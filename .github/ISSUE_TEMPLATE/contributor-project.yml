@@ -1,0 +1,65 @@
+name: Claim a contributor slice
+description: Pick one bounded project or propose a small independently mergeable outcome.
+title: "[Contributor] "
+labels:
+  - contribution
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for contributing. New contributors are welcome. If your idea is large, describe the smallest useful first slice and maintainers will help refine it.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Documentation and onboarding
+        - Tests and fault injection
+        - ResourceBank and LeaseTree
+        - LaneWeave scheduling
+        - Token and KV publication
+        - Provider context and gateway
+        - Provider cost and evidence
+        - Model formats and loader
+        - CPU or Metal backend
+        - Benchmarks and machine evidence
+        - Developer tooling
+        - New architecture proposal
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Smallest useful outcome
+      description: What behavior can merge and be useful independently?
+      placeholder: Add a read-only envelope renderer for lengths, sequence, and named roots; full nested rendering remains later work.
+    validations:
+      required: true
+  - type: textarea
+    id: rejection
+    attributes:
+      label: Rejection and failure cases
+      description: Name malformed, stale, unsupported, overflow, cancellation, or fault-injection cases relevant to the slice.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance command and expected result
+      placeholder: python3 -m unittest bench.tests.test_provider_evidence_join_wire
+    validations:
+      required: true
+  - type: textarea
+    id: help
+    attributes:
+      label: Questions or help wanted
+      description: Tell reviewers where you want design, Zig, testing, or project-navigation help.
+  - type: checkboxes
+    id: agreement
+    attributes:
+      label: Contribution agreement
+      options:
+        - label: I will keep claims within the evidence produced by this slice.
+          required: true
+        - label: I will not include credentials, private prompts, model weights, or unrelated generated files.
+          required: true

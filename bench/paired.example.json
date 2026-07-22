@@ -1,0 +1,222 @@
+{
+  "schema": "glacier.paired-bench/v1",
+  "name": "qwen2.5-0.5b-int4-e2e",
+  "repo_root": "..",
+  "cache_regime": "process-cold/os-warm",
+  "samples_per_engine": 32,
+  "warmup_runs_per_engine": 1,
+  "schedule_seed": 20260719,
+  "machine_state": {
+    "mode": "publishable",
+    "window_seconds": 60,
+    "sample_interval_seconds": 5,
+    "max_load1": 1.0,
+    "min_cpu_idle_median_percent": 90.0,
+    "min_cpu_idle_sample_percent": 80.0,
+    "max_matched_load1_delta": 0.25,
+    "max_matched_cpu_idle_median_delta": 5.0,
+    "in_run_cpu_sample_interval_seconds": 0.5,
+    "min_in_run_cpu_samples": 3,
+    "max_external_cpu_capacity_median_percent": 10.0,
+    "max_external_cpu_capacity_sample_percent": 20.0,
+    "max_matched_external_cpu_capacity_median_delta": 5.0,
+    "max_matched_external_cpu_capacity_max_delta": 10.0
+  },
+  "workload": {
+    "canonical_text": {
+      "path": "eval.txt",
+      "strip_exactly_one_final_lf": true,
+      "source_sha256": "1b7ee762127dc4a6df5777e94e7887542d1ba174baea0506125512ac76662fb1",
+      "canonical_sha256": "742fbc06941e1f7a5eee80e4811dadb78f5e7a1955a8f60cd1ecb02210d180ec"
+    },
+    "pinned_token_ids": {
+      "path": "eval-qwen2.5.ids",
+      "format": "plain",
+      "sha256": "67c3401cef9a5810f605db6bb9e3403f6ac52c74e4a43de042bbccaa620d1ba7"
+    },
+    "completion_tokens": 64,
+    "completion_equivalence": "stable-only",
+    "glacier_prefill_mode": "batch",
+    "require_fused_gqa": false
+  },
+  "artifacts": {
+    "python3": {
+      "path": "/path/to/python3",
+      "kind": "executable"
+    },
+    "glacier_bin": {
+      "path": "../zig-out/bin/glacier",
+      "kind": "executable"
+    },
+    "glacier_model": {
+      "path": "/private/tmp/glacier-engine-benchmark/qwen-int4-fullrange16-gate-up-down.glacier",
+      "kind": "model"
+    },
+    "hf_tokenizer_bridge": {
+      "path": "../tools/tok.py",
+      "kind": "file"
+    },
+    "tokenizer_json": {
+      "path": "/private/tmp/glacier-engine-benchmark/tokenizer.json",
+      "kind": "tokenizer"
+    },
+    "llama_completion": {
+      "path": "/path/to/llama.cpp/build/bin/llama-completion",
+      "kind": "executable"
+    },
+    "llama_tokenize": {
+      "path": "/path/to/llama.cpp/build/bin/llama-tokenize",
+      "kind": "executable"
+    },
+    "llama_model": {
+      "path": "/path/to/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "kind": "model"
+    }
+  },
+  "tokenizer_preflight": {
+    "hf": {
+      "argv": [
+        "{python3}",
+        "{hf_tokenizer_bridge}",
+        "{tokenizer_json}",
+        "--no-special"
+      ],
+      "cwd": "{repo_root}",
+      "stdin": "canonical_text",
+      "ids_stream": "stdout",
+      "ids_format": "plain"
+    },
+    "llama": {
+      "argv": [
+        "{llama_tokenize}",
+        "-m",
+        "{llama_model}",
+        "--ids",
+        "--stdin",
+        "--no-bos",
+        "--log-disable"
+      ],
+      "cwd": "{repo_root}",
+      "stdin": "canonical_text",
+      "ids_stream": "stdout",
+      "ids_format": "json-array"
+    }
+  },
+  "engines": {
+    "glacier": {
+      "argv": [
+        "{glacier_bin}",
+        "generate",
+        "{glacier_model}",
+        "--ids-file",
+        "{pinned_token_ids_path}",
+        "--n",
+        "64",
+        "--threads",
+        "4",
+        "--temp",
+        "0",
+        "--top-k",
+        "0",
+        "--top-p",
+        "1",
+        "--seed",
+        "0",
+        "--eos",
+        "4294967295",
+        "--require-batch-prefill",
+        "--out-ids-file",
+        "{sample_dir}/completion.ids"
+      ],
+      "cwd": "{repo_root}",
+      "completion": {
+        "source": "file",
+        "path": "{sample_dir}/completion.ids",
+        "format": "token_ids",
+        "ids_format": "plain"
+      },
+      "require_stable_completion_hash": true,
+      "timeout_seconds": 3600
+    },
+    "llama": {
+      "argv": [
+        "{llama_completion}",
+        "-m",
+        "{llama_model}",
+        "-f",
+        "{canonical_text_path}",
+        "-n",
+        "64",
+        "-c",
+        "240",
+        "-t",
+        "4",
+        "-tb",
+        "4",
+        "-dev",
+        "none",
+        "-ngl",
+        "0",
+        "--no-op-offload",
+        "-fit",
+        "off",
+        "--mmap",
+        "--no-direct-io",
+        "--temp",
+        "0",
+        "--top-k",
+        "0",
+        "--top-p",
+        "1",
+        "--repeat-penalty",
+        "1",
+        "--seed",
+        "0",
+        "--ignore-eos",
+        "--no-conversation",
+        "--no-display-prompt",
+        "--no-warmup",
+        "--no-context-shift",
+        "--no-escape",
+        "--perf",
+        "--simple-io",
+        "--special",
+        "--color",
+        "off"
+      ],
+      "cwd": "{repo_root}",
+      "completion": {
+        "source": "stdout",
+        "format": "raw",
+        "strip_exactly_one_final_lf": true,
+        "token_id_extractor": {
+          "argv": [
+            "{python3}",
+            "{hf_tokenizer_bridge}",
+            "{tokenizer_json}",
+            "--no-special"
+          ],
+          "cwd": "{repo_root}",
+          "ids_stream": "stdout",
+          "ids_format": "plain",
+          "timeout_seconds": 3600
+        }
+      },
+      "require_stable_completion_hash": true,
+      "timeout_seconds": 3600
+    }
+  },
+  "statistics": {
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 20017429989315922,
+    "confidence": 0.95
+  },
+  "metadata": {
+    "llama_cpp_release": "b10087",
+    "llama_cpp_commit": "1f66c3ce1c26c95db3fadb734086c7d9fba23bb9",
+    "llama_cpp_master_shadow": "e8e6c7af2456fd50bb62f7a2bbd642e6fb14ae77",
+    "evidence_status": "configuration template only; no measurement claim",
+    "require_fused_gqa_convention": "Set workload.require_fused_gqa=true only for strict prepared parallel-attention campaigns; validation rejects zero eligible decode graphs.",
+    "purpose": "paired performance-only end-to-end completion timing; stable-only is not quality-certified"
+  }
+}

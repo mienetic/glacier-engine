@@ -1,0 +1,45 @@
+# Zig / build artifacts
+zig-cache/
+zig-out/
+.zig-cache/
+*.o
+*.a
+*.so
+*.dylib
+
+# macOS
+.DS_Store
+._*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Models / cache files (large, machine-specific)
+*.glacier
+*.gguf
+*.safetensors
+models/
+weights/
+kv-cache/
+!examples/*.glacier  # keep tiny test fixtures if any
+
+# Bench output
+bench-results/
+*.bench.json
+bench/results/*
+!bench/results/README.md
+
+# Python
+__pycache__/
+*.pyc
+.env
+.venv/
+.pytest_cache/
+
+# Local development assistants and generated binaries
+.complexity-engineering/
+.serena/
+a.out

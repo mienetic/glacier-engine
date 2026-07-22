@@ -1,0 +1,32 @@
+name: Feature or design proposal
+description: Propose a user-facing capability or architectural improvement.
+title: "[Proposal] "
+labels:
+  - proposal
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or contributor problem should the project solve?
+    validations:
+      required: true
+  - type: textarea
+    id: first_slice
+    attributes:
+      label: Smallest first slice
+      description: Describe an independently mergeable starting point, not the entire destination.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and tradeoffs
+      description: Include compatibility, resource, evidence, and failure implications.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance and stop gates
+      description: What would prove the idea useful, and when should the experiment stop?
+    validations:
+      required: true

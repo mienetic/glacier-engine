@@ -1,0 +1,5 @@
+Glaciers move slowly, but the systems built to study them must react quickly. A field station records temperature, snowfall, wind, and the motion of ice throughout the year. Researchers compare each new observation with earlier measurements, looking for changes that are too small to see in a single day.
+
+Reliable software follows a similar discipline. It keeps a clear record of inputs, checks every transformation, and reports uncertainty instead of hiding it. Performance matters, but a faster answer is useful only when it remains correct. A good benchmark therefore fixes the data, describes the hardware, repeats the measurement, and preserves enough evidence for another person to reproduce the result.
+
+Local language models add another constraint: memory is shared with the rest of the computer. An inference engine should avoid unnecessary copies, keep its working set predictable, and choose representations that reduce bandwidth without silently changing the model's behavior.

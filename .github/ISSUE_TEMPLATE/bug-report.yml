@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible incorrect result, crash, rejection, or resource/evidence inconsistency.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Glacier Engine. Do not include credentials, private prompts, or sensitive vulnerabilities here; use the private security process for those.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include exact commands and the smallest safe fixture.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Glacier commit
+      placeholder: git rev-parse HEAD
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Zig version, OS, architecture, backend, build mode, and relevant flags.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Complete output or artifact digest
+      description: Remove private paths or data. Attach retained evidence when the issue concerns a benchmark.
+    validations:
+      required: true

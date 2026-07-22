@@ -1,0 +1,161 @@
+# Architecture
+
+Glacier Engine separates AI computation from the authority to consume resources
+and publish state. Computation may be speculative; externally visible state is
+not.
+
+## Component map
+
+| Layer | Primary components | Responsibility |
+| --- | --- | --- |
+| Model | `.glacier`, `.glrt`, loader, prepared model | Validate source and execution layouts before use |
+| Execution | CPU kernels, optional Metal backend, DecodePlan | Produce candidate activations, KV rows, and tokens |
+| Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
+| Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
+| State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
+| Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
+| Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
+| Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
+
+## Local execution flow
+
+```text
+validated model + request
+          │
+          ▼
+   derive exact claim
+          │
+          ▼
+ ResourceBank admission ──reject──> no resource mutation
+          │ receipt
+          ▼
+ LaneWeave admission ─────reject──> release receipt
+          │ service permit
+          ▼
+ speculative execution
+          │ prepared KV/RNG/output
+          ▼
+ publication transaction ─abort───> no visible mutation
+          │ commit
+          ▼
+ new KV root + RNG + counters + output + receipt
+```
+
+### ResourceBank
+
+`ResourceBank` accounts for declared logical quantities such as KV bytes,
+activation bytes, scratch bytes, page slots, and operations. Admission returns a
+generation-fenced receipt. Stale, mutated, foreign, or over-capacity receipts
+fail before state changes.
+
+`LeaseTree` subdivides one request receipt into exact child ownership. It is used
+to connect physical KV page allocation and retirement to the parent resource
+claim without treating process RSS as proof of ownership.
+
+### LaneWeave
+
+`LaneWeave` is a bounded control-plane scheduler. It combines exact admission,
+weighted service, deadline projection, cancellation, and replayable events.
+Prepared permits are single-purpose and fenced against stale address reuse.
+
+### Token publication
+
+A token transaction stages every AI-visible mutation:
+
+- KV root or row transition;
+- RNG state;
+- sampling-call counter;
+- output word;
+- resource and scheduling commitments.
+
+Preparation may fail without exposing partial state. Commit consumes the exact
+permit and publishes the staged state once. Abort leaves the prior committed
+root usable.
+
+Paged variants add cache instance, logical page, ownership generation, and
+before/after page-map roots. The LeaseTree-backed variant also binds allocation,
+retirement, and request-wide publication authority.
+
+## Provider execution flow
+
+```text
+logical spans
+    │
+    ▼
+ContextPack ──> mapping receipt + raw/packed token observations
+    │
+    ▼
+Gateway ──────> exact reservation + optional request coalescing
+    │
+    ▼
+Transport ────> chunks + terminal usage + cancellation outcome
+    │
+    ▼
+Settlement ───> quote, authoritative usage, and cost wire
+    │
+    ▼
+CostJournal ──> durable body/footer append and recovery
+    │
+    ▼
+EvidenceJoin ─> compact manifest over verified roots
+```
+
+### Context packing and token reconciliation
+
+Core does not tokenize or store text. Callers supply domain-bound span hashes,
+token observations, and explicit idempotence declarations. The packer removes
+only exact rendered duplicates that are safe to share and retains a decision for
+every logical span. A provider-specific adapter can render and count exact wire
+bytes outside core, then submit the reconciled observation for admission.
+
+### Gateway and transport
+
+The gateway admits an exact request identity and conservative token reservation.
+Identical logical requests may share one physical dispatch while retaining their
+consumer identities. Terminal provider usage authoritatively settles the
+reservation. Cancellation distinguishes consumer withdrawal from active
+transport cancellation.
+
+The transport harness is deterministic and credential-free. It exists to test
+chunk ordering, terminal usage, retry state, and cancellation semantics before a
+live adapter is introduced.
+
+### Durable provider evidence
+
+The cost journal appends a body and a separate commit footer, syncing each phase.
+Recovery accepts a complete valid prefix, can repair a short torn tail, and
+rejects a complete invalid frame. Writers are poisoned after an uncertain append
+and must be closed and reopened before reuse.
+
+`ProviderEvidenceJoinWire` is a fixed 712-byte manifest over the selected cost
+frame, gateway event, and transport outcome. Verification replays the supplied
+nested evidence rather than trusting copied roots. The manifest contains no
+dispatch, filesystem, or network authority.
+
+## Identity and trust rules
+
+1. On-disk and wire layouts are serialized explicitly; Zig struct layout is not
+   an ABI.
+2. Every reusable handle carries an epoch or generation.
+3. A hash proves byte identity and chain integrity, not the truth of the original
+   observation.
+4. Logical resource accounting and operating-system/device measurements are
+   separate evidence planes.
+5. Provider core stays credential-free; live credentials belong in isolated
+   adapters.
+6. Unsupported combinations reject rather than silently downgrade.
+
+## Portability
+
+The portable core is Zig. AArch64 has specialized CPU kernels and macOS can use
+Metal through a small Objective-C bridge. Cross-target test compilation covers
+x86_64 and AArch64 Linux. Execution, numerical, and physical-resource validation
+still require real machines for each promoted platform.
+
+## Where to go deeper
+
+- [Design](DESIGN.md): invariants and extension rules.
+- [Paging](PAGING.md): weight and KV paging boundaries.
+- [Model format](FORMAT_SPEC.md): portable draft format.
+- [Native runtime image](RUNTIME_IMAGE.md): execution image ABI.
+- [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

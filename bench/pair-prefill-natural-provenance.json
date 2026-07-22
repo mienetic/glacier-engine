@@ -1,0 +1,39 @@
+{
+  "schema": "glacier.pair-prefill-natural-ids.v1",
+  "description": "Natural technical-prose prompt prefixes for compact Pair batch-prefill evidence. These are prefixes of one tokenizer transcript, not repeated or tiled IDs.",
+  "source": {
+    "kind": "git-blob",
+    "commit": "45fbb014a0e19ef40f7053e646f2e78550884bef",
+    "path": "README.md",
+    "utf8_bytes": 53925,
+    "sha256": "ca6678bd6e440a5049d1b88ebd136925dcf16771cb096c2def7f8eb66e7f0113"
+  },
+  "tokenizer": {
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "artifact": "tokenizer.json",
+    "artifact_sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+    "tokenizers_version": "0.22.1",
+    "entrypoint": "Tokenizer.encode",
+    "normalizer": "NFC",
+    "post_processor": "ByteLevel (no injected BOS/chat wrapper)",
+    "complete_stream_tokens": 17954
+  },
+  "serialization": "ASCII decimal u32 IDs separated by one space and terminated by LF",
+  "prefixes": [
+    {
+      "tokens": 128,
+      "path": "bench/pair-prefill-natural-pp128.ids",
+      "sha256": "fd26e74ac8268da7e4895f5e872fd77a10287aca397c87ee2cb4b0b47e25df10"
+    },
+    {
+      "tokens": 512,
+      "path": "bench/pair-prefill-natural-pp512.ids",
+      "sha256": "1be9f6e092602c19acc745e9a836520daa4963123f254defeee8fb7c0a597131"
+    },
+    {
+      "tokens": 2048,
+      "path": "bench/pair-prefill-natural-pp2048.ids",
+      "sha256": "8e43994ffa63c6fcc0cda4c4b9b4db1300e7354e3d5c1c95fe9e3e6d4e20a676"
+    }
+  ]
+}
