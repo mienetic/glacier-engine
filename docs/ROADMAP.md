@@ -25,7 +25,7 @@ transactional state publication, and independently verifiable evidence.
 | Hierarchical ownership | Integrated | LeaseTree child scopes and paged-KV publication fences | Cross-worker and durable ownership identity |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
-| Continuation identity | Prototype | Fixed capsule, bounded tenant resolver, canonical bundle/dedup plan, Zig/Python verification | Immutable store, ownership reacquisition, and live restore |
+| Continuation identity | Prototype | Capsule, bounded resolver, canonical bundle, atomic in-memory tenant store, Zig/Python verification | Leases, durable publication, ownership reacquisition, and live restore |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
@@ -45,6 +45,8 @@ transactional state publication, and independently verifiable evidence.
   bounded scans/bytes, and adversarial failure coverage.
 - [x] Fixed tenant-scoped continuation bundle with canonical dedup ordinals,
   exact logical/unique totals, and full serialized-byte mutation coverage.
+- [x] Bounded in-memory tenant store with atomic bundle import, exact accounting,
+  duplicate reuse, quarantine, and allocator-failure rollback.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -77,21 +79,26 @@ Next slices:
 4. ~~Content-addressed bundle manifest with deduplication and tenant scope.~~
    Complete as a fixed 1,136-byte plan with typed and tenant-bound roots,
    canonical first-occurrence ordinals, and independent verification.
-5. Atomic file publication and crash-recovery state machine.
-6. ResourceBank/LeaseTree reacquisition without duplicated ownership.
-7. Paged-KV restore with foreign-generation rejection.
-8. End-to-end process restart between two token publications.
+5. ~~Bounded immutable in-memory store with atomic bundle import.~~ Complete
+   with bundle provenance, duplicate reuse, references, quarantine, exact
+   payload/index counters, snapshot root, and allocator rollback.
+6. Lease/generation fencing and provenance-aware repair.
+7. Atomic file publication and crash-recovery state machine.
+8. ResourceBank/LeaseTree reacquisition without duplicated ownership.
+9. Paged-KV restore with foreign-generation rejection.
+10. End-to-end process restart between two token publications.
 
 Promotion gate: byte-identical continuation of the selected deterministic mode,
 no duplicated output, no orphaned ownership, and crash coverage at every durable
 phase.
 
-The current capsule, resolver, and bundle form identity, least-authority lookup,
-and canonical storage-plan boundaries—not a saved session. The capsule/bundle
-embed zero object payload bytes and the native codecs allocate nothing, but
-these facts do not by themselves prove lower RSS, disk use, or restart latency.
-Those claims require store integration, ownership reacquisition, and physical
-measurements including metadata and cache overhead.
+The current capsule, resolver, bundle, and in-memory store form identity,
+least-authority lookup, canonical planning, and bounded payload-ownership
+boundaries—not a saved session. The fixture avoids one 25-byte duplicate payload
+allocation, but its fixed index and backing capacity are larger than that delta.
+No lower RSS, disk use, or restart latency is claimed. Those require compact
+index experiments, durable integration, ownership reacquisition, and complete
+physical measurements.
 
 ### Evidence inspection
 
@@ -224,7 +231,7 @@ ideas unless a different status is stated.
 | Capability Grant | Prototype (resolver scope) | Least-authority extensions for planners, tokenizers, stores, tools, and transports |
 | ToolTxn and ActionOutbox | Idea | Recoverable AI tool execution without duplicated external side effects |
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
-| Object Fabric | Prototype (bundle) | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
+| Object Fabric | Prototype (store) | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |
@@ -319,8 +326,9 @@ First slices:
 - ~~typed object key `(tenant_scope, kind, ABI, digest, length)`;~~
 - ~~capability-bounded resolver for `ContinuationCapsule`;~~
 - ~~fixed capsule bundle manifest and independent parser;~~
-- tenant-scoped immutable fake store with admitted put/get and no ambient I/O;
-- reference/lease accounting and quarantine;
+- ~~tenant-scoped immutable fake store with admitted put/get and no ambient I/O;~~
+- ~~reference counts, bundle provenance, and quarantine state;~~
+- lease/generation fencing and provenance-aware repair;
 - corruption repair from a trusted replica;
 - reachability-based garbage collection with dry-run evidence;
 - optional encrypted storage adapter whose ciphertext identity is separate from

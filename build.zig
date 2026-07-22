@@ -657,6 +657,34 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_continuation_bundle_demo.step);
     test_compile_step.dependOn(&continuation_bundle_demo_exe.step);
 
+    // Bounded in-memory tenant object store. It imports one verified bundle
+    // atomically, owns immutable payload copies, reuses duplicate blob roots,
+    // and accounts index/payload/reference state without filesystem access.
+    const continuation_store_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-object-store-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_object_store.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_store_demo_exe.root_module.addImport("core", core_mod);
+    const run_continuation_store_demo = b.addRunArtifact(
+        continuation_store_demo_exe,
+    );
+    const continuation_store_demo_step = b.step(
+        "continuation-store-demo",
+        "Run the bounded tenant continuation object-store demo",
+    );
+    continuation_store_demo_step.dependOn(
+        &run_continuation_store_demo.step,
+    );
+    test_step.dependOn(&run_continuation_store_demo.step);
+    test_compile_step.dependOn(&continuation_store_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

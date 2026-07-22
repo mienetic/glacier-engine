@@ -90,17 +90,18 @@ into core.
 
 ## Advanced projects
 
-### Continuation immutable fake store
+### Store lease and repair state machine
 
 `ContinuationCapsule v1` and its in-memory object resolver now supply fixed
 identity, tenant-scoped exact lookup, bounded quotas, caller-owned output, and
-cross-language verification. The fixed bundle now adds canonical typed/blob
-entries, tenant separation, and logical/unique totals. The next boundary should
-exercise storage lifecycle without granting ambient filesystem access.
+cross-language verification. The fixed bundle and bounded in-memory store now
+add canonical blob planning, exact allocation/index/reference accounting,
+atomic rollback, provenance binding, and quarantine without ambient I/O.
 
-**First slice:** an allocator-backed fake store admitted by exact tenant and blob
-capability, with put/get/missing/corrupt/duplicate/quarantine tests and explicit
-payload/index byte accounting. No filesystem adapter in the first slice.
+**First slice:** generation-fenced acquire/renew/release/expire transitions for
+one stored blob, with stale-lease rejection and a repair proposal that cannot
+replace quarantined bytes until independently verified. No clock or filesystem
+adapter in the first slice.
 
 ### Resolver adversarial fixtures
 

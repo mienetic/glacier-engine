@@ -19,6 +19,10 @@ object, total-byte, and resolution limits.
 object roots to tenant-bound storage blob roots and canonical deduplication
 ordinals without embedding payloads or granting storage authority.
 
+**Continuation object store** — A bounded, bundle-scoped in-memory store that
+owns immutable tenant blob payloads, reuses duplicate references, accounts
+payload/index state, and rolls partial imports back.
+
 **Blob ordinal** — The deterministic first-occurrence number assigned to equal
 tenant-bound payload bytes in a continuation bundle. It describes a storage
 plan, not a live object handle.

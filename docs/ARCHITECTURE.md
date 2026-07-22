@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | capsule, resolver, bundle | Bind a checkpoint, admit exact tenant objects, and derive a canonical storage plan |
+| Continuation | capsule, resolver, bundle, store | Bind a checkpoint, admit tenant objects, plan deduplication, and own bounded payloads |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -48,6 +48,8 @@ validated model + request
  bounded object resolver ──> verified caller-owned bytes; no live authority
           │
           └─ canonical bundle ──> tenant blob roots + dedup ordinals; no I/O
+                       │
+                       └─ bounded object store ──> owned bytes + references
 ```
 
 ### ResourceBank
@@ -129,6 +131,22 @@ and performs no storage I/O. It is a portable plan, not a store, lease, cache, o
 proof of physical savings. A future immutable store must admit access through a
 capability, account for all metadata and physical overhead, and return bytes
 through the existing resolver boundary.
+
+### Continuation object store
+
+The bounded in-memory store is scoped by one authority epoch, tenant, bundle
+root, operation mask, and entry/object/payload/index/reference limits. Its slot
+index has fixed native capacity while exact payload bytes come from a
+caller-supplied allocator. Import verifies the bundle and all objects first,
+then applies at most nine reversible insert/reference actions. Any later quota or
+allocation failure rolls the whole import back.
+
+Equal tenant blob roots reuse one owned payload allocation and increment a
+reference count. Reads re-hash and copy into caller-owned storage; the last
+release frees the payload. Corrupt entries can be retained in quarantine, where
+reads reject. The store reports logical index charge separately from native
+fixed-index and allocator capacity, so duplicate payload avoidance cannot be
+misreported as net memory savings.
 
 ## Provider execution flow
 
@@ -216,4 +234,6 @@ still require real machines for each promoted platform.
 - [Continuation object resolver](CONTINUATION_OBJECT_RESOLVER.md): scoped
   lookup and quota contract.
 - [Continuation bundle](CONTINUATION_BUNDLE.md): canonical tenant storage plan.
+- [Continuation object store](CONTINUATION_OBJECT_STORE.md): bounded in-memory
+  ownership and accounting.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

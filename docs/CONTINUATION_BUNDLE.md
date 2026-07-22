@@ -174,12 +174,18 @@ extension, capsule substitution, and overlapping native output storage.
 
 ## Next layers
 
-1. Tenant-scoped immutable fake store with admitted put/get operations.
-2. Provenance state and corruption quarantine.
-3. Reference/lease accounting with evidence-producing dry-run collection.
-4. Atomic bundle publication and crash recovery.
-5. Resource and paged-KV ownership reacquisition.
-6. End-to-end restart and paired physical-resource campaigns.
+1. ~~Tenant-scoped immutable fake store with admitted put/get operations.~~
+   Implemented in memory with fixed index capacity and allocator-owned payloads.
+2. ~~Bundle provenance, reference counts, corruption checks, and quarantine.~~
+   Implemented; generation-fenced leases and repair remain.
+3. Lease accounting and evidence-producing dry-run collection.
+4. Compact/dynamic index experiment with full overhead measurement.
+5. Atomic bundle publication and crash recovery.
+6. Resource and paged-KV ownership reacquisition.
+7. End-to-end restart and paired physical-resource campaigns.
 
 The store must preserve the distinction between semantic identity, tenant-bound
 blob identity, access authority, live ownership, and publication authority.
+
+See [Continuation Object Store](CONTINUATION_OBJECT_STORE.md) for the implemented
+in-memory ownership, rollback, and resource-accounting boundary.

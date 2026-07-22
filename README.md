@@ -36,6 +36,8 @@ formats, and independent verifiers.
   capsule objects under bounded scan, object, total-byte, and resolution limits.
 - **Canonical continuation bundles.** Semantic roots remain kind-specific while
   equal in-tenant payloads receive one deterministic storage blob ordinal.
+- **Bounded tenant object storage.** Atomic in-memory bundle import owns one copy
+  per unique blob with exact payload, index, and reference accounting.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
@@ -78,7 +80,8 @@ request
                          └─ ContinuationCapsule (typed external object roots)
                                   │
                                   ├─ bounded tenant-scoped object resolver
-                                  └─ canonical tenant bundle (no storage I/O)
+                                  ├─ canonical tenant bundle
+                                  └─ bounded in-memory object store (no file I/O)
 
 provider request
   │
@@ -109,6 +112,7 @@ zig build lane-publication-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-capsule-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-resolver-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-bundle-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -128,7 +132,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Token transactions, LeaseTree-backed KV ownership, capsule, bounded resolver, canonical bundle | Immutable store, ownership reacquisition, and restart integration |
+| State | Token transactions, capsule, bounded resolver, canonical bundle, in-memory tenant store | Leases, durable publication, ownership reacquisition, and restart |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
@@ -169,6 +173,7 @@ valuable as new features.
 - [Continuation capsule](docs/CONTINUATION_CAPSULE.md)
 - [Continuation object resolver](docs/CONTINUATION_OBJECT_RESOLVER.md)
 - [Continuation bundle](docs/CONTINUATION_BUNDLE.md)
+- [Continuation object store](docs/CONTINUATION_OBJECT_STORE.md)
 - [Glossary](docs/GLOSSARY.md)
 
 Research tracks are documented separately in

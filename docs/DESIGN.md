@@ -116,6 +116,13 @@ tokenizer, plan, KV, and other typed roots remain distinct. Bundle totals are
 logical evidence; they do not become physical allocation claims until a store
 reports its payload, index, metadata, cache, and platform overhead.
 
+The in-memory store makes that distinction executable. Payload ownership changes
+only after every quota and identity check, while a fixed reverse-action journal
+keeps bundle import all-or-nothing across allocator failure. Equal tenant blob
+identity can reuse payload allocation, but semantic references remain counted
+individually. Quarantine retains evidence without authorizing reads or claiming
+repair.
+
 ### State machines fail closed
 
 Named errors are preferable to implicit recovery when the correct alternative is

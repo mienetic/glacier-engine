@@ -27,6 +27,9 @@ before the first stable release.
 - Fixed continuation bundle manifest with separate semantic and tenant-bound
   blob roots, canonical first-occurrence dedup ordinals, exact logical/unique
   byte totals, and an independent Python verifier.
+- Bounded tenant continuation object store with atomic bundle import, immutable
+  payload ownership, duplicate reference reuse, exact payload/index accounting,
+  quarantine, corruption checks, and allocator-failure rollback.
 
 ### Status
 

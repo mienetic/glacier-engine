@@ -35,6 +35,8 @@ pub const continuation_capsule = @import("continuation_capsule.zig");
 pub const continuation_object_resolver =
     @import("continuation_object_resolver.zig");
 pub const continuation_bundle = @import("continuation_bundle.zig");
+pub const continuation_object_store =
+    @import("continuation_object_store.zig");
 
 // Re-export the most commonly used types at the root.
 pub const Precision = precision.Precision;
@@ -61,6 +63,7 @@ pub const ProviderEvidenceJoinWire = provider_evidence_join_wire;
 pub const ContinuationCapsule = continuation_capsule;
 pub const ContinuationObjectResolver = continuation_object_resolver;
 pub const ContinuationBundle = continuation_bundle;
+pub const ContinuationObjectStore = continuation_object_store;
 pub const Error = pager.Error;
 
 test {
