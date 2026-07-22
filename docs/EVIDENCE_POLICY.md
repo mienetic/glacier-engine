@@ -41,6 +41,8 @@ Keep these distinct:
   logical/unique payload totals without implied physical storage;
 - **store:** owned payload bytes, logical index charge, native capacity,
   references, quarantine state, rollback outcome, and snapshot root;
+- **lifecycle:** lease capability, owner, generation, explicit tick/deadline,
+  invalidation transition, repair capability/source/reason, and v2 snapshot;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;

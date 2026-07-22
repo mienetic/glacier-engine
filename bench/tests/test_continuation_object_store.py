@@ -27,6 +27,15 @@ class ContinuationObjectStoreTests(unittest.TestCase):
             self.bundle["objects"],
         )
 
+    def key(self, entry_index: int) -> dict[str, object]:
+        entry = bundle.decode_manifest(self.bundle["encoded"])["entries"][
+            entry_index
+        ]
+        return {
+            "byte_length": entry["byte_length"],
+            "sha256": entry["blob_sha256"],
+        }
+
     def test_cross_language_grant_snapshot_and_exact_accounting(self) -> None:
         self.assertEqual(
             object_store.grant_root(self.grant).hex(),
@@ -194,6 +203,171 @@ class ContinuationObjectStoreTests(unittest.TestCase):
         with self.assertRaises(object_store.StoreError):
             self.import_bundle(foreign_tenant)
         self.assertEqual(foreign_tenant.entry_count, 0)
+
+    def test_generation_fenced_lease_renew_expire_and_collection(self) -> None:
+        store = self.store()
+        self.import_bundle(store)
+        lifecycle = object_store.demo_lifecycle_grant(self.grant)
+        model = self.key(0)
+        owner = bytes((0x71,)) * 32
+        first = store.acquire_lease(model, lifecycle, owner, 100, 120)
+        self.assertEqual((first["generation"], store.active_leases), (1, 1))
+        store.release(model)
+        with self.assertRaises(object_store.StoreError):
+            store.release(model)
+        renewed = store.renew_lease(model, first, lifecycle, 110, 150)
+        self.assertEqual((renewed["generation"], store.active_leases), (2, 1))
+        with self.assertRaises(object_store.StoreError):
+            store.release_lease(model, first, lifecycle)
+        with self.assertRaises(object_store.StoreError):
+            store.expire_lease(model, renewed, lifecycle, 149)
+        store.expire_lease(model, renewed, lifecycle, 150)
+        self.assertEqual(store.active_leases, 0)
+        store.release(model)
+        self.assertIsNone(store._find(model))
+        store.verify_all()
+
+    def test_lease_scope_budget_window_and_tamper_fail_closed(self) -> None:
+        store = self.store()
+        self.import_bundle(store)
+        lifecycle = object_store.demo_lifecycle_grant(self.grant)
+        lifecycle["max_active_leases"] = 1
+        model = self.key(0)
+        kv = self.key(5)
+        receipt = store.acquire_lease(
+            model, lifecycle, bytes((0x71,)) * 32, 10, 20
+        )
+        with self.assertRaises(object_store.StoreError):
+            store.acquire_lease(kv, lifecycle, bytes((0x72,)) * 32, 10, 20)
+        with self.assertRaises(object_store.StoreError):
+            store.renew_lease(model, receipt, lifecycle, 11, 80)
+        tampered = dict(receipt)
+        tampered["generation"] += 1
+        with self.assertRaises(object_store.StoreError):
+            store.release_lease(model, tampered, lifecycle)
+        foreign = dict(lifecycle)
+        foreign["bundle_sha256"] = bytes((0x44,)) * 32
+        with self.assertRaises(object_store.StoreError):
+            store.release_lease(model, receipt, foreign)
+        denied = dict(lifecycle)
+        denied["allowed_operation_mask"] = object_store.LEASE_OPERATION_ACQUIRE
+        with self.assertRaises(object_store.StoreError):
+            store.release_lease(model, receipt, denied)
+        store.release_lease(model, receipt, lifecycle)
+        store.verify_all()
+
+    def test_quarantine_fences_lease_and_repair_requires_exact_provenance(
+        self,
+    ) -> None:
+        store = self.store()
+        self.import_bundle(store)
+        lifecycle = object_store.demo_lifecycle_grant(self.grant)
+        kv = self.key(5)
+        lease = store.acquire_lease(
+            kv, lifecycle, bytes((0x72,)) * 32, 200, 240
+        )
+        index = store._find(kv)
+        assert index is not None and store.slots[index] is not None
+        store.slots[index]["payload"] = b"x" + store.slots[index]["payload"][1:]
+        reason = bytes((0x9A,)) * 32
+        source = bytes((0xB6,)) * 32
+        store.quarantine(kv, reason)
+        self.assertEqual(store.active_leases, 0)
+        with self.assertRaises(object_store.StoreError):
+            store.release_lease(kv, lease, lifecycle)
+        repair_grant = object_store.demo_repair_grant(
+            self.grant, kv, source, reason
+        )
+        with self.assertRaises(object_store.StoreError):
+            store.repair(
+                kv,
+                self.bundle["objects"]["kv_state"][1],
+                bytes((0xB7,)) * 32,
+                repair_grant,
+            )
+        wrong_reason = dict(repair_grant)
+        wrong_reason["expected_quarantine_reason_sha256"] = bytes((0x91,)) * 32
+        with self.assertRaises(object_store.StoreError):
+            store.repair(kv, self.bundle["objects"]["kv_state"][1], source, wrong_reason)
+        with self.assertRaises(object_store.StoreError):
+            store.repair(kv, b"wrong repair payload", source, repair_grant)
+        receipt = store.repair(
+            kv,
+            self.bundle["objects"]["kv_state"][1],
+            source,
+            repair_grant,
+        )
+        self.assertEqual((receipt["repair_generation"], store.repair_count), (1, 1))
+        self.assertEqual(store.get(kv), self.bundle["objects"]["kv_state"][1])
+        self.assertEqual(receipt["repair_sha256"], object_store.repair_receipt_root(receipt))
+        store.verify_all()
+        store.release(kv)
+        self.assertEqual(store.repair_count, 0)
+        store.verify_all()
+
+    def test_cross_language_lifecycle_and_repair_roots(self) -> None:
+        self.maxDiff = None
+        store = self.store()
+        self.import_bundle(store)
+        lifecycle = object_store.demo_lifecycle_grant(self.grant)
+        model = self.key(0)
+        first = store.acquire_lease(
+            model, lifecycle, bytes((0x71,)) * 32, 100, 120
+        )
+        renewed = store.renew_lease(model, first, lifecycle, 110, 150)
+        store.release_lease(model, renewed, lifecycle)
+        kv = self.key(5)
+        kv_lease = store.acquire_lease(
+            kv, lifecycle, bytes((0x72,)) * 32, 200, 240
+        )
+        reason = bytes((0x9A,)) * 32
+        source = bytes((0xB6,)) * 32
+        store.quarantine(kv, reason)
+        repair_grant = object_store.demo_repair_grant(
+            self.grant, kv, source, reason
+        )
+        repair = store.repair(
+            kv,
+            self.bundle["objects"]["kv_state"][1],
+            source,
+            repair_grant,
+        )
+        self.assertEqual(kv_lease["generation"], 1)
+        expected = {
+            "lifecycle_grant": (
+                "cfd5df486b00f6fcf2fb61792a49bd4c"
+                "4ad358be183b9ec2b4df517a4b79b85b"
+            ),
+            "first_lease": (
+                "a95418f46e56d7105b73c40dc5138e56"
+                "b64ff881ebf84e2cc958cf26615b348a"
+            ),
+            "renewed_lease": (
+                "3ff1c7b5f4d83e40dccce97e424e4362"
+                "ccd7b04920b2141f71658f2922d5069d"
+            ),
+            "repair_grant": (
+                "5d4fa957f3e163b5fc3cf7cb2fed8fcc"
+                "8df28eaa74cff1b574c56ee69e787e7a"
+            ),
+            "repair_receipt": (
+                "59d39a2e4ab40382012505a326e3bec3"
+                "f8f1f27453d1a47928c3a4f27e282875"
+            ),
+            "snapshot_v2": (
+                "239ea7e7555388fab740d3d1fdb8040a"
+                "7f3706b102e9572c05f7dc612822e1bd"
+            ),
+        }
+        actual = {
+            "lifecycle_grant": object_store.lifecycle_grant_root(lifecycle).hex(),
+            "first_lease": first["lease_sha256"].hex(),
+            "renewed_lease": renewed["lease_sha256"].hex(),
+            "repair_grant": object_store.repair_grant_root(repair_grant).hex(),
+            "repair_receipt": repair["repair_sha256"].hex(),
+            "snapshot_v2": store.snapshot_root_v2().hex(),
+        }
+        self.assertEqual(actual, expected)
 
 
 if __name__ == "__main__":

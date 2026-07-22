@@ -38,6 +38,9 @@ formats, and independent verifiers.
   equal in-tenant payloads receive one deterministic storage blob ordinal.
 - **Bounded tenant object storage.** Atomic in-memory bundle import owns one copy
   per unique blob with exact payload, index, and reference accounting.
+- **Generation-fenced object lifecycle.** Explicit-tick leases prevent stale
+  owners and final collection; exact repair capabilities restore quarantined
+  bytes only after target, reason, source, and payload verification.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
@@ -81,7 +84,8 @@ request
                                   │
                                   ├─ bounded tenant-scoped object resolver
                                   ├─ canonical tenant bundle
-                                  └─ bounded in-memory object store (no file I/O)
+                                  └─ bounded in-memory object store
+                                     └─ lease, quarantine, repair (no file I/O)
 
 provider request
   │
@@ -132,7 +136,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Token transactions, capsule, bounded resolver, canonical bundle, in-memory tenant store | Leases, durable publication, ownership reacquisition, and restart |
+| State | Token transactions, capsule, resolver, bundle, tenant store, lease and repair receipts | Durable publication, ownership reacquisition, and restart |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
@@ -174,6 +178,7 @@ valuable as new features.
 - [Continuation object resolver](docs/CONTINUATION_OBJECT_RESOLVER.md)
 - [Continuation bundle](docs/CONTINUATION_BUNDLE.md)
 - [Continuation object store](docs/CONTINUATION_OBJECT_STORE.md)
+- [Continuation object lifecycle](docs/CONTINUATION_OBJECT_LIFECYCLE.md)
 - [Glossary](docs/GLOSSARY.md)
 
 Research tracks are documented separately in

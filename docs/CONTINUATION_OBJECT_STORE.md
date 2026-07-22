@@ -3,8 +3,10 @@
 Status: **prototype bounded in-memory store**. Native storage, independent
 Python state model, exact accounting, duplicate reuse, reference release,
 quarantine, corruption verification, atomic bundle import, and allocator-failure
-rollback are implemented. Filesystem durability, leases, repair, encryption,
-concurrent access, and live restart are not.
+rollback are implemented. Generation-fenced leases, deterministic expiry,
+quarantine fencing, and capability-bound repair are also implemented. Filesystem
+durability, concurrent access, replica transport, encryption, garbage
+collection, and live restart are not.
 
 `ContinuationObjectStore` turns the canonical bundle plan into owned immutable
 payload copies under one tenant and one bundle-scoped grant. Its index has fixed
@@ -15,6 +17,7 @@ successful mutation updates explicit payload/index/reference counters.
 
 ```text
 trusted caller + StoreGrantV1 + allocator
+               + LifecycleGrantV1 / RepairGrantV1
                   │
 verified ContinuationBundle + exact payload objects
                   │
@@ -23,8 +26,9 @@ verified ContinuationBundle + exact payload objects
        ├─ fixed-capacity slot index
        ├─ allocator-owned immutable payloads
        ├─ reference reuse/release
+       ├─ generation-fenced lease ownership
        ├─ corruption verification
-       ├─ quarantine retention
+       ├─ quarantine + verified repair
        └─ atomic import rollback
                   │
                   ▼
@@ -87,12 +91,20 @@ An existing equal blob increments only its reference count and allocates no
 payload. Equal digests with unequal length or bytes fail as a collision.
 
 `releaseV1` decrements one semantic reference. Only the final release frees the
-payload and index slot. `quarantineV1` retains bytes and references for evidence
-but blocks reads. Cleanup can still release a quarantined entry.
+payload and index slot, and that final transition rejects while a lease is
+active. `quarantineV1` retains bytes and references for evidence, blocks reads,
+and clears an active lease so its receipt becomes unusable. Cleanup can still
+release a quarantined entry.
 
 `verifyAllV1` independently recomputes every blob root and all counters. It also
 rejects duplicate occupied roots, foreign provenance, invalid live/quarantine
-state, and any reconstructed value beyond the grant.
+state, invalid lease/repair accounting, and any reconstructed value beyond the
+grant.
+
+Lease and repair authority are separate from the storage grant. See
+[Continuation object lifecycle](CONTINUATION_OBJECT_LIFECYCLE.md) for exact
+grant roots, receipt identities, logical-tick rules, stale-generation rejection,
+and repair admission.
 
 ## Atomic bundle import
 
@@ -123,6 +135,13 @@ The shared post-import fixture root is
 `5ef533c5bbf2db216806736f6a12c59503f668b02e3c12dba8dc8b503121860f`.
 It identifies this in-memory state only and is not a durable commit receipt.
 
+`snapshotRootV2` preserves that content/accounting root and additionally binds
+active-lease and repair counters plus each occupied slot's lease generation,
+current lease-receipt root, and repair generation. The receipt root transitively
+binds owner, deadline, and lifecycle grant without copying those fields into
+every slot. The shared post-lifecycle fixture root is
+`239ea7e7555388fab740d3d1fdb8040a7f3706b102e9572c05f7dc612822e1bd`.
+
 ## Resource accounting
 
 The store reports these categories separately:
@@ -146,14 +165,18 @@ Current fixture evidence:
 | Allocated payload bytes | 255 |
 | Duplicate payload allocation avoided | 25 |
 | Logical index bytes | 1,024 |
-| Native slot capacity on the current 64-bit build | 2,304 |
-| Native store value on the current 64-bit build | 2,560 |
+| Native slot capacity on the current 64-bit build | 3,200 |
+| Native store value on the current 64-bit build | 3,472 |
 | Fixed allocator backing capacity in the demo | 4,096 |
 | Fixed allocator consumed bytes after import | 255 |
 
-The store therefore proves one 25-byte duplicate payload allocation is avoided
-in this fixture, but it does **not** prove net memory savings: index and reserved
-backing capacity dominate this tiny example. Larger workloads require paired
+The additional lifecycle metadata deliberately raises fixed slot capacity from
+the earlier 2,304-byte prototype to 3,200 bytes. Storing one receipt root instead
+of duplicate owner/deadline/grant fields avoids another 1,152 bytes versus the
+initial lifecycle layout. The store therefore proves one 25-byte duplicate
+payload allocation is avoided in this fixture, but it does **not** prove net
+memory savings: lifecycle/index metadata and reserved backing capacity dominate
+this tiny example. Larger workloads require paired
 measurements, and a compact/dynamic index must include allocator and metadata
 overhead before making net claims.
 
@@ -171,29 +194,33 @@ Run the independent state model:
 python3 -m unittest bench.tests.test_continuation_object_store
 ```
 
-The suites cover exact cross-language grant/snapshot roots, successful atomic
-import, duplicate reuse, final-reference freeing, stale and denied authority,
-foreign provenance and bundle scope, entry/payload/index/reference limits,
-allocator rollback, missing reads, corruption, quarantine, and output overlap
-with store metadata.
+The suites cover exact cross-language store/lifecycle/repair grant and receipt
+roots, successful atomic import, duplicate reuse, lease-fenced final-reference
+freeing, renewal and explicit expiry, stale and denied authority, foreign
+provenance and bundle scope, entry/payload/index/reference/lease limits,
+allocator rollback, missing reads, corruption, quarantine fencing, repair-source
+and reason rejection, and output/source overlap with store memory.
 
 ## Security and authority boundary
 
 - One store instance is scoped to one tenant and one bundle provenance root.
 - Public reads copy verified bytes; they do not return internal allocation
   handles.
-- Quarantine blocks reads but is not repair or secure erasure.
-- Reference count is not a lease, ownership generation, or garbage-collection
-  proof.
+- Quarantine blocks reads and fences active leases; repair restores bytes only
+  after exact target, source, reason, tenant, bundle, and payload verification.
+- Reference count and lease generation remain separate. Neither is a
+  reachability or garbage-collection proof.
+- Logical ticks are explicit inputs, not wall-clock evidence or a timer service.
+- Repair source identity is capability metadata, not remote attestation.
 - Logical index charge is not native or physical memory measurement.
 - The store cannot access paths, sync data, communicate, decrypt, schedule,
   reacquire ResourceBank/LeaseTree state, or publish tokens.
 
 ## Next layers
 
-1. Lease/generation fencing around references and collection eligibility.
-2. Provenance-aware repair from a separately trusted source.
-3. Compact or dynamic index experiment with complete overhead measurement.
+1. Compact or dynamic index experiment with complete overhead measurement.
+2. Reachability evidence and dry-run collection eligibility.
+3. Replica adapter with independently verified repair transport.
 4. Atomic filesystem publication and crash recovery.
 5. Resource and paged-KV ownership reacquisition.
 6. End-to-end restart and paired physical-resource campaigns.

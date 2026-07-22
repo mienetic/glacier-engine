@@ -90,18 +90,19 @@ into core.
 
 ## Advanced projects
 
-### Store lease and repair state machine
+### Store reachability and dry-run collection
 
 `ContinuationCapsule v1` and its in-memory object resolver now supply fixed
 identity, tenant-scoped exact lookup, bounded quotas, caller-owned output, and
 cross-language verification. The fixed bundle and bounded in-memory store now
 add canonical blob planning, exact allocation/index/reference accounting,
-atomic rollback, provenance binding, and quarantine without ambient I/O.
+atomic rollback, generation-fenced leases, quarantine invalidation, and scoped
+repair without ambient I/O.
 
-**First slice:** generation-fenced acquire/renew/release/expire transitions for
-one stored blob, with stale-lease rejection and a repair proposal that cannot
-replace quarantined bytes until independently verified. No clock or filesystem
-adapter in the first slice.
+**First slice:** accept a bounded set of verified bundle roots and active lease
+receipts, classify occupied slots as reachable, leased, quarantined, or
+collectible, and emit a deterministic dry-run evidence root. Do not free bytes
+or add filesystem access in the first slice.
 
 ### Resolver adversarial fixtures
 

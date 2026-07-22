@@ -28,7 +28,7 @@ energy, or production reliability.
 | `zig build continuation-capsule-demo -Dmetal=false` | Fixed-size committed-checkpoint manifest, typed external object binding, and substitution rejection |
 | `zig build continuation-resolver-demo -Dmetal=false` | Tenant-scoped exact-object lookup, bounded quotas, caller-owned output, and full composition verification |
 | `zig build continuation-bundle-demo -Dmetal=false` | Fixed tenant bundle, semantic/blob identity separation, canonical ordinals, and exact logical/unique totals |
-| `zig build continuation-store-demo -Dmetal=false` | Atomic in-memory bundle import, duplicate payload reuse, exact index/reference accounting, and snapshot verification |
+| `zig build continuation-store-demo -Dmetal=false` | Atomic bundle import, duplicate reuse, generation-fenced leases, quarantine repair, exact accounting, and v1/v2 snapshots |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -71,12 +71,21 @@ measurement.
 
 The in-memory store fixture imports nine semantic references into eight payload
 allocations: 280 naive per-reference payload bytes become 255 allocated payload
-bytes. It also uses a 1,024-byte logical index charge, a 2,304-byte fixed slot
-array and 2,560-byte store value on the current 64-bit build, inside a
-4,096-byte caller-provided backing buffer. This proves one 25-byte duplicate
-payload allocation is avoided, atomic rollback works, and counters are exact. It
-does not establish net memory savings; the fixture's index/backing overhead is
-larger than its duplicate payload.
+bytes. It also uses a 1,024-byte logical index charge, a 3,200-byte fixed slot
+array and 3,472-byte store value on the current 64-bit build, inside a
+4,096-byte caller-provided payload backing buffer. Lifecycle metadata increased
+the fixed slot array from the earlier 2,304 bytes; receipt-root compaction avoids
+1,152 bytes versus the initial expanded layout. This proves one 25-byte
+duplicate payload allocation is avoided, atomic rollback works, and counters
+are exact. It does not establish net memory savings; the fixture's lifecycle,
+index, and backing overhead is larger than its duplicate payload.
+
+The same demo acquires and renews a model-object lease from generation 1 to 2,
+releases it with the exact current receipt, then acquires a KV-object lease that
+quarantine invalidates. A target/reason/source-scoped repair grant admits the
+verified KV payload and produces a shared Zig/Python repair receipt and v2
+snapshot. These are deterministic conformance results—not wall-clock lease
+safety, replica attestation, crash durability, or repair-latency measurements.
 
 ## Provider evidence checkpoint
 

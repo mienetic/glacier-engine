@@ -121,7 +121,11 @@ only after every quota and identity check, while a fixed reverse-action journal
 keeps bundle import all-or-nothing across allocator failure. Equal tenant blob
 identity can reuse payload allocation, but semantic references remain counted
 individually. Quarantine retains evidence without authorizing reads or claiming
-repair.
+repair. The lifecycle layer adds explicit-tick leases without importing a clock:
+acquire and renewal bind owner, deadline, capability, and increasing generation;
+release and expiry require the exact current receipt. Quarantine fences that
+receipt, while repair needs a separately scoped target/reason/source grant and a
+fresh content-root check before it can restore live state.
 
 ### State machines fail closed
 

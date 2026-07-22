@@ -21,7 +21,11 @@ ordinals without embedding payloads or granting storage authority.
 
 **Continuation object store** — A bounded, bundle-scoped in-memory store that
 owns immutable tenant blob payloads, reuses duplicate references, accounts
-payload/index state, and rolls partial imports back.
+payload/index/lifecycle state, and rolls partial imports back.
+
+**Continuation object lifecycle** — Explicit-tick acquire, renew, release,
+expiry, quarantine-fence, and repair transitions bound to separate
+tenant/bundle/store capabilities and generation-fenced receipts.
 
 **Blob ordinal** — The deterministic first-occurrence number assigned to equal
 tenant-bound payload bytes in a continuation bundle. It describes a storage
@@ -54,6 +58,14 @@ wave.
 
 **LeaseTree** — A hierarchy that subdivides one ResourceBank receipt into exact
 child ownership and publication scopes.
+
+**Object lease receipt** — A commitment to one blob, owner, retained generation,
+explicit expiry tick, and lifecycle grant. It is valid only while every field
+equals the active store slot.
+
+**Repair receipt** — A commitment joining a repaired blob, repair generation,
+declared source, prior quarantine reason, repair grant, and resulting store
+snapshot.
 
 **Logical accounting** — Runtime-owned counters derived from declared state. It
 does not by itself prove RSS, device residency, energy, or physical isolation.

@@ -30,6 +30,9 @@ before the first stable release.
 - Bounded tenant continuation object store with atomic bundle import, immutable
   payload ownership, duplicate reference reuse, exact payload/index accounting,
   quarantine, corruption checks, and allocator-failure rollback.
+- Deterministic object lifecycle with generation-fenced leases, explicit logical
+  expiry, quarantine invalidation, capability-bound repair, v2 snapshots, and
+  matching Zig/Python receipt roots.
 
 ### Status
 

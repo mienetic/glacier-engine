@@ -128,9 +128,8 @@ different blob root.
 
 The bundle records exact logical and unique payload totals but embeds no payload
 and performs no storage I/O. It is a portable plan, not a store, lease, cache, or
-proof of physical savings. A future immutable store must admit access through a
-capability, account for all metadata and physical overhead, and return bytes
-through the existing resolver boundary.
+proof of physical savings. The in-memory store is a separate capability boundary
+that accounts payload ownership and metadata explicitly.
 
 ### Continuation object store
 
@@ -143,10 +142,14 @@ allocation failure rolls the whole import back.
 
 Equal tenant blob roots reuse one owned payload allocation and increment a
 reference count. Reads re-hash and copy into caller-owned storage; the last
-release frees the payload. Corrupt entries can be retained in quarantine, where
-reads reject. The store reports logical index charge separately from native
-fixed-index and allocator capacity, so duplicate payload avoidance cannot be
-misreported as net memory savings.
+release frees the payload unless a generation-fenced lease is active. Acquire,
+renew, release, and explicit expiry consume a separate lifecycle capability;
+renewal advances generation so stale receipts reject. Quarantine clears active
+lease authority. Repair requires a target-specific grant binding the tenant,
+bundle, store grant, blob, quarantine reason, source identity, and byte ceiling,
+then re-hashes candidate bytes before mutation. The store reports logical index
+charge separately from native fixed-index and allocator capacity, so duplicate
+payload avoidance cannot be misreported as net memory savings.
 
 ## Provider execution flow
 
