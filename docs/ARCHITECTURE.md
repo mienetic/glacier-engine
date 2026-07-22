@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | `ContinuationCapsule` | Bind a committed checkpoint to typed external objects and parent lineage |
+| Continuation | `ContinuationCapsule`, object resolver | Bind a checkpoint, then admit exact tenant-scoped objects under explicit limits |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -43,6 +43,9 @@ validated model + request
           │
           ▼
  ContinuationCapsule ──> model/plan/resource/lane/KV/sampler/output roots
+          │
+          ▼
+ bounded object resolver ──> verified caller-owned bytes; no live authority
 ```
 
 ### ResourceBank
@@ -94,6 +97,21 @@ supply the expected request/execution identity and exact object bytes; the full
 verifier reconstructs the canonical manifest and rejects substitution. Parent
 roots form explicit checkpoint lineage. Durable storage and live runtime restore
 are the next layer, not an implied property of the manifest.
+
+### Continuation object resolver
+
+The in-memory resolver accepts one capsule, an exact authority epoch, a
+tenant-scoped grant, a bounded immutable catalog, and caller-owned output
+buffers. The grant limits object kinds, catalog entries, bytes per object, total
+bytes, and resolution count. A lookup must match tenant, kind, ABI, exact length,
+and typed digest; missing, corrupt, ambiguous, stale, repeated, cross-tenant, or
+overlapping requests reject before accounting changes.
+
+After all nine objects resolve, the resolver re-hashes every output and verifies
+the complete capsule composition. It allocates nothing and has no filesystem,
+network, ResourceBank, scheduler, or publication authority. The caller remains
+responsible for authenticating the grant and retaining output buffers. Durable
+bundle storage and live ownership reacquisition remain separate layers.
 
 ## Provider execution flow
 
@@ -178,4 +196,5 @@ still require real machines for each promoted platform.
 - [Model format](FORMAT_SPEC.md): portable draft format.
 - [Native runtime image](RUNTIME_IMAGE.md): execution image ABI.
 - [Continuation capsule](CONTINUATION_CAPSULE.md): checkpoint manifest ABI.
+- [Continuation object resolver](CONTINUATION_OBJECT_RESOLVER.md): scoped lookup and quota contract.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

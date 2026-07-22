@@ -11,6 +11,14 @@ checkpoint to typed external model, plan, resource, scheduling, KV, sampler,
 output, and publication objects without embedding their payloads or granting
 resume authority.
 
+**Continuation object resolver** — An allocation-free lookup state machine that
+admits exact capsule objects under a tenant-scoped grant and bounded catalog,
+object, total-byte, and resolution limits.
+
+**Capability grant** — A least-authority declaration of the exact identity,
+scope, operations, and resource ceilings a trusted boundary permits. Its digest
+binds the declaration but is not authentication by itself.
+
 **ContextPack** — A lossless mapping that emits one copy of explicitly
 idempotent, byte-identical rendered spans while retaining every logical span
 decision.

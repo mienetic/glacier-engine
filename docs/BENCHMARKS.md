@@ -26,6 +26,7 @@ energy, or production reliability.
 | `zig build lane-publication-demo -Dmetal=false` | One-token prepare/commit/abort with KV, RNG, sampler, output, schedule, and resource roots |
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
 | `zig build continuation-capsule-demo -Dmetal=false` | Fixed-size committed-checkpoint manifest, typed external object binding, and substitution rejection |
+| `zig build continuation-resolver-demo -Dmetal=false` | Tenant-scoped exact-object lookup, bounded quotas, caller-owned output, and full composition verification |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -49,6 +50,14 @@ foreign KV object also rejects.
 This proves deterministic identity composition for the fixture. It does not yet
 prove durable storage, live process restart, reduced RSS, content-addressed cache
 savings, or recovery after power loss.
+
+The resolver fixture then admits all nine objects under a 16-entry catalog-scan
+limit, 64-byte per-object limit, exact 264-byte total limit, and nine-resolution
+limit. It rejects stale, denied, repeated, cross-tenant, corrupt, ambiguous,
+oversized, over-budget, overlapping, substituted, and post-resolution-mutated
+inputs in native tests; an independent Python model checks the portable
+identity and state semantics. This is conformance evidence for bounded lookup,
+not a storage, RSS, latency, deduplication, or restart-performance result.
 
 ## Provider evidence checkpoint
 

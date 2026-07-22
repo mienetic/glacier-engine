@@ -21,6 +21,9 @@ before the first stable release.
 - Fixed 608-byte continuation capsule binding nine typed external AI-state
   objects, with allocation-free Zig verification and an independent Python
   verifier.
+- Allocation-free continuation object resolver with tenant-scoped capability
+  grants, bounded catalog scans and byte quotas, caller-owned output, and full
+  post-resolution composition verification.
 
 ### Status
 

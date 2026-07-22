@@ -25,7 +25,7 @@ transactional state publication, and independently verifiable evidence.
 | Hierarchical ownership | Integrated | LeaseTree child scopes and paged-KV publication fences | Cross-worker and durable ownership identity |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
-| Continuation identity | Prototype | Fixed 608-byte manifest, nine typed object roots, parent chain, Zig/Python verification | Object resolver, durable bundle, and live restore |
+| Continuation identity | Prototype | Fixed manifest plus allocation-free tenant resolver, bounded grants, caller-owned output, Zig/Python verification | Durable bundle, ownership reacquisition, and live restore |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
@@ -41,6 +41,8 @@ transactional state publication, and independently verifiable evidence.
 - [x] Model-free demos for scheduling, publication, and provider state machines.
 - [x] Model-free continuation capsule with independent verifier and complete
   serialized-byte mutation coverage.
+- [x] Model-free tenant-scoped object resolver with independent contract model,
+  bounded scans/bytes, and adversarial failure coverage.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -67,7 +69,9 @@ Next slices:
 1. ~~Canonical pointer-free continuation identity.~~ Complete in v1.
 2. ~~Mutation-complete Zig/Python verifier fixtures.~~ Complete for all 608
    serialized byte positions and foreign object substitution.
-3. Capability-bounded object resolver with kind/ABI/length/root admission.
+3. ~~Capability-bounded object resolver with kind/ABI/length/root admission.~~
+   Complete in memory with tenant scope, stale-epoch rejection, caller-owned
+   output, bounded scan/object/total/count limits, and final composition check.
 4. Content-addressed bundle manifest with deduplication and tenant scope.
 5. Atomic file publication and crash-recovery state machine.
 6. ResourceBank/LeaseTree reacquisition without duplicated ownership.
@@ -78,10 +82,11 @@ Promotion gate: byte-identical continuation of the selected deterministic mode,
 no duplicated output, no orphaned ownership, and crash coverage at every durable
 phase.
 
-The current capsule is a manifest, not a saved session. It embeds zero object
-payload bytes, which enables future reuse but does not by itself prove lower RSS,
-disk use, or restart latency. Those claims require resolver/store integration and
-physical measurements.
+The current capsule and resolver form an identity and least-authority lookup
+boundary, not a saved session. The capsule embeds zero object payload bytes and
+the native resolver allocates nothing, but these facts do not by themselves
+prove lower RSS, disk use, or restart latency. Those claims require bundle/store
+integration, ownership reacquisition, and physical measurements.
 
 ### Evidence inspection
 
@@ -211,10 +216,10 @@ ideas unless a different status is stated.
 | Track | Status | Ecosystem outcome |
 | --- | --- | --- |
 | Semantic Model Capsule | Idea | Stable operator/tokenizer/adapter meaning independent of source tensor names |
-| Capability Grant | Idea | Least-authority extensions for planners, tokenizers, stores, tools, and transports |
+| Capability Grant | Prototype (resolver scope) | Least-authority extensions for planners, tokenizers, stores, tools, and transports |
 | ToolTxn and ActionOutbox | Idea | Recoverable AI tool execution without duplicated external side effects |
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
-| Object Fabric | Idea | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
+| Object Fabric | Prototype (resolver) | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |
@@ -244,6 +249,11 @@ any operator/tokenizer/adapter drift rejects before allocation.
 Goal: let community extensions request only named authority such as read-model,
 resolve-object, count-wire-tokens, execute-transport, publish-evidence, or invoke
 one tool.
+
+Current slice: `GrantV1` implements a local, digest-bound `resolve-object`
+authority for one capsule and tenant, including stale epoch and resource limits.
+It is supplied by a trusted caller and is not yet a general extension protocol
+or authenticated cross-process credential.
 
 First slices:
 
@@ -301,8 +311,9 @@ objects through content identity while keeping access authority tenant-scoped.
 
 First slices:
 
-- typed object key `(tenant_scope, kind, ABI, digest, length)`;
-- capability-bounded resolver for `ContinuationCapsule`;
+- ~~typed object key `(tenant_scope, kind, ABI, digest, length)`;~~
+- ~~capability-bounded resolver for `ContinuationCapsule`;~~
+- fixed capsule bundle manifest and independent parser;
 - reference/lease accounting and quarantine;
 - corruption repair from a trusted replica;
 - reachability-based garbage collection with dry-run evidence;

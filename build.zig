@@ -601,6 +601,34 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_continuation_capsule_demo.step);
     test_compile_step.dependOn(&continuation_capsule_demo_exe.step);
 
+    // Least-authority resolver for the exact typed object roots committed by
+    // one continuation capsule. The demo exercises tenant isolation, quotas,
+    // caller-owned output and full-composition verification without I/O.
+    const continuation_resolver_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-object-resolver-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_object_resolver.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_resolver_demo_exe.root_module.addImport("core", core_mod);
+    const run_continuation_resolver_demo = b.addRunArtifact(
+        continuation_resolver_demo_exe,
+    );
+    const continuation_resolver_demo_step = b.step(
+        "continuation-resolver-demo",
+        "Run the tenant-scoped continuation object resolver demo",
+    );
+    continuation_resolver_demo_step.dependOn(
+        &run_continuation_resolver_demo.step,
+    );
+    test_step.dependOn(&run_continuation_resolver_demo.step);
+    test_compile_step.dependOn(&continuation_resolver_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

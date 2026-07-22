@@ -35,6 +35,8 @@ Keep these distinct:
 - **transactional:** before/after roots and commit receipts;
 - **continuation:** typed object roots, parent checkpoint lineage, and expected
   resume identity;
+- **resolution:** tenant scope, grant root, lookup limits, resolved kinds/bytes,
+  and final composition outcome;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;

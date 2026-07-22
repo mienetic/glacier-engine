@@ -32,6 +32,8 @@ formats, and independent verifiers.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
+- **Tenant-scoped object resolution.** A least-authority grant admits only exact
+  capsule objects under bounded scan, object, total-byte, and resolution limits.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
@@ -72,6 +74,8 @@ request
                          │
                          ├─ portable receipts and replay roots
                          └─ ContinuationCapsule (typed external object roots)
+                                  │
+                                  └─ bounded tenant-scoped object resolver
 
 provider request
   │
@@ -100,6 +104,7 @@ zig build -Doptimize=ReleaseSafe -Dmetal=false
 
 zig build lane-publication-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-capsule-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-resolver-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -119,7 +124,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Contiguous and paged token transactions, LeaseTree-backed KV ownership, continuation manifest | Durable object resolver and restart integration |
+| State | Token transactions, LeaseTree-backed KV ownership, continuation manifest, bounded tenant resolver | Durable bundle, ownership reacquisition, and restart integration |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
@@ -158,6 +163,7 @@ valuable as new features.
 - [Native runtime image](docs/RUNTIME_IMAGE.md)
 - [Paging contract](docs/PAGING.md)
 - [Continuation capsule](docs/CONTINUATION_CAPSULE.md)
+- [Continuation object resolver](docs/CONTINUATION_OBJECT_RESOLVER.md)
 - [Glossary](docs/GLOSSARY.md)
 
 Research tracks are documented separately in

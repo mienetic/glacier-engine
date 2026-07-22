@@ -103,6 +103,13 @@ request, publication, token-count, challenge, and parent-checkpoint identity. It
 stores roots and lengths rather than copying model or KV payloads. Resume
 authority remains external and must verify every referenced object.
 
+The continuation resolver narrows that external authority to one tenant scope,
+capsule root, request epoch, object-kind mask, and explicit catalog/object/total
+limits. Equal content under another tenant is not interchangeable. Successful
+lookup returns bytes into caller-owned storage, but those bytes remain
+non-authoritative until all nine outputs pass the final capsule composition
+check and live resource ownership is reacquired.
+
 ### State machines fail closed
 
 Named errors are preferable to implicit recovery when the correct alternative is

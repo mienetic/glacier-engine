@@ -1,8 +1,8 @@
 # Continuation Capsule v1
 
-Status: **prototype manifest ABI**. The fixed wire and full object verifier are
-implemented and tested. Durable object storage, runtime restore, and crash-safe
-publication are not implemented yet.
+Status: **prototype manifest ABI**. The fixed wire, full object verifier, and a
+separate tenant-scoped in-memory resolver are implemented and tested. Durable
+object storage, runtime restore, and crash-safe publication are not implemented.
 
 `ContinuationCapsule` binds one committed AI checkpoint without copying its
 large model, plan, or KV objects. The manifest is an identity and verification
@@ -145,7 +145,8 @@ trusting a historical receipt as live authority.
 
 ## Next layers
 
-1. Capability-bounded read-only object resolver.
+1. ~~Capability-bounded read-only object resolver.~~ Implemented in memory with
+   tenant, kind, ABI, length, root, scan, byte, and count admission.
 2. Tenant-scoped content-addressed bundle with size and retention policy.
 3. Atomic manifest publication and crash recovery.
 4. Resource and page ownership reacquisition.
@@ -154,3 +155,6 @@ trusting a historical receipt as live authority.
 
 Each layer must keep manifest identity separate from storage and execution
 authority.
+
+See [Continuation Object Resolver](CONTINUATION_OBJECT_RESOLVER.md) for the
+implemented least-authority lookup contract and its evidence boundary.

@@ -24,6 +24,7 @@ pub const provider_cost_wire = core.provider_cost_wire;
 pub const provider_cost_journal = core.provider_cost_journal;
 pub const provider_evidence_join_wire = core.provider_evidence_join_wire;
 pub const continuation_capsule = core.continuation_capsule;
+pub const continuation_object_resolver = core.continuation_object_resolver;
 
 pub const Precision = core.Precision;
 pub const Pager = core.Pager;
@@ -45,6 +46,7 @@ pub const ProviderCostWire = core.ProviderCostWire;
 pub const ProviderCostJournal = core.ProviderCostJournal;
 pub const ProviderEvidenceJoinWire = core.ProviderEvidenceJoinWire;
 pub const ContinuationCapsule = core.ContinuationCapsule;
+pub const ContinuationObjectResolver = core.ContinuationObjectResolver;
 
 pub const cpu_backend = @import("backends/cpu/backend.zig");
 pub const int4_matmul = @import("backends/cpu/int4_matmul.zig");

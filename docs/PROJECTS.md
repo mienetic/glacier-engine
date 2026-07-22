@@ -90,15 +90,24 @@ into core.
 
 ## Advanced projects
 
-### Continuation object resolver
+### Continuation bundle manifest
 
-`ContinuationCapsule v1` now supplies the fixed manifest and mutation-complete
-cross-language verifier. The next boundary must resolve its typed object roots
-without granting every storage backend unrestricted runtime authority.
+`ContinuationCapsule v1` and its in-memory object resolver now supply fixed
+identity, tenant-scoped exact lookup, bounded quotas, caller-owned output, and
+cross-language verification. The next boundary should describe one portable
+bundle without granting unrestricted storage access.
 
-**First slice:** a read-only fake resolver that returns caller-owned bytes for one
-expected kind/ABI/root and rejects missing, oversized, stale, and cross-kind
-objects. No filesystem or network adapter in the first slice.
+**First slice:** a fixed manifest listing the capsule and nine typed object keys,
+with canonical order, exact encoded lengths, a shared Zig/Python golden, and
+mutation tests. No filesystem writer or cache in the first slice.
+
+### Resolver adversarial fixtures
+
+Extend the in-memory resolver without adding storage authority.
+
+**First slice:** table-driven malformed grants and catalogs covering every
+public resolver error while proving destination bytes and accounting remain
+unchanged on pre-copy failure.
 
 ### Tenant-safe immutable page store
 
