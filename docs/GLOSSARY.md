@@ -27,6 +27,15 @@ payload/index/lifecycle state, and rolls partial imports back.
 expiry, quarantine-fence, and repair transitions bound to separate
 tenant/bundle/store capabilities and generation-fenced receipts.
 
+**Continuation object collection plan** — A bounded dry-run classification of
+every occupied store slot against one exact snapshot, complete semantic-root
+multiplicity, and complete current-lease coverage. Its evidence root grants no
+deallocation authority.
+
+**Retired entry** — A retained store payload with zero semantic references and
+no active lease. It is eligible for a future separately authorized sweep only
+after an exact collection plan classifies it as collectible.
+
 **Blob ordinal** — The deterministic first-occurrence number assigned to equal
 tenant-bound payload bytes in a continuation bundle. It describes a storage
 plan, not a live object handle.

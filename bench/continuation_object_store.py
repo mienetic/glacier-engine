@@ -256,6 +256,7 @@ class Store:
         self.entry_count = 0
         self.live_entries = 0
         self.quarantined_entries = 0
+        self.retired_entries = 0
         self.payload_bytes = 0
         self.logical_index_bytes = 0
         self.reference_count = 0
@@ -306,6 +307,8 @@ class Store:
                 raise StoreError("digest collision")
             if slot["state"] == "quarantined":
                 raise StoreError("quarantined")
+            if slot["state"] == "retired":
+                raise StoreError("retired")
             if self.reference_count + 1 > self.grant["max_references"]:
                 raise StoreError("reference budget exceeded")
             slot["reference_count"] += 1
@@ -374,6 +377,8 @@ class Store:
         assert slot is not None
         if slot["state"] == "quarantined":
             raise StoreError("quarantined")
+        if slot["state"] == "retired":
+            raise StoreError("retired")
         computed = bundle.blob_ref(
             self.grant["tenant_scope_sha256"], slot["payload"]
         )
@@ -388,6 +393,8 @@ class Store:
             raise StoreError("not found")
         slot = self.slots[index]
         assert slot is not None
+        if slot["state"] == "retired":
+            raise StoreError("retired")
         if slot["reference_count"] > 1:
             slot["reference_count"] -= 1
             self.reference_count -= 1
@@ -400,12 +407,35 @@ class Store:
         self.entry_count -= 1
         if slot["state"] == "live":
             self.live_entries -= 1
-        else:
+        elif slot["state"] == "quarantined":
             self.quarantined_entries -= 1
+        else:
+            raise StoreError("invalid retired release")
         self.payload_bytes -= slot["byte_length"]
         self.logical_index_bytes -= LOGICAL_INDEX_ENTRY_BYTES
         self.reference_count -= 1
         self.repair_count -= slot["repair_generation"]
+
+    def retire(self, expected: Record) -> None:
+        self._operation(OPERATION_RELEASE)
+        index = self._find(expected)
+        if index is None:
+            raise StoreError("not found")
+        slot = self.slots[index]
+        assert slot is not None
+        if slot["state"] == "quarantined":
+            raise StoreError("quarantined")
+        if slot["state"] == "retired":
+            raise StoreError("retired")
+        if slot["lease_active"]:
+            raise StoreError("lease active")
+        if slot["reference_count"] != 1:
+            raise StoreError("retirement requires final reference")
+        slot["reference_count"] = 0
+        slot["state"] = "retired"
+        self.reference_count -= 1
+        self.live_entries -= 1
+        self.retired_entries += 1
 
     def quarantine(self, expected: Record, reason_sha256: bytes) -> None:
         self._operation(OPERATION_QUARANTINE)
@@ -417,6 +447,8 @@ class Store:
         assert slot is not None
         if slot["state"] == "quarantined":
             raise StoreError("quarantined")
+        if slot["state"] == "retired":
+            raise StoreError("retired")
         if slot["lease_active"]:
             self._clear_lease(slot)
         slot["state"] = "quarantined"
@@ -523,6 +555,8 @@ class Store:
         assert slot is not None
         if slot["state"] == "quarantined":
             raise StoreError("quarantined")
+        if slot["state"] == "retired":
+            raise StoreError("retired")
         if slot["lease_active"]:
             raise StoreError("lease active")
         if self.active_leases >= grant["max_active_leases"]:
@@ -691,27 +725,47 @@ class Store:
 
     def verify_all(self) -> None:
         self._operation(OPERATION_VERIFY)
+        self._verify_state(False)
+
+    def audit_snapshot_root_v2(self) -> bytes:
+        self._operation(OPERATION_VERIFY)
+        self._verify_state(True)
+        return self.snapshot_root_v2_unchecked()
+
+    def _verify_state(self, allow_quarantined_corruption: bool) -> None:
         entry_count = live = quarantined = payload = index_bytes = references = 0
+        retired = 0
         active_leases = repairs = 0
         seen_roots: set[bytes] = set()
         for slot in self.slots:
             if slot is None:
                 continue
             if (
-                slot["reference_count"] == 0
-                or slot["byte_length"] > self.grant["max_object_bytes"]
+                slot["byte_length"] > self.grant["max_object_bytes"]
                 or slot["provenance_sha256"] != self.grant["bundle_sha256"]
                 or slot["sha256"] in seen_roots
             ):
                 raise StoreError("invalid accounting")
             seen_roots.add(slot["sha256"])
             if slot["state"] == "live":
-                if slot["quarantine_reason_sha256"] != ZERO_DIGEST:
+                if (
+                    slot["reference_count"] == 0
+                    or slot["quarantine_reason_sha256"] != ZERO_DIGEST
+                ):
                     raise StoreError("invalid live state")
                 live += 1
             elif slot["state"] == "quarantined":
+                if slot["reference_count"] == 0:
+                    raise StoreError("invalid quarantine state")
                 _digest(slot["quarantine_reason_sha256"])
                 quarantined += 1
+            elif slot["state"] == "retired":
+                if (
+                    slot["reference_count"] != 0
+                    or slot["quarantine_reason_sha256"] != ZERO_DIGEST
+                ):
+                    raise StoreError("invalid retired state")
+                retired += 1
             else:
                 raise StoreError("invalid state")
             if slot["lease_active"]:
@@ -732,6 +786,9 @@ class Store:
             if (
                 computed["byte_length"] != slot["byte_length"]
                 or computed["sha256"] != slot["sha256"]
+            ) and not (
+                allow_quarantined_corruption
+                and slot["state"] == "quarantined"
             ):
                 raise StoreError("corrupt payload")
             entry_count += 1
@@ -742,6 +799,7 @@ class Store:
             entry_count != self.entry_count
             or live != self.live_entries
             or quarantined != self.quarantined_entries
+            or retired != self.retired_entries
             or payload != self.payload_bytes
             or index_bytes != self.logical_index_bytes
             or references != self.reference_count
@@ -771,7 +829,9 @@ class Store:
         for index, slot in enumerate(self.slots):
             if slot is None:
                 continue
-            state = 1 if slot["state"] == "live" else 2
+            state = {"live": 1, "quarantined": 2, "retired": 3}[
+                slot["state"]
+            ]
             hasher.update(_u64(index))
             hasher.update(_u64(state))
             hasher.update(_u64(slot["byte_length"]))
@@ -817,7 +877,9 @@ class Store:
         for index, slot in enumerate(self.slots):
             if slot is None:
                 continue
-            state = 1 if slot["state"] == "live" else 2
+            state = {"live": 1, "quarantined": 2, "retired": 3}[
+                slot["state"]
+            ]
             hasher.update(_u64(index))
             hasher.update(_u64(state))
             hasher.update(_u64(slot["byte_length"]))

@@ -164,10 +164,13 @@ capsule substitution, and changed resolved output.
    Implemented with tenant-bound blob roots and canonical ordinals.
 2. ~~Tenant-scoped immutable fake store with provenance and quarantine.~~
    Implemented with atomic bundle import and exact accounting.
-3. Lease/generation accounting and evidence-producing dry-run collection.
-4. Atomic bundle publication and crash recovery.
-5. ResourceBank/LeaseTree and paged-KV reacquisition.
-6. End-to-end restart with paired physical measurements.
+3. ~~Lease/generation accounting and evidence-producing dry-run collection.~~
+   Implemented with explicit retirement, complete root/lease coverage, and
+   cross-language plan roots.
+4. Journaled collection sweep consuming an exact plan.
+5. Atomic bundle publication and crash recovery.
+6. ResourceBank/LeaseTree and paged-KV reacquisition.
+7. End-to-end restart with paired physical measurements.
 
 Each layer must preserve the separation between content identity, access
 authority, live resource ownership, and token publication authority.
@@ -176,3 +179,5 @@ See [Continuation Bundle](CONTINUATION_BUNDLE.md) for the implemented portable
 storage plan and its evidence boundary.
 See [Continuation Object Store](CONTINUATION_OBJECT_STORE.md) for the bounded
 payload-ownership and rollback boundary.
+See [Continuation Object Collection Plan](CONTINUATION_OBJECT_COLLECTION.md)
+for the non-destructive reachability evidence boundary.

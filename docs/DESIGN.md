@@ -127,6 +127,16 @@ release and expiry require the exact current receipt. Quarantine fences that
 receipt, while repair needs a separately scoped target/reason/source grant and a
 fresh content-root check before it can restore live state.
 
+Collection eligibility is also an explicit evidence transition. The caller may
+retire only a live, unleased final reference, which preserves its bytes at zero
+semantic references. A dry-run plan must then match the exact audit snapshot,
+the complete semantic-root multiset, and the complete set of current lease
+receipts. Every non-retired slot's presented root multiplicity must equal its
+reference count; every active lease must have exactly one current receipt.
+Missing evidence rejects rather than reclassifying live data as collectible.
+Quarantined data is always retained. Successful planning writes a canonical
+decision for every occupied slot but never frees bytes or mutates the store.
+
 ### State machines fail closed
 
 Named errors are preferable to implicit recovery when the correct alternative is

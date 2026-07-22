@@ -5,7 +5,8 @@ and independent Python implementations share canonical grant, receipt, and
 snapshot roots. Acquire, renew, release, explicit expiry, quarantine fencing,
 trusted-source repair, stale-generation rejection, and accounting verification
 are implemented. Wall-clock integration, concurrent access, replica transport,
-durable recovery, reachability collection, and remote attestation are not.
+durable recovery, destructive collection, and remote attestation are not. A
+separate dry-run planner now verifies reachability and collection eligibility.
 
 The lifecycle layer answers two questions that a reference count cannot:
 
@@ -210,10 +211,10 @@ repair receipt remains verifiable after collection.
 
 This compact representation stores one receipt root rather than repeating its
 owner, deadline, and lifecycle-grant fields in every slot. On the current 64-bit
-fixture it uses a 3,200-byte fixed slot array and 3,472-byte store value. That is
-896 and 912 bytes above the pre-lifecycle store respectively, but 1,152 bytes
-below the first expanded slot layout. These are compile-target layout
-observations, not RSS measurements.
+fixture it uses a 3,200-byte fixed slot array and 3,480-byte store value. The
+store value includes the retired-entry counter added by the collection planner.
+Receipt-root compaction remains 1,152 bytes below the first expanded slot
+layout. These are compile-target layout observations, not RSS measurements.
 
 ## Evidence and rejection coverage
 
@@ -239,7 +240,7 @@ savings, replica trust, secure erasure, or end-to-end restart.
 
 ## Next layers
 
-1. Reachability evidence and dry-run garbage-collection decisions.
+1. Journaled sweep consuming an exact dry-run collection plan.
 2. Replica transport separated from repair admission and content verification.
 3. Durable transition journal with crash points before and after publication.
 4. ResourceBank/LeaseTree ownership reacquisition using generation-linked

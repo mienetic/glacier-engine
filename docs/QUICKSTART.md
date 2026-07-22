@@ -56,6 +56,9 @@ zig build continuation-bundle-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Atomically import, lease, quarantine, and repair in a bounded tenant store
 zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Prove exact reachability and emit a dry-run object collection plan
+zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

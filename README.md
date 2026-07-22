@@ -41,6 +41,9 @@ formats, and independent verifiers.
 - **Generation-fenced object lifecycle.** Explicit-tick leases prevent stale
   owners and final collection; exact repair capabilities restore quarantined
   bytes only after target, reason, source, and payload verification.
+- **Evidence-first object retirement.** Exact root multiplicity and complete
+  lease coverage classify every stored object before any future sweep; the
+  current planner is deterministic, bounded, cross-language, and dry-run only.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
@@ -85,7 +88,8 @@ request
                                   ├─ bounded tenant-scoped object resolver
                                   ├─ canonical tenant bundle
                                   └─ bounded in-memory object store
-                                     └─ lease, quarantine, repair (no file I/O)
+                                     ├─ lease, quarantine, repair
+                                     └─ retire + collection plan (no free/I/O)
 
 provider request
   │
@@ -117,6 +121,7 @@ zig build continuation-capsule-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-resolver-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-bundle-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -136,7 +141,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Token transactions, capsule, resolver, bundle, tenant store, lease and repair receipts | Durable publication, ownership reacquisition, and restart |
+| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, and dry-run collection evidence | Durable publication, journaled sweep, ownership reacquisition, and restart |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
@@ -179,6 +184,7 @@ valuable as new features.
 - [Continuation bundle](docs/CONTINUATION_BUNDLE.md)
 - [Continuation object store](docs/CONTINUATION_OBJECT_STORE.md)
 - [Continuation object lifecycle](docs/CONTINUATION_OBJECT_LIFECYCLE.md)
+- [Continuation object collection plan](docs/CONTINUATION_OBJECT_COLLECTION.md)
 - [Glossary](docs/GLOSSARY.md)
 
 Research tracks are documented separately in

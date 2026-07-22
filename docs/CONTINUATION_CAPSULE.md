@@ -151,10 +151,13 @@ trusting a historical receipt as live authority.
    canonical ordinals and exact logical/unique fixture totals; no store yet.
 3. ~~Bounded in-memory tenant object store.~~ Implemented with exact accounting,
    atomic import rollback, references, and quarantine; no durability yet.
-4. Atomic manifest/bundle publication and crash recovery.
-5. Resource and page ownership reacquisition.
-6. Live restore between two transactional token publications.
-7. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
+4. ~~Generation-fenced lifecycle and dry-run collection evidence.~~ Implemented
+   with explicit leases, repair, retirement, and exact root/lease coverage.
+5. Journaled collection sweep consuming an exact plan.
+6. Atomic manifest/bundle publication and crash recovery.
+7. Resource and page ownership reacquisition.
+8. Live restore between two transactional token publications.
+9. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
 
 Each layer must keep manifest identity separate from storage and execution
 authority.
@@ -165,3 +168,5 @@ See [Continuation Bundle](CONTINUATION_BUNDLE.md) for the canonical tenant blob
 plan and its non-physical resource accounting.
 See [Continuation Object Store](CONTINUATION_OBJECT_STORE.md) for the bounded
 in-memory ownership and resource-accounting contract.
+See [Continuation Object Collection Plan](CONTINUATION_OBJECT_COLLECTION.md)
+for exact dry-run reachability and collection evidence.

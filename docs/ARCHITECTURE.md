@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | capsule, resolver, bundle, store | Bind a checkpoint, admit tenant objects, plan deduplication, and own bounded payloads |
+| Continuation | capsule, resolver, bundle, store, collection planner | Bind a checkpoint, admit tenant objects, own bounded payloads, and prove collection eligibility |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -50,6 +50,8 @@ validated model + request
           └─ canonical bundle ──> tenant blob roots + dedup ordinals; no I/O
                        │
                        └─ bounded object store ──> owned bytes + references
+                                  │
+                                  └─ dry-run collection ──> retained/eligible evidence
 ```
 
 ### ResourceBank
@@ -151,6 +153,17 @@ then re-hashes candidate bytes before mutation. The store reports logical index
 charge separately from native fixed-index and allocator capacity, so duplicate
 payload avoidance cannot be misreported as net memory savings.
 
+The collection planner adds a non-destructive retirement path. A live,
+unleased final reference can become a retained `retired` entry rather than
+being freed immediately. Planning then consumes the exact audit snapshot, a
+canonical multiset whose multiplicity equals every non-retired reference count,
+and exactly one current receipt for every active lease. It classifies occupied
+slots as reachable, leased, quarantined, or collectible under explicit scan and
+collectible-byte ceilings. Missing roots or lease receipts reject instead of
+making an object eligible. The output root binds every decision, while the
+operation performs no allocation, deallocation, filesystem access, or state
+mutation.
+
 ## Provider execution flow
 
 ```text
@@ -239,4 +252,6 @@ still require real machines for each promoted platform.
 - [Continuation bundle](CONTINUATION_BUNDLE.md): canonical tenant storage plan.
 - [Continuation object store](CONTINUATION_OBJECT_STORE.md): bounded in-memory
   ownership and accounting.
+- [Continuation object collection plan](CONTINUATION_OBJECT_COLLECTION.md):
+  exact reachability and dry-run collection evidence.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

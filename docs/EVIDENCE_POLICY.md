@@ -43,6 +43,9 @@ Keep these distinct:
   references, quarantine state, rollback outcome, and snapshot root;
 - **lifecycle:** lease capability, owner, generation, explicit tick/deadline,
   invalidation transition, repair capability/source/reason, and v2 snapshot;
+- **collection:** exact audit snapshot, canonical root multiplicity, complete
+  active-lease receipts, per-slot classification, collectible ceilings, and
+  dry-run plan root without an implied deallocation;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;

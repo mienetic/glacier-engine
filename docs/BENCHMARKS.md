@@ -29,6 +29,7 @@ energy, or production reliability.
 | `zig build continuation-resolver-demo -Dmetal=false` | Tenant-scoped exact-object lookup, bounded quotas, caller-owned output, and full composition verification |
 | `zig build continuation-bundle-demo -Dmetal=false` | Fixed tenant bundle, semantic/blob identity separation, canonical ordinals, and exact logical/unique totals |
 | `zig build continuation-store-demo -Dmetal=false` | Atomic bundle import, duplicate reuse, generation-fenced leases, quarantine repair, exact accounting, and v1/v2 snapshots |
+| `zig build continuation-collection-demo -Dmetal=false` | Exact root multiplicity, complete lease coverage, bounded classification, and a non-mutating collection-plan root |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -72,7 +73,7 @@ measurement.
 The in-memory store fixture imports nine semantic references into eight payload
 allocations: 280 naive per-reference payload bytes become 255 allocated payload
 bytes. It also uses a 1,024-byte logical index charge, a 3,200-byte fixed slot
-array and 3,472-byte store value on the current 64-bit build, inside a
+array and 3,480-byte store value on the current 64-bit build, inside a
 4,096-byte caller-provided payload backing buffer. Lifecycle metadata increased
 the fixed slot array from the earlier 2,304 bytes; receipt-root compaction avoids
 1,152 bytes versus the initial expanded layout. This proves one 25-byte
@@ -86,6 +87,16 @@ quarantine invalidates. A target/reason/source-scoped repair grant admits the
 verified KV payload and produces a shared Zig/Python repair receipt and v2
 snapshot. These are deterministic conformance results—not wall-clock lease
 safety, replica attestation, crash durability, or repair-latency measurements.
+
+The collection fixture presents all eight remaining semantic roots and the one
+current lease receipt against an exact audit snapshot. Across eight occupied
+entries it classifies five entries/five references as reachable, one entry/two
+references as leased, one entry/one reference as quarantined, and one retired
+30-byte entry as collectible. The store retains all 255 payload bytes and frees
+zero. Zig and the independent Python model share the grant, input, snapshot,
+and plan roots. This proves bounded dry-run classification for the fixture—not
+safe deletion, lower RSS, durable sweep recovery, or global reachability across
+stores.
 
 ## Provider evidence checkpoint
 

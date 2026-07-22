@@ -90,19 +90,19 @@ into core.
 
 ## Advanced projects
 
-### Store reachability and dry-run collection
+### Collection sweep journal
 
-`ContinuationCapsule v1` and its in-memory object resolver now supply fixed
-identity, tenant-scoped exact lookup, bounded quotas, caller-owned output, and
-cross-language verification. The fixed bundle and bounded in-memory store now
-add canonical blob planning, exact allocation/index/reference accounting,
-atomic rollback, generation-fenced leases, quarantine invalidation, and scoped
-repair without ambient I/O.
+The in-memory store now retains explicit retired entries and emits a
+deterministic dry-run plan only after exact semantic-root multiplicity, complete
+current-lease coverage, snapshot identity, and collectible ceilings pass. It
+does not free payloads.
 
-**First slice:** accept a bounded set of verified bundle roots and active lease
-receipts, classify occupied slots as reachable, leased, quarantined, or
-collectible, and emit a deterministic dry-run evidence root. Do not free bytes
-or add filesystem access in the first slice.
+**First slice:** define a bounded in-memory sweep journal that accepts one exact
+collection plan, stages each collectible slot once, and emits prepare/abort
+roots while leaving payload bytes untouched. Cover stale plans, duplicate slot
+decisions, non-collectible decisions, quota overflow, and abort-to-identical-
+snapshot recovery. Keep actual deallocation and filesystem access out of this
+slice.
 
 ### Resolver adversarial fixtures
 

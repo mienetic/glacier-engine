@@ -4,8 +4,9 @@ Status: **prototype bounded in-memory store**. Native storage, independent
 Python state model, exact accounting, duplicate reuse, reference release,
 quarantine, corruption verification, atomic bundle import, and allocator-failure
 rollback are implemented. Generation-fenced leases, deterministic expiry,
-quarantine fencing, and capability-bound repair are also implemented. Filesystem
-durability, concurrent access, replica transport, encryption, garbage
+quarantine fencing, capability-bound repair, explicit retirement, and
+evidence-producing dry-run collection planning are also implemented. Filesystem
+durability, concurrent access, replica transport, encryption, destructive
 collection, and live restart are not.
 
 `ContinuationObjectStore` turns the canonical bundle plan into owned immutable
@@ -29,6 +30,7 @@ verified ContinuationBundle + exact payload objects
        ├─ generation-fenced lease ownership
        ├─ corruption verification
        ├─ quarantine + verified repair
+       ├─ retained retirement + dry-run collection plan
        └─ atomic import rollback
                   │
                   ▼
@@ -78,10 +80,10 @@ or a signature; the boundary supplying the grant remains trusted.
 
 Each occupied slot contains:
 
-- live or quarantined state;
+- live, quarantined, or retired state;
 - exact payload length and tenant-bound blob root;
 - allocator-owned payload bytes;
-- nonzero semantic reference count;
+- semantic reference count, which is zero only when retired;
 - provenance fixed to the grant's bundle root; and
 - a nonzero quarantine reason only in quarantined state.
 
@@ -95,6 +97,12 @@ payload and index slot, and that final transition rejects while a lease is
 active. `quarantineV1` retains bytes and references for evidence, blocks reads,
 and clears an active lease so its receipt becomes unusable. Cleanup can still
 release a quarantined entry.
+
+`retireV1` offers a non-destructive alternative to final release. It accepts
+only a live, unleased entry with exactly one reference, changes that reference
+to zero, and retains the payload in a retired slot. A separately scoped dry-run
+planner can then prove its collection eligibility without freeing it. See
+[Continuation object collection plan](CONTINUATION_OBJECT_COLLECTION.md).
 
 `verifyAllV1` independently recomputes every blob root and all counters. It also
 rejects duplicate occupied roots, foreign provenance, invalid live/quarantine
@@ -166,7 +174,7 @@ Current fixture evidence:
 | Duplicate payload allocation avoided | 25 |
 | Logical index bytes | 1,024 |
 | Native slot capacity on the current 64-bit build | 3,200 |
-| Native store value on the current 64-bit build | 3,472 |
+| Native store value on the current 64-bit build | 3,480 |
 | Fixed allocator backing capacity in the demo | 4,096 |
 | Fixed allocator consumed bytes after import | 255 |
 
@@ -186,12 +194,14 @@ Run the model-free native demo:
 
 ```sh
 zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
 Run the independent state model:
 
 ```sh
 python3 -m unittest bench.tests.test_continuation_object_store
+python3 -m unittest bench.tests.test_continuation_object_collection
 ```
 
 The suites cover exact cross-language store/lifecycle/repair grant and receipt
@@ -199,7 +209,8 @@ roots, successful atomic import, duplicate reuse, lease-fenced final-reference
 freeing, renewal and explicit expiry, stale and denied authority, foreign
 provenance and bundle scope, entry/payload/index/reference/lease limits,
 allocator rollback, missing reads, corruption, quarantine fencing, repair-source
-and reason rejection, and output/source overlap with store memory.
+and reason rejection, retirement, exact root/lease coverage, collection budgets,
+dry-run immutability, and output/source overlap with store memory.
 
 ## Security and authority boundary
 
@@ -208,8 +219,9 @@ and reason rejection, and output/source overlap with store memory.
   handles.
 - Quarantine blocks reads and fences active leases; repair restores bytes only
   after exact target, source, reason, tenant, bundle, and payload verification.
-- Reference count and lease generation remain separate. Neither is a
-  reachability or garbage-collection proof.
+- Reference count and lease generation remain separate. Collection eligibility
+  additionally requires an exact audit snapshot, complete root multiplicity,
+  complete current-lease coverage, and an explicit retired state.
 - Logical ticks are explicit inputs, not wall-clock evidence or a timer service.
 - Repair source identity is capability metadata, not remote attestation.
 - Logical index charge is not native or physical memory measurement.
@@ -219,7 +231,7 @@ and reason rejection, and output/source overlap with store memory.
 ## Next layers
 
 1. Compact or dynamic index experiment with complete overhead measurement.
-2. Reachability evidence and dry-run collection eligibility.
+2. Journaled sweep that consumes an exact plan before deallocation.
 3. Replica adapter with independently verified repair transport.
 4. Atomic filesystem publication and crash recovery.
 5. Resource and paged-KV ownership reacquisition.

@@ -685,6 +685,34 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_continuation_store_demo.step);
     test_compile_step.dependOn(&continuation_store_demo_exe.step);
 
+    // Deterministic reachability evidence and a dry-run collection plan. The
+    // planner proves exact root multiplicity and active-lease coverage while
+    // leaving object payloads and accounting untouched.
+    const continuation_collection_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-object-collection-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_object_collection.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_collection_demo_exe.root_module.addImport("core", core_mod);
+    const run_continuation_collection_demo = b.addRunArtifact(
+        continuation_collection_demo_exe,
+    );
+    const continuation_collection_demo_step = b.step(
+        "continuation-collection-demo",
+        "Run the continuation reachability and collection-plan demo",
+    );
+    continuation_collection_demo_step.dependOn(
+        &run_continuation_collection_demo.step,
+    );
+    test_step.dependOn(&run_continuation_collection_demo.step);
+    test_compile_step.dependOn(&continuation_collection_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

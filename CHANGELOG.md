@@ -33,6 +33,9 @@ before the first stable release.
 - Deterministic object lifecycle with generation-fenced leases, explicit logical
   expiry, quarantine invalidation, capability-bound repair, v2 snapshots, and
   matching Zig/Python receipt roots.
+- Retained object retirement and bounded dry-run collection planning with exact
+  root multiplicity, complete current-lease coverage, per-slot decisions,
+  collectible ceilings, and matching Zig/Python evidence roots.
 
 ### Status
 
