@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | `ContinuationCapsule`, object resolver | Bind a checkpoint, then admit exact tenant-scoped objects under explicit limits |
+| Continuation | capsule, resolver, bundle | Bind a checkpoint, admit exact tenant objects, and derive a canonical storage plan |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -46,6 +46,8 @@ validated model + request
           │
           ▼
  bounded object resolver ──> verified caller-owned bytes; no live authority
+          │
+          └─ canonical bundle ──> tenant blob roots + dedup ordinals; no I/O
 ```
 
 ### ResourceBank
@@ -112,6 +114,21 @@ the complete capsule composition. It allocates nothing and has no filesystem,
 network, ResourceBank, scheduler, or publication authority. The caller remains
 responsible for authenticating the grant and retaining output buffers. Durable
 bundle storage and live ownership reacquisition remain separate layers.
+
+### Continuation bundle
+
+The 1,136-byte bundle manifest joins one capsule with its nine object references.
+Each entry retains the capsule's kind/ABI/length typed root and adds a
+tenant-bound blob root plus canonical first-occurrence ordinal. Equal payload
+bytes may therefore share one planned blob inside a tenant without collapsing
+their semantic object kinds. The same bytes under another tenant produce a
+different blob root.
+
+The bundle records exact logical and unique payload totals but embeds no payload
+and performs no storage I/O. It is a portable plan, not a store, lease, cache, or
+proof of physical savings. A future immutable store must admit access through a
+capability, account for all metadata and physical overhead, and return bytes
+through the existing resolver boundary.
 
 ## Provider execution flow
 
@@ -196,5 +213,7 @@ still require real machines for each promoted platform.
 - [Model format](FORMAT_SPEC.md): portable draft format.
 - [Native runtime image](RUNTIME_IMAGE.md): execution image ABI.
 - [Continuation capsule](CONTINUATION_CAPSULE.md): checkpoint manifest ABI.
-- [Continuation object resolver](CONTINUATION_OBJECT_RESOLVER.md): scoped lookup and quota contract.
+- [Continuation object resolver](CONTINUATION_OBJECT_RESOLVER.md): scoped
+  lookup and quota contract.
+- [Continuation bundle](CONTINUATION_BUNDLE.md): canonical tenant storage plan.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

@@ -25,7 +25,7 @@ transactional state publication, and independently verifiable evidence.
 | Hierarchical ownership | Integrated | LeaseTree child scopes and paged-KV publication fences | Cross-worker and durable ownership identity |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
-| Continuation identity | Prototype | Fixed manifest plus allocation-free tenant resolver, bounded grants, caller-owned output, Zig/Python verification | Durable bundle, ownership reacquisition, and live restore |
+| Continuation identity | Prototype | Fixed capsule, bounded tenant resolver, canonical bundle/dedup plan, Zig/Python verification | Immutable store, ownership reacquisition, and live restore |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
@@ -43,6 +43,8 @@ transactional state publication, and independently verifiable evidence.
   serialized-byte mutation coverage.
 - [x] Model-free tenant-scoped object resolver with independent contract model,
   bounded scans/bytes, and adversarial failure coverage.
+- [x] Fixed tenant-scoped continuation bundle with canonical dedup ordinals,
+  exact logical/unique totals, and full serialized-byte mutation coverage.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -72,7 +74,9 @@ Next slices:
 3. ~~Capability-bounded object resolver with kind/ABI/length/root admission.~~
    Complete in memory with tenant scope, stale-epoch rejection, caller-owned
    output, bounded scan/object/total/count limits, and final composition check.
-4. Content-addressed bundle manifest with deduplication and tenant scope.
+4. ~~Content-addressed bundle manifest with deduplication and tenant scope.~~
+   Complete as a fixed 1,136-byte plan with typed and tenant-bound roots,
+   canonical first-occurrence ordinals, and independent verification.
 5. Atomic file publication and crash-recovery state machine.
 6. ResourceBank/LeaseTree reacquisition without duplicated ownership.
 7. Paged-KV restore with foreign-generation rejection.
@@ -82,11 +86,12 @@ Promotion gate: byte-identical continuation of the selected deterministic mode,
 no duplicated output, no orphaned ownership, and crash coverage at every durable
 phase.
 
-The current capsule and resolver form an identity and least-authority lookup
-boundary, not a saved session. The capsule embeds zero object payload bytes and
-the native resolver allocates nothing, but these facts do not by themselves
-prove lower RSS, disk use, or restart latency. Those claims require bundle/store
-integration, ownership reacquisition, and physical measurements.
+The current capsule, resolver, and bundle form identity, least-authority lookup,
+and canonical storage-plan boundaries—not a saved session. The capsule/bundle
+embed zero object payload bytes and the native codecs allocate nothing, but
+these facts do not by themselves prove lower RSS, disk use, or restart latency.
+Those claims require store integration, ownership reacquisition, and physical
+measurements including metadata and cache overhead.
 
 ### Evidence inspection
 
@@ -219,7 +224,7 @@ ideas unless a different status is stated.
 | Capability Grant | Prototype (resolver scope) | Least-authority extensions for planners, tokenizers, stores, tools, and transports |
 | ToolTxn and ActionOutbox | Idea | Recoverable AI tool execution without duplicated external side effects |
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
-| Object Fabric | Prototype (resolver) | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
+| Object Fabric | Prototype (bundle) | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |
@@ -313,7 +318,8 @@ First slices:
 
 - ~~typed object key `(tenant_scope, kind, ABI, digest, length)`;~~
 - ~~capability-bounded resolver for `ContinuationCapsule`;~~
-- fixed capsule bundle manifest and independent parser;
+- ~~fixed capsule bundle manifest and independent parser;~~
+- tenant-scoped immutable fake store with admitted put/get and no ambient I/O;
 - reference/lease accounting and quarantine;
 - corruption repair from a trusted replica;
 - reachability-based garbage collection with dry-run evidence;

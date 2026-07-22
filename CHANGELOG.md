@@ -24,6 +24,9 @@ before the first stable release.
 - Allocation-free continuation object resolver with tenant-scoped capability
   grants, bounded catalog scans and byte quotas, caller-owned output, and full
   post-resolution composition verification.
+- Fixed continuation bundle manifest with separate semantic and tenant-bound
+  blob roots, canonical first-occurrence dedup ordinals, exact logical/unique
+  byte totals, and an independent Python verifier.
 
 ### Status
 

@@ -15,6 +15,14 @@ resume authority.
 admits exact capsule objects under a tenant-scoped grant and bounded catalog,
 object, total-byte, and resolution limits.
 
+**Continuation bundle** — A fixed manifest joining one capsule and nine semantic
+object roots to tenant-bound storage blob roots and canonical deduplication
+ordinals without embedding payloads or granting storage authority.
+
+**Blob ordinal** — The deterministic first-occurrence number assigned to equal
+tenant-bound payload bytes in a continuation bundle. It describes a storage
+plan, not a live object handle.
+
 **Capability grant** — A least-authority declaration of the exact identity,
 scope, operations, and resource ceilings a trusted boundary permits. Its digest
 binds the declaration but is not authentication by itself.

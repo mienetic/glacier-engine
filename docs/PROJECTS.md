@@ -90,16 +90,17 @@ into core.
 
 ## Advanced projects
 
-### Continuation bundle manifest
+### Continuation immutable fake store
 
 `ContinuationCapsule v1` and its in-memory object resolver now supply fixed
 identity, tenant-scoped exact lookup, bounded quotas, caller-owned output, and
-cross-language verification. The next boundary should describe one portable
-bundle without granting unrestricted storage access.
+cross-language verification. The fixed bundle now adds canonical typed/blob
+entries, tenant separation, and logical/unique totals. The next boundary should
+exercise storage lifecycle without granting ambient filesystem access.
 
-**First slice:** a fixed manifest listing the capsule and nine typed object keys,
-with canonical order, exact encoded lengths, a shared Zig/Python golden, and
-mutation tests. No filesystem writer or cache in the first slice.
+**First slice:** an allocator-backed fake store admitted by exact tenant and blob
+capability, with put/get/missing/corrupt/duplicate/quarantine tests and explicit
+payload/index byte accounting. No filesystem adapter in the first slice.
 
 ### Resolver adversarial fixtures
 

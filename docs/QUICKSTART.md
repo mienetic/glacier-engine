@@ -50,6 +50,9 @@ zig build continuation-capsule-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Resolve exact tenant-scoped capsule objects under explicit byte/scan limits
 zig build continuation-resolver-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Build a canonical tenant bundle plan without payload embedding or storage I/O
+zig build continuation-bundle-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

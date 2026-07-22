@@ -160,7 +160,8 @@ capsule substitution, and changed resolved output.
 
 ## Next layers
 
-1. Fixed bundle manifest for the capsule and its nine typed objects.
+1. ~~Fixed bundle manifest for the capsule and its nine typed objects.~~
+   Implemented with tenant-bound blob roots and canonical ordinals.
 2. Tenant-scoped immutable fake store with explicit provenance and quarantine.
 3. Reference/lease accounting and evidence-producing dry-run collection.
 4. Atomic bundle publication and crash recovery.
@@ -169,3 +170,6 @@ capsule substitution, and changed resolved output.
 
 Each layer must preserve the separation between content identity, access
 authority, live resource ownership, and token publication authority.
+
+See [Continuation Bundle](CONTINUATION_BUNDLE.md) for the implemented portable
+storage plan and its evidence boundary.

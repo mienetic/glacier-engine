@@ -27,6 +27,7 @@ energy, or production reliability.
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
 | `zig build continuation-capsule-demo -Dmetal=false` | Fixed-size committed-checkpoint manifest, typed external object binding, and substitution rejection |
 | `zig build continuation-resolver-demo -Dmetal=false` | Tenant-scoped exact-object lookup, bounded quotas, caller-owned output, and full composition verification |
+| `zig build continuation-bundle-demo -Dmetal=false` | Fixed tenant bundle, semantic/blob identity separation, canonical ordinals, and exact logical/unique totals |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -58,6 +59,14 @@ oversized, over-budget, overlapping, substituted, and post-resolution-mutated
 inputs in native tests; an independent Python model checks the portable
 identity and state semantics. This is conformance evidence for bounded lookup,
 not a storage, RSS, latency, deduplication, or restart-performance result.
+
+The bundle fixture describes 280 logical payload bytes as eight unique blobs
+totalling 255 bytes, so its canonical duplicate-payload delta is 25 bytes. The
+bundle wire itself is 1,136 bytes, the capsule remains an external 608 bytes,
+and the demo performs no storage writes. This proves the fixture's deterministic
+tenant-scoped plan and totals—not net disk savings, cache savings, lower RSS, or
+restore performance. Physical claims require a real store and complete overhead
+measurement.
 
 ## Provider evidence checkpoint
 

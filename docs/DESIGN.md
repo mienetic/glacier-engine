@@ -110,6 +110,12 @@ lookup returns bytes into caller-owned storage, but those bytes remain
 non-authoritative until all nine outputs pass the final capsule composition
 check and live resource ownership is reacquired.
 
+The continuation bundle adds a storage-plan identity without merging semantic
+roles. Equal bytes can share one tenant-bound blob ordinal while model,
+tokenizer, plan, KV, and other typed roots remain distinct. Bundle totals are
+logical evidence; they do not become physical allocation claims until a store
+reports its payload, index, metadata, cache, and platform overhead.
+
 ### State machines fail closed
 
 Named errors are preferable to implicit recovery when the correct alternative is

@@ -37,6 +37,8 @@ Keep these distinct:
   resume identity;
 - **resolution:** tenant scope, grant root, lookup limits, resolved kinds/bytes,
   and final composition outcome;
+- **bundle:** semantic roots, tenant-bound blob roots, canonical ordinals, and
+  logical/unique payload totals without implied physical storage;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;

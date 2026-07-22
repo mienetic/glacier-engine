@@ -147,7 +147,8 @@ trusting a historical receipt as live authority.
 
 1. ~~Capability-bounded read-only object resolver.~~ Implemented in memory with
    tenant, kind, ABI, length, root, scan, byte, and count admission.
-2. Tenant-scoped content-addressed bundle with size and retention policy.
+2. ~~Tenant-scoped content-addressed bundle manifest.~~ Implemented with
+   canonical ordinals and exact logical/unique fixture totals; no store yet.
 3. Atomic manifest publication and crash recovery.
 4. Resource and page ownership reacquisition.
 5. Live restore between two transactional token publications.
@@ -158,3 +159,5 @@ authority.
 
 See [Continuation Object Resolver](CONTINUATION_OBJECT_RESOLVER.md) for the
 implemented least-authority lookup contract and its evidence boundary.
+See [Continuation Bundle](CONTINUATION_BUNDLE.md) for the canonical tenant blob
+plan and its non-physical resource accounting.

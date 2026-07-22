@@ -629,6 +629,34 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_continuation_resolver_demo.step);
     test_compile_step.dependOn(&continuation_resolver_demo_exe.step);
 
+    // Canonical tenant-scoped bundle manifest for one capsule and its nine
+    // objects. It proves deterministic in-tenant blob deduplication without
+    // embedding payloads, allocating memory or opening a storage backend.
+    const continuation_bundle_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-bundle-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_bundle.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_bundle_demo_exe.root_module.addImport("core", core_mod);
+    const run_continuation_bundle_demo = b.addRunArtifact(
+        continuation_bundle_demo_exe,
+    );
+    const continuation_bundle_demo_step = b.step(
+        "continuation-bundle-demo",
+        "Run the canonical tenant-scoped continuation bundle demo",
+    );
+    continuation_bundle_demo_step.dependOn(
+        &run_continuation_bundle_demo.step,
+    );
+    test_step.dependOn(&run_continuation_bundle_demo.step);
+    test_compile_step.dependOn(&continuation_bundle_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and
