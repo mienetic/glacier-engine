@@ -90,13 +90,15 @@ into core.
 
 ## Advanced projects
 
-### Continuation capsule
+### Continuation object resolver
 
-Define a durable, versioned identity for resuming model, KV, RNG, sampler, plan,
-and resource state after restart.
+`ContinuationCapsule v1` now supplies the fixed manifest and mutation-complete
+cross-language verifier. The next boundary must resolve its typed object roots
+without granting every storage backend unrestricted runtime authority.
 
-**First slice:** canonical in-memory identity and mutation tests, with no disk
-writer.
+**First slice:** a read-only fake resolver that returns caller-owned bytes for one
+expected kind/ABI/root and rejects missing, oversized, stale, and cross-kind
+objects. No filesystem or network adapter in the first slice.
 
 ### Tenant-safe immutable page store
 

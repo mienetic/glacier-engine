@@ -25,6 +25,7 @@ energy, or production reliability.
 | `zig build lane-weave-demo -Dmetal=false` | Exact admission, deterministic weighted service, rejection, cancellation, final release |
 | `zig build lane-publication-demo -Dmetal=false` | One-token prepare/commit/abort with KV, RNG, sampler, output, schedule, and resource roots |
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
+| `zig build continuation-capsule-demo -Dmetal=false` | Fixed-size committed-checkpoint manifest, typed external object binding, and substitution rejection |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -34,6 +35,20 @@ energy, or production reliability.
 
 All commands should normally use `-Doptimize=ReleaseSafe` when validating
 contracts. They are model-free and credential-free.
+
+## Continuation checkpoint
+
+The current fixture encodes a 608-byte manifest over nine external object types.
+The demo's object payloads total 264 bytes but zero payload bytes are embedded in
+the manifest; production model and KV objects can be much larger. Zig encoding
+and verification are allocation-free. The independent Python suite shares the
+golden root, flips every one of the 608 serialized byte positions, reseals the
+outer digest where applicable, and requires rejection. A separately valid
+foreign KV object also rejects.
+
+This proves deterministic identity composition for the fixture. It does not yet
+prove durable storage, live process restart, reduced RSS, content-addressed cache
+savings, or recovery after power loss.
 
 ## Provider evidence checkpoint
 

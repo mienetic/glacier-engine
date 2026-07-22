@@ -18,6 +18,9 @@ before the first stable release.
 - Transactional token publication with contiguous and paged KV state.
 - Exact resource admission, LeaseTree ownership, and deterministic LaneWeave
   scheduling.
+- Fixed 608-byte continuation capsule binding nine typed external AI-state
+  objects, with allocation-free Zig verification and an independent Python
+  verifier.
 
 ### Status
 

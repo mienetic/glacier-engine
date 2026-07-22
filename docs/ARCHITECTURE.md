@@ -13,6 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
+| Continuation | `ContinuationCapsule` | Bind a committed checkpoint to typed external objects and parent lineage |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -39,6 +40,9 @@ validated model + request
           │ commit
           ▼
  new KV root + RNG + counters + output + receipt
+          │
+          ▼
+ ContinuationCapsule ──> model/plan/resource/lane/KV/sampler/output roots
 ```
 
 ### ResourceBank
@@ -75,6 +79,21 @@ root usable.
 Paged variants add cache instance, logical page, ownership generation, and
 before/after page-map roots. The LeaseTree-backed variant also binds allocation,
 retirement, and request-wide publication authority.
+
+### Continuation capsule
+
+`ContinuationCapsule v1` is a 608-byte pointer-free manifest created after a
+successful publication. Nine position-typed references bind model, tokenizer,
+execution plan, ResourceBank state, LaneWeave state, KV state, sampler/RNG state,
+output state, and publication receipt. Each reference hashes its ABI, exact
+length, and payload under a distinct object-kind domain.
+
+The manifest does not duplicate those objects and grants no resolver,
+filesystem, allocator, scheduler, or output authority. A resume boundary must
+supply the expected request/execution identity and exact object bytes; the full
+verifier reconstructs the canonical manifest and rejects substitution. Parent
+roots form explicit checkpoint lineage. Durable storage and live runtime restore
+are the next layer, not an implied property of the manifest.
 
 ## Provider execution flow
 
@@ -158,4 +177,5 @@ still require real machines for each promoted platform.
 - [Paging](PAGING.md): weight and KV paging boundaries.
 - [Model format](FORMAT_SPEC.md): portable draft format.
 - [Native runtime image](RUNTIME_IMAGE.md): execution image ABI.
+- [Continuation capsule](CONTINUATION_CAPSULE.md): checkpoint manifest ABI.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

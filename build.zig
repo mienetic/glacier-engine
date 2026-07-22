@@ -573,6 +573,34 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lane_contiguous_demo.step);
     test_compile_step.dependOn(&lane_contiguous_demo_exe.step);
 
+    // Fixed-size proof-carrying continuation manifest. It binds nine typed
+    // external AI-state objects and rejects substitution without embedding
+    // their payloads or receiving filesystem authority.
+    const continuation_capsule_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-capsule-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_capsule.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_capsule_demo_exe.root_module.addImport("core", core_mod);
+    const run_continuation_capsule_demo = b.addRunArtifact(
+        continuation_capsule_demo_exe,
+    );
+    const continuation_capsule_demo_step = b.step(
+        "continuation-capsule-demo",
+        "Run the proof-carrying continuation capsule demo",
+    );
+    continuation_capsule_demo_step.dependOn(
+        &run_continuation_capsule_demo.step,
+    );
+    test_step.dependOn(&run_continuation_capsule_demo.step);
+    test_compile_step.dependOn(&continuation_capsule_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

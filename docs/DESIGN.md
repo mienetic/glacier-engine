@@ -63,6 +63,10 @@ A trusted finalizer validates every identity again and atomically commits the
 prepared transition. It consumes its one-use authority before another scheduler
 mutation. Failure preserves the previous committed state.
 
+After commit, a continuation manifest may bind the resulting state. It is an
+identity/export boundary, not another publisher: it cannot mutate the live
+session or make provisional state durable.
+
 ## Core invariants
 
 ### Identity is explicit
@@ -93,6 +97,11 @@ A token proposal binds:
 The sink acknowledges the prepared state before commit. A mismatched
 acknowledgement, mutated proposal, stale permit, or failed sink rejects without a
 partial visible transition.
+
+`ContinuationCapsule v1` then binds nine typed objects under the exact execution,
+request, publication, token-count, challenge, and parent-checkpoint identity. It
+stores roots and lengths rather than copying model or KV payloads. Resume
+authority remains external and must verify every referenced object.
 
 ### State machines fail closed
 

@@ -25,6 +25,7 @@ transactional state publication, and independently verifiable evidence.
 | Hierarchical ownership | Integrated | LeaseTree child scopes and paged-KV publication fences | Cross-worker and durable ownership identity |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
+| Continuation identity | Prototype | Fixed 608-byte manifest, nine typed object roots, parent chain, Zig/Python verification | Object resolver, durable bundle, and live restore |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
@@ -38,6 +39,8 @@ transactional state publication, and independently verifiable evidence.
 
 - [x] Public architecture, quickstart, roadmap, support, security, and governance.
 - [x] Model-free demos for scheduling, publication, and provider state machines.
+- [x] Model-free continuation capsule with independent verifier and complete
+  serialized-byte mutation coverage.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -61,15 +64,24 @@ output position, and ResourceBank ownership after a process restart.
 
 Next slices:
 
-1. Canonical in-memory continuation identity.
-2. Mutation-complete verifier fixtures.
-3. Atomic file publication and recovery state machine.
-4. Paged-KV restore with foreign-generation rejection.
-5. End-to-end restart between two token publications.
+1. ~~Canonical pointer-free continuation identity.~~ Complete in v1.
+2. ~~Mutation-complete Zig/Python verifier fixtures.~~ Complete for all 608
+   serialized byte positions and foreign object substitution.
+3. Capability-bounded object resolver with kind/ABI/length/root admission.
+4. Content-addressed bundle manifest with deduplication and tenant scope.
+5. Atomic file publication and crash-recovery state machine.
+6. ResourceBank/LeaseTree reacquisition without duplicated ownership.
+7. Paged-KV restore with foreign-generation rejection.
+8. End-to-end process restart between two token publications.
 
 Promotion gate: byte-identical continuation of the selected deterministic mode,
 no duplicated output, no orphaned ownership, and crash coverage at every durable
 phase.
+
+The current capsule is a manifest, not a saved session. It embeds zero object
+payload bytes, which enables future reuse but does not by itself prove lower RSS,
+disk use, or restart latency. Those claims require resolver/store integration and
+physical measurements.
 
 ### Evidence inspection
 
@@ -190,6 +202,209 @@ Next slices:
 - bounded cache eviction and reference accounting;
 - optional encrypted-at-rest adapter outside the core identity.
 
+## P3 — Future ecosystem primitives
+
+These tracks define how Glacier can grow beyond a single-process inference
+runtime without turning every integration into trusted in-process code. They are
+ideas unless a different status is stated.
+
+| Track | Status | Ecosystem outcome |
+| --- | --- | --- |
+| Semantic Model Capsule | Idea | Stable operator/tokenizer/adapter meaning independent of source tensor names |
+| Capability Grant | Idea | Least-authority extensions for planners, tokenizers, stores, tools, and transports |
+| ToolTxn and ActionOutbox | Idea | Recoverable AI tool execution without duplicated external side effects |
+| ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
+| Object Fabric | Idea | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
+| Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
+| Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
+| Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |
+| EnergyQoS | Idea | Scheduling under measured energy/thermal budgets as well as latency |
+| TraceTwin and Evidence Registry | Idea | Causal replay and promotion decisions bound to immutable evidence |
+
+### Semantic Model Capsule
+
+Goal: describe operator graph, tokenizer behavior, adapters, tensor semantics,
+numerical policy, and representation lineage without coupling execution to one
+converter's tensor names.
+
+First slices:
+
+1. tiny normalized operator IR for one supported fixture;
+2. canonical model/tokenizer/adapter root;
+3. source-to-semantic mapping with duplicate/missing-role rejection;
+4. backend capability negotiation against semantic operators;
+5. migration record when a semantic schema changes.
+
+Promotion gate: two independently produced source artifacts with the same
+declared semantics generate the same canonical identity and checked output, while
+any operator/tokenizer/adapter drift rejects before allocation.
+
+### Capability Grant and isolated extensions
+
+Goal: let community extensions request only named authority such as read-model,
+resolve-object, count-wire-tokens, execute-transport, publish-evidence, or invoke
+one tool.
+
+First slices:
+
+1. versioned capability vocabulary with resource ceilings;
+2. deterministic negotiation and denial transcript;
+3. process-local fake extension with no ambient filesystem/network access;
+4. revocation, timeout, crash, and stale-grant handling;
+5. optional process/sandbox transport with identical semantics.
+
+Promotion gate: undeclared capability use is impossible through the extension
+API, denial leaves no resource mutation, and every accepted use is bound to the
+request and evidence chain.
+
+### ToolTxn and ActionOutbox
+
+Goal: connect model-selected tool actions to explicit policy and durable
+exactly-once intent. External effects cannot be rolled back like KV, so the state
+machine must represent prepared, dispatched, ambiguous, reconciled, terminal,
+and compensated outcomes.
+
+First slices:
+
+1. pointer-free action proposal and schema identity;
+2. capability/policy decision receipt;
+3. durable outbox body/footer commit before dispatch;
+4. idempotency key and ambiguous-outcome reconciliation;
+5. output publication that cites the terminal action receipt;
+6. compensation evidence for reversible actions.
+
+Promotion gate: process termination at every phase never duplicates an action,
+never publishes an unexecuted action as successful, and preserves enough state
+to reconcile an ambiguous external outcome without exposing credentials.
+
+### ModelTxn
+
+Goal: stage a new model or adapter set, validate its semantic and execution
+capsules, migrate or pin sessions, then atomically publish the active generation.
+
+First slices:
+
+- immutable active-model generation handle;
+- staged load with complete ResourceBank claim;
+- compatibility decision for existing continuation/KV objects;
+- commit/rollback race tests;
+- mixed-generation request rejection;
+- evidence-bound retirement and garbage collection.
+
+Promotion gate: no request observes a model/adapter/KV combination that was never
+committed, and rollback releases every staged resource.
+
+### Object Fabric
+
+Goal: reuse immutable model, plan, KV-prefix, continuation, adapter, and evidence
+objects through content identity while keeping access authority tenant-scoped.
+
+First slices:
+
+- typed object key `(tenant_scope, kind, ABI, digest, length)`;
+- capability-bounded resolver for `ContinuationCapsule`;
+- reference/lease accounting and quarantine;
+- corruption repair from a trusted replica;
+- reachability-based garbage collection with dry-run evidence;
+- optional encrypted storage adapter whose ciphertext identity is separate from
+  semantic content identity.
+
+Promotion gate: cross-tenant lookup never follows content equality alone, live
+leases survive collection, corrupt objects cannot enter execution, and measured
+deduplication savings include metadata and cache overhead.
+
+### Federated Execution Mesh
+
+Goal: assign plan fragments to CPU, accelerator, edge, or remote workers using
+capability, resource, deadline, and evidence contracts rather than backend names.
+
+First slices:
+
+1. worker capability capsule and liveness epoch;
+2. immutable fragment ownership plan;
+3. transfer object with source/destination resource handoff;
+4. deterministic timeout and reassignment without duplicate publication;
+5. partial-result quarantine and heterogeneous numerical verification;
+6. network-credit admission integrated with ResourceBank.
+
+Promotion gate: worker loss, replay, reordering, and partition cannot publish a
+token twice or lose ownership accounting; a single-node path remains available
+without distributed overhead.
+
+### Local/provider work router
+
+Goal: choose local execution, external execution, or a verified composition under
+one request identity, quality policy, latency deadline, privacy grant, and cost/
+resource ceiling.
+
+First slices:
+
+- canonical `WorkIntent` shared by local and external paths;
+- comparable logical token/work and monetary quote units without converting
+  unknown values to zero;
+- deterministic fake-route decision and fallback state machine;
+- cancellation and ambiguous remote-attempt reconciliation;
+- one terminal output authority across all attempted routes;
+- paired quality/latency/cost evidence per route envelope.
+
+Promotion gate: retries or fallback never duplicate a user-visible response or
+double-count settled cost, and private work cannot cross into a route lacking the
+required privacy capability.
+
+### Privacy Budget Capsule
+
+Goal: attach explicit data categories, redaction policy, retention, geographic or
+tenant boundary, logging permission, export permission, and expiry to every work
+intent and evidence bundle.
+
+First slices:
+
+- closed vocabulary and fail-closed policy intersection;
+- hash-only versus payload-bearing evidence classification;
+- retention/expiry event wire;
+- provider/extension capability matching;
+- deletion receipt that distinguishes logical unlink from physical erasure.
+
+Promotion gate: policy downgrade or missing classification rejects before
+payload access, and audit output never claims physical deletion from a logical
+ledger alone.
+
+### EnergyQoS
+
+Goal: make energy and thermal budgets schedulable resources alongside memory,
+queue, and latency—only on platforms with trustworthy measurement.
+
+First slices:
+
+- read-only sensor adapter with present/missing/denied/stale states;
+- energy interval bound to accepted tokens and monotonic time;
+- conservative admission using a declared upper bound;
+- LaneWeave policy simulation under per-tenant energy budgets;
+- drift handling and checked fallback when sensors disappear.
+
+Promotion gate: hardware energy values come from documented sensors, intervals
+cover the complete charged work, and missing telemetry cannot become an inferred
+savings claim.
+
+### TraceTwin and Evidence Registry
+
+Goal: reproduce the causal plan/admit/execute/fallback/publish path from portable
+events and allow runtime policy to select only configurations with retained
+passing evidence.
+
+First slices:
+
+- versioned causal event vocabulary;
+- independent state-machine replay;
+- immutable evidence envelope for binary, dependencies, model, workload,
+  machine, raw samples, and statistical policy;
+- registry query returning exact passing scope, not a transferred general claim;
+- expiry/revocation when code, model, driver, or machine policy drifts.
+
+Promotion gate: mutation, truncation, reordering, foreign evidence, and expired
+scope reject; replay reaches the same committed roots without requiring private
+payload text.
+
 ## Research tracks
 
 ### Prism progressive precision
@@ -218,6 +433,38 @@ Priorities:
 3. physical memory and device-residency evidence;
 4. energy and thermal capture where trustworthy APIs exist;
 5. reproducible public artifact bundles with independent verification.
+
+### Fair paired campaign contract
+
+Any comparative runtime campaign must hold or explicitly model these variables:
+
+- exact model and tokenizer bytes, prompt/token input, output contract, seed, and
+  requested token count;
+- compiler optimization, architecture, backend/device policy, thread count,
+  affinity, process priority, and memory limits;
+- power source, low-power mode, charger state, foreground/background processes,
+  warmup, cooldown, and pre-pair system load;
+- randomized or balanced pair order in the same machine session;
+- correctness/quality, timeout, thermal, load, and telemetry validity gates fixed
+  before observing results;
+- raw TTFT, prefill, decode, ITL, end-to-end, RSS, device memory, transferred
+  bytes, and energy values only when their observers are available;
+- rejected pairs with reasons, not silent deletion.
+
+MachineEnvelope v2 work items:
+
+1. host capability report generated before either arm is named;
+2. symmetric process-tree observer outside both arms;
+3. charger/power and low-power-state adapters;
+4. CPU effective-frequency and core-residency adapters where supported;
+5. device allocation/residency and unified-memory pressure adapters;
+6. signed monotonic interval and observer-loss events;
+7. schema validator that prevents a campaign from claiming an unavailable
+   physical metric.
+
+Promotion gate: a same-machine result remains scoped to its exact matrix;
+multi-platform wording requires independent machines, workloads, and retained
+artifacts rather than repeated samples from one host.
 
 ## How roadmap work merges
 

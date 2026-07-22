@@ -31,6 +31,7 @@ pub const provider_cost_wire = @import("provider_cost_wire.zig");
 pub const provider_cost_journal = @import("provider_cost_journal.zig");
 pub const provider_evidence_join_wire =
     @import("provider_evidence_join_wire.zig");
+pub const continuation_capsule = @import("continuation_capsule.zig");
 
 // Re-export the most commonly used types at the root.
 pub const Precision = precision.Precision;
@@ -54,6 +55,7 @@ pub const ProviderTransportEventWire = provider_transport_event_wire;
 pub const ProviderCostWire = provider_cost_wire;
 pub const ProviderCostJournal = provider_cost_journal;
 pub const ProviderEvidenceJoinWire = provider_evidence_join_wire;
+pub const ContinuationCapsule = continuation_capsule;
 pub const Error = pager.Error;
 
 test {

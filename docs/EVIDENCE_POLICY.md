@@ -33,6 +33,8 @@ Keep these distinct:
 
 - **logical:** runtime-owned resource and token ledgers;
 - **transactional:** before/after roots and commit receipts;
+- **continuation:** typed object roots, parent checkpoint lineage, and expected
+  resume identity;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;

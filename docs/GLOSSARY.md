@@ -6,6 +6,11 @@ can execute.
 **Commitment** — A digest or structured identity binding exact state. It proves
 identity only within its verification contract.
 
+**ContinuationCapsule** — A fixed-size manifest that binds a committed AI
+checkpoint to typed external model, plan, resource, scheduling, KV, sampler,
+output, and publication objects without embedding their payloads or granting
+resume authority.
+
 **ContextPack** — A lossless mapping that emits one copy of explicitly
 idempotent, byte-identical rendered spans while retaining every logical span
 decision.

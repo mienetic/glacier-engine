@@ -44,6 +44,9 @@ zig build lane-weave-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build lane-publication-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build lane-contiguous-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Bind a committed checkpoint without embedding its external object payloads
+zig build continuation-capsule-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false
