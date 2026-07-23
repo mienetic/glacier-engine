@@ -24,11 +24,16 @@ The stateful archive appends a fifth canonical object:
    audio feature-window state, video temporal-cache state, and their
    synchronized watermark.
 
-`decodeSetV1` remains a strict four-object reader. `decodeCompatibleSetV1`
-opens either shape for stream-only recovery, while `decodeStatefulSetV1`
-requires and verifies all five objects. Existing four-object archives therefore
-remain readable without letting a stateful caller silently ignore missing
-processor state.
+The materialized archive appends a sixth canonical object:
+
+6. one variable-length image/audio/video processor-cache payload bundle with
+   exact lengths, roots, restore Bank epochs, and ownership key bases.
+
+`decodeSetV1` remains a strict four-object reader. `decodeStatefulSetV1`
+requires five objects, and `decodeMaterializedSetV1` requires all six.
+`decodeCompatibleSetV1` opens any shape for stream-only recovery. Existing
+archives therefore remain readable without letting a caller silently ignore
+processor state or required cache payloads.
 
 The retained-output bundle avoids consuming one archive directory entry per
 chunk. Its fixed directory has room for four outputs per modality while its
@@ -117,14 +122,15 @@ target resumes it. Repeating recovery is idempotent. Across this root-switch
 campaign, 14 fresh target processes resume 42 modality-chunks with zero
 duplicate publications.
 
-The same demo then starts another fresh process from stateful generation two.
+The same demo then starts another fresh process from materialized generation two.
 It charges six retained outputs before materialization, rebinds their
-ownership, advances the three processor/cache states, appends three
-modality-chunks, releases all three Banks, and atomically publishes a
-five-object, nine-output generation three. A final fresh process opens
-generation three and resumes three more chunks. The complete demo therefore
-resumes 45 modality-chunks. Every target finishes with zero Bank usage, live
-allocations, and active lease trees.
+ownership, charges and verifies all three processor-cache payloads, advances
+the three processor/cache states, appends three modality-chunks, releases all
+owners, and atomically publishes a six-object, nine-output generation three. A
+final fresh process opens generation three, restores its cache payloads, and
+resumes three more chunks. The complete demo therefore resumes 45
+modality-chunks. Every target finishes with zero Bank usage, live allocations,
+and active lease trees.
 
 ## Run the proofs
 
@@ -138,7 +144,7 @@ The Zig and Python codecs share golden retained-bundle and restored-ownership
 roots. They independently reject every one-byte bundle mutation plus rehashed
 foreign checkpoint roots, retained-output substitutions, stale restored
 epochs, replayed ownership receipts, foreign restored owners, and processor
-bundle substitution.
+bundle/cache substitution.
 
 ## Deliberate limits
 
@@ -150,7 +156,7 @@ second seven-phase campaign specifically during restored execution is not
 claimed.
 
 Multi-writer leader election, archive garbage collection policy, external
-codecs, capture/playback, physical processor-cache payload materialization,
-media-model execution, and generated-media publication remain gated. The fifth
-object proves durable logical state and lineage; it is not proof that accelerator
-memory or cache payload bytes were reconstructed.
+codecs, capture/playback, media-model execution, accelerator residency, and
+generated-media publication remain gated. The sixth object and fresh-Bank proof
+cover caller-owned cache bytes and exact logical ownership, not measured RSS,
+allocator fragmentation, or device memory.

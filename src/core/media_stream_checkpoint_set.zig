@@ -8,6 +8,7 @@ const std = @import("std");
 const media = @import("media_contract.zig");
 const continuation = @import("media_stream_continuation.zig");
 const processor = @import("media_processor_state.zig");
+const processor_cache = @import("media_processor_cache.zig");
 const checkpoint_file = @import("continuation_checkpoint_file.zig");
 
 pub const Digest = [32]u8;
@@ -27,11 +28,15 @@ pub const bundle_footer_bytes: usize = 32;
 pub const archive_object_count: usize = stream_count + 1;
 pub const stateful_archive_object_count: usize =
     archive_object_count + 1;
+pub const materialized_archive_object_count: usize =
+    stateful_archive_object_count + 1;
 pub const checkpoint_object_abi =
     continuation.checkpoint_abi;
 pub const bundle_object_abi = bundle_abi;
 pub const processor_object_abi =
     processor.processor_bundle_abi;
+pub const processor_cache_object_abi =
+    processor_cache.cache_bundle_abi;
 pub const allowed_flags: u64 = 0;
 
 const bundle_domain =
@@ -40,15 +45,18 @@ const checkpoint_object_ordinal_base: u64 = 0;
 const bundle_object_ordinal: u64 = stream_count;
 const processor_object_ordinal: u64 =
     archive_object_count;
+const processor_cache_object_ordinal: u64 =
+    stateful_archive_object_count;
 
 comptime {
-    if (stateful_archive_object_count >
+    if (materialized_archive_object_count >
         checkpoint_file.max_objects)
         @compileError("media checkpoint set exceeds archive directory");
 }
 
 pub const Error = checkpoint_file.Error ||
-    continuation.Error || processor.Error || error{
+    continuation.Error || processor.Error ||
+    processor_cache.Error || error{
     InvalidBundle,
     InvalidMediaCheckpointSet,
     InvalidSuccessor,
@@ -118,6 +126,12 @@ pub const PreparedStatefulSetV1 = struct {
     processor_bundle_sha256: Digest,
 };
 
+pub const PreparedMaterializedSetV1 = struct {
+    archive: checkpoint_file.PreparedSetV1,
+    processor_bundle_sha256: Digest,
+    processor_cache_bundle_sha256: Digest,
+};
+
 pub const DecodedSetV1 = struct {
     archive: checkpoint_file.DecodedSetV1,
     checkpoints: [stream_count]continuation.CheckpointV1,
@@ -144,6 +158,11 @@ pub const DecodedSetV1 = struct {
 pub const DecodedStatefulSetV1 = struct {
     media_set: DecodedSetV1,
     processor_bundle: processor.DecodedBundleV1,
+};
+
+pub const DecodedMaterializedSetV1 = struct {
+    stateful_set: DecodedStatefulSetV1,
+    processor_cache_bundle: processor_cache.DecodedBundleV1,
 };
 
 pub fn encodeRetainedBundleV1(
@@ -426,6 +445,7 @@ pub fn encodeSetV1(
         parent_archive_sha256,
         bundle_storage,
         null,
+        null,
         set_storage,
     );
     _ = try decodeSetV1(archive.bytes);
@@ -451,6 +471,7 @@ pub fn encodeStatefulSetV1(
         parent_archive_sha256,
         bundle_storage,
         processor_bundle.bytes,
+        null,
         set_storage,
     );
     _ = try decodeStatefulSetV1(archive.bytes);
@@ -460,11 +481,54 @@ pub fn encodeStatefulSetV1(
     };
 }
 
+pub fn encodeMaterializedSetV1(
+    streams: [stream_count]StreamInputV1,
+    processor_states: [processor.processor_count]processor.ProcessorStateV1,
+    sync: processor.SyncStateV1,
+    cache_plan: processor_cache.BundlePlanV1,
+    cache_payloads: [processor_cache.cache_count][]const u8,
+    parent_archive_sha256: Digest,
+    bundle_storage: []u8,
+    processor_storage: *[processor.processor_bundle_bytes]u8,
+    processor_cache_storage: []u8,
+    set_storage: []u8,
+) Error!PreparedMaterializedSetV1 {
+    const processor_bundle = try processor.encodeBundleV1(
+        processor_states,
+        sync,
+        processor_storage,
+    );
+    const decoded_processor = try processor.decodeBundleV1(
+        processor_bundle.bytes,
+    );
+    const cache_bundle = try processor_cache.encodeBundleV1(
+        decoded_processor,
+        cache_plan,
+        cache_payloads,
+        processor_cache_storage,
+    );
+    const archive = try encodeArchiveV1(
+        streams,
+        parent_archive_sha256,
+        bundle_storage,
+        processor_bundle.bytes,
+        cache_bundle.bytes,
+        set_storage,
+    );
+    _ = try decodeMaterializedSetV1(archive.bytes);
+    return .{
+        .archive = archive,
+        .processor_bundle_sha256 = processor_bundle.bundle_sha256,
+        .processor_cache_bundle_sha256 = cache_bundle.bundle_sha256,
+    };
+}
+
 fn encodeArchiveV1(
     streams: [stream_count]StreamInputV1,
     parent_archive_sha256: Digest,
     bundle_storage: []u8,
     processor_bundle: ?[]const u8,
+    processor_cache_bundle: ?[]const u8,
     set_storage: []u8,
 ) Error!checkpoint_file.PreparedSetV1 {
     var checkpoint_storage: [stream_count][continuation.checkpoint_bytes]u8 =
@@ -535,7 +599,7 @@ fn encodeArchiveV1(
         bundle_streams,
         bundle_storage,
     );
-    var objects: [stateful_archive_object_count]checkpoint_file.ObjectInputV1 =
+    var objects: [materialized_archive_object_count]checkpoint_file.ObjectInputV1 =
         undefined;
     objects[0] = .{
         .kind = .extension,
@@ -561,7 +625,7 @@ fn encodeArchiveV1(
         .abi_version = bundle_object_abi,
         .bytes = bundle,
     };
-    const object_count: usize = if (processor_bundle) |encoded| count: {
+    var object_count: usize = if (processor_bundle) |encoded| count: {
         objects[processor_object_ordinal] = .{
             .kind = .extension,
             .ordinal = processor_object_ordinal,
@@ -570,6 +634,17 @@ fn encodeArchiveV1(
         };
         break :count stateful_archive_object_count;
     } else archive_object_count;
+    if (processor_cache_bundle) |encoded| {
+        if (processor_bundle == null)
+            return Error.InvalidMediaCheckpointSet;
+        objects[processor_cache_object_ordinal] = .{
+            .kind = .extension,
+            .ordinal = processor_cache_object_ordinal,
+            .abi_version = processor_cache_object_abi,
+            .bytes = encoded,
+        };
+        object_count = materialized_archive_object_count;
+    }
     return checkpoint_file.encodeSetV1(
         .{
             .generation = first.checkpoint_generation,
@@ -601,7 +676,8 @@ pub fn decodeCompatibleSetV1(
         encoded,
     );
     if (archive.object_count != archive_object_count and
-        archive.object_count != stateful_archive_object_count)
+        archive.object_count != stateful_archive_object_count and
+        archive.object_count != materialized_archive_object_count)
         return Error.InvalidMediaCheckpointSet;
     return decodeMediaArchiveV1(archive);
 }
@@ -615,6 +691,44 @@ pub fn decodeStatefulSetV1(
     if (archive.object_count !=
         stateful_archive_object_count)
         return Error.InvalidMediaCheckpointSet;
+    return decodeStatefulArchiveV1(archive);
+}
+
+pub fn decodeMaterializedSetV1(
+    encoded: []const u8,
+) Error!DecodedMaterializedSetV1 {
+    const archive = try checkpoint_file.decodeSetV1(
+        encoded,
+    );
+    if (archive.object_count !=
+        materialized_archive_object_count)
+        return Error.InvalidMediaCheckpointSet;
+    const stateful_set = try decodeStatefulArchiveV1(
+        archive,
+    );
+    const object =
+        archive.objects[processor_cache_object_ordinal];
+    if (object.kind != .extension or
+        object.ordinal != processor_cache_object_ordinal or
+        object.abi_version != processor_cache_object_abi)
+        return Error.InvalidMediaCheckpointSet;
+    const cache_bundle = processor_cache.decodeBundleV1(
+        object.bytes,
+    ) catch return Error.InvalidMediaCheckpointSet;
+    processor_cache.validateBindingV1(
+        &cache_bundle,
+        &stateful_set.processor_bundle,
+        stateful_set.processor_bundle.bundle_sha256,
+    ) catch return Error.InvalidMediaCheckpointSet;
+    return .{
+        .stateful_set = stateful_set,
+        .processor_cache_bundle = cache_bundle,
+    };
+}
+
+fn decodeStatefulArchiveV1(
+    archive: checkpoint_file.DecodedSetV1,
+) Error!DecodedStatefulSetV1 {
     const media_archive = try decodeMediaArchiveV1(
         archive,
     );
@@ -944,6 +1058,34 @@ pub fn validateRestoredStatefulSuccessorV1(
     processor.validateSuccessorV1(
         &previous.processor_bundle,
         &successor.processor_bundle,
+    ) catch return Error.InvalidSuccessor;
+}
+
+pub fn validateMaterializedSuccessorV1(
+    previous: *const DecodedMaterializedSetV1,
+    successor: *const DecodedMaterializedSetV1,
+) Error!void {
+    validateStatefulSuccessorV1(
+        &previous.stateful_set,
+        &successor.stateful_set,
+    ) catch return Error.InvalidSuccessor;
+    processor_cache.validateSuccessorV1(
+        &previous.processor_cache_bundle,
+        &successor.processor_cache_bundle,
+    ) catch return Error.InvalidSuccessor;
+}
+
+pub fn validateRestoredMaterializedSuccessorV1(
+    previous: *const DecodedMaterializedSetV1,
+    successor: *const DecodedMaterializedSetV1,
+) Error!void {
+    validateRestoredStatefulSuccessorV1(
+        &previous.stateful_set,
+        &successor.stateful_set,
+    ) catch return Error.InvalidSuccessor;
+    processor_cache.validateSuccessorV1(
+        &previous.processor_cache_bundle,
+        &successor.processor_cache_bundle,
     ) catch return Error.InvalidSuccessor;
 }
 

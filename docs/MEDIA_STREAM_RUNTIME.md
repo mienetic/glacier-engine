@@ -121,6 +121,6 @@ The first continuation layer is complete in
    generation-two to generation-three transition and another fresh resume;
 6. add family-specific state for audio windows, video temporal caches, and
    image processor/cross-attention state; fixed image/audio/video processor and
-   synchronized state plus atomic checkpoint binding is complete, while
-   physical cache materialization and cross-attention state remain; and
+   synchronized state, atomic checkpoint binding, and exact cache-payload
+   restore are complete, while cross-attention and typed model state remain; and
 7. define generated-media partial-output and cancellation policy.

@@ -66,8 +66,8 @@ formats, and independent verifiers.
   charges a fresh Bank before materialization and appends the next image,
   audio, or video chunk without duplicating publication.
 - **Atomic multimodal generations.** Three stream checkpoints, one canonical
-  retained-output bundle, and an optional fixed processor/cache bundle share a
-  single immutable archive root.
+  retained-output bundle, an optional fixed processor-state bundle, and an
+  optional verified cache-payload bundle share a single immutable archive root.
   Process-death campaigns prove that readers resume the complete previous or
   successor image/audio/video generation, never a mixed set.
 - **Post-restore checkpoint successor.** A fresh process rebinds retained
@@ -79,6 +79,10 @@ formats, and independent verifiers.
   watermark form one lineage-bound, independently verified state bundle. A
   stateful checkpoint stores it as a fifth atomic object and advances it through
   fresh-process generation three.
+- **Restore-before-visible processor caches.** A sixth atomic object carries
+  exact image/audio/video cache payloads. Fresh processes charge three
+  generation-fenced `activation_bytes` allocations before byte verification,
+  make them live only after success, and release every cache owner to zero.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -281,7 +285,7 @@ model conversion, generation, and every demo command, continue with the
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, fixed checkpoints, post-restore stateful generation three, image processor progress, audio feature windows, video temporal caches, exact synchronized watermark, and atomic processor-state persistence | Materialize cache payloads under exact ownership, then add external formats, typed model adapters, and generated-media publication |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object checkpoints, post-restore materialized generation three, image processor progress, audio feature windows, video temporal caches, exact synchronized watermark, and restore-before-visible cache ownership | Add typed model adapters and external formats, then generated-media publication |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -321,6 +325,7 @@ valuable as new features.
 - [Media stream continuation](docs/MEDIA_STREAM_CONTINUATION.md)
 - [Atomic media stream checkpoint sets](docs/MEDIA_STREAM_CHECKPOINT_SET.md)
 - [Multimodal processor and cache state](docs/MEDIA_PROCESSOR_STATE.md)
+- [Materialized multimodal processor caches](docs/MEDIA_PROCESSOR_CACHE.md)
 - [Paging contract](docs/PAGING.md)
 - [Continuation capsule](docs/CONTINUATION_CAPSULE.md)
 - [Continuation object resolver](docs/CONTINUATION_OBJECT_RESOLVER.md)

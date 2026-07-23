@@ -11,12 +11,15 @@ const stream_runtime = core.media_stream_runtime;
 const continuation = core.media_stream_continuation;
 const media_set = core.media_stream_checkpoint_set;
 const processor = core.media_processor_state;
+const processor_cache = core.media_processor_cache;
 const checkpoint_file = core.continuation_checkpoint_file;
 
 const challenge_sha256 = [_]u8{0x72} ** 32;
 const request_epoch: u64 = 12_000;
 const maximum_set_bytes = 16 * 1024;
 const maximum_bundle_bytes = 4 * 1024;
+const maximum_processor_cache_bytes = 4 * 1024;
+const maximum_cache_payload_bytes = 1024;
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
@@ -188,64 +191,122 @@ pub fn main() !void {
     var second_bundle_storage: [maximum_bundle_bytes]u8 = undefined;
     var first_processor_storage: [processor.processor_bundle_bytes]u8 = undefined;
     var second_processor_storage: [processor.processor_bundle_bytes]u8 = undefined;
+    var first_cache_payload_storage: [processor.processor_count][maximum_cache_payload_bytes]u8 =
+        undefined;
+    var second_cache_payload_storage: [processor.processor_count][maximum_cache_payload_bytes]u8 =
+        undefined;
+    const first_cache_payloads = try makeCachePayloadsV1(
+        &first_cache_payload_storage,
+        1,
+    );
+    const second_cache_payloads = try makeCachePayloadsV1(
+        &second_cache_payload_storage,
+        2,
+    );
+    var first_processor_cache_storage: [maximum_processor_cache_bytes]u8 = undefined;
+    var second_processor_cache_storage: [maximum_processor_cache_bytes]u8 = undefined;
     var first_set_storage: [maximum_set_bytes]u8 = undefined;
     var second_set_storage: [maximum_set_bytes]u8 = undefined;
     const first_processor = try makeProcessorSnapshotV1(
         first_checkpoints,
         1,
         null,
+        first_cache_payloads,
     );
-    const first_set = try media_set.encodeStatefulSetV1(
+    const first_processor_prepared =
+        try processor.encodeBundleV1(
+            first_processor.states,
+            first_processor.sync,
+            &first_processor_storage,
+        );
+    const first_set = try media_set.encodeMaterializedSetV1(
         first_inputs,
         first_processor.states,
         first_processor.sync,
+        cachePlanV1(
+            1,
+            first_processor_prepared.bundle_sha256,
+            [_]u8{0} ** 32,
+            20_000,
+            21_000,
+        ),
+        first_cache_payloads,
         [_]u8{0} ** 32,
         &first_bundle_storage,
         &first_processor_storage,
+        &first_processor_cache_storage,
         &first_set_storage,
     );
-    const first_decoded = try media_set.decodeStatefulSetV1(
+    const first_decoded = try media_set.decodeMaterializedSetV1(
         first_set.archive.bytes,
     );
     const second_processor = try makeProcessorSnapshotV1(
         second_checkpoints,
         2,
-        &first_decoded.processor_bundle,
+        &first_decoded.stateful_set.processor_bundle,
+        second_cache_payloads,
     );
-    const second_set = try media_set.encodeStatefulSetV1(
+    const second_processor_prepared =
+        try processor.encodeBundleV1(
+            second_processor.states,
+            second_processor.sync,
+            &second_processor_storage,
+        );
+    const second_set = try media_set.encodeMaterializedSetV1(
         second_inputs,
         second_processor.states,
         second_processor.sync,
+        cachePlanV1(
+            2,
+            second_processor_prepared.bundle_sha256,
+            first_decoded.processor_cache_bundle
+                .bundle_sha256,
+            21_000,
+            22_000,
+        ),
+        second_cache_payloads,
         first_set.archive.checkpoint_sha256,
         &second_bundle_storage,
         &second_processor_storage,
+        &second_processor_cache_storage,
         &second_set_storage,
     );
-    const second_decoded = try media_set.decodeStatefulSetV1(
+    const second_decoded = try media_set.decodeMaterializedSetV1(
         second_set.archive.bytes,
     );
-    try media_set.validateStatefulSuccessorV1(
+    try media_set.validateMaterializedSuccessorV1(
         &first_decoded,
         &second_decoded,
     );
     var foreign_bundle_storage: [maximum_bundle_bytes]u8 = undefined;
     var foreign_processor_storage: [processor.processor_bundle_bytes]u8 = undefined;
+    var foreign_processor_cache_storage: [maximum_processor_cache_bytes]u8 = undefined;
     var foreign_set_storage: [maximum_set_bytes]u8 = undefined;
-    const foreign_set = try media_set.encodeStatefulSetV1(
+    const foreign_set = try media_set.encodeMaterializedSetV1(
         second_inputs,
         second_processor.states,
         second_processor.sync,
+        cachePlanV1(
+            2,
+            second_processor_prepared.bundle_sha256,
+            first_decoded.processor_cache_bundle
+                .bundle_sha256,
+            21_000,
+            22_000,
+        ),
+        second_cache_payloads,
         [_]u8{0xee} ** 32,
         &foreign_bundle_storage,
         &foreign_processor_storage,
+        &foreign_processor_cache_storage,
         &foreign_set_storage,
     );
-    const foreign_decoded = try media_set.decodeStatefulSetV1(
+    const foreign_decoded = try media_set.decodeMaterializedSetV1(
         foreign_set.archive.bytes,
     );
     try std.testing.expectError(
         media_set.Error.InvalidSuccessor,
-        media_set.validateStatefulSuccessorV1(
+        media_set.validateMaterializedSuccessorV1(
             &first_decoded,
             &foreign_decoded,
         ),
@@ -400,13 +461,14 @@ pub fn main() !void {
         );
         if (repeated.disposition != .already_applied)
             return error.NonIdempotentRecovery;
-        const repaired = try media_set.decodeStatefulSetV1(
+        const repaired = try media_set.decodeMaterializedSetV1(
             reopened.stream(),
         );
-        if (repaired.media_set.archive.metadata.generation != 2 or
+        if (repaired.stateful_set.media_set.archive.metadata.generation != 2 or
             !std.mem.eql(
                 u8,
-                &repaired.media_set.archive.checkpoint_sha256,
+                &repaired.stateful_set.media_set.archive
+                    .checkpoint_sha256,
                 &second_set.archive.checkpoint_sha256,
             ))
             return error.InvalidRecoveredGeneration;
@@ -511,7 +573,10 @@ pub fn main() !void {
         "\"retained_outputs\":9",
         "\"stale_source_authority\":false",
         "\"charge_before_materialize\":true",
+        "\"cache_charge_before_materialize\":true",
+        "\"restored_cache_bytes\":1104",
         "\"processor_state_rebound\":true",
+        "\"processor_cache_rebound\":true",
         "\"atomic_publication\":true",
         "\"ownership_released\":true",
         "\"verified\":true",
@@ -536,21 +601,26 @@ pub fn main() !void {
             &generation_three_storage,
         );
     const generation_three =
-        try media_set.decodeStatefulSetV1(
+        try media_set.decodeMaterializedSetV1(
             generation_three_lease.stream(),
         );
-    if (generation_three.media_set.archive.metadata.generation != 3)
+    if (generation_three.stateful_set.media_set.archive.metadata.generation != 3)
         return error.InvalidSuccessorGeneration;
-    try media_set.validateRestoredStatefulSuccessorV1(
+    try media_set.validateRestoredMaterializedSuccessorV1(
         &second_decoded,
         &generation_three,
     );
     const generation_three_archive_sha256 =
-        generation_three.media_set.archive.checkpoint_sha256;
+        generation_three.stateful_set.media_set.archive
+            .checkpoint_sha256;
     const generation_three_bundle_sha256 =
-        generation_three.media_set.bundle.bundle_sha256;
+        generation_three.stateful_set.media_set.bundle
+            .bundle_sha256;
     const generation_three_processor_sha256 =
-        generation_three.processor_bundle.bundle_sha256;
+        generation_three.stateful_set.processor_bundle
+            .bundle_sha256;
+    const generation_three_cache_sha256 =
+        generation_three.processor_cache_bundle.bundle_sha256;
     generation_three_lease.close();
 
     const resumed_generation_three = try runChildV1(
@@ -593,6 +663,10 @@ pub fn main() !void {
         generation_three_processor_sha256,
         .lower,
     );
+    const cache_hex = std.fmt.bytesToHex(
+        generation_three_cache_sha256,
+        .lower,
+    );
     var stdout_buffer: [2048]u8 = undefined;
     var stdout_writer =
         std.fs.File.stdout().writer(&stdout_buffer);
@@ -600,8 +674,11 @@ pub fn main() !void {
     try stdout.print(
         "{{\"schema\":\"glacier.media-stream-checkpoint-set/demo-v1\"," ++
             "\"modalities\":3,\"checkpoint_generations\":3," ++
-            "\"archive_objects\":5,\"retained_outputs\":9," ++
+            "\"archive_objects\":6,\"retained_outputs\":9," ++
             "\"processor_state_bundle\":true," ++
+            "\"materialized_cache_bundle\":true," ++
+            "\"cache_charge_before_materialize\":true," ++
+            "\"generation_three_cache_bytes\":1288," ++
             "\"source_ownership_releases\":3," ++
             "\"process_deaths\":7,\"archive_phase_deaths\":3," ++
             "\"selector_phase_deaths\":4," ++
@@ -627,10 +704,72 @@ pub fn main() !void {
             "\"archive_sha256\":\"{s}\"," ++
             "\"bundle_sha256\":\"{s}\"," ++
             "\"processor_bundle_sha256\":\"{s}\"," ++
+            "\"processor_cache_bundle_sha256\":\"{s}\"," ++
             "\"verified\":true}}\n",
-        .{ &archive_hex, &bundle_hex, &processor_hex },
+        .{ &archive_hex, &bundle_hex, &processor_hex, &cache_hex },
     );
     try stdout.flush();
+}
+
+fn makeCachePayloadsV1(
+    storage: *[processor.processor_count][maximum_cache_payload_bytes]u8,
+    generation: u64,
+) ![processor.processor_count][]const u8 {
+    const lengths = [_]u64{
+        try std.math.mul(u64, generation, 24),
+        try std.math.add(
+            u64,
+            480,
+            try std.math.mul(u64, generation, 160),
+        ),
+        try std.math.mul(u64, @min(generation, 2), 128),
+    };
+    var payloads: [processor.processor_count][]const u8 =
+        undefined;
+    for (lengths, 0..) |length, index| {
+        const payload_length = std.math.cast(
+            usize,
+            length,
+        ) orelse return error.InvalidCachePayload;
+        if (payload_length > maximum_cache_payload_bytes)
+            return error.InvalidCachePayload;
+        @memset(
+            storage[index][0..payload_length],
+            @intCast(0x20 + index * 0x10 + generation),
+        );
+        payloads[index] = storage[index][0..payload_length];
+    }
+    return payloads;
+}
+
+fn cachePlanV1(
+    generation: u64,
+    processor_bundle_sha256: [32]u8,
+    previous_cache_bundle_sha256: [32]u8,
+    source_bank_epoch: u64,
+    restore_bank_epoch: u64,
+) processor_cache.BundlePlanV1 {
+    return .{
+        .processor_bundle_sha256 = processor_bundle_sha256,
+        .previous_cache_bundle_sha256 = previous_cache_bundle_sha256,
+        .source_bank_epoch = source_bank_epoch,
+        .restore_bank_epoch = restore_bank_epoch,
+        .restore_owner_key_base = restore_bank_epoch + 100,
+        .restore_tree_key_base = restore_bank_epoch + 200,
+        .restore_authority_key_base = restore_bank_epoch + 300,
+        .tenant_key = 21_400,
+        .publication_next_sequence = generation + 1,
+    };
+}
+
+fn sha256(bytes: []const u8) [32]u8 {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(
+        bytes,
+        &digest,
+        .{},
+    );
+    return digest;
 }
 
 const ProcessorSnapshotV1 = struct {
@@ -642,6 +781,7 @@ fn makeProcessorSnapshotV1(
     checkpoints: [media_set.stream_count]continuation.CheckpointV1,
     generation: u64,
     previous: ?*const processor.DecodedBundleV1,
+    cache_payloads: [processor.processor_count][]const u8,
 ) !ProcessorSnapshotV1 {
     var plans: [processor.processor_count]processor.StatePlanV1 =
         undefined;
@@ -669,7 +809,9 @@ fn makeProcessorSnapshotV1(
             .processor_plan_sha256 = [_]u8{@intCast(0x31 + index)} ** 32,
             .previous_state_sha256 = previous_state_sha256,
             .challenge_sha256 = checkpoint.challenge_sha256,
-            .cache_content_sha256 = [_]u8{@intCast(0x50 + index * 8 + generation)} ** 32,
+            .cache_content_sha256 = sha256(
+                cache_payloads[index],
+            ),
             .output_chain_sha256 = checkpoint.last_chunk_sha256,
             .ownership_receipt_sha256 = checkpoint.retained_manifest_sha256,
             .decoder_state_sha256 = [_]u8{@intCast(0x41 + index)} ** 32,
@@ -889,6 +1031,8 @@ fn validateResumeEvidenceV1(
         "\"resumed_chunks\":3",
         "\"duplicate_publications\":0",
         "\"charge_before_materialize\":true",
+        "\"cache_charge_before_materialize\":true",
+        "\"cache_ownership_released\":true",
         "\"final_bank_host_bytes\":0",
         "\"final_live_allocations\":0",
         "\"verified\":true",

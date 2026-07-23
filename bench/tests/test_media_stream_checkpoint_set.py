@@ -6,6 +6,7 @@ import unittest
 from bench import continuation_checkpoint_file as archive
 from bench import media_contract as media
 from bench import media_decode_fixture as fixture
+from bench import media_processor_cache as processor_cache
 from bench import media_processor_state as processor
 from bench import media_runtime_lease as lease
 from bench import media_stream_checkpoint_set as checkpoint_set
@@ -340,6 +341,7 @@ def stream_inputs(value: dict[str, object]) -> list[dict[str, object]]:
 def bound_processor_state(
     value: dict[str, object],
     previous: dict[str, object] | None = None,
+    cache_payloads: list[bytes] | None = None,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     generation = value["archive"]["metadata"]["generation"]
     checkpoints = value["checkpoints"]
@@ -372,8 +374,10 @@ def bound_processor_state(
             "processor_plan_sha256": digest(0x80 + index),
             "previous_state_sha256": previous_roots[index],
             "challenge_sha256": checkpoint["challenge_sha256"],
-            "cache_content_sha256": digest(
-                0x90 + index * 4 + generation
+            "cache_content_sha256": (
+                hashlib.sha256(cache_payloads[index]).digest()
+                if cache_payloads is not None
+                else digest(0x90 + index * 4 + generation)
             ),
             "output_chain_sha256": checkpoint["last_chunk_sha256"],
             "ownership_receipt_sha256": checkpoint[
@@ -470,6 +474,103 @@ def stateful_generations(
     return first_wire, second_wire
 
 
+def cache_payloads(generation: int) -> list[bytes]:
+    return [
+        bytes((0x20 + generation,)) * (generation * 24),
+        bytes((0x30 + generation,)) * (480 + generation * 160),
+        bytes((0x40 + generation,)) * (
+            min(generation, 2) * 128
+        ),
+    ]
+
+
+def materialized_generations(
+    restored: bool = False,
+) -> tuple[bytes, bytes]:
+    plain_first, plain_second = (
+        restored_checkpoint_generations()
+        if restored
+        else checkpoint_generations()
+    )
+    first_media = checkpoint_set.decode_set(plain_first)
+    second_media = checkpoint_set.decode_set(plain_second)
+    first_generation = first_media["archive"]["metadata"]["generation"]
+    second_generation = second_media["archive"]["metadata"]["generation"]
+    first_payloads = cache_payloads(first_generation)
+    first_states, first_sync = bound_processor_state(
+        first_media,
+        cache_payloads=first_payloads,
+    )
+    first_processor_wire = processor.encode_bundle(
+        first_states,
+        first_sync,
+    )
+    first_processor = processor.decode_bundle(first_processor_wire)
+    first_wire = checkpoint_set.encode_materialized_set(
+        stream_inputs(first_media),
+        first_states,
+        first_sync,
+        {
+            "processor_bundle_sha256": first_processor[
+                "bundle_sha256"
+            ],
+            "previous_cache_bundle_sha256": (
+                processor_cache.ZERO_DIGEST
+                if first_generation == 1
+                else digest(0xA1)
+            ),
+            "source_bank_epoch": 40_000,
+            "restore_bank_epoch": 41_000,
+            "restore_owner_key_base": 41_100,
+            "restore_tree_key_base": 41_200,
+            "restore_authority_key_base": 41_300,
+            "tenant_key": 41_400,
+            "publication_next_sequence": first_generation + 1,
+        },
+        first_payloads,
+        (
+            checkpoint_set.ZERO_DIGEST
+            if first_generation == 1
+            else digest(0x91)
+        ),
+    )
+    first = checkpoint_set.decode_materialized_set(first_wire)
+    second_payloads = cache_payloads(second_generation)
+    second_states, second_sync = bound_processor_state(
+        second_media,
+        first,
+        second_payloads,
+    )
+    second_processor_wire = processor.encode_bundle(
+        second_states,
+        second_sync,
+    )
+    second_processor = processor.decode_bundle(second_processor_wire)
+    second_wire = checkpoint_set.encode_materialized_set(
+        stream_inputs(second_media),
+        second_states,
+        second_sync,
+        {
+            "processor_bundle_sha256": second_processor[
+                "bundle_sha256"
+            ],
+            "previous_cache_bundle_sha256": first[
+                "processor_cache_bundle"
+            ]["bundle_sha256"],
+            "source_bank_epoch": 41_000,
+            "restore_bank_epoch": 42_000,
+            "restore_owner_key_base": 42_100,
+            "restore_tree_key_base": 42_200,
+            "restore_authority_key_base": 42_300,
+            "tenant_key": 41_400,
+            "publication_next_sequence": second_generation + 1,
+        },
+        second_payloads,
+        first["archive"]["checkpoint_sha256"],
+    )
+    return first_wire, second_wire
+
+
 class MediaStreamCheckpointSetTests(unittest.TestCase):
     def test_bundle_round_trip_and_native_golden_root(self) -> None:
         encoded, _streams = bundle_fixture()
@@ -557,6 +658,40 @@ class MediaStreamCheckpointSetTests(unittest.TestCase):
         self.assertEqual(
             third["processor_bundle"]["sync"]["generation"],
             3,
+        )
+
+    def test_materialized_archive_advances_cache_payload_lineage(
+        self,
+    ) -> None:
+        first_wire, second_wire = materialized_generations()
+        first = checkpoint_set.decode_materialized_set(first_wire)
+        second = checkpoint_set.decode_materialized_set(second_wire)
+        checkpoint_set.validate_materialized_successor(first, second)
+        self.assertEqual(
+            len(second["archive"]["objects"]),
+            checkpoint_set.MATERIALIZED_ARCHIVE_OBJECT_COUNT,
+        )
+        self.assertEqual(
+            second["processor_cache_bundle"]["total_cache_bytes"],
+            1_104,
+        )
+        checkpoint_set.decode_compatible_set(second_wire)
+        with self.assertRaises(
+            checkpoint_set.MediaStreamCheckpointSetError
+        ):
+            checkpoint_set.decode_stateful_set(second_wire)
+
+    def test_materialized_post_restore_successor(self) -> None:
+        second_wire, third_wire = materialized_generations(restored=True)
+        second = checkpoint_set.decode_materialized_set(second_wire)
+        third = checkpoint_set.decode_materialized_set(third_wire)
+        checkpoint_set.validate_restored_materialized_successor(
+            second,
+            third,
+        )
+        self.assertEqual(
+            third["processor_cache_bundle"]["total_cache_bytes"],
+            1_288,
         )
 
     def test_foreign_processor_bundle_rejects_after_archive_reroot(

@@ -51,6 +51,8 @@ The bundle is also the fifth object in the stateful atomic media checkpoint
 archive. Its three processor records are cross-bound to the matching stream
 checkpoints through media, output-chain, and retained-ownership roots. The
 stateful successor validator advances stream and processor lineage together.
+The materialized archive adds a sixth cache-payload object whose exact bytes,
+lengths, and roots must match these records.
 
 ## Image processor progress
 
@@ -128,12 +130,12 @@ replay, skipped audio windows, non-integral time mapping, and byte mutation.
 ## Deliberate limits
 
 The roots bind declared fixture state; they are not proof that a particular
-codec, processor, model, allocator, or accelerator executed. Cache bytes are
-logical ownership quantities, not measured resident memory. The crash-atomic
-archive now preserves and advances the logical processor state across a fresh
-process, but does not yet reconstruct physical cache payload bytes or device
+codec, processor, model, allocator, or accelerator executed. The crash-atomic
+archive now preserves logical processor state and exact caller-owned cache
+payloads across a fresh process. Each cache is charged through
+`ResourceBank`/`LeaseTree` before visibility and released to zero. This still
+does not prove measured process memory, allocator behavior, or device
 residency.
 
-The next milestone gives each materialized cache payload exact
-`ResourceBank`/`LeaseTree` ownership, verifies its bytes before visibility, and
-then adds typed vision, speech, and video model adapters.
+The next milestone adds typed vision, speech, and video model adapters over
+these restartable contracts.

@@ -3,9 +3,9 @@
 Status: **integrated model-free image/audio/video runtime, bounded streaming,
 two-process continuation, crash-atomic checkpoint sets, and a post-restore
 generation-three successor; bounded image processor, audio feature-window,
-video temporal-cache, and synchronized-watermark state integrated as a fifth
-durable archive object; media-model execution and external formats remain
-gated**.
+video temporal-cache, synchronized-watermark state, and exact cache payloads
+integrated as fifth and sixth durable archive objects with fresh-Bank restore;
+media-model execution and external formats remain gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -25,9 +25,10 @@ production promotion still waits for an uninterrupted/resumed production-model
 comparison and retained platform evidence. The model-free stream itself now
 crosses a real process boundary: a fixed checkpoint restores retained outputs
 under a fresh Bank and publishes the next chunk for every modality. Three
-checkpoints, one retained-output bundle, and the optional processor/cache bundle
-now share an atomic archive root; fresh targets resume the complete previous or
-successor generation across all seven root-switch process-death boundaries.
+checkpoints, one retained-output bundle, the optional processor-state bundle,
+and the optional verified cache-payload bundle now share an atomic archive
+root; fresh targets resume the complete previous or successor generation across
+all seven root-switch process-death boundaries.
 Another fresh process now restores generation two, rebinds six retained-output
 leases under three fresh Banks, advances processor state, appends one
 image/audio/video chunk, and atomically publishes generation three.
@@ -38,7 +39,9 @@ video cursors to one exact integer master clock and commits the lower end tick
 as a synchronized watermark. The complete processor bundle is the fifth
 stateful checkpoint object, cross-bound to each stream's media, output, and
 ownership roots, and advances through the fresh-process generation-three
-publication.
+publication. A sixth canonical bundle carries the exact three cache payloads;
+the target charges generation-fenced `activation_bytes` before verification
+and visibility, then releases every cache owner to zero.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -196,9 +199,11 @@ cross-bound to all three stream checkpoints, and the fresh-process successor
 advances stream and processor lineage together. Four-object archives remain
 readable through the explicit compatibility reader.
 
-Physical cache integration remains: the archive does not yet reacquire
-`ResourceBank`/`LeaseTree` ownership for cache payload bytes or reconstruct
-device residency.
+Caller-owned cache integration is also complete. The sixth object binds exact
+image/audio/video payload bytes and predecessor lineage; a fresh
+`ResourceBank`/`LeaseTree` keeps all three allocations unmaterialized until byte
+verification succeeds. Measured RSS, allocator fragmentation, and device
+residency remain outside the claim.
 
 ## Image track
 
@@ -329,8 +334,8 @@ Early contributions can proceed without a large model:
 - decompression and allocation ceiling tests;
 - extend the completed deterministic crop/nearest, mix/exact-decimation, and
   keyframe-selection reference models with new bounded cases;
-- materialize the completed processor/cache state bundle under exact
-  post-restore cache ownership and byte verification;
+- add bounded typed vision, speech, and video model-operation adapters over the
+  completed post-restore cache ownership path;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 

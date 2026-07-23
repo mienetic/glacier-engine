@@ -229,12 +229,17 @@ runtime-visible.
 **Media stream checkpoint set** — One immutable archive generation containing
 fixed image, audio, and video stream checkpoints plus a canonical
 retained-output bundle and, for stateful archives, one fixed processor/cache
-bundle. A single selector root makes only the complete previous or successor
-multimodal generation visible across process death.
+bundle. Materialized archives add exact cache payloads as a sixth object. A
+single selector root makes only the complete previous or successor multimodal
+generation visible across process death.
 
 **Media processor state** — A fixed record for lineage-bound preprocessing
 progress and logical cache accounting. The current bounded forms cover image
 tile/patch progress, audio feature windows, and video temporal windows.
+
+**Media processor cache bundle** — A canonical image/audio/video payload set
+whose exact bytes, sizes, roots, processor-state binding, predecessor, and
+fresh-Bank restore plan travel as the sixth atomic media checkpoint object.
 
 **Synchronized media watermark** — The lower exact master-clock tick reached by
 the bound audio and video processor states, accepted only when integer mapping

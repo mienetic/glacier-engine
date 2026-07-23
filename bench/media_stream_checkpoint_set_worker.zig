@@ -5,6 +5,7 @@ const core = @import("core");
 const checkpoint_file = core.continuation_checkpoint_file;
 const media_set = core.media_stream_checkpoint_set;
 const processor = core.media_processor_state;
+const processor_cache = core.media_processor_cache;
 const continuation = core.media_stream_continuation;
 const resource_bank = core.resource_bank;
 const media = core.media_contract;
@@ -15,6 +16,8 @@ const transform = core.media_transform;
 const challenge_sha256 = [_]u8{0x72} ** 32;
 const maximum_set_bytes = 16 * 1024;
 const maximum_bundle_bytes = 4 * 1024;
+const maximum_processor_cache_bytes = 4 * 1024;
+const maximum_cache_payload_bytes = 1024;
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
@@ -71,9 +74,52 @@ pub fn main() !void {
         &active_storage,
     );
     defer lease.close();
-    const selected = try media_set.decodeCompatibleSetV1(
-        lease.stream(),
+    const selected_materialized =
+        try media_set.decodeMaterializedSetV1(
+            lease.stream(),
+        );
+    const selected =
+        selected_materialized.stateful_set.media_set;
+
+    var cache_slots =
+        [_]resource_bank.Slot{.{}} ** processor_cache.cache_count;
+    var cache_roots =
+        [_]resource_bank.LeaseTreeRootSlot{.{}} **
+        processor_cache.cache_count;
+    var cache_nodes =
+        [_]resource_bank.LeaseNodeSlot{.{}} **
+        (processor_cache.cache_count * 2);
+    var cache_bank =
+        try resource_bank.Bank.initWithLeaseTreeStorage(
+            &cache_slots,
+            &cache_roots,
+            &cache_nodes,
+            .{},
+            selected_materialized.processor_cache_bundle
+                .restore_bank_epoch,
+        );
+    var cache_restore: processor_cache.RestoreSession = .{};
+    try cache_restore.prepareV1(
+        &cache_bank,
+        selected_materialized.processor_cache_bundle,
+        selected_materialized.processor_cache_bundle
+            .bundle_sha256,
     );
+    const cache_reserved = try cache_bank.snapshotV3();
+    if (cache_reserved.reserved_unmaterialized_allocations !=
+        processor_cache.cache_count or
+        cache_reserved.live_allocations != 0)
+        return error.CacheChargeBeforeMaterializeMissing;
+    try cache_restore.commitMaterializedV1(
+        selected_materialized.processor_cache_bundle.payloads,
+    );
+    const cache_active = try cache_bank.snapshotV3();
+    if (cache_active.live_allocations !=
+        processor_cache.cache_count or
+        cache_active.used.activation_bytes !=
+            selected_materialized.processor_cache_bundle
+                .total_cache_bytes)
+        return error.InvalidMaterializedCacheAccounting;
 
     var fixture_storage: [fixture_api.maximum_fixture_bytes]u8 = undefined;
     var decode_plan_storage: [decode_plan.plan_bytes]u8 = undefined;
@@ -193,6 +239,12 @@ pub fn main() !void {
             final.active_lease_trees != 0)
             return error.TargetOwnershipLeak;
     }
+    try cache_restore.closeAndRelease();
+    const cache_final = try cache_bank.snapshotV3();
+    if (!cache_final.used.isZero() or
+        cache_final.live_allocations != 0 or
+        cache_final.active_lease_trees != 0)
+        return error.CacheOwnershipLeak;
 
     var stdout_buffer: [1536]u8 = undefined;
     var stdout_writer =
@@ -207,6 +259,9 @@ pub fn main() !void {
             "\"resumed_chunks\":{d},\"next_chunk_index\":{d}," ++
             "\"duplicate_publications\":0," ++
             "\"charge_before_materialize\":true," ++
+            "\"cache_charge_before_materialize\":true," ++
+            "\"materialized_cache_bytes\":{d}," ++
+            "\"cache_ownership_released\":true," ++
             "\"final_bank_host_bytes\":0," ++
             "\"final_live_allocations\":0," ++
             "\"final_active_lease_trees\":0," ++
@@ -221,6 +276,8 @@ pub fn main() !void {
             restored_outputs,
             resumed_chunks,
             next_chunk_index,
+            selected_materialized.processor_cache_bundle
+                .total_cache_bytes,
         },
     );
     try stdout.flush();
@@ -268,12 +325,47 @@ fn publishSuccessorV1(
         &active_storage,
     );
     defer lease.close();
-    const selected = try media_set.decodeStatefulSetV1(
+    const selected = try media_set.decodeMaterializedSetV1(
         lease.stream(),
     );
-    const selected_media = selected.media_set;
+    const selected_media =
+        selected.stateful_set.media_set;
     if (selected_media.archive.metadata.generation != 2)
         return error.InvalidSelectedGeneration;
+
+    var cache_slots =
+        [_]resource_bank.Slot{.{}} ** processor_cache.cache_count;
+    var cache_roots =
+        [_]resource_bank.LeaseTreeRootSlot{.{}} **
+        processor_cache.cache_count;
+    var cache_nodes =
+        [_]resource_bank.LeaseNodeSlot{.{}} **
+        (processor_cache.cache_count * 2);
+    var cache_bank =
+        try resource_bank.Bank.initWithLeaseTreeStorage(
+            &cache_slots,
+            &cache_roots,
+            &cache_nodes,
+            .{},
+            selected.processor_cache_bundle
+                .restore_bank_epoch,
+        );
+    var cache_restore: processor_cache.RestoreSession = .{};
+    try cache_restore.prepareV1(
+        &cache_bank,
+        selected.processor_cache_bundle,
+        selected.processor_cache_bundle.bundle_sha256,
+    );
+    const cache_reserved = try cache_bank.snapshotV3();
+    if (cache_reserved.reserved_unmaterialized_allocations !=
+        processor_cache.cache_count or
+        cache_reserved.live_allocations != 0)
+        return error.CacheChargeBeforeMaterializeMissing;
+    try cache_restore.commitMaterializedV1(
+        selected.processor_cache_bundle.payloads,
+    );
+    const restored_cache_bytes =
+        selected.processor_cache_bundle.total_cache_bytes;
 
     var fixture_storage: [fixture_api.maximum_fixture_bytes]u8 =
         undefined;
@@ -419,29 +511,58 @@ fn publishSuccessorV1(
             final.active_lease_trees != 0)
             return error.TargetOwnershipLeak;
     }
+    try cache_restore.closeAndRelease();
+    const cache_final = try cache_bank.snapshotV3();
+    if (!cache_final.used.isZero() or
+        cache_final.live_allocations != 0 or
+        cache_final.active_lease_trees != 0)
+        return error.CacheOwnershipLeak;
 
     var bundle_storage: [maximum_bundle_bytes]u8 =
         undefined;
     var processor_storage: [processor.processor_bundle_bytes]u8 = undefined;
+    var cache_payload_storage: [processor.processor_count][maximum_cache_payload_bytes]u8 =
+        undefined;
+    const cache_payloads = try makeCachePayloadsV1(
+        &cache_payload_storage,
+        3,
+    );
+    var processor_cache_storage: [maximum_processor_cache_bytes]u8 = undefined;
     var set_storage: [maximum_set_bytes]u8 = undefined;
     const processor_snapshot = try makeProcessorSnapshotV1(
         checkpoints,
         3,
-        &selected.processor_bundle,
+        &selected.stateful_set.processor_bundle,
+        cache_payloads,
     );
-    const successor = try media_set.encodeStatefulSetV1(
+    const processor_prepared = try processor.encodeBundleV1(
+        processor_snapshot.states,
+        processor_snapshot.sync,
+        &processor_storage,
+    );
+    const successor = try media_set.encodeMaterializedSetV1(
         inputs,
         processor_snapshot.states,
         processor_snapshot.sync,
+        cachePlanV1(
+            3,
+            processor_prepared.bundle_sha256,
+            selected.processor_cache_bundle.bundle_sha256,
+            selected.processor_cache_bundle
+                .restore_bank_epoch,
+            23_000,
+        ),
+        cache_payloads,
         selected_media.archive.checkpoint_sha256,
         &bundle_storage,
         &processor_storage,
+        &processor_cache_storage,
         &set_storage,
     );
-    const decoded_successor = try media_set.decodeStatefulSetV1(
+    const decoded_successor = try media_set.decodeMaterializedSetV1(
         successor.archive.bytes,
     );
-    try media_set.validateRestoredStatefulSuccessorV1(
+    try media_set.validateRestoredMaterializedSuccessorV1(
         &selected,
         &decoded_successor,
     );
@@ -465,6 +586,10 @@ fn publishSuccessorV1(
         successor.processor_bundle_sha256,
         .lower,
     );
+    const cache_hex = std.fmt.bytesToHex(
+        successor.processor_cache_bundle_sha256,
+        .lower,
+    );
     var stdout_buffer: [1536]u8 = undefined;
     var stdout_writer =
         std.fs.File.stdout().writer(&stdout_buffer);
@@ -480,18 +605,24 @@ fn publishSuccessorV1(
             "\"new_chunks\":3,\"retained_outputs\":9," ++
             "\"stale_source_authority\":false," ++
             "\"charge_before_materialize\":true," ++
+            "\"cache_charge_before_materialize\":true," ++
+            "\"restored_cache_bytes\":{d}," ++
             "\"processor_state_rebound\":true," ++
+            "\"processor_cache_rebound\":true," ++
             "\"atomic_publication\":true," ++
             "\"ownership_released\":true," ++
             "\"archive_sha256\":\"{s}\"," ++
             "\"processor_bundle_sha256\":\"{s}\"," ++
+            "\"processor_cache_bundle_sha256\":\"{s}\"," ++
             "\"verified\":true}}\n",
         .{
             source_pid,
             target_pid,
             rebound_outputs,
+            restored_cache_bytes,
             &archive_hex,
             &processor_hex,
+            &cache_hex,
         },
     );
     try stdout.flush();
@@ -519,6 +650,67 @@ fn successorCheckpointPlanV1(
     };
 }
 
+fn makeCachePayloadsV1(
+    storage: *[processor.processor_count][maximum_cache_payload_bytes]u8,
+    generation: u64,
+) ![processor.processor_count][]const u8 {
+    const lengths = [_]u64{
+        try std.math.mul(u64, generation, 24),
+        try std.math.add(
+            u64,
+            480,
+            try std.math.mul(u64, generation, 160),
+        ),
+        try std.math.mul(u64, @min(generation, 2), 128),
+    };
+    var payloads: [processor.processor_count][]const u8 =
+        undefined;
+    for (lengths, 0..) |length, index| {
+        const payload_length = std.math.cast(
+            usize,
+            length,
+        ) orelse return error.InvalidCachePayload;
+        if (payload_length > maximum_cache_payload_bytes)
+            return error.InvalidCachePayload;
+        @memset(
+            storage[index][0..payload_length],
+            @intCast(0x20 + index * 0x10 + generation),
+        );
+        payloads[index] = storage[index][0..payload_length];
+    }
+    return payloads;
+}
+
+fn cachePlanV1(
+    generation: u64,
+    processor_bundle_sha256: [32]u8,
+    previous_cache_bundle_sha256: [32]u8,
+    source_bank_epoch: u64,
+    restore_bank_epoch: u64,
+) processor_cache.BundlePlanV1 {
+    return .{
+        .processor_bundle_sha256 = processor_bundle_sha256,
+        .previous_cache_bundle_sha256 = previous_cache_bundle_sha256,
+        .source_bank_epoch = source_bank_epoch,
+        .restore_bank_epoch = restore_bank_epoch,
+        .restore_owner_key_base = restore_bank_epoch + 100,
+        .restore_tree_key_base = restore_bank_epoch + 200,
+        .restore_authority_key_base = restore_bank_epoch + 300,
+        .tenant_key = 21_400,
+        .publication_next_sequence = generation + 1,
+    };
+}
+
+fn sha256(bytes: []const u8) [32]u8 {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(
+        bytes,
+        &digest,
+        .{},
+    );
+    return digest;
+}
+
 const ProcessorSnapshotV1 = struct {
     states: [processor.processor_count]processor.ProcessorStateV1,
     sync: processor.SyncStateV1,
@@ -528,6 +720,7 @@ fn makeProcessorSnapshotV1(
     checkpoints: [media_set.stream_count]continuation.CheckpointV1,
     generation: u64,
     previous: *const processor.DecodedBundleV1,
+    cache_payloads: [processor.processor_count][]const u8,
 ) !ProcessorSnapshotV1 {
     var plans: [processor.processor_count]processor.StatePlanV1 =
         undefined;
@@ -549,7 +742,9 @@ fn makeProcessorSnapshotV1(
             .processor_plan_sha256 = [_]u8{@intCast(0x31 + index)} ** 32,
             .previous_state_sha256 = previous.states[index].state_sha256,
             .challenge_sha256 = checkpoint.challenge_sha256,
-            .cache_content_sha256 = [_]u8{@intCast(0x50 + index * 8 + generation)} ** 32,
+            .cache_content_sha256 = sha256(
+                cache_payloads[index],
+            ),
             .output_chain_sha256 = checkpoint.last_chunk_sha256,
             .ownership_receipt_sha256 = checkpoint.retained_manifest_sha256,
             .decoder_state_sha256 = [_]u8{@intCast(0x41 + index)} ** 32,

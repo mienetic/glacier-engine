@@ -123,13 +123,13 @@ tile/patch progress, audio window/hop/context and feature-cache accounting,
 video temporal-window/eviction state, logical cache bytes, and an exact
 audio/video watermark. Zig and Python share one canonical bundle root.
 
-**Next slice:** add the processor-state bundle as the fifth atomic checkpoint
-object. Bind its generation, request, challenge, three stream roots, ownership
-set and output set to the checkpoint archive, then reconstruct it during the
-post-restore successor without expanding ambient authority. Reuse
+**Next slice:** add a bounded typed vision-encoder adapter over the completed
+processor-state and materialized-cache checkpoint path. Preserve generation,
+request, media, ownership, cancellation, and output publication identity
+without expanding ambient authority. Reuse
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md),
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), and
-[Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md).
+[Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md).
 
 ### AI runtime family registry
 

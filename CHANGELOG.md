@@ -8,6 +8,10 @@ before the first stable release.
 
 ### Added
 
+- Materialized multimodal processor caches: a sixth atomic checkpoint object
+  carries exact image/audio/video cache bytes. A fresh process charges
+  generation-fenced `activation_bytes` before verification and visibility,
+  advances generation three, and releases every cache owner to zero.
 - Stateful atomic media checkpoints: the fixed processor/cache bundle is now a
   fifth lineage-bound archive object cross-checked against all three stream
   checkpoints. Four-object archives remain readable, while a fresh process

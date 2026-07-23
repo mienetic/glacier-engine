@@ -31,7 +31,7 @@ evidence. The plane and model-family sequence is specified in the
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, and an integrated model-free image/audio/video transaction vertical | Common family/operation adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
 | Model-family breadth | Text-generation prototype; other families gated | Shared artifact, tensor, state, provider, media, and evidence building blocks | Encoders/embeddings first, then perception, generative media, multimodal, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime, streaming, continuation, post-restore stateful generation three, and bounded processor/cache state integrated; model execution gated | Shared identity/timeline, exact per-buffer ownership, five-object atomic checkpoint sets, image tile/patch state, audio window/hop/context state, video temporal-window state, logical cache bytes, and an exact synchronized watermark | Materialize processor/cache payloads under exact ownership, then external formats, typed model adapters, and generated-media publication |
+| Multimodal execution | Model-free runtime, streaming, continuation, post-restore materialized generation three, and bounded processor/cache state integrated; model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object atomic checkpoint sets, image tile/patch state, audio window/hop/context state, video temporal-window state, exact cache payloads, and restore-before-visible ownership | Typed model adapters and external formats, then generated-media publication |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -122,6 +122,10 @@ evidence. The plane and model-family sequence is specified in the
   processor/cache bundle to all three stream checkpoints, retain four-object
   archive compatibility, and advance processor lineage through fresh-process
   generation three.
+- [x] Materialized six-object media checkpoint sets with canonical
+  image/audio/video cache payloads, mutation-complete verification, fresh-Bank
+  charge-before-visibility restore, successor cache lineage, and zero final
+  ownership.
 - [x] Full AI runtime architecture roadmap with shared planes, universal adapter
   contracts, model-family coverage map, promotion gates, and contributor lanes.
 - [x] Bounded contributor project catalog and issue template.
@@ -353,7 +357,8 @@ The implementation sequence is:
    fresh-process generation-three checkpoint, and another resume from that
    checkpoint are complete; fixed image tile/patch, audio feature-window, video
    temporal-cache, and synchronized-watermark state now advances as the fifth
-   object in that durable archive; physical cache payload ownership remains; and
+   object in that durable archive; exact cache payloads advance as the sixth
+   object and restore under fresh-Bank ownership; and
 6. generated image/audio/video output only after cancellation, restart, and
    provenance rules are proven.
 
@@ -421,7 +426,7 @@ ideas unless a different status is stated.
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
 | Object Fabric | Prototype (durable payload bytes and logical ownership reacquisition; in-memory object lifecycle) | Tenant-safe content-addressed model, plan, KV, continuation, media, and evidence objects |
 | Media Capsule | Idea (gated) | Typed image, audio, and video identity with explicit decode/preprocess meaning |
-| MediaTimeline and MediaTxn | Integrated model-free fixture, bounded stream, post-restore stateful successor, and five-object atomic checkpoint; model/external-format gated | Exact sample/frame position, per-buffer execution, retained-output rebinding, image/audio/video processor progress, logical temporal-cache accounting, and an integer synchronized watermark |
+| MediaTimeline and MediaTxn | Integrated model-free fixture, bounded stream, post-restore materialized successor, and six-object atomic checkpoint; model/external-format gated | Exact sample/frame position, per-buffer execution, retained-output/cache rebinding, image/audio/video processor progress, materialized temporal-cache accounting, and an integer synchronized watermark |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |

@@ -199,9 +199,10 @@ each modality, publishes generation three, and supports another fresh-process
 resume from that new root. A separate fixed 2,272-byte processor-state bundle
 now advances image tile/patch progress, audio feature windows, video temporal
 cache state, and an exact integer synchronized watermark through two verified
-generations. Binding that bundle into the durable checkpoint archive, external
-codecs, capture, playback, media models, and generated-media publication remain
-gated.
+generations. The bundle is now the fifth checkpoint object, while a sixth
+object carries exact cache payloads through fresh-Bank charge-before-visibility
+restore. External codecs, capture, playback, media models, and generated-media
+publication remain gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -399,11 +400,11 @@ while retaining different state and publication semantics.
   transcript and restart integration remain;
 - add video temporal selection, synchronized timeline state, and cache
   ownership; fixed window/eviction state plus exact audio/video watermark is
-  complete, while physical cache ownership remains;
+  complete together with materialized cache ownership, while typed video-model
+  execution remains;
 - extend checkpoints with family-specific processor/cache state; the fixed
-  independently verified bundle now advances as the fifth atomic archive
-  object through a fresh-process successor, while physical cache payload
-  ownership is next.
+  independently verified state and payload bundles now advance as the fifth
+  and sixth atomic archive objects through a fresh-process successor.
 
 Exit gate: image, audio, and video input paths preserve exact source mappings,
 stay within admitted memory/time bounds, and resume or cancel at declared units.

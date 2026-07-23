@@ -15,7 +15,7 @@ not.
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
-| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers exactly, advance bounded chunk chains, checkpoint retained outputs, atomically select complete generations, and resume after process death |
+| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -144,8 +144,8 @@ timeline, and starts `MediaStreamRuntime` at the next global chunk index. The
 native proof performs this transition under distinct PIDs and Bank epochs for
 image, audio, and video.
 
-`MediaStreamCheckpointSet` joins the three fixed checkpoints with one canonical
-retained-output bundle and an optional fixed processor/cache bundle inside the
+`MediaStreamCheckpointSet` joins the three fixed checkpoints with canonical
+retained-output, processor-state, and processor-cache bundles inside the
 immutable checkpoint archive. One selector rename publishes the complete
 multimodal generation. The source produces two
 lineage-bound generations; native workers die after all seven archive/selector
@@ -164,20 +164,24 @@ set, sync policy, and predecessor. The complete state bundle is 2,272 bytes and
 has an independent verifier. Stateful media checkpoints store it as the fifth
 archive object and cross-bind every processor record to the matching stream
 checkpoint before advancing both lineages through generation three.
+`MediaProcessorCache` adds the sixth object, verifies exact payload bytes
+against those records, and uses fresh-Bank `activation_bytes` allocations to
+keep all caches unmaterialized until verification succeeds.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
 decimation, and keyframe selection. It has no external codec, encoder,
 network, camera, microphone, model, or accelerator authority. The atomic-set
 worker has explicit filesystem authority but does not emulate device power
-loss. External formats, real processor/cache payload materialization, durable
-cache ownership, and model adapters remain future layers. See
+loss. External formats, measured accelerator residency, and model adapters
+remain future layers. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), then
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), followed by
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md) and
-[Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md).
+[Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md), then
+[Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md).
 
 ### ResourceBank
 
@@ -525,8 +529,12 @@ still require real machines for each promoted platform.
   whole-checkpoint archives, one atomic root selector, and seven-phase
   process-death recovery.
 - [Atomic media stream checkpoint sets](MEDIA_STREAM_CHECKPOINT_SET.md):
-  one-root image/audio/video generations, retained-output bundling, and
-  previous/successor fresh-process resume under every selector boundary.
+  one-root image/audio/video generations, retained-output/processor/cache
+  bundling, and previous/successor fresh-process resume under every selector
+  boundary.
+- [Materialized multimodal processor caches](MEDIA_PROCESSOR_CACHE.md):
+  canonical cache payloads, processor-state binding, fresh-Bank
+  charge-before-visibility restore, and exact release.
 - [Shared media contract](MEDIA_CONTRACT.md): fixed image/audio/video identity,
   exact rational positions, explicit event roots, and logical chunk
   publication.
