@@ -314,8 +314,8 @@ expand the base adapter's capabilities.
 | Family | Representative operations | Current state | First retained slice | Integration gate |
 | --- | --- | --- | --- | --- |
 | Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication integrated | Small legal artifact through uninterrupted and resumed output | Declared numerical equivalence, exact KV ownership, no duplicate token |
-| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Idea; shared tensor/kernel pieces exist | Tiny encoder fixture with exact tensor/output schema | Deterministic batch mapping, stable normalization, typed vector/score publication |
-| Vision understanding | encode image, OCR, detect, segment, VQA inputs | Model-free image runtime vertical integrated; model gated | Tiny image processor plus patch/source mapping | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
+| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result prototype; vision embedding fixture integrated | Add a non-vision stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
+| Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Model-free audio runtime vertical integrated; model gated | PCM window to feature/source-range evidence | No sample loss/duplication, exact streaming restart, transcript transaction |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
 | Video understanding | frame/segment encode, search, summarize | Model-free video runtime vertical integrated; model gated | Keyframe selection plus temporal window plan | Exact frame/time mapping, temporal-cache ownership, synchronized stream policy |
@@ -341,8 +341,11 @@ it does not require changing the meaning of existing families.
 ### R0 — Runtime vocabulary and registry
 
 - define `ModelFamilyId`, `OperationId`, typed input/output kinds, numerical
-  policies, capability vocabulary, and explicit unsupported results;
+  policies, capability vocabulary, and explicit unsupported results; complete
+  as a fixed prototype with a bounded support-record query;
 - specify `ArtifactManifest`, `ModelExecutionPlan`, and family adapter lifecycle;
+  canonical artifact/plan/result wires and the first
+  prepare/validate/publish lifecycle are complete;
 - generate a compatibility matrix from retained tests;
 - add a read-only runtime inspector and fixture authoring guide.
 
@@ -363,9 +366,14 @@ evidence.
 
 ### R2 — Stateless tensor families
 
-- add encoder/embedding/reranker/classifier operations;
-- define typed tensor/vector/score result envelopes;
-- add deterministic batch-item mapping and tie/normalization policy;
+- add encoder/embedding/reranker/classifier operations; the first vision encode
+  operation is retained, while generic encoder, reranker, and classifier
+  fixtures remain;
+- define typed tensor/vector/score result envelopes; the fixed integer
+  embedding envelope is complete;
+- add deterministic batch-item mapping and tie/normalization policy; exact
+  batch mapping is complete for the vision fixture, while normalization and tie
+  policies remain;
 - integrate ResourceBank, LaneWeave, cancellation, and provider routing.
 
 Exit gate: text generation and one stateless encoder share the runtime planes
@@ -393,8 +401,9 @@ while retaining different state and publication semantics.
   fresh-process generation-two to generation-three transition, six rebound
   outputs, three appended chunks, and a second fresh-process resume;
 - integrate image processors and vision encoder fixtures; bounded tile/patch
-  progress and logical cache accounting are complete, while encoder execution
-  remains;
+  progress, materialized cache ownership, exact-integer encoder execution,
+  candidate validation, and typed embedding publication are complete for the
+  retained fixture;
 - add audio feature windows, transcript transactions, and streaming restart;
   fixed window/hop/context and feature-cache state are complete, while
   transcript and restart integration remain;

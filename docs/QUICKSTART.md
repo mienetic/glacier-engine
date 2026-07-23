@@ -112,6 +112,11 @@ zig build media-stream-checkpoint-set-demo -Doptimize=ReleaseSafe -Dmetal=false
 # state through two lineage-bound generations
 zig build media-processor-state-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Verify canonical model-family wires and the cache-bound vision adapter
+zig test src/core/model_contract.zig -OReleaseSafe
+zig test src/core/vision_encoder_adapter.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_model_contract
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

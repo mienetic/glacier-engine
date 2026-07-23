@@ -29,9 +29,9 @@ evidence. The plane and model-family sequence is specified in the
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
-| AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, and an integrated model-free image/audio/video transaction vertical | Common family/operation adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
-| Model-family breadth | Text-generation prototype; other families gated | Shared artifact, tensor, state, provider, media, and evidence building blocks | Encoders/embeddings first, then perception, generative media, multimodal, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime, streaming, continuation, post-restore materialized generation three, and bounded processor/cache state integrated; model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object atomic checkpoint sets, image tile/patch state, audio window/hop/context state, video temporal-window state, exact cache payloads, and restore-before-visible ownership | Typed model adapters and external formats, then generated-media publication |
+| AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, and an integrated model-free image/audio/video transaction vertical | More family adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
+| Model-family breadth | Text-generation prototype plus a typed vision-encoder fixture; other families gated | Shared artifact/plan/result wires, explicit support records, exact-integer vision embedding publication, tensor, state, provider, media, and evidence building blocks | Audio/video encoders, generic embeddings/reranking/classification, then generative media, multimodal, agents/retrieval, and specialized families |
+| Multimodal execution | Model-free runtime, streaming, continuation, post-restore materialized generation three, processor/cache state, and one vision fixture integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object atomic checkpoint sets, image tile/patch state, audio window/hop/context state, video temporal-window state, exact cache payloads, restore-before-visible ownership, and cache-bound typed embedding publication | Typed audio/video adapters and external formats, then generated-media publication |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -326,14 +326,15 @@ for unsupported inputs, and reproducible generation instructions.
 
 ### Multimodal execution
 
-Status: **integrated model-free runtime vertical; model execution gated**.
+Status: **integrated model-free runtime vertical plus one typed vision
+fixture; production-model execution gated**.
 Shared identity, rational timeline/events, sealed plans, bounded canonical
 RGB/PCM/intra-frame decode, three deterministic transforms, exact
 `ResourceBank` admission, candidate revalidation, atomic logical publication,
 abort/retry, fixed receipts, and exact release now work as one lifecycle.
-External format decoding or model execution still starts only after its stated
-continuation and integration gates. Tiny legal fixtures do not imply integrated
-model support.
+External format decoding or production-model execution still starts only after
+its stated continuation and integration gates. Tiny legal fixtures do not
+imply production-model support.
 
 The implementation sequence is:
 

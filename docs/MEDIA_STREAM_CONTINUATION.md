@@ -125,4 +125,5 @@ loss, or carry external codecs, capture/playback, media-model state, or
 generated-media publication. Fixed family-specific audio windows, video
 temporal caches, image processor state, and a synchronized watermark now exist
 as an atomic stateful bundle, and exact cache payloads now restore under
-fresh-Bank ownership. Typed model adapters remain the next milestone.
+fresh-Bank ownership. A typed vision fixture now consumes that image cache;
+audio/video model adapters and production-model integration remain.

@@ -167,14 +167,19 @@ checkpoint before advancing both lineages through generation three.
 `MediaProcessorCache` adds the sixth object, verifies exact payload bytes
 against those records, and uses fresh-Bank `activation_bytes` allocations to
 keep all caches unmaterialized until verification succeeds.
+`ModelContract` then gives model families fixed artifact, operation-plan, and
+result records without treating vocabulary as execution support.
+`VisionEncoderAdapter` is the first bounded implementation: it requires a live
+owned image cache, executes an exact-integer fixture into provisional storage,
+revalidates the candidate, and publishes one typed embedding or scrubs it.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
 decimation, and keyframe selection. It has no external codec, encoder,
 network, camera, microphone, model, or accelerator authority. The atomic-set
 worker has explicit filesystem authority but does not emulate device power
-loss. External formats, measured accelerator residency, and model adapters
-remain future layers. See
+loss. External formats, measured accelerator residency, and production-model
+integrations remain future layers. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), then
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
@@ -535,6 +540,9 @@ still require real machines for each promoted platform.
 - [Materialized multimodal processor caches](MEDIA_PROCESSOR_CACHE.md):
   canonical cache payloads, processor-state binding, fresh-Bank
   charge-before-visibility restore, and exact release.
+- [Typed model-family contracts and vision adapter](MODEL_FAMILY_ADAPTER.md):
+  canonical artifact/plan/result records, explicit support negotiation, and a
+  cache-bound transactional embedding fixture.
 - [Shared media contract](MEDIA_CONTRACT.md): fixed image/audio/video identity,
   exact rational positions, explicit event roots, and logical chunk
   publication.

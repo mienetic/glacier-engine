@@ -241,6 +241,19 @@ tile/patch progress, audio feature windows, and video temporal windows.
 whose exact bytes, sizes, roots, processor-state binding, predecessor, and
 fresh-Bank restore plan travel as the sixth atomic media checkpoint object.
 
+**Model family** — A typed semantic class such as autoregressive generation,
+vision understanding, audio understanding, diffusion, retrieval, or agent
+policy. A family ID is vocabulary only; a matching support record and adapter
+are still required before execution.
+
+**Model execution plan** — A fixed contract binding one operation to exact
+input/output shapes, numerical policy, resource claim, required capabilities,
+artifact identity, and media/processor/cache/ownership roots.
+
+**Typed result envelope** — A fixed publication record binding output bytes to
+their model plan, adapter, resource receipt, source mapping, predecessor, and
+publication transition.
+
 **Synchronized media watermark** — The lower exact master-clock tick reached by
 the bound audio and video processor states, accepted only when integer mapping
 is exact and declared stream skew remains within policy.

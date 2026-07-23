@@ -123,10 +123,15 @@ tile/patch progress, audio window/hop/context and feature-cache accounting,
 video temporal-window/eviction state, logical cache bytes, and an exact
 audio/video watermark. Zig and Python share one canonical bundle root.
 
-**Next slice:** add a bounded typed vision-encoder adapter over the completed
-processor-state and materialized-cache checkpoint path. Preserve generation,
-request, media, ownership, cancellation, and output publication identity
-without expanding ambient authority. Reuse
+**Completed slice:** a bounded typed vision-encoder adapter now runs over the
+processor-state and materialized-cache path. It preserves generation, request,
+media, ownership, cancellation, source mapping, and output publication
+identity without ambient authority. See
+[Typed Model-Family Contracts and Vision Adapter](MODEL_FAMILY_ADAPTER.md).
+
+**Next slice:** add a typed audio-window encoder whose streaming input and
+result semantics differ from vision without changing the common artifact,
+plan, or result wire. Reuse
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md),
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), and
 [Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md).
@@ -137,8 +142,12 @@ Define one small part of the common vocabulary from the
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md): a family ID, operation ID,
 typed input/output kind, numerical policy, or explicit unsupported result.
 
-**First slice:** a fixed bounded registry value plus malformed/unknown fixtures
-and a read-only renderer. It must not claim that registering a family makes it
+**Completed foundation:** fixed family, operation, input, output, and numerical
+IDs plus bounded support records and malformed/unknown fixtures distinguish
+vocabulary from executable support.
+
+**Next slice:** generate a read-only compatibility renderer from retained
+support records. It must not claim that registering a family makes it
 executable.
 
 ### Stateless encoder result envelope
@@ -147,8 +156,12 @@ Design a typed result for one embedding, reranking, or classification fixture.
 Keep logical batch-item identity, tensor shape, normalization/tie policy,
 artifact root, execution-plan root, and publication sequence explicit.
 
-**First slice:** pure encode/decode/verify plus an independent Python model; no
-weights, model download, backend, or quality claim.
+**Completed foundation:** fixed artifact, execution-plan, and result envelopes
+have strict Zig codecs, complete mutation tests, and an independent Python
+oracle with shared golden roots.
+
+**Next slice:** add score and ranked-item envelopes with explicit
+normalization/tie policy; no model download or quality claim.
 
 ### Model-family adapter lifecycle
 

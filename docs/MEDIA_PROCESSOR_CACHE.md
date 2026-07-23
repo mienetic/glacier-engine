@@ -97,9 +97,10 @@ archive-shape downgrade.
 The retained payloads are deterministic caller-owned fixtures. Exact
 `activation_bytes` accounting is not measured RSS, accelerator residency,
 allocator fragmentation, cache quality, or processor throughput. The runtime
-does not yet execute a vision encoder, speech model, video model, external
-codec, camera, microphone, or generated-media pipeline.
+now executes only a tiny exact-integer vision fixture; it does not execute a
+production vision encoder, speech model, video model, external codec, camera,
+microphone, or generated-media pipeline.
 
-The next milestone uses these durable input, state, and cache contracts behind
-typed model-operation adapters, beginning with a bounded vision-encoder
-fixture and preserving the same cancellation and restart rules.
+The next milestone reuses these durable input, state, cache, and typed
+publication contracts for an audio-window encoder, then a temporal video
+encoder, while preserving the same cancellation and restart rules.

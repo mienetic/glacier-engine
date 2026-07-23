@@ -499,6 +499,33 @@ pub const RestoreSession = struct {
         self.phase = .active;
     }
 
+    /// Proves that one exact cache payload is visible under the live,
+    /// generation-fenced ownership established by this restore session.
+    pub fn validateActivePayloadV1(
+        self: *const RestoreSession,
+        index: usize,
+        payload: []const u8,
+    ) Error!void {
+        if (self.phase != .active or index >= cache_count or
+            self.active_count != cache_count)
+            return Error.InvalidRestoreState;
+        const active = self.active_caches[index];
+        if (!active.active or
+            !std.mem.eql(u8, payload, self.bundle.payloads[index]) or
+            !std.mem.eql(
+                u8,
+                &sha256(payload),
+                &self.bundle.cache_sha256[index],
+            ))
+            return Error.CacheExpectationMismatch;
+        self.bank.validateCommitted(active.receipt) catch
+            return Error.RestorePoisoned;
+        self.bank.validateLeaseTree(active.tree) catch
+            return Error.RestorePoisoned;
+        self.bank.validateLeaseNode(active.tree, active.scope) catch
+            return Error.RestorePoisoned;
+    }
+
     pub fn closeAndRelease(
         self: *RestoreSession,
     ) Error!void {

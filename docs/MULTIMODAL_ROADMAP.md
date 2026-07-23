@@ -42,6 +42,10 @@ ownership roots, and advances through the fresh-process generation-three
 publication. A sixth canonical bundle carries the exact three cache payloads;
 the target charges generation-fenced `activation_bytes` before verification
 and visibility, then releases every cache owner to zero.
+A typed vision adapter now consumes the live image cache through a sealed
+artifact/plan/result contract, computes a deterministic integer embedding into
+provisional storage, and publishes only after source, ownership, and candidate
+revalidation. Production vision models and quality evidence remain gated.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:

@@ -58,6 +58,9 @@ pub const media_processor_state =
     @import("media_processor_state.zig");
 pub const media_processor_cache =
     @import("media_processor_cache.zig");
+pub const model_contract = @import("model_contract.zig");
+pub const vision_encoder_adapter =
+    @import("vision_encoder_adapter.zig");
 pub const continuation_ownership_manifest =
     @import("continuation_ownership_manifest.zig");
 pub const continuation_object_sweep =
@@ -111,6 +114,8 @@ pub const MediaStreamCheckpointSet =
     media_stream_checkpoint_set;
 pub const MediaProcessorState = media_processor_state;
 pub const MediaProcessorCache = media_processor_cache;
+pub const ModelContract = model_contract;
+pub const VisionEncoderAdapter = vision_encoder_adapter;
 pub const ContinuationOwnershipManifest = continuation_ownership_manifest;
 pub const ContinuationObjectSweep = continuation_object_sweep;
 pub const ContinuationObjectSweepRecord = continuation_object_sweep_record;

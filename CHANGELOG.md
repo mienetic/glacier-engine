@@ -8,6 +8,11 @@ before the first stable release.
 
 ### Added
 
+- Typed model-family contracts and the first vision-encoder adapter: canonical
+  artifact, execution-plan, and result wires distinguish vocabulary from
+  executable support, while a zero-capability exact-integer fixture consumes a
+  live restored image cache, rejects candidate drift, publishes a typed
+  embedding, and returns model/cache ownership to zero.
 - Materialized multimodal processor caches: a sixth atomic checkpoint object
   carries exact image/audio/video cache bytes. A fresh process charges
   generation-fenced `activation_bytes` before verification and visibility,
