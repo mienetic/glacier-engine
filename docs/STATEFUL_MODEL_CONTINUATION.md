@@ -109,11 +109,14 @@ Recurrent audio transcript state and temporal video-understanding state now
 have their own scoped bindings, cancellation-safe publication, timeline/link
 lineage, and distinct-process fixtures. Generated-image publication now meets
 the bounded decode, provenance, cancellation, and visibility gate for one raw
-image. Generated audio/video and production image decoding remain separate
-tracks.
+image. A separate bounded generated-audio transaction now publishes ordered
+raw PCM and gates its successor on exact application acknowledgement;
+production audio/video models, physical playback, production image decoding,
+and shared durable composition remain gated.
 
 See [Stateful Model Adapter and Latent-Step Fixture](STATEFUL_MODEL_ADAPTER.md),
 [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md),
+[Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
 [Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md),
 [Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md),
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md), and

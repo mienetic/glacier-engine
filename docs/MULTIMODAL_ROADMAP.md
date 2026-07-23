@@ -3,11 +3,12 @@
 Status: **integrated model-free image/audio/video runtime plus typed
 vision/audio/temporal-video fixtures, stateful transcript and explicit-VFR
 video-model restart, bounded streaming, generated-image publication after
-terminal-latent restart, two-process continuation, crash-atomic checkpoint
-sets, and a post-restore generation-three successor; bounded processor/cache
-state and payloads integrated as fifth and sixth durable archive objects with
-fresh-Bank restore; production-model execution and external formats remain
-gated**.
+terminal-latent restart, generated-PCM publication with exact application
+acknowledgement across process restart, two-process continuation, crash-atomic
+checkpoint sets, and a post-restore generation-three successor; bounded
+processor/cache state and payloads integrated as fifth and sixth durable
+archive objects with fresh-Bank restore; production-model execution, physical
+playback, and external formats remain gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -85,6 +86,15 @@ decodes into private buffers, preserves visibility on abort or candidate drift,
 and commits pixels, provenance, typed result, resource receipt, and media state
 together. The native fixture performs the terminal step and publication in a
 fresh process, then releases every target resource to zero.
+A bounded generated-audio path now publishes raw interleaved PCM behind a
+single-outstanding-buffer gate. Fixed state, plan, provenance, result,
+observation, and acknowledgement wires bind exact frames, renderer, source
+output, media identity, resources, sink identity, and both predecessor chains.
+A fresh process verifies the pending buffer before admission, rejects partial
+acknowledgement without state change, acknowledges it, aborts one private
+successor, publishes the next exact frames, and returns ownership to zero.
+This is application acknowledgement; physical playback remains outside the
+authority-free core.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -323,12 +333,19 @@ First slices:
    and result wires mapping two chained transcript words to exact sample ranges
    and first-occurrence speaker identities across a real process restart;
    language/punctuation and overlapping-speaker ambiguity remain;
-9. generated-audio chunk ordering and playback acknowledgement;
-10. microphone/network adapters outside the authority-free core.
+9. ~~generated-audio chunk ordering and playback acknowledgement;~~ complete
+   for two bounded raw mono PCM s16le chunks: one outstanding buffer gates its
+   successor, exact application observations survive a process restart,
+   partial/duplicate acknowledgements fail closed, and cancellation preserves
+   visibility;
+10. production renderer/codec adapters, shared generated-media manifests, and
+    authorized physical playback evidence; and
+11. microphone/network adapters outside the authority-free core.
 
 Promotion gate: no sample is silently dropped, duplicated, reordered, mixed, or
 resampled; streaming restart resumes at an exact sample/timeline boundary; input
-capture and output playback require separate capabilities.
+capture and physical output playback require separate capabilities. A logical
+application acknowledgement is not evidence that a device emitted sound.
 
 ## Video track
 

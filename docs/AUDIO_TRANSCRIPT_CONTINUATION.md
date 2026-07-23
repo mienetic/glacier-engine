@@ -115,11 +115,14 @@ explicit variable-frame-rate discontinuity evidence, timeline predecessor, and
 exact audio/video link continuation through
 [Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md).
 Language/punctuation, overlapping-speaker ambiguity, production confidence,
-crash-atomic composition, and generated-audio playback acknowledgement remain
-separate tracks.
+and crash-atomic composition remain separate tracks. A bounded generated-audio
+transaction now implements application acknowledgement and successor
+backpressure independently; production renderers, physical playback, and
+composition with this transcript checkpoint remain gated.
 
 See [Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md),
 [Exact Speech Annotation Publication](SPEECH_ANNOTATION_PUBLICATION.md),
+[Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
 [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md),
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

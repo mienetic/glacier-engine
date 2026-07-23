@@ -210,7 +210,10 @@ samples onto that tail. External codecs, capture, playback, and production
 media models remain gated. The first generative output slice now decodes one
 exact post-restart terminal latent and atomically publishes a bounded raw image,
 provenance, typed result, resource receipt, and media transition. Generated
-audio/video, external encoding, and durable output composition remain gated.
+audio now adds ordered bounded PCM publication, one-buffer backpressure,
+application acknowledgement, cancellation, and a distinct-process restart
+proof. Generated video, external encoding, production renderers, physical
+playback, and durable output composition remain gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -249,13 +252,16 @@ Responsibilities:
 - streaming acknowledgement and partial-result policy.
 
 Current state: **integrated for tokens, model-free media, bounded typed
-perception fixtures, and one generated-image fixture**. Media transactions
+perception fixtures, generated-image publication, and generated-audio
+publication with application acknowledgement**. Media transactions
 compose exact resource admission, transformed output, timeline advancement,
 transcript/video-segment visibility, deterministic merge decisions, cross-modal
-result links, and terminal-latent image/provenance visibility behind explicit
-commit boundaries; abort scrubs provisional bytes and leaves publication state
-unchanged. Generic tensor/action envelopes, streaming acknowledgement, durable
-media output, and generated audio/video transactions remain planned.
+result links, terminal-latent image/provenance visibility, and ordered PCM
+visibility behind explicit commit boundaries; abort scrubs provisional bytes
+and leaves publication state unchanged. The audio path accepts only a complete,
+sink-bound application observation before its successor. Generic tensor/action
+envelopes, partial-stream policy, durable media output, physical playback, and
+generated-video transactions remain planned.
 
 Promotion gate: every output family has a named atomic unit, rollback behavior,
 replay rule, and continuation position; cancellation cannot expose an
@@ -328,11 +334,11 @@ expand the base adapter's capabilities.
 | Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision, audio, and temporal-video embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, fresh-process stateful transcript continuation, and restartable exact word-timing/speaker publication integrated; production model gated | Add language/punctuation, overlapping-speaker policy, and crash-atomic checkpoint composition | No sample loss/duplication, exact streaming restart, annotation lineage, calibrated production quality |
-| Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
+| Speech and audio generation | TTS, codec/audio token generation | Bounded exact-integer PCM publication, cancellation-safe retry, one-buffer backpressure, application acknowledgement, and distinct-process restart integrated; production model/device paths gated | Add a production renderer/codec adapter and shared chunk manifest | Quality evidence, durable composition, explicit device authority, physical playback evidence |
 | Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder, explicit VFR windows, fresh-process stateful segment continuation, canonical merge timeline, and exact audio/transcript-video result-link continuation integrated; production model gated | Add external container timestamp normalization and production backend conformance | Stateful continuation, explicit discontinuity evidence, production quality evidence |
 | Image generation | diffusion/flow step, decode latent, publish image | Exact retained-state continuation plus bounded terminal-latent decode, cancellation-safe atomic image/provenance/result publication, and a distinct-process proof integrated; production model gated | Add a production decoder adapter and multi-image/chunk manifests | Multi-step continuation, external format encoding, crash-atomic composition, and quality/performance evidence |
 | Video generation | temporal latent steps, frame/segment publication | Idea | Two-frame synthetic generation fixture | Temporal ordering, restart/cancel semantics, manifest/chunk publication |
-| Audio/music generation | acoustic or token steps, waveform decode | Idea | Short synthetic exact-integer output fixture | Timeline continuity, chunk lineage, rights/provenance policy |
+| Audio/music generation | acoustic or token steps, waveform decode | Shared bounded exact-integer waveform-output transaction integrated; music models gated | Add a legal production artifact or a richer multi-chunk manifest fixture | Timeline continuity, chunk lineage, rights/provenance policy, calibrated quality |
 | Multimodal fusion | cross-attention, joint embedding, interleaved generation | Idea; shared identities exist | Image+text or audio+text synthetic fusion fixture | Each modality retains source/state identity through one output transaction |
 | Tool-use and agent policy | choose action, arguments, observation, continue | Idea; scheduler/provider primitives exist | Fake tool with bounded schema and no ambient I/O | Separate action authorization, idempotency, result identity, cancellation |
 | Retrieval and recommendation | embed, search, rerank, recommend | Idea | In-memory fixed corpus and exact top-k tie policy | Index/version identity, tenant filtering, deterministic tie/evidence policy |
@@ -465,17 +471,26 @@ stay within admitted memory/time bounds, and resume or cancel at declared units.
   decoder, tenant, media, resources, and publication predecessors; abort/retry,
   candidate drift, atomic visibility, independent mutation verification, and a
   real distinct-process proof are complete;
+- publish bounded generated audio under exact frame ordering and backpressure;
+  fixed state/plan/provenance/result plus observation/acknowledgement wires now
+  bind source output, PCM, media, renderer, resource receipt, sink identity, and
+  both predecessor chains; cancellation, partial/duplicate rejection,
+  independent mutation verification, and a real distinct-process proof are
+  complete;
 - add production image decoder adapters, multi-image manifests, external format
   encoding, and crash-atomic encoded-output composition;
-- add generated audio/video chunk manifests, timeline continuity, provenance,
-  and playback/display acknowledgement;
+- add production audio renderers/codecs, shared generated-media chunk manifests,
+  crash-atomic composition, authorized physical playback evidence, and
+  generated-video display acknowledgement;
 - add cross-modal cache/state identity and fusion fixtures;
 - extend checkpoint and provider evidence to generative media units.
 
-Current gate progress: the deterministic generated-image fixture survives
-cancellation and process restart without duplicate visible output. The R4 exit
-gate still requires an independently restartable generated-audio or
-generated-video chunk path plus the shared manifest/checkpoint composition.
+Current gate progress: deterministic generated-image and generated-audio
+fixtures survive cancellation and process restart without duplicate visible
+output; audio additionally gates its successor on exact application
+acknowledgement. The R4 exit gate still requires shared generated-media
+manifest/checkpoint composition and a restartable generated-video publication
+path.
 
 ### R5 — Agents, retrieval, and specialized families
 

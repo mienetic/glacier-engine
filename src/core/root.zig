@@ -91,6 +91,8 @@ pub const latent_step_adapter =
     @import("latent_step_adapter.zig");
 pub const generated_image_publication =
     @import("generated_image_publication.zig");
+pub const generated_audio_playback =
+    @import("generated_audio_playback.zig");
 pub const speech_annotation_publication =
     @import("speech_annotation_publication.zig");
 pub const continuation_ownership_manifest =
@@ -170,6 +172,8 @@ pub const AudioVideoResultLink = audio_video_result_link;
 pub const LatentStepAdapter = latent_step_adapter;
 pub const GeneratedImagePublication =
     generated_image_publication;
+pub const GeneratedAudioPlayback =
+    generated_audio_playback;
 pub const SpeechAnnotationPublication =
     speech_annotation_publication;
 pub const ContinuationOwnershipManifest = continuation_ownership_manifest;

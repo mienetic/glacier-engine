@@ -123,12 +123,12 @@ device authority. It does not infer useful events, process B-frames, normalize
 container edit lists, measure video quality, prove physical memory, or run
 production weights.
 
-With stateful audio/video continuation, exact word/speaker annotation, and
-bounded generated-image publication integrated, the next multimodal runtime
-slices are external media format adapters, richer language/punctuation and
-overlapping-speaker policy, and generated-audio chunks. Generated audio/video
-publication and playback/display acknowledgement remain separate promotion
-tracks.
+With stateful audio/video continuation, exact word/speaker annotation, bounded
+generated-image publication, and acknowledgement-gated generated PCM
+integrated, the next multimodal runtime slices are external media format
+adapters, richer language/punctuation and overlapping-speaker policy,
+production generative-media adapters/manifests, and generated video. Physical
+playback and display acknowledgement remain separate promotion tracks.
 
 See [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md),
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md),

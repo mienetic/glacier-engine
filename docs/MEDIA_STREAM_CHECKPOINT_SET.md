@@ -157,8 +157,9 @@ claimed.
 
 Multi-writer leader election, archive garbage collection policy, external
 codecs, capture/playback, media-model execution, accelerator residency, and
-generated audio/video publication remain gated. A separate bounded
-terminal-latent path now publishes one raw generated image with atomic
-provenance, but this checkpoint set does not yet durably compose that output.
+generated-video publication remain gated. Separate bounded paths now publish
+one raw generated image with atomic provenance and ordered raw generated-audio
+chunks with application acknowledgement, but this checkpoint set does not yet
+durably compose either output.
 The sixth object and fresh-Bank proof cover caller-owned cache bytes and exact
 logical ownership, not measured RSS, allocator fragmentation, or device memory.

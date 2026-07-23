@@ -21,6 +21,14 @@ before the first stable release.
 
 ### Added
 
+- Generated-audio publication and playback acknowledgement: canonical
+  448-byte state, 576-byte plan, 512-byte provenance, 576-byte result, 288-byte
+  observation, 448-byte acknowledgement plan, and 512-byte acknowledgement
+  result records bind exact PCM frames, source/renderer/media/resource lineage,
+  one outstanding buffer, and sink-bound application completion. An abort-safe
+  transaction, independent mutation-complete Python oracle, and real
+  two-process proof reject partial/duplicate acknowledgement, gate the
+  successor chunk, and release ownership to zero.
 - Exact speech annotation publication: fixed state, plan, and result records
   bind canonical transcript words to sample-derived timing, first-occurrence
   speaker identities, confidence, media/cache lineage, and predecessor state.

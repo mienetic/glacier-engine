@@ -190,9 +190,18 @@ all wire mutations, and a fresh process publishes the next word and turn
 without duplication. See
 [Exact Speech Annotation Publication](SPEECH_ANNOTATION_PUBLICATION.md).
 
+**Completed slice:** bounded generated-audio state, plan, provenance, result,
+observation, and acknowledgement records now publish exact raw PCM behind a
+single-outstanding-buffer gate. A fresh process verifies the pending chunk,
+rejects partial acknowledgement without changing state, acknowledges it,
+cancels one private successor candidate, publishes the next chunk, rejects
+duplicate acknowledgement, and releases ownership to zero. See
+[Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md).
+
 **Next slices:** add external container timestamp normalization, a production
 image decoder adapter, richer language/punctuation or overlapping-speaker
-policy, or the first generated-audio chunk with playback acknowledgement. Each
+policy, a production audio renderer/codec, shared generated-media manifests, or
+the first bounded generated-video manifest with display acknowledgement. Each
 is independently contributor-sized and must preserve the fixed core contracts.
 
 ### AI runtime family registry
@@ -240,8 +249,9 @@ releases all ownership. See
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md).
 
 **Next slice:** add a generic non-media encoder using the converged stateless
-lifecycle, or adapt a second bounded generative output while preserving the
-generated-image publication contract.
+lifecycle, adapt a production renderer to the bounded generated-audio
+transaction, or define a generated-video manifest while preserving the existing
+generative publication contracts.
 
 ### ResourceBank property tests
 

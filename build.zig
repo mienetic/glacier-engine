@@ -1410,6 +1410,65 @@ pub fn build(b: *std.Build) void {
         &generated_image_live_restart_worker_exe.step,
     );
 
+    // A source process publishes one bounded generated PCM chunk and exits
+    // with an outstanding application acknowledgement. A distinct target
+    // validates that state before admission, rejects partial acknowledgement,
+    // acknowledges the exact buffer, and publishes the next chunk only after
+    // the backpressure gate opens.
+    const generated_audio_live_restart_worker_exe =
+        b.addExecutable(.{
+            .name = "glacier-generated-audio-live-restart-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/generated_audio_live_restart_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    generated_audio_live_restart_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    generated_audio_live_restart_worker_exe.linkLibC();
+    const generated_audio_live_restart_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-generated-audio-live-restart-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/generated_audio_live_restart.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    const run_generated_audio_live_restart_demo =
+        b.addRunArtifact(
+            generated_audio_live_restart_demo_exe,
+        );
+    run_generated_audio_live_restart_demo.addArtifactArg(
+        generated_audio_live_restart_worker_exe,
+    );
+    const generated_audio_live_restart_demo_step =
+        b.step(
+            "generated-audio-live-restart-demo",
+            "Publish and acknowledge generated audio across processes",
+        );
+    generated_audio_live_restart_demo_step.dependOn(
+        &run_generated_audio_live_restart_demo.step,
+    );
+    test_step.dependOn(
+        &run_generated_audio_live_restart_demo.step,
+    );
+    test_compile_step.dependOn(
+        &generated_audio_live_restart_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &generated_audio_live_restart_worker_exe.step,
+    );
+
     // A stateful transcript process commits one exact sample range and syncs a
     // composed checkpoint. A distinct target process charges and materializes
     // retained state, publishes the next transcript, and advances its

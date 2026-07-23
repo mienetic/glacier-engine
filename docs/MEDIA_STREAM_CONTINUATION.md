@@ -134,6 +134,7 @@ newly publishable transcript time to its accumulated tail. Composed transcript
 and VFR video checkpoints now use the shared stateful-model lifecycle to
 publish the exact next audio range or video segment and cross-modal link in a
 fresh process. External container normalization, production-model integration,
-and generated audio/video publication remain. A separate terminal-latent path
-now publishes one bounded generated image with exact provenance; composing that
-result into this durable checkpoint set is a later slice.
+and generated-video publication remain. Separate generative paths now publish
+one bounded image with exact provenance and ordered raw PCM with application
+acknowledgement; composing either result into this durable checkpoint set is a
+later slice.

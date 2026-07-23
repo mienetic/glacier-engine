@@ -130,6 +130,8 @@ The next media-runtime sequence is:
    exact-integer fixtures;
 5. generated-media publication with partial-output cancellation policy;
    complete for one raw terminal-latent image through
-   [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md), while
-   generated audio/video and durable output composition remain; and
+   [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md) and two
+   acknowledgement-gated raw PCM chunks through
+   [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
+   while generated video and durable output composition remain; and
 6. external codec adapters outside the authority-free core.

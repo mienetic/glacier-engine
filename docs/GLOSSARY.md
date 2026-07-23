@@ -252,6 +252,16 @@ tile/patch progress, audio feature windows, and video temporal windows.
 whose exact bytes, sizes, roots, processor-state binding, predecessor, and
 fresh-Bank restore plan travel as the sixth atomic media checkpoint object.
 
+**Generated audio state** — A fixed output state that separates committed PCM
+chunks/frames from application-acknowledged chunks/frames, permits at most one
+pending exact buffer, and chains publication and acknowledgement predecessors
+across restart.
+
+**Playback observation** — A canonical application-supplied receipt claiming
+complete consumption of one exact generated-audio buffer by an identified sink
+implementation and instance. It advances logical backpressure only after exact
+binding; it is not proof that a physical device emitted sound.
+
 **Model family** — A typed semantic class such as autoregressive generation,
 vision understanding, audio understanding, diffusion, retrieval, or agent
 policy. A family ID is vocabulary only; a matching support record and adapter

@@ -61,6 +61,8 @@ energy, or production reliability.
 | `zig build stateful-model-live-restart-demo -Dmetal=false` | Canonical intermediate checkpoint, distinct source/target PIDs, fresh-Bank charge-before-materialization latent restore, chained terminal plan, zero duplicate results, and final zero ownership |
 | `zig test src/core/generated_image_publication.zig -OReleaseSafe` | Fixed generated-image plan/provenance/result wires, exact terminal-latent lineage, bounded private decode, abort/drift visibility preservation, atomic image publication, mutation rejection, and final zero ownership |
 | `zig build generated-image-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, charge-before-materialization latent restore, exact terminal step, one cancelled image publication, atomic retry, bound provenance, zero duplicate images, and final zero ownership |
+| `zig test src/core/generated_audio_playback.zig -OReleaseSafe` | Seven canonical generated-audio/acknowledgement wires, exact PCM/frame/resource/sink lineage, one-buffer backpressure, mutation and partial/duplicate rejection, abort/drift preservation, atomic publication, and final zero ownership |
+| `zig build generated-audio-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, pending-state validation before admission, publication blocked before acknowledgement, partial acknowledgement rejection, one cancellation-safe successor retry, two exact PCM chunks, zero duplicates, and final zero ownership |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -121,6 +123,16 @@ the fresh target process. This is conformance evidence for binding,
 cancellation, atomic visibility, and release—not image quality, production
 decoder compatibility, external format support, latency, throughput, memory,
 energy, or durable multi-file publication.
+
+The generated-audio fixture converts four bounded reference audio tokens into
+two raw mono PCM s16le chunks across distinct processes. It preserves sentinel
+visibility through one abort, rejects a partial observation, gates the
+successor until the first exact buffer is acknowledged, and rejects duplicate
+acknowledgement. This proves wire, ordering, backpressure, cancellation,
+restart, and ownership semantics. It does not measure speech/music quality,
+production renderer or codec compatibility, latency, throughput, memory,
+energy, device behavior, audibility, or durable multi-file publication. Its
+playback observation is application evidence, not proof of physical sound.
 
 The speech-annotation fixture maps `ice` and `berg` onto exact adjacent sample
 ranges and two opaque speaker identities. Its fresh target validates the
