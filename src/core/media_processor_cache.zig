@@ -318,6 +318,7 @@ pub fn validateBindingV1(
     processor_bundle: *const processor.DecodedBundleV1,
     expected_processor_bundle_sha256: Digest,
 ) Error!void {
+    try processor.validateDecodedBundleV1(processor_bundle.*);
     if (!std.mem.eql(
         u8,
         &cache_bundle.processor_bundle_sha256,

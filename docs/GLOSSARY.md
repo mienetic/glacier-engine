@@ -254,6 +254,14 @@ artifact identity, and media/processor/cache/ownership roots.
 their model plan, adapter, resource receipt, source mapping, predecessor, and
 publication transition.
 
+**Stateless model adapter** — The family-neutral lifecycle for an operation
+whose result does not retain model state: exact admission, private candidate
+execution, family validation, typed publication or scrub, and exact release.
+
+**Audio-window source mapping** — A commitment joining an audio result to its
+time base, sample cursor, window/hop/context parameters, feature shape, live
+cache payload, processor state, and model batch.
+
 **Synchronized media watermark** — The lower exact master-clock tick reached by
 the bound audio and video processor states, accepted only when integer mapping
 is exact and declared stream skew remains within policy.

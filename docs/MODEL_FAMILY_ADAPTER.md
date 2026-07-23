@@ -122,12 +122,16 @@ zig test src/core/vision_encoder_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_model_contract
 ```
 
-## Next adapters
+## Additional adapters
 
-The common records are intentionally reusable. The next retained slice should
-add a typed audio-window encoder with different input and streaming semantics,
-then a temporal video encoder. Those adapters should reuse publication and
-resource contracts without adding vision-specific fields to the common wire.
+The common records are intentionally reusable. A typed audio-window encoder now
+uses different input width and streaming source semantics through the shared
+stateless lifecycle without changing the common wire. See
+[Typed Audio-Window Encoder Adapter](AUDIO_WINDOW_ADAPTER.md).
+
+The next retained perception slice is a temporal video encoder. It should reuse
+the same publication and resource contracts without adding vision- or
+audio-specific fields to the common wire.
 
 See [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and

@@ -569,6 +569,25 @@ pub fn decodeBundleV1(
     };
 }
 
+/// Reconstructs a decoded bundle canonically so callers do not have to trust
+/// that an in-memory value remained unchanged after strict wire decoding.
+pub fn validateDecodedBundleV1(
+    bundle: DecodedBundleV1,
+) Error!void {
+    var encoded: [processor_bundle_bytes]u8 = undefined;
+    const prepared = try encodeBundleV1(
+        bundle.states,
+        bundle.sync,
+        &encoded,
+    );
+    if (!std.mem.eql(
+        u8,
+        &prepared.bundle_sha256,
+        &bundle.bundle_sha256,
+    ))
+        return Error.InvalidProcessorBundle;
+}
+
 pub fn validateSuccessorV1(
     previous: *const DecodedBundleV1,
     successor: *const DecodedBundleV1,

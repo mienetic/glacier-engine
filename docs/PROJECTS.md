@@ -129,9 +129,14 @@ media, ownership, cancellation, source mapping, and output publication
 identity without ambient authority. See
 [Typed Model-Family Contracts and Vision Adapter](MODEL_FAMILY_ADAPTER.md).
 
-**Next slice:** add a typed audio-window encoder whose streaming input and
-result semantics differ from vision without changing the common artifact,
-plan, or result wire. Reuse
+**Completed slice:** a typed audio-window encoder now adds signed feature
+inputs, sample/window/hop source mapping, and shared stateless publication
+without changing the common artifact, plan, or result wire. See
+[Typed Audio-Window Encoder Adapter](AUDIO_WINDOW_ADAPTER.md).
+
+**Next slice:** add a temporal video encoder over the owned cache window. Bind
+selected frame ordinals, keyframe lineage, eviction boundary, and target
+timeline without changing the common model wire. Reuse
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md),
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), and
 [Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md).
@@ -168,8 +173,12 @@ normalization/tie policy; no model download or quality claim.
 Prototype `inspect → plan → prepare → validate candidate → publish/abort` with
 two fake families that have different state/output semantics.
 
-**First slice:** one stateless vector family and one stateful step family under
-zero ambient capabilities, fixed buffers, and deterministic rejection tests.
+**Current slice:** vision and audio stateless vector families run under zero
+ambient capabilities, fixed buffers, and deterministic rejection tests. Audio
+uses the shared family-neutral stateless lifecycle.
+
+**Next slice:** migrate vision to that shared lifecycle, then add one stateful
+step family with distinct continuation semantics.
 
 ### ResourceBank property tests
 

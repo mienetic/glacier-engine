@@ -8,6 +8,10 @@ before the first stable release.
 
 ### Added
 
+- Typed audio-window encoder and shared stateless adapter lifecycle: exact i16
+  feature windows bind sample/window/hop lineage and live audio-cache ownership,
+  publish deterministic i32 embeddings, reject in-memory state mutation and
+  candidate drift, and release model/cache claims to zero.
 - Typed model-family contracts and the first vision-encoder adapter: canonical
   artifact, execution-plan, and result wires distinguish vocabulary from
   executable support, while a zero-capability exact-integer fixture consumes a

@@ -117,6 +117,10 @@ zig test src/core/model_contract.zig -OReleaseSafe
 zig test src/core/vision_encoder_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_model_contract
 
+# Verify signed audio windows through the shared stateless adapter lifecycle
+zig test src/core/audio_window_adapter.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_audio_window_adapter
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

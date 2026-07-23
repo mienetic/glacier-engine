@@ -1,11 +1,12 @@
 # Multimodal Roadmap
 
-Status: **integrated model-free image/audio/video runtime, bounded streaming,
-two-process continuation, crash-atomic checkpoint sets, and a post-restore
-generation-three successor; bounded image processor, audio feature-window,
-video temporal-cache, synchronized-watermark state, and exact cache payloads
-integrated as fifth and sixth durable archive objects with fresh-Bank restore;
-media-model execution and external formats remain gated**.
+Status: **integrated model-free image/audio/video runtime, typed vision/audio
+fixtures, bounded streaming, two-process continuation, crash-atomic checkpoint
+sets, and a post-restore generation-three successor; bounded image processor,
+audio feature-window, video temporal-cache, synchronized-watermark state, and
+exact cache payloads integrated as fifth and sixth durable archive objects with
+fresh-Bank restore; temporal video, production-model execution, and external
+formats remain gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -46,6 +47,10 @@ A typed vision adapter now consumes the live image cache through a sealed
 artifact/plan/result contract, computes a deterministic integer embedding into
 provisional storage, and publishes only after source, ownership, and candidate
 revalidation. Production vision models and quality evidence remain gated.
+A typed audio adapter now consumes non-overlapping signed feature windows from
+the live audio cache and binds sample rate, window, hop, feature shape, and
+source cursor into the same result contract. Overlap/context ownership,
+transcripts, and production audio models remain gated.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:

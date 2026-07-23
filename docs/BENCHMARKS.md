@@ -47,6 +47,7 @@ energy, or production reliability.
 | `zig build media-stream-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, synced image/audio/video checkpoints and retained outputs, three resumed chunks, zero duplicates, and explicit non-atomic-set disclosure |
 | `zig build media-stream-checkpoint-set-demo -Dmetal=false` | Six-object materialized image/audio/video generations, canonical retained-output, processor-state, and cache-payload bundles, seven `SIGKILL` boundaries, restore-before-visible cache ownership, fresh-process generation three, idempotent recovery, and final zero ownership |
 | `zig test src/core/vision_encoder_adapter.zig -OReleaseSafe` | Canonical model artifact/plan/result records, explicit support negotiation, a live-cache exact-integer vision projection, candidate drift rejection, transactional typed embedding publication, and final zero ownership |
+| `zig test src/core/audio_window_adapter.zig -OReleaseSafe` | Live signed feature windows, exact sample/window/hop source mapping, shared stateless adapter publication, abort/drift rejection, and final zero ownership |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -63,6 +64,11 @@ explicit support decisions, exact integer fixture output, provisional candidate
 behavior, publication state, and zero logical ownership after close. It is
 adapter-contract evidence, not vision quality, production-model compatibility,
 accelerator performance, or physical memory evidence.
+
+The audio adapter adds exact signed-window projection and a cross-language
+source-mapping root. It does not measure transcription or classification
+quality, overlapping-window behavior, streaming model restart, latency,
+throughput, or physical memory.
 
 ## Shared media contract
 

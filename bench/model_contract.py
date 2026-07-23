@@ -31,6 +31,9 @@ PLAN_DOMAIN = b"glacier-model-execution-plan-v1\x00"
 RESULT_DOMAIN = b"glacier-model-result-envelope-v1\x00"
 PUBLICATION_STATE_DOMAIN = b"glacier-model-publication-state-v1\x00"
 PUBLICATION_COMMIT_DOMAIN = b"glacier-model-publication-commit-v1\x00"
+AUDIO_SOURCE_MAPPING_DOMAIN = (
+    b"glacier-audio-window-source-mapping-v1\x00"
+)
 CLAIM_FIELDS = (
     "capsule_bytes",
     "kv_bytes",
@@ -749,3 +752,79 @@ def reference_integer_projection(
                 raise ModelContractError("invalid projection candidate")
             output.extend(struct.pack("<i", accumulator))
     return bytes(output)
+
+
+def reference_i16_projection(
+    plan: Record,
+    weights: bytes,
+    audio_features: bytes,
+) -> bytes:
+    if (
+        plan["input_element_bytes"] != 2
+        or plan["output_element_bytes"] != 4
+        or len(weights) != plan["weight_bytes"]
+        or len(audio_features) != plan["input_bytes"]
+    ):
+        raise ModelContractError("audio projection input mismatch")
+    output = bytearray()
+    features = plan["input_features"]
+    dimensions = plan["output_dimensions"]
+    for batch in range(plan["batch_items"]):
+        for dimension in range(dimensions):
+            accumulator = 0
+            for feature in range(features):
+                input_offset = (batch * features + feature) * 2
+                weight_offset = (dimension * features + feature) * 2
+                input_value = struct.unpack_from(
+                    "<h",
+                    audio_features,
+                    input_offset,
+                )[0]
+                weight_value = struct.unpack_from(
+                    "<h",
+                    weights,
+                    weight_offset,
+                )[0]
+                accumulator += input_value * weight_value
+            if (
+                abs(accumulator) > plan["maximum_absolute_output"]
+                or not -(1 << 31) <= accumulator < (1 << 31)
+            ):
+                raise ModelContractError("invalid audio candidate")
+            output.extend(struct.pack("<i", accumulator))
+    return bytes(output)
+
+
+def audio_source_mapping_root(
+    plan: Record,
+    audio_state: Record,
+) -> bytes:
+    from bench import media_processor_state as processor
+
+    try:
+        parameters = audio_state["parameters"]
+        values = (
+            audio_state["timeline_numerator"],
+            audio_state["timeline_denominator"],
+            audio_state["cursor_units"],
+            audio_state["produced_units"],
+            *parameters,
+            plan["batch_items"],
+            plan["input_features"],
+        )
+        body = (
+            _digest(plan["media_object_sha256"])
+            + _digest(plan["processor_state_sha256"])
+            + _digest(plan["cache_payload_sha256"])
+            + b"".join(_u64(value) for value in values)
+        )
+    except (KeyError, TypeError):
+        raise ModelContractError("invalid audio source mapping") from None
+    if (
+        audio_state["kind"] != 2
+        or len(parameters) != 8
+        or audio_state["state_sha256"] != plan["processor_state_sha256"]
+        or processor.state_root(audio_state) != audio_state["state_sha256"]
+    ):
+        raise ModelContractError("invalid audio source mapping")
+    return hashlib.sha256(AUDIO_SOURCE_MAPPING_DOMAIN + body).digest()

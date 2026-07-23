@@ -314,9 +314,9 @@ expand the base adapter's capabilities.
 | Family | Representative operations | Current state | First retained slice | Integration gate |
 | --- | --- | --- | --- | --- |
 | Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication integrated | Small legal artifact through uninterrupted and resumed output | Declared numerical equivalence, exact KV ownership, no duplicate token |
-| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result prototype; vision embedding fixture integrated | Add a non-vision stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
+| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision and audio embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
-| Speech and audio understanding | ASR, translation, audio classification | Model-free audio runtime vertical integrated; model gated | PCM window to feature/source-range evidence | No sample loss/duplication, exact streaming restart, transcript transaction |
+| Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder fixture integrated; production model gated | Add overlap/context ownership and a typed transcript fixture | No sample loss/duplication, exact streaming restart, transcript transaction |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
 | Video understanding | frame/segment encode, search, summarize | Model-free video runtime vertical integrated; model gated | Keyframe selection plus temporal window plan | Exact frame/time mapping, temporal-cache ownership, synchronized stream policy |
 | Image generation | diffusion/flow step, decode latent, publish image | Idea | Tiny deterministic latent scheduler state machine | Latent/step continuation, bounded decode, atomic image/provenance publication |
@@ -352,6 +352,11 @@ it does not require changing the meaning of existing families.
 Exit gate: two structurally different family fixtures use the shared contracts
 without family-specific fields leaking into the common wire.
 
+Current progress: vision u8 patches and audio i16 feature windows now share the
+artifact/plan/result records while retaining distinct source mappings. A
+generated compatibility matrix and read-only inspector remain before the exit
+gate is complete.
+
 ### R1 — Text path becomes the first complete runtime vertical
 
 - bind current loader, prepared image, resource, schedule, KV, sampler, token
@@ -367,8 +372,8 @@ evidence.
 ### R2 — Stateless tensor families
 
 - add encoder/embedding/reranker/classifier operations; the first vision encode
-  operation is retained, while generic encoder, reranker, and classifier
-  fixtures remain;
+  and audio encode operations are retained, while generic encoder, reranker,
+  and classifier fixtures remain;
 - define typed tensor/vector/score result envelopes; the fixed integer
   embedding envelope is complete;
 - add deterministic batch-item mapping and tie/normalization policy; exact
@@ -405,8 +410,9 @@ while retaining different state and publication semantics.
   candidate validation, and typed embedding publication are complete for the
   retained fixture;
 - add audio feature windows, transcript transactions, and streaming restart;
-  fixed window/hop/context and feature-cache state are complete, while
-  transcript and restart integration remain;
+  fixed window/hop/context state plus a non-overlapping exact-integer
+  feature-window encoder are complete, while overlap ownership, transcript
+  publication, and model restart integration remain;
 - add video temporal selection, synchronized timeline state, and cache
   ownership; fixed window/eviction state plus exact audio/video watermark is
   complete together with materialized cache ownership, while typed video-model

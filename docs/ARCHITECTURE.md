@@ -16,6 +16,7 @@ not.
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
+| Model adapters | `ModelContract`, `StatelessModelAdapter`, `VisionEncoderAdapter`, `AudioWindowAdapter` | Separate vocabulary from support, bind exact tensor/resource/source schemas, execute into private candidates, and publish typed results only after family validation |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -172,6 +173,11 @@ result records without treating vocabulary as execution support.
 `VisionEncoderAdapter` is the first bounded implementation: it requires a live
 owned image cache, executes an exact-integer fixture into provisional storage,
 revalidates the candidate, and publishes one typed embedding or scrubs it.
+`StatelessModelAdapter` extracts the reusable admission, private-candidate,
+revalidation, publication, abort, and release lifecycle.
+`AudioWindowAdapter` is the second family binding: it validates live audio
+features plus exact sample/window/hop lineage before entering that shared
+lifecycle.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
@@ -543,6 +549,9 @@ still require real machines for each promoted platform.
 - [Typed model-family contracts and vision adapter](MODEL_FAMILY_ADAPTER.md):
   canonical artifact/plan/result records, explicit support negotiation, and a
   cache-bound transactional embedding fixture.
+- [Typed audio-window encoder adapter](AUDIO_WINDOW_ADAPTER.md): signed feature
+  windows, sample/window/hop source mapping, shared stateless publication, and
+  exact cancellation/release.
 - [Shared media contract](MEDIA_CONTRACT.md): fixed image/audio/video identity,
   exact rational positions, explicit event roots, and logical chunk
   publication.

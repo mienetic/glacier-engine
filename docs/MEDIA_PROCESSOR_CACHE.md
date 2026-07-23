@@ -101,6 +101,6 @@ now executes only a tiny exact-integer vision fixture; it does not execute a
 production vision encoder, speech model, video model, external codec, camera,
 microphone, or generated-media pipeline.
 
-The next milestone reuses these durable input, state, cache, and typed
-publication contracts for an audio-window encoder, then a temporal video
-encoder, while preserving the same cancellation and restart rules.
+An audio-window encoder now reuses these durable input, state, cache, and typed
+publication contracts. The next perception milestone applies them to a temporal
+video encoder while preserving the same cancellation and restart rules.
