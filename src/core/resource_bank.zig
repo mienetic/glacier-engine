@@ -397,6 +397,53 @@ pub fn receiptIntegrityValidV1(receipt: Receipt) bool {
     );
 }
 
+/// Recompute a pointer-free LeaseTree handle checksum without consulting live
+/// Bank state. Like receipt validation, this proves structural consistency,
+/// not current ownership or authority.
+pub fn leaseTreeIntegrityValidV1(tree: LeaseTreeV1) bool {
+    if (tree.abi_version != lease_tree_abi or
+        !receiptIntegrityValidV1(tree.parent))
+        return false;
+    var result = mix64(lease_tree_domain ^ tree.parent.integrity);
+    result = mix64(result ^ tree.tree_key);
+    result = mix64(result ^ tree.authority_key);
+    result = mix64(result ^ tree.identity_generation);
+    result = mix64(result ^ tree.generation);
+    result = mix64(result ^ tree.structural_revision);
+    inline for (std.meta.fields(Claim)) |field|
+        result = mix64(result ^ @field(tree.ceiling, field.name));
+    inline for (std.meta.fields(Claim)) |field|
+        result = mix64(result ^ @field(tree.current, field.name));
+    result = mix64(result ^ @as(u64, tree.active_nodes));
+    result = mix64(result ^ tree.state_digest);
+    return tree.integrity == result;
+}
+
+/// Recompute one pointer-free LeaseTree node checksum without consulting live
+/// Bank state. Lifecycle state is deliberately excluded from the stable node
+/// identity; callers still need a live Bank validation before mutation.
+pub fn leaseNodeIntegrityValidV1(node: LeaseNodeV1) bool {
+    if (node.abi_version != lease_node_abi or
+        !receiptIntegrityValidV1(node.parent))
+        return false;
+    var result = mix64(lease_node_domain ^ node.parent.integrity);
+    result = mix64(result ^ node.tree_key);
+    result = mix64(result ^ node.tree_identity_generation);
+    result = mix64(result ^ @as(u64, node.node_index));
+    result = mix64(result ^ node.generation);
+    result = mix64(result ^ @as(u64, node.parent_index));
+    result = mix64(result ^ node.parent_generation);
+    result = mix64(result ^ node.node_key);
+    result = mix64(result ^ node.tenant_key);
+    result = mix64(result ^ node.binding_key);
+    result = mix64(result ^ @intFromEnum(node.kind));
+    inline for (std.meta.fields(Claim)) |field|
+        result = mix64(result ^ @field(node.ceiling, field.name));
+    inline for (std.meta.fields(Claim)) |field|
+        result = mix64(result ^ @field(node.claim, field.name));
+    return node.integrity == result;
+}
+
 /// Generation-fenced mutable allocator-commitment charge anchored to one
 /// immutable committed parent Receipt. V1 provides one child channel per
 /// parent slot; resize returns a new handle and invalidates every copied prior
@@ -4127,6 +4174,12 @@ test "LeaseTree reserve materialize publish and free preserves exact sums" {
     );
 
     var tree = try bank.commitAllocationsAfterAllocate(reservation.batch);
+    try std.testing.expect(leaseTreeIntegrityValidV1(tree));
+    try std.testing.expect(leaseNodeIntegrityValidV1(lane_open.scope));
+    try std.testing.expect(leaseNodeIntegrityValidV1(leaves[0]));
+    var forged_leaf = leaves[0];
+    forged_leaf.binding_key ^= 1;
+    try std.testing.expect(!leaseNodeIntegrityValidV1(forged_leaf));
     try std.testing.expectError(
         Error.StaleReservation,
         bank.beginPublicationWithTree(

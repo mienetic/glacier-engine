@@ -1144,6 +1144,35 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_media_runtime_demo.step);
     test_compile_step.dependOn(&media_runtime_demo_exe.step);
 
+    // Hierarchical media ownership: every decoded source, mapping table,
+    // scratch region, and output receives its own generation-fenced LeaseTree
+    // allocation before execution. Provisional buffers can retire early while
+    // the published output remains live.
+    const media_runtime_lease_demo_exe = b.addExecutable(.{
+        .name = "glacier-media-runtime-lease-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/media_runtime_lease.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    media_runtime_lease_demo_exe.root_module.addImport("core", core_mod);
+    const run_media_runtime_lease_demo = b.addRunArtifact(
+        media_runtime_lease_demo_exe,
+    );
+    const media_runtime_lease_demo_step = b.step(
+        "media-runtime-lease-demo",
+        "Run per-buffer LeaseTree media ownership and early retirement",
+    );
+    media_runtime_lease_demo_step.dependOn(
+        &run_media_runtime_lease_demo.step,
+    );
+    test_step.dependOn(&run_media_runtime_lease_demo.step);
+    test_compile_step.dependOn(&media_runtime_lease_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

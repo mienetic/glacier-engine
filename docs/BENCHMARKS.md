@@ -41,6 +41,7 @@ energy, or production reliability.
 | `zig build media-decode-fixture-demo -Dmetal=false` | Sealed plans plus bounded RGB8, PCM s16le, and intra-frame gray8 fixture decode with complete per-unit source mapping |
 | `zig build media-transform-demo -Dmetal=false` | Sealed image/audio/video transform plans, caller-owned allocation-free execution, exact output-unit mappings, and shared cross-language plan/receipt roots |
 | `zig build media-runtime-demo -Dmetal=false` | Exact image/audio/video ResourceBank admission, provisional execution, candidate revalidation, atomic commit/abort/retry, fixed receipts, and complete release |
+| `zig build media-runtime-lease-demo -Dmetal=false` | Per-buffer LeaseTree charge-before-use, abort reclamation, early provisional retirement, retained output ownership, fixed hierarchical receipts, and final zero state |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -99,10 +100,21 @@ abort/scrub/retry path, commits three media transitions, emits three fixed
 The independent Python verifier reconstructs each transform, mapping chain,
 resource receipt, timeline event, publication commit, and runtime receipt.
 
+The hierarchical runtime demo admits the same 3,752 host bytes but separates
+control-plane admission from six live allocation leaves per scratch-free
+request. Across the three modalities it retires six provisional allocations
+early, retains exactly one output allocation per committed request, performs 12
+reclamation commits including the explicit audio abort/retry path, and returns
+all Bank usage and live allocations to zero. Its fixed 1,536-byte receipt binds
+the parent, tree state, and ordered scope/allocation evidence. A separate Python
+oracle reconstructs the same no-abort golden roots and rejects every serialized
+byte mutation.
+
 These values are deterministic conformance counts. They do not measure process
 memory, physical device residency, throughput, latency, model quality, codec
 coverage, or provider usage. See
-[Media Runtime Transaction](MEDIA_RUNTIME_TXN.md).
+[Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
+[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md).
 
 ## Continuation checkpoint
 

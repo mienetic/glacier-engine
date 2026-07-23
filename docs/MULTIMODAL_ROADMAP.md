@@ -12,8 +12,9 @@ whole-checkpoint, and phase-complete process-death requirements. Separately, a
 model-free media runtime now supplies shared identity, sealed decode plans,
 bounded RGB/PCM/intra-frame fixtures, exact source-unit mapping, rational
 timeline events, exact `ResourceBank` admission, provisional execution,
-candidate revalidation, atomic chunk publication, abort/retry, portable
-receipts, and exact release. Media-model execution still waits for an
+candidate revalidation, per-buffer `LeaseTree` ownership, atomic chunk
+publication, abort/retry, early provisional retirement, portable receipts, and
+exact release. Media-model execution still waits for an
 uninterrupted/resumed production-model comparison and retained platform
 evidence.
 
@@ -127,11 +128,16 @@ The first integrated model-free transaction is also complete. It:
   abort; and
 - emits a fixed 640-byte receipt before closing and releasing the exact claim.
 
-The current claim is request-wide rather than subdivided through `LeaseTree`.
-The transaction does not durably store output, stream multiple chunks, retain
+The hierarchical variant now preserves the request-wide claim while splitting
+it into a parent receipt plus decoded-source, mapping, optional scratch, and
+output allocation leaves. It atomically charges all leaves before use, includes
+their pointer-free identities in a fixed 1,536-byte receipt, reclaims every leaf
+on abort, and can retire provisional leaves after commit while retaining the
+output. It still does not durably store output, stream multiple chunks, retain
 model embeddings or cross-attention state, or resume across process death. See
-the [Shared Media Contract](MEDIA_CONTRACT.md) and
-[Media Runtime Transaction](MEDIA_RUNTIME_TXN.md).
+the [Shared Media Contract](MEDIA_CONTRACT.md),
+[Media Runtime Transaction](MEDIA_RUNTIME_TXN.md), and
+[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md).
 
 ## Image track
 
@@ -155,7 +161,8 @@ First slices:
 4. ~~exact runtime admission, provisional execution, atomic publication,
    abort/retry, receipt, and release;~~ complete for the retained fixture;
 5. patch/token correspondence evidence without storing private pixels;
-6. vision-encoder capability negotiation and per-buffer lease ownership;
+6. ~~per-buffer lease ownership;~~ complete in the shared hierarchical runtime,
+   followed by vision-encoder capability negotiation;
 7. continuation binding for processed regions and cross-attention state;
 8. generated-image chunk publication with cancellation and provenance.
 
@@ -184,11 +191,12 @@ First slices:
    from 48 kHz to 16 kHz over the retained fixture; general resampling remains;
 3. ~~exact runtime admission, provisional execution, atomic publication,
    abort/retry, receipt, and release;~~ complete for the retained fixture;
-4. streaming chunk transaction with overlap and gap evidence;
-5. feature-window or audio-token mapping back to source sample ranges;
-6. partial transcript publication without duplicated text after restart;
-7. generated-audio chunk ordering and playback acknowledgement;
-8. microphone/network adapters outside the authority-free core.
+4. ~~per-buffer lease ownership;~~ complete in the shared hierarchical runtime;
+5. streaming chunk transaction with overlap and gap evidence;
+6. feature-window or audio-token mapping back to source sample ranges;
+7. partial transcript publication without duplicated text after restart;
+8. generated-audio chunk ordering and playback acknowledgement;
+9. microphone/network adapters outside the authority-free core.
 
 Promotion gate: no sample is silently dropped, duplicated, reordered, mixed, or
 resampled; streaming restart resumes at an exact sample/timeline boundary; input
@@ -216,10 +224,11 @@ First slices:
    over the retained fixture;
 4. ~~exact runtime admission, provisional execution, atomic publication,
    abort/retry, receipt, and release;~~ complete for the retained fixture;
-5. decode queue admission under deadline and cancellation ceilings;
-6. audio/subtitle linkage through `MediaTimeline`;
-7. temporal-cache ownership and continuation state;
-8. generated segment publication with ordered manifest and chunk roots.
+5. ~~per-buffer lease ownership;~~ complete in the shared hierarchical runtime;
+6. decode queue admission under deadline and cancellation ceilings;
+7. audio/subtitle linkage through `MediaTimeline`;
+8. temporal-cache ownership and continuation state;
+9. generated segment publication with ordered manifest and chunk roots.
 
 Promotion gate: frame selection and temporal ordering replay exactly; seek,
 variable-frame-rate, corrupt-frame, missing-audio, cancellation, and restart
@@ -250,8 +259,8 @@ Early contributions can proceed without a large model:
 - decompression and allocation ceiling tests;
 - extend the completed deterministic crop/nearest, mix/exact-decimation, and
   keyframe-selection reference models with new bounded cases;
-- subdivide the admitted media claim through `LeaseTree` and prove zero-state
-  recovery under abort, commit, and cancellation;
+- add bounded multi-chunk ownership and prove zero-state recovery under
+  gap/overlap rejection, cancellation, and continuation;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 
@@ -261,4 +270,6 @@ retained evidence, and nonclaims. See [Roadmap](ROADMAP.md) for sequencing and
 baseline is specified in
 [Bounded Media Decode Fixtures](MEDIA_DECODE_FIXTURES.md), and the implemented
 transform layer is specified in
-[Deterministic Media Transforms](MEDIA_TRANSFORMS.md).
+[Deterministic Media Transforms](MEDIA_TRANSFORMS.md), and the ownership layer
+is specified in
+[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md).

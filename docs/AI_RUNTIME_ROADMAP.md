@@ -118,9 +118,11 @@ Responsibilities:
 Current state: **integrated for logical ownership**, **prototype for physical
 residency**. Exact claims and hierarchical leases are used by current runtime
 state paths. The model-free media vertical now derives and reserves exact
-activation, output, staging, I/O, and queue claims before execution, then
-releases them exactly. Per-buffer media `LeaseTree` ownership, production
-weight paging, and complete device/network accounting remain planned.
+activation, output, staging, I/O, and queue claims before execution. Decoded
+source, mapping, optional scratch, and output regions now receive distinct
+`LeaseTree` allocations; provisional regions retire early after commit and all
+paths return ownership to zero. Production weight paging and complete
+device/network accounting remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
 cancellation returns the declared delta, and measured physical counters are
@@ -180,11 +182,11 @@ Current state: **integrated model-free runtime vertical**. Fixed media objects,
 rational timelines, bounded RGB8/PCM s16le/intra-frame gray8 decode, and
 deterministic image crop/nearest/tile, audio weighted mix/exact decimation, and
 video keyframe selection now compose with exact `ResourceBank` admission,
-provisional caller-owned storage, candidate revalidation, atomic media/resource
-publication, abort scrubbing, retry, exact release, and a fixed independently
-verified runtime receipt. Multi-chunk streaming, `LeaseTree` buffer
-subdivision, continuation, external codecs, capture, playback, media models,
-and generated-media publication remain gated.
+per-buffer `LeaseTree` ownership, provisional caller-owned storage, candidate
+revalidation, atomic media/resource publication, abort scrubbing, retry, early
+provisional retirement, exact release, and fixed independently verified runtime
+receipts. Multi-chunk streaming, continuation, external codecs, capture,
+playback, media models, and generated-media publication remain gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -359,6 +361,7 @@ while retaining different state and publication semantics.
   atomic media publication transaction; complete for retained model-free
   fixtures;
 - add `LeaseTree` ownership for decoded source, mappings, output, and scratch;
+  complete for retained model-free fixtures;
 - integrate image processors and vision encoder fixtures;
 - add audio feature windows, transcript transactions, and streaming restart;
 - add video temporal selection, synchronized timeline state, and cache ownership;

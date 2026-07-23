@@ -89,17 +89,18 @@ versioned ABI with migration fixtures. Reuse
 
 ### Media runtime LeaseTree ownership
 
-The model-free media transaction now admits and releases one exact request-wide
-`ResourceBank` claim across image, audio, and video. The next slice should
-subdivide that receipt into decoded-source, mapping, scratch, and output child
-leases without changing the existing transform or 640-byte runtime receipt
-semantics.
+This slice is complete for image, audio, and video. The hierarchical runtime
+preserves the existing request-wide ABI while assigning exact decoded-source,
+mapping, optional scratch, and output allocation leaves. It charges before use,
+reclaims every dynamic leaf on abort, retires provisional leaves early after
+commit, retains output ownership, emits a fixed pointer-free receipt, and
+returns the tree and Bank to zero. Zig and Python share golden roots and
+mutation-complete wire tests.
 
-**First slice:** implement the image path with deterministic child identities,
-charge-before-use ordering, candidate-mutation abort, exact child retirement,
-and a final zero-state assertion. Add one independent allocation/retirement
-oracle and stale-child tests before extending the same contract to audio and
-video. Reuse [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md).
+**Next slice:** introduce two bounded chunks under one session. Define exact
+gap/overlap policy, charge each chunk before use, retain only published output,
+and prove cancellation returns every unpublished allocation. Reuse
+[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md).
 
 ### AI runtime family registry
 

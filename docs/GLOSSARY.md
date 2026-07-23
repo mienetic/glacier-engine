@@ -211,6 +211,11 @@ wave.
 **LeaseTree** — A hierarchy that subdivides one ResourceBank receipt into exact
 child ownership and publication scopes.
 
+**Media buffer lease** — A generation-fenced LeaseTree allocation for one
+decoded-source, mapping, scratch, or output region. The logical lease is charged
+before caller storage is used and retired only after that storage is no longer
+runtime-visible.
+
 **Object lease receipt** — A commitment to one blob, owner, retained generation,
 explicit expiry tick, and lifecycle grant. It is valid only while every field
 equals the active store slot.

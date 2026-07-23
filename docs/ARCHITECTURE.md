@@ -15,7 +15,7 @@ not.
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
-| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, admit exact resources, transform canonical units into provisional storage, revalidate candidates, then atomically advance logical chunks |
+| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, admit exact per-buffer ownership, transform canonical units into provisional storage, revalidate candidates, retire temporary buffers, then atomically advance logical chunks |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -121,18 +121,21 @@ fixed runtime receipt + exact ResourceBank release
 The shared media layer is an integrated model-free runtime vertical. It verifies
 descriptors, sealed decode and transform identity, exact logical resource
 claims, provisional output, every source mapping, integer-only positions, event
-lineage, and logical publication state before a single-owner commit. Abort
-scrubs decoded/output/mapping storage, retry keeps both sequences unchanged, and
-close releases the complete request claim. The fixed runtime receipt lets an
-independent verifier reconstruct the resource receipt, transform evidence,
-timeline event, publication commit, and output.
+lineage, and logical publication state before a single-owner commit. The
+hierarchical variant gives decoded source, mappings, scratch, and output their
+own generation-fenced allocation leaves. Abort scrubs and retires every dynamic
+allocation; after commit, provisional allocations can retire while the output
+lease remains live. Closing returns the tree and parent Bank receipt to zero.
+The fixed runtime receipts let independent verifiers reconstruct the ownership,
+transform evidence, timeline event, publication commit, and output.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
 decimation, and keyframe selection. It has no external codec, encoder,
 filesystem, network, camera, microphone, model, or accelerator authority.
-`LeaseTree` subdivision, streaming, continuation, and model adapters are future
-layers. See [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md).
+Streaming, continuation, and model adapters are future layers. See
+[Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
+[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md).
 
 ### ResourceBank
 

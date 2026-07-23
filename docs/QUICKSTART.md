@@ -91,6 +91,9 @@ zig build media-transform-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Admit, execute, validate, commit/abort, receipt, and release all three media kinds
 zig build media-runtime-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Give every media buffer an exact LeaseTree owner and retire provisional storage
+zig build media-runtime-lease-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

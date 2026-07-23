@@ -31,7 +31,7 @@ evidence. The plane and model-family sequence is specified in the
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, and an integrated model-free image/audio/video transaction vertical | Common family/operation adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
 | Model-family breadth | Text-generation prototype; other families gated | Shared artifact, tensor, state, provider, media, and evidence building blocks | Encoders/embeddings first, then perception, generative media, multimodal, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime vertical integrated; model execution gated | Shared identity/timeline, bounded RGB8/PCM/intra-frame decode, deterministic transforms, exact ResourceBank admission, candidate revalidation, atomic commit/abort/retry, fixed receipts, and exact release | LeaseTree buffer ownership, streaming/continuation, external formats, model adapters, and generated-media publication |
+| Multimodal execution | Model-free runtime vertical integrated; model execution gated | Shared identity/timeline, bounded RGB8/PCM/intra-frame decode, deterministic transforms, exact admission, per-buffer LeaseTree ownership, candidate revalidation, atomic commit/abort/retry, early provisional retirement, fixed receipts, and exact release | Streaming/continuation, external formats, typed model adapters, and generated-media publication |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -104,6 +104,10 @@ evidence. The plane and model-family sequence is specified in the
   claims, provisional caller-owned storage, transform candidate revalidation,
   atomic image/audio/video publication, abort scrubbing, retry, exact release,
   a fixed receipt, and independent mutation-complete verification.
+- [x] Per-buffer media LeaseTree ownership for decoded source, mappings,
+  optional scratch, and output; atomic charge-before-use, abort reclamation,
+  early provisional retirement, retained output ownership, fixed receipts, and
+  independent cross-language golden vectors.
 - [x] Full AI runtime architecture roadmap with shared planes, universal adapter
   contracts, model-family coverage map, promotion gates, and contributor lanes.
 - [x] Bounded contributor project catalog and issue template.
@@ -324,10 +328,10 @@ The implementation sequence is:
 4. keyframe selection and exact frame/time mappings are complete;
    audio/subtitle synchronization, temporal cache, and segment publication
    remain;
-5. exact request admission, provisional execution, full candidate
-   revalidation, commit/abort/retry, portable runtime receipts, and release are
-   complete for all three retained fixtures; `LeaseTree` subdivision and
-   durable continuation remain; and
+5. exact request admission, per-buffer `LeaseTree` ownership, provisional
+   execution, full candidate revalidation, commit/abort/retry, portable runtime
+   receipts, early provisional retirement, and release are complete for all
+   three retained fixtures; streaming and durable continuation remain; and
 6. generated image/audio/video output only after cancellation, restart, and
    provenance rules are proven.
 

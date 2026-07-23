@@ -167,10 +167,11 @@ model embeddings, vision/speech/video inference, or generated media.
 
 The next runtime slices are:
 
-1. subdivide the admitted claim through `LeaseTree` nodes for decoded source,
-   mappings, output, and scratch;
-2. retire provisional source/staging ownership after publication while retaining
-   output ownership;
+1. ~~subdivide the admitted claim through `LeaseTree` nodes for decoded source,
+   mappings, output, and scratch;~~ complete in
+   [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md);
+2. ~~retire provisional source/staging ownership after publication while
+   retaining output ownership;~~ complete in the hierarchical runtime;
 3. add multi-chunk audio/video sessions with exact gap/overlap and cancellation
    policy;
 4. bind the committed media receipt into continuation/checkpoint state; and

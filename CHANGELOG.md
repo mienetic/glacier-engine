@@ -126,6 +126,14 @@ before the first stable release.
   sessions, explicit audio abort/scrub/retry, seven exact mappings, three
   releases, and final zero Bank usage without filesystem, network, device, or
   model authority.
+- A hierarchical media runtime that splits every request into exact decoded
+  source, mapping, optional scratch, and output LeaseTree allocations before
+  execution; abort reclaims all dynamic leases, while committed requests can
+  retire provisional storage early and retain only output ownership.
+- A fixed 1,536-byte hierarchical media receipt with pointer-free tree/node
+  evidence, independent Zig/Python golden roots, every-byte mutation rejection,
+  authority and candidate substitution tests, node/capacity exhaustion tests,
+  and a native three-modality zero-leak demo.
 - A full Glacier AI Runtime roadmap defining shared runtime planes, universal
   family adapters, model-family coverage, promotion gates, delivery sequence,
   use cases, and contributor-sized lanes.
