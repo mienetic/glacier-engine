@@ -1,6 +1,7 @@
 # Multimodal Roadmap
 
-Status: **shared foundation prototype; media execution remains gated**.
+Status: **shared foundation and bounded fixtures; media execution remains
+gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -8,11 +9,12 @@ resume without duplicated visible output. Format research and tiny legal
 fixtures may begin earlier, but production execution does not bypass that gate.
 The model-free continuation proof now meets ownership, exact-output, atomic
 whole-checkpoint, and phase-complete process-death requirements. Separately, a
-model-free media prototype now supplies shared identity, exact rational
+model-free media prototype now supplies shared identity, sealed decode plans,
+bounded RGB/PCM/intra-frame fixtures, exact source-unit mapping, rational
 timeline events, and logical chunk publication. Integrated media execution
 still waits for an uninterrupted/resumed production-model comparison and
-retained platform evidence. Sealed decode plans and tiny legal fixtures remain
-eligible before that gate.
+retained platform evidence. Pure transform fixtures remain eligible before that
+gate.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -78,7 +80,7 @@ bounded resolver remain future slices.
 
 ### MediaDecodePlan
 
-One sealed plan binds:
+Prototype complete as a fixed 416-byte wire. One sealed plan binds:
 
 - decoder implementation and version;
 - source and destination representations;
@@ -90,6 +92,9 @@ One sealed plan binds:
 
 Silent codec fallback is not admissible. Two decoders producing different
 semantic tensors receive different execution identities.
+The current reference decoder accepts only deterministic exact-integer identity
+plans with zero ambient capabilities, exact output length, zero scratch, and
+the retained tiny fixture implementation root.
 
 ### MediaTimeline
 
@@ -132,9 +137,11 @@ Initial use cases:
 
 First slices:
 
-1. tiny lossless RGB/gray fixture with width, height, channels, row stride,
-   orientation, color model, transfer function, and alpha semantics;
-2. bounded decoder output into caller-owned storage;
+1. ~~tiny lossless RGB fixture with width, height, channels, row stride,
+   orientation, color model, transfer function, and alpha semantics;~~ complete
+   for the retained 2×2 RGB8 fixture;
+2. ~~bounded decoder output into caller-owned storage;~~ complete for the
+   identity fixture decoder with per-pixel source-byte mappings;
 3. canonical resize/crop/tile plan with source-region mapping;
 4. patch/token correspondence evidence without storing private pixels;
 5. vision-encoder capability negotiation and exact resource admission;
@@ -158,8 +165,9 @@ Initial use cases:
 
 First slices:
 
-1. bounded PCM fixture with sample format, sample rate, channel count/layout,
-   frame count, and rational start time;
+1. ~~bounded PCM fixture with sample format, sample rate, channel count/layout,
+   frame count, and rational start time;~~ complete for eight interleaved stereo
+   s16le frames at 48 kHz with per-frame source/timeline mappings;
 2. canonical channel mix and resample plan with exact input/output ranges;
 3. streaming chunk transaction with overlap and gap evidence;
 4. feature-window or audio-token mapping back to source sample ranges;
@@ -182,9 +190,12 @@ Initial use cases:
 
 First slices:
 
-1. tiny intra-frame fixture with coded/display geometry, pixel model, frame
-   count, and rational frame time;
-2. bounded frame-index/keyframe map;
+1. ~~tiny intra-frame fixture with coded/display geometry, pixel model, frame
+   count, and rational frame time;~~ complete for two 2×2 gray8 frames at 30
+   fps;
+2. bounded frame-index/keyframe map; the current fixture has a verified
+   64-frame-bounded keyframe bitmap and per-frame byte/timeline mappings, while
+   a seek/index structure remains;
 3. deterministic frame-selection plan with exact source coverage;
 4. decode queue admission under memory, deadline, and cancellation ceilings;
 5. audio/subtitle linkage through `MediaTimeline`;
@@ -215,8 +226,7 @@ never inferred from local byte counts.
 
 Early contributions can proceed without a large model:
 
-- canonical descriptor codecs and mutation-complete verifiers;
-- tiny redistributable image/audio/video fixtures;
+- extend canonical descriptor/plan codecs and mutation-complete verifiers;
 - checked geometry and rational-time arithmetic;
 - decompression and allocation ceiling tests;
 - deterministic crop/resample/frame-selection reference models;
@@ -225,4 +235,6 @@ Early contributions can proceed without a large model:
 
 Each contribution must name its authority, resource ceiling, rejection paths,
 retained evidence, and nonclaims. See [Roadmap](ROADMAP.md) for sequencing and
-[Evidence policy](EVIDENCE_POLICY.md) for promotion requirements.
+[Evidence policy](EVIDENCE_POLICY.md) for promotion requirements. The completed
+baseline is specified in
+[Bounded Media Decode Fixtures](MEDIA_DECODE_FIXTURES.md).

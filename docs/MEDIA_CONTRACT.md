@@ -8,8 +8,10 @@ publication. It gives future decoders, models, provider adapters, and generated
 media paths a common substrate without placing filesystem, network, camera,
 microphone, or device access in the portable core.
 
-This milestone does not decode media or run a multimodal model. It establishes
-the values those future paths must verify before work becomes visible.
+This contract module does not decode media or run a multimodal model. The
+companion [Bounded Media Decode Fixtures](MEDIA_DECODE_FIXTURES.md) now exercise
+sealed plans and identity decoding for three tiny canonical inputs; external
+formats and model execution remain outside both prototypes.
 
 ## What the prototype provides
 
@@ -166,29 +168,32 @@ from checksum validation.
 
 ## Claim boundary
 
-This prototype proves deterministic contract behavior for tiny synthetic
-values. It does not prove:
+This contract prototype proves deterministic identity, timeline, and
+publication behavior for tiny synthetic values. By itself it does not prove:
 
-- media decoding, encoding, capture, playback, rendering, or generation;
+- external-format media decoding, encoding, capture, playback, rendering, or
+  generation;
 - compatibility with a particular container, codec, model, or provider;
 - image region or audio/video synchronization correctness;
 - lower latency, memory, storage, energy, provider tokens, or cost;
 - durable publication or restart recovery for media chunks; or
 - safety of untrusted compressed payloads.
 
-Those claims require bounded parsers, sealed decode plans, concrete resource
-ownership, retained legal fixtures, crash campaigns, and model/provider
-integration evidence.
+The companion fixture prototype adds sealed plans and bounded identity decode
+for three retained canonical inputs. Broader claims still require external
+format parsers, concrete resource ownership, transform reference models, crash
+campaigns, and model/provider integration evidence.
 
 ## Contributor slices
 
 The foundation makes several independent contributions possible:
 
-1. add tiny redistributable image, PCM, or intra-frame video fixtures whose
-   manifests resolve to `MediaObjectV1`;
+1. extend the completed tiny RGB, PCM, and intra-frame video fixture baseline
+   with additional legal edge cases whose manifests resolve to `MediaObjectV1`;
 2. define a versioned container/codec identity registry without linking decoder
    choice to ambient host state;
-3. implement a sealed `MediaDecodePlan` with exact output and scratch ceilings;
+3. extend the completed sealed `MediaDecodePlan` with transform-specific
+   constraints while retaining exact output and scratch ceilings;
 4. extend timeline validation for image regions, audio gaps/overlaps, and
    audio/video synchronization;
 5. connect a prepared publication to real `ResourceBank` ownership and prove

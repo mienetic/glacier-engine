@@ -44,6 +44,8 @@ pub const continuation_object_payload_file =
 pub const continuation_checkpoint_file =
     @import("continuation_checkpoint_file.zig");
 pub const media_contract = @import("media_contract.zig");
+pub const media_decode_plan = @import("media_decode_plan.zig");
+pub const media_fixture = @import("media_fixture.zig");
 pub const continuation_ownership_manifest =
     @import("continuation_ownership_manifest.zig");
 pub const continuation_object_sweep =
@@ -85,6 +87,8 @@ pub const ContinuationObjectPayloadStore = continuation_object_payload_store;
 pub const ContinuationObjectPayloadFile = continuation_object_payload_file;
 pub const ContinuationCheckpointFile = continuation_checkpoint_file;
 pub const MediaContract = media_contract;
+pub const MediaDecodePlan = media_decode_plan;
+pub const MediaFixture = media_fixture;
 pub const ContinuationOwnershipManifest = continuation_ownership_manifest;
 pub const ContinuationObjectSweep = continuation_object_sweep;
 pub const ContinuationObjectSweepRecord = continuation_object_sweep_record;

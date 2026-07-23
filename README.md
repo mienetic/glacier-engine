@@ -42,6 +42,9 @@ formats, and independent verifiers.
 - **Shared media contracts.** One fixed image/audio/video identity, checked
   rational timeline, explicit transform history, and exact-once chunk
   publication give future multimodal paths a verifiable model-free foundation.
+- **Bounded media inputs.** Sealed decode plans and tiny RGB, PCM, and
+  intra-frame video fixtures decode into caller-owned storage while mapping
+  every pixel, audio frame, and video frame to exact source bytes.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -155,6 +158,8 @@ provider request
 media object
   │
   ├─ MediaObject ─── fixed image/audio/video content + policy identity
+  ├─ DecodePlan ───── sealed decoder + representation + exact bounds
+  ├─ fixture decode ─ caller-owned RGB / PCM / intra-frame bytes + mappings
   ├─ MediaTimeline ─ checked rational positions + explicit transform events
   └─ publication ─── output + resource root + timeline (one logical commit)
 ```
@@ -190,6 +195,7 @@ zig build continuation-payload-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-checkpoint-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-contract-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build media-decode-fixture-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -213,7 +219,7 @@ model conversion, generation, and every demo command, continue with the
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Prototype shared image/audio/video identity, exact rational timeline, event roots, and chunk publication | Sealed decode plan and tiny bounded fixtures; model execution remains gated |
+| Multimodal | Shared identity/timeline/publication plus sealed plans and bounded RGB, PCM, and intra-frame video fixtures with exact source mapping | Deterministic crop, resample, and frame-selection plans; model execution remains gated |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -265,6 +271,7 @@ valuable as new features.
 - [Continuation live restart](docs/CONTINUATION_LIVE_RESTART.md)
 - [Continuation checkpoint file](docs/CONTINUATION_CHECKPOINT_FILE.md)
 - [Shared media contract](docs/MEDIA_CONTRACT.md)
+- [Bounded media decode fixtures](docs/MEDIA_DECODE_FIXTURES.md)
 - [Multimodal roadmap](docs/MULTIMODAL_ROADMAP.md)
 - [Glossary](docs/GLOSSARY.md)
 

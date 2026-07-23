@@ -120,6 +120,16 @@ resource-claim root, and prior commit. The prototype advances in-memory logical
 state exactly once; concrete resource and output publication remain an
 integration requirement.
 
+**MediaDecodePlan** — A fixed sealed value binding one media object to an exact
+decoder implementation, source/destination representation, execution and
+numerical policies, required capabilities, output/scratch bounds, transform
+policy, resource policy, and challenge. A valid plan grants no I/O authority.
+
+**Tiny media fixture** — A bounded canonical test container whose header,
+payload, provenance, and footer reconstruct one `MediaObject`. The reference
+identity decoder maps every output pixel, PCM frame, or video frame to exact
+source bytes; it is not a general external-format codec.
+
 **Retired entry** — A retained store payload with zero semantic references and
 no active lease. It is eligible for a future separately authorized sweep only
 after an exact collection plan classifies it as collectible.

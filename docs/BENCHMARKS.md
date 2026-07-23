@@ -38,6 +38,7 @@ energy, or production reliability.
 | `zig build continuation-live-restart-demo -Dmetal=false` | Fresh-process ownership/KV/RNG/output restore and exact-once publication of the next token |
 | `zig build continuation-checkpoint-file-demo -Dmetal=false` | Immutable whole-checkpoint archive, atomic selector switch, seven process-death phases, and fresh live resume after each recovery |
 | `zig build media-contract-demo -Dmetal=false` | Fixed image/audio/video descriptors, exact rational mapping, explicit event lineage, two logical chunk commits, and stale-replay rejection |
+| `zig build media-decode-fixture-demo -Dmetal=false` | Sealed plans plus bounded RGB8, PCM s16le, and intra-frame gray8 fixture decode with complete per-unit source mapping |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -65,6 +66,17 @@ or microphone authority.
 This is contract conformance, not an execution benchmark. It supports no claim
 about codec coverage, model quality, provider units, throughput, latency,
 memory, storage, or energy.
+
+The bounded decode fixture adds three canonical inputs totaling 1,108 encoded
+bytes and 52 decoded payload bytes. It maps four RGB pixels, eight stereo PCM
+frames, and two video frames—14 units total—without heap allocation, scratch
+storage, ambient capabilities, external codecs, or model execution. The
+independent Python oracle shares all fixture, plan, and decode-receipt roots and
+mutation-checks every byte of all six wires.
+
+These deliberately tiny counts describe test coverage, not performance or
+format support. See [Bounded Media Decode Fixtures](MEDIA_DECODE_FIXTURES.md)
+for the exact claim boundary.
 
 ## Continuation checkpoint
 

@@ -73,16 +73,19 @@ Add a tiny, redistributable fixture covering one loader or tensor-layout branch.
 
 **First slice:** parser and shape validation only; do not bundle large weights.
 
-### Tiny media fixture contracts
+### Media transform reference models
 
-Add one redistributable image, PCM audio, or intra-frame video fixture plus a
-machine-readable manifest of exact bytes, geometry/time base, and provenance.
-Resolve the manifest through the implemented 272-byte shared media descriptor;
-this advances the gated multimodal track without claiming integrated execution.
+The first fixture slice is complete: one canonical container now covers tiny
+RGB8, PCM s16le, and intra-frame gray8 video through sealed plans, bounded
+caller-owned decode, complete source mappings, and independent golden vectors.
 
-**First slice:** fixture generation, checksum, bounded parser, and malformed
-length/geometry rejection only. Reuse the golden-vector pattern in the
-[Shared Media Contract](MEDIA_CONTRACT.md) and see the
+Add one deterministic transform without importing a production codec: image
+crop/tile, audio channel mix/resample, or video frame selection. Preserve exact
+input/output ranges and make unsupported geometry reject.
+
+**First slice:** pure plan + reference transform + exhaustive tiny mapping
+fixtures; no model, device, or network integration. Reuse
+[Bounded Media Decode Fixtures](MEDIA_DECODE_FIXTURES.md) and see the
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md).
 
 ### ResourceBank property tests

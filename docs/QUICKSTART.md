@@ -82,6 +82,9 @@ zig build continuation-checkpoint-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Verify shared image/audio/video identity, exact time, and chunk publication
 zig build media-contract-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Decode bounded RGB, PCM, and intra-frame video fixtures through sealed plans
+zig build media-decode-fixture-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

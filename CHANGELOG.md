@@ -95,6 +95,16 @@ before the first stable release.
   authority.
 - A model-free shared media demo plus a gated roadmap from the new contract
   prototype through bounded image, streaming audio, and video execution.
+- A fixed 416-byte sealed media decode plan binding object, decoder,
+  representation, execution/numerical/rejection policy, exact output/scratch
+  bounds, transform, resource policy, challenge, and required capabilities.
+- Tiny bounded RGB8, PCM s16le, and intra-frame gray8 video fixtures with a
+  canonical 320-byte header, allocation-free caller-owned identity decode,
+  complete per-pixel/frame source mappings, keyframe bounds, and shared
+  Zig/Python fixture, plan, and receipt roots.
+- Mutation-complete verification for all three fixture and decode-plan wires
+  plus foreign-plan, output-capacity, overlap, truncation, and re-rooted
+  semantic contradiction rejection.
 
 ### Status
 

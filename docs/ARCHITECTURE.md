@@ -14,7 +14,7 @@ not.
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
-| Media | `MediaObjectV1`, rational positions, timeline events, publication state | Bind image/audio/video identity and transformations, then advance logical chunks exactly once without ambient I/O authority |
+| Media | `MediaObjectV1`, sealed decode plan, bounded fixture decoder, rational positions, timeline events, publication state | Bind image/audio/video identity and decoder bounds, map canonical fixture units to source bytes, then advance logical chunks exactly once without ambient I/O authority |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -75,6 +75,14 @@ untrusted media declaration
 fixed MediaObject decode ──reject──> no accepted identity
           │ object root
           ▼
+sealed DecodePlan + bounded fixture
+          │
+          ├─ foreign decoder/object/bounds ──reject──> output unchanged
+          │
+          ▼
+caller-owned canonical bytes + exact source-unit mappings
+          │
+          ▼
 exact rational source span + explicit transform event
           │
           ├─ non-integral/invalid mapping ──reject──> no timeline change
@@ -90,9 +98,11 @@ next sequence + chunk count + logical units + timeline/commit roots
 ```
 
 The shared media layer is a model-free prototype. It verifies descriptors,
-integer-only positions, event lineage, and logical publication state. It has no
-decoder, encoder, filesystem, network, camera, microphone, or accelerator
-authority. A future integration must compose sealed decode plans and concrete
+sealed plan identity, integer-only positions, event lineage, logical
+publication state, and a tiny bounded fixture container. The reference identity
+decoder supports only retained RGB8, PCM s16le, and intra-frame gray8 fixtures;
+it has no external codec, encoder, filesystem, network, camera, microphone,
+model, or accelerator authority. A future integration must compose concrete
 resource/output transitions without weakening those boundaries.
 
 ### ResourceBank
@@ -443,6 +453,8 @@ still require real machines for each promoted platform.
 - [Shared media contract](MEDIA_CONTRACT.md): fixed image/audio/video identity,
   exact rational positions, explicit event roots, and logical chunk
   publication.
+- [Bounded media decode fixtures](MEDIA_DECODE_FIXTURES.md): sealed plans,
+  caller-owned RGB/PCM/video fixture decode, and complete source-unit mapping.
 - [Multimodal roadmap](MULTIMODAL_ROADMAP.md): gated shared media identity,
   timeline, transaction, image, audio, and video tracks.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.
