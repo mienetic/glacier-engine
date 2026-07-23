@@ -173,16 +173,16 @@ result records without treating vocabulary as execution support.
 `VisionEncoderAdapter` is the first bounded implementation: it requires a live
 owned image cache, executes an exact-integer fixture into provisional storage,
 revalidates the candidate, and publishes one typed embedding or scrubs it.
-`StatelessModelAdapter` extracts the reusable admission, private-candidate,
-revalidation, publication, abort, and release lifecycle.
+`StatelessModelAdapter` supplies the reusable admission, private-candidate,
+revalidation, publication, abort, and release lifecycle used by all three
+retained perception adapters.
 `AudioWindowAdapter` is the second family binding: it validates live audio
-features plus exact sample/window/hop lineage before entering that shared
-lifecycle.
+features plus exact sample/window/hop lineage before entering the lifecycle.
 `TemporalVideoAdapter` adds a canonical strided-frame selection. It binds
 keyframe lineage, eviction boundary, cache generation, and an exactly mapped
 target span, gathers only selected frames into charged caller-owned scratch,
-scrubs the gather buffer on every return, and then enters the same stateless
-publication lifecycle.
+scrubs the gather buffer on every return, and then enters the same publication
+lifecycle.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact

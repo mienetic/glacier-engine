@@ -136,8 +136,9 @@ timeline mapping, and keyframe/eviction lineage through that same common wire.
 See [Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md).
 
 The next family work is a generic non-media encoder plus a stateful step
-adapter. Vision should also migrate onto the extracted shared stateless
-lifecycle.
+adapter. Vision, audio, and temporal video now use the extracted shared
+stateless lifecycle, so that stateful work can focus on genuinely different
+continuation semantics instead of another publication implementation.
 
 See [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and

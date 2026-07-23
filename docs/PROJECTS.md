@@ -180,10 +180,10 @@ two fake families that have different state/output semantics.
 
 **Current slice:** vision, audio, and temporal-video stateless vector families
 run under zero ambient capabilities, fixed buffers, and deterministic rejection
-tests. Audio and video use the shared family-neutral stateless lifecycle.
+tests. All three now use the shared family-neutral stateless lifecycle.
 
-**Next slice:** migrate vision to that shared lifecycle, then add one stateful
-step family with distinct continuation semantics.
+**Next slice:** add one stateful step family with distinct continuation
+semantics, or add a generic non-media encoder using the converged lifecycle.
 
 ### ResourceBank property tests
 

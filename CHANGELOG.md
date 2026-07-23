@@ -6,6 +6,13 @@ before the first stable release.
 
 ## Unreleased
 
+### Changed
+
+- Vision now uses the same family-neutral stateless adapter lifecycle as audio
+  and temporal video, removing its duplicate admission/publication state
+  machine while preserving live-cache checks, candidate revalidation,
+  abort scrubbing, and exact release behavior.
+
 ### Added
 
 - Typed temporal-video encoder: a canonical strided-frame selection binds
