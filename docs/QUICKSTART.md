@@ -121,6 +121,10 @@ python3 -m unittest bench.tests.test_model_contract
 zig test src/core/audio_window_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_audio_window_adapter
 
+# Verify charged strided video selection and exact target-timeline binding
+zig test src/core/temporal_video_adapter.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_temporal_video_adapter
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

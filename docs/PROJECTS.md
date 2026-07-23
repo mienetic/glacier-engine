@@ -134,9 +134,14 @@ inputs, sample/window/hop source mapping, and shared stateless publication
 without changing the common artifact, plan, or result wire. See
 [Typed Audio-Window Encoder Adapter](AUDIO_WINDOW_ADAPTER.md).
 
-**Next slice:** add a temporal video encoder over the owned cache window. Bind
-selected frame ordinals, keyframe lineage, eviction boundary, and target
-timeline without changing the common model wire. Reuse
+**Completed slice:** a typed temporal-video encoder now gathers a canonical
+strided frame selection from the owned cache window into charged scratch. It
+binds selected ordinals, keyframe lineage, eviction boundary, cache generation,
+and exact target timeline without changing the common model wire. See
+[Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md).
+
+**Next slice:** add overlapping audio context ownership and typed transcript
+publication, reusing
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md),
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), and
 [Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md).
@@ -173,9 +178,9 @@ normalization/tie policy; no model download or quality claim.
 Prototype `inspect → plan → prepare → validate candidate → publish/abort` with
 two fake families that have different state/output semantics.
 
-**Current slice:** vision and audio stateless vector families run under zero
-ambient capabilities, fixed buffers, and deterministic rejection tests. Audio
-uses the shared family-neutral stateless lifecycle.
+**Current slice:** vision, audio, and temporal-video stateless vector families
+run under zero ambient capabilities, fixed buffers, and deterministic rejection
+tests. Audio and video use the shared family-neutral stateless lifecycle.
 
 **Next slice:** migrate vision to that shared lifecycle, then add one stateful
 step family with distinct continuation semantics.

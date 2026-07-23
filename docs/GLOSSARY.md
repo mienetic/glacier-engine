@@ -262,6 +262,15 @@ execution, family validation, typed publication or scrub, and exact release.
 time base, sample cursor, window/hop/context parameters, feature shape, live
 cache payload, processor state, and model batch.
 
+**Temporal-video selection** — A canonical bounded declaration of selected
+frame ordinals, stride, keyframe lineage, eviction boundary, cache generation,
+and exactly mapped target span. Its selected bytes are gathered into explicitly
+charged caller-owned scratch.
+
+**Temporal-video source mapping** — A commitment joining a temporal selection
+to the complete live video-cache root, processor window, time base, model batch,
+input shape, and typed result.
+
 **Synchronized media watermark** — The lower exact master-clock tick reached by
 the bound audio and video processor states, accepted only when integer mapping
 is exact and declared stream skew remains within policy.

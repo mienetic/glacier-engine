@@ -314,11 +314,11 @@ expand the base adapter's capabilities.
 | Family | Representative operations | Current state | First retained slice | Integration gate |
 | --- | --- | --- | --- | --- |
 | Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication integrated | Small legal artifact through uninterrupted and resumed output | Declared numerical equivalence, exact KV ownership, no duplicate token |
-| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision and audio embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
+| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision, audio, and temporal-video embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder fixture integrated; production model gated | Add overlap/context ownership and a typed transcript fixture | No sample loss/duplication, exact streaming restart, transcript transaction |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
-| Video understanding | frame/segment encode, search, summarize | Model-free video runtime vertical integrated; model gated | Keyframe selection plus temporal window plan | Exact frame/time mapping, temporal-cache ownership, synchronized stream policy |
+| Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder integrated; production model gated | Extend from typed embedding to a bounded segment result | Variable-frame-rate mapping, audio/subtitle linkage, stateful continuation |
 | Image generation | diffusion/flow step, decode latent, publish image | Idea | Tiny deterministic latent scheduler state machine | Latent/step continuation, bounded decode, atomic image/provenance publication |
 | Video generation | temporal latent steps, frame/segment publication | Idea | Two-frame synthetic generation fixture | Temporal ordering, restart/cancel semantics, manifest/chunk publication |
 | Audio/music generation | acoustic or token steps, waveform decode | Idea | Short synthetic exact-integer output fixture | Timeline continuity, chunk lineage, rights/provenance policy |
@@ -352,10 +352,12 @@ it does not require changing the meaning of existing families.
 Exit gate: two structurally different family fixtures use the shared contracts
 without family-specific fields leaking into the common wire.
 
-Current progress: vision u8 patches and audio i16 feature windows now share the
-artifact/plan/result records while retaining distinct source mappings. A
-generated compatibility matrix and read-only inspector remain before the exit
-gate is complete.
+Current progress: vision u8 patches, audio i16 feature windows, and strided
+video u8 frames now share the artifact/plan/result records while retaining
+distinct source mappings. Video additionally proves charged gather scratch,
+keyframe/eviction lineage, and exact target-time mapping. A generated
+compatibility matrix and read-only inspector remain before the exit gate is
+complete.
 
 ### R1 — Text path becomes the first complete runtime vertical
 
@@ -371,14 +373,14 @@ evidence.
 
 ### R2 — Stateless tensor families
 
-- add encoder/embedding/reranker/classifier operations; the first vision encode
-  and audio encode operations are retained, while generic encoder, reranker,
-  and classifier fixtures remain;
+- add encoder/embedding/reranker/classifier operations; vision, audio, and
+  temporal-video encode operations are retained, while generic encoder,
+  reranker, and classifier fixtures remain;
 - define typed tensor/vector/score result envelopes; the fixed integer
   embedding envelope is complete;
 - add deterministic batch-item mapping and tie/normalization policy; exact
-  batch mapping is complete for the vision fixture, while normalization and tie
-  policies remain;
+  batch mapping is complete for vision, audio, and selected video frames, while
+  normalization and tie policies remain;
 - integrate ResourceBank, LaneWeave, cancellation, and provider routing.
 
 Exit gate: text generation and one stateless encoder share the runtime planes
@@ -415,8 +417,10 @@ while retaining different state and publication semantics.
   publication, and model restart integration remain;
 - add video temporal selection, synchronized timeline state, and cache
   ownership; fixed window/eviction state plus exact audio/video watermark is
-  complete together with materialized cache ownership, while typed video-model
-  execution remains;
+  complete together with materialized cache ownership; a typed strided-frame
+  encoder now binds keyframe lineage, eviction boundary, charged gather
+  scratch, and exact target time, while variable-frame-rate and stateful model
+  continuation remain;
 - extend checkpoints with family-specific processor/cache state; the fixed
   independently verified state and payload bundles now advance as the fifth
   and sixth atomic archive objects through a fresh-process successor.

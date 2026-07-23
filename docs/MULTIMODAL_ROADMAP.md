@@ -1,12 +1,11 @@
 # Multimodal Roadmap
 
-Status: **integrated model-free image/audio/video runtime, typed vision/audio
-fixtures, bounded streaming, two-process continuation, crash-atomic checkpoint
-sets, and a post-restore generation-three successor; bounded image processor,
-audio feature-window, video temporal-cache, synchronized-watermark state, and
-exact cache payloads integrated as fifth and sixth durable archive objects with
-fresh-Bank restore; temporal video, production-model execution, and external
-formats remain gated**.
+Status: **integrated model-free image/audio/video runtime plus typed
+vision/audio/temporal-video fixtures, bounded streaming, two-process
+continuation, crash-atomic checkpoint sets, and a post-restore generation-three
+successor; bounded processor/cache state and payloads integrated as fifth and
+sixth durable archive objects with fresh-Bank restore; production-model
+execution and external formats remain gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -51,6 +50,12 @@ A typed audio adapter now consumes non-overlapping signed feature windows from
 the live audio cache and binds sample rate, window, hop, feature shape, and
 source cursor into the same result contract. Overlap/context ownership,
 transcripts, and production audio models remain gated.
+A typed temporal-video adapter now selects a bounded strided frame set from the
+live video cache into explicitly charged scratch. Its source mapping binds
+frame ordinals, keyframe lineage, eviction boundary, cache generation, and an
+exact rational target span; the gather scratch is scrubbed before return.
+Variable-frame-rate discontinuities, audio/subtitle linkage, stateful video
+models, and production quality remain gated.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -343,8 +348,9 @@ Early contributions can proceed without a large model:
 - decompression and allocation ceiling tests;
 - extend the completed deterministic crop/nearest, mix/exact-decimation, and
   keyframe-selection reference models with new bounded cases;
-- add bounded typed vision, speech, and video model-operation adapters over the
-  completed post-restore cache ownership path;
+- extend the bounded typed vision, audio, and temporal-video adapters with
+  detection, transcript, and segment result forms over the completed
+  post-restore cache ownership path;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 

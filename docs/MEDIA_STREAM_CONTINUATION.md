@@ -126,5 +126,6 @@ generated-media publication. Fixed family-specific audio windows, video
 temporal caches, image processor state, and a synchronized watermark now exist
 as an atomic stateful bundle, and exact cache payloads now restore under
 fresh-Bank ownership. Typed vision and audio fixtures now consume their live
-caches; temporal video, audio transcript, and production-model integration
-remain.
+caches, and a typed temporal-video fixture gathers a charged strided selection
+from its live window; overlapping audio context, transcripts, stateful model
+continuation, and production-model integration remain.

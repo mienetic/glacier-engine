@@ -1,9 +1,9 @@
 # Typed Model-Family Contracts and Vision Adapter
 
 Status: **prototype**. Glacier now has a capability-closed common model
-contract and one retained vision-encoder fixture. The fixture proves execution
-lifecycle and evidence semantics; it is not a production model or a quality
-benchmark.
+contract and retained vision, audio, and temporal-video encoder fixtures. They
+prove execution lifecycle and evidence semantics; they are not production
+models or quality benchmarks.
 
 ## Why this layer exists
 
@@ -119,6 +119,8 @@ throughput, or compatibility with downloaded weights.
 ```sh
 zig test src/core/model_contract.zig -OReleaseSafe
 zig test src/core/vision_encoder_adapter.zig -OReleaseSafe
+zig test src/core/audio_window_adapter.zig -OReleaseSafe
+zig test src/core/temporal_video_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_model_contract
 ```
 
@@ -129,9 +131,13 @@ uses different input width and streaming source semantics through the shared
 stateless lifecycle without changing the common wire. See
 [Typed Audio-Window Encoder Adapter](AUDIO_WINDOW_ADAPTER.md).
 
-The next retained perception slice is a temporal video encoder. It should reuse
-the same publication and resource contracts without adding vision- or
-audio-specific fields to the common wire.
+A typed temporal-video encoder now adds strided frame gathering, exact target
+timeline mapping, and keyframe/eviction lineage through that same common wire.
+See [Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md).
+
+The next family work is a generic non-media encoder plus a stateful step
+adapter. Vision should also migrate onto the extracted shared stateless
+lifecycle.
 
 See [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and

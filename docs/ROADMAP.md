@@ -30,8 +30,8 @@ evidence. The plane and model-family sequence is specified in the
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, and an integrated model-free image/audio/video transaction vertical | More family adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
-| Model-family breadth | Text-generation prototype plus typed vision and audio encoder fixtures; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless lifecycle, exact-integer vision/audio embedding publication, tensor, state, provider, media, and evidence building blocks | Video encoder, generic embeddings/reranking/classification, then generative media, multimodal, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime, streaming, continuation, post-restore materialized generation three, processor/cache state, and vision/audio fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object atomic checkpoint sets, image tile/patch state, audio window/hop/context state, video temporal-window state, exact cache payloads, restore-before-visible ownership, and cache-bound typed image/audio embedding publication | Typed video adapter and external formats, then transcript and generated-media publication |
+| Model-family breadth | Text-generation prototype plus typed vision, audio, and temporal-video encoder fixtures; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless lifecycle, exact-integer media embedding publication, tensor, state, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, stateful families, then generative media, multimodal, agents/retrieval, and specialized families |
+| Multimodal execution | Model-free runtime, streaming, continuation, post-restore materialized generation three, processor/cache state, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object atomic checkpoint sets, image tile/patch state, audio window/hop/context state, video temporal-window state, exact cache payloads, restore-before-visible ownership, and cache-bound typed image/audio/video embedding publication | Overlapping audio ownership, transcripts, and external formats, then generated-media publication |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -326,8 +326,8 @@ for unsupported inputs, and reproducible generation instructions.
 
 ### Multimodal execution
 
-Status: **integrated model-free runtime vertical plus one typed vision
-fixture; production-model execution gated**.
+Status: **integrated model-free runtime vertical plus typed vision, audio, and
+temporal-video fixtures; production-model execution gated**.
 Shared identity, rational timeline/events, sealed plans, bounded canonical
 RGB/PCM/intra-frame decode, three deterministic transforms, exact
 `ResourceBank` admission, candidate revalidation, atomic logical publication,
@@ -346,9 +346,9 @@ The implementation sequence is:
    publication, model-free two-process restart, fixed feature-window state, and
    a non-overlapping exact-integer feature encoder are complete; overlap
    ownership, transcript, and playback state remain;
-4. keyframe selection and exact frame/time mappings are complete;
-   audio/subtitle synchronization, temporal cache, and segment publication
-   remain;
+4. keyframe selection, exact frame/time mappings, temporal-cache ownership, and
+   a typed strided-frame encoder with charged gather scratch are complete;
+   audio/subtitle linkage and typed segment publication remain;
 5. exact request admission, per-buffer `LeaseTree` ownership, provisional
    execution, full candidate revalidation, commit/abort/retry, bounded
    multi-chunk publication, portable receipt chains, early provisional
@@ -428,7 +428,7 @@ ideas unless a different status is stated.
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
 | Object Fabric | Prototype (durable payload bytes and logical ownership reacquisition; in-memory object lifecycle) | Tenant-safe content-addressed model, plan, KV, continuation, media, and evidence objects |
 | Media Capsule | Idea (gated) | Typed image, audio, and video identity with explicit decode/preprocess meaning |
-| MediaTimeline and MediaTxn | Integrated model-free fixture, bounded stream, post-restore materialized successor, six-object atomic checkpoint, and typed vision/audio fixtures; production-model/external-format gated | Exact sample/frame position, per-buffer execution, retained-output/cache rebinding, image/audio/video processor progress, materialized temporal-cache accounting, typed image/audio embeddings, and an integer synchronized watermark |
+| MediaTimeline and MediaTxn | Integrated model-free fixture, bounded stream, post-restore materialized successor, six-object atomic checkpoint, and typed vision/audio/temporal-video fixtures; production-model/external-format gated | Exact sample/frame position, per-buffer execution, retained-output/cache rebinding, image/audio/video processor progress, materialized temporal-cache accounting, typed media embeddings, and an integer synchronized watermark |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |

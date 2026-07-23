@@ -8,6 +8,10 @@ before the first stable release.
 
 ### Added
 
+- Typed temporal-video encoder: a canonical strided-frame selection binds
+  keyframe lineage, eviction boundary, cache generation, and exact target
+  timeline mapping; charged gather scratch is always scrubbed before the shared
+  stateless lifecycle publishes deterministic embeddings or aborts.
 - Typed audio-window encoder and shared stateless adapter lifecycle: exact i16
   feature windows bind sample/window/hop lineage and live audio-cache ownership,
   publish deterministic i32 embeddings, reject in-memory state mutation and

@@ -34,6 +34,10 @@ PUBLICATION_COMMIT_DOMAIN = b"glacier-model-publication-commit-v1\x00"
 AUDIO_SOURCE_MAPPING_DOMAIN = (
     b"glacier-audio-window-source-mapping-v1\x00"
 )
+VIDEO_SELECTION_DOMAIN = b"glacier-temporal-video-selection-v1\x00"
+VIDEO_SOURCE_MAPPING_DOMAIN = (
+    b"glacier-temporal-video-source-mapping-v1\x00"
+)
 CLAIM_FIELDS = (
     "capsule_bytes",
     "kv_bytes",
@@ -79,8 +83,10 @@ RESULT_DIGEST_FIELDS = (
 
 # IDs are vocabulary, not claims of executable support.
 VISION_UNDERSTANDING = 3
+VIDEO_UNDERSTANDING = 6
 ENCODE = 3
 IMAGE_FEATURE_U8 = 3
+VIDEO_FEATURE_U8 = 5
 EMBEDDING_I32 = 2
 EXACT_INTEGER = 1
 FAMILY_IDS = frozenset(range(1, 18))
@@ -828,3 +834,243 @@ def audio_source_mapping_root(
     ):
         raise ModelContractError("invalid audio source mapping")
     return hashlib.sha256(AUDIO_SOURCE_MAPPING_DOMAIN + body).digest()
+
+
+def _temporal_video_selection_root(
+    video_state: Record,
+    selection: Record,
+) -> bytes:
+    fields = (
+        "first_frame",
+        "frame_count",
+        "frame_stride",
+        "last_frame",
+        "keyframe_ordinal",
+        "eviction_boundary",
+        "cache_generation",
+        "target_numerator",
+        "target_denominator",
+        "target_start_tick",
+        "target_end_tick",
+    )
+    try:
+        body = _digest(video_state["state_sha256"]) + b"".join(
+            _u64(selection[field]) for field in fields
+        )
+    except (KeyError, TypeError):
+        raise ModelContractError("invalid temporal video selection") from None
+    return hashlib.sha256(VIDEO_SELECTION_DOMAIN + body).digest()
+
+
+def make_temporal_video_selection(
+    video_state: Record,
+    *,
+    first_frame: int,
+    frame_count: int,
+    frame_stride: int,
+    target_base: tuple[int, int],
+) -> Record:
+    from bench import media_contract as media
+    from bench import media_processor_state as processor
+
+    try:
+        processor.encode_state(video_state)
+        if frame_count <= 0 or frame_stride <= 0:
+            raise ModelContractError("invalid temporal video selection")
+        last_frame = first_frame + (frame_count - 1) * frame_stride
+        _u64(last_frame)
+        source_end = last_frame + 1
+        _u64(source_end)
+        target_start = media.convert_exact(
+            (
+                first_frame,
+                (
+                    video_state["timeline_numerator"],
+                    video_state["timeline_denominator"],
+                ),
+            ),
+            target_base,
+        )
+        target_end = media.convert_exact(
+            (
+                source_end,
+                (
+                    video_state["timeline_numerator"],
+                    video_state["timeline_denominator"],
+                ),
+            ),
+            target_base,
+        )
+        selection: Record = {
+            "first_frame": first_frame,
+            "frame_count": frame_count,
+            "frame_stride": frame_stride,
+            "last_frame": last_frame,
+            "keyframe_ordinal": video_state["parameters"][4],
+            "eviction_boundary": video_state["parameters"][6],
+            "cache_generation": video_state["parameters"][5],
+            "target_numerator": target_base[0],
+            "target_denominator": target_base[1],
+            "target_start_tick": target_start[0],
+            "target_end_tick": target_end[0],
+        }
+    except (KeyError, TypeError, OverflowError, ValueError):
+        raise ModelContractError("invalid temporal video selection") from None
+    selection["selection_sha256"] = _temporal_video_selection_root(
+        video_state,
+        selection,
+    )
+    return validate_temporal_video_selection(video_state, selection)
+
+
+def validate_temporal_video_selection(
+    video_state: Record,
+    selection: Record,
+) -> Record:
+    from bench import media_contract as media
+    from bench import media_processor_state as processor
+
+    try:
+        processor.encode_state(video_state)
+        parameters = video_state["parameters"]
+        values = {
+            field: selection[field]
+            for field in (
+                "first_frame",
+                "frame_count",
+                "frame_stride",
+                "last_frame",
+                "keyframe_ordinal",
+                "eviction_boundary",
+                "cache_generation",
+                "target_numerator",
+                "target_denominator",
+                "target_start_tick",
+                "target_end_tick",
+            )
+        }
+        for value in values.values():
+            _u64(value)
+        selection_root = _digest(selection["selection_sha256"])
+        last_frame = values["first_frame"] + (
+            values["frame_count"] - 1
+        ) * values["frame_stride"]
+        _u64(last_frame)
+        source_end = last_frame + 1
+        _u64(source_end)
+        target_base = (
+            values["target_numerator"],
+            values["target_denominator"],
+        )
+        source_base = (
+            video_state["timeline_numerator"],
+            video_state["timeline_denominator"],
+        )
+        target_start = media.convert_exact(
+            (values["first_frame"], source_base),
+            target_base,
+        )
+        target_end = media.convert_exact(
+            (source_end, source_base),
+            target_base,
+        )
+    except (KeyError, TypeError, OverflowError, ValueError):
+        raise ModelContractError("invalid temporal video selection") from None
+    if (
+        video_state["kind"] != media.VIDEO
+        or values["frame_count"] <= 0
+        or values["frame_stride"] <= 0
+        or values["first_frame"] < parameters[2]
+        or values["last_frame"] >= parameters[3]
+        or values["last_frame"] != last_frame
+        or values["keyframe_ordinal"] != parameters[4]
+        or values["keyframe_ordinal"] > values["first_frame"]
+        or values["eviction_boundary"] != parameters[6]
+        or values["cache_generation"] != parameters[5]
+        or values["target_start_tick"] != target_start[0]
+        or values["target_end_tick"] != target_end[0]
+        or values["target_start_tick"] >= values["target_end_tick"]
+        or selection_root
+        != _temporal_video_selection_root(video_state, selection)
+    ):
+        raise ModelContractError("invalid temporal video selection")
+    return {**values, "selection_sha256": selection_root}
+
+
+def materialize_temporal_video_selection(
+    plan: Record,
+    video_state: Record,
+    selection: Record,
+    video_cache: bytes,
+) -> bytes:
+    selection = validate_temporal_video_selection(
+        video_state,
+        selection,
+    )
+    try:
+        parameters = video_state["parameters"]
+        if (
+            not isinstance(video_cache, bytes)
+            or len(video_cache) != video_state["cache_bytes"]
+            or sha256(video_cache) != video_state["cache_content_sha256"]
+            or video_state["cache_content_sha256"]
+            != plan["cache_payload_sha256"]
+            or plan["batch_items"] != selection["frame_count"]
+            or plan["input_features"] != parameters[1]
+            or plan["input_bytes"]
+            != selection["frame_count"] * parameters[1]
+        ):
+            raise ModelContractError("invalid temporal video cache")
+        selected = bytearray()
+        for index in range(selection["frame_count"]):
+            frame = (
+                selection["first_frame"]
+                + index * selection["frame_stride"]
+            )
+            offset = (frame - parameters[2]) * parameters[1]
+            selected.extend(video_cache[offset : offset + parameters[1]])
+        if len(selected) != plan["input_bytes"]:
+            raise ModelContractError("invalid temporal video cache")
+    except (KeyError, TypeError, OverflowError):
+        raise ModelContractError("invalid temporal video cache") from None
+    return bytes(selected)
+
+
+def temporal_video_source_mapping_root(
+    plan: Record,
+    video_state: Record,
+    selection: Record,
+) -> bytes:
+    selection = validate_temporal_video_selection(
+        video_state,
+        selection,
+    )
+    try:
+        parameters = video_state["parameters"]
+        values = (
+            video_state["timeline_numerator"],
+            video_state["timeline_denominator"],
+            video_state["cursor_units"],
+            video_state["produced_units"],
+            video_state["cache_entries"],
+            video_state["cache_bytes"],
+            *parameters,
+            plan["batch_items"],
+            plan["input_features"],
+        )
+        body = (
+            _digest(plan["media_object_sha256"])
+            + _digest(plan["processor_state_sha256"])
+            + _digest(plan["cache_payload_sha256"])
+            + selection["selection_sha256"]
+            + b"".join(_u64(value) for value in values)
+        )
+    except (KeyError, TypeError):
+        raise ModelContractError("invalid video source mapping") from None
+    if (
+        video_state["state_sha256"] != plan["processor_state_sha256"]
+        or plan["batch_items"] != selection["frame_count"]
+        or plan["input_features"] != video_state["parameters"][1]
+    ):
+        raise ModelContractError("invalid video source mapping")
+    return hashlib.sha256(VIDEO_SOURCE_MAPPING_DOMAIN + body).digest()

@@ -85,9 +85,10 @@ formats, and independent verifiers.
   make them live only after success, and release every cache owner to zero.
 - **Typed model-family execution.** Fixed artifact, execution-plan, and result
   records separate runtime vocabulary from executable support. Capability-free
-  vision and audio adapters read only verified live caches, compute into
-  provisional storage, reject candidate drift, and publish source- and
-  ownership-bound embedding transactions.
+  vision, audio, and temporal-video adapters read only verified live caches,
+  compute into provisional storage, reject candidate drift, and publish
+  source- and ownership-bound embedding transactions. Video selection gathers
+  strided frames through explicitly charged scratch and scrubs it on return.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -285,12 +286,12 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | AI runtime | CPU execution, optional Metal backend, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes | More family adapters, stable API, distribution and retained compatibility matrix |
-| Model families | Text-generation prototype, cache-bound vision/audio embedding fixtures, a reusable stateless lifecycle, and shared tensor, state, provider, and media building blocks | Video encoder, generic embeddings/reranking/classification, diffusion/generative media, multimodal, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
+| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, a reusable stateless lifecycle, and shared tensor, state, provider, and media building blocks | Generic embeddings/reranking/classification, stateful families, diffusion/generative media, multimodal, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object checkpoints, post-restore materialized generation three, image processor progress, audio feature windows, video temporal caches, exact synchronized watermark, restore-before-visible cache ownership, and typed vision/audio embedding publication | Add a typed video adapter and external formats, then transcript and generated-media publication |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object checkpoints, post-restore materialized generation three, image processor progress, audio feature windows, video temporal caches, exact synchronized watermark, restore-before-visible cache ownership, and typed vision/audio/temporal-video embedding publication | Add overlapping audio ownership and transcripts, external formats, then generated-media publication |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -333,6 +334,7 @@ valuable as new features.
 - [Materialized multimodal processor caches](docs/MEDIA_PROCESSOR_CACHE.md)
 - [Typed model-family contracts and vision adapter](docs/MODEL_FAMILY_ADAPTER.md)
 - [Typed audio-window encoder adapter](docs/AUDIO_WINDOW_ADAPTER.md)
+- [Typed temporal-video encoder adapter](docs/TEMPORAL_VIDEO_ADAPTER.md)
 - [Paging contract](docs/PAGING.md)
 - [Continuation capsule](docs/CONTINUATION_CAPSULE.md)
 - [Continuation object resolver](docs/CONTINUATION_OBJECT_RESOLVER.md)

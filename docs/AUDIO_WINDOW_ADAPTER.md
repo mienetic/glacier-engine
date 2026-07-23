@@ -105,9 +105,10 @@ zig test src/core/audio_window_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_audio_window_adapter
 ```
 
-The next perception slice is a temporal video encoder over the existing
-keyframe/window cache. The following audio slice should add overlap/context
-ownership and a typed transcript transaction.
+The temporal-video slice now covers strided selection over the existing
+keyframe/window cache. The next audio slice should add overlap/context
+ownership and a typed transcript transaction. See
+[Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md).
 
 See [Typed Model-Family Contracts and Vision Adapter](MODEL_FAMILY_ADAPTER.md),
 [Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md), and

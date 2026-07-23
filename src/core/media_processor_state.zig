@@ -588,6 +588,10 @@ pub fn validateDecodedBundleV1(
         return Error.InvalidProcessorBundle;
 }
 
+pub fn validateDecodedStateV1(state: ProcessorStateV1) Error!void {
+    try validateProcessorStateV1(state);
+}
+
 pub fn validateSuccessorV1(
     previous: *const DecodedBundleV1,
     successor: *const DecodedBundleV1,

@@ -609,6 +609,7 @@ pub fn sourceMappingRootV1(
     plan: model.ExecutionPlanV1,
     image_state: processor.ProcessorStateV1,
 ) Error!Digest {
+    try processor.validateDecodedStateV1(image_state);
     if (image_state.kind != .image or
         !std.mem.eql(
             u8,
