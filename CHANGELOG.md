@@ -8,6 +8,11 @@ before the first stable release.
 
 ### Added
 
+- One-root image/audio/video checkpoint generations: three fixed stream
+  checkpoints plus a canonical retained-output bundle publish through the
+  immutable archive and atomic selector. A seven-boundary `SIGKILL` campaign
+  resumes the complete previous or successor generation in fresh processes,
+  then proves idempotent recovery to generation two.
 - Public contributor documentation, governance, support, security, and conduct
   policies.
 - Glacier Engine visual identity and repository metadata.

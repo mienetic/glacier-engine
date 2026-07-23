@@ -109,14 +109,16 @@ Bank usage, live allocations, and active trees.
 
 ## Deliberate limits
 
-The worker syncs each checkpoint and retained output plus the containing
-directory, but the collection is not yet one crash-atomic checkpoint set. It
-does not provide a root selector, multi-worker leader election, repeated
-checkpoint generations after a resumed chunk, power-loss injection, external
-codecs, capture/playback, media-model state, or generated-media publication.
+The subsequent
+[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md) layer now
+places all three checkpoints and one retained-output bundle under the existing
+immutable archive and atomic selector. It accepts only the complete previous or
+successor generation after every process-death write/sync/root-switch boundary.
 
-The next layer places the media checkpoint and retained outputs into the
-existing immutable checkpoint archive and atomic selector protocol. That layer
-must accept only the previous or successor generation after every interrupted
-write/sync/root-switch boundary, then add family-specific audio windows, video
-temporal caches, image processor state, and generated-output policy.
+It does not yet create a new checkpoint generation after restoring an older
+generation, provide multi-writer leader election, emulate storage-device power
+loss, or carry external codecs, capture/playback, media-model state, or
+generated-media publication. The next ownership milestone rebinds restored
+output leases into a successor checkpoint, then adds family-specific audio
+windows, video temporal caches, image processor state, and generated-output
+policy.

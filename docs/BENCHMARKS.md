@@ -45,6 +45,7 @@ energy, or production reliability.
 | `zig build media-stream-demo -Dmetal=false` | Six bounded image/audio/video chunks, two retained outputs per stream, cancellation-safe retry, exact target gap/overlap rejection, portable chunk chaining, and final zero state |
 | `zig build media-stream-continuation-demo -Dmetal=false` | Three portable 2,048-byte checkpoints, fresh-Bank charge-before-materialization output restore, exact next-chunk publication, and final zero state |
 | `zig build media-stream-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, synced image/audio/video checkpoints and retained outputs, three resumed chunks, zero duplicates, and explicit non-atomic-set disclosure |
+| `zig build media-stream-checkpoint-set-demo -Dmetal=false` | Two one-root image/audio/video generations, canonical retained-output bundling, seven `SIGKILL` boundaries, complete previous/successor resume, idempotent recovery, and final zero ownership |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -128,8 +129,19 @@ fresh Bank, and appends chunk one. The two-process companion repeats the same
 three paths under distinct source and target PIDs after file and directory
 sync. Both finish with zero Bank usage, live allocations, and active trees. The
 independent oracle shares the fixed 2,048-byte image checkpoint root and rejects
-every serialized byte mutation. These are restart-conformance counts, not a
-claim that the separate checkpoint/output files form one crash-atomic set.
+every serialized byte mutation. These first two commands are
+restart-conformance counts and do not claim that their separate files form one
+crash-atomic set.
+
+The checkpoint-set demo closes that visibility gap. It packs three fixed
+checkpoints and six retained outputs into four archive objects using one
+canonical bundle, then publishes generation two over generation one. Seven
+publisher deaths expose generation one five times and generation two twice;
+fresh targets resume all three streams both before repair and after idempotent
+recovery. The observed campaign performs 42 resumed modality-chunks with zero
+duplicates and zero final Bank usage. It exercises real process death and sync
+calls, not storage-device power loss or checkpoint creation after restored
+execution.
 
 These values are deterministic conformance counts. They do not measure process
 memory, physical device residency, throughput, latency, model quality, codec
@@ -137,7 +149,8 @@ coverage, or provider usage. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), followed by
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
-[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md).
+[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), followed by
+[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md).
 
 ## Continuation checkpoint
 

@@ -112,9 +112,12 @@ The first continuation layer is complete in
 2. ~~fresh-generation reacquisition of retained output leases before resume;~~
 3. ~~a real source/target process restart for image, audio, and video retained
    fixtures;~~
-4. place checkpoint and output objects under one crash-atomic archive/selector,
-   then repeat process death at every write, sync, and root-switch boundary;
-5. add repeated checkpoint generations after resumed chunks;
+4. ~~place checkpoint and output objects under one crash-atomic archive/selector,
+   then repeat process death at every write, sync, and root-switch boundary;~~
+   complete for two whole image/audio/video generations and seven native
+   `SIGKILL` boundaries;
+5. add repeated checkpoint generations after resumed chunks, rebinding fresh
+   ownership without accepting stale source receipts;
 6. add family-specific state for audio windows, video temporal caches, and
    image processor/cross-attention state; and
 7. define generated-media partial-output and cancellation policy.

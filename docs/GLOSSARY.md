@@ -226,6 +226,11 @@ publication state, last chunk root, retained output identities and bytes, plus
 the exact fresh-Bank ownership plan required before resumed output becomes
 runtime-visible.
 
+**Media stream checkpoint set** — One immutable archive generation containing
+fixed image, audio, and video stream checkpoints plus a canonical
+retained-output bundle. A single selector root makes only the complete previous
+or successor multimodal generation visible across process death.
+
 **Object lease receipt** — A commitment to one blob, owner, retained generation,
 explicit expiry tick, and lifecycle grant. It is valid only while every field
 equals the active store slot.

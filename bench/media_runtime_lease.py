@@ -425,6 +425,8 @@ def isolated_tree_evidence(
     tree_key: int,
     authority_key: int,
     tenant_key: int,
+    slot_index: int = 0,
+    receipt_generation: int = 1,
 ) -> tuple[Record, list[Record]]:
     plan = transform.decode_plan(transform.encode_plan(plan_value))
     roles = roles_for_plan(plan)
@@ -432,6 +434,8 @@ def isolated_tree_evidence(
         bank_epoch,
         owner_key,
         parent_claim(encoded_fixture_bytes),
+        slot_index,
+        receipt_generation,
     )
     nodes: list[Record] = []
     bindings: list[Record] = []
@@ -906,6 +910,8 @@ def build_execution_receipt(
     tree_key: int,
     authority_key: int,
     tenant_key: int,
+    slot_index: int = 0,
+    receipt_generation: int = 1,
 ) -> tuple[Record, Record]:
     transform.verify_receipt(
         encoded_fixture,
@@ -925,6 +931,8 @@ def build_execution_receipt(
         tree_key,
         authority_key,
         tenant_key,
+        slot_index,
+        receipt_generation,
     )
     total = total_claim(len(encoded_fixture), plan)
     resource_sha256 = resource_commitment(

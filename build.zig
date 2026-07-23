@@ -1293,6 +1293,71 @@ pub fn build(b: *std.Build) void {
         &media_stream_live_restart_worker_exe.step,
     );
 
+    // Three stream checkpoints and one canonical retained-output bundle share
+    // a single immutable archive root. The source produces two generations;
+    // a publisher dies after every durability phase, and fresh target
+    // processes resume image/audio/video from either selected generation.
+    const media_stream_checkpoint_set_worker_exe =
+        b.addExecutable(.{
+            .name = "glacier-media-stream-checkpoint-set-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/media_stream_checkpoint_set_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    media_stream_checkpoint_set_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    media_stream_checkpoint_set_worker_exe.linkLibC();
+    const media_stream_checkpoint_set_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-media-stream-checkpoint-set-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/media_stream_checkpoint_set.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    media_stream_checkpoint_set_demo_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    media_stream_checkpoint_set_demo_exe.linkLibC();
+    const run_media_stream_checkpoint_set_demo =
+        b.addRunArtifact(
+            media_stream_checkpoint_set_demo_exe,
+        );
+    run_media_stream_checkpoint_set_demo.addArtifactArg(
+        continuation_checkpoint_file_worker_exe,
+    );
+    run_media_stream_checkpoint_set_demo.addArtifactArg(
+        media_stream_checkpoint_set_worker_exe,
+    );
+    const media_stream_checkpoint_set_demo_step = b.step(
+        "media-stream-checkpoint-set-demo",
+        "Run crash-atomic multimodal checkpoint generations",
+    );
+    media_stream_checkpoint_set_demo_step.dependOn(
+        &run_media_stream_checkpoint_set_demo.step,
+    );
+    test_step.dependOn(
+        &run_media_stream_checkpoint_set_demo.step,
+    );
+    test_compile_step.dependOn(
+        &media_stream_checkpoint_set_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &media_stream_checkpoint_set_worker_exe.step,
+    );
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

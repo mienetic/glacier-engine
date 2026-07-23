@@ -1,8 +1,9 @@
 # Multimodal Roadmap
 
 Status: **integrated model-free image/audio/video runtime, bounded streaming,
-and two-process continuation vertical; media-model execution, crash-atomic
-media checkpoint selection, and external formats remain gated**.
+two-process continuation, and crash-atomic two-generation checkpoint sets;
+media-model execution, post-restore successor checkpoints, and external formats
+remain gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -21,7 +22,10 @@ advancing state, and chains portable chunk receipts. Media-model execution and
 production promotion still waits for an uninterrupted/resumed production-model
 comparison and retained platform evidence. The model-free stream itself now
 crosses a real process boundary: a fixed checkpoint restores retained outputs
-under a fresh Bank and publishes the next chunk for every modality.
+under a fresh Bank and publishes the next chunk for every modality. Three
+checkpoints and one retained-output bundle now share an atomic archive root;
+fresh targets resume the complete previous or successor generation across all
+seven root-switch process-death boundaries.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -151,12 +155,16 @@ The continuation layer adds a fixed 2,048-byte checkpoint. A source process
 syncs checkpoint/output bytes, releases its Bank, and exits; a distinct target
 process reserves fresh output ownership before materialization, verifies exact
 bytes, reconstructs the timeline, and publishes chunk one after chunk zero.
-The current files are individually synced but are not yet selected as one
-crash-atomic checkpoint set. See the [Shared Media Contract](MEDIA_CONTRACT.md),
+The checkpoint-set layer packages the image, audio, and video checkpoints plus
+one canonical retained-output bundle into a single immutable archive selected
+by one atomic root. Two lineage-bound generations survive `SIGKILL` after every
+archive and selector durability phase without mixed visibility. See the
+[Shared Media Contract](MEDIA_CONTRACT.md),
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md), and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), followed by
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
-[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md).
+[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), then
+[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md).
 
 ## Image track
 
@@ -283,9 +291,8 @@ Early contributions can proceed without a large model:
 - decompression and allocation ceiling tests;
 - extend the completed deterministic crop/nearest, mix/exact-decimation, and
   keyframe-selection reference models with new bounded cases;
-- place the completed media checkpoint and retained outputs under one
-  crash-atomic archive/selector and inject process death at every durability
-  boundary;
+- create a new generation after restoring an older media checkpoint, rebinding
+  retained ownership evidence without accepting stale source authority;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 

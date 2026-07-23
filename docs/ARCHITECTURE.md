@@ -15,7 +15,7 @@ not.
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
-| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers exactly, advance bounded chunk chains, checkpoint retained outputs, reacquire them before visibility, and resume after a process exit |
+| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers exactly, advance bounded chunk chains, checkpoint retained outputs, atomically select complete generations, and resume after process death |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -144,17 +144,25 @@ timeline, and starts `MediaStreamRuntime` at the next global chunk index. The
 native proof performs this transition under distinct PIDs and Bank epochs for
 image, audio, and video.
 
+`MediaStreamCheckpointSet` joins the three fixed checkpoints with one canonical
+retained-output bundle inside the immutable checkpoint archive. One selector
+rename publishes the complete multimodal generation. The source produces two
+lineage-bound generations; native workers die after all seven archive/selector
+durability phases, and fresh targets resume whichever complete generation is
+selected before idempotent recovery converges to the successor.
+
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
 decimation, and keyframe selection. It has no external codec, encoder,
-network, camera, microphone, model, or accelerator authority. The live restart
-worker has explicit filesystem authority and syncs its files, but does not yet
-publish them as one crash-atomic selected checkpoint set. External formats,
-model adapters, and atomic repeated media checkpoints remain future layers. See
+network, camera, microphone, model, or accelerator authority. The atomic-set
+worker has explicit filesystem authority but does not emulate device power
+loss. Creating a successor checkpoint after restoring an earlier generation,
+external formats, and model adapters remain future layers. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), then
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
-[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md).
+[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), followed by
+[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md).
 
 ### ResourceBank
 
@@ -501,6 +509,9 @@ still require real machines for each promoted platform.
 - [Continuation checkpoint file](CONTINUATION_CHECKPOINT_FILE.md): immutable
   whole-checkpoint archives, one atomic root selector, and seven-phase
   process-death recovery.
+- [Atomic media stream checkpoint sets](MEDIA_STREAM_CHECKPOINT_SET.md):
+  one-root image/audio/video generations, retained-output bundling, and
+  previous/successor fresh-process resume under every selector boundary.
 - [Shared media contract](MEDIA_CONTRACT.md): fixed image/audio/video identity,
   exact rational positions, explicit event roots, and logical chunk
   publication.

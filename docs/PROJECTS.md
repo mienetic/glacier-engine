@@ -108,12 +108,18 @@ fresh-Bank ownership plan. Separate source and target processes exercise image,
 audio, and video restore, with charge before materialization, no duplicate next
 chunk, and final zero ownership.
 
-**Next slice:** store the media checkpoint and retained outputs as one immutable
-checkpoint archive selected by the existing atomic root-switch protocol. Inject
-source-process death after every archive write/sync and selector write/sync,
-accept only the previous or successor generation, then resume exactly once.
-Reuse [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md) and
-[Continuation Checkpoint File](CONTINUATION_CHECKPOINT_FILE.md).
+The atomic-set slice is now complete for two source-side generations. Three
+fixed checkpoints and one canonical retained-output bundle share one immutable
+archive root. Seven `SIGKILL` boundaries expose only the complete previous or
+successor generation; fresh targets resume all modalities before repair and
+again after idempotent convergence to generation two.
+
+**Next slice:** create a successor checkpoint after restoring generation one.
+Bind the fresh target receipts/trees into new retained ownership evidence,
+reject stale source authority, publish the successor atomically, then kill and
+resume it at every durability boundary. Reuse
+[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md) and
+[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md).
 
 ### AI runtime family registry
 

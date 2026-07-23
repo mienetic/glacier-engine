@@ -191,9 +191,11 @@ chunks, and emits a portable predecessor-bound receipt chain. A fixed stream
 checkpoint now carries retained-output ownership through a real source/target
 process restart; the target charges a fresh Bank before materialization and
 publishes the next chunk exactly once for all three retained modalities.
-Crash-atomic media checkpoint-set selection, repeated generations, external
-codecs, capture, playback, media models, and generated-media publication remain
-gated.
+Three checkpoints plus one canonical retained-output bundle now publish as one
+atomic archive root. Two lineage-bound generations resume as complete
+previous/successor sets across all seven native process-death boundaries.
+Post-restore successor checkpoint creation, external codecs, capture, playback,
+media models, and generated-media publication remain gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -377,7 +379,10 @@ while retaining different state and publication semantics.
   next chunk; complete for retained image/audio/video fixtures under distinct
   source and target PIDs;
 - publish media checkpoint/output objects through one crash-atomic archive and
-  selector, then repeat checkpoint generations after resumed chunks;
+  selector; complete for two source-side generations, three modalities, and
+  every archive/selector process-death boundary;
+- create the next checkpoint generation after resumed chunks while rebinding
+  retained ownership and rejecting stale source authority;
 - integrate image processors and vision encoder fixtures;
 - add audio feature windows, transcript transactions, and streaming restart;
 - add video temporal selection, synchronized timeline state, and cache ownership;
