@@ -27,7 +27,7 @@ transactional state publication, and independently verifiable evidence.
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
-| Multimodal execution | Planned and gated | Shared image/audio/video architecture and contributor slices are specified; no media execution is integrated | Enter only after the durable-continuation promotion gate |
+| Multimodal execution | Prototype foundation; execution gated | Fixed shared image/audio/video identity, exact rational timeline/events, logical chunk publication, model-free demo, and independent verifier | Sealed decode plan, bounded legal fixtures, concrete resource/output integration, then the production-continuation gate |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -87,6 +87,9 @@ transactional state publication, and independently verifiable evidence.
 - [x] Canonical whole-checkpoint archive and fixed root selector with exact
   previous/successor recovery, seven process-death phases, independent
   verification, and a fresh live resume after every phase.
+- [x] Fixed shared image/audio/video descriptor, checked rational timeline,
+  explicit event lineage, and exact-once logical chunk publication with a
+  model-free demo and independent verifier.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -283,15 +286,17 @@ for unsupported inputs, and reproducible generation instructions.
 
 ### Multimodal execution
 
-Status: **planned and gated**. Image, audio, and video execution starts only
-after the durable-continuation promotion gate above. Format contracts and tiny
-legal fixtures may be developed earlier, but they do not imply integrated model
-support.
+Status: **prototype foundation; execution gated**. Shared identity, rational
+timeline/events, and logical chunk publication now work in isolation. Image,
+audio, and video decoding or model execution still starts only after the
+durable-continuation promotion gate above. Format contracts and tiny legal
+fixtures do not imply integrated model support.
 
 The implementation sequence is:
 
-1. shared `MediaObject`, `MediaDecodePlan`, rational `MediaTimeline`, and
-   transactional media publication;
+1. shared `MediaObject`, rational `MediaTimeline`, and logical transactional
+   publication are complete as a model-free prototype; sealed
+   `MediaDecodePlan` and concrete ResourceBank/output composition remain;
 2. bounded image input and exact source-region/patch mapping;
 3. streaming audio with sample-range, resample, transcript, and playback state;
 4. video frame selection, audio/subtitle synchronization, temporal cache, and

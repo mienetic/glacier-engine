@@ -77,10 +77,12 @@ Add a tiny, redistributable fixture covering one loader or tensor-layout branch.
 
 Add one redistributable image, PCM audio, or intra-frame video fixture plus a
 machine-readable manifest of exact bytes, geometry/time base, and provenance.
-This prepares the gated multimodal track without claiming integrated execution.
+Resolve the manifest through the implemented 272-byte shared media descriptor;
+this advances the gated multimodal track without claiming integrated execution.
 
 **First slice:** fixture generation, checksum, bounded parser, and malformed
-length/geometry rejection only. See
+length/geometry rejection only. Reuse the golden-vector pattern in the
+[Shared Media Contract](MEDIA_CONTRACT.md) and see the
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md).
 
 ### ResourceBank property tests

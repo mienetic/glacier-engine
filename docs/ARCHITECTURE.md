@@ -14,6 +14,7 @@ not.
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
+| Media | `MediaObjectV1`, rational positions, timeline events, publication state | Bind image/audio/video identity and transformations, then advance logical chunks exactly once without ambient I/O authority |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -64,6 +65,35 @@ validated model + request
                                                                                         └─ atomic root selector
                                                                                              └─ ownership + KV + runtime resume
 ```
+
+## Shared media flow
+
+```text
+untrusted media declaration
+          │
+          ▼
+fixed MediaObject decode ──reject──> no accepted identity
+          │ object root
+          ▼
+exact rational source span + explicit transform event
+          │
+          ├─ non-integral/invalid mapping ──reject──> no timeline change
+          │
+          ▼
+prepared media publication
+  output root + resource-claim root + prior timeline/commit
+          │
+          ├─ stale/substituted/overlapping state ──reject──> unchanged state
+          │
+          ▼
+next sequence + chunk count + logical units + timeline/commit roots
+```
+
+The shared media layer is a model-free prototype. It verifies descriptors,
+integer-only positions, event lineage, and logical publication state. It has no
+decoder, encoder, filesystem, network, camera, microphone, or accelerator
+authority. A future integration must compose sealed decode plans and concrete
+resource/output transitions without weakening those boundaries.
 
 ### ResourceBank
 
@@ -410,6 +440,9 @@ still require real machines for each promoted platform.
 - [Continuation checkpoint file](CONTINUATION_CHECKPOINT_FILE.md): immutable
   whole-checkpoint archives, one atomic root selector, and seven-phase
   process-death recovery.
+- [Shared media contract](MEDIA_CONTRACT.md): fixed image/audio/video identity,
+  exact rational positions, explicit event roots, and logical chunk
+  publication.
 - [Multimodal roadmap](MULTIMODAL_ROADMAP.md): gated shared media identity,
   timeline, transaction, image, audio, and video tracks.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

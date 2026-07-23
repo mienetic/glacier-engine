@@ -74,6 +74,14 @@ zig build continuation-sweep-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Recover canonical payload bytes across seven plan/promotion process deaths
 zig build continuation-payload-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Resume one exact next token in a fresh process, then exercise atomic
+# whole-checkpoint recovery across seven process-death phases
+zig build continuation-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-checkpoint-file-demo -Doptimize=ReleaseSafe -Dmetal=false
+
+# Verify shared image/audio/video identity, exact time, and chunk publication
+zig build media-contract-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

@@ -37,6 +37,7 @@ energy, or production reliability.
 | `zig build continuation-payload-file-demo -Dmetal=false` | Canonical payload snapshots, fixed exact-target reclaim plans, copy-on-write promotion, and seven native subprocess-death recovery boundaries |
 | `zig build continuation-live-restart-demo -Dmetal=false` | Fresh-process ownership/KV/RNG/output restore and exact-once publication of the next token |
 | `zig build continuation-checkpoint-file-demo -Dmetal=false` | Immutable whole-checkpoint archive, atomic selector switch, seven process-death phases, and fresh live resume after each recovery |
+| `zig build media-contract-demo -Dmetal=false` | Fixed image/audio/video descriptors, exact rational mapping, explicit event lineage, two logical chunk commits, and stale-replay rejection |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -46,6 +47,24 @@ energy, or production reliability.
 
 All commands should normally use `-Doptimize=ReleaseSafe` when validating
 contracts. They are model-free and credential-free.
+
+## Shared media contract
+
+The media conformance fixture accepts one synthetic image, audio, and video
+descriptor through the same 272-byte wire. Zig and an independent Python model
+share the audio-object and first-publication golden roots. Both verify
+kind-specific fields, canonical rational bases, and exact publication lineage;
+the descriptor test flips all 272 serialized bytes and rejects every mutation.
+
+The demo maps a one-second 48 kHz audio span exactly into a 16 kHz timeline,
+rejects one-sample conversion into a 44.1 kHz base, commits two ordered chunks,
+and rejects replay of the first prepared commit without state mutation. It
+loads no model or media library and requests no file, network, device, camera,
+or microphone authority.
+
+This is contract conformance, not an execution benchmark. It supports no claim
+about codec coverage, model quality, provider units, throughput, latency,
+memory, storage, or energy.
 
 ## Continuation checkpoint
 

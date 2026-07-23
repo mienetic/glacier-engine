@@ -86,8 +86,15 @@ before the first stable release.
 - An independent checkpoint archive/selector verifier with shared golden roots,
   mutation-complete wire coverage, re-rooted contradiction rejection, and a
   pure foreign-state recovery model.
-- A gated multimodal roadmap for a shared media identity/timeline/transaction
-  substrate followed by bounded image, streaming audio, and video execution.
+- A fixed 272-byte shared image/audio/video object descriptor with independent
+  Zig/Python golden roots, mutation-complete verification, and re-rooted
+  semantic contradiction rejection.
+- Checked rational media positions, explicit transform-event roots, and an
+  exact-once logical chunk publication chain that binds output and
+  resource-claim evidence without granting device, filesystem, or network
+  authority.
+- A model-free shared media demo plus a gated roadmap from the new contract
+  prototype through bounded image, streaming audio, and video execution.
 
 ### Status
 

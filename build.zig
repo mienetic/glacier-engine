@@ -1033,6 +1033,32 @@ pub fn build(b: *std.Build) void {
         &continuation_checkpoint_file_worker_exe.step,
     );
 
+    // Shared authority-free image/audio/video identity, rational timeline,
+    // and exact-once publication contract. This is a model-free foundation;
+    // decoder, encoder, device, and network integration remain separate.
+    const media_contract_demo_exe = b.addExecutable(.{
+        .name = "glacier-media-contract-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/media_contract.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    media_contract_demo_exe.root_module.addImport("core", core_mod);
+    const run_media_contract_demo = b.addRunArtifact(
+        media_contract_demo_exe,
+    );
+    const media_contract_demo_step = b.step(
+        "media-contract-demo",
+        "Run the shared image/audio/video contract demo",
+    );
+    media_contract_demo_step.dependOn(&run_media_contract_demo.step);
+    test_step.dependOn(&run_media_contract_demo.step);
+    test_compile_step.dependOn(&media_contract_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

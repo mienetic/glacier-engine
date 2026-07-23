@@ -105,13 +105,20 @@ commit so one fresh process can publish the next token atomically.
 archive through a fixed lineage-bound record whose atomic rename makes the
 complete successor visible at one filesystem boundary.
 
-**MediaObject** — Planned content-addressed identity for an immutable image,
-audio, or video payload plus its bounded semantic metadata. It does not grant
+**MediaObject** — A fixed pointer-free, content-addressed identity for an
+immutable image, audio, or video payload plus exact byte length, kind-specific
+axes, semantic ABI, policy, provenance, and tenant scope. It does not grant
 file, network, camera, or microphone access.
 
-**MediaTimeline** — Planned checked rational position system connecting audio
-sample ranges, video frames, image regions, subtitles, generated chunks, and
-model-visible state without relying on floating-point wall-clock time.
+**MediaTimeline** — A checked rational position and event-chain system for
+exact media ranges and explicit trim, pad, resample, frame-selection, or reorder
+history without floating-point wall-clock rounding.
+
+**Media publication** — A prepared logical state transition binding one exact
+next sequence, chunk/unit range, media and timeline roots, output root,
+resource-claim root, and prior commit. The prototype advances in-memory logical
+state exactly once; concrete resource and output publication remain an
+integration requirement.
 
 **Retired entry** — A retained store payload with zero semantic references and
 no active lease. It is eligible for a future separately authorized sweep only

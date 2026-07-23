@@ -1,16 +1,18 @@
 # Multimodal Roadmap
 
-Status: **planned after the durable-continuation promotion gate**.
+Status: **shared foundation prototype; media execution remains gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
 resume without duplicated visible output. Format research and tiny legal
 fixtures may begin earlier, but production execution does not bypass that gate.
-The model-free proof now meets ownership, exact-output, atomic whole-checkpoint,
-and phase-complete process-death requirements. Integrated media execution still
-waits for an uninterrupted/resumed production-model comparison and retained
-platform evidence. Format contracts and tiny legal fixtures remain eligible
-before that gate.
+The model-free continuation proof now meets ownership, exact-output, atomic
+whole-checkpoint, and phase-complete process-death requirements. Separately, a
+model-free media prototype now supplies shared identity, exact rational
+timeline events, and logical chunk publication. Integrated media execution
+still waits for an uninterrupted/resumed production-model comparison and
+retained platform evidence. Sealed decode plans and tiny legal fixtures remain
+eligible before that gate.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -47,15 +49,16 @@ Multimodal execution starts after all of these continuation requirements pass:
 8. an uninterrupted and resumed production-model fixture has equivalent
    visible output under one declared numerical mode.
 
-Until then, the tracks below remain `idea` or `prototype fixture`, never
-`integrated`.
+Until then, the shared contract may advance as a `prototype`, while decoder,
+model, provider, capture, playback, and generated-media paths remain `idea` or
+`prototype fixture`, never `integrated`.
 
 ## Shared media foundation
 
 ### MediaObject
 
-A pointer-free `MediaObjectV1` will identify an immutable source payload without
-embedding it:
+Prototype complete. A pointer-free 272-byte `MediaObjectV1` identifies an
+immutable source payload without embedding it:
 
 ```text
 tenant scope + media kind + semantic ABI
@@ -68,6 +71,10 @@ metadata-policy root + provenance root
 The descriptor is not permission to read a file, URL, camera, or microphone.
 A separately scoped resolver grants access to one exact object and byte ceiling.
 Container metadata is treated as untrusted input until canonical validation.
+The current contract validates distinct image, audio, and video axes/time bases,
+uses separate content, tenant, metadata-policy, and provenance roots, and has
+mutation-complete Zig/Python fixtures. A versioned container/codec registry and
+bounded resolver remain future slices.
 
 ### MediaDecodePlan
 
@@ -86,15 +93,21 @@ semantic tensors receive different execution identities.
 
 ### MediaTimeline
 
-Audio samples, image regions, video frames, subtitles, and generated tokens need
-one rational time/position vocabulary. Timeline values use checked integers and
-explicit numerators/denominators rather than floating-point wall-clock values.
-Discontinuity, trim, pad, resample, frame drop, and reordering are explicit
-events.
+Prototype core complete. Timeline values use checked integers and explicit
+reduced numerators/denominators rather than floating-point wall-clock values.
+Exact conversion rejects non-integral positions. Identity, trim, pad, resample,
+frame-selection, and reorder events bind source/target spans, plan identity, and
+prior event root. Image regions, gaps/overlaps, subtitles, discontinuities, and
+cross-stream synchronization still need richer policies.
 
 ### MediaTxn
 
-A media transaction stages:
+The first logical publication slice is complete: prepare binds the exact prior
+state, sequence, chunk/unit range, media and event roots, output root,
+resource-claim root, and previous commit. Commit revalidates the complete value,
+advances the logical state once, and rejects stale replay without mutation.
+
+The integrated transaction must additionally stage:
 
 - decoded or generated chunks;
 - model embeddings and cross-attention state;
@@ -103,8 +116,10 @@ A media transaction stages:
 - output bytes or references; and
 - evidence roots.
 
-Commit makes all of them visible together. Cancellation or failure releases the
-provisional resources and leaves the previous media/timeline root unchanged.
+Only that future composition may claim that payload bytes, embeddings, concrete
+ownership, and timeline visibility commit together. The current prototype binds
+their evidence roots but does not allocate, release, or durably store them. See
+the [Shared Media Contract](MEDIA_CONTRACT.md).
 
 ## Image track
 
