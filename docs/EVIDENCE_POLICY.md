@@ -49,6 +49,10 @@ Keep these distinct:
 - **sweep staging:** separately scoped grant, regenerated collection plan,
   unchanged snapshot, staged entry/byte ceilings, and functional prepare/abort
   roots without implied commit, deallocation, or durability;
+- **sweep commit:** separately scoped destructive grant, canonical retired
+  targets, regenerated plan, before/after snapshots and logical accounting,
+  freed entry/payload/index totals, and allocator deallocation calls without an
+  implied RSS reduction, secure erase, or durability;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;

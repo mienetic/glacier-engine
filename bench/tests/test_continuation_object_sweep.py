@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import unittest
 
 from bench import continuation_bundle as bundle
@@ -75,6 +76,74 @@ class ContinuationObjectSweepTests(unittest.TestCase):
             self.leases,
             sweep.empty_journal(),
         )
+
+    def commit_fixture(self) -> dict[str, object]:
+        demo = object_store.build_demo()
+        store = object_store.Store(
+            demo["grant"],
+            demo["grant"]["authority_epoch"],
+        )
+        store.import_bundle(
+            demo["bundle"]["encoded"],
+            demo["bundle"]["bundle_config"],
+            demo["bundle"]["capsule_wire"],
+            demo["bundle"]["objects"],
+        )
+        manifest = bundle.decode_manifest(demo["bundle"]["encoded"])
+
+        def key(index: int) -> dict[str, object]:
+            entry = manifest["entries"][index]
+            return {
+                "byte_length": entry["byte_length"],
+                "sha256": entry["blob_sha256"],
+            }
+
+        lifecycle = object_store.demo_lifecycle_grant(demo["grant"])
+        lease = store.acquire_lease(
+            key(0),
+            lifecycle,
+            bytes((0x71,)) * 32,
+            100,
+            120,
+        )
+        retired = key(8)
+        store.retire(retired)
+        store.quarantine(key(4), bytes((0x9A,)) * 32)
+        roots = collection.canonical_roots(
+            [key(index) for index in range(len(capsule.OBJECT_NAMES) - 1)]
+        )
+        leases = collection.canonical_lease_receipts([lease])
+        collection_grant = collection.demo_grant(store)
+        plan, _ = collection.plan_collection(
+            store,
+            collection_grant,
+            roots,
+            leases,
+        )
+        sweep_grant = sweep.demo_grant(store, plan["plan_sha256"])
+        prepared, _, _ = sweep.prepare(
+            store,
+            sweep_grant,
+            collection_grant,
+            roots,
+            leases,
+            sweep.empty_journal(),
+        )
+        commit_grant = sweep.demo_commit_grant(
+            store,
+            sweep_grant,
+            prepared,
+        )
+        return {
+            "store": store,
+            "roots": roots,
+            "leases": leases,
+            "retired": retired,
+            "collection_grant": collection_grant,
+            "sweep_grant": sweep_grant,
+            "prepared": prepared,
+            "commit_grant": commit_grant,
+        }
 
     def test_prepare_and_abort_are_functional_and_store_preserving(self) -> None:
         snapshot_before = self.store.audit_snapshot_root_v2()
@@ -219,6 +288,200 @@ class ContinuationObjectSweepTests(unittest.TestCase):
         self.store.release(self.roots[0])
         with self.assertRaises(sweep.SweepError):
             sweep.abort(self.store, self.sweep_grant, journal)
+
+    def test_commit_frees_exact_retired_target_and_roots_match(self) -> None:
+        fixture = self.commit_fixture()
+        store = fixture["store"]
+        self.assertIsInstance(store, object_store.Store)
+        receipt, store_receipt = sweep.commit(
+            store,
+            fixture["sweep_grant"],
+            fixture["commit_grant"],
+            fixture["collection_grant"],
+            fixture["roots"],
+            fixture["leases"],
+            fixture["prepared"],
+        )
+        sweep.verify_commit_receipt(
+            fixture["commit_grant"],
+            receipt,
+            store_receipt,
+        )
+        store.verify_all()
+        self.assertEqual(
+            (
+                receipt["freed_entries"],
+                receipt["freed_payload_bytes"],
+                receipt["freed_index_bytes"],
+                receipt["freed_repair_count"],
+                receipt["allocator_deallocation_calls"],
+            ),
+            (1, 39, 128, 0, 1),
+        )
+        self.assertEqual(
+            (store.entry_count, store.retired_entries, store.payload_bytes),
+            (7, 0, 216),
+        )
+        with self.assertRaises(object_store.StoreError):
+            store.get(fixture["retired"])
+        actual = {
+            "commit_grant": sweep.commit_grant_root(
+                fixture["commit_grant"]
+            ).hex(),
+            "targets": store_receipt["targets_sha256"].hex(),
+            "store_commit": store_receipt["commit_sha256"].hex(),
+            "commit": receipt["commit_sha256"].hex(),
+            "snapshot_after": receipt["snapshot_after_sha256"].hex(),
+        }
+        expected = {
+            "commit_grant": (
+                "4bb165e6809e00403cc17997d3bdbcc1"
+                "3787c051d895b4ff7eadde9d24991d3e"
+            ),
+            "targets": (
+                "d5e185b91d3aae5e6d96f249c69cc59"
+                "b213e9cdd43717669fee2192d2752988e"
+            ),
+            "store_commit": (
+                "4dc638ad333478ba67e7273f6bdd3e5c"
+                "3bb7b82c2b3df0fef0d7ad3aa22a2c88"
+            ),
+            "commit": (
+                "e40010e0a26dbfe6cd94ecfdb3b1fbf"
+                "49b9b3f4421b1cf40247fa6304ad309b5"
+            ),
+            "snapshot_after": (
+                "2e537f05538bcb1ef378a600f55fd1bc"
+                "f35c85c9c1f4185cb908a128ec147ab2"
+            ),
+        }
+        self.assertEqual(actual, expected)
+        contradictory_store_receipt = copy.deepcopy(store_receipt)
+        contradictory_store_receipt["accounting_after"][
+            "payload_bytes"
+        ] += 1
+        contradictory_store_receipt["commit_sha256"] = (
+            object_store.retired_commit_receipt_root(
+                contradictory_store_receipt
+            )
+        )
+        contradictory_receipt = dict(receipt)
+        contradictory_receipt["store_commit_sha256"] = (
+            contradictory_store_receipt["commit_sha256"]
+        )
+        contradictory_receipt["commit_sha256"] = sweep.commit_root(
+            contradictory_receipt
+        )
+        with self.assertRaises(sweep.SweepError):
+            sweep.verify_commit_receipt(
+                fixture["commit_grant"],
+                contradictory_receipt,
+                contradictory_store_receipt,
+            )
+        with self.assertRaises(collection.CollectionError):
+            sweep.commit(
+                store,
+                fixture["sweep_grant"],
+                fixture["commit_grant"],
+                fixture["collection_grant"],
+                fixture["roots"],
+                fixture["leases"],
+                fixture["prepared"],
+            )
+
+    def test_commit_scope_evidence_targets_and_budgets_fail_closed(self) -> None:
+        fixture = self.commit_fixture()
+        store = fixture["store"]
+        self.assertIsInstance(store, object_store.Store)
+        snapshot_before = store.audit_snapshot_root_v2()
+        mutations = (
+            ("bundle_sha256", bytes((0x44,)) * 32),
+            ("prepare_sha256", bytes((0x45,)) * 32),
+            ("collection_plan_sha256", bytes((0x46,)) * 32),
+            ("max_freed_entries", 0),
+            ("max_freed_bytes", 38),
+        )
+        for name, value in mutations:
+            with self.subTest(commit_grant_field=name):
+                grant = dict(fixture["commit_grant"])
+                grant[name] = value
+                with self.assertRaises(
+                    (sweep.SweepError, collection.CollectionError)
+                ):
+                    sweep.commit(
+                        store,
+                        fixture["sweep_grant"],
+                        grant,
+                        fixture["collection_grant"],
+                        fixture["roots"],
+                        fixture["leases"],
+                        fixture["prepared"],
+                    )
+        with self.assertRaises(collection.CollectionError):
+            sweep.commit(
+                store,
+                fixture["sweep_grant"],
+                fixture["commit_grant"],
+                fixture["collection_grant"],
+                fixture["roots"][:-1],
+                fixture["leases"],
+                fixture["prepared"],
+            )
+        with self.assertRaises(collection.CollectionError):
+            sweep.commit(
+                store,
+                fixture["sweep_grant"],
+                fixture["commit_grant"],
+                fixture["collection_grant"],
+                fixture["roots"],
+                [],
+                fixture["prepared"],
+            )
+        tampered = dict(fixture["prepared"])
+        tampered["staged_bytes"] += 1
+        with self.assertRaises(sweep.SweepError):
+            sweep.commit(
+                store,
+                fixture["sweep_grant"],
+                fixture["commit_grant"],
+                fixture["collection_grant"],
+                fixture["roots"],
+                fixture["leases"],
+                tampered,
+            )
+        permit = {
+            "authority_epoch": fixture["commit_grant"]["authority_epoch"],
+            "tenant_scope_sha256": fixture["commit_grant"][
+                "tenant_scope_sha256"
+            ],
+            "bundle_sha256": fixture["commit_grant"]["bundle_sha256"],
+            "store_grant_sha256": fixture["commit_grant"][
+                "store_grant_sha256"
+            ],
+            "expected_snapshot_sha256": fixture["commit_grant"][
+                "expected_snapshot_sha256"
+            ],
+            "authorization_sha256": sweep.commit_grant_root(
+                fixture["commit_grant"]
+            ),
+            "max_freed_entries": 2,
+            "max_freed_bytes": 128,
+        }
+        with self.assertRaises(object_store.StoreError):
+            store.commit_retired(
+                permit,
+                [fixture["retired"], fixture["retired"]],
+            )
+        with self.assertRaises(object_store.StoreError):
+            store.commit_retired(permit, [fixture["roots"][0]])
+        with self.assertRaises(object_store.StoreError):
+            store.commit_retired(
+                permit,
+                collection.canonical_roots(
+                    [fixture["retired"], fixture["roots"][0]]
+                ),
+            )
+        self.assertEqual(snapshot_before, store.audit_snapshot_root_v2())
 
     def test_valid_plan_without_collectible_entries_rejects(self) -> None:
         demo = object_store.build_demo()

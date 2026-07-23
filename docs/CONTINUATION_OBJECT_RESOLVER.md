@@ -169,7 +169,8 @@ capsule substitution, and changed resolved output.
    cross-language plan roots.
 4. ~~Sweep prepare/abort consuming an exact plan.~~ Implemented with plan
    regeneration and cross-language journal roots.
-5. Destructive sweep commit with exact allocator/accounting evidence.
+5. ~~Destructive sweep commit with exact allocator/accounting evidence.~~
+   Implemented as a separately authorized atomic in-memory transition.
 6. Atomic bundle publication and crash recovery.
 7. ResourceBank/LeaseTree and paged-KV reacquisition.
 8. End-to-end restart with paired physical measurements.
@@ -183,5 +184,7 @@ See [Continuation Object Store](CONTINUATION_OBJECT_STORE.md) for the bounded
 payload-ownership and rollback boundary.
 See [Continuation Object Collection Plan](CONTINUATION_OBJECT_COLLECTION.md)
 for the non-destructive reachability evidence boundary.
+See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
+the exact retired-target removal and accounting boundary.
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 non-destructive prepare/abort staging boundary.

@@ -44,9 +44,10 @@ formats, and independent verifiers.
 - **Evidence-first object retirement.** Exact root multiplicity and complete
   lease coverage classify every stored object before any future sweep; the
   current planner is deterministic, bounded, cross-language, and dry-run only.
-- **Capability-scoped sweep staging.** A separately approved plan is regenerated
-  from its original evidence before a functional prepare/abort journal can
-  stage collectible totals; staging never frees or mutates payloads.
+- **Capability-scoped object reclamation.** A separately approved plan is
+  regenerated before staging, then a distinct commit grant authorizes only the
+  exact canonical retired set. Receipts bind before/after snapshots and exact
+  entry, payload, index, and allocator-call accounting.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
@@ -93,7 +94,7 @@ request
                                   └─ bounded in-memory object store
                                      ├─ lease, quarantine, repair
                                      ├─ retire + collection plan
-                                     └─ sweep prepare/abort (no free/I/O)
+                                     └─ sweep prepare/abort + atomic commit
 
 provider request
   │
@@ -114,7 +115,7 @@ Requirements:
 - macOS or Linux;
 - Python 3 for the independent evidence tests.
 
-Build the portable CLI and run two model-free demos:
+Build the portable CLI and run deterministic model-free demos:
 
 ```sh
 zig build -Doptimize=ReleaseSafe -Dmetal=false
@@ -127,6 +128,7 @@ zig build continuation-bundle-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -146,7 +148,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, and sweep prepare/abort roots | Exact sweep commit, durable publication, ownership reacquisition, and restart |
+| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging, and atomic in-memory sweep commit | Durable sweep publication/recovery, ownership reacquisition, and restart |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
@@ -191,6 +193,7 @@ valuable as new features.
 - [Continuation object lifecycle](docs/CONTINUATION_OBJECT_LIFECYCLE.md)
 - [Continuation object collection plan](docs/CONTINUATION_OBJECT_COLLECTION.md)
 - [Continuation object sweep journal](docs/CONTINUATION_OBJECT_SWEEP.md)
+- [Continuation object sweep commit](docs/CONTINUATION_OBJECT_SWEEP_COMMIT.md)
 - [Glossary](docs/GLOSSARY.md)
 
 Research tracks are documented separately in

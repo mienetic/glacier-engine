@@ -37,6 +37,12 @@ whose prepare transition regenerates one separately approved collection plan
 and whose abort transition requires the pinned snapshot to remain current. It
 stages exact totals but grants no commit or deallocation authority.
 
+**Continuation object sweep commit** — A separately authorized in-memory
+transition that regenerates one prepared plan, validates a canonical set of
+retired targets before mutation, deallocates exactly that set, and binds exact
+before/after store accounting into verifiable receipts. It does not imply
+durability, secure erase, or lower process RSS.
+
 **Retired entry** — A retained store payload with zero semantic references and
 no active lease. It is eligible for a future separately authorized sweep only
 after an exact collection plan classifies it as collectible.

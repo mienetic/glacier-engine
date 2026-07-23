@@ -3,8 +3,9 @@
 //! A sweep grant pins one exact store snapshot and one exact collection-plan
 //! root. Prepare regenerates that plan from the original root and lease
 //! evidence before staging its collectible totals. Abort requires the same
-//! snapshot. Both transitions return new caller-owned journal values and never
-//! allocate, deallocate, or mutate object-store payloads.
+//! snapshot. A separately scoped commit grant can then authorize the exact
+//! regenerated retired-target set. Prepare and abort never mutate payloads;
+//! commit completes every fallible check before its deallocation suffix.
 
 const std = @import("std");
 const capsule = @import("continuation_capsule.zig");
@@ -20,6 +21,10 @@ const prepare_domain =
     "glacier-continuation-store-sweep-prepare-v1\x00";
 const abort_domain =
     "glacier-continuation-store-sweep-abort-v1\x00";
+const commit_grant_domain =
+    "glacier-continuation-store-sweep-commit-grant-v1\x00";
+const commit_domain =
+    "glacier-continuation-store-sweep-commit-v1\x00";
 
 pub const Error = object_store.Error || error{
     InvalidSweepGrant,
@@ -31,6 +36,11 @@ pub const Error = object_store.Error || error{
     InvalidSweepJournal,
     SweepAlreadyPrepared,
     SweepNotPrepared,
+    InvalidSweepCommitGrant,
+    SweepCommitScopeMismatch,
+    SweepCommitJournalMismatch,
+    SweepCommitBudgetExceeded,
+    InvalidSweepCommitReceipt,
 };
 
 pub const GrantV1 = struct {
@@ -60,6 +70,20 @@ pub const JournalV1 = struct {
     staged_bytes: u64 = 0,
     prepare_sha256: Digest = zero_digest,
     abort_sha256: Digest = zero_digest,
+};
+
+pub const CommitGrantV1 = struct {
+    authority_epoch: u64,
+    tenant_scope_sha256: Digest,
+    bundle_sha256: Digest,
+    store_grant_sha256: Digest,
+    sweep_grant_sha256: Digest,
+    prepare_sha256: Digest,
+    expected_snapshot_sha256: Digest,
+    collection_plan_sha256: Digest,
+    max_freed_entries: u64,
+    max_freed_bytes: u64,
+    challenge_sha256: Digest,
 };
 
 pub const PrepareReceiptV1 = struct {
@@ -92,6 +116,28 @@ pub const AbortResultV1 = struct {
     receipt: AbortReceiptV1,
 };
 
+pub const CommitReceiptV1 = struct {
+    commit_grant_sha256: Digest,
+    sweep_grant_sha256: Digest,
+    prepare_sha256: Digest,
+    collection_plan_sha256: Digest,
+    targets_sha256: Digest,
+    snapshot_before_sha256: Digest,
+    snapshot_after_sha256: Digest,
+    store_commit_sha256: Digest,
+    freed_entries: u64,
+    freed_payload_bytes: u64,
+    freed_index_bytes: u64,
+    freed_repair_count: u64,
+    allocator_deallocation_calls: u64,
+    commit_sha256: Digest,
+};
+
+pub const CommitResultV1 = struct {
+    receipt: CommitReceiptV1,
+    store_receipt: object_store.RetiredCommitReceiptV1,
+};
+
 pub fn grantRootV1(grant: GrantV1) Error!Digest {
     try validateGrantV1(grant);
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
@@ -105,6 +151,47 @@ pub fn grantRootV1(grant: GrantV1) Error!Digest {
     hashU64(&hash, grant.max_staged_entries);
     hashU64(&hash, grant.max_staged_bytes);
     hash.update(&grant.challenge_sha256);
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+pub fn commitGrantRootV1(grant: CommitGrantV1) Error!Digest {
+    try validateCommitGrantV1(grant);
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(commit_grant_domain);
+    hashU64(&hash, grant.authority_epoch);
+    hash.update(&grant.tenant_scope_sha256);
+    hash.update(&grant.bundle_sha256);
+    hash.update(&grant.store_grant_sha256);
+    hash.update(&grant.sweep_grant_sha256);
+    hash.update(&grant.prepare_sha256);
+    hash.update(&grant.expected_snapshot_sha256);
+    hash.update(&grant.collection_plan_sha256);
+    hashU64(&hash, grant.max_freed_entries);
+    hashU64(&hash, grant.max_freed_bytes);
+    hash.update(&grant.challenge_sha256);
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+pub fn commitRootV1(receipt: CommitReceiptV1) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(commit_domain);
+    hash.update(&receipt.commit_grant_sha256);
+    hash.update(&receipt.sweep_grant_sha256);
+    hash.update(&receipt.prepare_sha256);
+    hash.update(&receipt.collection_plan_sha256);
+    hash.update(&receipt.targets_sha256);
+    hash.update(&receipt.snapshot_before_sha256);
+    hash.update(&receipt.snapshot_after_sha256);
+    hash.update(&receipt.store_commit_sha256);
+    hashU64(&hash, receipt.freed_entries);
+    hashU64(&hash, receipt.freed_payload_bytes);
+    hashU64(&hash, receipt.freed_index_bytes);
+    hashU64(&hash, receipt.freed_repair_count);
+    hashU64(&hash, receipt.allocator_deallocation_calls);
     var digest: Digest = undefined;
     hash.final(&digest);
     return digest;
@@ -242,6 +329,174 @@ pub fn abortV1(
     return .{ .journal = journal, .receipt = receipt };
 }
 
+pub fn commitV1(
+    store: *object_store.Store,
+    sweep_grant: GrantV1,
+    commit_grant: CommitGrantV1,
+    collection_grant: object_store.CollectionGrantV1,
+    root_references: []const bundle.BlobRefV1,
+    lease_receipts: []const object_store.LeaseReceiptV1,
+    current: JournalV1,
+) Error!CommitResultV1 {
+    const sweep_grant_root = try ensureGrantV1(store, sweep_grant);
+    try verifyPreparedJournalV1(sweep_grant, sweep_grant_root, current);
+    const commit_grant_root = try ensureCommitGrantV1(
+        store,
+        sweep_grant,
+        sweep_grant_root,
+        commit_grant,
+        current,
+    );
+    if (!std.mem.eql(
+        u8,
+        &collection_grant.expected_snapshot_sha256,
+        &current.snapshot_sha256,
+    )) return Error.SweepCommitJournalMismatch;
+
+    var decisions: [object_store.default_capacity]object_store.CollectionDecisionV1 =
+        undefined;
+    const plan = try store.planCollectionV1(
+        collection_grant,
+        root_references,
+        lease_receipts,
+        &decisions,
+    );
+    if (!std.mem.eql(u8, &plan.plan_sha256, &current.collection_plan_sha256) or
+        !std.mem.eql(u8, &plan.plan_sha256, &commit_grant.collection_plan_sha256) or
+        !std.mem.eql(u8, &plan.snapshot_sha256, &current.snapshot_sha256))
+        return Error.SweepCommitJournalMismatch;
+
+    const decision_count = std.math.cast(
+        usize,
+        plan.occupied_entries,
+    ) orelse return Error.SweepCommitBudgetExceeded;
+    var targets: [object_store.default_capacity]bundle.BlobRefV1 = undefined;
+    var target_count: usize = 0;
+    var target_bytes: u64 = 0;
+    for (decisions[0..decision_count]) |decision| {
+        if (decision.class != .collectible) continue;
+        if (target_count >= targets.len)
+            return Error.SweepCommitBudgetExceeded;
+        targets[target_count] = decision.target;
+        target_count += 1;
+        target_bytes = std.math.add(
+            u64,
+            target_bytes,
+            decision.target.byte_length,
+        ) catch return Error.SweepCommitBudgetExceeded;
+    }
+    const target_count_u64 = std.math.cast(u64, target_count) orelse
+        return Error.SweepCommitBudgetExceeded;
+    if (target_count_u64 != current.staged_entries or
+        target_bytes != current.staged_bytes or
+        target_count_u64 != plan.collectible_entries or
+        target_bytes != plan.collectible_bytes)
+        return Error.SweepCommitJournalMismatch;
+    if (target_count_u64 > commit_grant.max_freed_entries or
+        target_bytes > commit_grant.max_freed_bytes)
+        return Error.SweepCommitBudgetExceeded;
+    object_store.sortRootReferencesV1(targets[0..target_count]);
+    const permit: object_store.RetiredCommitPermitV1 = .{
+        .authority_epoch = commit_grant.authority_epoch,
+        .tenant_scope_sha256 = commit_grant.tenant_scope_sha256,
+        .bundle_sha256 = commit_grant.bundle_sha256,
+        .store_grant_sha256 = commit_grant.store_grant_sha256,
+        .expected_snapshot_sha256 = commit_grant.expected_snapshot_sha256,
+        .authorization_sha256 = commit_grant_root,
+        .max_freed_entries = commit_grant.max_freed_entries,
+        .max_freed_bytes = commit_grant.max_freed_bytes,
+    };
+    const store_receipt = try store.commitRetiredV1(
+        permit,
+        targets[0..target_count],
+    );
+    var receipt: CommitReceiptV1 = .{
+        .commit_grant_sha256 = commit_grant_root,
+        .sweep_grant_sha256 = sweep_grant_root,
+        .prepare_sha256 = current.prepare_sha256,
+        .collection_plan_sha256 = current.collection_plan_sha256,
+        .targets_sha256 = store_receipt.targets_sha256,
+        .snapshot_before_sha256 = store_receipt.snapshot_before_sha256,
+        .snapshot_after_sha256 = store_receipt.snapshot_after_sha256,
+        .store_commit_sha256 = store_receipt.commit_sha256,
+        .freed_entries = store_receipt.freed_entries,
+        .freed_payload_bytes = store_receipt.freed_payload_bytes,
+        .freed_index_bytes = store_receipt.freed_index_bytes,
+        .freed_repair_count = store_receipt.freed_repair_count,
+        .allocator_deallocation_calls = store_receipt.allocator_deallocation_calls,
+        .commit_sha256 = zero_digest,
+    };
+    receipt.commit_sha256 = commitRootV1(receipt);
+    return .{ .receipt = receipt, .store_receipt = store_receipt };
+}
+
+pub fn verifyCommitReceiptV1(
+    commit_grant: CommitGrantV1,
+    receipt: CommitReceiptV1,
+    store_receipt: object_store.RetiredCommitReceiptV1,
+) Error!void {
+    const commit_grant_root = try commitGrantRootV1(commit_grant);
+    object_store.verifyRetiredCommitReceiptV1(store_receipt) catch
+        return Error.InvalidSweepCommitReceipt;
+    if (!std.mem.eql(
+        u8,
+        &receipt.commit_grant_sha256,
+        &commit_grant_root,
+    ) or !std.mem.eql(
+        u8,
+        &receipt.sweep_grant_sha256,
+        &commit_grant.sweep_grant_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &receipt.prepare_sha256,
+        &commit_grant.prepare_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &receipt.collection_plan_sha256,
+        &commit_grant.collection_plan_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &receipt.snapshot_before_sha256,
+        &commit_grant.expected_snapshot_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &store_receipt.authorization_sha256,
+        &commit_grant_root,
+    ) or !std.mem.eql(
+        u8,
+        &store_receipt.commit_sha256,
+        &object_store.retiredCommitReceiptRootV1(store_receipt),
+    ) or !std.mem.eql(
+        u8,
+        &receipt.targets_sha256,
+        &store_receipt.targets_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &receipt.snapshot_before_sha256,
+        &store_receipt.snapshot_before_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &receipt.snapshot_after_sha256,
+        &store_receipt.snapshot_after_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &receipt.store_commit_sha256,
+        &store_receipt.commit_sha256,
+    ) or receipt.freed_entries != store_receipt.freed_entries or
+        receipt.freed_payload_bytes != store_receipt.freed_payload_bytes or
+        receipt.freed_index_bytes != store_receipt.freed_index_bytes or
+        receipt.freed_repair_count != store_receipt.freed_repair_count or
+        receipt.allocator_deallocation_calls !=
+            store_receipt.allocator_deallocation_calls or
+        receipt.freed_entries > commit_grant.max_freed_entries or
+        receipt.freed_payload_bytes > commit_grant.max_freed_bytes or
+        !std.mem.eql(
+            u8,
+            &receipt.commit_sha256,
+            &commitRootV1(receipt),
+        )) return Error.InvalidSweepCommitReceipt;
+}
+
 pub fn verifyJournalV1(
     sweep_grant: GrantV1,
     journal: JournalV1,
@@ -308,6 +563,53 @@ fn ensureGrantV1(
     return root;
 }
 
+fn ensureCommitGrantV1(
+    store: *const object_store.Store,
+    sweep_grant: GrantV1,
+    sweep_grant_sha256: Digest,
+    commit_grant: CommitGrantV1,
+    journal: JournalV1,
+) Error!Digest {
+    const root = try commitGrantRootV1(commit_grant);
+    if (store.closed) return Error.StoreClosed;
+    if (commit_grant.authority_epoch != store.grant.authority_epoch or
+        !std.mem.eql(
+            u8,
+            &commit_grant.tenant_scope_sha256,
+            &store.grant.tenant_scope_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &commit_grant.bundle_sha256,
+            &store.grant.bundle_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &commit_grant.store_grant_sha256,
+            &store.grant_sha256,
+        )) return Error.SweepCommitScopeMismatch;
+    if (!std.mem.eql(
+        u8,
+        &commit_grant.sweep_grant_sha256,
+        &sweep_grant_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &commit_grant.prepare_sha256,
+        &journal.prepare_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &commit_grant.expected_snapshot_sha256,
+        &journal.snapshot_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &commit_grant.collection_plan_sha256,
+        &journal.collection_plan_sha256,
+    ) or commit_grant.max_freed_entries > sweep_grant.max_staged_entries or
+        commit_grant.max_freed_bytes > sweep_grant.max_staged_bytes)
+        return Error.SweepCommitJournalMismatch;
+    return root;
+}
+
 fn validateGrantV1(grant: GrantV1) Error!void {
     if (grant.authority_epoch == 0 or
         isZero(grant.tenant_scope_sha256) or
@@ -319,6 +621,21 @@ fn validateGrantV1(grant: GrantV1) Error!void {
         grant.max_staged_bytes == 0 or
         isZero(grant.challenge_sha256))
         return Error.InvalidSweepGrant;
+}
+
+fn validateCommitGrantV1(grant: CommitGrantV1) Error!void {
+    if (grant.authority_epoch == 0 or
+        isZero(grant.tenant_scope_sha256) or
+        isZero(grant.bundle_sha256) or
+        isZero(grant.store_grant_sha256) or
+        isZero(grant.sweep_grant_sha256) or
+        isZero(grant.prepare_sha256) or
+        isZero(grant.expected_snapshot_sha256) or
+        isZero(grant.collection_plan_sha256) or
+        grant.max_freed_entries == 0 or
+        grant.max_freed_bytes == 0 or
+        isZero(grant.challenge_sha256))
+        return Error.InvalidSweepCommitGrant;
 }
 
 fn ensureEmptyJournalV1(journal: JournalV1) Error!void {
@@ -644,6 +961,335 @@ test "sweep journal scope evidence budgets and transitions fail closed" {
     );
 }
 
+test "sweep commit atomically frees exact retired target and reclaims allocator tail" {
+    var capsule_storage: [capsule.encoded_bytes]u8 = undefined;
+    var bundle_storage: [bundle.encoded_bytes]u8 = undefined;
+    const fixture = try testBundleFixture(
+        &capsule_storage,
+        &bundle_storage,
+    );
+    const store_grant = testStoreGrant(
+        try bundle.envelopeRootV1(fixture.bundle_wire),
+    );
+    var allocator_storage: [4096]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&allocator_storage);
+    var store = try object_store.Store.initV1(
+        fba.allocator(),
+        store_grant,
+        store_grant.authority_epoch,
+    );
+    defer store.deinit();
+    _ = try store.importBundleV1(
+        fixture.bundle_wire,
+        fixture.bundle_config,
+        fixture.capsule_wire,
+        fixture.objects,
+    );
+    const collection = try testCollectionFixtureForKind(
+        &store,
+        fixture,
+        store_grant,
+        .publication_receipt,
+    );
+    const sweep_grant = testSweepGrant(
+        store_grant,
+        collection.grant.expected_snapshot_sha256,
+        collection.receipt.plan_sha256,
+    );
+    const prepared = try prepareV1(
+        &store,
+        sweep_grant,
+        collection.grant,
+        &collection.roots,
+        &collection.leases,
+        .{},
+    );
+    const commit_grant = testCommitGrant(
+        store_grant,
+        sweep_grant,
+        prepared.journal,
+    );
+    const allocator_before = fba.end_index;
+    const committed = try commitV1(
+        &store,
+        sweep_grant,
+        commit_grant,
+        collection.grant,
+        &collection.roots,
+        &collection.leases,
+        prepared.journal,
+    );
+    try verifyCommitReceiptV1(
+        commit_grant,
+        committed.receipt,
+        committed.store_receipt,
+    );
+    const commit_grant_hex = std.fmt.bytesToHex(
+        try commitGrantRootV1(commit_grant),
+        .lower,
+    );
+    try std.testing.expectEqualStrings(
+        "4bb165e6809e00403cc17997d3bdbcc1" ++
+            "3787c051d895b4ff7eadde9d24991d3e",
+        &commit_grant_hex,
+    );
+    const targets_hex = std.fmt.bytesToHex(
+        committed.receipt.targets_sha256,
+        .lower,
+    );
+    try std.testing.expectEqualStrings(
+        "d5e185b91d3aae5e6d96f249c69cc59" ++
+            "b213e9cdd43717669fee2192d2752988e",
+        &targets_hex,
+    );
+    const store_commit_hex = std.fmt.bytesToHex(
+        committed.store_receipt.commit_sha256,
+        .lower,
+    );
+    try std.testing.expectEqualStrings(
+        "4dc638ad333478ba67e7273f6bdd3e5c" ++
+            "3bb7b82c2b3df0fef0d7ad3aa22a2c88",
+        &store_commit_hex,
+    );
+    const commit_hex = std.fmt.bytesToHex(
+        committed.receipt.commit_sha256,
+        .lower,
+    );
+    try std.testing.expectEqualStrings(
+        "e40010e0a26dbfe6cd94ecfdb3b1fbf" ++
+            "49b9b3f4421b1cf40247fa6304ad309b5",
+        &commit_hex,
+    );
+    const after_hex = std.fmt.bytesToHex(
+        committed.receipt.snapshot_after_sha256,
+        .lower,
+    );
+    try std.testing.expectEqualStrings(
+        "2e537f05538bcb1ef378a600f55fd1bc" ++
+            "f35c85c9c1f4185cb908a128ec147ab2",
+        &after_hex,
+    );
+    try store.verifyAllV1();
+    try std.testing.expectEqual(@as(u64, 1), committed.receipt.freed_entries);
+    try std.testing.expectEqual(@as(u64, 39), committed.receipt.freed_payload_bytes);
+    try std.testing.expectEqual(
+        object_store.logical_index_entry_bytes,
+        committed.receipt.freed_index_bytes,
+    );
+    try std.testing.expectEqual(@as(u64, 0), committed.receipt.freed_repair_count);
+    try std.testing.expectEqual(@as(u64, 1), committed.receipt.allocator_deallocation_calls);
+    try std.testing.expectEqual(@as(u64, 7), store.entry_count);
+    try std.testing.expectEqual(@as(u64, 0), store.retired_entries);
+    try std.testing.expectEqual(@as(u64, 216), store.payload_bytes);
+    try std.testing.expectEqual(@as(usize, 255), allocator_before);
+    try std.testing.expectEqual(@as(usize, 216), fba.end_index);
+    var contradictory_store_receipt = committed.store_receipt;
+    contradictory_store_receipt.accounting_after.payload_bytes += 1;
+    contradictory_store_receipt.commit_sha256 =
+        object_store.retiredCommitReceiptRootV1(contradictory_store_receipt);
+    var contradictory_receipt = committed.receipt;
+    contradictory_receipt.store_commit_sha256 =
+        contradictory_store_receipt.commit_sha256;
+    contradictory_receipt.commit_sha256 = commitRootV1(contradictory_receipt);
+    try std.testing.expectError(
+        Error.InvalidSweepCommitReceipt,
+        verifyCommitReceiptV1(
+            commit_grant,
+            contradictory_receipt,
+            contradictory_store_receipt,
+        ),
+    );
+    const retired_entry = fixture.decoded.entry(.publication_receipt);
+    try std.testing.expectError(
+        object_store.Error.NotFound,
+        store.getV1(.{
+            .byte_length = retired_entry.byte_length,
+            .sha256 = retired_entry.blob_sha256,
+        }, &[_]u8{}),
+    );
+    try std.testing.expectError(
+        object_store.Error.CollectionSnapshotMismatch,
+        commitV1(
+            &store,
+            sweep_grant,
+            commit_grant,
+            collection.grant,
+            &collection.roots,
+            &collection.leases,
+            prepared.journal,
+        ),
+    );
+}
+
+test "sweep commit grant evidence targets and budgets fail before mutation" {
+    var capsule_storage: [capsule.encoded_bytes]u8 = undefined;
+    var bundle_storage: [bundle.encoded_bytes]u8 = undefined;
+    const fixture = try testBundleFixture(
+        &capsule_storage,
+        &bundle_storage,
+    );
+    const store_grant = testStoreGrant(
+        try bundle.envelopeRootV1(fixture.bundle_wire),
+    );
+    var allocator_storage: [4096]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&allocator_storage);
+    var store = try object_store.Store.initV1(
+        fba.allocator(),
+        store_grant,
+        store_grant.authority_epoch,
+    );
+    defer store.deinit();
+    _ = try store.importBundleV1(
+        fixture.bundle_wire,
+        fixture.bundle_config,
+        fixture.capsule_wire,
+        fixture.objects,
+    );
+    const collection = try testCollectionFixtureForKind(
+        &store,
+        fixture,
+        store_grant,
+        .publication_receipt,
+    );
+    const sweep_grant = testSweepGrant(
+        store_grant,
+        collection.grant.expected_snapshot_sha256,
+        collection.receipt.plan_sha256,
+    );
+    const prepared = try prepareV1(
+        &store,
+        sweep_grant,
+        collection.grant,
+        &collection.roots,
+        &collection.leases,
+        .{},
+    );
+    const commit_grant = testCommitGrant(
+        store_grant,
+        sweep_grant,
+        prepared.journal,
+    );
+    const snapshot_before = try store.auditSnapshotRootV2();
+    const allocator_before = fba.end_index;
+
+    var wrong_scope = commit_grant;
+    wrong_scope.bundle_sha256[0] ^= 1;
+    try std.testing.expectError(
+        Error.SweepCommitScopeMismatch,
+        commitV1(
+            &store,
+            sweep_grant,
+            wrong_scope,
+            collection.grant,
+            &collection.roots,
+            &collection.leases,
+            prepared.journal,
+        ),
+    );
+    var wrong_prepare = commit_grant;
+    wrong_prepare.prepare_sha256[0] ^= 1;
+    try std.testing.expectError(
+        Error.SweepCommitJournalMismatch,
+        commitV1(
+            &store,
+            sweep_grant,
+            wrong_prepare,
+            collection.grant,
+            &collection.roots,
+            &collection.leases,
+            prepared.journal,
+        ),
+    );
+    var byte_limited = commit_grant;
+    byte_limited.max_freed_bytes = 38;
+    try std.testing.expectError(
+        Error.SweepCommitBudgetExceeded,
+        commitV1(
+            &store,
+            sweep_grant,
+            byte_limited,
+            collection.grant,
+            &collection.roots,
+            &collection.leases,
+            prepared.journal,
+        ),
+    );
+    try std.testing.expectError(
+        object_store.Error.ReachabilityMismatch,
+        commitV1(
+            &store,
+            sweep_grant,
+            commit_grant,
+            collection.grant,
+            collection.roots[0 .. collection.roots.len - 1],
+            &collection.leases,
+            prepared.journal,
+        ),
+    );
+    try std.testing.expectError(
+        object_store.Error.LeaseReceiptMismatch,
+        commitV1(
+            &store,
+            sweep_grant,
+            commit_grant,
+            collection.grant,
+            &collection.roots,
+            &[_]object_store.LeaseReceiptV1{},
+            prepared.journal,
+        ),
+    );
+    var tampered = prepared.journal;
+    tampered.staged_bytes += 1;
+    try std.testing.expectError(
+        Error.InvalidSweepJournal,
+        commitV1(
+            &store,
+            sweep_grant,
+            commit_grant,
+            collection.grant,
+            &collection.roots,
+            &collection.leases,
+            tampered,
+        ),
+    );
+
+    const retired_entry = fixture.decoded.entry(.publication_receipt);
+    const retired: bundle.BlobRefV1 = .{
+        .byte_length = retired_entry.byte_length,
+        .sha256 = retired_entry.blob_sha256,
+    };
+    const permit: object_store.RetiredCommitPermitV1 = .{
+        .authority_epoch = commit_grant.authority_epoch,
+        .tenant_scope_sha256 = commit_grant.tenant_scope_sha256,
+        .bundle_sha256 = commit_grant.bundle_sha256,
+        .store_grant_sha256 = commit_grant.store_grant_sha256,
+        .expected_snapshot_sha256 = commit_grant.expected_snapshot_sha256,
+        .authorization_sha256 = try commitGrantRootV1(commit_grant),
+        .max_freed_entries = 2,
+        .max_freed_bytes = 128,
+    };
+    try std.testing.expectError(
+        object_store.Error.NonCanonicalRetiredTargets,
+        store.commitRetiredV1(permit, &[_]bundle.BlobRefV1{ retired, retired }),
+    );
+    try std.testing.expectError(
+        object_store.Error.RetiredTargetMismatch,
+        store.commitRetiredV1(permit, &[_]bundle.BlobRefV1{collection.roots[0]}),
+    );
+    var partial_set = [_]bundle.BlobRefV1{ retired, collection.roots[0] };
+    object_store.sortRootReferencesV1(&partial_set);
+    try std.testing.expectError(
+        object_store.Error.RetiredTargetMismatch,
+        store.commitRetiredV1(permit, &partial_set),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &snapshot_before,
+        &(try store.auditSnapshotRootV2()),
+    );
+    try std.testing.expectEqual(allocator_before, fba.end_index);
+}
+
 test "sweep journal rejects a valid plan with no collectible entries" {
     var capsule_storage: [capsule.encoded_bytes]u8 = undefined;
     var bundle_storage: [bundle.encoded_bytes]u8 = undefined;
@@ -755,6 +1401,20 @@ fn testCollectionFixture(
     fixture: TestBundleFixture,
     store_grant: object_store.GrantV1,
 ) !TestCollectionFixture {
+    return testCollectionFixtureForKind(
+        store,
+        fixture,
+        store_grant,
+        .kv_state,
+    );
+}
+
+fn testCollectionFixtureForKind(
+    store: *object_store.Store,
+    fixture: TestBundleFixture,
+    store_grant: object_store.GrantV1,
+    retired_kind: capsule.ObjectKind,
+) !TestCollectionFixture {
     const model_entry = fixture.decoded.entry(.model);
     const model: bundle.BlobRefV1 = .{
         .byte_length = model_entry.byte_length,
@@ -768,10 +1428,10 @@ fn testCollectionFixture(
         100,
         120,
     );
-    const kv_entry = fixture.decoded.entry(.kv_state);
+    const retired_entry = fixture.decoded.entry(retired_kind);
     try store.retireV1(.{
-        .byte_length = kv_entry.byte_length,
-        .sha256 = kv_entry.blob_sha256,
+        .byte_length = retired_entry.byte_length,
+        .sha256 = retired_entry.blob_sha256,
     });
     const lane_entry = fixture.decoded.entry(.lane_state);
     try store.quarantineV1(.{
@@ -782,7 +1442,7 @@ fn testCollectionFixture(
     var roots: [capsule.object_count - 1]bundle.BlobRefV1 = undefined;
     var root_count: usize = 0;
     for (capsule.object_kinds) |kind| {
-        if (kind == .kv_state) continue;
+        if (kind == retired_kind) continue;
         const entry = fixture.decoded.entry(kind);
         roots[root_count] = .{
             .byte_length = entry.byte_length,
@@ -839,6 +1499,27 @@ fn testSweepGrant(
         .max_staged_entries = 2,
         .max_staged_bytes = 128,
         .challenge_sha256 = [_]u8{0xd4} ** 32,
+    };
+}
+
+fn testCommitGrant(
+    store_grant: object_store.GrantV1,
+    sweep_grant: GrantV1,
+    prepared: JournalV1,
+) CommitGrantV1 {
+    return .{
+        .authority_epoch = store_grant.authority_epoch,
+        .tenant_scope_sha256 = store_grant.tenant_scope_sha256,
+        .bundle_sha256 = store_grant.bundle_sha256,
+        .store_grant_sha256 = object_store.grantRootV1(store_grant) catch
+            unreachable,
+        .sweep_grant_sha256 = grantRootV1(sweep_grant) catch unreachable,
+        .prepare_sha256 = prepared.prepare_sha256,
+        .expected_snapshot_sha256 = prepared.snapshot_sha256,
+        .collection_plan_sha256 = prepared.collection_plan_sha256,
+        .max_freed_entries = 2,
+        .max_freed_bytes = 128,
+        .challenge_sha256 = [_]u8{0xd7} ** 32,
     };
 }
 

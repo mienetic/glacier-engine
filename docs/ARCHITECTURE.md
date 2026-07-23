@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal | Bind a checkpoint, admit tenant objects, own bounded payloads, and separate collection evidence from destructive authority |
+| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit | Bind a checkpoint, admit tenant objects, own bounded payloads, and separate collection evidence, staging, and destructive authority |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -53,7 +53,9 @@ validated model + request
                                   │
                                   └─ dry-run collection ──> retained/eligible evidence
                                               │
-                                              └─ sweep prepare/abort ──> staged evidence; no free
+                                              └─ sweep prepare/abort ──> staged evidence
+                                                          │
+                                                          └─ scoped commit ──> exact removal receipt
 ```
 
 ### ResourceBank
@@ -173,7 +175,16 @@ regenerates the plan from the original root multiset and lease receipts, then
 returns a new caller-owned journal value. Abort validates the prepared root and
 requires the same live snapshot before returning another journal value. Neither
 transition mutates the input journal or store, allocates heap memory, or frees
-payloads. Destructive commit and durability remain later layers.
+payloads.
+
+Destructive commit adds a second grant that binds the exact sweep grant,
+prepare root, snapshot, collection plan, and removal ceilings. It regenerates
+the plan again, derives a canonical target set, audits every target and all
+before/after accounting, and completes every fallible check before the first
+deallocation. The store then frees only those exact retired targets and emits a
+receipt binding post-state, payload/index release, and allocator call count.
+This is an atomic single-owner in-memory suffix, not durable crash recovery,
+secure erase, or a process-RSS claim.
 
 ## Provider execution flow
 
@@ -267,4 +278,6 @@ still require real machines for each promoted platform.
   exact reachability and dry-run collection evidence.
 - [Continuation object sweep journal](CONTINUATION_OBJECT_SWEEP.md):
   capability-scoped prepare/abort staging without deallocation.
+- [Continuation object sweep commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md):
+  separately authorized exact retired-target removal and accounting evidence.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

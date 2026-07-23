@@ -4,8 +4,9 @@ Status: **prototype bounded in-memory prepare/abort journal**. Native Zig and an
 independent Python model share canonical sweep-grant, prepare, and abort roots.
 Prepare regenerates an approved collection plan from its original root and
 lease evidence. Abort verifies the store is still at the pinned snapshot.
-Destructive commit, payload deallocation, durable persistence, crash recovery,
-concurrent mutation, and exactly-once execution are not implemented.
+A separately authorized atomic in-memory destructive commit is implemented as
+the next boundary. Durable persistence, crash recovery, concurrent mutation,
+secure erasure, and exactly-once execution are not implemented.
 
 This layer creates a separate authority boundary between answering “which
 objects are collectible?” and authorizing a future destructive transition. A
@@ -151,8 +152,10 @@ the existing 3,480-byte store value unchanged; callers hold journal state only
 for a sweep workflow.
 
 The fixture retains 255 payload bytes before prepare, after prepare, and after
-abort. It stages 30 bytes and frees **zero** bytes. A future commit transition
-must report actual allocator and accounting changes separately.
+abort. It stages 30 bytes and frees **zero** bytes. Commit reports actual
+allocator and accounting changes separately using another fixture whose final
+39-byte allocation can be physically reclaimed; see
+[Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md).
 
 ## Failure and evidence coverage
 
@@ -179,17 +182,18 @@ The native and Python suites cover:
 - store mutation between prepare and abort; and
 - rejection of a valid collection plan containing no collectible entries.
 
-This proves deterministic prepare/abort conformance for the fixture. It does
-not prove safe physical deletion, secure erasure, durable recovery, distributed
+This proves deterministic prepare/abort conformance for the fixture. The
+separate commit layer covers exact in-memory deletion; this journal result does
+not imply commit authority, secure erasure, durable recovery, distributed
 coordination, liveness, or exactly-once execution.
 
 ## Next layers
 
-1. A commit transition that revalidates the prepared journal, validates every
+1. ~~A commit transition that revalidates the prepared journal, validates every
    retired target before mutation, and frees exactly the staged entries only
-   after all checks pass.
-2. Exact post-commit snapshot, allocator, entry, index, and payload accounting
-   bound into a sweep receipt.
+   after all checks pass.~~ Implemented in memory.
+2. ~~Exact post-commit snapshot, allocator, entry, index, and payload accounting
+   bound into a sweep receipt.~~ Implemented with independent verification.
 3. Durable body/footer publication with crash points before and after commit.
 4. Multi-bundle and parent-checkpoint reachability composition.
 5. ResourceBank/LeaseTree reacquisition and end-to-end restart.

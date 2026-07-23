@@ -182,7 +182,8 @@ extension, capsule substitution, and overlapping native output storage.
    with retained retirement and exact root/lease coverage.
 4. ~~Sweep prepare/abort consuming an exact plan.~~ Implemented with a separate
    capability, plan regeneration, and no deallocation.
-5. Destructive sweep commit with exact allocator/accounting evidence.
+5. ~~Destructive sweep commit with exact allocator/accounting evidence.~~
+   Implemented as a separately authorized atomic in-memory transition.
 6. Compact/dynamic index experiment with full overhead measurement.
 7. Atomic bundle publication and crash recovery.
 8. Resource and paged-KV ownership reacquisition.
@@ -193,6 +194,8 @@ blob identity, access authority, live ownership, and publication authority.
 
 See [Continuation Object Store](CONTINUATION_OBJECT_STORE.md) for the implemented
 in-memory ownership, rollback, and resource-accounting boundary.
+See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
+the exact retired-target removal and accounting boundary.
 See [Continuation Object Collection Plan](CONTINUATION_OBJECT_COLLECTION.md)
 for the implemented dry-run evidence boundary.
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the

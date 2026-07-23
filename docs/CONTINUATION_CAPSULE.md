@@ -155,7 +155,8 @@ trusting a historical receipt as live authority.
    with explicit leases, repair, retirement, and exact root/lease coverage.
 5. ~~Sweep prepare/abort consuming an exact plan.~~ Implemented with plan
    regeneration, a separate capability, and zero payload deallocation.
-6. Destructive sweep commit with exact allocator/accounting evidence.
+6. ~~Destructive sweep commit with exact allocator/accounting evidence.~~
+   Implemented as a separately authorized atomic in-memory transition.
 7. Atomic manifest/bundle publication and crash recovery.
 8. Resource and page ownership reacquisition.
 9. Live restore between two transactional token publications.
@@ -173,4 +174,6 @@ in-memory ownership and resource-accounting contract.
 See [Continuation Object Collection Plan](CONTINUATION_OBJECT_COLLECTION.md)
 for exact dry-run reachability and collection evidence.
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for
-capability-scoped prepare/abort staging.
+capability-scoped non-destructive staging.
+See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
+the exact retired-target removal and accounting boundary.

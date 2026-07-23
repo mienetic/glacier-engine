@@ -5,8 +5,9 @@ and independent Python implementations share canonical grant, receipt, and
 snapshot roots. Acquire, renew, release, explicit expiry, quarantine fencing,
 trusted-source repair, stale-generation rejection, and accounting verification
 are implemented. Wall-clock integration, concurrent access, replica transport,
-durable recovery, destructive collection, and remote attestation are not. A
-separate dry-run planner now verifies reachability and collection eligibility.
+durable recovery, secure erasure, and remote attestation are not. A separate
+dry-run planner verifies reachability and collection eligibility, and a
+separately authorized in-memory commit removes exact retired targets.
 
 The lifecycle layer answers two questions that a reference count cannot:
 
@@ -221,6 +222,7 @@ layout. These are compile-target layout observations, not RSS measurements.
 ```sh
 zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
 python3 -m unittest bench.tests.test_continuation_object_store
 python3 -m unittest bench.tests.test_continuation_object_sweep
 ```
@@ -244,7 +246,8 @@ savings, replica trust, secure erasure, or end-to-end restart.
 
 1. ~~Sweep prepare/abort consuming an exact dry-run plan.~~ Implemented with a
    separate capability, plan regeneration, and no deallocation.
-2. Destructive sweep commit with exact allocator/accounting evidence.
+2. ~~Destructive sweep commit with exact allocator/accounting evidence.~~
+   Implemented as an atomic single-owner in-memory suffix.
 3. Replica transport separated from repair admission and content verification.
 4. Durable transition journal with crash points before and after publication.
 5. ResourceBank/LeaseTree ownership reacquisition using generation-linked

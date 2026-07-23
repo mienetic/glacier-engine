@@ -31,6 +31,7 @@ energy, or production reliability.
 | `zig build continuation-store-demo -Dmetal=false` | Atomic bundle import, duplicate reuse, generation-fenced leases, quarantine repair, exact accounting, and v1/v2 snapshots |
 | `zig build continuation-collection-demo -Dmetal=false` | Exact root multiplicity, complete lease coverage, bounded classification, and a non-mutating collection-plan root |
 | `zig build continuation-sweep-demo -Dmetal=false` | Separately scoped plan regeneration, staging ceilings, functional prepare/abort roots, and zero payload deallocation |
+| `zig build continuation-sweep-commit-demo -Dmetal=false` | Separate destructive authority, repeated plan regeneration, canonical target removal, exact accounting, and allocator tail reclamation |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -108,6 +109,22 @@ allocated and zero bytes are freed. Zig and Python share the sweep grant,
 prepare, and abort roots. This is functional in-memory staging evidence—not a
 destructive commit, durable journal, exactly-once transition, secure erase, or
 memory reduction.
+
+The sweep-commit fixture uses a separate prepared plan whose one collectible
+object is the final 39-byte payload allocation. A second capability binds the
+exact sweep grant, prepare root, snapshot, plan, and removal ceilings. Native
+commit changes the store from 8 to 7 occupied entries, 1 to 0 retired entries,
+255 to 216 payload-ledger bytes, and 1,024 to 896 logical-index bytes. It invokes
+the allocator deallocation once. Because the target is deliberately the
+fixed-buffer allocator tail, observed allocator consumption also changes from
+255 to 216 bytes. The 3,480-byte fixed store value and 184-byte caller-owned
+journal remain unchanged.
+
+Zig and Python share the commit grant, target-set, store-commit, outer-commit,
+and post-state roots. This proves exact atomic single-owner in-memory removal
+for the fixture. The 39-byte allocator delta is a tail-layout observation—not a
+general allocator, fragmentation, RSS, secure-erasure, durability, or garbage-
+collection throughput result.
 
 ## Provider evidence checkpoint
 

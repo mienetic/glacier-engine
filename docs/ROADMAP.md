@@ -25,7 +25,7 @@ transactional state publication, and independently verifiable evidence.
 | Hierarchical ownership | Integrated | LeaseTree child scopes and paged-KV publication fences | Cross-worker and durable ownership identity |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
-| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, leases/repair, retirement, collection evidence, sweep prepare/abort, Zig/Python verification | Exact sweep commit, durable publication, ownership reacquisition, and live restore |
+| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, leases/repair, retirement, collection evidence, sweep staging, atomic in-memory commit, Zig/Python verification | Durable sweep publication/recovery, ownership reacquisition, and live restore |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
@@ -53,6 +53,9 @@ transactional state publication, and independently verifiable evidence.
   dry-run classification, cross-language plan roots, and no deallocation.
 - [x] Separately scoped sweep prepare/abort journal with plan regeneration,
   staging ceilings, unchanged snapshots, and cross-language evidence roots.
+- [x] Separately scoped destructive sweep commit with canonical targets, full
+  pre-mutation validation, exact before/after accounting, allocator-call
+  evidence, and cross-language roots.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -97,7 +100,10 @@ Next slices:
 8. ~~Bounded sweep prepare/abort journal.~~ Complete with a separate capability,
    collection-plan regeneration, exact staging ceilings, functional journal
    values, stale-snapshot rejection, and independent verification.
-9. Destructive sweep commit with exact allocator/accounting receipt.
+9. ~~Destructive sweep commit with exact allocator/accounting receipt.~~
+   Complete in memory with a second capability, repeated plan regeneration,
+   canonical target derivation, a no-failure mutation suffix, replay rejection,
+   and independent verification.
 10. Durable sweep and file-publication crash-recovery state machine.
 11. ResourceBank/LeaseTree reacquisition without duplicated ownership.
 12. Paged-KV restore with foreign-generation rejection.
@@ -108,14 +114,14 @@ no duplicated output, no orphaned ownership, and crash coverage at every durable
 phase.
 
 The current capsule, resolver, bundle, store, lifecycle receipts, collection
-plan, and sweep journal form identity, least-authority lookup, canonical
-planning, bounded payload ownership, and deterministic in-memory
-lifecycle/evidence boundaries—not a saved session. The fixture avoids one
-25-byte duplicate payload allocation, but lifecycle metadata, fixed index, and
-backing capacity are larger than that delta. No lower RSS, disk
-use, or restart latency is claimed. Those require compact index experiments,
-durable integration, ownership reacquisition, and complete physical
-measurements.
+plan, sweep journal, and sweep commit form identity, least-authority lookup,
+canonical planning, bounded payload ownership, and a deterministic destructive
+in-memory boundary—not a saved session. The fixture avoids one 25-byte duplicate
+payload allocation and the commit fixture reclaims a 39-byte allocator tail,
+but lifecycle metadata, fixed index, and backing capacity remain larger than
+those deltas. No lower RSS, disk use, or restart latency is claimed. Those
+require compact index experiments, durable integration, ownership
+reacquisition, and complete physical measurements.
 
 ### Evidence inspection
 
@@ -248,7 +254,7 @@ ideas unless a different status is stated.
 | Capability Grant | Prototype (resolver scope) | Least-authority extensions for planners, tokenizers, stores, tools, and transports |
 | ToolTxn and ActionOutbox | Idea | Recoverable AI tool execution without duplicated external side effects |
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
-| Object Fabric | Prototype (sweep staging) | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
+| Object Fabric | Prototype (atomic in-memory sweep) | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |
@@ -348,9 +354,9 @@ First slices:
 - ~~lease/generation fencing and target/reason/source-scoped repair admission;~~
 - ~~retained retirement plus exact reachability and dry-run collection evidence;~~
 - ~~separately scoped sweep prepare/abort with plan regeneration and no free;~~
-- trusted replica transport with independently verified fetch evidence;
-- destructive sweep commit with exact allocator/accounting evidence;
+- ~~destructive sweep commit with exact allocator/accounting evidence;~~
 - durable sweep recovery across every publication crash point;
+- trusted replica transport with independently verified fetch evidence;
 - optional encrypted storage adapter whose ciphertext identity is separate from
   semantic content identity.
 

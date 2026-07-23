@@ -48,6 +48,10 @@ const collection_leases_domain =
     "glacier-continuation-store-collection-leases-v1\x00";
 const collection_plan_domain =
     "glacier-continuation-store-collection-plan-v1\x00";
+const retired_targets_domain =
+    "glacier-continuation-store-retired-targets-v1\x00";
+const retired_commit_domain =
+    "glacier-continuation-store-retired-commit-v1\x00";
 
 pub const lease_operation_acquire: u64 = 1 << 0;
 pub const lease_operation_renew: u64 = 1 << 1;
@@ -116,6 +120,13 @@ pub const Error = bundle.Error || std.mem.Allocator.Error || error{
     InsufficientDecisionBuffer,
     UnsafeDecisionBuffer,
     RetirementRequiresFinalReference,
+    InvalidRetiredCommitPermit,
+    RetiredCommitScopeMismatch,
+    RetiredCommitSnapshotMismatch,
+    RetiredCommitBudgetExceeded,
+    NonCanonicalRetiredTargets,
+    RetiredTargetMismatch,
+    InvalidRetiredCommitReceipt,
 };
 
 pub const GrantV1 = struct {
@@ -252,6 +263,44 @@ pub const CollectionReceiptV1 = struct {
     collectible_entries: u64,
     collectible_bytes: u64,
     plan_sha256: Digest,
+};
+
+pub const RetiredCommitPermitV1 = struct {
+    authority_epoch: u64,
+    tenant_scope_sha256: Digest,
+    bundle_sha256: Digest,
+    store_grant_sha256: Digest,
+    expected_snapshot_sha256: Digest,
+    authorization_sha256: Digest,
+    max_freed_entries: u64,
+    max_freed_bytes: u64,
+};
+
+pub const LogicalAccountingV1 = struct {
+    entry_count: u64,
+    live_entries: u64,
+    quarantined_entries: u64,
+    retired_entries: u64,
+    payload_bytes: u64,
+    logical_index_bytes: u64,
+    reference_count: u64,
+    active_leases: u64,
+    repair_count: u64,
+};
+
+pub const RetiredCommitReceiptV1 = struct {
+    authorization_sha256: Digest,
+    targets_sha256: Digest,
+    snapshot_before_sha256: Digest,
+    snapshot_after_sha256: Digest,
+    accounting_before: LogicalAccountingV1,
+    accounting_after: LogicalAccountingV1,
+    freed_entries: u64,
+    freed_payload_bytes: u64,
+    freed_index_bytes: u64,
+    freed_repair_count: u64,
+    allocator_deallocation_calls: u64,
+    commit_sha256: Digest,
 };
 
 pub const StatsV1 = struct {
@@ -979,6 +1028,136 @@ pub fn StoreV1(comptime capacity: usize) type {
             return receipt;
         }
 
+        pub fn commitRetiredV1(
+            self: *Self,
+            permit: RetiredCommitPermitV1,
+            targets: []const bundle.BlobRefV1,
+        ) Error!RetiredCommitReceiptV1 {
+            try self.ensureOperation(operation_release);
+            try validateRetiredCommitPermitV1(permit);
+            if (permit.authority_epoch != self.grant.authority_epoch or
+                !std.mem.eql(
+                    u8,
+                    &permit.tenant_scope_sha256,
+                    &self.grant.tenant_scope_sha256,
+                ) or
+                !std.mem.eql(
+                    u8,
+                    &permit.bundle_sha256,
+                    &self.grant.bundle_sha256,
+                ) or
+                !std.mem.eql(
+                    u8,
+                    &permit.store_grant_sha256,
+                    &self.grant_sha256,
+                )) return Error.RetiredCommitScopeMismatch;
+            const target_count = std.math.cast(u64, targets.len) orelse
+                return Error.RetiredCommitBudgetExceeded;
+            if (target_count == 0 or target_count > permit.max_freed_entries or
+                targets.len > capacity)
+                return Error.RetiredCommitBudgetExceeded;
+            const targets_root = try retiredTargetsRootV1(targets);
+            const snapshot_before = try self.auditSnapshotRootV2();
+            if (!std.mem.eql(
+                u8,
+                &snapshot_before,
+                &permit.expected_snapshot_sha256,
+            )) return Error.RetiredCommitSnapshotMismatch;
+
+            var exact_targets: [capacity]bundle.BlobRefV1 = undefined;
+            std.mem.copyForwards(
+                bundle.BlobRefV1,
+                exact_targets[0..targets.len],
+                targets,
+            );
+            var freed_payload_bytes: u64 = 0;
+            var released_repairs: u64 = 0;
+            for (exact_targets[0..targets.len]) |target| {
+                const index = self.findExactSlot(target) orelse
+                    return Error.RetiredTargetMismatch;
+                const slot = self.slots[index].?;
+                if (slot.state != .retired or
+                    slot.reference_count != 0 or
+                    slot.lease_active or
+                    !isZero(slot.quarantine_reason_sha256))
+                    return Error.RetiredTargetMismatch;
+                freed_payload_bytes = std.math.add(
+                    u64,
+                    freed_payload_bytes,
+                    slot.byte_length,
+                ) catch return Error.RetiredCommitBudgetExceeded;
+                released_repairs = std.math.add(
+                    u64,
+                    released_repairs,
+                    slot.repair_generation,
+                ) catch return Error.InvalidAccounting;
+            }
+            if (freed_payload_bytes > permit.max_freed_bytes)
+                return Error.RetiredCommitBudgetExceeded;
+            const freed_index_bytes = std.math.mul(
+                u64,
+                target_count,
+                logical_index_entry_bytes,
+            ) catch return Error.InvalidAccounting;
+            const accounting_before = self.logicalAccountingV1();
+            if (accounting_before.entry_count < target_count or
+                accounting_before.retired_entries < target_count or
+                accounting_before.payload_bytes < freed_payload_bytes or
+                accounting_before.logical_index_bytes < freed_index_bytes or
+                accounting_before.repair_count < released_repairs)
+                return Error.InvalidAccounting;
+            const accounting_after: LogicalAccountingV1 = .{
+                .entry_count = accounting_before.entry_count - target_count,
+                .live_entries = accounting_before.live_entries,
+                .quarantined_entries = accounting_before.quarantined_entries,
+                .retired_entries = accounting_before.retired_entries -
+                    target_count,
+                .payload_bytes = accounting_before.payload_bytes -
+                    freed_payload_bytes,
+                .logical_index_bytes = accounting_before.logical_index_bytes -
+                    freed_index_bytes,
+                .reference_count = accounting_before.reference_count,
+                .active_leases = accounting_before.active_leases,
+                .repair_count = accounting_before.repair_count -
+                    released_repairs,
+            };
+
+            // All fallible checks finish above. Freeing exact, distinct retired
+            // slots and assigning the precomputed counters cannot fail.
+            for (exact_targets[0..targets.len]) |target| {
+                const index = self.findExactSlot(target) orelse unreachable;
+                const removed = self.slots[index].?;
+                self.allocator.free(removed.payload);
+                self.slots[index] = null;
+            }
+            self.entry_count = accounting_after.entry_count;
+            self.live_entries = accounting_after.live_entries;
+            self.quarantined_entries = accounting_after.quarantined_entries;
+            self.retired_entries = accounting_after.retired_entries;
+            self.payload_bytes = accounting_after.payload_bytes;
+            self.logical_index_bytes = accounting_after.logical_index_bytes;
+            self.reference_count = accounting_after.reference_count;
+            self.active_leases = accounting_after.active_leases;
+            self.repair_count = accounting_after.repair_count;
+            const snapshot_after = self.snapshotRootV2Unchecked();
+            var receipt: RetiredCommitReceiptV1 = .{
+                .authorization_sha256 = permit.authorization_sha256,
+                .targets_sha256 = targets_root,
+                .snapshot_before_sha256 = snapshot_before,
+                .snapshot_after_sha256 = snapshot_after,
+                .accounting_before = accounting_before,
+                .accounting_after = accounting_after,
+                .freed_entries = target_count,
+                .freed_payload_bytes = freed_payload_bytes,
+                .freed_index_bytes = freed_index_bytes,
+                .freed_repair_count = released_repairs,
+                .allocator_deallocation_calls = target_count,
+                .commit_sha256 = zero_digest,
+            };
+            receipt.commit_sha256 = retiredCommitReceiptRootV1(receipt);
+            return receipt;
+        }
+
         pub fn verifyAllV1(self: *Self) Error!void {
             try self.ensureOperation(operation_verify);
             try self.verifyStateV1(false);
@@ -1176,6 +1355,20 @@ pub fn StoreV1(comptime capacity: usize) type {
                 .repair_count = self.repair_count,
                 .native_slot_capacity_bytes = @sizeOf(@TypeOf(self.slots)),
                 .native_store_bytes = @sizeOf(Self),
+            };
+        }
+
+        fn logicalAccountingV1(self: *const Self) LogicalAccountingV1 {
+            return .{
+                .entry_count = self.entry_count,
+                .live_entries = self.live_entries,
+                .quarantined_entries = self.quarantined_entries,
+                .retired_entries = self.retired_entries,
+                .payload_bytes = self.payload_bytes,
+                .logical_index_bytes = self.logical_index_bytes,
+                .reference_count = self.reference_count,
+                .active_leases = self.active_leases,
+                .repair_count = self.repair_count,
             };
         }
 
@@ -1654,6 +1847,126 @@ pub fn collectionPlanRootV1(
     return digest;
 }
 
+pub fn retiredTargetsRootV1(
+    targets: []const bundle.BlobRefV1,
+) Error!Digest {
+    if (targets.len == 0) return Error.NonCanonicalRetiredTargets;
+    for (targets, 0..) |target, index| {
+        if (target.byte_length == 0 or isZero(target.sha256))
+            return Error.NonCanonicalRetiredTargets;
+        if (index > 0 and
+            blobRefOrder(targets[index - 1], target) != .lt)
+            return Error.NonCanonicalRetiredTargets;
+    }
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(retired_targets_domain);
+    hashU64(
+        &hash,
+        std.math.cast(u64, targets.len) orelse
+            return Error.RetiredCommitBudgetExceeded,
+    );
+    for (targets) |target| {
+        hashU64(&hash, target.byte_length);
+        hash.update(&target.sha256);
+    }
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+pub fn retiredCommitReceiptRootV1(
+    receipt: RetiredCommitReceiptV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(retired_commit_domain);
+    hash.update(&receipt.authorization_sha256);
+    hash.update(&receipt.targets_sha256);
+    hash.update(&receipt.snapshot_before_sha256);
+    hash.update(&receipt.snapshot_after_sha256);
+    hashLogicalAccountingV1(&hash, receipt.accounting_before);
+    hashLogicalAccountingV1(&hash, receipt.accounting_after);
+    hashU64(&hash, receipt.freed_entries);
+    hashU64(&hash, receipt.freed_payload_bytes);
+    hashU64(&hash, receipt.freed_index_bytes);
+    hashU64(&hash, receipt.freed_repair_count);
+    hashU64(&hash, receipt.allocator_deallocation_calls);
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+pub fn verifyRetiredCommitReceiptV1(
+    receipt: RetiredCommitReceiptV1,
+) Error!void {
+    const expected_index_bytes = std.math.mul(
+        u64,
+        receipt.freed_entries,
+        logical_index_entry_bytes,
+    ) catch return Error.InvalidRetiredCommitReceipt;
+    const expected_before_entries = std.math.add(
+        u64,
+        receipt.accounting_after.entry_count,
+        receipt.freed_entries,
+    ) catch return Error.InvalidRetiredCommitReceipt;
+    const expected_before_retired = std.math.add(
+        u64,
+        receipt.accounting_after.retired_entries,
+        receipt.freed_entries,
+    ) catch return Error.InvalidRetiredCommitReceipt;
+    const expected_before_payload = std.math.add(
+        u64,
+        receipt.accounting_after.payload_bytes,
+        receipt.freed_payload_bytes,
+    ) catch return Error.InvalidRetiredCommitReceipt;
+    const expected_before_index = std.math.add(
+        u64,
+        receipt.accounting_after.logical_index_bytes,
+        receipt.freed_index_bytes,
+    ) catch return Error.InvalidRetiredCommitReceipt;
+    const expected_before_repairs = std.math.add(
+        u64,
+        receipt.accounting_after.repair_count,
+        receipt.freed_repair_count,
+    ) catch return Error.InvalidRetiredCommitReceipt;
+    if (isZero(receipt.authorization_sha256) or
+        isZero(receipt.targets_sha256) or
+        isZero(receipt.snapshot_before_sha256) or
+        isZero(receipt.snapshot_after_sha256) or
+        std.mem.eql(
+            u8,
+            &receipt.snapshot_before_sha256,
+            &receipt.snapshot_after_sha256,
+        ) or
+        receipt.freed_entries == 0 or
+        receipt.freed_payload_bytes == 0 or
+        receipt.freed_index_bytes != expected_index_bytes or
+        receipt.allocator_deallocation_calls != receipt.freed_entries or
+        receipt.accounting_before.entry_count !=
+            expected_before_entries or
+        receipt.accounting_before.retired_entries !=
+            expected_before_retired or
+        receipt.accounting_before.payload_bytes !=
+            expected_before_payload or
+        receipt.accounting_before.logical_index_bytes !=
+            expected_before_index or
+        receipt.accounting_before.live_entries !=
+            receipt.accounting_after.live_entries or
+        receipt.accounting_before.quarantined_entries !=
+            receipt.accounting_after.quarantined_entries or
+        receipt.accounting_before.reference_count !=
+            receipt.accounting_after.reference_count or
+        receipt.accounting_before.active_leases !=
+            receipt.accounting_after.active_leases or
+        receipt.accounting_before.repair_count != expected_before_repairs or
+        !logicalAccountingIsValidV1(receipt.accounting_before) or
+        !logicalAccountingIsValidV1(receipt.accounting_after) or
+        !std.mem.eql(
+            u8,
+            &receipt.commit_sha256,
+            &retiredCommitReceiptRootV1(receipt),
+        )) return Error.InvalidRetiredCommitReceipt;
+}
+
 pub fn sortRootReferencesV1(
     root_references: []bundle.BlobRefV1,
 ) void {
@@ -1772,6 +2085,20 @@ fn validateCollectionGrant(grant: CollectionGrantV1) Error!void {
         return Error.InvalidCollectionGrant;
 }
 
+fn validateRetiredCommitPermitV1(
+    permit: RetiredCommitPermitV1,
+) Error!void {
+    if (permit.authority_epoch == 0 or
+        isZero(permit.tenant_scope_sha256) or
+        isZero(permit.bundle_sha256) or
+        isZero(permit.store_grant_sha256) or
+        isZero(permit.expected_snapshot_sha256) or
+        isZero(permit.authorization_sha256) or
+        permit.max_freed_entries == 0 or
+        permit.max_freed_bytes == 0)
+        return Error.InvalidRetiredCommitPermit;
+}
+
 fn validateCanonicalRoots(
     root_references: []const bundle.BlobRefV1,
 ) Error!void {
@@ -1830,6 +2157,50 @@ fn hashU64(hash: *std.crypto.hash.sha2.Sha256, value: u64) void {
     var bytes: [8]u8 = undefined;
     std.mem.writeInt(u64, &bytes, value, .little);
     hash.update(&bytes);
+}
+
+fn hashLogicalAccountingV1(
+    hash: *std.crypto.hash.sha2.Sha256,
+    accounting: LogicalAccountingV1,
+) void {
+    hashU64(hash, accounting.entry_count);
+    hashU64(hash, accounting.live_entries);
+    hashU64(hash, accounting.quarantined_entries);
+    hashU64(hash, accounting.retired_entries);
+    hashU64(hash, accounting.payload_bytes);
+    hashU64(hash, accounting.logical_index_bytes);
+    hashU64(hash, accounting.reference_count);
+    hashU64(hash, accounting.active_leases);
+    hashU64(hash, accounting.repair_count);
+}
+
+fn logicalAccountingIsValidV1(accounting: LogicalAccountingV1) bool {
+    const classified = std.math.add(
+        u64,
+        accounting.live_entries,
+        accounting.quarantined_entries,
+    ) catch return false;
+    const occupied = std.math.add(
+        u64,
+        classified,
+        accounting.retired_entries,
+    ) catch return false;
+    const expected_index_bytes = std.math.mul(
+        u64,
+        accounting.entry_count,
+        logical_index_entry_bytes,
+    ) catch return false;
+    return accounting.entry_count == occupied and
+        accounting.logical_index_bytes == expected_index_bytes and
+        accounting.reference_count >= classified and
+        accounting.active_leases <= accounting.live_entries and
+        (if (accounting.entry_count == 0)
+            accounting.payload_bytes == 0 and
+                accounting.reference_count == 0 and
+                accounting.repair_count == 0
+        else
+            accounting.payload_bytes >= accounting.entry_count) and
+        (classified != 0 or accounting.reference_count == 0);
 }
 
 fn isZero(value: Digest) bool {

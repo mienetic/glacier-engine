@@ -143,8 +143,16 @@ Prepare regenerates the plan from the original root and lease evidence instead
 of trusting a copied receipt. It returns a new immutable-style journal value
 only when the regenerated plan and snapshot match. Abort likewise returns a new
 value only while the store snapshot remains unchanged. Neither transition
-implies deallocation, durability, exactly-once execution, or mutation of the
-input journal.
+mutates the input journal or grants deallocation authority.
+
+Destructive sweep commit requires a second capability binding that exact sweep
+grant, prepare root, snapshot, plan, and smaller-or-equal removal ceilings. The
+plan is regenerated again, every derived target and all before/after counters
+are validated, and only then may the store enter a no-failure mutation suffix:
+free exact payloads, clear their fixed slots, and assign precomputed accounting.
+The receipt distinguishes logical payload/index release, allocator `free` call
+count, and post-state identity. It does not equate any of them with RSS,
+durability, secure erase, or crash-atomic execution.
 
 ### State machines fail closed
 

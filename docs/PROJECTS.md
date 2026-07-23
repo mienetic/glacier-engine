@@ -90,18 +90,18 @@ into core.
 
 ## Advanced projects
 
-### Sweep commit state machine
+### Durable sweep recovery state machine
 
-The collection planner now proves exact eligibility, and the separate sweep
-journal regenerates that plan before emitting capability-scoped prepare/abort
-roots. Both layers leave payloads untouched.
+The in-memory path now separates collection planning, prepare/abort staging, and
+destructive commit capabilities. Commit regenerates the plan, validates every
+canonical retired target before mutation, emits exact before/after accounting,
+and rejects replay against the changed snapshot. No durable record exists yet.
 
-**First slice:** consume one canonical prepared journal, revalidate every staged
-retired slot before mutation, and free exactly that set only after all checks
-pass. Emit before/after snapshot, entry, payload, index, allocator-observed, and
-freed-target roots. Cover stale snapshots, tampered prepare roots, partial-set
-failure, counter underflow, and double commit. Keep filesystem durability out of
-this slice.
+**First slice:** specify a fixed pointer-free body/footer record that binds the
+existing sweep grant, prepare, commit grant, target-set, store-commit, and before/
+after snapshot roots. Add Zig and independent Python encode/decode fixtures with
+truncation, extension, mutation, and valid-foreign-record rejection. Keep file
+writes, payload deletion, and recovery policy out of this slice.
 
 ### Resolver adversarial fixtures
 

@@ -6,8 +6,9 @@ quarantine, corruption verification, atomic bundle import, and allocator-failure
 rollback are implemented. Generation-fenced leases, deterministic expiry,
 quarantine fencing, capability-bound repair, explicit retirement, and
 evidence-producing dry-run collection planning are also implemented. Filesystem
-durability, concurrent access, replica transport, encryption, destructive
-collection, and live restart are not.
+durability, concurrent access, replica transport, encryption, secure erase, and
+live restart are not. A separately authorized in-memory sweep commit now removes
+an exact validated retired set and emits before/after accounting evidence.
 
 `ContinuationObjectStore` turns the canonical bundle plan into owned immutable
 payload copies under one tenant and one bundle-scoped grant. Its index has fixed
@@ -31,6 +32,7 @@ verified ContinuationBundle + exact payload objects
        ├─ corruption verification
        ├─ quarantine + verified repair
        ├─ retained retirement + dry-run collection plan
+       ├─ separately authorized atomic retired-target commit
        └─ atomic import rollback
                   │
                   ▼
@@ -196,6 +198,7 @@ Run the model-free native demo:
 zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
 Run the independent state model:
@@ -213,7 +216,9 @@ provenance and bundle scope, entry/payload/index/reference/lease limits,
 allocator rollback, missing reads, corruption, quarantine fencing, repair-source
 and reason rejection, retirement, exact root/lease coverage, collection budgets,
 dry-run immutability, sweep plan regeneration, prepare/abort journal tamper and
-stale-snapshot rejection, and output/source overlap with store memory.
+stale-snapshot rejection, canonical retired-target commit, exact before/after
+accounting, double-commit rejection, and output/source overlap with store
+memory.
 
 ## Security and authority boundary
 
@@ -236,7 +241,9 @@ stale-snapshot rejection, and output/source overlap with store memory.
 1. Compact or dynamic index experiment with complete overhead measurement.
 2. ~~Sweep prepare/abort consuming an exact plan.~~ Implemented with separate
    capability scope, plan regeneration, and zero payload deallocation.
-3. Destructive sweep commit with exact allocator/accounting evidence.
+3. ~~Destructive sweep commit with exact allocator/accounting evidence.~~
+   Implemented in memory with canonical targets, complete pre-mutation checks,
+   and matching Zig/Python roots.
 4. Replica adapter with independently verified repair transport.
 5. Atomic filesystem publication and crash recovery.
 6. Resource and paged-KV ownership reacquisition.

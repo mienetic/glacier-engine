@@ -741,6 +741,35 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_continuation_sweep_demo.step);
     test_compile_step.dependOn(&continuation_sweep_demo_exe.step);
 
+    // Destructive sweep commit demonstration. A separately scoped commit
+    // grant authorizes one exact retired target after the collection plan is
+    // regenerated; the fixture makes that target the allocator tail so both
+    // logical release and physical allocator reclamation are observable.
+    const continuation_sweep_commit_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-object-sweep-commit-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_object_sweep_commit.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_sweep_commit_demo_exe.root_module.addImport("core", core_mod);
+    const run_continuation_sweep_commit_demo = b.addRunArtifact(
+        continuation_sweep_commit_demo_exe,
+    );
+    const continuation_sweep_commit_demo_step = b.step(
+        "continuation-sweep-commit-demo",
+        "Run the atomic continuation object sweep commit demo",
+    );
+    continuation_sweep_commit_demo_step.dependOn(
+        &run_continuation_sweep_commit_demo.step,
+    );
+    test_step.dependOn(&run_continuation_sweep_commit_demo.step);
+    test_compile_step.dependOn(&continuation_sweep_commit_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

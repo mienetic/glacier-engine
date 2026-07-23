@@ -4,8 +4,9 @@ Status: **prototype deterministic dry-run planner**. Native Zig and an
 independent Python model share canonical collection-grant, root-set,
 lease-set, audit-snapshot, and plan roots. Retirement and classification are
 implemented. A separately scoped in-memory sweep prepare/abort journal is also
-implemented. Deallocation, durable journal persistence, concurrent mutation,
-and multi-bundle reachability are not.
+implemented, followed by a separately scoped atomic in-memory destructive
+commit. Durable journal persistence, concurrent mutation, secure erasure, and
+multi-bundle reachability are not.
 
 The planner answers a deliberately narrow question: given one exact store
 snapshot, a complete multiset of semantic roots, and one current receipt for
@@ -217,15 +218,17 @@ unknown and duplicate inputs, stale snapshots, root/receipt/scan/collectible
 budgets, insufficient output, unsafe aliases, corrupt quarantine retention, and
 unchanged outputs on rejection.
 
-This proves deterministic classification for the fixture. It does not prove
-safe physical deletion, crash durability, distributed liveness, secure erasure,
-or multi-bundle global reachability.
+This proves deterministic classification for the fixture. The separate commit
+layer proves exact in-memory removal for its own fixture; neither result proves
+crash durability, distributed liveness, secure erasure, or multi-bundle global
+reachability.
 
 ## Next layers
 
 1. ~~Separately authorized sweep prepare/abort journal.~~ Implemented with plan
    regeneration, exact staging ceilings, functional values, and no deallocation.
-2. Destructive commit with exact post-sweep allocator/accounting evidence.
+2. ~~Destructive commit with exact post-sweep allocator/accounting evidence.~~
+   Implemented in memory with a separate grant and repeated plan regeneration.
 3. Crash-safe durable publication and recovery of retirement/sweep decisions.
 4. Multi-bundle and parent-checkpoint reachability composition.
 5. Replica transport that keeps admission, verification, and deletion authority
@@ -233,4 +236,6 @@ or multi-bundle global reachability.
 6. ResourceBank/LeaseTree reacquisition and end-to-end restart.
 
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
-implemented staging boundary.
+implemented staging boundary and
+[Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for the
+destructive boundary.

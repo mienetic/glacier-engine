@@ -62,6 +62,9 @@ zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Regenerate an approved plan and emit functional sweep prepare/abort roots
 zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Commit one exact retired set and report logical plus allocator reclamation
+zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

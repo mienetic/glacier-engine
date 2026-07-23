@@ -35,6 +35,8 @@ LIFECYCLE_GRANT_DOMAIN = b"glacier-continuation-store-lifecycle-grant-v1\x00"
 LEASE_RECEIPT_DOMAIN = b"glacier-continuation-store-lease-receipt-v1\x00"
 REPAIR_GRANT_DOMAIN = b"glacier-continuation-store-repair-grant-v1\x00"
 REPAIR_RECEIPT_DOMAIN = b"glacier-continuation-store-repair-receipt-v1\x00"
+RETIRED_TARGETS_DOMAIN = b"glacier-continuation-store-retired-targets-v1\x00"
+RETIRED_COMMIT_DOMAIN = b"glacier-continuation-store-retired-commit-v1\x00"
 LEASE_OPERATION_ACQUIRE = 1 << 0
 LEASE_OPERATION_RENEW = 1 << 1
 LEASE_OPERATION_RELEASE = 1 << 2
@@ -110,6 +112,181 @@ def grant_root(grant: Record) -> bytes:
     ):
         hasher.update(part)
     return hasher.digest()
+
+
+def _target_key(target: Record) -> tuple[bytes, int]:
+    if target["byte_length"] == 0:
+        raise StoreError("zero-length target")
+    _u64(target["byte_length"])
+    _digest(target["sha256"])
+    return target["sha256"], target["byte_length"]
+
+
+def retired_targets_root(targets: list[Record]) -> bytes:
+    if not targets:
+        raise StoreError("empty retired targets")
+    keys = [_target_key(target) for target in targets]
+    if keys != sorted(keys) or len(set(keys)) != len(keys):
+        raise StoreError("non-canonical retired targets")
+    hasher = hashlib.sha256()
+    hasher.update(RETIRED_TARGETS_DOMAIN)
+    hasher.update(_u64(len(targets)))
+    for target in targets:
+        hasher.update(_u64(target["byte_length"]))
+        hasher.update(target["sha256"])
+    return hasher.digest()
+
+
+def _hash_logical_accounting(hasher: Any, accounting: Record) -> None:
+    for name in (
+        "entry_count",
+        "live_entries",
+        "quarantined_entries",
+        "retired_entries",
+        "payload_bytes",
+        "logical_index_bytes",
+        "reference_count",
+        "active_leases",
+        "repair_count",
+    ):
+        hasher.update(_u64(accounting[name]))
+
+
+def retired_commit_receipt_root(receipt: Record) -> bytes:
+    hasher = hashlib.sha256()
+    hasher.update(RETIRED_COMMIT_DOMAIN)
+    hasher.update(receipt["authorization_sha256"])
+    hasher.update(receipt["targets_sha256"])
+    hasher.update(receipt["snapshot_before_sha256"])
+    hasher.update(receipt["snapshot_after_sha256"])
+    _hash_logical_accounting(hasher, receipt["accounting_before"])
+    _hash_logical_accounting(hasher, receipt["accounting_after"])
+    hasher.update(_u64(receipt["freed_entries"]))
+    hasher.update(_u64(receipt["freed_payload_bytes"]))
+    hasher.update(_u64(receipt["freed_index_bytes"]))
+    hasher.update(_u64(receipt["freed_repair_count"]))
+    hasher.update(_u64(receipt["allocator_deallocation_calls"]))
+    return hasher.digest()
+
+
+def _logical_accounting_is_valid(accounting: Record) -> bool:
+    try:
+        values = {
+            name: accounting[name]
+            for name in (
+                "entry_count",
+                "live_entries",
+                "quarantined_entries",
+                "retired_entries",
+                "payload_bytes",
+                "logical_index_bytes",
+                "reference_count",
+                "active_leases",
+                "repair_count",
+            )
+        }
+        for value in values.values():
+            _u64(value)
+        occupied = (
+            values["live_entries"]
+            + values["quarantined_entries"]
+            + values["retired_entries"]
+        )
+        expected_index_bytes = (
+            values["entry_count"] * LOGICAL_INDEX_ENTRY_BYTES
+        )
+        _u64(occupied)
+        _u64(expected_index_bytes)
+    except (KeyError, StoreError):
+        return False
+    classified = values["live_entries"] + values["quarantined_entries"]
+    return (
+        values["entry_count"] == occupied
+        and values["logical_index_bytes"] == expected_index_bytes
+        and values["reference_count"] >= classified
+        and values["active_leases"] <= values["live_entries"]
+        and (
+            (
+                values["payload_bytes"] == 0
+                and values["reference_count"] == 0
+                and values["repair_count"] == 0
+            )
+            if values["entry_count"] == 0
+            else values["payload_bytes"] >= values["entry_count"]
+        )
+        and (classified != 0 or values["reference_count"] == 0)
+    )
+
+
+def verify_retired_commit_receipt(receipt: Record) -> None:
+    try:
+        for name in (
+            "authorization_sha256",
+            "targets_sha256",
+            "snapshot_before_sha256",
+            "snapshot_after_sha256",
+            "commit_sha256",
+        ):
+            _digest(receipt[name])
+        for name in (
+            "freed_entries",
+            "freed_payload_bytes",
+            "freed_index_bytes",
+            "freed_repair_count",
+            "allocator_deallocation_calls",
+        ):
+            _u64(receipt[name])
+        expected_index_bytes = (
+            receipt["freed_entries"] * LOGICAL_INDEX_ENTRY_BYTES
+        )
+        _u64(expected_index_bytes)
+        before = receipt["accounting_before"]
+        after = receipt["accounting_after"]
+        expected_before_entries = after["entry_count"] + receipt["freed_entries"]
+        expected_before_retired = (
+            after["retired_entries"] + receipt["freed_entries"]
+        )
+        expected_before_payload = (
+            after["payload_bytes"] + receipt["freed_payload_bytes"]
+        )
+        expected_before_index = (
+            after["logical_index_bytes"] + receipt["freed_index_bytes"]
+        )
+        expected_before_repairs = (
+            after["repair_count"] + receipt["freed_repair_count"]
+        )
+        for value in (
+            expected_before_entries,
+            expected_before_retired,
+            expected_before_payload,
+            expected_before_index,
+            expected_before_repairs,
+        ):
+            _u64(value)
+    except (KeyError, StoreError) as exc:
+        raise StoreError("invalid retired commit receipt") from exc
+    if (
+        receipt["snapshot_before_sha256"]
+        == receipt["snapshot_after_sha256"]
+        or receipt["freed_entries"] == 0
+        or receipt["freed_payload_bytes"] == 0
+        or receipt["freed_index_bytes"] != expected_index_bytes
+        or receipt["allocator_deallocation_calls"]
+        != receipt["freed_entries"]
+        or before["entry_count"] != expected_before_entries
+        or before["retired_entries"] != expected_before_retired
+        or before["payload_bytes"] != expected_before_payload
+        or before["logical_index_bytes"] != expected_before_index
+        or before["live_entries"] != after["live_entries"]
+        or before["quarantined_entries"] != after["quarantined_entries"]
+        or before["reference_count"] != after["reference_count"]
+        or before["active_leases"] != after["active_leases"]
+        or before["repair_count"] != expected_before_repairs
+        or not _logical_accounting_is_valid(before)
+        or not _logical_accounting_is_valid(after)
+        or receipt["commit_sha256"] != retired_commit_receipt_root(receipt)
+    ):
+        raise StoreError("invalid retired commit receipt")
 
 
 def _validate_lifecycle_grant(grant: Record) -> None:
@@ -721,6 +898,124 @@ class Store:
             "snapshot_sha256": self.snapshot_root_v2_unchecked(),
         }
         receipt["repair_sha256"] = repair_receipt_root(receipt)
+        return receipt
+
+    def logical_accounting(self) -> Record:
+        return {
+            "entry_count": self.entry_count,
+            "live_entries": self.live_entries,
+            "quarantined_entries": self.quarantined_entries,
+            "retired_entries": self.retired_entries,
+            "payload_bytes": self.payload_bytes,
+            "logical_index_bytes": self.logical_index_bytes,
+            "reference_count": self.reference_count,
+            "active_leases": self.active_leases,
+            "repair_count": self.repair_count,
+        }
+
+    def commit_retired(self, permit: Record, targets: list[Record]) -> Record:
+        self._operation(OPERATION_RELEASE)
+        for name in (
+            "authority_epoch",
+            "max_freed_entries",
+            "max_freed_bytes",
+        ):
+            _u64(permit[name])
+        for name in (
+            "tenant_scope_sha256",
+            "bundle_sha256",
+            "store_grant_sha256",
+            "expected_snapshot_sha256",
+            "authorization_sha256",
+        ):
+            _digest(permit[name])
+        if (
+            permit["authority_epoch"] == 0
+            or permit["max_freed_entries"] == 0
+            or permit["max_freed_bytes"] == 0
+        ):
+            raise StoreError("invalid retired commit permit")
+        if (
+            permit["authority_epoch"] != self.grant["authority_epoch"]
+            or permit["tenant_scope_sha256"]
+            != self.grant["tenant_scope_sha256"]
+            or permit["bundle_sha256"] != self.grant["bundle_sha256"]
+            or permit["store_grant_sha256"] != self.grant_sha256
+        ):
+            raise StoreError("retired commit scope mismatch")
+        if not targets or len(targets) > permit["max_freed_entries"]:
+            raise StoreError("retired commit entry budget exceeded")
+        exact_targets = [dict(target) for target in targets]
+        targets_sha256 = retired_targets_root(exact_targets)
+        snapshot_before = self.audit_snapshot_root_v2()
+        if snapshot_before != permit["expected_snapshot_sha256"]:
+            raise StoreError("retired commit snapshot mismatch")
+        freed_payload_bytes = 0
+        released_repairs = 0
+        indexes: list[int] = []
+        for target in exact_targets:
+            index = self._find(target)
+            if index is None:
+                raise StoreError("retired target missing")
+            slot = self.slots[index]
+            assert slot is not None
+            if (
+                slot["state"] != "retired"
+                or slot["reference_count"] != 0
+                or slot["lease_active"]
+                or slot["quarantine_reason_sha256"] != ZERO_DIGEST
+            ):
+                raise StoreError("retired target mismatch")
+            indexes.append(index)
+            freed_payload_bytes += slot["byte_length"]
+            released_repairs += slot["repair_generation"]
+            _u64(freed_payload_bytes)
+            _u64(released_repairs)
+        if freed_payload_bytes > permit["max_freed_bytes"]:
+            raise StoreError("retired commit byte budget exceeded")
+        freed_entries = len(exact_targets)
+        freed_index_bytes = freed_entries * LOGICAL_INDEX_ENTRY_BYTES
+        before = self.logical_accounting()
+        if (
+            before["entry_count"] < freed_entries
+            or before["retired_entries"] < freed_entries
+            or before["payload_bytes"] < freed_payload_bytes
+            or before["logical_index_bytes"] < freed_index_bytes
+            or before["repair_count"] < released_repairs
+        ):
+            raise StoreError("retired commit accounting underflow")
+        after = dict(before)
+        after["entry_count"] -= freed_entries
+        after["retired_entries"] -= freed_entries
+        after["payload_bytes"] -= freed_payload_bytes
+        after["logical_index_bytes"] -= freed_index_bytes
+        after["repair_count"] -= released_repairs
+
+        for index in indexes:
+            self.slots[index] = None
+        self.entry_count = after["entry_count"]
+        self.live_entries = after["live_entries"]
+        self.quarantined_entries = after["quarantined_entries"]
+        self.retired_entries = after["retired_entries"]
+        self.payload_bytes = after["payload_bytes"]
+        self.logical_index_bytes = after["logical_index_bytes"]
+        self.reference_count = after["reference_count"]
+        self.active_leases = after["active_leases"]
+        self.repair_count = after["repair_count"]
+        receipt = {
+            "authorization_sha256": permit["authorization_sha256"],
+            "targets_sha256": targets_sha256,
+            "snapshot_before_sha256": snapshot_before,
+            "snapshot_after_sha256": self.snapshot_root_v2_unchecked(),
+            "accounting_before": before,
+            "accounting_after": after,
+            "freed_entries": freed_entries,
+            "freed_payload_bytes": freed_payload_bytes,
+            "freed_index_bytes": freed_index_bytes,
+            "freed_repair_count": released_repairs,
+            "allocator_deallocation_calls": freed_entries,
+        }
+        receipt["commit_sha256"] = retired_commit_receipt_root(receipt)
         return receipt
 
     def verify_all(self) -> None:

@@ -39,6 +39,10 @@ before the first stable release.
 - Capability-scoped functional sweep prepare/abort journals that regenerate an
   approved collection plan, reject stale snapshots and tampered journals, stage
   exact collectible totals, and leave all payload bytes untouched.
+- Atomic in-memory object sweep commit with a separate destructive capability,
+  complete plan regeneration, canonical retired-target validation, exact
+  before/after accounting, allocator-call evidence, and matching Zig/Python
+  roots.
 
 ### Status
 
