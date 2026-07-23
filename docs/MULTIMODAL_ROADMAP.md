@@ -1,7 +1,8 @@
 # Multimodal Roadmap
 
 Status: **integrated model-free image/audio/video runtime plus typed
-vision/audio/temporal-video fixtures, bounded streaming, two-process
+vision/audio/temporal-video fixtures, stateful transcript and explicit-VFR
+video-model restart, bounded streaming, two-process
 continuation, crash-atomic checkpoint sets, and a post-restore generation-three
 successor; bounded processor/cache state and payloads integrated as fifth and
 sixth durable archive objects with fresh-Bank restore; production-model
@@ -50,7 +51,9 @@ A typed audio adapter now consumes non-overlapping signed feature windows from
 the live audio cache and binds sample rate, window, hop, feature shape, and
 source cursor into the same result contract. A second adapter now binds
 overlap/context ownership, predecessor continuity, and a fixed transcript
-segment. Transcript-model restart and production audio models remain gated.
+segment. A fresh-process stateful transcript fixture now advances the exact next
+sample range; production audio models and richer transcript metadata remain
+gated.
 A typed temporal-video adapter now selects a bounded strided frame set from the
 live video cache into explicitly charged scratch. Its source mapping binds
 frame ordinals, keyframe lineage, eviction boundary, cache generation, and an
@@ -64,8 +67,12 @@ transcript samples into that tail, rejects non-integral or non-overlapping
 time, and binds both modality lineages. A stateful transcript fixture now
 crosses a real process boundary under fresh charged ownership, publishes the
 exact next sample range, and advances that link without duplicated text.
-Variable-frame-rate discontinuities, stateful video models, richer subtitle
-semantics, and production quality remain gated.
+An explicit VFR window now binds each frame ordinal, PTS, duration, keyframe,
+feature payload, declared inter-window gap, and predecessor. A fresh process
+restores retained video-model state, publishes the exact successor segment,
+retains the gap in the canonical timeline, and advances the cross-modal link.
+External container timestamp normalization, richer subtitle semantics, and
+production quality remain gated.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -329,14 +336,17 @@ First slices:
 8. ~~exact audio/transcript linkage to the accumulated video timeline;~~
    complete for one positive-overlap result using exact integer target-time
    mapping and dual-modality lineage; word/subtitle semantics remain;
-9. temporal-cache ownership and continuation state; fixed temporal-window,
-   eviction, logical byte, ownership-root, and predecessor state is complete,
-   while ResourceBank materialization and checkpoint-archive restore remain;
-10. generated segment publication with ordered manifest and chunk roots.
+9. ~~temporal-cache ownership and continuation state;~~ complete for an explicit
+   VFR fixture: per-frame timing and feature payloads, retained model state,
+   fresh-Bank materialization, successor segment, visible timeline, and
+   cross-modal link all advance across distinct processes;
+10. external container timestamp/edit-list normalization;
+11. generated segment publication with ordered manifest and chunk roots.
 
-Promotion gate: frame selection and temporal ordering replay exactly; seek,
-variable-frame-rate, corrupt-frame, missing-audio, cancellation, and restart
-cases preserve resource accounting and never publish a segment twice.
+Promotion gate: frame selection and temporal ordering replay exactly; explicit
+VFR and restart fixtures are integrated, while external-container seek,
+corrupt-frame, missing-audio, cancellation, and production campaigns must still
+preserve resource accounting and never publish a segment twice.
 
 ## Provider efficiency
 

@@ -139,7 +139,7 @@ residency.
 
 Typed vision, audio, transcript, temporal-video, bounded video-segment, and
 exact audio/video result-link adapters now consume these contracts. The next
-state milestone carries video-model temporal state across a fresh process while
-preserving the same cache, timeline, publication, and cross-modal predecessor
-lineage. Transcript-model continuation now meets that gate for the retained
-exact-integer fixture.
+stateful-model layer now carries both transcript and explicit-VFR video state
+across fresh processes while preserving cache, timeline, publication, and
+cross-modal predecessor lineage. External format normalization and
+production-model conformance remain outside this processor-state fixture.

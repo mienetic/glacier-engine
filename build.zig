@@ -1406,6 +1406,63 @@ pub fn build(b: *std.Build) void {
         &audio_transcript_live_restart_worker_exe.step,
     );
 
+    // A source process commits an explicit per-frame VFR window and video
+    // segment. A fresh target charges retained model state before
+    // materialization, publishes the successor after a declared timeline gap,
+    // then advances the canonical segment timeline and cross-modal link.
+    const video_model_live_restart_worker_exe =
+        b.addExecutable(.{
+            .name = "glacier-video-model-live-restart-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/video_model_live_restart_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    video_model_live_restart_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    video_model_live_restart_worker_exe.linkLibC();
+    const video_model_live_restart_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-video-model-live-restart-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/video_model_live_restart.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    const run_video_model_live_restart_demo =
+        b.addRunArtifact(
+            video_model_live_restart_demo_exe,
+        );
+    run_video_model_live_restart_demo.addArtifactArg(
+        video_model_live_restart_worker_exe,
+    );
+    const video_model_live_restart_demo_step = b.step(
+        "video-model-live-restart-demo",
+        "Run two-process stateful VFR video continuation",
+    );
+    video_model_live_restart_demo_step.dependOn(
+        &run_video_model_live_restart_demo.step,
+    );
+    test_step.dependOn(
+        &run_video_model_live_restart_demo.step,
+    );
+    test_compile_step.dependOn(
+        &video_model_live_restart_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &video_model_live_restart_worker_exe.step,
+    );
+
     // Three stream checkpoints plus retained-output, processor-state, and
     // processor-cache bundles share a single immutable archive root. The
     // source produces two generations; a publisher dies after every durability

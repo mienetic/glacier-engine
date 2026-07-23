@@ -2,8 +2,9 @@
 
 Status: **prototype**. Glacier now checkpoints one committed retained-state
 step, exits the source process, restores the intermediate state under a fresh
-`ResourceBank`, and publishes the terminal step exactly once in a distinct
-target process.
+`ResourceBank`, and publishes the successor exactly once in a distinct target
+process. The generic checkpoint is now composed by latent-step, streaming
+transcript, and VFR video-understanding fixtures.
 
 This is deterministic lifecycle evidence for iterative model families. It is
 not image-quality, production scheduler, accelerator, or crash-atomic storage
@@ -102,11 +103,14 @@ not device power-loss evidence. The fixture uses unsigned-byte arithmetic,
 synthetic weights, and no image decoder. The next image-generation slice is a
 bounded terminal-latent decode and generated-image publication transaction.
 
-The same continuation contract is intended for recurrent audio state and
-temporal video generation, but those family bindings remain gated until their
-own state, timeline, cancellation, and publication fixtures exist.
+Recurrent audio transcript state and temporal video-understanding state now
+have their own scoped bindings, cancellation-safe publication, timeline/link
+lineage, and distinct-process fixtures. Generated image/audio/video publication
+remains gated behind bounded decode, provenance, cancellation, and visibility
+contracts.
 
 See [Stateful Model Adapter and Latent-Step Fixture](STATEFUL_MODEL_ADAPTER.md),
 [Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md),
+[Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md),
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md), and
 [Benchmark and Evidence Guide](BENCHMARKS.md).

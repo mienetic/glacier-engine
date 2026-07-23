@@ -96,10 +96,11 @@ Retained tests reject:
 
 ## Claim boundary
 
-This slice does not decode external video, seek through a container, infer
-missing frames, model variable-frame-rate discontinuities, link audio or
-subtitles, retain recurrent model state, run on an accelerator, measure
-physical memory, or establish useful video embeddings.
+This stateless slice does not decode external video, seek through a container,
+infer missing frames, link subtitles, run on an accelerator, measure physical
+memory, or establish useful video embeddings. Separate composed fixtures now
+bind exact audio results and carry explicit VFR timing plus retained
+video-model state across a process restart.
 
 ## Run the retained proof
 
@@ -115,7 +116,9 @@ fixed source/time-bound event result. The
 adjacent overlap deterministically, and
 [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md) binds newly
 publishable transcript time to that accumulated tail. Remaining video slices
-include richer subtitle semantics and stateful video-model continuation.
+include external container normalization, richer subtitle semantics, and
+generated-segment publication. Stateful VFR continuation is integrated through
+[Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md).
 
 See [Typed Model-Family Contracts and Vision Adapter](MODEL_FAMILY_ADAPTER.md),
 [Typed Audio-Window Encoder Adapter](AUDIO_WINDOW_ADAPTER.md), and

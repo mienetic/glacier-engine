@@ -126,11 +126,14 @@ zig test src/core/video_segment_timeline.zig -OReleaseSafe
 zig test src/core/audio_video_result_link.zig -OReleaseSafe
 zig test src/core/stateful_transcript_adapter.zig -OReleaseSafe
 zig test src/core/audio_transcript_continuation.zig -OReleaseSafe
+zig test src/core/stateful_video_adapter.zig -OReleaseSafe
+zig test src/core/video_model_continuation.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_model_contract
 python3 -m unittest bench.tests.test_video_segment_adapter
 python3 -m unittest bench.tests.test_video_segment_timeline
 python3 -m unittest bench.tests.test_audio_video_result_link
 python3 -m unittest bench.tests.test_audio_transcript_continuation
+python3 -m unittest bench.tests.test_video_model_continuation
 ```
 
 ## Additional adapters
@@ -167,8 +170,14 @@ the exact next sample, model state, transcript predecessor, video timeline, and
 link state through a fresh process before publishing the next text range. See
 [Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md).
 
-Vision, audio, restartable transcripts, temporal video, typed segments, and
-cross-modal links use bounded typed publication contracts.
+The stateful VFR video adapter and composed checkpoint carry exact per-frame
+PTS/duration, retained temporal position, previous segment, visible timeline,
+and result-link lineage through a fresh process before publishing the next
+segment. See
+[Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md).
+
+Vision, audio, restartable transcripts, restartable VFR video, typed segments,
+and cross-modal links use bounded typed publication contracts.
 The stateful lifecycle and exact latent-step fixture now publish replacement
 state with each result, checkpoint the intermediate publication, restore it
 under fresh ownership in another process, and commit the terminal step exactly

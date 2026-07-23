@@ -1,10 +1,10 @@
 # Canonical Video-Segment Timeline
 
-Status: **prototype**. Glacier can now reduce an ordered chain of typed video
-segments into a deterministic visible timeline. The retained proof covers
-canonical overlap decisions, fixed state and receipt wires, exact resource
-admission, transactional visibility, and cross-language verification. It does
-not establish production event quality.
+Status: **integrated fixture**. Glacier can reduce an ordered chain of typed
+video segments into a deterministic visible timeline. The retained proof
+covers canonical overlap decisions, fixed state and receipt wires, exact
+resource admission, transactional visibility, and cross-language verification.
+It does not establish production event quality.
 
 ## Why timeline state is separate
 
@@ -99,15 +99,18 @@ Additional tests prove:
 
 ## Current boundary
 
-The fixture consumes deterministic synthetic segments. It does not run an event
-model, infer labels, merge different event IDs, resolve variable-frame-rate
-discontinuities, persist the timeline to a durable checkpoint, or restore a
-model across processes.
+The fixture consumes deterministic synthetic segments. The stateful VFR
+continuation fixture now carries the timeline through a real process restart,
+records a five-tick discontinuity explicitly, and commits `retain_distinct`
+before advancing the cross-modal link. It does not run a useful event model,
+infer labels, merge different event IDs, normalize external container
+timestamps, or publish the complete file set through the atomic archive.
 
 The next cross-modal source contract is now complete: one exact newly
 publishable transcript range can link to the verified accumulated timeline
 through [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md). Stateful
-video-model continuation is the next video-understanding slice.
+video-model continuation is now integrated through
+[Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md).
 
 ## Run the retained proof
 
@@ -117,6 +120,7 @@ python3 -m unittest bench.tests.test_video_segment_timeline
 ```
 
 See [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md),
+[Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md),
 [Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md),
 [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and

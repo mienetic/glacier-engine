@@ -21,6 +21,12 @@ before the first stable release.
 
 ### Added
 
+- Stateful VFR video-model continuation: canonical per-frame
+  ordinal/PTS/duration/keyframe evidence, a fixed 48-byte retained model state,
+  a 768-byte composed checkpoint, independent Python oracle, and native
+  two-process proof publish the exact successor segment after a declared gap,
+  advance video timeline and cross-modal link state, and release ownership to
+  zero.
 - Stateful audio transcript continuation: a typed exact-integer transcript
   family, fixed 576-byte composed checkpoint, independent Python oracle, and
   native two-process proof restore model state under fresh charged ownership,

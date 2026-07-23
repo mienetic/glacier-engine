@@ -148,6 +148,14 @@ python3 -m unittest bench.tests.test_audio_transcript_continuation
 zig build audio-transcript-live-restart-demo \
   -Doptimize=ReleaseSafe -Dmetal=false
 
+# Restore exact VFR video-model state, publish the successor after a declared
+# gap, and advance the canonical timeline and cross-modal link
+zig test src/core/stateful_video_adapter.zig -OReleaseSafe
+zig test src/core/video_model_continuation.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_video_model_continuation
+zig build video-model-live-restart-demo \
+  -Doptimize=ReleaseSafe -Dmetal=false
+
 # Verify one atomic retained-state/result transition
 zig test src/core/latent_step_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_stateful_model_adapter

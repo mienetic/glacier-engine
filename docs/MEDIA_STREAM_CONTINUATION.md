@@ -129,9 +129,9 @@ fresh-Bank ownership. Typed vision and audio fixtures now consume their live
 caches, and a typed temporal-video fixture gathers a charged strided selection
 from its live window. A separate overlap-safe adapter publishes typed transcript
 segments, the same video selection now publishes a fixed source-bound segment,
-a canonical timeline reduces those segments, an exact result link joins newly
-publishable transcript time to its accumulated tail, and stateful-model
-continuation crosses one process boundary. A composed transcript checkpoint now
-uses that lifecycle to publish the exact next audio range and cross-modal link
-in a fresh process; stateful video-model restart and production-model
-integration remain.
+a canonical timeline reduces those segments, and an exact result link joins
+newly publishable transcript time to its accumulated tail. Composed transcript
+and VFR video checkpoints now use the shared stateful-model lifecycle to
+publish the exact next audio range or video segment and cross-modal link in a
+fresh process. External container normalization, production-model integration,
+and generated-media publication remain.

@@ -169,11 +169,16 @@ result-link predecessor before the fresh process publishes the next segment.
 See
 [Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md).
 
-**Next slice:** carry video-model temporal state through a process restart while
-preserving timeline and result-link predecessors, reusing
-[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md),
-[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), and
-[Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md).
+**Completed slice:** a stateful video-understanding family now binds explicit
+per-frame PTS/duration, feature payload, declared discontinuity, retained model
+state, segment predecessor, visible timeline, and result-link predecessor
+across a real process restart. See
+[Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md).
+
+**Next slice:** bind the terminal retained latent to a bounded generated-image
+decode and atomic media/provenance publication. Parallel contributor slices can
+add speech timestamps/speakers or external container timestamp normalization
+without weakening the fixed core contracts.
 
 ### AI runtime family registry
 

@@ -1,10 +1,11 @@
 # Stateful Model Adapter and Latent-Step Fixture
 
-Status: **prototype**. Glacier now retains two exact synthetic latent-denoise
-steps whose model results and replacement states publish together. The
-intermediate state crosses a real process restart under fresh ownership. This
-proves a stateful runtime transaction and continuation boundary; it is not a
-production diffusion model or image-quality evidence.
+Status: **prototype**. Glacier now uses one shared retained-state transaction
+for exact synthetic latent-denoise, streaming transcript, and VFR
+video-understanding fixtures. Model results and replacement states publish
+together, and each family carries its intermediate state across a real process
+restart under fresh ownership. This proves a reusable stateful runtime
+boundary; it is not production-model or output-quality evidence.
 
 ## Why a second lifecycle exists
 
@@ -120,7 +121,8 @@ tensors, external weights, image decoding, accelerator execution,
 physical-memory measurement, model quality, or compatibility evidence.
 
 The same lifecycle now also powers the exact-integer
-[Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md).
+[Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md) and
+[Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md).
 
 ## Run the retained proof
 
@@ -129,6 +131,9 @@ zig test src/core/latent_step_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_stateful_model_adapter
 zig build stateful-model-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 python3 -m unittest bench.tests.test_stateful_model_continuation
+zig test src/core/stateful_video_adapter.zig -OReleaseSafe
+zig build video-model-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
+python3 -m unittest bench.tests.test_video_model_continuation
 ```
 
 The continuation details and exact claim boundary are in

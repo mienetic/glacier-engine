@@ -325,7 +325,7 @@ expand the base adapter's capabilities.
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, and fresh-process stateful transcript continuation integrated; production model gated | Add timestamps/speakers and crash-atomic checkpoint-set publication | No sample loss/duplication, exact streaming restart, transcript transaction |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
-| Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder, fixed predecessor-bound segment result, canonical merge timeline, and exact audio/transcript-video result link integrated; production model gated | Carry transcript or video-model state through a fresh-process restart | Variable-frame-rate mapping, stateful continuation, production quality evidence |
+| Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder, explicit VFR windows, fresh-process stateful segment continuation, canonical merge timeline, and exact audio/transcript-video result-link continuation integrated; production model gated | Add external container timestamp normalization and production backend conformance | Stateful continuation, explicit discontinuity evidence, production quality evidence |
 | Image generation | diffusion/flow step, decode latent, publish image | Exact two-step retained-state transaction with distinct-process intermediate restore; production model gated | Decode the terminal latent into a bounded generated-image transaction | Multi-step continuation, bounded decode, atomic image/provenance publication |
 | Video generation | temporal latent steps, frame/segment publication | Idea | Two-frame synthetic generation fixture | Temporal ordering, restart/cancel semantics, manifest/chunk publication |
 | Audio/music generation | acoustic or token steps, waveform decode | Idea | Short synthetic exact-integer output fixture | Timeline continuity, chunk lineage, rights/provenance policy |
@@ -435,9 +435,10 @@ while retaining different state and publication semantics.
   only touching/overlapping same-event results and retain gaps or different
   events; a fixed cross-modal transaction now maps only newly publishable
   transcript samples to the accumulated video tail, rejects non-integral or
-  non-overlapping time, and binds both histories, while variable-frame-rate
-  handling and stateful video-model continuation remain; transcript-model
-  continuation is complete for the retained exact-integer fixture;
+  non-overlapping time, and binds both histories; a stateful video fixture now
+  crosses a real process boundary with explicit per-frame PTS/duration,
+  declared-gap evidence, timeline continuation, and result-link continuation;
+  external container normalization and production quality remain;
 - extend checkpoints with family-specific processor/cache state; the fixed
   independently verified state and payload bundles now advance as the fifth
   and sixth atomic archive objects through a fresh-process successor.

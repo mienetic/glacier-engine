@@ -105,11 +105,12 @@ has no microphone, codec, network, provider, accelerator, playback, or device
 authority. It does not identify a language, emit word timestamps or speakers,
 measure recognition quality, prove physical memory, or run production weights.
 
-The next streaming-perception milestone applies the same continuation
-composition to a stateful video model, including temporal-cache position,
-variable-frame-rate discontinuity evidence, timeline predecessor, and exact
-audio/video link continuation. Richer speech timestamps and generated-audio
-playback acknowledgement remain separate tracks.
+The same composition now also carries stateful video-model temporal position,
+explicit variable-frame-rate discontinuity evidence, timeline predecessor, and
+exact audio/video link continuation through
+[Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md).
+Richer speech timestamps/speakers and generated-audio playback acknowledgement
+remain separate tracks.
 
 See [Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md),
 [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md),

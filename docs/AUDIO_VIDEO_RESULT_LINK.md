@@ -103,19 +103,20 @@ python3 -m unittest bench.tests.test_audio_video_result_link
 
 ## Current boundary and next milestone
 
-The fixture uses exact synthetic timestamps and fixed text. It does not produce
-word-level timestamps, align meanings across modalities, resolve
-variable-frame-rate discontinuities, persist the link chain, restart a speech
-or video model, run external codecs, or measure quality, latency, throughput,
-memory, or energy.
+The base fixture uses exact synthetic timestamps and fixed text. It does not
+produce word-level timestamps, align meanings across modalities, decode
+external containers, or measure quality, latency, throughput, memory, or
+energy. Its fixed link wire does not itself describe individual video frames;
+the composed video continuation binds it to a separately verified VFR window.
 
 Transcript-model state now crosses a fresh-process restart while preserving the
 exact link predecessor through
 [Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md).
-The next streaming-perception milestone applies that composition to stateful
-video-model temporal caches and variable-frame-rate evidence. Richer timestamp,
-speaker, subtitle, event, and confidence contracts can follow without changing
-the meaning of the current wire.
+Video-model state now does the same while preserving explicit per-frame timing,
+the declared discontinuity, timeline tail, and exact link chain through
+[Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md).
+Richer timestamp, speaker, subtitle, event, and confidence contracts can follow
+without changing the meaning of the current wire.
 
 See [Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md),
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md),

@@ -94,6 +94,15 @@ integer features prove restart mechanics, not recognition quality, word
 alignment, production-model compatibility, latency, throughput, or physical
 memory.
 
+The stateful VFR video continuation fixture adds explicit per-frame ordinal,
+PTS, duration, keyframe, feature-payload, and declared-gap evidence. A source
+process publishes frames `0,1` over ticks `[0,20)`; a fresh target restores the
+model and publishes frames `2,3` over `[25,50)` after the exact five-tick gap,
+then advances timeline and cross-modal link state. The retained durations
+`8,12,10,15` prove contract-level VFR handling. They do not measure decode
+correctness for external containers, event quality, production-model
+compatibility, latency, throughput, energy, or physical memory.
+
 The latent-step fixture adds state/result atomicity and a cross-language
 transition root. The live-restart fixture then chains two exact steps across
 distinct processes through a cross-language 512-byte checkpoint and fresh

@@ -326,6 +326,16 @@ joining the generic stateful-model checkpoint to previous/next audio overlap
 plans, transcript predecessor, video timeline, cross-modal link state, fresh
 Bank epoch, and exact retained-state digest.
 
+**VFR frame window** — A fixed 576-byte source contract carrying each active
+frame ordinal, presentation tick, duration, keyframe flag, exact feature and
+timestamp payload roots, previous end tick, declared discontinuity, media
+lineage, and predecessor-window root without inferring a constant frame rate.
+
+**Stateful video-model continuation checkpoint** — A fixed 768-byte composition
+joining the generic retained-model checkpoint to previous/next VFR windows, the
+previous typed video segment, visible timeline, transcript ranges, result-link
+predecessor, fresh Bank epoch, and exact next frame/time boundary.
+
 **Synchronized media watermark** — The lower exact master-clock tick reached by
 the bound audio and video processor states, accepted only when integer mapping
 is exact and declared stream skew remains within policy.
