@@ -53,8 +53,12 @@ the live audio cache and binds sample rate, window, hop, feature shape, and
 source cursor into the same result contract. A second adapter now binds
 overlap/context ownership, predecessor continuity, and a fixed transcript
 segment. A fresh-process stateful transcript fixture now advances the exact next
-sample range; production audio models and richer transcript metadata remain
-gated.
+sample range. A fixed speech-annotation layer now maps canonical transcript
+word bytes onto exact sample ranges, opaque speaker identities, and integer
+confidence. Its state chains the next sample, last transcript/result/speaker,
+visible words, and speaker turns across a real process restart. Production
+audio models, language/punctuation, overlapping-speaker ambiguity, and
+calibrated confidence remain gated.
 A typed temporal-video adapter now selects a bounded strided frame set from the
 live video cache into explicitly charged scratch. Its source mapping binds
 frame ordinals, keyframe lineage, eviction boundary, cache generation, and an
@@ -315,8 +319,12 @@ First slices:
    complete for a stateful exact-integer fixture: a fresh process reuses
    conditioning context, publishes only the exact next sample range, preserves
    transcript/link predecessors, and releases restored ownership to zero;
-8. generated-audio chunk ordering and playback acknowledgement;
-9. microphone/network adapters outside the authority-free core.
+8. ~~word timestamps and speaker attribution;~~ complete for fixed state, plan,
+   and result wires mapping two chained transcript words to exact sample ranges
+   and first-occurrence speaker identities across a real process restart;
+   language/punctuation and overlapping-speaker ambiguity remain;
+9. generated-audio chunk ordering and playback acknowledgement;
+10. microphone/network adapters outside the authority-free core.
 
 Promotion gate: no sample is silently dropped, duplicated, reordered, mixed, or
 resampled; streaming restart resumes at an exact sample/timeline boundary; input

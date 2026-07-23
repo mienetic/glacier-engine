@@ -21,6 +21,12 @@ before the first stable release.
 
 ### Added
 
+- Exact speech annotation publication: fixed state, plan, and result records
+  bind canonical transcript words to sample-derived timing, first-occurrence
+  speaker identities, confidence, media/cache lineage, and predecessor state.
+  An abort-safe transaction, independent mutation-complete Python oracle, and
+  real two-process proof publish two exact words and speaker turns without
+  duplication, then release ownership to zero.
 - Generated-image publication after latent restart: fixed 736-byte plan,
   640-byte provenance, and 704-byte result records bind artifact, checkpoint,
   terminal plan/result/state, decoder, media, tenant, resources, and

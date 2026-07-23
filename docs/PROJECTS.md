@@ -183,10 +183,17 @@ Abort and candidate drift preserve visibility; Zig/Python reject every wire
 mutation; a real target process commits the image once and returns ownership to
 zero. See [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md).
 
-**Next slices:** add speech timestamps/speakers, external container timestamp
-normalization, a production image decoder adapter, or the first generated-audio
-chunk with playback acknowledgement. Each is independently contributor-sized
-and must preserve the fixed core contracts.
+**Completed slice:** fixed speech annotation state, plan, and result records now
+map canonical transcript words to exact sample ranges, first-occurrence speaker
+identities, and confidence. Abort/drift preserve visibility, Zig/Python reject
+all wire mutations, and a fresh process publishes the next word and turn
+without duplication. See
+[Exact Speech Annotation Publication](SPEECH_ANNOTATION_PUBLICATION.md).
+
+**Next slices:** add external container timestamp normalization, a production
+image decoder adapter, richer language/punctuation or overlapping-speaker
+policy, or the first generated-audio chunk with playback acknowledgement. Each
+is independently contributor-sized and must preserve the fixed core contracts.
 
 ### AI runtime family registry
 

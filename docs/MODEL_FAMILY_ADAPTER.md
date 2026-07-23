@@ -169,6 +169,10 @@ The stateful transcript adapter and composed continuation checkpoint now carry
 the exact next sample, model state, transcript predecessor, video timeline, and
 link state through a fresh process before publishing the next text range. See
 [Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md).
+Exact word/sample/speaker annotations now continue their own transactional
+state across a fresh process while remaining bound to those transcript roots.
+See
+[Exact Speech Annotation Publication](SPEECH_ANNOTATION_PUBLICATION.md).
 
 The stateful VFR video adapter and composed checkpoint carry exact per-frame
 PTS/duration, retained temporal position, previous segment, visible timeline,

@@ -327,7 +327,7 @@ expand the base adapter's capabilities.
 | Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication integrated | Small legal artifact through uninterrupted and resumed output | Declared numerical equivalence, exact KV ownership, no duplicate token |
 | Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision, audio, and temporal-video embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
-| Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, and fresh-process stateful transcript continuation integrated; production model gated | Add timestamps/speakers and crash-atomic checkpoint-set publication | No sample loss/duplication, exact streaming restart, transcript transaction |
+| Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, fresh-process stateful transcript continuation, and restartable exact word-timing/speaker publication integrated; production model gated | Add language/punctuation, overlapping-speaker policy, and crash-atomic checkpoint composition | No sample loss/duplication, exact streaming restart, annotation lineage, calibrated production quality |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
 | Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder, explicit VFR windows, fresh-process stateful segment continuation, canonical merge timeline, and exact audio/transcript-video result-link continuation integrated; production model gated | Add external container timestamp normalization and production backend conformance | Stateful continuation, explicit discontinuity evidence, production quality evidence |
 | Image generation | diffusion/flow step, decode latent, publish image | Exact retained-state continuation plus bounded terminal-latent decode, cancellation-safe atomic image/provenance/result publication, and a distinct-process proof integrated; production model gated | Add a production decoder adapter and multi-image/chunk manifests | Multi-step continuation, external format encoding, crash-atomic composition, and quality/performance evidence |
@@ -428,7 +428,10 @@ while retaining different state and publication semantics.
   complete; a stateful transcript fixture now restores exact sample/model state
   under fresh charged ownership in a distinct process, publishes only the next
   range, and advances its cross-modal link without duplicated text; production
-  speech models, word timestamps, and atomic multi-file composition remain;
+  speech models, language/punctuation policy, overlapping-speaker ambiguity,
+  and atomic multi-file composition remain; exact word sample ranges and
+  first-occurrence speaker turns now publish across a distinct-process state
+  restart;
 - add video temporal selection, synchronized timeline state, and cache
   ownership; fixed window/eviction state plus exact audio/video watermark is
   complete together with materialized cache ownership; a typed strided-frame

@@ -1467,6 +1467,62 @@ pub fn build(b: *std.Build) void {
         &audio_transcript_live_restart_worker_exe.step,
     );
 
+    // A speech-annotation source publishes exact word timing and speaker one.
+    // A distinct target validates the fixed state before admission, aborts one
+    // private candidate, then publishes the next word and speaker turn once.
+    const speech_annotation_live_restart_worker_exe =
+        b.addExecutable(.{
+            .name = "glacier-speech-annotation-live-restart-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/speech_annotation_live_restart_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    speech_annotation_live_restart_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    speech_annotation_live_restart_worker_exe.linkLibC();
+    const speech_annotation_live_restart_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-speech-annotation-live-restart-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/speech_annotation_live_restart.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    const run_speech_annotation_live_restart_demo =
+        b.addRunArtifact(
+            speech_annotation_live_restart_demo_exe,
+        );
+    run_speech_annotation_live_restart_demo.addArtifactArg(
+        speech_annotation_live_restart_worker_exe,
+    );
+    const speech_annotation_live_restart_demo_step = b.step(
+        "speech-annotation-live-restart-demo",
+        "Publish exact word timing and speaker turns after restart",
+    );
+    speech_annotation_live_restart_demo_step.dependOn(
+        &run_speech_annotation_live_restart_demo.step,
+    );
+    test_step.dependOn(
+        &run_speech_annotation_live_restart_demo.step,
+    );
+    test_compile_step.dependOn(
+        &speech_annotation_live_restart_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &speech_annotation_live_restart_worker_exe.step,
+    );
+
     // A source process commits an explicit per-frame VFR window and video
     // segment. A fresh target charges retained model state before
     // materialization, publishes the successor after a declared timeline gap,

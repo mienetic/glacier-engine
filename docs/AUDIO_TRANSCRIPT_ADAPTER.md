@@ -86,9 +86,12 @@ language, measure word error rate, or run a production speech model.
 Transcript-model restart with exact segment continuity is now complete for the
 retained exact-integer fixture through
 [Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md).
-The next audio slices add word timestamps, tokens, speakers, and confidence
-only after each field receives a bounded canonical contract, then generated
-audio ordering and playback acknowledgement.
+Exact word offsets, sample-derived timestamps, opaque speaker identities, turn
+counts, and integer confidence now have a bounded canonical transaction through
+[Exact Speech Annotation Publication](SPEECH_ANNOTATION_PUBLICATION.md).
+Language/punctuation, token-to-word mapping, overlapping-speaker ambiguity,
+calibrated production confidence, generated-audio ordering, and playback
+acknowledgement remain separate tracks.
 The current newly publishable sample range can already be joined to a verified
 video timeline through
 [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md); conditioning-only
@@ -96,5 +99,6 @@ context is excluded from that temporal link.
 
 See [Typed Audio-Window Encoder Adapter](AUDIO_WINDOW_ADAPTER.md),
 [Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md),
+[Exact Speech Annotation Publication](SPEECH_ANNOTATION_PUBLICATION.md),
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

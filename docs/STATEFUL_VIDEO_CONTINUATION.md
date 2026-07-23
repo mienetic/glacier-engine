@@ -123,15 +123,17 @@ device authority. It does not infer useful events, process B-frames, normalize
 container edit lists, measure video quality, prove physical memory, or run
 production weights.
 
-With stateful audio/video continuation and bounded generated-image publication
-integrated, the next multimodal runtime slices are richer speech
-timestamps/speakers, external media format adapters, and generated-audio chunks.
-Generated audio/video publication and playback/display acknowledgement remain
-separate promotion tracks.
+With stateful audio/video continuation, exact word/speaker annotation, and
+bounded generated-image publication integrated, the next multimodal runtime
+slices are external media format adapters, richer language/punctuation and
+overlapping-speaker policy, and generated-audio chunks. Generated audio/video
+publication and playback/display acknowledgement remain separate promotion
+tracks.
 
 See [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md),
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md),
 [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md),
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md),
+[Exact Speech Annotation Publication](SPEECH_ANNOTATION_PUBLICATION.md),
 [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

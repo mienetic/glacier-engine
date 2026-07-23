@@ -104,15 +104,22 @@ The fixture has filesystem authority only for its bounded checkpoint files. It
 has no microphone, codec, network, provider, accelerator, playback, or device
 authority. It does not identify a language, emit word timestamps or speakers,
 measure recognition quality, prove physical memory, or run production weights.
+The transcript-model fixture itself stops at the segment boundary. Exact word
+sample ranges and first-occurrence speaker identities now publish in a separate
+bounded annotation transaction whose state continues across a real process
+restart. The transcript-model and annotation-state file sets are not yet
+composed into one crash-atomic checkpoint.
 
 The same composition now also carries stateful video-model temporal position,
 explicit variable-frame-rate discontinuity evidence, timeline predecessor, and
 exact audio/video link continuation through
 [Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md).
-Richer speech timestamps/speakers and generated-audio playback acknowledgement
-remain separate tracks.
+Language/punctuation, overlapping-speaker ambiguity, production confidence,
+crash-atomic composition, and generated-audio playback acknowledgement remain
+separate tracks.
 
 See [Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md),
+[Exact Speech Annotation Publication](SPEECH_ANNOTATION_PUBLICATION.md),
 [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md),
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

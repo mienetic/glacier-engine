@@ -55,6 +55,8 @@ energy, or production reliability.
 | `zig test src/core/audio_video_result_link.zig -OReleaseSafe` | Canonical 320-byte state and 576-byte cross-modal result wires, publish-only audio mapping, exact time conversion, positive-overlap relations, dual-modality lineage, mutation/drift rejection, and final zero ownership |
 | `zig test src/core/audio_transcript_continuation.zig -OReleaseSafe` | Exact 32-byte transcript state, canonical 576-byte composed checkpoint, previous/next sample continuity, foreign-lineage rejection before admission, fresh-Bank restore, second transcript/link publication, and final zero ownership |
 | `zig build audio-transcript-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, synced transcript/state/link evidence, charge-before-materialization restore, context reuse without duplicate text, exact next sample range, cross-modal link continuation, and final zero ownership |
+| `zig test src/core/speech_annotation_publication.zig -OReleaseSafe` | Fixed annotation state/plan/result wires, exact transcript-word/sample/speaker bindings, canonical palette ordering, mutation/substitution rejection, abort/drift preservation, atomic publication, and final zero ownership |
+| `zig build speech-annotation-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, state validation before admission, exact `ice`/`berg` sample ranges, two speaker turns, one cancellation-safe retry, zero duplicate words, and final zero ownership |
 | `zig test src/core/latent_step_adapter.zig -OReleaseSafe` | Canonical retained-state wire, pinned model/state snapshots, buffer-alias rejection, exact latent candidate, atomic state/result publication, abort/drift preservation, and final zero ownership |
 | `zig build stateful-model-live-restart-demo -Dmetal=false` | Canonical intermediate checkpoint, distinct source/target PIDs, fresh-Bank charge-before-materialization latent restore, chained terminal plan, zero duplicate results, and final zero ownership |
 | `zig test src/core/generated_image_publication.zig -OReleaseSafe` | Fixed generated-image plan/provenance/result wires, exact terminal-latent lineage, bounded private decode, abort/drift visibility preservation, atomic image publication, mutation rejection, and final zero ownership |
@@ -119,6 +121,14 @@ the fresh target process. This is conformance evidence for binding,
 cancellation, atomic visibility, and release—not image quality, production
 decoder compatibility, external format support, latency, throughput, memory,
 energy, or durable multi-file publication.
+
+The speech-annotation fixture maps `ice` and `berg` onto exact adjacent sample
+ranges and two opaque speaker identities. Its fresh target validates the
+persisted annotation predecessor before resource admission, aborts one
+candidate without visibility, then publishes word and turn two. This proves
+wire, ordering, restart, cancellation, and ownership semantics—not ASR,
+alignment, diarization, confidence calibration, language, latency, throughput,
+memory, energy, or production compatibility.
 
 ## Shared media contract
 

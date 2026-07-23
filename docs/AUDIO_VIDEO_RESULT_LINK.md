@@ -104,10 +104,12 @@ python3 -m unittest bench.tests.test_audio_video_result_link
 ## Current boundary and next milestone
 
 The base fixture uses exact synthetic timestamps and fixed text. It does not
-produce word-level timestamps, align meanings across modalities, decode
+itself produce word-level timestamps, align meanings across modalities, decode
 external containers, or measure quality, latency, throughput, memory, or
-energy. Its fixed link wire does not itself describe individual video frames;
-the composed video continuation binds it to a separately verified VFR window.
+energy. A separate annotation transaction now maps canonical transcript words
+to exact sample ranges and speaker identities without changing this link wire.
+The fixed link wire does not itself describe individual video frames; the
+composed video continuation binds it to a separately verified VFR window.
 
 Transcript-model state now crosses a fresh-process restart while preserving the
 exact link predecessor through
@@ -115,10 +117,12 @@ exact link predecessor through
 Video-model state now does the same while preserving explicit per-frame timing,
 the declared discontinuity, timeline tail, and exact link chain through
 [Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md).
-Richer timestamp, speaker, subtitle, event, and confidence contracts can follow
-without changing the meaning of the current wire.
+Richer subtitle, event, language, punctuation, overlapping-speaker, and
+calibrated confidence contracts can follow without changing the meaning of the
+current wire.
 
 See [Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md),
+[Exact Speech Annotation Publication](SPEECH_ANNOTATION_PUBLICATION.md),
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

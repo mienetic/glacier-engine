@@ -30,8 +30,8 @@ evidence. The plane and model-family sequence is specified in the
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, integrated perception transactions, and the first restart-safe generative-media output vertical | More family adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
-| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, and generated-image publication across distinct processes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, generated audio/video, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, and atomic media publication | Richer speech timestamps/speakers, external formats, generated-audio chunks with playback acknowledgement, then generated-video manifests |
+| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, and generated-image publication across distinct processes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, generated audio/video, agents/retrieval, and specialized families |
+| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, and atomic media publication | External formats, richer language/punctuation and overlapping-speaker policy, generated-audio chunks with playback acknowledgement, then generated-video manifests |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -134,6 +134,10 @@ evidence. The plane and model-family sequence is specified in the
 - [x] Bounded generated-image plan, provenance, and result wires with exact
   terminal-latent binding, atomic abort/retry publication, independent
   mutation-complete verification, and a real two-process restart proof.
+- [x] Fixed speech annotation state, plan, and result wires with exact
+  transcript-word/sample/speaker lineage, abort-safe atomic publication,
+  independent mutation-complete verification, and a real two-process state
+  continuation proof.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -352,8 +356,11 @@ The implementation sequence is:
    publication, model-free two-process restart, fixed feature-window state, a
    non-overlapping exact-integer feature encoder, canonical overlap ownership,
    typed transcript publication, and a fresh-process stateful transcript
-   continuation with exact next-sample/link predecessor are complete; word
-   timestamps, production speech models, and playback state remain;
+   continuation with exact next-sample/link predecessor are complete; fixed
+   word offsets, sample-derived timestamps, speaker identities/turn counts, and
+   confidence now continue across a real annotation-state process restart;
+   production speech models, language/punctuation and overlapping-speaker
+   policy, crash-atomic composition, and playback state remain;
 4. keyframe selection, exact frame/time mappings, temporal-cache ownership, and
    a typed strided-frame encoder with charged gather scratch are complete; one
    fixed predecessor-bound typed segment now publishes exact source/time and

@@ -148,6 +148,12 @@ python3 -m unittest bench.tests.test_audio_transcript_continuation
 zig build audio-transcript-live-restart-demo \
   -Doptimize=ReleaseSafe -Dmetal=false
 
+# Publish exact word sample ranges and speaker turns across a process restart
+zig test src/core/speech_annotation_publication.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_speech_annotation_publication
+zig build speech-annotation-live-restart-demo \
+  -Doptimize=ReleaseSafe -Dmetal=false
+
 # Restore exact VFR video-model state, publish the successor after a declared
 # gap, and advance the canonical timeline and cross-modal link
 zig test src/core/stateful_video_adapter.zig -OReleaseSafe

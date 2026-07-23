@@ -137,6 +137,11 @@ tenant/policy, and media predecessor before decoding into private storage.
 Commit makes raw pixels, provenance, typed result, resource receipt, and media
 state visible together; abort exposes none of them.
 
+**Speech annotation publication** — A bounded transaction that maps canonical
+transcript token bytes to exact audio sample ranges, speaker-identity digests,
+and integer confidence. State chains the next sample, transcript/result
+predecessors, last speaker, visible words, and speaker turns across restart.
+
 **MediaObject** — A fixed pointer-free, content-addressed identity for an
 immutable image, audio, or video payload plus exact byte length, kind-specific
 axes, semantic ABI, policy, provenance, and tenant scope. It does not grant
