@@ -216,6 +216,11 @@ decoded-source, mapping, scratch, or output region. The logical lease is charged
 before caller storage is used and retired only after that storage is no longer
 runtime-visible.
 
+**Media stream chunk** — One contiguous target-timeline publication backed by
+its own hierarchical media transaction. Its portable receipt binds the exact
+target interval, retained output lease receipt, publication commit, and previous
+stream chunk.
+
 **Object lease receipt** — A commitment to one blob, owner, retained generation,
 explicit expiry tick, and lifecycle grant. It is valid only while every field
 equals the active store slot.

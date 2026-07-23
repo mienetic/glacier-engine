@@ -1,7 +1,8 @@
 # Multimodal Roadmap
 
-Status: **integrated model-free image/audio/video runtime vertical; media-model
-execution, streaming, and external formats remain gated**.
+Status: **integrated model-free image/audio/video runtime and bounded streaming
+vertical; media-model execution, durable continuation, and external formats
+remain gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -14,7 +15,10 @@ bounded RGB/PCM/intra-frame fixtures, exact source-unit mapping, rational
 timeline events, exact `ResourceBank` admission, provisional execution,
 candidate revalidation, per-buffer `LeaseTree` ownership, atomic chunk
 publication, abort/retry, early provisional retirement, portable receipts, and
-exact release. Media-model execution still waits for an
+exact release. A bounded stream now composes two retained chunks per modality,
+rejects target gaps/overlaps before admission, reclaims cancellation without
+advancing state, and chains portable chunk receipts. Media-model execution and
+stream restart still wait for an
 uninterrupted/resumed production-model comparison and retained platform
 evidence.
 
@@ -133,11 +137,19 @@ it into a parent receipt plus decoded-source, mapping, optional scratch, and
 output allocation leaves. It atomically charges all leaves before use, includes
 their pointer-free identities in a fixed 1,536-byte receipt, reclaims every leaf
 on abort, and can retire provisional leaves after commit while retaining the
-output. It still does not durably store output, stream multiple chunks, retain
-model embeddings or cross-attention state, or resume across process death. See
-the [Shared Media Contract](MEDIA_CONTRACT.md),
+output. By itself it does not durably store output, compose multiple chunks,
+retain model embeddings or cross-attention state, or resume across process
+death.
+
+The bounded stream layer now composes multiple hierarchical transactions under
+one target timeline. It retains one output lease per committed chunk, reclaims
+unpublished cancellation, rejects target gaps/overlaps and length drift before
+admission, and binds each commit to its predecessor in a fixed 352-byte receipt.
+It does not yet durably restore those retained outputs or resume after process
+death. See the [Shared Media Contract](MEDIA_CONTRACT.md),
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md), and
-[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md).
+[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), followed by
+[Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md).
 
 ## Image track
 
@@ -163,8 +175,10 @@ First slices:
 5. patch/token correspondence evidence without storing private pixels;
 6. ~~per-buffer lease ownership;~~ complete in the shared hierarchical runtime,
    followed by vision-encoder capability negotiation;
-7. continuation binding for processed regions and cross-attention state;
-8. generated-image chunk publication with cancellation and provenance.
+7. ~~bounded two-region chunk publication with target continuity and retained
+   outputs;~~ complete for the two retained image rows;
+8. continuation binding for processed regions and cross-attention state;
+9. generated-image chunk publication with cancellation and provenance.
 
 Promotion gate: every accepted pixel maps to an exact source region and
 preprocessing plan; orientation/color drift, decompression bombs, foreign
@@ -192,7 +206,8 @@ First slices:
 3. ~~exact runtime admission, provisional execution, atomic publication,
    abort/retry, receipt, and release;~~ complete for the retained fixture;
 4. ~~per-buffer lease ownership;~~ complete in the shared hierarchical runtime;
-5. streaming chunk transaction with overlap and gap evidence;
+5. ~~bounded streaming chunk transaction with target overlap/gap evidence and
+   cancellation-safe retry;~~ complete for two adjacent retained source ranges;
 6. feature-window or audio-token mapping back to source sample ranges;
 7. partial transcript publication without duplicated text after restart;
 8. generated-audio chunk ordering and playback acknowledgement;
@@ -225,10 +240,12 @@ First slices:
 4. ~~exact runtime admission, provisional execution, atomic publication,
    abort/retry, receipt, and release;~~ complete for the retained fixture;
 5. ~~per-buffer lease ownership;~~ complete in the shared hierarchical runtime;
-6. decode queue admission under deadline and cancellation ceilings;
-7. audio/subtitle linkage through `MediaTimeline`;
-8. temporal-cache ownership and continuation state;
-9. generated segment publication with ordered manifest and chunk roots.
+6. ~~bounded two-frame chunk publication with target continuity, retained
+   outputs, and cancellation-safe ownership;~~ complete for the fixture;
+7. decode queue admission under deadline and cancellation ceilings;
+8. audio/subtitle linkage through `MediaTimeline`;
+9. temporal-cache ownership and continuation state;
+10. generated segment publication with ordered manifest and chunk roots.
 
 Promotion gate: frame selection and temporal ordering replay exactly; seek,
 variable-frame-rate, corrupt-frame, missing-audio, cancellation, and restart
@@ -259,8 +276,8 @@ Early contributions can proceed without a large model:
 - decompression and allocation ceiling tests;
 - extend the completed deterministic crop/nearest, mix/exact-decimation, and
   keyframe-selection reference models with new bounded cases;
-- add bounded multi-chunk ownership and prove zero-state recovery under
-  gap/overlap rejection, cancellation, and continuation;
+- define checkpointable stream state and prove fresh-generation ownership
+  reacquisition plus exact next-chunk publication after restart;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 
@@ -272,4 +289,6 @@ baseline is specified in
 transform layer is specified in
 [Deterministic Media Transforms](MEDIA_TRANSFORMS.md), and the ownership layer
 is specified in
-[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md).
+[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md). The completed
+bounded stream layer is specified in
+[Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md).

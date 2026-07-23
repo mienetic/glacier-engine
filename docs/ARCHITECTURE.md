@@ -15,7 +15,7 @@ not.
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
-| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, admit exact per-buffer ownership, transform canonical units into provisional storage, revalidate candidates, retire temporary buffers, then atomically advance logical chunks |
+| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, admit exact per-buffer ownership, transform canonical units into provisional storage, reject target gaps/overlaps, retain committed outputs, and atomically advance a bounded chunk chain |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -129,13 +129,21 @@ lease remains live. Closing returns the tree and parent Bank receipt to zero.
 The fixed runtime receipts let independent verifiers reconstruct the ownership,
 transform evidence, timeline event, publication commit, and output.
 
+`MediaStreamRuntime` composes up to four address-stable hierarchical chunk
+sessions. Every declared target interval must begin at the current visible unit
+and have the exact sealed-plan length. Each successful chunk retires provisional
+buffers, retains its output lease, and appends a fixed predecessor-bound stream
+receipt. Cancellation closes only the unpublished chunk and leaves the prior
+timeline and outputs unchanged.
+
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
 decimation, and keyframe selection. It has no external codec, encoder,
 filesystem, network, camera, microphone, model, or accelerator authority.
-Streaming, continuation, and model adapters are future layers. See
+Durable stream continuation and model adapters are future layers. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
-[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md).
+[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), then
+[Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md).
 
 ### ResourceBank
 

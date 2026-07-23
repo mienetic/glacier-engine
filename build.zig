@@ -1173,6 +1173,34 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_media_runtime_lease_demo.step);
     test_compile_step.dependOn(&media_runtime_lease_demo_exe.step);
 
+    // Bounded multi-chunk media stream: exact contiguous target boundaries,
+    // one retained output lease per committed chunk, cancellation-safe
+    // unpublished reclamation, and a portable chunk receipt chain.
+    const media_stream_demo_exe = b.addExecutable(.{
+        .name = "glacier-media-stream-runtime-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/media_stream_runtime.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    media_stream_demo_exe.root_module.addImport("core", core_mod);
+    const run_media_stream_demo = b.addRunArtifact(
+        media_stream_demo_exe,
+    );
+    const media_stream_demo_step = b.step(
+        "media-stream-demo",
+        "Run bounded two-chunk image/audio/video streams",
+    );
+    media_stream_demo_step.dependOn(
+        &run_media_stream_demo.step,
+    );
+    test_step.dependOn(&run_media_stream_demo.step);
+    test_compile_step.dependOn(&media_stream_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

@@ -160,10 +160,11 @@ evidence, wire roots, and re-rooted semantic contradictions.
 
 ## Claim boundary and next integration
 
-The session is request-local and single-owner. It does not claim concurrent
-access to one session, durable output bytes, process-restart continuation,
-external codecs, capture/playback, accelerator residency, streaming chunks,
-model embeddings, vision/speech/video inference, or generated media.
+The base transaction session is request-local, single-owner, and one chunk. It
+does not claim concurrent access, durable output bytes, process-restart
+continuation, external codecs, capture/playback, accelerator residency, model
+embeddings, vision/speech/video inference, or generated media. The bounded
+stream layer composes multiple such sessions without changing this ABI.
 
 The next runtime slices are:
 
@@ -172,8 +173,9 @@ The next runtime slices are:
    [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md);
 2. ~~retire provisional source/staging ownership after publication while
    retaining output ownership;~~ complete in the hierarchical runtime;
-3. add multi-chunk audio/video sessions with exact gap/overlap and cancellation
-   policy;
+3. ~~add multi-chunk image/audio/video sessions with exact target gap/overlap
+   and cancellation policy;~~ complete in
+   [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md);
 4. bind the committed media receipt into continuation/checkpoint state; and
 5. place the first vision or speech family adapter above this media vertical.
 

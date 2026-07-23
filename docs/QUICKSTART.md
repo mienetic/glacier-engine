@@ -94,6 +94,9 @@ zig build media-runtime-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Give every media buffer an exact LeaseTree owner and retire provisional storage
 zig build media-runtime-lease-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Append two owned chunks per image/audio/video stream and reject target gaps
+zig build media-stream-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

@@ -31,7 +31,7 @@ evidence. The plane and model-family sequence is specified in the
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, and an integrated model-free image/audio/video transaction vertical | Common family/operation adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
 | Model-family breadth | Text-generation prototype; other families gated | Shared artifact, tensor, state, provider, media, and evidence building blocks | Encoders/embeddings first, then perception, generative media, multimodal, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime vertical integrated; model execution gated | Shared identity/timeline, bounded RGB8/PCM/intra-frame decode, deterministic transforms, exact admission, per-buffer LeaseTree ownership, candidate revalidation, atomic commit/abort/retry, early provisional retirement, fixed receipts, and exact release | Streaming/continuation, external formats, typed model adapters, and generated-media publication |
+| Multimodal execution | Model-free runtime vertical and bounded streaming integrated; model execution gated | Shared identity/timeline, bounded RGB8/PCM/intra-frame decode, deterministic transforms, exact admission, per-buffer LeaseTree ownership, two-chunk image/audio/video streams, target gap/overlap rejection, cancellation-safe retry, retained outputs, portable receipt chains, and exact release | Durable stream continuation, external formats, typed model adapters, and generated-media publication |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -108,6 +108,9 @@ evidence. The plane and model-family sequence is specified in the
   optional scratch, and output; atomic charge-before-use, abort reclamation,
   early provisional retirement, retained output ownership, fixed receipts, and
   independent cross-language golden vectors.
+- [x] Bounded multi-chunk image/audio/video streams with exact contiguous target
+  intervals, cancellation-safe unpublished reclamation, retained output leases,
+  fixed predecessor-bound chunk receipts, and shared Zig/Python golden chains.
 - [x] Full AI runtime architecture roadmap with shared planes, universal adapter
   contracts, model-family coverage map, promotion gates, and contributor lanes.
 - [x] Bounded contributor project catalog and issue template.
@@ -323,15 +326,17 @@ The implementation sequence is:
    bounded three-modality fixture decode, and logical transactional publication
    are complete as model-free prototypes;
 2. bounded image crop/nearest/tile and exact source-pixel mapping are complete;
-3. weighted stereo-to-mono mixing and exact integer decimation are complete;
-   streaming chunks, feature windows, transcript, and playback state remain;
+3. weighted stereo-to-mono mixing, exact integer decimation, and bounded
+   two-chunk publication are complete; feature windows, transcript, playback,
+   and restart state remain;
 4. keyframe selection and exact frame/time mappings are complete;
    audio/subtitle synchronization, temporal cache, and segment publication
    remain;
 5. exact request admission, per-buffer `LeaseTree` ownership, provisional
-   execution, full candidate revalidation, commit/abort/retry, portable runtime
-   receipts, early provisional retirement, and release are complete for all
-   three retained fixtures; streaming and durable continuation remain; and
+   execution, full candidate revalidation, commit/abort/retry, bounded
+   multi-chunk publication, portable receipt chains, early provisional
+   retirement, retained outputs, and release are complete for all three
+   retained fixtures; durable stream continuation remains; and
 6. generated image/audio/video output only after cancellation, restart, and
    provenance rules are proven.
 
@@ -399,7 +404,7 @@ ideas unless a different status is stated.
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
 | Object Fabric | Prototype (durable payload bytes and logical ownership reacquisition; in-memory object lifecycle) | Tenant-safe content-addressed model, plan, KV, continuation, media, and evidence objects |
 | Media Capsule | Idea (gated) | Typed image, audio, and video identity with explicit decode/preprocess meaning |
-| MediaTimeline and MediaTxn | Integrated model-free fixture vertical; model/streaming gated | Exact sample/frame position, admitted transform execution, and atomic multimodal state publication |
+| MediaTimeline and MediaTxn | Integrated model-free fixture and bounded stream vertical; model/restart gated | Exact sample/frame position, admitted per-buffer execution, cancellation-safe chunk chaining, retained outputs, and atomic multimodal state publication |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |

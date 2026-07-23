@@ -97,10 +97,17 @@ commit, retains output ownership, emits a fixed pointer-free receipt, and
 returns the tree and Bank to zero. Zig and Python share golden roots and
 mutation-complete wire tests.
 
-**Next slice:** introduce two bounded chunks under one session. Define exact
-gap/overlap policy, charge each chunk before use, retain only published output,
-and prove cancellation returns every unpublished allocation. Reuse
-[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md).
+The bounded stream slice is also complete: one address-stable session commits
+two chunks per retained modality, rejects target gap/overlap and length drift
+before admission, reclaims cancelled unpublished chunks, retains one output
+lease per commit, and chains fixed portable receipts.
+
+**Next slice:** define a fixed stream checkpoint containing the latest chunk
+root, exact visible unit and sequence, retained-output manifest, and a
+fresh-generation ownership plan. The first fixture should checkpoint after
+chunk one, release all source-process ownership, reacquire the retained output
+in a fresh Bank, and publish chunk two exactly once. Reuse
+[Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md).
 
 ### AI runtime family registry
 

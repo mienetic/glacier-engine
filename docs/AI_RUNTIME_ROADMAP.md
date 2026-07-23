@@ -185,8 +185,11 @@ video keyframe selection now compose with exact `ResourceBank` admission,
 per-buffer `LeaseTree` ownership, provisional caller-owned storage, candidate
 revalidation, atomic media/resource publication, abort scrubbing, retry, early
 provisional retirement, exact release, and fixed independently verified runtime
-receipts. Multi-chunk streaming, continuation, external codecs, capture,
-playback, media models, and generated-media publication remain gated.
+receipts. A bounded stream session now commits two retained chunks for each
+modality, rejects target gaps/overlaps before admission, reclaims cancelled
+chunks, and emits a portable predecessor-bound receipt chain. Durable stream
+continuation, external codecs, capture, playback, media models, and
+generated-media publication remain gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -362,6 +365,9 @@ while retaining different state and publication semantics.
   fixtures;
 - add `LeaseTree` ownership for decoded source, mappings, output, and scratch;
   complete for retained model-free fixtures;
+- compose bounded image/audio/video chunks under one target timeline with
+  cancellation-safe ownership and portable chain receipts; complete for two
+  retained chunks per modality;
 - integrate image processors and vision encoder fixtures;
 - add audio feature windows, transcript transactions, and streaming restart;
 - add video temporal selection, synchronized timeline state, and cache ownership;

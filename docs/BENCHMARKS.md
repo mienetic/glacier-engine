@@ -42,6 +42,7 @@ energy, or production reliability.
 | `zig build media-transform-demo -Dmetal=false` | Sealed image/audio/video transform plans, caller-owned allocation-free execution, exact output-unit mappings, and shared cross-language plan/receipt roots |
 | `zig build media-runtime-demo -Dmetal=false` | Exact image/audio/video ResourceBank admission, provisional execution, candidate revalidation, atomic commit/abort/retry, fixed receipts, and complete release |
 | `zig build media-runtime-lease-demo -Dmetal=false` | Per-buffer LeaseTree charge-before-use, abort reclamation, early provisional retirement, retained output ownership, fixed hierarchical receipts, and final zero state |
+| `zig build media-stream-demo -Dmetal=false` | Six bounded image/audio/video chunks, two retained outputs per stream, cancellation-safe retry, exact target gap/overlap rejection, portable chunk chaining, and final zero state |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -110,11 +111,21 @@ the parent, tree state, and ordered scope/allocation evidence. A separate Python
 oracle reconstructs the same no-abort golden roots and rejects every serialized
 byte mutation.
 
+The bounded stream demo commits six chunks—two per modality—while retaining two
+output allocations at each stream's peak. It retires 12 provisional allocations
+after successful publication, reclaims one cancelled audio chunk, rejects one
+target gap and one target overlap before admission, performs 21 total
+reclamation commits, and closes with zero Bank usage, live allocations, and
+active trees. The fixed 352-byte chunk record chains each publication to its
+predecessor; the independent oracle shares a two-chunk golden chain and
+mutation-complete wire coverage.
+
 These values are deterministic conformance counts. They do not measure process
 memory, physical device residency, throughput, latency, model quality, codec
 coverage, or provider usage. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
-[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md).
+[Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), followed by
+[Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md).
 
 ## Continuation checkpoint
 

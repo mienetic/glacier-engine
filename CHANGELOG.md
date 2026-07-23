@@ -134,6 +134,14 @@ before the first stable release.
   evidence, independent Zig/Python golden roots, every-byte mutation rejection,
   authority and candidate substitution tests, node/capacity exhaustion tests,
   and a native three-modality zero-leak demo.
+- A bounded multi-chunk media stream runtime that commits two image, audio, and
+  video chunks under one exact target timeline; rejects gaps, overlaps, length
+  drift, copied transactions, and capacity overflow; reclaims cancelled or
+  mutated unpublished chunks; and retains one output lease per commit.
+- A fixed 352-byte predecessor-bound media chunk receipt with shared Zig/Python
+  golden chains, every-byte mutation rejection, state/execution/key/predecessor
+  substitution tests, and a six-chunk native demo ending with zero Bank usage,
+  live allocations, and active trees.
 - A full Glacier AI Runtime roadmap defining shared runtime planes, universal
   family adapters, model-family coverage, promotion gates, delivery sequence,
   use cases, and contributor-sized lanes.
