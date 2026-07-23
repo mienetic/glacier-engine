@@ -135,10 +135,14 @@ A typed temporal-video encoder now adds strided frame gathering, exact target
 timeline mapping, and keyframe/eviction lineage through that same common wire.
 See [Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md).
 
-The next family work is a generic non-media encoder plus a stateful step
-adapter. Vision, audio, and temporal video now use the extracted shared
-stateless lifecycle, so that stateful work can focus on genuinely different
-continuation semantics instead of another publication implementation.
+Vision, audio, and temporal video use the extracted shared stateless lifecycle.
+The first stateful lifecycle and exact latent-step fixture now publish
+replacement state with its result; the next gate is a multi-step,
+fresh-process continuation proof. See
+[Stateful Model Adapter and Latent-Step Fixture](STATEFUL_MODEL_ADAPTER.md).
+
+The next stateless family work is a generic non-media encoder with typed score
+or ranked-item output.
 
 See [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and

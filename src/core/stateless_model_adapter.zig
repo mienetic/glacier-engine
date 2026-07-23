@@ -179,6 +179,12 @@ pub const Session = struct {
             return Error.BufferTooSmall;
         const candidate_slice = candidate[0..candidate_bytes];
         const visible_slice = visible_output[0..output_bytes];
+        if (slicesOverlap(candidate_slice, visible_slice) or
+            slicesOverlap(candidate_slice, weights) or
+            slicesOverlap(candidate_slice, input) or
+            slicesOverlap(visible_slice, weights) or
+            slicesOverlap(visible_slice, input))
+            return Error.InvalidBinding;
         @memset(candidate_slice, 0);
         @memset(visible_slice, 0);
         const permit = self.bank.beginPublication(
@@ -435,4 +441,13 @@ fn hashU64(hash: anytype, value: u64) void {
 
 fn isZero(digest: Digest) bool {
     return std.mem.allEqual(u8, &digest, 0);
+}
+
+fn slicesOverlap(a: []const u8, b: []const u8) bool {
+    if (a.len == 0 or b.len == 0) return false;
+    const a_start = @intFromPtr(a.ptr);
+    const b_start = @intFromPtr(b.ptr);
+    const a_end = std.math.add(usize, a_start, a.len) catch return true;
+    const b_end = std.math.add(usize, b_start, b.len) catch return true;
+    return a_start < b_end and b_start < a_end;
 }

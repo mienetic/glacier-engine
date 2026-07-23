@@ -12,9 +12,16 @@ before the first stable release.
   and temporal video, removing its duplicate admission/publication state
   machine while preserving live-cache checks, candidate revalidation,
   abort scrubbing, and exact release behavior.
+- Shared stateless adapters now reject candidate, visible-output, weight, and
+  input buffer overlap before execution, preserving pre-commit invisibility
+  under caller-owned storage.
 
 ### Added
 
+- Stateful model publication and exact latent-step fixture: a canonical
+  320-byte state record, pinned model/state snapshots, disjoint candidate
+  buffers, and one transition root publish replacement state with its typed
+  result or preserve the predecessor on abort/drift.
 - Typed temporal-video encoder: a canonical strided-frame selection binds
   keyframe lineage, eviction boundary, cache generation, and exact target
   timeline mapping; charged gather scratch is always scrubbed before the shared

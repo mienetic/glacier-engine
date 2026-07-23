@@ -125,6 +125,10 @@ python3 -m unittest bench.tests.test_audio_window_adapter
 zig test src/core/temporal_video_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_temporal_video_adapter
 
+# Verify one atomic retained-state/result transition
+zig test src/core/latent_step_adapter.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_stateful_model_adapter
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

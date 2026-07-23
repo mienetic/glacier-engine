@@ -49,6 +49,7 @@ energy, or production reliability.
 | `zig test src/core/vision_encoder_adapter.zig -OReleaseSafe` | Canonical model artifact/plan/result records, explicit support negotiation, a live-cache exact-integer vision projection, candidate drift rejection, transactional typed embedding publication, and final zero ownership |
 | `zig test src/core/audio_window_adapter.zig -OReleaseSafe` | Live signed feature windows, exact sample/window/hop source mapping, shared stateless adapter publication, abort/drift rejection, and final zero ownership |
 | `zig test src/core/temporal_video_adapter.zig -OReleaseSafe` | Live temporal cache, canonical strided-frame selection, keyframe/eviction lineage, charged-and-scrubbed gather scratch, exact target-time mapping, candidate drift rejection, and final zero ownership |
+| `zig test src/core/latent_step_adapter.zig -OReleaseSafe` | Canonical retained-state wire, pinned model/state snapshots, buffer-alias rejection, exact latent candidate, atomic state/result publication, abort/drift preservation, and final zero ownership |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -70,6 +71,10 @@ The audio and temporal-video adapters add exact signed-window projection,
 strided frame gathering, and cross-language source-mapping roots. They do not
 measure transcription, classification, or video quality; overlapping-window
 behavior; streaming model restart; latency; throughput; or physical memory.
+
+The latent-step fixture adds state/result atomicity and a cross-language
+transition root. It does not measure generation quality, scheduler fidelity,
+multi-step continuation, accelerator performance, or production compatibility.
 
 ## Shared media contract
 

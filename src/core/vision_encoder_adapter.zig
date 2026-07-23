@@ -792,6 +792,18 @@ test "vision adapter rejects foreign cache and unsupported capability" {
             &output,
         ),
     );
+    try std.testing.expectError(
+        Error.InvalidBinding,
+        session.prepareV1(
+            &fixture.processor_bundle,
+            &fixture.cache_bundle,
+            &cache_session,
+            &fixture.weights,
+            &fixture.image_features,
+            &candidate,
+            &candidate,
+        ),
+    );
     try std.testing.expectEqual(Phase.idle, session.inner.phase);
     try session.closeAndRelease();
     try cache_session.closeAndRelease();

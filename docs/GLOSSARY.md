@@ -258,6 +258,18 @@ publication transition.
 whose result does not retain model state: exact admission, private candidate
 execution, family validation, typed publication or scrub, and exact release.
 
+**Stateful model adapter** — The family-neutral lifecycle for a step that must
+publish a typed result and replace retained model state together. It pins both
+publication snapshots and keeps output/state candidates private until commit.
+
+**State publication** — A fixed record binding request, current/terminal step,
+state byte length, artifact, current state root, previous result, challenge,
+and publication root.
+
+**State transition root** — A commitment joining the state publication before
+a step, execution plan, output root, successor-state root, adapter, challenge,
+and next step. It is carried as the typed result's source mapping.
+
 **Audio-window source mapping** — A commitment joining an audio result to its
 time base, sample cursor, window/hop/context parameters, feature shape, live
 cache payload, processor state, and model batch.

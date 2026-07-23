@@ -16,7 +16,7 @@ not.
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
-| Model adapters | `ModelContract`, `StatelessModelAdapter`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `TemporalVideoAdapter` | Separate vocabulary from support, bind exact tensor/resource/source schemas, gather charged temporal inputs, execute into private candidates, and publish typed results only after family validation |
+| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `TemporalVideoAdapter`, `LatentStepAdapter` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, and publish typed stateless results or state/result transitions only after family validation |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -183,6 +183,11 @@ keyframe lineage, eviction boundary, cache generation, and an exactly mapped
 target span, gathers only selected frames into charged caller-owned scratch,
 scrubs the gather buffer on every return, and then enters the same publication
 lifecycle.
+`StatefulModelAdapter` adds a distinct retained-state transaction. It pins the
+model and state publication roots, executes into disjoint output/state
+candidates, revalidates both, and makes the typed result plus successor state
+visible together. `LatentStepAdapter` retains the first exact synthetic
+denoise-step fixture over that lifecycle.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
@@ -560,6 +565,9 @@ still require real machines for each promoted platform.
 - [Typed temporal-video encoder adapter](TEMPORAL_VIDEO_ADAPTER.md): canonical
   strided-frame selection, keyframe/eviction lineage, charged gather scratch,
   exact target-time mapping, and transactional embedding publication.
+- [Stateful model adapter and latent-step fixture](STATEFUL_MODEL_ADAPTER.md):
+  canonical retained-state publication, pinned lineage, disjoint candidates,
+  and atomic state/result replacement.
 - [Shared media contract](MEDIA_CONTRACT.md): fixed image/audio/video identity,
   exact rational positions, explicit event roots, and logical chunk
   publication.

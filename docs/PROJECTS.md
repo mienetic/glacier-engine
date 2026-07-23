@@ -182,8 +182,14 @@ two fake families that have different state/output semantics.
 run under zero ambient capabilities, fixed buffers, and deterministic rejection
 tests. All three now use the shared family-neutral stateless lifecycle.
 
-**Next slice:** add one stateful step family with distinct continuation
-semantics, or add a generic non-media encoder using the converged lifecycle.
+**Completed slice:** a family-neutral stateful lifecycle now pins model/state
+publication roots and commits replacement state with its typed result. An exact
+latent-denoise fixture proves abort/drift preservation and zero release. See
+[Stateful Model Adapter and Latent-Step Fixture](STATEFUL_MODEL_ADAPTER.md).
+
+**Next slice:** chain a second plan from the committed state and restore the
+intermediate state in a fresh process, or add a generic non-media encoder using
+the converged stateless lifecycle.
 
 ### ResourceBank property tests
 

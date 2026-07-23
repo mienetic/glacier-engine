@@ -89,6 +89,10 @@ formats, and independent verifiers.
   compute into provisional storage, reject candidate drift, and publish
   source- and ownership-bound embedding transactions. Video selection gathers
   strided frames through explicitly charged scratch and scrubs it on return.
+- **Atomic retained-state steps.** A separate stateful lifecycle pins model and
+  state publication snapshots, executes into disjoint private output/state
+  candidates, and publishes both together. A canonical one-step latent fixture
+  proves abort/drift preservation and exact release.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -286,7 +290,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | AI runtime | CPU execution, optional Metal backend, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes | More family adapters, stable API, distribution and retained compatibility matrix |
-| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, a reusable stateless lifecycle, and shared tensor, state, provider, and media building blocks | Generic embeddings/reranking/classification, stateful families, diffusion/generative media, multimodal, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
+| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, shared stateless and stateful lifecycles, and one exact latent-state step | Multi-step/fresh-process state continuation, generic embeddings/reranking/classification, production generative media, multimodal, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
@@ -335,6 +339,7 @@ valuable as new features.
 - [Typed model-family contracts and vision adapter](docs/MODEL_FAMILY_ADAPTER.md)
 - [Typed audio-window encoder adapter](docs/AUDIO_WINDOW_ADAPTER.md)
 - [Typed temporal-video encoder adapter](docs/TEMPORAL_VIDEO_ADAPTER.md)
+- [Stateful model adapter and latent-step fixture](docs/STATEFUL_MODEL_ADAPTER.md)
 - [Paging contract](docs/PAGING.md)
 - [Continuation capsule](docs/CONTINUATION_CAPSULE.md)
 - [Continuation object resolver](docs/CONTINUATION_OBJECT_RESOLVER.md)
