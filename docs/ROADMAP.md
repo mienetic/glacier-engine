@@ -31,7 +31,7 @@ evidence. The plane and model-family sequence is specified in the
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, and an integrated model-free image/audio/video transaction vertical | More family adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
 | Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, and exact two-step latent continuation across distinct processes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, bounded generated-image publication, then multimodal, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime, streaming, continuation, post-restore materialized generation three, processor/cache state, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object atomic checkpoint sets, image tile/patch state, audio window/hop/context state, video temporal-window state, exact cache payloads, restore-before-visible ownership, and cache-bound typed image/audio/video embedding publication | Overlapping audio ownership, transcripts, and external formats, then generated-media publication |
+| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, overlap-safe transcripts, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object checkpoint sets, image tile/patch state, audio window/hop/context plus typed transcript state, video temporal-window state, exact cache payloads, restore-before-visible ownership, and typed media publication | Transcript model restart, bounded video segments, external formats, then generated-media publication |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -346,9 +346,10 @@ The implementation sequence is:
    are complete as model-free prototypes;
 2. bounded image crop/nearest/tile and exact source-pixel mapping are complete;
 3. weighted stereo-to-mono mixing, exact integer decimation, bounded two-chunk
-   publication, model-free two-process restart, fixed feature-window state, and
-   a non-overlapping exact-integer feature encoder are complete; overlap
-   ownership, transcript, and playback state remain;
+   publication, model-free two-process restart, fixed feature-window state, a
+   non-overlapping exact-integer feature encoder, canonical overlap ownership,
+   and typed transcript publication are complete; transcript model restart and
+   playback state remain;
 4. keyframe selection, exact frame/time mappings, temporal-cache ownership, and
    a typed strided-frame encoder with charged gather scratch are complete;
    audio/subtitle linkage and typed segment publication remain;

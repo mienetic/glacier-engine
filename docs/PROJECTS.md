@@ -140,8 +140,13 @@ binds selected ordinals, keyframe lineage, eviction boundary, cache generation,
 and exact target timeline without changing the common model wire. See
 [Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md).
 
-**Next slice:** add overlapping audio context ownership and typed transcript
-publication, reusing
+**Completed slice:** overlapping audio context now has a canonical ownership
+plan and a fixed predecessor-bound transcript wire. Context-only samples cannot
+be mistaken for newly publishable text. See
+[Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md).
+
+**Next slice:** carry transcript publication through a model restart or add a
+bounded typed video-segment result, reusing
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md),
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), and
 [Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md).

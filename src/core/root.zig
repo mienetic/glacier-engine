@@ -69,6 +69,8 @@ pub const vision_encoder_adapter =
     @import("vision_encoder_adapter.zig");
 pub const audio_window_adapter =
     @import("audio_window_adapter.zig");
+pub const audio_transcript_adapter =
+    @import("audio_transcript_adapter.zig");
 pub const temporal_video_adapter =
     @import("temporal_video_adapter.zig");
 pub const latent_step_adapter =
@@ -133,6 +135,8 @@ pub const StatefulModelContinuation =
     stateful_model_continuation;
 pub const VisionEncoderAdapter = vision_encoder_adapter;
 pub const AudioWindowAdapter = audio_window_adapter;
+pub const AudioTranscriptAdapter =
+    audio_transcript_adapter;
 pub const TemporalVideoAdapter = temporal_video_adapter;
 pub const LatentStepAdapter = latent_step_adapter;
 pub const ContinuationOwnershipManifest = continuation_ownership_manifest;

@@ -16,7 +16,7 @@ not.
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
-| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `TemporalVideoAdapter`, `LatentStepAdapter` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, and publish typed stateless results or restartable state/result transitions only after family validation |
+| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `TemporalVideoAdapter`, `LatentStepAdapter` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, and publish typed embeddings, transcripts, or restartable state/result transitions only after family validation |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -178,6 +178,10 @@ revalidation, publication, abort, and release lifecycle used by all three
 retained perception adapters.
 `AudioWindowAdapter` is the second family binding: it validates live audio
 features plus exact sample/window/hop lineage before entering the lifecycle.
+`AudioTranscriptAdapter` accepts a context-bearing cache through a canonical
+overlap plan. It marks prefix samples as conditioning-only, binds the new sample
+range and previous transcript root, and publishes a fixed transcript wire
+without duplicating text for the overlap.
 `TemporalVideoAdapter` adds a canonical strided-frame selection. It binds
 keyframe lineage, eviction boundary, cache generation, and an exactly mapped
 target span, gathers only selected frames into charged caller-owned scratch,
@@ -565,6 +569,9 @@ still require real machines for each promoted platform.
 - [Typed audio-window encoder adapter](AUDIO_WINDOW_ADAPTER.md): signed feature
   windows, sample/window/hop source mapping, shared stateless publication, and
   exact cancellation/release.
+- [Overlap-safe audio transcript adapter](AUDIO_TRANSCRIPT_ADAPTER.md):
+  canonical context/new-sample ownership, predecessor-bound transcript
+  segments, and transactional publication.
 - [Typed temporal-video encoder adapter](TEMPORAL_VIDEO_ADAPTER.md): canonical
   strided-frame selection, keyframe/eviction lineage, charged gather scratch,
   exact target-time mapping, and transactional embedding publication.

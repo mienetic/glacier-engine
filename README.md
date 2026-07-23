@@ -89,6 +89,10 @@ formats, and independent verifiers.
   compute into provisional storage, reject candidate drift, and publish
   source- and ownership-bound embedding transactions. Video selection gathers
   strided frames through explicitly charged scratch and scrubs it on return.
+- **Overlap-safe transcripts.** A canonical audio plan separates prefix context
+  from newly publishable samples, binds both to live processor-cache ownership,
+  and commits a fixed transcript segment without turning repeated context into
+  duplicate visible text.
 - **Atomic retained-state steps.** A separate stateful lifecycle pins model and
   state publication snapshots, executes into disjoint private output/state
   candidates, and publishes both together. A canonical two-step latent fixture
@@ -296,7 +300,7 @@ model conversion, generation, and every demo command, continue with the
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object checkpoints, post-restore materialized generation three, image processor progress, audio feature windows, video temporal caches, exact synchronized watermark, restore-before-visible cache ownership, and typed vision/audio/temporal-video embedding publication | Add overlapping audio ownership and transcripts, external formats, then generated-media publication |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object checkpoints, post-restore generation three, image processor progress, overlapping audio context plus typed transcripts, video temporal caches, exact synchronized watermark, restore-before-visible cache ownership, and typed vision/audio/video publication | Add transcript model restart, bounded video segments, external formats, then generated-media publication |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -339,6 +343,7 @@ valuable as new features.
 - [Materialized multimodal processor caches](docs/MEDIA_PROCESSOR_CACHE.md)
 - [Typed model-family contracts and vision adapter](docs/MODEL_FAMILY_ADAPTER.md)
 - [Typed audio-window encoder adapter](docs/AUDIO_WINDOW_ADAPTER.md)
+- [Overlap-safe audio transcript adapter](docs/AUDIO_TRANSCRIPT_ADAPTER.md)
 - [Typed temporal-video encoder adapter](docs/TEMPORAL_VIDEO_ADAPTER.md)
 - [Stateful model adapter and latent-step fixture](docs/STATEFUL_MODEL_ADAPTER.md)
 - [Stateful model continuation](docs/STATEFUL_MODEL_CONTINUATION.md)

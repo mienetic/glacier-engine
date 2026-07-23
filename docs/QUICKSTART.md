@@ -121,6 +121,10 @@ python3 -m unittest bench.tests.test_model_contract
 zig test src/core/audio_window_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_audio_window_adapter
 
+# Publish only new transcript text when audio context windows overlap
+zig test src/core/audio_transcript_adapter.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_audio_transcript_adapter
+
 # Verify charged strided video selection and exact target-timeline binding
 zig test src/core/temporal_video_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_temporal_video_adapter

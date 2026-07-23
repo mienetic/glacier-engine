@@ -48,8 +48,9 @@ provisional storage, and publishes only after source, ownership, and candidate
 revalidation. Production vision models and quality evidence remain gated.
 A typed audio adapter now consumes non-overlapping signed feature windows from
 the live audio cache and binds sample rate, window, hop, feature shape, and
-source cursor into the same result contract. Overlap/context ownership,
-transcripts, and production audio models remain gated.
+source cursor into the same result contract. A second adapter now binds
+overlap/context ownership, predecessor continuity, and a fixed transcript
+segment. Transcript-model restart and production audio models remain gated.
 A typed temporal-video adapter now selects a bounded strided frame set from the
 live video cache into explicitly charged scratch. Its source mapping binds
 frame ordinals, keyframe lineage, eviction boundary, cache generation, and an

@@ -135,7 +135,12 @@ A typed temporal-video encoder now adds strided frame gathering, exact target
 timeline mapping, and keyframe/eviction lineage through that same common wire.
 See [Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md).
 
-Vision, audio, and temporal video use the extracted shared stateless lifecycle.
+An overlap-safe audio transcript adapter now separates conditioning context
+from newly publishable samples and emits a predecessor-bound typed transcript.
+See [Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md).
+
+Vision, audio, transcripts, and temporal video use the extracted shared
+stateless lifecycle.
 The stateful lifecycle and exact latent-step fixture now publish replacement
 state with each result, checkpoint the intermediate publication, restore it
 under fresh ownership in another process, and commit the terminal step exactly

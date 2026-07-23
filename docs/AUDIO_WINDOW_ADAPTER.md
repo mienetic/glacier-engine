@@ -93,10 +93,11 @@ count, and allows one clean retry.
 
 ## Claim boundary
 
-This slice does not provide an external decoder, microphone access, spectral
-quality, overlapping-window context support, recurrent state, transcript
-publication, streaming restart through a model, accelerator execution,
-physical memory measurement, or compatibility with downloaded weights.
+This embedding slice does not provide an external decoder, microphone access,
+spectral quality, recurrent state, streaming restart through a model,
+accelerator execution, physical memory measurement, or compatibility with
+downloaded weights. Overlap ownership and typed transcript publication now
+exist as a separate bounded adapter.
 
 ## Run the retained proof
 
@@ -106,9 +107,10 @@ python3 -m unittest bench.tests.test_audio_window_adapter
 ```
 
 The temporal-video slice now covers strided selection over the existing
-keyframe/window cache. The next audio slice should add overlap/context
-ownership and a typed transcript transaction. See
-[Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md).
+keyframe/window cache. The separate transcript slice covers overlap/context
+ownership and predecessor-bound text; its next gate is model restart. See
+[Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md) and
+[Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md).
 
 See [Typed Model-Family Contracts and Vision Adapter](MODEL_FAMILY_ADAPTER.md),
 [Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md), and

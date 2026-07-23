@@ -318,7 +318,7 @@ expand the base adapter's capabilities.
 | Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication integrated | Small legal artifact through uninterrupted and resumed output | Declared numerical equivalence, exact KV ownership, no duplicate token |
 | Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision, audio, and temporal-video embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
-| Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder fixture integrated; production model gated | Add overlap/context ownership and a typed transcript fixture | No sample loss/duplication, exact streaming restart, transcript transaction |
+| Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder plus overlap-safe typed transcript fixture integrated; production model gated | Carry transcript publication through a streaming model restart | No sample loss/duplication, exact streaming restart, transcript transaction |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
 | Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder integrated; production model gated | Extend from typed embedding to a bounded segment result | Variable-frame-rate mapping, audio/subtitle linkage, stateful continuation |
 | Image generation | diffusion/flow step, decode latent, publish image | Exact two-step retained-state transaction with distinct-process intermediate restore; production model gated | Decode the terminal latent into a bounded generated-image transaction | Multi-step continuation, bounded decode, atomic image/provenance publication |
@@ -414,9 +414,9 @@ while retaining different state and publication semantics.
   candidate validation, and typed embedding publication are complete for the
   retained fixture;
 - add audio feature windows, transcript transactions, and streaming restart;
-  fixed window/hop/context state plus a non-overlapping exact-integer
-  feature-window encoder are complete, while overlap ownership, transcript
-  publication, and model restart integration remain;
+  fixed window/hop/context state, a non-overlapping exact-integer feature
+  encoder, canonical overlap ownership, and typed transcript publication are
+  complete, while model restart integration remains;
 - add video temporal selection, synchronized timeline state, and cache
   ownership; fixed window/eviction state plus exact audio/video watermark is
   complete together with materialized cache ownership; a typed strided-frame

@@ -18,6 +18,10 @@ before the first stable release.
 
 ### Added
 
+- Overlapping-audio transcript adapter: a canonical context/new-sample plan
+  binds live processor-cache ownership to a fixed transcript segment, excludes
+  context samples from the publishable range, rejects predecessor/candidate
+  substitution, and publishes through the shared stateless lifecycle.
 - Stateful model continuation: a canonical 512-byte intermediate checkpoint
   reconstructs model/state publications in a distinct process, charges a fresh
   `LeaseTree` before latent materialization, chains the terminal plan, prevents

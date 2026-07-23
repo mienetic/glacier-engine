@@ -127,5 +127,6 @@ temporal caches, image processor state, and a synchronized watermark now exist
 as an atomic stateful bundle, and exact cache payloads now restore under
 fresh-Bank ownership. Typed vision and audio fixtures now consume their live
 caches, and a typed temporal-video fixture gathers a charged strided selection
-from its live window; overlapping audio context, transcripts, stateful model
-continuation, and production-model integration remain.
+from its live window. A separate overlap-safe adapter publishes typed transcript
+segments, and stateful-model continuation now crosses one process boundary;
+transcript-model restart and production-model integration remain.

@@ -278,6 +278,14 @@ restore Bank epochs, retained-state bytes, and exact fresh ownership keys.
 time base, sample cursor, window/hop/context parameters, feature shape, live
 cache payload, processor state, and model batch.
 
+**Audio overlap plan** — A fixed record separating a source span into
+conditioning-only context and newly publishable samples while binding the
+processor/cache owner and previous transcript.
+
+**Transcript segment** — A fixed typed text record binding its visible sample
+range, excluded context range, media/cache/processor roots, overlap plan, and
+previous transcript.
+
 **Temporal-video selection** — A canonical bounded declaration of selected
 frame ordinals, stride, keyframe lineage, eviction boundary, cache generation,
 and exactly mapped target span. Its selected bytes are gathered into explicitly

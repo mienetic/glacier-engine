@@ -48,6 +48,7 @@ energy, or production reliability.
 | `zig build media-stream-checkpoint-set-demo -Dmetal=false` | Six-object materialized image/audio/video generations, canonical retained-output, processor-state, and cache-payload bundles, seven `SIGKILL` boundaries, restore-before-visible cache ownership, fresh-process generation three, idempotent recovery, and final zero ownership |
 | `zig test src/core/vision_encoder_adapter.zig -OReleaseSafe` | Canonical model artifact/plan/result records, explicit support negotiation, a live-cache exact-integer vision projection, candidate drift rejection, transactional typed embedding publication, and final zero ownership |
 | `zig test src/core/audio_window_adapter.zig -OReleaseSafe` | Live signed feature windows, exact sample/window/hop source mapping, shared stateless adapter publication, abort/drift rejection, and final zero ownership |
+| `zig test src/core/audio_transcript_adapter.zig -OReleaseSafe` | Canonical overlap and transcript wires, context-only versus publishable sample ranges, live cache ownership, predecessor/candidate substitution rejection, transactional text visibility, and final zero ownership |
 | `zig test src/core/temporal_video_adapter.zig -OReleaseSafe` | Live temporal cache, canonical strided-frame selection, keyframe/eviction lineage, charged-and-scrubbed gather scratch, exact target-time mapping, candidate drift rejection, and final zero ownership |
 | `zig test src/core/latent_step_adapter.zig -OReleaseSafe` | Canonical retained-state wire, pinned model/state snapshots, buffer-alias rejection, exact latent candidate, atomic state/result publication, abort/drift preservation, and final zero ownership |
 | `zig build stateful-model-live-restart-demo -Dmetal=false` | Canonical intermediate checkpoint, distinct source/target PIDs, fresh-Bank charge-before-materialization latent restore, chained terminal plan, zero duplicate results, and final zero ownership |
@@ -70,8 +71,10 @@ accelerator performance, or physical memory evidence.
 
 The audio and temporal-video adapters add exact signed-window projection,
 strided frame gathering, and cross-language source-mapping roots. They do not
-measure transcription, classification, or video quality; overlapping-window
-behavior; streaming model restart; latency; throughput; or physical memory.
+measure transcription or video quality, streaming model restart, latency,
+throughput, or physical memory. The transcript fixture proves overlap ownership
+and publication semantics only; its fixed ASCII text is not recognition-quality
+evidence.
 
 The latent-step fixture adds state/result atomicity and a cross-language
 transition root. The live-restart fixture then chains two exact steps across
