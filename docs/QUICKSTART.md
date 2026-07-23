@@ -68,6 +68,9 @@ zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Verify a sweep record, classify tails, and exercise scoped crash publication
 zig build continuation-sweep-record-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Exercise descriptor-relative locking, sync, and six real process deaths
+zig build continuation-sweep-file-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

@@ -268,8 +268,9 @@ production garbage-collection performance.
    tails; it performs no I/O or repair.
 3. ~~Snapshot-bound capability writer with explicit crash points and separate
    repair authority.~~ Implemented with a deterministic allocation-free backend.
-4. Real directory adapter and subprocess recovery under platform lock/sync
-   semantics.
+4. ~~Descriptor-relative POSIX file adapter and subprocess recovery under
+   platform lock/sync/identity semantics.~~ Implemented on the macOS host;
+   native Linux filesystem campaigns remain.
 5. Publication-before-deallocation ordering without double deallocation.
 6. Durable retirement and file-publication ordering.
 7. Multi-bundle and parent-checkpoint reachability composition.
@@ -284,4 +285,6 @@ eligibility evidence, and
 [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for the
 portable commit-evidence format, and
 [Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for its
-least-authority modeled publication boundary.
+least-authority modeled publication boundary, and
+[Continuation Object Sweep File Adapter](CONTINUATION_OBJECT_SWEEP_FILE.md) for
+the real-file implementation and its claim boundary.

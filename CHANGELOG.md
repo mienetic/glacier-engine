@@ -53,6 +53,10 @@ before the first stable release.
   generations, separate append/repair capabilities, ordered body/footer sync,
   poisoned uncertain writers, explicit incomplete-tail repair, and exhaustive
   Zig/Python deterministic crash-boundary models.
+- Descriptor-relative continuation sweep files with no-follow lookup,
+  exclusive advisory locks, device/inode/link/permission fencing, ordered file
+  and directory sync, replacement detection, independent Python verification,
+  and six native plus Python subprocess-death boundaries.
 
 ### Status
 

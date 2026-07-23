@@ -175,6 +175,20 @@ retry requires a new lease and snapshot. The deterministic backend proves this
 ordering over modeled crash prefixes but does not substitute for platform file
 and directory durability tests.
 
+The real-file adapter preserves that split instead of replacing it with a
+path-based writer. A trusted caller passes an opened directory plus one bounded
+component name. The adapter holds one exclusive advisory lock and refuses final
+symlinks, hard-linked files, widened permission bits, identity replacement, or
+unexpected length. Each external operation begins from a poisoned state and
+becomes usable only after device/inode/length postconditions pass. New entries
+receive both file and directory sync; append and repair use explicit-offset
+write-all, truncate, and file sync. Process-death tests prove fresh-open behavior
+after all six phase boundaries, while deterministic reverse-length outcomes
+remain the power-loss abstraction. Neither evidence class authorizes payload
+deallocation or restored runtime ownership. Because the lock is advisory, this
+contract requires cooperating writers; device/inode/length checks do not detect
+a same-length in-place overwrite by a process that ignores the lock.
+
 ### State machines fail closed
 
 Named errors are preferable to implicit recovery when the correct alternative is

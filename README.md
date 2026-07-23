@@ -59,6 +59,10 @@ formats, and independent verifiers.
   Uncertain I/O poisons the writer, and an allocation-free reference backend
   explores every modeled byte boundary without granting real filesystem or
   payload-deletion authority.
+- **Identity-fenced file publication.** A descriptor-relative POSIX adapter
+  adds exclusive locking, no-follow lookup, single-link/private-mode checks,
+  file and directory sync, namespace-replacement detection, and six real
+  subprocess-death boundaries without adding payload deletion authority.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
@@ -109,6 +113,7 @@ request
                                         └─ fixed body/footer evidence record
                                            └─ pure anchored stream classifier
                                               └─ scoped writer/repair model
+                                                 └─ locked real-file adapter
 
 provider request
   │
@@ -144,6 +149,7 @@ zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-record-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-sweep-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -163,7 +169,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, fixed evidence record, anchored recovery, and a scoped crash-writer model | Real directory durability, ownership reacquisition, and restart |
+| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, fixed evidence record, anchored recovery, scoped crash model, and a locked POSIX file adapter | Publication-before-deallocation ordering, ownership reacquisition, and live restart |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
@@ -211,6 +217,7 @@ valuable as new features.
 - [Continuation object sweep commit](docs/CONTINUATION_OBJECT_SWEEP_COMMIT.md)
 - [Continuation object sweep record](docs/CONTINUATION_OBJECT_SWEEP_RECORD.md)
 - [Continuation object sweep writer](docs/CONTINUATION_OBJECT_SWEEP_WRITER.md)
+- [Continuation object sweep file adapter](docs/CONTINUATION_OBJECT_SWEEP_FILE.md)
 - [Glossary](docs/GLOSSARY.md)
 
 Research tracks are documented separately in

@@ -111,11 +111,19 @@ pure stream classifier, exclusive snapshot binding, separate append/repair
 capabilities, and exhaustive cross-language append, mutation, foreign-chain,
 partial-I/O, poison/reopen, and repair fixtures.
 
-**Next slice:** implement a real directory-capability adapter over the completed
-contract. Exercise one-component path admission, exclusive lock failure,
-write-all loops, file and directory sync, process death, fresh-read reopen, and
-exact repair on promoted filesystems. Keep payload deletion and destructive
-replay outside this slice.
+The POSIX adapter now implements the next boundary with descriptor-relative
+one-component admission, no-follow open, exclusive advisory locking,
+device/inode/link/permission fencing, explicit-offset write-all, file and
+directory sync, namespace-replacement detection, fresh-read reopen, and exact
+repair. Native and Python workers terminate after all six append/repair phases.
+
+**Completed slice:** real host-filesystem adapter and process-death conformance
+on the promoted macOS development host, plus portable Linux compilation.
+
+**Next slice:** run the same retained matrix natively across Linux filesystems,
+then join evidence publication to destructive payload deallocation under an
+explicit ordering protocol. Keep live ownership restore outside that destructive
+slice.
 
 ### Resolver adversarial fixtures
 

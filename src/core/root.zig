@@ -43,6 +43,8 @@ pub const continuation_object_sweep_record =
     @import("continuation_object_sweep_record.zig");
 pub const continuation_object_sweep_writer =
     @import("continuation_object_sweep_writer.zig");
+pub const continuation_object_sweep_file =
+    @import("continuation_object_sweep_file.zig");
 
 // Re-export the most commonly used types at the root.
 pub const Precision = precision.Precision;
@@ -73,6 +75,7 @@ pub const ContinuationObjectStore = continuation_object_store;
 pub const ContinuationObjectSweep = continuation_object_sweep;
 pub const ContinuationObjectSweepRecord = continuation_object_sweep_record;
 pub const ContinuationObjectSweepWriter = continuation_object_sweep_writer;
+pub const ContinuationObjectSweepFile = continuation_object_sweep_file;
 pub const Error = pager.Error;
 
 test {

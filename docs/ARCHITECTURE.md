@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer | Bind a checkpoint, own bounded tenant payloads, separate collection/staging/destructive/publication authority, and carry portable commit evidence |
+| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer/file adapter | Bind a checkpoint, own bounded tenant payloads, separate collection/staging/destructive/publication authority, and carry portable commit evidence into an identity-fenced file |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -58,6 +58,7 @@ validated model + request
                                                           └─ scoped atomic commit ──> exact removal receipt
                                                                └─ fixed body/footer evidence record
                                                                     └─ anchored recovery + scoped writer model
+                                                                         └─ locked descriptor-relative file
 ```
 
 ### ResourceBank
@@ -207,8 +208,19 @@ tail to the verified prefix and sync it. Any uncertain I/O poisons the local
 writer or repairer and requires lease release, fresh read, and reclassification.
 The deterministic caller-owned backend models partial writes and crash survival
 at every byte boundary without real filesystem or payload-deletion authority.
-Platform locking, directory sync, durable destructive ordering, and live restore
-remain separate layers.
+
+The POSIX file adapter is the following authority boundary. It receives a
+caller-opened directory descriptor and one component name, opens without
+following the final symlink, acquires an exclusive advisory lock, and requires
+one owner-private regular-file link. Device, inode, length, permissions, and
+directory-entry identity are checked around every write, sync, and truncate.
+Creation synchronizes both file and directory. Six native subprocess deaths
+cover every append and repair phase, while the independent Python adapter repeats
+the file and lock contract. This is process-death and namespace-replacement
+evidence, not device power-cut evidence. Durable destructive ordering,
+ownership reacquisition, and live restore remain separate layers. The advisory
+lock contract also requires cooperating writers; same-length in-place writes
+that preserve visible identity metadata are outside its detection boundary.
 
 ## Provider execution flow
 
@@ -310,4 +322,7 @@ still require real machines for each promoted platform.
 - [Continuation object sweep writer](CONTINUATION_OBJECT_SWEEP_WRITER.md):
   snapshot-bound append/repair capabilities, poisoned uncertain writers, and
   deterministic crash-boundary conformance without real filesystem authority.
+- [Continuation object sweep file adapter](CONTINUATION_OBJECT_SWEEP_FILE.md):
+  descriptor-relative locking, identity fencing, ordered sync, explicit repair,
+  and real subprocess-death conformance.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

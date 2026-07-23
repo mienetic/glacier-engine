@@ -201,11 +201,16 @@ coordination, liveness, or exactly-once execution.
    states without I/O.
 5. ~~Snapshot-bound capability publication with crash points before and after
    every body/footer operation.~~ Implemented over deterministic storage.
-6. Real directory adapter and durable publication-before-deallocation ordering.
-7. Multi-bundle and parent-checkpoint reachability composition.
-8. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+6. ~~Descriptor-relative POSIX file adapter with lock/sync/identity fences and
+   subprocess death recovery.~~ Implemented on the macOS host; native Linux
+   filesystem campaigns remain.
+7. Durable publication-before-deallocation ordering.
+8. Multi-bundle and parent-checkpoint reachability composition.
+9. ResourceBank/LeaseTree reacquisition and end-to-end restart.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the fixed evidence wire and
 [Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for the
-scoped writer/repair contract and remaining real-durability boundary.
+scoped writer/repair contract, and
+[Continuation Object Sweep File Adapter](CONTINUATION_OBJECT_SWEEP_FILE.md) for
+the real-file boundary and its precise durability limits.

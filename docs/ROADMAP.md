@@ -25,7 +25,7 @@ transactional state publication, and independently verifiable evidence.
 | Hierarchical ownership | Integrated | LeaseTree child scopes and paged-KV publication fences | Cross-worker and durable ownership identity |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
-| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, leases/repair, retirement, collection evidence, atomic in-memory sweep, fixed evidence record, anchored recovery, snapshot-bound writer/repair conformance, Zig/Python verification | Real directory durability, ownership reacquisition, and live restore |
+| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, leases/repair, retirement, collection evidence, atomic in-memory sweep, fixed evidence record, anchored recovery, snapshot-bound writer/repair, descriptor-relative POSIX file publication, and real process-death conformance | Native Linux filesystem campaigns, publication-before-deallocation, ownership reacquisition, and live restore |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
@@ -65,6 +65,9 @@ transactional state publication, and independently verifiable evidence.
 - [x] Snapshot-bound exclusive sweep writer with separate append/repair
   capabilities, ordered sync, uncertain-state poisoning, explicit repair, and
   exhaustive Zig/Python deterministic crash-boundary models.
+- [x] Descriptor-relative POSIX sweep file adapter with exclusive locking,
+  identity/link/mode fences, ordered file and directory sync, explicit repair,
+  and six real subprocess-death boundaries on the macOS host.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -122,8 +125,10 @@ Next slices:
     - ~~snapshot-bound capability writer with ordered sync, uncertain-writer
       poisoning, explicit repair policy, and deterministic crash storage;~~
       complete without real filesystem authority;
-    - real directory-capability adapter with platform locking, file/directory
-      sync, replacement resistance, and subprocess death tests;
+    - ~~directory-capability adapter with platform locking, file/directory
+      sync, replacement detection, and subprocess death tests;~~ complete for
+      the POSIX adapter on the macOS host, with Linux compilation retained and
+      native Linux filesystem campaigns still pending;
     - crash campaign joining durable publication to destructive transition
       ordering.
 11. ResourceBank/LeaseTree reacquisition without duplicated ownership.
@@ -135,18 +140,20 @@ no duplicated output, no orphaned ownership, and crash coverage at every durable
 phase.
 
 The current capsule, resolver, bundle, store, lifecycle receipts, collection
-plan, sweep journal, sweep commit, body/footer record, classifier, and scoped
-writer model form identity, least-authority lookup, canonical planning, bounded
-payload ownership, a deterministic destructive in-memory boundary, portable
-commit evidence, and modeled publication/recovery decisions—not a saved
-session. The writer proves capability and crash-state conformance in
-caller-owned memory but does not perform or prove real file/directory sync,
-locking, deletion ordering, or process restore. The fixture avoids
-one 25-byte duplicate payload allocation and the commit fixture reclaims a
-39-byte allocator tail, but lifecycle metadata, fixed index, and backing
-capacity remain larger than those deltas. No lower RSS, disk use, or restart
-latency is claimed. Those require compact index experiments, durable integration,
-ownership reacquisition, and complete physical measurements.
+plan, sweep journal, sweep commit, body/footer record, classifier, scoped
+writer, and POSIX file adapter form identity, least-authority lookup, canonical
+planning, bounded payload ownership, a deterministic destructive in-memory
+boundary, portable commit evidence, and host-filesystem publication/recovery
+decisions—not a saved session. The adapter performs real file/directory sync,
+locking, identity checks, and subprocess-death recovery on the macOS host.
+Process death is not power loss, Linux has compile evidence rather than a
+retained native filesystem campaign, and deletion ordering and process restore
+remain unproven. The fixture avoids one 25-byte duplicate payload allocation and
+the commit fixture reclaims a 39-byte allocator tail, but lifecycle metadata,
+fixed index, and backing capacity remain larger than those deltas. No lower RSS,
+disk use, or restart latency is claimed. Those require compact index
+experiments, durable integration, ownership reacquisition, and complete
+physical measurements.
 
 ### Evidence inspection
 
@@ -383,8 +390,10 @@ First slices:
 - ~~fixed sweep body/footer evidence format;~~
 - ~~pure anchored recovery classification over record streams;~~
 - ~~snapshot-bound sweep writer/repair contract and deterministic crash model;~~
-- real directory adapter and subprocess recovery across every publication crash
-  point;
+- ~~descriptor-relative POSIX file adapter and subprocess recovery across every
+  publication and repair crash point;~~ complete on the macOS host;
+- native Linux filesystem campaign plus publication-before-deallocation
+  recovery across every destructive transition;
 - trusted replica transport with independently verified fetch evidence;
 - optional encrypted storage adapter whose ciphertext identity is separate from
   semantic content identity.

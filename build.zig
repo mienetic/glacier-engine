@@ -798,6 +798,63 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_continuation_sweep_record_demo.step);
     test_compile_step.dependOn(&continuation_sweep_record_demo_exe.step);
 
+    // Descriptor-relative real-file publication and subprocess-death recovery.
+    // The worker is intentionally separate so lock release and page-cache
+    // visibility are exercised across an actual process boundary.
+    const continuation_sweep_file_worker_exe = b.addExecutable(.{
+        .name = "glacier-continuation-object-sweep-file-worker",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "bench/continuation_object_sweep_file_worker.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_sweep_file_worker_exe.root_module.addImport("core", core_mod);
+    const continuation_sweep_fixture_mod = b.createModule(.{
+        .root_source_file = b.path(
+            "examples/continuation_object_sweep_fixture.zig",
+        ),
+        .target = target,
+        .optimize = optimize,
+        .sanitize_thread = sanitize_thread,
+    });
+    continuation_sweep_fixture_mod.addImport("core", core_mod);
+    const continuation_sweep_file_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-object-sweep-file-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_object_sweep_file.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_sweep_file_demo_exe.root_module.addImport("core", core_mod);
+    continuation_sweep_file_demo_exe.root_module.addImport(
+        "sweep_fixture",
+        continuation_sweep_fixture_mod,
+    );
+    const run_continuation_sweep_file_demo = b.addRunArtifact(
+        continuation_sweep_file_demo_exe,
+    );
+    run_continuation_sweep_file_demo.addArtifactArg(
+        continuation_sweep_file_worker_exe,
+    );
+    const continuation_sweep_file_demo_step = b.step(
+        "continuation-sweep-file-demo",
+        "Run descriptor-relative sweep file and process-death conformance",
+    );
+    continuation_sweep_file_demo_step.dependOn(
+        &run_continuation_sweep_file_demo.step,
+    );
+    test_step.dependOn(&run_continuation_sweep_file_demo.step);
+    test_compile_step.dependOn(&continuation_sweep_file_demo_exe.step);
+    test_compile_step.dependOn(&continuation_sweep_file_worker_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

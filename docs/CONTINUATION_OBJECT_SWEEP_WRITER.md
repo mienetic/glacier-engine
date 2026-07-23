@@ -165,7 +165,7 @@ The retained fixtures prove allocation-free state-machine conformance,
 cross-language snapshot identity, operation ordering, fail-closed recovery
 decisions, and exhaustive modeled byte-boundary behavior.
 
-They do not prove:
+The deterministic backend alone does not prove:
 
 - filesystem, device, or distributed-log durability;
 - advisory or mandatory lock behavior on a promoted platform;
@@ -175,12 +175,16 @@ They do not prove:
 - process restart of live AI state;
 - lower RSS, disk usage, latency, or energy.
 
-The next layer is a directory-capability adapter with platform-specific locking,
-write-all loops, file and directory sync, fresh-read reopen, and subprocess death
-tests. Destructive object-store replay remains outside that adapter until the
+The downstream descriptor-relative POSIX adapter now provides platform-specific
+locking, write-all loops, file and directory sync, fresh-read reopen, identity
+fences, and subprocess-death tests on the macOS host. It does not turn the
+deterministic backend into power-loss evidence. Native Linux filesystem
+campaigns and destructive object-store replay remain pending until
 publication-before-deallocation ordering is separately proven.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the wire format and pure classifier, and
+[Continuation Object Sweep File Adapter](CONTINUATION_OBJECT_SWEEP_FILE.md) for
+the real-file implementation and its claim boundary, and
 [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for the
 in-memory transition whose evidence is published.

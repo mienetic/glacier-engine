@@ -183,12 +183,16 @@ semantic contradiction, empty streams, and authenticated suffix scans.
 The capability-scoped writer contract and deterministic crash backend are now
 implemented. They bind the classified bytes to one exclusive lease snapshot,
 separate append from repair, enforce ordered body/footer sync, poison uncertain
-operations, and cover every modeled partial-write boundary. They still perform
-no real filesystem I/O. A directory adapter, platform lock/sync evidence,
-destructive-transition ordering, and end-to-end process restart remain.
+operations, and cover every modeled partial-write boundary. The downstream
+POSIX adapter now adds descriptor-relative lookup, platform locking, real file
+and directory sync, identity fences, and subprocess-death recovery on the
+macOS host. Native Linux filesystem campaigns, destructive-transition ordering,
+power-loss evidence, and end-to-end process restart remain.
 
 See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
 the in-memory transition whose evidence this format carries and
 [Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for the
 least-authority publication and repair state machines, and
+[Continuation Object Sweep File Adapter](CONTINUATION_OBJECT_SWEEP_FILE.md) for
+the real-file adapter and claim boundary, and
 [Roadmap](ROADMAP.md) for the durability sequence.

@@ -40,6 +40,9 @@ pub const Error = record.Error || error{
     RepairRequired,
     SequenceExhausted,
     SnapshotMismatch,
+    StorageIdentityChanged,
+    StorageIo,
+    UnsupportedPlatform,
 };
 
 pub const StorageSnapshotV1 = struct {

@@ -63,6 +63,15 @@ classified incomplete tail. Neither form grants payload deletion authority.
 uncertain I/O result and therefore rejects reuse until storage is reacquired,
 read again, and reclassified under a fresh snapshot.
 
+**Directory capability** — An already opened directory descriptor passed as
+bounded namespace authority. Glacier combines it with one validated component
+name; it is not permission to resolve arbitrary absolute paths or traverse
+descendant directories.
+
+**Process-death recovery** — Fresh acquisition and verification after the
+publishing process terminates. It proves lock release and host page-cache/file
+semantics for the observed run, but does not emulate device power loss.
+
 **Retired entry** — A retained store payload with zero semantic references and
 no active lease. It is eligible for a future separately authorized sweep only
 after an exact collection plan classifies it as collectible.

@@ -61,6 +61,11 @@ Keep these distinct:
   stream and capacity snapshot, ordered body/footer operations, sync watermarks,
   poisoned uncertainty, explicit repair decision, discarded tail, and fresh
   reopen outcome without implied operating-system durability or deletion;
+- **sweep file:** trusted directory descriptor, admitted component name,
+  device/inode/link/permission identity, exclusive lock outcome, exact
+  write/sync/truncate phase, file/directory sync result, namespace-replacement
+  decision, and fresh-process reopen without implied power-cut durability or
+  payload deletion;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;

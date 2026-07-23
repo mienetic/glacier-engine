@@ -33,6 +33,7 @@ energy, or production reliability.
 | `zig build continuation-sweep-demo -Dmetal=false` | Separately scoped plan regeneration, staging ceilings, functional prepare/abort roots, and zero payload deallocation |
 | `zig build continuation-sweep-commit-demo -Dmetal=false` | Separate destructive authority, repeated plan regeneration, canonical target removal, exact accounting, and allocator tail reclamation |
 | `zig build continuation-sweep-record-demo -Dmetal=false` | Fixed record verification, anchored tail classification, snapshot-bound append/repair capabilities, ordered sync, and deterministic crash-storage conformance |
+| `zig build continuation-sweep-file-demo -Dmetal=false` | Descriptor-relative lock/identity/sync checks and six native subprocess-death recovery boundaries |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -154,6 +155,16 @@ truncate. Append and repair capabilities expose disjoint operations, and every
 uncertain error poisons the local state until fresh lease/snapshot reopen. This
 is allocation-free deterministic storage-model evidence—not proof of real lock,
 filesystem sync, directory durability, process restart, or storage performance.
+
+The file-adapter demo adds retained host-filesystem evidence for four append
+process deaths and two repair process deaths. It verifies exclusive advisory
+locking, no-follow final lookup, one-link/private-mode admission, file and
+directory sync, identity checks, replacement detection, and fresh-descriptor
+reopen. The independent Python adapter repeats those child deaths and
+cross-process lock contention. These are correctness fixtures, not throughput
+benchmarks. They do not emulate device power loss, establish native Linux
+behavior, or justify filesystem latency, energy, RSS, or durability claims
+beyond the recorded host run.
 
 The sweep-commit demo separately encodes its actual native store receipts into
 the same 784-byte format and verifies record root `6f60f970…c7fa52`.
