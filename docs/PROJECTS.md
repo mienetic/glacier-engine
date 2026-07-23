@@ -175,10 +175,18 @@ state, segment predecessor, visible timeline, and result-link predecessor
 across a real process restart. See
 [Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md).
 
-**Next slice:** bind the terminal retained latent to a bounded generated-image
-decode and atomic media/provenance publication. Parallel contributor slices can
-add speech timestamps/speakers or external container timestamp normalization
-without weakening the fixed core contracts.
+**Completed slice:** the exact post-restart terminal latent now enters a bounded
+generated-image transaction. Fixed plan, provenance, and result wires bind the
+artifact, checkpoint, terminal plan/result/state, decoder, tenant/policy,
+resource receipt, timeline event, media commit, and publication predecessors.
+Abort and candidate drift preserve visibility; Zig/Python reject every wire
+mutation; a real target process commits the image once and returns ownership to
+zero. See [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md).
+
+**Next slices:** add speech timestamps/speakers, external container timestamp
+normalization, a production image decoder adapter, or the first generated-audio
+chunk with playback acknowledgement. Each is independently contributor-sized
+and must preserve the fixed core contracts.
 
 ### AI runtime family registry
 
@@ -225,7 +233,8 @@ releases all ownership. See
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md).
 
 **Next slice:** add a generic non-media encoder using the converged stateless
-lifecycle, or bind the terminal latent to bounded generated-image publication.
+lifecycle, or adapt a second bounded generative output while preserving the
+generated-image publication contract.
 
 ### ResourceBank property tests
 

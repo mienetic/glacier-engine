@@ -164,6 +164,13 @@ python3 -m unittest bench.tests.test_stateful_model_adapter
 zig build stateful-model-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 python3 -m unittest bench.tests.test_stateful_model_continuation
 
+# Decode that exact post-restart terminal latent and atomically publish a
+# bounded image, provenance, result, resource receipt, and media transition
+zig test src/core/generated_image_publication.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_generated_image_publication
+zig build generated-image-live-restart-demo \
+  -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

@@ -29,9 +29,9 @@ evidence. The plane and model-family sequence is specified in the
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
-| AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, and an integrated model-free image/audio/video transaction vertical | More family adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
-| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, video-segment results, canonical video timelines, exact audio/video result links, and exact latent continuation across distinct processes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, bounded generated-image publication, then richer multimodal fusion, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, explicit VFR discontinuity evidence, exact audio/video result links, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, and typed media publication | Bounded generated-image publication, richer speech metadata, external formats, then generated audio/video publication |
+| AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, integrated perception transactions, and the first restart-safe generative-media output vertical | More family adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
+| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, and generated-image publication across distinct processes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, generated audio/video, agents/retrieval, and specialized families |
+| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, and atomic media publication | Richer speech timestamps/speakers, external formats, generated-audio chunks with playback acknowledgement, then generated-video manifests |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -131,6 +131,9 @@ evidence. The plane and model-family sequence is specified in the
 - [x] Canonical stateful-model checkpoint with fresh-Bank
   charge-before-materialization restore and a real two-process latent chain
   that publishes the terminal step exactly once.
+- [x] Bounded generated-image plan, provenance, and result wires with exact
+  terminal-latent binding, atomic abort/retry publication, independent
+  mutation-complete verification, and a real two-process restart proof.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -373,8 +376,13 @@ The implementation sequence is:
    temporal-cache, and synchronized-watermark state now advances as the fifth
    object in that durable archive; exact cache payloads advance as the sixth
    object and restore under fresh-Bank ownership; and
-6. generated image/audio/video output only after cancellation, restart, and
-   provenance rules are proven.
+6. terminal-latent generated-image output now has bounded decode, exact source
+   provenance, cancellation-safe retry, atomic visibility, and a real
+   process-restart proof; production decoder and durable encoded-output
+   composition remain gated; and
+7. generated audio/video output follows only after modality-specific timeline,
+   cancellation, restart, provenance, manifest, and playback/display
+   acknowledgement rules are proven.
 
 Every modality uses content identity separate from tenant access, explicit
 decoder/preprocessing identity, exact resource admission, and provider wire

@@ -184,6 +184,10 @@ under fresh ownership in another process, and commit the terminal step exactly
 once. See
 [Stateful Model Adapter and Latent-Step Fixture](STATEFUL_MODEL_ADAPTER.md) and
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md).
+The first generative-media consumer now binds that terminal state to a bounded
+decoder and atomically publishes one raw image, provenance record, typed
+result, resource receipt, and media transition. See
+[Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md).
 
 The next stateless family work is a generic non-media encoder with typed score
 or ranked-item output.

@@ -116,6 +116,11 @@ formats, and independent verifiers.
   candidates, and publishes both together. A canonical two-step latent fixture
   checkpoints the intermediate state, reacquires it in a distinct process
   before materialization, and publishes the terminal result exactly once.
+- **Generated images after restart.** A bounded decoder turns that exact
+  terminal latent into a caller-owned image, then publishes pixels,
+  provenance, typed result, resource receipt, and media timeline atomically.
+  Abort and candidate drift preserve visible state, while a real two-process
+  proof returns every target resource to zero.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -183,6 +188,8 @@ enough:
 - fault-injection research for KV, output, RNG, and journal publication;
 - media preprocessing and streaming prototypes that need exact source ranges,
   provenance, and ordered output state;
+- generative-media runtime experiments that need terminal-state identity,
+  cancellation-safe output, and independently verifiable provenance;
 - reproducible runtime, kernel, format, and verification research.
 
 The provider context fixtures demonstrate a logical count change from 440 to
@@ -294,6 +301,7 @@ zig build media-stream-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-stream-continuation-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-stream-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-stream-checkpoint-set-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build generated-image-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -313,12 +321,12 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | AI runtime | CPU execution, optional Metal backend, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes | More family adapters, stable API, distribution and retained compatibility matrix |
-| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, stateful transcript and VFR video restart, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, and exact latent continuation across distinct processes | Generic embeddings/reranking/classification, bounded generated-image publication, richer speech metadata, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
+| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, stateful transcript and VFR video restart, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, and atomic generated-image publication across distinct processes | Generic embeddings/reranking/classification, richer speech metadata, multimodal fusion, generated audio/video, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, and typed vision/audio/video publication | Add bounded generated-image publication, richer speech timestamps/speakers, external formats, then generated audio/video publication |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, and terminal-latent generated-image publication | Add speech timestamps/speakers, external formats, generated-audio chunks with playback acknowledgement, then generated-video manifests |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -368,6 +376,7 @@ valuable as new features.
 - [Exact audio/video result link](docs/AUDIO_VIDEO_RESULT_LINK.md)
 - [Stateful audio transcript continuation](docs/AUDIO_TRANSCRIPT_CONTINUATION.md)
 - [Stateful VFR video-model continuation](docs/STATEFUL_VIDEO_CONTINUATION.md)
+- [Generated-image publication](docs/GENERATED_IMAGE_PUBLICATION.md)
 - [Stateful model adapter and latent-step fixture](docs/STATEFUL_MODEL_ADAPTER.md)
 - [Stateful model continuation](docs/STATEFUL_MODEL_CONTINUATION.md)
 - [Paging contract](docs/PAGING.md)

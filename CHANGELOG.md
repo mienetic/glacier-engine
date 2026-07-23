@@ -21,6 +21,13 @@ before the first stable release.
 
 ### Added
 
+- Generated-image publication after latent restart: fixed 736-byte plan,
+  640-byte provenance, and 704-byte result records bind artifact, checkpoint,
+  terminal plan/result/state, decoder, media, tenant, resources, and
+  publication lineage. An abort-safe transaction publishes a bounded raw image
+  atomically, an independent Python oracle rejects every wire mutation, and a
+  real target process reaches the terminal latent, retries after cancellation,
+  commits once, and releases ownership to zero.
 - Stateful VFR video-model continuation: canonical per-frame
   ordinal/PTS/duration/keyframe evidence, a fixed 48-byte retained model state,
   a 768-byte composed checkpoint, independent Python oracle, and native

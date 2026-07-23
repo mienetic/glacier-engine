@@ -57,6 +57,8 @@ energy, or production reliability.
 | `zig build audio-transcript-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, synced transcript/state/link evidence, charge-before-materialization restore, context reuse without duplicate text, exact next sample range, cross-modal link continuation, and final zero ownership |
 | `zig test src/core/latent_step_adapter.zig -OReleaseSafe` | Canonical retained-state wire, pinned model/state snapshots, buffer-alias rejection, exact latent candidate, atomic state/result publication, abort/drift preservation, and final zero ownership |
 | `zig build stateful-model-live-restart-demo -Dmetal=false` | Canonical intermediate checkpoint, distinct source/target PIDs, fresh-Bank charge-before-materialization latent restore, chained terminal plan, zero duplicate results, and final zero ownership |
+| `zig test src/core/generated_image_publication.zig -OReleaseSafe` | Fixed generated-image plan/provenance/result wires, exact terminal-latent lineage, bounded private decode, abort/drift visibility preservation, atomic image publication, mutation rejection, and final zero ownership |
+| `zig build generated-image-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, charge-before-materialization latent restore, exact terminal step, one cancelled image publication, atomic retry, bound provenance, zero duplicate images, and final zero ownership |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -109,6 +111,14 @@ distinct processes through a cross-language 512-byte checkpoint and fresh
 retained-state ownership. It does not measure generation quality, production
 scheduler fidelity, accelerator performance, crash-atomic checkpoint
 publication, or production compatibility.
+
+The generated-image fixture consumes that exact terminal lineage through a
+bounded decoder. It emits four raw gray8 pixels plus fixed provenance and result
+wires, preserves sentinel visibility through one abort, then publishes once in
+the fresh target process. This is conformance evidence for binding,
+cancellation, atomic visibility, and release—not image quality, production
+decoder compatibility, external format support, latency, throughput, memory,
+energy, or durable multi-file publication.
 
 ## Shared media contract
 

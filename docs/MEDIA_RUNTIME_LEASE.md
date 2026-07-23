@@ -123,7 +123,13 @@ The next media-runtime sequence is:
 2. ~~checkpointable stream position, fresh-generation lease reacquisition, and
    two-process next-chunk resume;~~ complete in
    [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md);
-3. crash-atomic media checkpoint archive/selection and repeated generations;
-4. typed image, audio, and video model adapters;
-5. generated-media publication with partial-output cancellation policy; and
+3. ~~crash-atomic media checkpoint archive/selection and repeated
+   generations;~~ complete in
+   [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md);
+4. ~~typed image, audio, and video model adapters;~~ complete for retained
+   exact-integer fixtures;
+5. generated-media publication with partial-output cancellation policy;
+   complete for one raw terminal-latent image through
+   [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md), while
+   generated audio/video and durable output composition remain; and
 6. external codec adapters outside the authority-free core.

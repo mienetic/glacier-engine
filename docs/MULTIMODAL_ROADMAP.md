@@ -2,11 +2,12 @@
 
 Status: **integrated model-free image/audio/video runtime plus typed
 vision/audio/temporal-video fixtures, stateful transcript and explicit-VFR
-video-model restart, bounded streaming, two-process
-continuation, crash-atomic checkpoint sets, and a post-restore generation-three
-successor; bounded processor/cache state and payloads integrated as fifth and
-sixth durable archive objects with fresh-Bank restore; production-model
-execution and external formats remain gated**.
+video-model restart, bounded streaming, generated-image publication after
+terminal-latent restart, two-process continuation, crash-atomic checkpoint
+sets, and a post-restore generation-three successor; bounded processor/cache
+state and payloads integrated as fifth and sixth durable archive objects with
+fresh-Bank restore; production-model execution and external formats remain
+gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -73,6 +74,13 @@ restores retained video-model state, publishes the exact successor segment,
 retains the gap in the canonical timeline, and advances the cross-modal link.
 External container timestamp normalization, richer subtitle semantics, and
 production quality remain gated.
+A bounded generative-image output path now verifies the exact restored
+checkpoint, terminal plan/result/state, latent digest, decoder identity,
+tenant/policy roots, and media publication predecessor before admission. It
+decodes into private buffers, preserves visibility on abort or candidate drift,
+and commits pixels, provenance, typed result, resource receipt, and media state
+together. The native fixture performs the terminal step and publication in a
+fresh process, then releases every target resource to zero.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -110,9 +118,11 @@ Multimodal execution starts after all of these continuation requirements pass:
    visible output under one declared numerical mode.
 
 Until then, the bounded model-free runtime may advance independently, while
-external decoder, model, provider, capture, playback, and generated-media paths
-remain `idea` or `prototype fixture`, never `integrated`. This is the media
-specialization of the broader
+external decoder, production model, provider, capture, and playback paths
+remain `idea` or `prototype fixture`, never `integrated`. The bounded
+terminal-latent generated-image path is integrated as runtime conformance, not
+production-model or quality evidence. This is the media specialization of the
+broader
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).
 
 ## Shared media foundation
@@ -243,7 +253,7 @@ Initial use cases:
 - image understanding and visual question answering;
 - document, chart, screenshot, and diagram analysis;
 - image-conditioned local/provider routing; and
-- later, generated-image publication through an output transaction.
+- generated-image publication through a terminal-latent output transaction.
 
 First slices:
 
@@ -263,7 +273,12 @@ First slices:
 7. ~~bounded two-region chunk publication with target continuity and retained
    outputs;~~ complete for the two retained image rows;
 8. continuation binding for processed regions and cross-attention state;
-9. generated-image chunk publication with cancellation and provenance.
+9. ~~generated-image publication with cancellation and provenance;~~ complete
+   for one bounded raw gray8 image decoded from the exact post-restart terminal
+   latent, with fixed plan/provenance/result wires, atomic abort/retry
+   visibility, and independent mutation-complete verification;
+10. multi-image/chunk manifests, production decoder integration, and
+    crash-atomic external-format composition.
 
 Promotion gate: every accepted pixel maps to an exact source region and
 preprocessing plan; orientation/color drift, decompression bombs, foreign

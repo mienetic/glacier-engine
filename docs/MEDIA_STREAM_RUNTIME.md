@@ -123,4 +123,7 @@ The first continuation layer is complete in
    image processor/cross-attention state; fixed image/audio/video processor and
    synchronized state, atomic checkpoint binding, and exact cache-payload
    restore are complete, while cross-attention and typed model state remain; and
-7. define generated-media partial-output and cancellation policy.
+7. define generated-media partial-output and cancellation policy; complete for
+   one bounded terminal-latent image through
+   [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md), while
+   generated audio/video chunks and manifest composition remain.

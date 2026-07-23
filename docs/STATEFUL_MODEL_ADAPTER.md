@@ -117,8 +117,10 @@ candidates, and release the exact claim.
 The retained fixture performs two exact steps and one distinct-process restore.
 Its checkpoint files are synced but not published through a crash-atomic
 selector. It does not provide scheduler variants, floating-point latent
-tensors, external weights, image decoding, accelerator execution,
-physical-memory measurement, model quality, or compatibility evidence.
+tensors, external weights, production image decoding, accelerator execution,
+physical-memory measurement, model quality, or compatibility evidence. A
+separate deterministic generated-image fixture now supplies bounded raw-image
+decode and atomic provenance/result publication from the exact terminal latent.
 
 The same lifecycle now also powers the exact-integer
 [Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md) and
@@ -131,15 +133,18 @@ zig test src/core/latent_step_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_stateful_model_adapter
 zig build stateful-model-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 python3 -m unittest bench.tests.test_stateful_model_continuation
+zig test src/core/generated_image_publication.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_generated_image_publication
+zig build generated-image-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig test src/core/stateful_video_adapter.zig -OReleaseSafe
 zig build video-model-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 python3 -m unittest bench.tests.test_video_model_continuation
 ```
 
 The continuation details and exact claim boundary are in
-[Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md). The next
-generative-image slice should decode the terminal latent through a bounded
-generated-media transaction with provenance.
+[Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md). The completed
+bounded output transaction and its narrower claim boundary are in
+[Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md).
 
 See [Typed Model-Family Contracts and Vision Adapter](MODEL_FAMILY_ADAPTER.md),
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md), and

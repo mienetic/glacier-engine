@@ -121,8 +121,8 @@ the processor lineage, appends one chunk per modality, publishes that successor
 atomically, and resumes it from another fresh process.
 
 It does not provide multi-writer leader election, emulate storage-device power
-loss, or carry external codecs, capture/playback, media-model state, or
-generated-media publication. Fixed family-specific audio windows, video
+loss, or carry external codecs, capture/playback, or production media-model
+state. Fixed family-specific audio windows, video
 temporal caches, image processor state, and a synchronized watermark now exist
 as an atomic stateful bundle, and exact cache payloads now restore under
 fresh-Bank ownership. Typed vision and audio fixtures now consume their live
@@ -134,4 +134,6 @@ newly publishable transcript time to its accumulated tail. Composed transcript
 and VFR video checkpoints now use the shared stateful-model lifecycle to
 publish the exact next audio range or video segment and cross-modal link in a
 fresh process. External container normalization, production-model integration,
-and generated-media publication remain.
+and generated audio/video publication remain. A separate terminal-latent path
+now publishes one bounded generated image with exact provenance; composing that
+result into this durable checkpoint set is a later slice.

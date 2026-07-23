@@ -1349,6 +1349,67 @@ pub fn build(b: *std.Build) void {
         &stateful_model_live_restart_worker_exe.step,
     );
 
+    // Reuse the retained-latent checkpoint source above, then let a distinct
+    // target process restore the intermediate state, commit the terminal
+    // latent, decode bounded raw pixels, and publish image plus provenance
+    // atomically after one cancellation-safe retry.
+    const generated_image_live_restart_worker_exe =
+        b.addExecutable(.{
+            .name = "glacier-generated-image-live-restart-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/generated_image_live_restart_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    generated_image_live_restart_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    generated_image_live_restart_worker_exe.linkLibC();
+    const generated_image_live_restart_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-generated-image-live-restart-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/generated_image_live_restart.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    const run_generated_image_live_restart_demo =
+        b.addRunArtifact(
+            generated_image_live_restart_demo_exe,
+        );
+    run_generated_image_live_restart_demo.addArtifactArg(
+        stateful_model_live_restart_worker_exe,
+    );
+    run_generated_image_live_restart_demo.addArtifactArg(
+        generated_image_live_restart_worker_exe,
+    );
+    const generated_image_live_restart_demo_step =
+        b.step(
+            "generated-image-live-restart-demo",
+            "Publish bounded generated image after model restart",
+        );
+    generated_image_live_restart_demo_step.dependOn(
+        &run_generated_image_live_restart_demo.step,
+    );
+    test_step.dependOn(
+        &run_generated_image_live_restart_demo.step,
+    );
+    test_compile_step.dependOn(
+        &generated_image_live_restart_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &generated_image_live_restart_worker_exe.step,
+    );
+
     // A stateful transcript process commits one exact sample range and syncs a
     // composed checkpoint. A distinct target process charges and materializes
     // retained state, publishes the next transcript, and advances its

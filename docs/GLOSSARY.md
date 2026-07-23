@@ -131,6 +131,12 @@ publication in which each family declares its atomic visible unit—such as a
 token, tensor, score, box, mask, transcript span, media chunk, retrieval result,
 or authorized action—and its replay, cancellation, and continuation rules.
 
+**Generated-image publication** — A bounded transaction that binds one exact
+terminal retained latent, artifact/checkpoint/model lineage, decoder identity,
+tenant/policy, and media predecessor before decoding into private storage.
+Commit makes raw pixels, provenance, typed result, resource receipt, and media
+state visible together; abort exposes none of them.
+
 **MediaObject** — A fixed pointer-free, content-addressed identity for an
 immutable image, audio, or video payload plus exact byte length, kind-specific
 axes, semantic ABI, policy, provenance, and tenant scope. It does not grant

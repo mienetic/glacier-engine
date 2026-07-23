@@ -98,18 +98,22 @@ allocator authority. It operates on caller-owned wires and buffers. The native
 worker has explicit filesystem authority only to demonstrate a real process
 boundary and ordered sync.
 
-The four files are not one crash-atomic checkpoint set, and process restart is
-not device power-loss evidence. The fixture uses unsigned-byte arithmetic,
-synthetic weights, and no image decoder. The next image-generation slice is a
-bounded terminal-latent decode and generated-image publication transaction.
+The four checkpoint files are not one crash-atomic checkpoint set, and process
+restart is not device power-loss evidence. The fixture uses unsigned-byte
+arithmetic and synthetic weights. A separate bounded image decoder now consumes
+the exact terminal latent and atomically publishes raw pixels, provenance, and
+a typed result; it remains a deterministic runtime fixture rather than image
+quality evidence.
 
 Recurrent audio transcript state and temporal video-understanding state now
 have their own scoped bindings, cancellation-safe publication, timeline/link
-lineage, and distinct-process fixtures. Generated image/audio/video publication
-remains gated behind bounded decode, provenance, cancellation, and visibility
-contracts.
+lineage, and distinct-process fixtures. Generated-image publication now meets
+the bounded decode, provenance, cancellation, and visibility gate for one raw
+image. Generated audio/video and production image decoding remain separate
+tracks.
 
 See [Stateful Model Adapter and Latent-Step Fixture](STATEFUL_MODEL_ADAPTER.md),
+[Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md),
 [Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md),
 [Stateful VFR Video-Model Continuation](STATEFUL_VIDEO_CONTINUATION.md),
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md), and

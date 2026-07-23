@@ -16,7 +16,7 @@ not.
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
-| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, and publish typed embeddings, restartable transcripts/VFR video segments, timeline decisions, cross-modal links, or retained state/result transitions only after family validation |
+| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, and publish typed embeddings, restartable transcripts/VFR video segments, timeline decisions, cross-modal links, retained state/result transitions, or terminal-latent generated images only after family validation |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -218,6 +218,14 @@ denoise-step fixture over that lifecycle. `StatefulModelContinuation` binds the
 intermediate model/state publications into a fixed checkpoint, charges a fresh
 `LeaseTree` before materializing the retained latent in another process, and
 chains the terminal step at the exact next result sequence.
+`GeneratedImagePublication` is the first generative-media consumer of that
+terminal state. Its fixed plan verifies the complete checkpoint, terminal
+plan/result/state, latent, decoder, tenant/policy, and media predecessors before
+admission. Decode occurs in disjoint private storage. Abort or drift scrubs all
+candidates; commit copies raw pixels, provenance, and the typed result while
+advancing the media timeline exactly once. The native proof performs the
+terminal step and image publication in a fresh process and closes with zero
+target ownership.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
@@ -232,7 +240,8 @@ integrations remain future layers. See
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), followed by
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md) and
 [Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md), then
-[Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md).
+[Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md), followed
+by [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md).
 
 ### ResourceBank
 
@@ -619,6 +628,9 @@ still require real machines for each promoted platform.
 - [Stateful model continuation](STATEFUL_MODEL_CONTINUATION.md): canonical
   intermediate checkpoint, fresh-Bank retained-state ownership, and exact-once
   terminal publication after a real process restart.
+- [Generated-image publication](GENERATED_IMAGE_PUBLICATION.md): bounded
+  terminal-latent decode, fixed provenance/result wires, atomic abort/retry
+  visibility, and exact release after a real process restart.
 - [Shared media contract](MEDIA_CONTRACT.md): fixed image/audio/video identity,
   exact rational positions, explicit event roots, and logical chunk
   publication.

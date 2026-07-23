@@ -99,7 +99,9 @@ The retained payloads are deterministic caller-owned fixtures. Exact
 allocator fragmentation, cache quality, or processor throughput. The runtime
 now executes only tiny exact-integer vision, audio, and temporal-video
 fixtures; it does not execute a production perception model, external codec,
-camera, microphone, or generated-media pipeline.
+camera, microphone, or production generated-media pipeline. A separate bounded
+generated-image transaction consumes the exact terminal latent without turning
+these input caches into output authority.
 
 Audio-window and temporal-video encoders now reuse these durable input, state,
 cache, and typed publication contracts while preserving the same cancellation
