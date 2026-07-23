@@ -770,6 +770,34 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_continuation_sweep_commit_demo.step);
     test_compile_step.dependOn(&continuation_sweep_commit_demo_exe.step);
 
+    // Fixed pointer-free body/footer record for one already committed sweep.
+    // The codec reconstructs and verifies the embedded grant and both receipts,
+    // then exposes an ordered append plan without performing filesystem I/O.
+    const continuation_sweep_record_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-object-sweep-record-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_object_sweep_record.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_sweep_record_demo_exe.root_module.addImport("core", core_mod);
+    const run_continuation_sweep_record_demo = b.addRunArtifact(
+        continuation_sweep_record_demo_exe,
+    );
+    const continuation_sweep_record_demo_step = b.step(
+        "continuation-sweep-record-demo",
+        "Run the fixed continuation sweep evidence-record demo",
+    );
+    continuation_sweep_record_demo_step.dependOn(
+        &run_continuation_sweep_record_demo.step,
+    );
+    test_step.dependOn(&run_continuation_sweep_record_demo.step);
+    test_compile_step.dependOn(&continuation_sweep_record_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

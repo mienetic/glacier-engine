@@ -108,7 +108,8 @@ operation or rollback path after the first deallocation.
 
 This is an atomic in-memory mutation boundary for the current single-owner
 store. It is not crash atomicity: process or power loss can interrupt memory
-mutation, and no durable record exists yet.
+mutation. A portable body/footer evidence record now exists, but no file writer,
+sync protocol, recovery policy, or durable mutation ordering exists yet.
 
 ## Canonical target set
 
@@ -259,16 +260,22 @@ production garbage-collection performance.
 
 ## Next layers
 
-1. Durable prepare/commit body-footer records with explicit crash points.
-2. Recovery that distinguishes unstarted, prepared, committed, and ambiguous
+1. ~~Fixed body/footer sweep commit evidence record.~~ Implemented as a
+   784-byte pointer-free wire with chain fields and semantic receipt
+   reconstruction; it performs no I/O.
+2. Pure recovery classification followed by a durable writer with explicit
+   crash points.
+3. Recovery that distinguishes unstarted, prepared, committed, and ambiguous
    durable states without double deallocation.
-3. Durable retirement and file-publication ordering.
-4. Multi-bundle and parent-checkpoint reachability composition.
-5. Allocator campaigns covering non-tail reuse, fragmentation, RSS, and peak
+4. Durable retirement and file-publication ordering.
+5. Multi-bundle and parent-checkpoint reachability composition.
+6. Allocator campaigns covering non-tail reuse, fragmentation, RSS, and peak
    memory without conflating them with logical accounting.
-6. ResourceBank/LeaseTree reacquisition and end-to-end continuation restore.
+7. ResourceBank/LeaseTree reacquisition and end-to-end continuation restore.
 
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 non-destructive prepare/abort boundary and
 [Continuation Object Collection Plan](CONTINUATION_OBJECT_COLLECTION.md) for
-eligibility evidence.
+eligibility evidence, and
+[Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for the
+portable commit-evidence format and its non-durable boundary.

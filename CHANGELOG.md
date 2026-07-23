@@ -43,6 +43,9 @@ before the first stable release.
   complete plan regeneration, canonical retired-target validation, exact
   before/after accounting, allocator-call evidence, and matching Zig/Python
   roots.
+- Fixed 784-byte continuation sweep evidence record with body/footer framing,
+  record chaining, semantic reconstruction of the commit grant and both
+  receipts, pinned expectation checks, and independent Zig/Python fixtures.
 
 ### Status
 

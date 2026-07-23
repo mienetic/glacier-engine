@@ -194,6 +194,12 @@ coordination, liveness, or exactly-once execution.
    after all checks pass.~~ Implemented in memory.
 2. ~~Exact post-commit snapshot, allocator, entry, index, and payload accounting
    bound into a sweep receipt.~~ Implemented with independent verification.
-3. Durable body/footer publication with crash points before and after commit.
-4. Multi-bundle and parent-checkpoint reachability composition.
-5. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+3. ~~Fixed body/footer record carrying one committed sweep.~~ Implemented with
+   semantic receipt reconstruction and no filesystem authority.
+4. Pure recovery classification and durable publication with crash points
+   before and after the footer.
+5. Multi-bundle and parent-checkpoint reachability composition.
+6. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+
+See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
+the fixed evidence wire and the remaining durability boundary.

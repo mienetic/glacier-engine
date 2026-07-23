@@ -32,6 +32,7 @@ energy, or production reliability.
 | `zig build continuation-collection-demo -Dmetal=false` | Exact root multiplicity, complete lease coverage, bounded classification, and a non-mutating collection-plan root |
 | `zig build continuation-sweep-demo -Dmetal=false` | Separately scoped plan regeneration, staging ceilings, functional prepare/abort roots, and zero payload deallocation |
 | `zig build continuation-sweep-commit-demo -Dmetal=false` | Separate destructive authority, repeated plan regeneration, canonical target removal, exact accounting, and allocator tail reclamation |
+| `zig build continuation-sweep-record-demo -Dmetal=false` | Fixed 784-byte body/footer record, semantic receipt reconstruction, chain expectation, and mutation/foreign-record rejection |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -125,6 +126,17 @@ and post-state roots. This proves exact atomic single-owner in-memory removal
 for the fixture. The 39-byte allocator delta is a tail-layout observation—not a
 general allocator, fragmentation, RSS, secure-erasure, durability, or garbage-
 collection throughput result.
+
+The sweep-record fixture encodes that transition evidence as a fixed 736-byte
+body and 48-byte commit footer. Zig and Python share the record root
+`a9adfd09…bba06` and complete-wire SHA-256 `3b3fb1ad…d7c6d3`. Both reject every
+one-byte mutation across 784 positions, every truncation, an extension, a
+correctly rehashed accounting contradiction, and a valid foreign record under a
+pinned expectation. This proves the codec and semantic verifier for the named
+fixture. It is not a filesystem throughput, sync latency, crash recovery, or
+durability result; the append plan performs no I/O.
+The sweep-commit demo separately encodes its actual native store receipts into
+the same 784-byte format and verifies record root `6f60f970…c7fa52`.
 
 ## Provider evidence checkpoint
 

@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit | Bind a checkpoint, admit tenant objects, own bounded payloads, and separate collection evidence, staging, and destructive authority |
+| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record | Bind a checkpoint, own bounded tenant payloads, separate collection/staging/destructive authority, and carry portable commit evidence |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -55,7 +55,8 @@ validated model + request
                                               │
                                               └─ sweep prepare/abort ──> staged evidence
                                                           │
-                                                          └─ scoped commit ──> exact removal receipt
+                                                          └─ scoped atomic commit ──> exact removal receipt
+                                                               └─ fixed body/footer evidence record
 ```
 
 ### ResourceBank
@@ -186,6 +187,14 @@ receipt binding post-state, payload/index release, and allocator call count.
 This is an atomic single-owner in-memory suffix, not durable crash recovery,
 secure erase, or a process-RSS claim.
 
+The sweep-record codec is the next authority boundary. It encodes one verified
+commit as a fixed 736-byte body plus a separate 48-byte footer. Decoding
+reconstructs the commit grant, store receipt, and outer receipt and rechecks
+their semantic accounting; exact expectations reject a valid record from a
+different chain position. The append plan returns body and footer slices only.
+It does not open, write, sync, truncate, delete, or recover files, so the format
+is durable-ready evidence rather than a durable state machine.
+
 ## Provider execution flow
 
 ```text
@@ -280,4 +289,6 @@ still require real machines for each promoted platform.
   capability-scoped prepare/abort staging without deallocation.
 - [Continuation object sweep commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md):
   separately authorized exact retired-target removal and accounting evidence.
+- [Continuation object sweep record](CONTINUATION_OBJECT_SWEEP_RECORD.md):
+  fixed body/footer commit evidence and chain verification without file I/O.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

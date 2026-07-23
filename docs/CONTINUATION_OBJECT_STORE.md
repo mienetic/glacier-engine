@@ -199,6 +199,7 @@ zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-sweep-record-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
 Run the independent state model:
@@ -207,6 +208,7 @@ Run the independent state model:
 python3 -m unittest bench.tests.test_continuation_object_store
 python3 -m unittest bench.tests.test_continuation_object_collection
 python3 -m unittest bench.tests.test_continuation_object_sweep
+python3 -m unittest bench.tests.test_continuation_object_sweep_record
 ```
 
 The suites cover exact cross-language store/lifecycle/repair grant and receipt
@@ -217,8 +219,8 @@ allocator rollback, missing reads, corruption, quarantine fencing, repair-source
 and reason rejection, retirement, exact root/lease coverage, collection budgets,
 dry-run immutability, sweep plan regeneration, prepare/abort journal tamper and
 stale-snapshot rejection, canonical retired-target commit, exact before/after
-accounting, double-commit rejection, and output/source overlap with store
-memory.
+accounting, double-commit rejection, fixed body/footer encoding, semantic record
+verification, and output/source overlap with store memory.
 
 ## Security and authority boundary
 
@@ -244,7 +246,12 @@ memory.
 3. ~~Destructive sweep commit with exact allocator/accounting evidence.~~
    Implemented in memory with canonical targets, complete pre-mutation checks,
    and matching Zig/Python roots.
-4. Replica adapter with independently verified repair transport.
-5. Atomic filesystem publication and crash recovery.
-6. Resource and paged-KV ownership reacquisition.
-7. End-to-end restart and paired physical-resource campaigns.
+4. ~~Fixed sweep commit evidence record.~~ Implemented as a pointer-free
+   body/footer wire without filesystem authority.
+5. Replica adapter with independently verified repair transport.
+6. Atomic filesystem publication and crash recovery.
+7. Resource and paged-KV ownership reacquisition.
+8. End-to-end restart and paired physical-resource campaigns.
+
+See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
+the portable commit evidence and non-durable append plan.

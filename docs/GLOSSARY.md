@@ -43,6 +43,11 @@ retired targets before mutation, deallocates exactly that set, and binds exact
 before/after store accounting into verifiable receipts. It does not imply
 durability, secure erase, or lower process RSS.
 
+**Continuation object sweep record** — A fixed pointer-free body/footer wire
+that carries one sweep commit's chain position and enough canonical fields to
+reconstruct and verify its grant and receipts. Its ordered append plan grants no
+filesystem, deletion, recovery, or durability authority.
+
 **Retired entry** — A retained store payload with zero semantic references and
 no active lease. It is eligible for a future separately authorized sweep only
 after an exact collection plan classifies it as collectible.

@@ -25,7 +25,7 @@ transactional state publication, and independently verifiable evidence.
 | Hierarchical ownership | Integrated | LeaseTree child scopes and paged-KV publication fences | Cross-worker and durable ownership identity |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
-| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, leases/repair, retirement, collection evidence, sweep staging, atomic in-memory commit, Zig/Python verification | Durable sweep publication/recovery, ownership reacquisition, and live restore |
+| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, leases/repair, retirement, collection evidence, atomic in-memory sweep, fixed body/footer evidence record, Zig/Python verification | Durable writer/recovery policy, ownership reacquisition, and live restore |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
@@ -56,6 +56,9 @@ transactional state publication, and independently verifiable evidence.
 - [x] Separately scoped destructive sweep commit with canonical targets, full
   pre-mutation validation, exact before/after accounting, allocator-call
   evidence, and cross-language roots.
+- [x] Fixed 784-byte sweep evidence record with chain fields, separate commit
+  footer, semantic receipt reconstruction, pinned expectations, and independent
+  Zig/Python mutation-complete verification.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -104,7 +107,14 @@ Next slices:
    Complete in memory with a second capability, repeated plan regeneration,
    canonical target derivation, a no-failure mutation suffix, replay rejection,
    and independent verification.
-10. Durable sweep and file-publication crash-recovery state machine.
+10. Durable sweep and file-publication crash-recovery state machine:
+    - ~~fixed pointer-free body/footer evidence record;~~ complete as a 784-byte
+      format with record chaining and semantic receipt reconstruction;
+    - pure recovery classifier over concatenated records and incomplete tails;
+    - directory-capability writer with locking, ordered sync, uncertain-writer
+      poisoning, and bounded repair policy;
+    - crash campaign joining durable publication to destructive transition
+      ordering.
 11. ResourceBank/LeaseTree reacquisition without duplicated ownership.
 12. Paged-KV restore with foreign-generation rejection.
 13. End-to-end process restart between two token publications.
@@ -114,13 +124,15 @@ no duplicated output, no orphaned ownership, and crash coverage at every durable
 phase.
 
 The current capsule, resolver, bundle, store, lifecycle receipts, collection
-plan, sweep journal, and sweep commit form identity, least-authority lookup,
-canonical planning, bounded payload ownership, and a deterministic destructive
-in-memory boundary—not a saved session. The fixture avoids one 25-byte duplicate
-payload allocation and the commit fixture reclaims a 39-byte allocator tail,
-but lifecycle metadata, fixed index, and backing capacity remain larger than
-those deltas. No lower RSS, disk use, or restart latency is claimed. Those
-require compact index experiments, durable integration, ownership
+plan, sweep journal, sweep commit, and body/footer evidence record form identity,
+least-authority lookup, canonical planning, bounded payload ownership, a
+deterministic destructive in-memory boundary, and portable commit evidence—not
+a saved session. The record exposes the order a future writer must use but does
+not write, sync, truncate, delete, or recover files. The fixture avoids one
+25-byte duplicate payload allocation and the commit fixture reclaims a 39-byte
+allocator tail, but lifecycle metadata, fixed index, and backing capacity remain
+larger than those deltas. No lower RSS, disk use, or restart latency is claimed.
+Those require compact index experiments, durable integration, ownership
 reacquisition, and complete physical measurements.
 
 ### Evidence inspection
@@ -355,7 +367,9 @@ First slices:
 - ~~retained retirement plus exact reachability and dry-run collection evidence;~~
 - ~~separately scoped sweep prepare/abort with plan regeneration and no free;~~
 - ~~destructive sweep commit with exact allocator/accounting evidence;~~
-- durable sweep recovery across every publication crash point;
+- ~~fixed sweep body/footer evidence format;~~
+- pure recovery classification followed by durable sweep recovery across every
+  publication crash point;
 - trusted replica transport with independently verified fetch evidence;
 - optional encrypted storage adapter whose ciphertext identity is separate from
   semantic content identity.

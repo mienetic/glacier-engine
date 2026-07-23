@@ -171,9 +171,11 @@ capsule substitution, and changed resolved output.
    regeneration and cross-language journal roots.
 5. ~~Destructive sweep commit with exact allocator/accounting evidence.~~
    Implemented as a separately authorized atomic in-memory transition.
-6. Atomic bundle publication and crash recovery.
-7. ResourceBank/LeaseTree and paged-KV reacquisition.
-8. End-to-end restart with paired physical measurements.
+6. ~~Fixed body/footer sweep commit evidence record.~~ Implemented without
+   filesystem or recovery authority.
+7. Atomic bundle publication and crash recovery.
+8. ResourceBank/LeaseTree and paged-KV reacquisition.
+9. End-to-end restart with paired physical measurements.
 
 Each layer must preserve the separation between content identity, access
 authority, live resource ownership, and token publication authority.
@@ -188,3 +190,5 @@ See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
 the exact retired-target removal and accounting boundary.
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 non-destructive prepare/abort staging boundary.
+See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
+the portable commit evidence and its non-durable boundary.

@@ -229,13 +229,17 @@ reachability.
    regeneration, exact staging ceilings, functional values, and no deallocation.
 2. ~~Destructive commit with exact post-sweep allocator/accounting evidence.~~
    Implemented in memory with a separate grant and repeated plan regeneration.
-3. Crash-safe durable publication and recovery of retirement/sweep decisions.
-4. Multi-bundle and parent-checkpoint reachability composition.
-5. Replica transport that keeps admission, verification, and deletion authority
+3. ~~Fixed body/footer commit evidence record.~~ Implemented without file or
+   recovery authority.
+4. Crash-safe durable publication and recovery of retirement/sweep decisions.
+5. Multi-bundle and parent-checkpoint reachability composition.
+6. Replica transport that keeps admission, verification, and deletion authority
    separate.
-6. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+7. ResourceBank/LeaseTree reacquisition and end-to-end restart.
 
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 implemented staging boundary and
 [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for the
-destructive boundary.
+destructive boundary, and
+[Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for the
+portable commit evidence.

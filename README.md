@@ -48,6 +48,10 @@ formats, and independent verifiers.
   regenerated before staging, then a distinct commit grant authorizes only the
   exact canonical retired set. Receipts bind before/after snapshots and exact
   entry, payload, index, and allocator-call accounting.
+- **Portable sweep evidence.** A fixed 784-byte body/footer record reconstructs
+  and verifies the commit grant plus both receipts, rejects foreign chain
+  positions, and exposes an ordered future append plan without receiving file,
+  deletion, or recovery authority.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
@@ -95,6 +99,7 @@ request
                                      ├─ lease, quarantine, repair
                                      ├─ retire + collection plan
                                      └─ sweep prepare/abort + atomic commit
+                                        └─ fixed body/footer evidence record
 
 provider request
   │
@@ -129,6 +134,7 @@ zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-sweep-record-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -148,7 +154,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging, and atomic in-memory sweep commit | Durable sweep publication/recovery, ownership reacquisition, and restart |
+| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, and a fixed sweep evidence record | Durable writer/recovery policy, ownership reacquisition, and restart |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
@@ -194,6 +200,7 @@ valuable as new features.
 - [Continuation object collection plan](docs/CONTINUATION_OBJECT_COLLECTION.md)
 - [Continuation object sweep journal](docs/CONTINUATION_OBJECT_SWEEP.md)
 - [Continuation object sweep commit](docs/CONTINUATION_OBJECT_SWEEP_COMMIT.md)
+- [Continuation object sweep record](docs/CONTINUATION_OBJECT_SWEEP_RECORD.md)
 - [Glossary](docs/GLOSSARY.md)
 
 Research tracks are documented separately in

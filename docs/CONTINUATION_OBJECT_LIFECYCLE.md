@@ -223,8 +223,10 @@ layout. These are compile-target layout observations, not RSS measurements.
 zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-sweep-record-demo -Doptimize=ReleaseSafe -Dmetal=false
 python3 -m unittest bench.tests.test_continuation_object_store
 python3 -m unittest bench.tests.test_continuation_object_sweep
+python3 -m unittest bench.tests.test_continuation_object_sweep_record
 ```
 
 Native and independent tests cover:
@@ -248,8 +250,10 @@ savings, replica trust, secure erasure, or end-to-end restart.
    separate capability, plan regeneration, and no deallocation.
 2. ~~Destructive sweep commit with exact allocator/accounting evidence.~~
    Implemented as an atomic single-owner in-memory suffix.
-3. Replica transport separated from repair admission and content verification.
-4. Durable transition journal with crash points before and after publication.
-5. ResourceBank/LeaseTree ownership reacquisition using generation-linked
+3. ~~Fixed body/footer sweep evidence record.~~ Implemented with independent
+   verification and no filesystem authority.
+4. Replica transport separated from repair admission and content verification.
+5. Durable transition journal with crash points before and after publication.
+6. ResourceBank/LeaseTree ownership reacquisition using generation-linked
    receipts.
-6. Paged-KV restore and end-to-end restart without duplicated output.
+7. Paged-KV restore and end-to-end restart without duplicated output.

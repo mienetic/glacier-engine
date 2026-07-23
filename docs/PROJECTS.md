@@ -95,13 +95,19 @@ into core.
 The in-memory path now separates collection planning, prepare/abort staging, and
 destructive commit capabilities. Commit regenerates the plan, validates every
 canonical retired target before mutation, emits exact before/after accounting,
-and rejects replay against the changed snapshot. No durable record exists yet.
+and rejects replay against the changed snapshot. A fixed 784-byte body/footer
+record now carries the canonical commit evidence, reconstructs both receipts,
+and passes independent Zig/Python mutation-complete verification. It performs no
+filesystem I/O and does not make the transition durable.
 
-**First slice:** specify a fixed pointer-free body/footer record that binds the
-existing sweep grant, prepare, commit grant, target-set, store-commit, and before/
-after snapshot roots. Add Zig and independent Python encode/decode fixtures with
-truncation, extension, mutation, and valid-foreign-record rejection. Keep file
-writes, payload deletion, and recovery policy out of this slice.
+**Completed slice:** fixed pointer-free evidence record, separate commit footer,
+chain position, exact pinned expectations, semantic receipt reconstruction, and
+cross-language golden fixtures.
+
+**Next slice:** implement a pure recovery classifier over concatenated record
+bytes. It must identify a clean committed prefix, a short body tail, a complete
+body missing its footer, and a corrupt complete record. Return classification
+and safe-prefix length only; do not open, truncate, sync, or modify files.
 
 ### Resolver adversarial fixtures
 

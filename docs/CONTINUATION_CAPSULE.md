@@ -157,10 +157,12 @@ trusting a historical receipt as live authority.
    regeneration, a separate capability, and zero payload deallocation.
 6. ~~Destructive sweep commit with exact allocator/accounting evidence.~~
    Implemented as a separately authorized atomic in-memory transition.
-7. Atomic manifest/bundle publication and crash recovery.
-8. Resource and page ownership reacquisition.
-9. Live restore between two transactional token publications.
-10. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
+7. ~~Fixed body/footer sweep commit evidence record.~~ Implemented without
+   filesystem, deletion, or recovery authority.
+8. Atomic manifest/bundle publication and crash recovery.
+9. Resource and page ownership reacquisition.
+10. Live restore between two transactional token publications.
+11. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
 
 Each layer must keep manifest identity separate from storage and execution
 authority.
@@ -177,3 +179,5 @@ See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for
 capability-scoped non-destructive staging.
 See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
 the exact retired-target removal and accounting boundary.
+See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
+the fixed portable commit evidence and its non-durable boundary.

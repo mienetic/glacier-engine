@@ -154,6 +154,14 @@ The receipt distinguishes logical payload/index release, allocator `free` call
 count, and post-state identity. It does not equate any of them with RSS,
 durability, secure erase, or crash-atomic execution.
 
+Portable sweep evidence is a separate step from both mutation and durability.
+The fixed record stores the minimum canonical fields needed to reconstruct the
+commit grant and both receipts, repeats its body root in a commit footer, and
+binds epoch, sequence, previous record, and an exact expectation. Verification
+replays semantic accounting rather than accepting a correctly rehashed
+contradiction. The codec can describe a future body-then-footer append order but
+cannot write, sync, repair, delete, or recover storage.
+
 ### State machines fail closed
 
 Named errors are preferable to implicit recovery when the correct alternative is

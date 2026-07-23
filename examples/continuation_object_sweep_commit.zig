@@ -6,6 +6,7 @@ const capsule = core.continuation_capsule;
 const bundle = core.continuation_bundle;
 const object_store = core.continuation_object_store;
 const sweep = core.continuation_object_sweep;
+const sweep_record = core.continuation_object_sweep_record;
 
 pub fn main() !void {
     const objects = demoObjects();
@@ -185,6 +186,29 @@ pub fn main() !void {
         else => return err,
     }
 
+    const record_input: sweep_record.InputV1 = .{
+        .record_epoch = 0x5357_4545_5000_0001,
+        .sequence = 1,
+        .previous_record_sha256 = capsule.zero_digest,
+        .record_challenge_sha256 = [_]u8{0xd8} ** 32,
+        .commit_grant = commit_grant,
+        .commit_receipt = committed.receipt,
+        .store_receipt = committed.store_receipt,
+    };
+    var record_storage: [sweep_record.encoded_bytes]u8 = undefined;
+    const record_wire = try sweep_record.encodeV1(
+        record_input,
+        &record_storage,
+    );
+    const record_decoded = try sweep_record.decodeV1(record_wire);
+    _ = try sweep_record.decodeAndVerifyV1(
+        record_wire,
+        try sweep_record.expectationV1(
+            record_input,
+            record_decoded.record_sha256,
+        ),
+    );
+
     const sweep_grant_hex = std.fmt.bytesToHex(
         try sweep.grantRootV1(sweep_grant),
         .lower,
@@ -218,6 +242,10 @@ pub fn main() !void {
         committed.receipt.snapshot_after_sha256,
         .lower,
     );
+    const record_hex = std.fmt.bytesToHex(
+        record_decoded.record_sha256,
+        .lower,
+    );
     var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
@@ -242,6 +270,9 @@ pub fn main() !void {
             "\"filesystem_authority\":false," ++
             "\"network_authority\":false,\"clock_authority\":false," ++
             "\"durable\":false,\"secure_erase\":false," ++
+            "\"sweep_record_bytes\":{d}," ++
+            "\"sweep_record_verified\":true," ++
+            "\"sweep_record_filesystem_authority\":false," ++
             "\"sweep_grant_sha256\":\"{s}\"," ++
             "\"collection_plan_sha256\":\"{s}\"," ++
             "\"prepare_sha256\":\"{s}\"," ++
@@ -249,6 +280,7 @@ pub fn main() !void {
             "\"targets_sha256\":\"{s}\"," ++
             "\"store_commit_sha256\":\"{s}\"," ++
             "\"commit_sha256\":\"{s}\"," ++
+            "\"sweep_record_sha256\":\"{s}\"," ++
             "\"snapshot_before_sha256\":\"{s}\"," ++
             "\"snapshot_after_sha256\":\"{s}\",\"verified\":true}}\n",
         .{
@@ -265,6 +297,7 @@ pub fn main() !void {
             store.payload_bytes,
             @sizeOf(sweep.JournalV1),
             store.statsV1().native_store_bytes,
+            record_wire.len,
             &sweep_grant_hex,
             &plan_hex,
             &prepare_hex,
@@ -272,6 +305,7 @@ pub fn main() !void {
             &targets_hex,
             &store_commit_hex,
             &commit_hex,
+            &record_hex,
             &before_hex,
             &after_hex,
         },

@@ -184,10 +184,12 @@ extension, capsule substitution, and overlapping native output storage.
    capability, plan regeneration, and no deallocation.
 5. ~~Destructive sweep commit with exact allocator/accounting evidence.~~
    Implemented as a separately authorized atomic in-memory transition.
-6. Compact/dynamic index experiment with full overhead measurement.
-7. Atomic bundle publication and crash recovery.
-8. Resource and paged-KV ownership reacquisition.
-9. End-to-end restart and paired physical-resource campaigns.
+6. ~~Fixed body/footer sweep commit evidence record.~~ Implemented without
+   filesystem, deletion, or recovery authority.
+7. Compact/dynamic index experiment with full overhead measurement.
+8. Atomic bundle publication and crash recovery.
+9. Resource and paged-KV ownership reacquisition.
+10. End-to-end restart and paired physical-resource campaigns.
 
 The store must preserve the distinction between semantic identity, tenant-bound
 blob identity, access authority, live ownership, and publication authority.
@@ -200,3 +202,5 @@ See [Continuation Object Collection Plan](CONTINUATION_OBJECT_COLLECTION.md)
 for the implemented dry-run evidence boundary.
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 implemented prepare/abort staging boundary.
+See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
+the fixed portable commit evidence and non-durable append plan.

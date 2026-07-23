@@ -53,6 +53,9 @@ Keep these distinct:
   targets, regenerated plan, before/after snapshots and logical accounting,
   freed entry/payload/index totals, and allocator deallocation calls without an
   implied RSS reduction, secure erase, or durability;
+- **sweep record:** fixed body/footer bytes, epoch/sequence/previous root,
+  reconstructed grant and receipts, semantic accounting verification, and an
+  ordered append plan without implied file writes, sync, recovery, or durability;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;
