@@ -22,10 +22,10 @@ transactional state publication, and independently verifiable evidence.
 | Track | Status | What works now | Main gap |
 | --- | --- | --- | --- |
 | Exact admission | Integrated | ResourceBank receipts, capacity rejection, release, snapshots | Physical telemetry adapters and long-running pressure campaigns |
-| Hierarchical ownership | Integrated | LeaseTree child scopes, paged-KV publication fences, and fresh-Bank checkpoint reacquisition | Cross-worker handoff and live paged-KV restore |
+| Hierarchical ownership | Integrated | LeaseTree child scopes, publication fences, fresh-Bank reacquisition, and generation-remapped paged-KV restore | Cross-worker handoff and end-to-end live restart |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
-| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, collection/sweep evidence, durable payload snapshots, seven-boundary copy-on-write recovery, and canonical ResourceBank/LeaseTree reacquisition | Paged-KV restore and live restart |
+| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, durable payload recovery, canonical ownership reacquisition, and generation-remapped paged-KV reconstruction | Sampler/output composition and live restart |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Multimodal execution | Planned and gated | Shared image/audio/video architecture and contributor slices are specified; no media execution is integrated | Enter only after the durable-continuation promotion gate |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
@@ -78,6 +78,9 @@ transactional state publication, and independently verifiable evidence.
 - [x] Canonical ownership manifest with fresh-epoch ResourceBank/LeaseTree
   reacquisition, charge-before-materialization ordering, exact restored
   publication sequence, and independent mutation-complete verification.
+- [x] Canonical paged-KV images with durable membership, complete source-chain
+  validation, atomic fresh-cache reconstruction, new target generations, and
+  independent mutation-complete verification.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -154,7 +157,11 @@ Next slices:
     verifies typed reconstructed bytes before making nodes live, restores the
     exact next publication sequence, and rejects same-Bank replay plus stale
     source receipts.
-12. Paged-KV restore with foreign-generation rejection.
+12. ~~Paged-KV restore with foreign-generation rejection.~~ Complete as
+    committed-row page images that rebuild an actual fresh `PagedKVCache`,
+    preserve the logical KV root, remap cache/page generations, require exact
+    durable membership and ownership claims, and reject stale source refs before
+    publication.
 13. End-to-end process restart between two token publications.
 
 Promotion gate: byte-identical continuation of the selected deterministic mode,
@@ -169,10 +176,11 @@ safe in-memory runtime reacquisition—not a saved session. The adapters perform
 real file/directory sync, locking, identity checks, and subprocess-death
 recovery on the macOS host. The ownership plan then binds the durable payload
 root to a new Bank epoch and restores charged LeaseTree nodes before they become
-live. Object-store lease/quarantine/repair metadata, real paged-KV mapping, and
-visible request execution are not restored yet. Process death is not power loss,
-and Linux has compile evidence rather than a retained native filesystem
-campaign.
+live. Canonical page images then rebuild an actual paged-KV map under fresh
+cache/page generations while preserving the logical KV hash. Object-store
+lease/quarantine/repair metadata, sampler/RNG/output composition, and visible
+request execution are not restored yet. Process death is not power loss, and
+Linux has compile evidence rather than a retained native filesystem campaign.
 The fixture avoids one 25-byte duplicate payload allocation and the commit
 fixture reclaims a 39-byte allocator tail, but lifecycle metadata, fixed index,
 and backing capacity remain larger than those deltas. No lower RSS, disk use, or
@@ -451,7 +459,9 @@ First slices:
 - ~~canonical durable ownership plan plus fresh-epoch ResourceBank/LeaseTree
   reacquisition without same-Bank duplication;~~ complete as a model-free
   prototype;
-- paged-KV generation and page-map restore under reacquired ownership;
+- ~~paged-KV generation and page-map restore under reacquired ownership;~~
+  complete as a model-free actual-cache prototype;
+- sampler/RNG/output composition and end-to-end visible restart;
 - native Linux filesystem campaigns across evidence and payload transitions;
 - trusted replica transport with independently verified fetch evidence;
 - optional encrypted storage adapter whose ciphertext identity is separate from

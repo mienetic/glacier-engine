@@ -68,6 +68,9 @@ before the first stable release.
   fresh-epoch ResourceBank/LeaseTree reacquisition, exact restored publication
   sequence, charge-before-materialization ordering, explicit abort, and
   mutation-complete Zig/Python verification.
+- Canonical paged-KV page images with durable payload membership, complete
+  source ownership-chain verification, atomic fresh-cache reconstruction, new
+  target generations, and stale source-ref rejection.
 - A gated multimodal roadmap for a shared media identity/timeline/transaction
   substrate followed by bounded image, streaming audio, and video execution.
 

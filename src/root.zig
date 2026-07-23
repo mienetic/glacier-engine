@@ -107,6 +107,8 @@ pub const fixture_gen = @import("fixture_gen.zig");
 pub const kv_cache = @import("kv_cache.zig");
 pub const paged_kv_cache = @import("paged_kv_cache.zig");
 pub const leased_paged_kv_cache = @import("leased_paged_kv_cache.zig");
+pub const continuation_paged_kv_restore =
+    @import("continuation_paged_kv_restore.zig");
 pub const paged_lease_token_txn = @import("paged_lease_token_txn.zig");
 pub const paged_attention = @import("paged_attention.zig");
 pub const paged_elastic_token_txn = @import("paged_elastic_token_txn.zig");

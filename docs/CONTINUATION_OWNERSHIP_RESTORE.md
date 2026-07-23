@@ -1,8 +1,9 @@
 # Continuation Ownership Restore v1
 
 Status: prototype. The wire contract and model-free reacquisition path are
-implemented and independently verified. Paged-KV byte restoration and
-end-to-end live request restart remain later stages.
+implemented and independently verified. The next layer now restores paged-KV
+bytes into fresh cache/page generations; end-to-end live request restart
+remains a later stage.
 
 ## Purpose
 
@@ -172,7 +173,7 @@ are not yet restored through this plan.
 
 It does not yet prove:
 
-- reconstruction of real paged-KV mappings or accelerator allocations;
+- accelerator allocation reconstruction;
 - RNG, sampler, tokenizer, or output-journal byte restoration;
 - an end-to-end process restart between token publications;
 - cross-process prevention if an operator reuses one target epoch;
@@ -180,6 +181,9 @@ It does not yet prove:
 - native Linux filesystem recovery; or
 - lower latency, memory use, disk use, token use, or energy.
 
-The next implementation slice joins allocation entries to paged-KV page images,
-rebuilds page-map generations under the reacquired nodes, and rejects foreign
-or stale page generations before any publication can begin.
+The implemented
+[paged-KV restore layer](CONTINUATION_PAGED_KV_RESTORE.md) joins allocation
+entries to canonical page images, rebuilds page-map generations under the
+reacquired nodes, and rejects foreign or stale page generations before any
+publication can begin. Sampler/RNG/output composition and visible process
+restart are the next continuation boundary.

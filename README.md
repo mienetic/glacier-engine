@@ -29,6 +29,9 @@ formats, and independent verifiers.
   weighted service with replayable decisions and fail-closed permits.
 - **Paged KV ownership.** Physical page identity, generations, references, and
   publication fences are bound into token receipts.
+- **Generation-remapped KV restore.** Canonical committed-row images rebuild a
+  fresh paged cache under charged ownership; historical cache/page generations
+  remain stale evidence and never become target authority.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -237,6 +240,7 @@ valuable as new features.
 - [Continuation object sweep file adapter](docs/CONTINUATION_OBJECT_SWEEP_FILE.md)
 - [Continuation object payload file](docs/CONTINUATION_OBJECT_PAYLOAD_FILE.md)
 - [Continuation ownership restore](docs/CONTINUATION_OWNERSHIP_RESTORE.md)
+- [Continuation paged-KV restore](docs/CONTINUATION_PAGED_KV_RESTORE.md)
 - [Multimodal roadmap](docs/MULTIMODAL_ROADMAP.md)
 - [Glossary](docs/GLOSSARY.md)
 

@@ -92,6 +92,11 @@ scopes, allocation identities, materialized-object roots, and the next
 publication sequence. It enables logical ownership reacquisition but does not
 restore runtime object contents by itself.
 
+**Paged-KV checkpoint remap** — Verification of a complete historical
+page-root/ref chain followed by reconstruction into a new cache instance and
+new page ownership generations. Source refs remain stale evidence rather than
+being promoted into live target authority.
+
 **MediaObject** — Planned content-addressed identity for an immutable image,
 audio, or video payload plus its bounded semantic metadata. It does not grant
 file, network, camera, or microphone access.

@@ -197,13 +197,22 @@ rejects same-Bank replay plus the old source receipt. Zig and Python share
 ownership root `59c777c9…fe68f394f` and reject mutation of every serialized
 position plus a re-rooted semantic contradiction.
 
+The paged-KV fixture adds two layers, dimension two, and 17 committed positions
+across two real page allocations. It reconstructs the complete source
+ownership chain from durable page images, restores the same logical KV
+SHA-256 into a fresh cache instance, emits new target page generations, and
+rejects source refs in the target. A changed source generation leaves a probe
+cache fresh and publication remains blocked while ownership is pending. The
+shared 752-byte codec fixture has root `e052306f…3437d1e4` and mutation-complete
+Zig/Python coverage.
+
 Together these fixtures prove canonical payload-byte encoding, exact target
 reconstruction, copy-on-write ordering, fresh-process old/new reconciliation,
-and safe model-free logical ownership reacquisition on the retained host. They
-do not restore real paged-KV mappings, object-store lifecycle metadata,
-accelerator allocations, or a live request; emulate device power loss;
-establish native Linux filesystem behavior; or measure disk use, latency, RSS,
-or energy.
+safe logical ownership reacquisition, and model-free paged-KV reconstruction on
+the retained host. They do not restore object-store lifecycle metadata,
+sampler/output state, accelerator allocations, or a live request; emulate
+device power loss; establish native Linux filesystem behavior; or measure disk
+use, latency, RSS, or energy.
 
 ## Provider evidence checkpoint
 

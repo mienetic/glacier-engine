@@ -21,6 +21,7 @@ pub const page_map_root_abi: u64 = 0x4750_4d52_0000_0001;
 pub const row_txn_abi: u64 = 0x4750_5254_0000_0001;
 pub const row_allocation_plan_abi: u64 = 0x4750_4150_0000_0001;
 pub const retirement_reclaim_plan_abi: u64 = 0x4750_5250_0000_0001;
+pub const checkpoint_restore_abi: u64 = 0x4750_4352_0000_0001;
 pub const Digest = [32]u8;
 
 pub const Error = std.mem.Allocator.Error || error{
@@ -29,6 +30,7 @@ pub const Error = std.mem.Allocator.Error || error{
     GenerationExhausted,
     InvalidPageRef,
     InvalidAllocationPlan,
+    InvalidCheckpoint,
     InvalidRoot,
     InvalidTransaction,
     ShapeMismatch,
@@ -140,6 +142,24 @@ pub const RetirementReclaimPlanV1 = struct {
     page_payload_bytes: usize,
     payload_bytes_to_free: usize,
     next_root_generation: u64,
+};
+
+/// One canonical source page for a checkpoint restore. Payload bytes contain
+/// only committed rows in `(layer, K/V, row, dim)` order as little-endian f32
+/// bit patterns; padded rows are reconstructed as zero in the target page.
+pub const CheckpointPageV1 = struct {
+    source_ref: PageRefV1,
+    committed_rows: usize,
+    canonical_f32_le: []const u8,
+};
+
+/// Evidence for one atomic source-root to fresh target-root remap.
+pub const CheckpointRestoreV1 = struct {
+    abi_version: u64 = checkpoint_restore_abi,
+    source_root: PageMapRootV1,
+    target_root: PageMapRootV1,
+    restored_pages: usize,
+    restored_payload_bytes: usize,
 };
 
 pub fn deriveCapacityLedger(
@@ -329,6 +349,33 @@ fn appendOwnershipDigest(before: Digest, page_ref: PageRefV1) Digest {
     var digest: Digest = undefined;
     hash.final(&digest);
     return digest;
+}
+
+/// Portable source-root seed used by checkpoint codecs and independent
+/// verifiers. This grants no cache or allocator authority.
+pub fn checkpointEmptyOwnershipDigestV1(
+    cache_instance: u64,
+    num_layers: usize,
+    dim: usize,
+    max_seq: usize,
+) Error!Digest {
+    if (cache_instance == 0)
+        return error.InvalidCheckpoint;
+    _ = try deriveCapacityLedger(num_layers, dim, max_seq);
+    return emptyOwnershipDigest(cache_instance, num_layers, dim, max_seq);
+}
+
+/// Append one structurally valid source PageRef to a portable checkpoint
+/// ownership chain. Live target validation still requires a cache instance.
+pub fn checkpointAppendOwnershipDigestV1(
+    before: Digest,
+    page_ref: PageRefV1,
+) Error!Digest {
+    if (page_ref.abi_version != page_ref_abi or
+        page_ref.cache_instance == 0 or
+        page_ref.ownership_generation == 0)
+        return error.InvalidCheckpoint;
+    return appendOwnershipDigest(before, page_ref);
 }
 
 /// Borrowed page-local rows. A span is valid only until the next mutation of
@@ -523,6 +570,237 @@ pub const PagedKVCache = struct {
         }
         self.allocator.free(self.entries);
         self.* = undefined;
+    }
+
+    /// Restore one complete committed checkpoint into a fresh cache instance.
+    /// All source identity and byte lengths validate before allocation. Any
+    /// allocator failure frees every page created by this call and returns the
+    /// cache to its exact fresh state.
+    pub fn restoreCheckpointV1(
+        self: *PagedKVCache,
+        source_root: PageMapRootV1,
+        pages: []const CheckpointPageV1,
+        out_target_refs: []PageRefV1,
+    ) Error!CheckpointRestoreV1 {
+        try self.validateFreshCheckpointTarget();
+        if (source_root.abi_version != page_map_root_abi or
+            source_root.cache_instance == 0 or source_root.generation == 0 or
+            source_root.committed_len == 0 or
+            source_root.committed_len > self.max_seq or
+            source_root.committed_pages == 0 or
+            source_root.committed_pages > self.entries.len or
+            source_root.committed_pages != pages.len or
+            out_target_refs.len < pages.len)
+            return error.InvalidCheckpoint;
+        const expected_pages = source_root.committed_len / page_positions +
+            @intFromBool(source_root.committed_len % page_positions != 0);
+        if (expected_pages != pages.len)
+            return error.InvalidCheckpoint;
+
+        var source_ownership = emptyOwnershipDigest(
+            source_root.cache_instance,
+            self.num_layers,
+            self.dim,
+            self.max_seq,
+        );
+        var restored_payload_bytes: usize = 0;
+        for (pages, 0..) |page, index| {
+            const expected_rows = @min(
+                page_positions,
+                @as(usize, @intCast(source_root.committed_len)) -
+                    index * page_positions,
+            );
+            const expected_elements = std.math.mul(
+                usize,
+                std.math.mul(
+                    usize,
+                    std.math.mul(
+                        usize,
+                        self.num_layers,
+                        2,
+                    ) catch return error.InvalidCheckpoint,
+                    expected_rows,
+                ) catch return error.InvalidCheckpoint,
+                self.dim,
+            ) catch return error.InvalidCheckpoint;
+            const expected_bytes = std.math.mul(
+                usize,
+                expected_elements,
+                @sizeOf(f32),
+            ) catch return error.InvalidCheckpoint;
+            if (page.source_ref.abi_version != page_ref_abi or
+                page.source_ref.cache_instance !=
+                    source_root.cache_instance or
+                page.source_ref.logical_page != index or
+                page.source_ref.ownership_generation == 0 or
+                page.committed_rows != expected_rows or
+                page.canonical_f32_le.len != expected_bytes)
+                return error.InvalidCheckpoint;
+            source_ownership = appendOwnershipDigest(
+                source_ownership,
+                page.source_ref,
+            );
+            restored_payload_bytes = std.math.add(
+                usize,
+                restored_payload_bytes,
+                self.capacity_ledger.page_payload_bytes,
+            ) catch return error.InvalidCheckpoint;
+        }
+        if (!std.mem.eql(
+            u8,
+            &source_ownership,
+            &source_root.ownership_sha256,
+        )) return error.InvalidCheckpoint;
+        if (pages.len >= std.math.maxInt(u64))
+            return error.GenerationExhausted;
+
+        var allocated: usize = 0;
+        errdefer {
+            for (self.entries[0..allocated]) |*entry| {
+                self.allocator.free(
+                    entry.payload.?[0..self.capacity_ledger.page_elements],
+                );
+                entry.* = .{};
+            }
+            self.allocated_pages = 0;
+        }
+        var target_ownership = self.committed_root.ownership_sha256;
+        for (pages, 0..) |page, index| {
+            const payload = try self.allocator.alignedAlloc(
+                f32,
+                .@"64",
+                self.capacity_ledger.page_elements,
+            );
+            @memset(payload, 0);
+            self.entries[index] = .{
+                .payload = payload.ptr,
+                .ownership_generation = @as(u64, @intCast(index)) + 1,
+            };
+            allocated += 1;
+            self.allocated_pages = allocated;
+
+            var reader_offset: usize = 0;
+            for (0..self.num_layers) |layer| {
+                for (0..2) |kind| {
+                    for (0..page.committed_rows) |row| {
+                        const target_offset =
+                            (((layer * 2 + kind) * page_positions + row) *
+                                self.dim);
+                        for (0..self.dim) |dimension| {
+                            const bits = std.mem.readInt(
+                                u32,
+                                page.canonical_f32_le[reader_offset .. reader_offset + 4][0..4],
+                                .little,
+                            );
+                            payload[target_offset + dimension] = @bitCast(bits);
+                            reader_offset += 4;
+                        }
+                    }
+                }
+            }
+            if (reader_offset != page.canonical_f32_le.len)
+                return error.InvalidCheckpoint;
+            const target_ref: PageRefV1 = .{
+                .cache_instance = self.instance_id,
+                .logical_page = index,
+                .ownership_generation = @as(u64, @intCast(index)) + 1,
+            };
+            out_target_refs[index] = target_ref;
+            target_ownership = appendOwnershipDigest(
+                target_ownership,
+                target_ref,
+            );
+        }
+
+        self.len = @intCast(source_root.committed_len);
+        self.next_page_generation = @as(u64, @intCast(pages.len)) + 1;
+        self.committed_root = .{
+            .cache_instance = self.instance_id,
+            .generation = 2,
+            .committed_len = source_root.committed_len,
+            .committed_pages = source_root.committed_pages,
+            .ownership_sha256 = target_ownership,
+        };
+        self.next_root_generation = 3;
+        return .{
+            .source_root = source_root,
+            .target_root = self.committed_root,
+            .restored_pages = pages.len,
+            .restored_payload_bytes = restored_payload_bytes,
+        };
+    }
+
+    /// Free a just-restored checkpoint before its ownership batch becomes
+    /// live. The exact target root fences copied or already-mutated caches.
+    pub fn discardRestoredCheckpointV1(
+        self: *PagedKVCache,
+        target_root: PageMapRootV1,
+    ) Error!void {
+        if (target_root.abi_version != page_map_root_abi or
+            !std.meta.eql(target_root, self.committed_root) or
+            self.active_row_txn != null or self.retired or
+            self.leased_coordinator_instance != 0 or
+            self.leased_coordinator_address != 0 or
+            self.next_row_txn_generation != 1 or
+            self.next_root_generation != 3 or self.len == 0 or
+            self.allocated_pages != self.committed_root.committed_pages)
+            return error.InvalidCheckpoint;
+        for (self.entries[0..self.allocated_pages]) |*entry| {
+            if (entry.payload == null or entry.ownership_generation == 0)
+                return error.InvalidCheckpoint;
+        }
+        for (self.entries[0..self.allocated_pages]) |*entry| {
+            self.allocator.free(
+                entry.payload.?[0..self.capacity_ledger.page_elements],
+            );
+            entry.* = .{};
+        }
+        self.len = 0;
+        self.allocated_pages = 0;
+        self.next_page_generation = 1;
+        self.next_root_generation = 2;
+        self.committed_root = .{
+            .cache_instance = self.instance_id,
+            .generation = 1,
+            .committed_len = 0,
+            .committed_pages = 0,
+            .ownership_sha256 = emptyOwnershipDigest(
+                self.instance_id,
+                self.num_layers,
+                self.dim,
+                self.max_seq,
+            ),
+        };
+    }
+
+    fn validateFreshCheckpointTarget(
+        self: *const PagedKVCache,
+    ) Error!void {
+        if (self.retired or self.len != 0 or self.allocated_pages != 0 or
+            self.active_row_txn != null or self.next_row_txn_generation != 1 or
+            self.next_root_generation != 2 or self.next_page_generation != 1 or
+            self.leased_coordinator_instance != 0 or
+            self.leased_coordinator_address != 0 or
+            self.committed_root.abi_version != page_map_root_abi or
+            self.committed_root.cache_instance != self.instance_id or
+            self.committed_root.generation != 1 or
+            self.committed_root.committed_len != 0 or
+            self.committed_root.committed_pages != 0 or
+            !std.mem.eql(
+                u8,
+                &self.committed_root.ownership_sha256,
+                &emptyOwnershipDigest(
+                    self.instance_id,
+                    self.num_layers,
+                    self.dim,
+                    self.max_seq,
+                ),
+            ))
+            return error.InvalidCheckpoint;
+        for (self.entries) |entry| {
+            if (entry.payload != null or entry.ownership_generation != 0)
+                return error.InvalidCheckpoint;
+        }
     }
 
     pub fn capacityLedger(self: *const PagedKVCache) CapacityLedger {
@@ -1870,6 +2148,79 @@ test "second-page OOM leaves committed root cursor and resident ledger unchanged
     try testing.expectEqual(@as(usize, 16), cache.len);
     try testing.expectEqualDeep(resident_before, try cache.residentLedger());
     try testing.expect(cache.active_row_txn == null);
+}
+
+test "checkpoint restore second-page OOM returns exact fresh cache" {
+    const source_instance: u64 = 0x9001;
+    const first_ref: PageRefV1 = .{
+        .cache_instance = source_instance,
+        .logical_page = 0,
+        .ownership_generation = 4,
+    };
+    const second_ref: PageRefV1 = .{
+        .cache_instance = source_instance,
+        .logical_page = 1,
+        .ownership_generation = 5,
+    };
+    var source_ownership = try checkpointEmptyOwnershipDigestV1(
+        source_instance,
+        1,
+        1,
+        32,
+    );
+    source_ownership = try checkpointAppendOwnershipDigestV1(
+        source_ownership,
+        first_ref,
+    );
+    source_ownership = try checkpointAppendOwnershipDigestV1(
+        source_ownership,
+        second_ref,
+    );
+    const source_root: PageMapRootV1 = .{
+        .cache_instance = source_instance,
+        .generation = 7,
+        .committed_len = 17,
+        .committed_pages = 2,
+        .ownership_sha256 = source_ownership,
+    };
+    const full_page = [_]u8{0x11} ** (2 * page_positions * @sizeOf(f32));
+    const final_page = [_]u8{0x22} ** (2 * @sizeOf(f32));
+    const pages = [_]CheckpointPageV1{
+        .{
+            .source_ref = first_ref,
+            .committed_rows = page_positions,
+            .canonical_f32_le = &full_page,
+        },
+        .{
+            .source_ref = second_ref,
+            .committed_rows = 1,
+            .canonical_f32_le = &final_page,
+        },
+    };
+
+    var failing = testing.FailingAllocator.init(testing.allocator, .{});
+    var cache = try PagedKVCache.init(failing.allocator(), 1, 1, 32);
+    defer cache.deinit();
+    const fresh_root = cache.root();
+    const fresh_ledger = try cache.allocationCommitmentLedger();
+    failing.fail_index = failing.alloc_index + 1;
+    var target_refs: [2]PageRefV1 = undefined;
+
+    try testing.expectError(
+        error.OutOfMemory,
+        cache.restoreCheckpointV1(source_root, &pages, &target_refs),
+    );
+    try testing.expect(failing.has_induced_failure);
+    try testing.expectEqualDeep(fresh_root, cache.root());
+    try testing.expectEqualDeep(
+        fresh_ledger,
+        try cache.allocationCommitmentLedger(),
+    );
+    try testing.expectEqual(@as(usize, 0), cache.len);
+    try testing.expectEqual(@as(u64, 1), cache.next_page_generation);
+    try testing.expectEqual(@as(u64, 2), cache.next_root_generation);
+    for (cache.entries) |entry|
+        try testing.expectEqualDeep(PageEntry{}, entry);
 }
 
 test "planned allocation OOM leaves entry root generations and count unchanged" {

@@ -92,13 +92,14 @@ release operations, then check exact zero-state recovery.
 
 ### Paged-KV ownership restore fixture
 
-Join one tiny page image and page-map generation to the canonical continuation
-ownership plan. Restore into caller-owned buffers under the already reacquired
-LeaseTree node and reject a foreign page generation before publication.
+This slice is now implemented with canonical committed-row images, durable
+payload membership, full source-chain verification, an actual fresh cache, and
+foreign-generation rejection.
 
-**First slice:** one page, one scope, one exact claim, no model weights or
-accelerator dependency. See
-[Continuation Ownership Restore](CONTINUATION_OWNERSHIP_RESTORE.md).
+**Next slice:** compose the restored cache with sampler/RNG and output-journal
+state, then terminate and resume one model-free request between publication
+sequences without duplicated output. See
+[Continuation Paged-KV Restore](CONTINUATION_PAGED_KV_RESTORE.md).
 
 ### Live provider adapter boundary
 
@@ -160,9 +161,14 @@ process-death conformance on the macOS development host.
 **Completed slice:** a canonical ownership plan now reacquires a fresh
 ResourceBank/LeaseTree and charges exact objects before they become live.
 
-**Next slice:** rebuild one paged-KV generation under those reacquired nodes and
-reject foreign page identity before publication. A separate contributor slice
-can run the existing evidence and payload campaigns on native Linux filesystems.
+**Completed slice:** canonical committed-row images now rebuild a fresh
+paged-KV cache under those reacquired nodes and reject foreign page identity
+before publication.
+
+**Next slice:** compose sampler/RNG/output state and demonstrate a process
+restart between two publications without duplicated output. A separate
+contributor slice can run the existing evidence and payload campaigns on native
+Linux filesystems.
 
 ### Resolver adversarial fixtures
 
