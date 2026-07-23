@@ -30,8 +30,8 @@ evidence. The plane and model-family sequence is specified in the
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, and an integrated model-free image/audio/video transaction vertical | More family adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
-| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, transcript/video-segment results, canonical video timelines, exact audio/video result links, and exact two-step latent continuation across distinct processes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, bounded generated-image publication, then richer multimodal fusion, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, overlap-safe transcripts, exact audio/video result links, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object checkpoint sets, image tile/patch state, audio window/hop/context plus typed transcript state, video temporal-window, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, and typed media publication | Transcript/video model restart, variable-frame-rate evidence, external formats, then generated-media publication |
+| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcripts, video-segment results, canonical video timelines, exact audio/video result links, and exact latent continuation across distinct processes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, bounded generated-image publication, stateful video continuation, then richer multimodal fusion, agents/retrieval, and specialized families |
+| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript restart, exact audio/video result links, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, video temporal-window, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, and typed media publication | Stateful video restart, variable-frame-rate evidence, external formats, then generated-media publication |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -348,8 +348,9 @@ The implementation sequence is:
 3. weighted stereo-to-mono mixing, exact integer decimation, bounded two-chunk
    publication, model-free two-process restart, fixed feature-window state, a
    non-overlapping exact-integer feature encoder, canonical overlap ownership,
-   and typed transcript publication are complete; transcript model restart and
-   playback state remain;
+   typed transcript publication, and a fresh-process stateful transcript
+   continuation with exact next-sample/link predecessor are complete; word
+   timestamps, production speech models, and playback state remain;
 4. keyframe selection, exact frame/time mappings, temporal-cache ownership, and
    a typed strided-frame encoder with charged gather scratch are complete; one
    fixed predecessor-bound typed segment now publishes exact source/time and
@@ -357,8 +358,9 @@ The implementation sequence is:
    coalesce same-event overlap while retaining gaps and event changes; one
    fixed result-link state and transaction map only newly publishable transcript
    samples to the accumulated video tail using exact integer time and
-   dual-modality lineage; variable-frame-rate handling and stateful
-   transcript/video-model restart remain;
+   dual-modality lineage; stateful transcript restart is complete for the
+   retained fixture, while variable-frame-rate handling and stateful
+   video-model restart remain;
 5. exact request admission, per-buffer `LeaseTree` ownership, provisional
    execution, full candidate revalidation, commit/abort/retry, bounded
    multi-chunk publication, portable receipt chains, early provisional

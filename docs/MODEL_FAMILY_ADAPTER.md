@@ -124,10 +124,13 @@ zig test src/core/temporal_video_adapter.zig -OReleaseSafe
 zig test src/core/video_segment_adapter.zig -OReleaseSafe
 zig test src/core/video_segment_timeline.zig -OReleaseSafe
 zig test src/core/audio_video_result_link.zig -OReleaseSafe
+zig test src/core/stateful_transcript_adapter.zig -OReleaseSafe
+zig test src/core/audio_transcript_continuation.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_model_contract
 python3 -m unittest bench.tests.test_video_segment_adapter
 python3 -m unittest bench.tests.test_video_segment_timeline
 python3 -m unittest bench.tests.test_audio_video_result_link
+python3 -m unittest bench.tests.test_audio_transcript_continuation
 ```
 
 ## Additional adapters
@@ -159,8 +162,13 @@ newly visible sample range onto the accumulated video tail and retains both
 lineages under one challenge. See
 [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md).
 
-Vision, audio, transcripts, temporal video, typed segments, and cross-modal
-links use bounded typed publication contracts.
+The stateful transcript adapter and composed continuation checkpoint now carry
+the exact next sample, model state, transcript predecessor, video timeline, and
+link state through a fresh process before publishing the next text range. See
+[Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md).
+
+Vision, audio, restartable transcripts, temporal video, typed segments, and
+cross-modal links use bounded typed publication contracts.
 The stateful lifecycle and exact latent-step fixture now publish replacement
 state with each result, checkpoint the intermediate publication, restore it
 under fresh ownership in another process, and commit the terminal step exactly

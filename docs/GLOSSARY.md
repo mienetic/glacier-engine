@@ -316,6 +316,16 @@ video timeline/tail, challenge, policy, and predecessor roots.
 audio and video media identities, shared challenge, next sequence, visible link
 count, previous link, and fixed relation policy.
 
+**Stateful transcript model state** — A fixed retained fixture state carrying
+the latest transcript segment, exact next publishable sample, sample rate, and
+cumulative visible text bytes. It advances atomically with typed transcript
+model output.
+
+**Audio transcript continuation checkpoint** — A fixed 576-byte composition
+joining the generic stateful-model checkpoint to previous/next audio overlap
+plans, transcript predecessor, video timeline, cross-modal link state, fresh
+Bank epoch, and exact retained-state digest.
+
 **Synchronized media watermark** — The lower exact master-clock tick reached by
 the bound audio and video processor states, accepted only when integer mapping
 is exact and declared stream skew remains within policy.

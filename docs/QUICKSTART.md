@@ -141,6 +141,13 @@ python3 -m unittest bench.tests.test_video_segment_timeline
 zig test src/core/audio_video_result_link.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_audio_video_result_link
 
+# Restore transcript-model state in a fresh process, publish the next exact
+# sample range, and advance its video link without duplicated text
+zig test src/core/audio_transcript_continuation.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_audio_transcript_continuation
+zig build audio-transcript-live-restart-demo \
+  -Doptimize=ReleaseSafe -Dmetal=false
+
 # Verify one atomic retained-state/result transition
 zig test src/core/latent_step_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_stateful_model_adapter

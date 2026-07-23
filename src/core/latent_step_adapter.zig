@@ -521,8 +521,10 @@ test "latent step publishes result and retained state atomically" {
     );
     var candidate_output: [4]u8 = undefined;
     var candidate_state: [4]u8 = undefined;
-    var visible_output: [4]u8 = undefined;
-    var visible_next_state: [4]u8 = undefined;
+    var visible_output = [_]u8{0xa5} ** 4;
+    var visible_next_state = [_]u8{0x5a} ** 4;
+    const visible_output_before = visible_output;
+    const visible_state_before = visible_next_state;
     const before = fixture.current_state;
     const prepared = try session.prepareV1(
         &fixture.weights,
@@ -548,7 +550,16 @@ test "latent step publishes result and retained state atomically" {
         &before,
         &fixture.current_state,
     );
-    try std.testing.expect(std.mem.allEqual(u8, &visible_output, 0));
+    try std.testing.expectEqualSlices(
+        u8,
+        &visible_output_before,
+        &visible_output,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &visible_state_before,
+        &visible_next_state,
+    );
     try std.testing.expectEqualSlices(
         u8,
         &[_]u8{ 8, 16, 24, 32 },
@@ -616,8 +627,10 @@ test "latent step abort alias and drift preserve retained state" {
     );
     var candidate_output: [4]u8 = undefined;
     var candidate_state: [4]u8 = undefined;
-    var visible_output: [4]u8 = undefined;
-    var visible_next_state: [4]u8 = undefined;
+    var visible_output = [_]u8{0xa5} ** 4;
+    var visible_next_state = [_]u8{0x5a} ** 4;
+    const visible_output_before = visible_output;
+    const visible_state_before = visible_next_state;
     const model_publication_before = fixture.model_publication;
     fixture.model_publication.next_sequence = 1;
     fixture.model_publication.visible_results = 1;
@@ -663,8 +676,16 @@ test "latent step abort alias and drift preserve retained state" {
         &[_]u8{ 10, 20, 30, 40 },
         &fixture.current_state,
     );
-    try std.testing.expect(std.mem.allEqual(u8, &visible_output, 0));
-    try std.testing.expect(std.mem.allEqual(u8, &visible_next_state, 0));
+    try std.testing.expectEqualSlices(
+        u8,
+        &visible_output_before,
+        &visible_output,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &visible_state_before,
+        &visible_next_state,
+    );
     _ = try session.prepareV1(
         &fixture.weights,
         &fixture.conditioning,
@@ -684,7 +705,16 @@ test "latent step abort alias and drift preserve retained state" {
         &[_]u8{ 10, 20, 30, 40 },
         &fixture.current_state,
     );
-    try std.testing.expect(std.mem.allEqual(u8, &visible_next_state, 0));
+    try std.testing.expectEqualSlices(
+        u8,
+        &visible_output_before,
+        &visible_output,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &visible_state_before,
+        &visible_next_state,
+    );
     try std.testing.expectEqual(
         @as(u64, 0),
         fixture.state_publication.current_step,

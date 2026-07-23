@@ -280,8 +280,6 @@ pub const Session = struct {
             return Error.InvalidBinding;
         @memset(candidate_output, 0);
         @memset(candidate_state, 0);
-        @memset(visible_output, 0);
-        @memset(visible_next_state, 0);
         const permit = self.bank.beginPublication(
             self.receipt,
             self.plan.request_epoch,
@@ -526,8 +524,6 @@ pub const Session = struct {
     ) Error!void {
         if (self.candidate_output) |candidate| @memset(candidate, 0);
         if (self.candidate_state) |candidate| @memset(candidate, 0);
-        if (self.visible_output) |output| @memset(output, 0);
-        if (self.visible_next_state) |state| @memset(state, 0);
         self.bank.abortPublication(permit) catch {
             self.phase = .poisoned;
             return Error.ResourceReceiptInvalid;

@@ -1349,6 +1349,63 @@ pub fn build(b: *std.Build) void {
         &stateful_model_live_restart_worker_exe.step,
     );
 
+    // A stateful transcript process commits one exact sample range and syncs a
+    // composed checkpoint. A distinct target process charges and materializes
+    // retained state, publishes the next transcript, and advances its
+    // cross-modal video link without duplicated text.
+    const audio_transcript_live_restart_worker_exe =
+        b.addExecutable(.{
+            .name = "glacier-audio-transcript-live-restart-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/audio_transcript_live_restart_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    audio_transcript_live_restart_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    audio_transcript_live_restart_worker_exe.linkLibC();
+    const audio_transcript_live_restart_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-audio-transcript-live-restart-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/audio_transcript_live_restart.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    const run_audio_transcript_live_restart_demo =
+        b.addRunArtifact(
+            audio_transcript_live_restart_demo_exe,
+        );
+    run_audio_transcript_live_restart_demo.addArtifactArg(
+        audio_transcript_live_restart_worker_exe,
+    );
+    const audio_transcript_live_restart_demo_step = b.step(
+        "audio-transcript-live-restart-demo",
+        "Run two-process transcript and video-link continuation",
+    );
+    audio_transcript_live_restart_demo_step.dependOn(
+        &run_audio_transcript_live_restart_demo.step,
+    );
+    test_step.dependOn(
+        &run_audio_transcript_live_restart_demo.step,
+    );
+    test_compile_step.dependOn(
+        &audio_transcript_live_restart_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &audio_transcript_live_restart_worker_exe.step,
+    );
+
     // Three stream checkpoints plus retained-output, processor-state, and
     // processor-cache bundles share a single immutable archive root. The
     // source produces two generations; a publisher dies after every durability

@@ -139,6 +139,7 @@ residency.
 
 Typed vision, audio, transcript, temporal-video, bounded video-segment, and
 exact audio/video result-link adapters now consume these contracts. The next
-state milestone carries a transcript- or video-model continuation across a
-fresh process while preserving the same cache, publication, and cross-modal
-predecessor lineage.
+state milestone carries video-model temporal state across a fresh process while
+preserving the same cache, timeline, publication, and cross-modal predecessor
+lineage. Transcript-model continuation now meets that gate for the retained
+exact-integer fixture.

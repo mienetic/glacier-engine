@@ -107,5 +107,6 @@ temporal video generation, but those family bindings remain gated until their
 own state, timeline, cancellation, and publication fixtures exist.
 
 See [Stateful Model Adapter and Latent-Step Fixture](STATEFUL_MODEL_ADAPTER.md),
+[Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md),
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md), and
 [Benchmark and Evidence Guide](BENCHMARKS.md).

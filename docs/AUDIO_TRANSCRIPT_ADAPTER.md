@@ -83,14 +83,18 @@ text `ice`. It does not yet restore a transcript-producing model across a
 process restart, acknowledge playback, decode external audio, identify a
 language, measure word error rate, or run a production speech model.
 
-The next audio slice is transcript-model restart with exact segment continuity.
-The same publication vocabulary can later carry timestamps, tokens, speakers,
-and confidence only after each field receives a bounded canonical contract.
+Transcript-model restart with exact segment continuity is now complete for the
+retained exact-integer fixture through
+[Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md).
+The next audio slices add word timestamps, tokens, speakers, and confidence
+only after each field receives a bounded canonical contract, then generated
+audio ordering and playback acknowledgement.
 The current newly publishable sample range can already be joined to a verified
 video timeline through
 [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md); conditioning-only
 context is excluded from that temporal link.
 
 See [Typed Audio-Window Encoder Adapter](AUDIO_WINDOW_ADAPTER.md),
+[Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md),
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

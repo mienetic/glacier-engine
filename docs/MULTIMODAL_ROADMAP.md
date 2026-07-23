@@ -61,9 +61,11 @@ A fixed timeline and merge receipt now preserve the accumulated visible tail,
 coalesce only same-event overlap/touch, and retain gaps or different events.
 A fixed audio/video result-link transaction now maps only newly publishable
 transcript samples into that tail, rejects non-integral or non-overlapping
-time, and binds both modality lineages. Variable-frame-rate discontinuities,
-stateful transcript/video models, richer subtitle semantics, and production
-quality remain gated.
+time, and binds both modality lineages. A stateful transcript fixture now
+crosses a real process boundary under fresh charged ownership, publishes the
+exact next sample range, and advances that link without duplicated text.
+Variable-frame-rate discontinuities, stateful video models, richer subtitle
+semantics, and production quality remain gated.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -287,9 +289,10 @@ First slices:
 6. feature-window or audio-token mapping back to source sample ranges; exact
    window/hop/context cursor state is complete for the bounded feature fixture,
    while token mapping remains;
-7. partial transcript publication without duplicated text after restart; the
-   publish-only transcript range and exact video linkage are complete, while
-   transcript-model restart remains;
+7. ~~partial transcript publication without duplicated text after restart;~~
+   complete for a stateful exact-integer fixture: a fresh process reuses
+   conditioning context, publishes only the exact next sample range, preserves
+   transcript/link predecessors, and releases restored ownership to zero;
 8. generated-audio chunk ordering and playback acknowledgement;
 9. microphone/network adapters outside the authority-free core.
 

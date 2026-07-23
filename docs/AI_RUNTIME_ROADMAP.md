@@ -323,7 +323,7 @@ expand the base adapter's capabilities.
 | Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication integrated | Small legal artifact through uninterrupted and resumed output | Declared numerical equivalence, exact KV ownership, no duplicate token |
 | Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision, audio, and temporal-video embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
-| Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder plus overlap-safe typed transcript fixture integrated; production model gated | Carry transcript publication through a streaming model restart | No sample loss/duplication, exact streaming restart, transcript transaction |
+| Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, and fresh-process stateful transcript continuation integrated; production model gated | Add timestamps/speakers and crash-atomic checkpoint-set publication | No sample loss/duplication, exact streaming restart, transcript transaction |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
 | Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder, fixed predecessor-bound segment result, canonical merge timeline, and exact audio/transcript-video result link integrated; production model gated | Carry transcript or video-model state through a fresh-process restart | Variable-frame-rate mapping, stateful continuation, production quality evidence |
 | Image generation | diffusion/flow step, decode latent, publish image | Exact two-step retained-state transaction with distinct-process intermediate restore; production model gated | Decode the terminal latent into a bounded generated-image transaction | Multi-step continuation, bounded decode, atomic image/provenance publication |
@@ -421,7 +421,10 @@ while retaining different state and publication semantics.
 - add audio feature windows, transcript transactions, and streaming restart;
   fixed window/hop/context state, a non-overlapping exact-integer feature
   encoder, canonical overlap ownership, and typed transcript publication are
-  complete, while model restart integration remains;
+  complete; a stateful transcript fixture now restores exact sample/model state
+  under fresh charged ownership in a distinct process, publishes only the next
+  range, and advances its cross-modal link without duplicated text; production
+  speech models, word timestamps, and atomic multi-file composition remain;
 - add video temporal selection, synchronized timeline state, and cache
   ownership; fixed window/eviction state plus exact audio/video watermark is
   complete together with materialized cache ownership; a typed strided-frame
@@ -433,7 +436,8 @@ while retaining different state and publication semantics.
   events; a fixed cross-modal transaction now maps only newly publishable
   transcript samples to the accumulated video tail, rejects non-integral or
   non-overlapping time, and binds both histories, while variable-frame-rate
-  handling and stateful transcript/video-model continuation remain;
+  handling and stateful video-model continuation remain; transcript-model
+  continuation is complete for the retained exact-integer fixture;
 - extend checkpoints with family-specific processor/cache state; the fixed
   independently verified state and payload bundles now advance as the fifth
   and sixth atomic archive objects through a fresh-process successor.

@@ -162,8 +162,15 @@ integer time, positive overlap, one challenge, and both modality lineages must
 verify before publication. See
 [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md).
 
-**Next slice:** carry transcript or video-model state through a process restart
-while preserving the exact result-link predecessor, reusing
+**Completed slice:** a stateful transcript family now carries exact next-sample
+state through a real process restart. Its fixed composed checkpoint preserves
+the previous/next overlap plans, transcript predecessor, video timeline, and
+result-link predecessor before the fresh process publishes the next segment.
+See
+[Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md).
+
+**Next slice:** carry video-model temporal state through a process restart while
+preserving timeline and result-link predecessors, reusing
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md),
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), and
 [Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md).

@@ -109,10 +109,13 @@ variable-frame-rate discontinuities, persist the link chain, restart a speech
 or video model, run external codecs, or measure quality, latency, throughput,
 memory, or energy.
 
-The next streaming-perception milestone carries transcript-model or
-video-model state through a fresh-process restart while preserving the exact
-link predecessor. Richer timestamp, speaker, subtitle, event, and confidence
-contracts can follow without changing the meaning of the current wire.
+Transcript-model state now crosses a fresh-process restart while preserving the
+exact link predecessor through
+[Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md).
+The next streaming-perception milestone applies that composition to stateful
+video-model temporal caches and variable-frame-rate evidence. Richer timestamp,
+speaker, subtitle, event, and confidence contracts can follow without changing
+the meaning of the current wire.
 
 See [Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md),
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md),

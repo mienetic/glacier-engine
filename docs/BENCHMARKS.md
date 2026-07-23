@@ -53,6 +53,8 @@ energy, or production reliability.
 | `zig test src/core/video_segment_adapter.zig -OReleaseSafe` | Canonical 512-byte video segments, exact frame/time bounds, live selection/cache lineage, predecessor binding, mutation rejection, transactional visibility, and final zero ownership |
 | `zig test src/core/video_segment_timeline.zig -OReleaseSafe` | Canonical 384-byte timeline/merge wires, same-event overlap coalescing, gap/event separation, raw/decision lineage, mutation and candidate-drift rejection, and final zero ownership |
 | `zig test src/core/audio_video_result_link.zig -OReleaseSafe` | Canonical 320-byte state and 576-byte cross-modal result wires, publish-only audio mapping, exact time conversion, positive-overlap relations, dual-modality lineage, mutation/drift rejection, and final zero ownership |
+| `zig test src/core/audio_transcript_continuation.zig -OReleaseSafe` | Exact 32-byte transcript state, canonical 576-byte composed checkpoint, previous/next sample continuity, foreign-lineage rejection before admission, fresh-Bank restore, second transcript/link publication, and final zero ownership |
+| `zig build audio-transcript-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, synced transcript/state/link evidence, charge-before-materialization restore, context reuse without duplicate text, exact next sample range, cross-modal link continuation, and final zero ownership |
 | `zig test src/core/latent_step_adapter.zig -OReleaseSafe` | Canonical retained-state wire, pinned model/state snapshots, buffer-alias rejection, exact latent candidate, atomic state/result publication, abort/drift preservation, and final zero ownership |
 | `zig build stateful-model-live-restart-demo -Dmetal=false` | Canonical intermediate checkpoint, distinct source/target PIDs, fresh-Bank charge-before-materialization latent restore, chained terminal plan, zero duplicate results, and final zero ownership |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
@@ -82,6 +84,15 @@ histories in one link. These fixtures do not measure transcription or video
 quality, semantic alignment, streaming model restart, latency, throughput, or
 physical memory. The transcript fixture's fixed ASCII text is not
 recognition-quality evidence.
+
+The stateful transcript continuation fixture adds a deterministic
+`audio_understanding / transcribe` model transition, a fixed composed
+checkpoint, and a real source/target process handoff. The first process
+publishes samples `2..10`; the target reuses context `8..10`, publishes only
+`10..18`, and advances the cross-modal link once. These fixed strings and tiny
+integer features prove restart mechanics, not recognition quality, word
+alignment, production-model compatibility, latency, throughput, or physical
+memory.
 
 The latent-step fixture adds state/result atomicity and a cross-language
 transition root. The live-restart fixture then chains two exact steps across

@@ -108,8 +108,8 @@ Retained tests reject:
 - uncharged or incorrectly sized buffers.
 
 Abort and candidate drift preserve the original retained state, keep both
-publication counts unchanged, scrub private candidates, and release the exact
-claim.
+publication counts and caller-visible buffers unchanged, scrub private
+candidates, and release the exact claim.
 
 ## Claim boundary
 
@@ -118,6 +118,9 @@ Its checkpoint files are synced but not published through a crash-atomic
 selector. It does not provide scheduler variants, floating-point latent
 tensors, external weights, image decoding, accelerator execution,
 physical-memory measurement, model quality, or compatibility evidence.
+
+The same lifecycle now also powers the exact-integer
+[Stateful Audio Transcript Continuation](AUDIO_TRANSCRIPT_CONTINUATION.md).
 
 ## Run the retained proof
 

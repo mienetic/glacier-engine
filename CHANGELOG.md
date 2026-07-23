@@ -8,6 +8,9 @@ before the first stable release.
 
 ### Changed
 
+- Stateful model prepare/rollback now leave caller-visible output and successor
+  state buffers unchanged until commit; abort and drift scrub only private
+  candidates.
 - Vision now uses the same family-neutral stateless adapter lifecycle as audio
   and temporal video, removing its duplicate admission/publication state
   machine while preserving live-cache checks, candidate revalidation,
@@ -18,6 +21,11 @@ before the first stable release.
 
 ### Added
 
+- Stateful audio transcript continuation: a typed exact-integer transcript
+  family, fixed 576-byte composed checkpoint, independent Python oracle, and
+  native two-process proof restore model state under fresh charged ownership,
+  publish the next non-duplicated sample range, advance its video-result link,
+  and release all ownership to zero.
 - Exact audio/video result linking: canonical 320-byte state and 576-byte result
   wires map only newly publishable transcript samples to the accumulated video
   timeline using exact integer time conversion, reject non-overlap and

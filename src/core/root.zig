@@ -71,6 +71,10 @@ pub const audio_window_adapter =
     @import("audio_window_adapter.zig");
 pub const audio_transcript_adapter =
     @import("audio_transcript_adapter.zig");
+pub const stateful_transcript_adapter =
+    @import("stateful_transcript_adapter.zig");
+pub const audio_transcript_continuation =
+    @import("audio_transcript_continuation.zig");
 pub const temporal_video_adapter =
     @import("temporal_video_adapter.zig");
 pub const video_segment_adapter =
@@ -143,6 +147,10 @@ pub const VisionEncoderAdapter = vision_encoder_adapter;
 pub const AudioWindowAdapter = audio_window_adapter;
 pub const AudioTranscriptAdapter =
     audio_transcript_adapter;
+pub const StatefulTranscriptAdapter =
+    stateful_transcript_adapter;
+pub const AudioTranscriptContinuation =
+    audio_transcript_continuation;
 pub const TemporalVideoAdapter = temporal_video_adapter;
 pub const VideoSegmentAdapter = video_segment_adapter;
 pub const VideoSegmentTimeline = video_segment_timeline;
