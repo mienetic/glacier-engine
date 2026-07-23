@@ -156,10 +156,10 @@ second seven-phase campaign specifically during restored execution is not
 claimed.
 
 Multi-writer leader election, archive garbage collection policy, external
-codecs, capture/playback, media-model execution, accelerator residency, and
-generated-video publication remain gated. Separate bounded paths now publish
-one raw generated image with atomic provenance and ordered raw generated-audio
-chunks with application acknowledgement, but this checkpoint set does not yet
-durably compose either output.
+codecs, capture/playback/display, production media-model execution, accelerator
+residency, and generative-media composition remain gated. Separate bounded
+paths now publish a raw generated image, ordered generated-audio chunks, and
+ordered generated-video manifests, but this checkpoint set does not yet durably
+compose those outputs.
 The sixth object and fresh-Bank proof cover caller-owned cache bytes and exact
 logical ownership, not measured RSS, allocator fragmentation, or device memory.

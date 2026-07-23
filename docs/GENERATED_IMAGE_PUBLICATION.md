@@ -129,11 +129,14 @@ The next image-generation slices are:
 6. quality, memory, energy, and latency evidence on named artifacts and
    platforms.
 
-Generated audio and video will reuse the same principles but require their own
-timeline continuity, playback/display acknowledgement, cancellation, and
-chunk-manifest contracts.
+Generated audio and video now reuse these principles in their own bounded
+publication contracts with timeline continuity, cancellation, and application
+playback/display acknowledgement. Shared manifest/checkpoint composition and
+production adapters remain.
 
 See [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md),
 [Shared Media Contract](MEDIA_CONTRACT.md),
+[Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
+[Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

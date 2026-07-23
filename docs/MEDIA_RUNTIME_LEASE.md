@@ -133,5 +133,7 @@ The next media-runtime sequence is:
    [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md) and two
    acknowledgement-gated raw PCM chunks through
    [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
-   while generated video and durable output composition remain; and
+   plus two acknowledgement-gated raw video segments through
+   [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
+   while shared durable output composition remains; and
 6. external codec adapters outside the authority-free core.

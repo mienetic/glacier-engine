@@ -184,6 +184,14 @@ python3 -m unittest bench.tests.test_generated_audio_playback
 zig build generated-audio-live-restart-demo \
   -Doptimize=ReleaseSafe -Dmetal=false
 
+# Publish an ordered two-frame generated-video manifest across a process
+# restart, require complete application display acknowledgement, and admit the
+# successor only after backpressure
+zig test src/core/generated_video_display.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_generated_video_display
+zig build generated-video-live-restart-demo \
+  -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

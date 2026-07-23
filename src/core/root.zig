@@ -93,6 +93,8 @@ pub const generated_image_publication =
     @import("generated_image_publication.zig");
 pub const generated_audio_playback =
     @import("generated_audio_playback.zig");
+pub const generated_video_display =
+    @import("generated_video_display.zig");
 pub const speech_annotation_publication =
     @import("speech_annotation_publication.zig");
 pub const continuation_ownership_manifest =
@@ -174,6 +176,8 @@ pub const GeneratedImagePublication =
     generated_image_publication;
 pub const GeneratedAudioPlayback =
     generated_audio_playback;
+pub const GeneratedVideoDisplay =
+    generated_video_display;
 pub const SpeechAnnotationPublication =
     speech_annotation_publication;
 pub const ContinuationOwnershipManifest = continuation_ownership_manifest;

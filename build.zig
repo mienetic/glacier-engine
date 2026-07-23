@@ -1469,6 +1469,65 @@ pub fn build(b: *std.Build) void {
         &generated_audio_live_restart_worker_exe.step,
     );
 
+    // A source process publishes an ordered two-frame raw-video manifest and
+    // exits with one outstanding application display acknowledgement. A
+    // distinct target validates every retained wire before admission, rejects
+    // partial display, acknowledges the segment, and only then publishes the
+    // successor manifest.
+    const generated_video_live_restart_worker_exe =
+        b.addExecutable(.{
+            .name = "glacier-generated-video-live-restart-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/generated_video_live_restart_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    generated_video_live_restart_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    generated_video_live_restart_worker_exe.linkLibC();
+    const generated_video_live_restart_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-generated-video-live-restart-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/generated_video_live_restart.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    const run_generated_video_live_restart_demo =
+        b.addRunArtifact(
+            generated_video_live_restart_demo_exe,
+        );
+    run_generated_video_live_restart_demo.addArtifactArg(
+        generated_video_live_restart_worker_exe,
+    );
+    const generated_video_live_restart_demo_step =
+        b.step(
+            "generated-video-live-restart-demo",
+            "Publish and acknowledge generated video across processes",
+        );
+    generated_video_live_restart_demo_step.dependOn(
+        &run_generated_video_live_restart_demo.step,
+    );
+    test_step.dependOn(
+        &run_generated_video_live_restart_demo.step,
+    );
+    test_compile_step.dependOn(
+        &generated_video_live_restart_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &generated_video_live_restart_worker_exe.step,
+    );
+
     // A stateful transcript process commits one exact sample range and syncs a
     // composed checkpoint. A distinct target process charges and materializes
     // retained state, publishes the next transcript, and advances its

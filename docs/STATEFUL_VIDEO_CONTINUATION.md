@@ -124,11 +124,12 @@ container edit lists, measure video quality, prove physical memory, or run
 production weights.
 
 With stateful audio/video continuation, exact word/speaker annotation, bounded
-generated-image publication, and acknowledgement-gated generated PCM
-integrated, the next multimodal runtime slices are external media format
-adapters, richer language/punctuation and overlapping-speaker policy,
-production generative-media adapters/manifests, and generated video. Physical
-playback and display acknowledgement remain separate promotion tracks.
+generated-image publication, acknowledgement-gated generated PCM, and ordered
+generated-video manifest publication integrated, the next multimodal runtime
+slices are external media format adapters, richer language/punctuation and
+overlapping-speaker policy, production generative-media adapters, shared
+manifest/checkpoint composition, and multi-segment continuity. Physical
+playback and display evidence remain separate promotion tracks.
 
 See [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md),
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md),

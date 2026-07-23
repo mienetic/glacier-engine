@@ -198,11 +198,20 @@ cancels one private successor candidate, publishes the next chunk, rejects
 duplicate acknowledgement, and releases ownership to zero. See
 [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md).
 
+**Completed slice:** bounded generated-video state, ordered two-frame manifest,
+provenance, result, observation, and acknowledgement records now publish exact
+raw frame roots and durations behind a single-outstanding-segment gate. A fresh
+process validates retained frames before admission, rejects partial display
+without changing state, acknowledges the segment, cancels one private
+successor, publishes the next manifest, rejects duplicate acknowledgement, and
+releases ownership to zero. See
+[Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md).
+
 **Next slices:** add external container timestamp normalization, a production
 image decoder adapter, richer language/punctuation or overlapping-speaker
-policy, a production audio renderer/codec, shared generated-media manifests, or
-the first bounded generated-video manifest with display acknowledgement. Each
-is independently contributor-sized and must preserve the fixed core contracts.
+policy, a production audio/video renderer or codec, shared generated-media
+manifest/checkpoint composition, or multi-segment video continuity. Each is
+independently contributor-sized and must preserve the fixed core contracts.
 
 ### AI runtime family registry
 
@@ -250,8 +259,8 @@ releases all ownership. See
 
 **Next slice:** add a generic non-media encoder using the converged stateless
 lifecycle, adapt a production renderer to the bounded generated-audio
-transaction, or define a generated-video manifest while preserving the existing
-generative publication contracts.
+transaction, or compose the generated image/audio/video manifests behind one
+crash-atomic checkpoint while preserving the existing publication contracts.
 
 ### ResourceBank property tests
 

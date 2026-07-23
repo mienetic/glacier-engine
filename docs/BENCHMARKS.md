@@ -63,6 +63,8 @@ energy, or production reliability.
 | `zig build generated-image-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, charge-before-materialization latent restore, exact terminal step, one cancelled image publication, atomic retry, bound provenance, zero duplicate images, and final zero ownership |
 | `zig test src/core/generated_audio_playback.zig -OReleaseSafe` | Seven canonical generated-audio/acknowledgement wires, exact PCM/frame/resource/sink lineage, one-buffer backpressure, mutation and partial/duplicate rejection, abort/drift preservation, atomic publication, and final zero ownership |
 | `zig build generated-audio-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, pending-state validation before admission, publication blocked before acknowledgement, partial acknowledgement rejection, one cancellation-safe successor retry, two exact PCM chunks, zero duplicates, and final zero ownership |
+| `zig test src/core/generated_video_display.zig -OReleaseSafe` | Seven canonical generated-video/display wires, two ordered frame roots and durations, exact media/resource/sink lineage, one-segment backpressure, mutation and partial/duplicate rejection, abort/drift preservation, atomic publication, and final zero ownership |
+| `zig build generated-video-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, all retained records and frame roots validated before admission, publication blocked before acknowledgement, partial display rejection, one cancellation-safe successor retry, two exact raw-video segments, zero duplicates, and final zero ownership |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -133,6 +135,17 @@ restart, and ownership semantics. It does not measure speech/music quality,
 production renderer or codec compatibility, latency, throughput, memory,
 energy, device behavior, audibility, or durable multi-file publication. Its
 playback observation is application evidence, not proof of physical sound.
+
+The generated-video fixture expands four bounded reference tokens into two
+ordered two-frame raw gray8 segments across distinct processes. It binds each
+frame root and duration, preserves sentinel visibility through one abort,
+rejects a one-frame observation, gates the successor until complete application
+display acknowledgement, and rejects duplicate acknowledgement. This proves
+wire, ordering, timeline, backpressure, cancellation, restart, and ownership
+semantics. It does not measure generative-video quality, temporal coherence,
+production renderer/codec compatibility, latency, throughput, memory, energy,
+compositor or device behavior, physical display, or crash-atomic multi-file
+publication.
 
 The speech-annotation fixture maps `ice` and `berg` onto exact adjacent sample
 ranges and two opaque speaker identities. Its fresh target validates the

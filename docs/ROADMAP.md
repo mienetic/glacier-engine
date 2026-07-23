@@ -29,9 +29,9 @@ evidence. The plane and model-family sequence is specified in the
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
-| AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, integrated perception transactions, and restart-safe generated-image and generated-audio output verticals | More family adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
-| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, and acknowledged generated-PCM publication across distinct processes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, production generative-media adapters/manifests, generated video, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM publication, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, and exact application backpressure | External formats, richer language/punctuation and overlapping-speaker policy, production audio/image adapters and shared manifests, then generated-video manifests with display acknowledgement |
+| AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, integrated perception transactions, and restart-safe generated-image/audio/video output verticals | More family adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
+| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM publication, and acknowledged generated-video manifests across distinct processes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, production generative-media adapters and shared manifests, agents/retrieval, and specialized families |
+| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM publication, ordered generated-video manifest publication, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, and exact application backpressure | External formats, richer language/punctuation and overlapping-speaker policy, production media adapters, shared generated-media manifest/checkpoint composition, multi-segment continuity, and physical playback/display evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -142,6 +142,10 @@ evidence. The plane and model-family sequence is specified in the
   acknowledgement wires with exact PCM/frame lineage, one-buffer backpressure,
   cancellation-safe atomic publication, independent mutation-complete
   verification, and a real two-process acknowledgement/publication proof.
+- [x] Bounded generated-video state, two-frame manifest, provenance, result,
+  observation, and acknowledgement wires with exact frame roots/durations,
+  one-segment backpressure, cancellation-safe atomic publication, independent
+  mutation-complete verification, and a real two-process proof.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -396,9 +400,15 @@ The implementation sequence is:
    frame/source/provenance/resource lineage, one outstanding-buffer gate,
    cancellation-safe retry, application acknowledgement, and a real
    process-restart proof; production renderers/codecs, shared manifests,
-   crash-atomic composition, and physical device evidence remain gated; and
-8. generated-video output follows after its temporal manifest, cancellation,
-   restart, provenance, and display-acknowledgement rules are proven.
+   crash-atomic composition, and physical device evidence remain gated;
+8. generated-video output now has an ordered two-frame raw manifest, exact
+   frame roots and durations, source/provenance/resource lineage, one
+   outstanding-segment gate, cancellation-safe retry, application display
+   acknowledgement, and a real process-restart proof; production adapters,
+   multi-segment continuity, encoded output, and physical display evidence
+   remain gated; and
+9. shared generated-media manifest/checkpoint composition follows across
+   image, audio, and video output transactions.
 
 Every modality uses content identity separate from tenant access, explicit
 decoder/preprocessing identity, exact resource admission, and provider wire

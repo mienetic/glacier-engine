@@ -131,6 +131,11 @@ formats, and independent verifiers.
   process verifies the pending chunk, rejects partial acknowledgement, opens
   backpressure only after exact application consumption, and publishes the
   successor without duplication.
+- **Ordered generated-video manifests.** Canonical state, two-frame manifest,
+  provenance, result, observation, and acknowledgement wires bind raw frame
+  roots and exact durations. A fresh process validates retained output before
+  admission, rejects partial display, opens the successor gate only after full
+  application consumption, and preserves visibility on cancellation.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -313,6 +318,7 @@ zig build media-stream-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-stream-checkpoint-set-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build generated-image-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build generated-audio-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build generated-video-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build speech-annotation-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
@@ -333,12 +339,12 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | AI runtime | CPU execution, optional Metal backend, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes | More family adapters, stable API, distribution and retained compatibility matrix |
-| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, and restartable generated-audio publication/acknowledgement | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, generated-video manifests, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
+| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, and acknowledged generated-video manifests | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters and shared manifests, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, terminal-latent generated-image publication, and restartable generated-PCM publication with exact application acknowledgement | Add external formats, richer language/punctuation and overlapping-speaker policy, production audio/image adapters and manifests, then generated-video manifests with display acknowledgement |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, generated-image publication, acknowledged generated-PCM publication, and ordered generated-video manifest publication | Add external formats, richer language/punctuation and overlapping-speaker policy, production media adapters, shared generated-media manifests/checkpoints, and authorized physical playback/display evidence |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -390,6 +396,7 @@ valuable as new features.
 - [Stateful VFR video-model continuation](docs/STATEFUL_VIDEO_CONTINUATION.md)
 - [Generated-image publication](docs/GENERATED_IMAGE_PUBLICATION.md)
 - [Generated-audio publication and playback acknowledgement](docs/GENERATED_AUDIO_PLAYBACK.md)
+- [Generated-video manifest and display acknowledgement](docs/GENERATED_VIDEO_DISPLAY.md)
 - [Exact speech annotation publication](docs/SPEECH_ANNOTATION_PUBLICATION.md)
 - [Stateful model adapter and latent-step fixture](docs/STATEFUL_MODEL_ADAPTER.md)
 - [Stateful model continuation](docs/STATEFUL_MODEL_CONTINUATION.md)

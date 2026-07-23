@@ -128,4 +128,6 @@ The first continuation layer is complete in
    [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md) and two
    acknowledgement-gated raw PCM chunks through
    [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
-   while shared manifest composition and generated video remain.
+   plus two acknowledgement-gated raw video segments through
+   [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
+   while shared manifest/checkpoint composition remains.

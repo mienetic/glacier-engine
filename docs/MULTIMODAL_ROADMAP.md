@@ -4,11 +4,12 @@ Status: **integrated model-free image/audio/video runtime plus typed
 vision/audio/temporal-video fixtures, stateful transcript and explicit-VFR
 video-model restart, bounded streaming, generated-image publication after
 terminal-latent restart, generated-PCM publication with exact application
-acknowledgement across process restart, two-process continuation, crash-atomic
-checkpoint sets, and a post-restore generation-three successor; bounded
+acknowledgement across process restart, ordered generated-video manifests with
+exact application display acknowledgement, two-process continuation,
+crash-atomic checkpoint sets, and a post-restore generation-three successor; bounded
 processor/cache state and payloads integrated as fifth and sixth durable
 archive objects with fresh-Bank restore; production-model execution, physical
-playback, and external formats remain gated**.
+playback/display evidence, and external formats remain gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -95,6 +96,15 @@ acknowledgement without state change, acknowledges it, aborts one private
 successor, publishes the next exact frames, and returns ownership to zero.
 This is application acknowledgement; physical playback remains outside the
 authority-free core.
+A bounded generated-video path now publishes two ordered raw gray8 frame roots
+and exact durations behind a single-outstanding-segment gate. Fixed state,
+manifest, provenance, result, observation, and acknowledgement wires bind
+geometry, source output, media, renderer, resources, sink identity, and both
+predecessor chains. A fresh process verifies the retained manifest and frames
+before admission, rejects partial display without state change, acknowledges
+the segment, aborts one private successor, publishes the next exact segment,
+and returns ownership to zero. This is application acknowledgement; physical
+display remains outside the authority-free core.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -354,7 +364,7 @@ Initial use cases:
 - video understanding, search, summarization, and event extraction;
 - frame/segment-conditioned generation;
 - synchronized audio/video analysis; and
-- later, transactional generated-video publication.
+- transactional generated-video publication.
 
 First slices:
 
@@ -381,12 +391,17 @@ First slices:
    fresh-Bank materialization, successor segment, visible timeline, and
    cross-modal link all advance across distinct processes;
 10. external container timestamp/edit-list normalization;
-11. generated segment publication with ordered manifest and chunk roots.
+11. ~~generated segment publication with ordered manifest and chunk roots;~~
+    complete for two bounded two-frame raw gray8 segments: exact per-frame
+    roots/durations, one-segment backpressure, application display
+    acknowledgement, cancellation-safe visibility, independent verification,
+    and a real process restart.
 
 Promotion gate: frame selection and temporal ordering replay exactly; explicit
-VFR and restart fixtures are integrated, while external-container seek,
-corrupt-frame, missing-audio, cancellation, and production campaigns must still
-preserve resource accounting and never publish a segment twice.
+VFR, stateful restart, and generated-segment restart fixtures are integrated,
+while external-container seek, corrupt-frame, missing-audio, multi-segment
+continuity, physical display, and production campaigns must still preserve
+resource accounting and never publish a segment twice.
 
 ## Provider efficiency
 

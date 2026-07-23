@@ -21,6 +21,14 @@ before the first stable release.
 
 ### Added
 
+- Generated-video manifest publication and display acknowledgement: canonical
+  state, two-frame manifest, provenance, publication result, observation,
+  acknowledgement plan, and acknowledgement result records bind exact raw
+  frame roots, per-frame durations, media/resource lineage, one outstanding
+  segment, and sink-bound application completion. An abort-safe transaction,
+  independent mutation-complete Python oracle, and real two-process proof
+  reject partial/duplicate display, gate the successor segment, preserve
+  visibility on cancellation, and release ownership to zero.
 - Generated-audio publication and playback acknowledgement: canonical
   448-byte state, 576-byte plan, 512-byte provenance, 576-byte result, 288-byte
   observation, 448-byte acknowledgement plan, and 512-byte acknowledgement

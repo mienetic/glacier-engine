@@ -16,7 +16,7 @@ not.
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
-| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, and publish typed embeddings, restartable transcripts/VFR video segments, exact word/speaker annotations, timeline decisions, cross-modal links, retained state/result transitions, terminal-latent generated images, or acknowledgement-gated PCM chunks only after family validation |
+| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, and publish typed embeddings, restartable transcripts/VFR video segments, exact word/speaker annotations, timeline decisions, cross-modal links, retained state/result transitions, terminal-latent generated images, acknowledgement-gated PCM chunks, or acknowledgement-gated raw-video manifests only after family validation |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -232,6 +232,13 @@ candidates; commit copies raw pixels, provenance, and the typed result while
 advancing the media timeline exactly once. The native proof performs the
 terminal step and image publication in a fresh process and closes with zero
 target ownership.
+`GeneratedAudioPlayback` publishes bounded raw PCM behind one pending-buffer
+gate, while `GeneratedVideoDisplay` publishes an ordered two-frame manifest
+behind one pending-segment gate. Both render into private storage, bind exact
+source/media/resource lineage, reject partial or duplicate application
+observations, and prove successor publication across distinct processes.
+Application acknowledgement advances logical backpressure; it does not prove
+physical playback or display.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
@@ -248,6 +255,9 @@ integrations remain future layers. See
 [Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md), then
 [Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md), followed
 by [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md).
+The generative output chain continues with
+[Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md)
+and [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md).
 
 ### ResourceBank
 

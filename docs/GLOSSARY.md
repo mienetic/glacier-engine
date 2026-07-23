@@ -262,6 +262,22 @@ complete consumption of one exact generated-audio buffer by an identified sink
 implementation and instance. It advances logical backpressure only after exact
 binding; it is not proof that a physical device emitted sound.
 
+**Generated video manifest** — A fixed publication plan that binds two ordered
+raw-frame roots, exact per-frame durations, geometry, source output, renderer,
+media identity, resource shape, predecessor state, tenant, policy, and
+challenge.
+
+**Generated video state** — A fixed output state that separates committed
+segment/frame/timeline watermarks from application-displayed watermarks,
+permits at most one pending exact segment, and chains publication and
+acknowledgement predecessors across restart.
+
+**Display observation** — A canonical application-supplied receipt claiming
+complete consumption of one exact generated-video segment by an identified
+sink implementation and instance. It advances logical display backpressure
+only after exact binding; it is not proof that a physical display presented a
+frame.
+
 **Model family** — A typed semantic class such as autoregressive generation,
 vision understanding, audio understanding, diffusion, retrieval, or agent
 policy. A family ID is vocabulary only; a matching support record and adapter

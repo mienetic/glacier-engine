@@ -117,3 +117,6 @@ Next work is production renderer/codec integration, multi-chunk manifests,
 crash-atomic output/checkpoint composition, partial-buffer policy where a
 product explicitly needs it, and physical playback adapters outside the
 authority-free core.
+
+The sibling ordered raw-video path is specified in
+[Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md).
