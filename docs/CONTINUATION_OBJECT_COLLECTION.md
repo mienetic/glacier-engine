@@ -232,15 +232,19 @@ reachability.
 3. ~~Fixed body/footer commit evidence record.~~ Implemented without file or
    recovery authority.
 4. ~~Pure anchored record classification.~~ Implemented without I/O or repair.
-5. Crash-safe durable publication and recovery of retirement/sweep decisions.
-6. Multi-bundle and parent-checkpoint reachability composition.
-7. Replica transport that keeps admission, verification, and deletion authority
+5. ~~Snapshot-bound append/repair capability and deterministic crash model.~~
+   Implemented without real filesystem or deletion authority.
+6. Real crash-safe publication and recovery of retirement/sweep decisions.
+7. Multi-bundle and parent-checkpoint reachability composition.
+8. Replica transport that keeps admission, verification, and deletion authority
    separate.
-8. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+9. ResourceBank/LeaseTree reacquisition and end-to-end restart.
 
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 implemented staging boundary and
 [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for the
 destructive boundary, and
 [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for the
-portable commit evidence.
+portable commit evidence, and
+[Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for the
+scoped publication model and remaining platform boundary.

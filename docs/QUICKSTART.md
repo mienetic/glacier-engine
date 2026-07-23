@@ -65,7 +65,7 @@ zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Commit one exact retired set and report logical plus allocator reclamation
 zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
 
-# Verify a fixed sweep record and classify clean/incomplete/corrupt stream tails
+# Verify a sweep record, classify tails, and exercise scoped crash publication
 zig build continuation-sweep-record-demo -Doptimize=ReleaseSafe -Dmetal=false
 
 # Provider request, settlement, cost, and durable journal evidence

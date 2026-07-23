@@ -101,18 +101,21 @@ and passes independent Zig/Python mutation-complete verification. It performs no
 filesystem I/O and does not make the transition durable. An allocation-free
 anchored classifier now returns the exact committed prefix and distinguishes
 short bodies, a body without footer, a matching partial footer, and corrupt
-complete evidence.
+complete evidence. A snapshot-bound writer model now separates append from
+repair authority, enforces ordered body/footer sync, poisons uncertain state,
+and explores every partial-write boundary in Zig and Python.
 
 **Completed slices:** fixed pointer-free evidence record, separate commit footer,
-chain position, exact pinned expectations, semantic receipt reconstruction, and
-a pure stream classifier with exhaustive cross-language append-boundary,
-mutation, foreign-chain, and suffix-anchor fixtures.
+chain position, exact pinned expectations, semantic receipt reconstruction, a
+pure stream classifier, exclusive snapshot binding, separate append/repair
+capabilities, and exhaustive cross-language append, mutation, foreign-chain,
+partial-I/O, poison/reopen, and repair fixtures.
 
-**Next slice:** define a capability-scoped writer contract and deterministic fake
-I/O backend. Exercise exclusive ownership, short body/footer writes, sync
-failure, uncertain-writer poisoning, close/reopen, and classifier-driven repair
-decisions at every phase. Keep real filesystem access, payload deletion, and
-destructive replay outside this slice.
+**Next slice:** implement a real directory-capability adapter over the completed
+contract. Exercise one-component path admission, exclusive lock failure,
+write-all loops, file and directory sync, process death, fresh-read reopen, and
+exact repair on promoted filesystems. Keep payload deletion and destructive
+replay outside this slice.
 
 ### Resolver adversarial fixtures
 

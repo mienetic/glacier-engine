@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record | Bind a checkpoint, own bounded tenant payloads, separate collection/staging/destructive authority, and carry portable commit evidence |
+| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer | Bind a checkpoint, own bounded tenant payloads, separate collection/staging/destructive/publication authority, and carry portable commit evidence |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -57,6 +57,7 @@ validated model + request
                                                           │
                                                           └─ scoped atomic commit ──> exact removal receipt
                                                                └─ fixed body/footer evidence record
+                                                                    └─ anchored recovery + scoped writer model
 ```
 
 ### ResourceBank
@@ -196,8 +197,18 @@ An anchored allocation-free classifier then admits only a semantically verified
 epoch/sequence/previous-root chain into its committed prefix and names short
 body, absent footer, matching partial footer, and corrupt tails separately. The
 codec and classifier do not open, write, sync, truncate, repair, delete, or
-recover files, so they are durable-ready evidence rather than a durable state
-machine.
+recover files.
+
+The sweep writer is the next authority boundary. An exclusive lease snapshot
+binds storage epoch, lease generation, exact observed bytes, and capacity.
+Append authority exposes only ordered body/footer write and sync operations;
+separate repair authority can truncate one explicitly classified incomplete
+tail to the verified prefix and sync it. Any uncertain I/O poisons the local
+writer or repairer and requires lease release, fresh read, and reclassification.
+The deterministic caller-owned backend models partial writes and crash survival
+at every byte boundary without real filesystem or payload-deletion authority.
+Platform locking, directory sync, durable destructive ordering, and live restore
+remain separate layers.
 
 ## Provider execution flow
 
@@ -296,4 +307,7 @@ still require real machines for each promoted platform.
 - [Continuation object sweep record](CONTINUATION_OBJECT_SWEEP_RECORD.md):
   fixed body/footer commit evidence and pure anchored stream classification
   without file I/O or repair authority.
+- [Continuation object sweep writer](CONTINUATION_OBJECT_SWEEP_WRITER.md):
+  snapshot-bound append/repair capabilities, poisoned uncertain writers, and
+  deterministic crash-boundary conformance without real filesystem authority.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

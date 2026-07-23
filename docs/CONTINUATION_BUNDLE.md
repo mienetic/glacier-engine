@@ -188,10 +188,12 @@ extension, capsule substitution, and overlapping native output storage.
    filesystem, deletion, or recovery authority.
 7. ~~Pure anchored sweep-record classification.~~ Implemented without I/O or
    repair authority.
-8. Compact/dynamic index experiment with full overhead measurement.
-9. Atomic bundle publication and crash recovery.
-10. Resource and paged-KV ownership reacquisition.
-11. End-to-end restart and paired physical-resource campaigns.
+8. ~~Snapshot-bound append/repair capability and deterministic crash model.~~
+   Implemented without real filesystem or deletion authority.
+9. Compact/dynamic index experiment with full overhead measurement.
+10. Real atomic bundle publication and crash recovery.
+11. Resource and paged-KV ownership reacquisition.
+12. End-to-end restart and paired physical-resource campaigns.
 
 The store must preserve the distinction between semantic identity, tenant-bound
 blob identity, access authority, live ownership, and publication authority.
@@ -206,3 +208,5 @@ See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 implemented prepare/abort staging boundary.
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the fixed portable commit evidence and non-durable append plan.
+See [Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for
+the scoped publication model and real-adapter boundary.

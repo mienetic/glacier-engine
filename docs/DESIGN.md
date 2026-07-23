@@ -166,6 +166,15 @@ only fully replayed records to the committed prefix. Incomplete body/footer
 states are descriptive evidence, not implicit permission to truncate or retry;
 a complete semantic or chain contradiction remains corrupt.
 
+Durability operations are split again by authority. A storage snapshot binds
+the bytes classified under one exclusive lease generation. The append view can
+only execute body-write/body-sync/footer-write/footer-sync; it cannot truncate.
+The repair view cannot append and is used only after an explicit incomplete-tail
+decision. Any uncertain callback outcome poisons the local state machine, so a
+retry requires a new lease and snapshot. The deterministic backend proves this
+ordering over modeled crash prefixes but does not substitute for platform file
+and directory durability tests.
+
 ### State machines fail closed
 
 Named errors are preferable to implicit recovery when the correct alternative is

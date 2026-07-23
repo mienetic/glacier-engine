@@ -251,10 +251,14 @@ output/source overlap with store memory.
    body/footer wire without filesystem authority.
 5. ~~Pure anchored sweep-record classification.~~ Implemented without I/O or
    repair authority.
-6. Replica adapter with independently verified repair transport.
-7. Atomic filesystem publication and crash recovery.
-8. Resource and paged-KV ownership reacquisition.
-9. End-to-end restart and paired physical-resource campaigns.
+6. ~~Snapshot-bound append/repair capability and deterministic crash model.~~
+   Implemented without real filesystem or deletion authority.
+7. Replica adapter with independently verified repair transport.
+8. Atomic filesystem publication and crash recovery.
+9. Resource and paged-KV ownership reacquisition.
+10. End-to-end restart and paired physical-resource campaigns.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the portable commit evidence and non-durable append plan.
+See [Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for
+the scoped publication model and remaining platform boundary.

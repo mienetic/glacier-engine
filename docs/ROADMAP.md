@@ -25,7 +25,7 @@ transactional state publication, and independently verifiable evidence.
 | Hierarchical ownership | Integrated | LeaseTree child scopes and paged-KV publication fences | Cross-worker and durable ownership identity |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
-| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, leases/repair, retirement, collection evidence, atomic in-memory sweep, fixed evidence record, pure anchored recovery classification, Zig/Python verification | Capability-scoped durable writer/repair policy, ownership reacquisition, and live restore |
+| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, leases/repair, retirement, collection evidence, atomic in-memory sweep, fixed evidence record, anchored recovery, snapshot-bound writer/repair conformance, Zig/Python verification | Real directory durability, ownership reacquisition, and live restore |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
@@ -62,6 +62,9 @@ transactional state publication, and independently verifiable evidence.
 - [x] Allocation-free anchored sweep-record classifier with exact committed
   prefix, named body/footer tail states, semantic/chain rejection, and exhaustive
   cross-language append-boundary fixtures.
+- [x] Snapshot-bound exclusive sweep writer with separate append/repair
+  capabilities, ordered sync, uncertain-state poisoning, explicit repair, and
+  exhaustive Zig/Python deterministic crash-boundary models.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -116,8 +119,11 @@ Next slices:
     - ~~pure recovery classifier over concatenated records and incomplete
       tails;~~ complete with exact epoch/sequence/previous-root anchors, semantic
       record replay, five statuses, and no I/O or repair authority;
-    - directory-capability writer with locking, ordered sync, uncertain-writer
-      poisoning, and bounded repair policy;
+    - ~~snapshot-bound capability writer with ordered sync, uncertain-writer
+      poisoning, explicit repair policy, and deterministic crash storage;~~
+      complete without real filesystem authority;
+    - real directory-capability adapter with platform locking, file/directory
+      sync, replacement resistance, and subprocess death tests;
     - crash campaign joining durable publication to destructive transition
       ordering.
 11. ResourceBank/LeaseTree reacquisition without duplicated ownership.
@@ -129,12 +135,13 @@ no duplicated output, no orphaned ownership, and crash coverage at every durable
 phase.
 
 The current capsule, resolver, bundle, store, lifecycle receipts, collection
-plan, sweep journal, sweep commit, and body/footer evidence record form identity,
-least-authority lookup, canonical planning, bounded payload ownership, a
-deterministic destructive in-memory boundary, and portable commit evidence—not
-a saved session. The record exposes the order a future writer must use, and its
-pure classifier identifies complete and incomplete chain prefixes, but neither
-writes, syncs, truncates, repairs, deletes, or recovers files. The fixture avoids
+plan, sweep journal, sweep commit, body/footer record, classifier, and scoped
+writer model form identity, least-authority lookup, canonical planning, bounded
+payload ownership, a deterministic destructive in-memory boundary, portable
+commit evidence, and modeled publication/recovery decisions—not a saved
+session. The writer proves capability and crash-state conformance in
+caller-owned memory but does not perform or prove real file/directory sync,
+locking, deletion ordering, or process restore. The fixture avoids
 one 25-byte duplicate payload allocation and the commit fixture reclaims a
 39-byte allocator tail, but lifecycle metadata, fixed index, and backing
 capacity remain larger than those deltas. No lower RSS, disk use, or restart
@@ -375,8 +382,9 @@ First slices:
 - ~~destructive sweep commit with exact allocator/accounting evidence;~~
 - ~~fixed sweep body/footer evidence format;~~
 - ~~pure anchored recovery classification over record streams;~~
-- capability-scoped durable sweep writer and recovery across every publication
-  crash point;
+- ~~snapshot-bound sweep writer/repair contract and deterministic crash model;~~
+- real directory adapter and subprocess recovery across every publication crash
+  point;
 - trusted replica transport with independently verified fetch evidence;
 - optional encrypted storage adapter whose ciphertext identity is separate from
   semantic content identity.

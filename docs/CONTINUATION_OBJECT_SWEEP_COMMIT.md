@@ -266,18 +266,22 @@ production garbage-collection performance.
 2. ~~Pure anchored recovery classification.~~ Implemented over concatenated
    records with exact committed-prefix metadata and named incomplete/corrupt
    tails; it performs no I/O or repair.
-3. Capability-scoped durable writer with explicit crash points.
-4. Recovery policy that distinguishes unstarted, prepared, committed, and
-   ambiguous durable states without double deallocation.
-5. Durable retirement and file-publication ordering.
-6. Multi-bundle and parent-checkpoint reachability composition.
-7. Allocator campaigns covering non-tail reuse, fragmentation, RSS, and peak
+3. ~~Snapshot-bound capability writer with explicit crash points and separate
+   repair authority.~~ Implemented with a deterministic allocation-free backend.
+4. Real directory adapter and subprocess recovery under platform lock/sync
+   semantics.
+5. Publication-before-deallocation ordering without double deallocation.
+6. Durable retirement and file-publication ordering.
+7. Multi-bundle and parent-checkpoint reachability composition.
+8. Allocator campaigns covering non-tail reuse, fragmentation, RSS, and peak
    memory without conflating them with logical accounting.
-8. ResourceBank/LeaseTree reacquisition and end-to-end continuation restore.
+9. ResourceBank/LeaseTree reacquisition and end-to-end continuation restore.
 
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 non-destructive prepare/abort boundary and
 [Continuation Object Collection Plan](CONTINUATION_OBJECT_COLLECTION.md) for
 eligibility evidence, and
 [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for the
-portable commit-evidence format and its non-durable boundary.
+portable commit-evidence format, and
+[Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for its
+least-authority modeled publication boundary.

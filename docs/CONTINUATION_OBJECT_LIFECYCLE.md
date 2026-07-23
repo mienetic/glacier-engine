@@ -240,7 +240,8 @@ Native and independent tests cover:
 - repair-generation accounting through final object release;
 - reconstruction of active lease and repair counters during full verification;
   and
-- fixed sweep-record verification and anchored stream-tail classification.
+- fixed sweep-record verification, anchored stream-tail classification, and
+  snapshot-bound append/repair crash conformance.
 
 This proves deterministic state-machine conformance for the fixture. It does not
 prove distributed consensus, wall-clock lease safety, crash durability, memory
@@ -256,8 +257,10 @@ savings, replica trust, secure erasure, or end-to-end restart.
    verification and no filesystem authority.
 4. ~~Pure anchored sweep-record classification.~~ Implemented without I/O or
    repair authority.
-5. Replica transport separated from repair admission and content verification.
-6. Durable transition journal with crash points before and after publication.
-7. ResourceBank/LeaseTree ownership reacquisition using generation-linked
+5. ~~Snapshot-bound append/repair capability and deterministic crash model.~~
+   Implemented without real filesystem or deletion authority.
+6. Replica transport separated from repair admission and content verification.
+7. Real durable transition journal across every publication crash point.
+8. ResourceBank/LeaseTree ownership reacquisition using generation-linked
    receipts.
-8. Paged-KV restore and end-to-end restart without duplicated output.
+9. Paged-KV restore and end-to-end restart without duplicated output.

@@ -57,6 +57,10 @@ Keep these distinct:
   reconstructed grant and receipts, semantic accounting verification, and an
   ordered append plan plus anchored committed-prefix/tail classification without
   implied file writes, sync, truncation, repair, recovery, or durability;
+- **sweep publication:** exclusive storage epoch/generation, exact observed
+  stream and capacity snapshot, ordered body/footer operations, sync watermarks,
+  poisoned uncertainty, explicit repair decision, discarded tail, and fresh
+  reopen outcome without implied operating-system durability or deletion;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;

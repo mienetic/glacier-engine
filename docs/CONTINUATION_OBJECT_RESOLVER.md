@@ -175,9 +175,11 @@ capsule substitution, and changed resolved output.
    filesystem or recovery authority.
 7. ~~Pure anchored sweep-record classification.~~ Implemented without I/O or
    repair authority.
-8. Atomic bundle publication and crash recovery.
-9. ResourceBank/LeaseTree and paged-KV reacquisition.
-10. End-to-end restart with paired physical measurements.
+8. ~~Snapshot-bound append/repair capability and deterministic crash model.~~
+   Implemented without real filesystem or deletion authority.
+9. Real atomic bundle publication and crash recovery.
+10. ResourceBank/LeaseTree and paged-KV reacquisition.
+11. End-to-end restart with paired physical measurements.
 
 Each layer must preserve the separation between content identity, access
 authority, live resource ownership, and token publication authority.
@@ -194,3 +196,5 @@ See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 non-destructive prepare/abort staging boundary.
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the portable commit evidence and its non-durable boundary.
+See [Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for
+the scoped publication model and remaining platform boundary.

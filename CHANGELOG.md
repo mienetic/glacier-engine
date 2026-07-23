@@ -49,6 +49,10 @@ before the first stable release.
 - Pure anchored sweep-record classifier with exact committed-prefix metadata,
   five clean/incomplete/corrupt statuses, semantic and chain verification, and
   exhaustive cross-language append-boundary and mutation fixtures.
+- Snapshot-bound continuation sweep publication with exclusive lease
+  generations, separate append/repair capabilities, ordered body/footer sync,
+  poisoned uncertain writers, explicit incomplete-tail repair, and exhaustive
+  Zig/Python deterministic crash-boundary models.
 
 ### Status
 

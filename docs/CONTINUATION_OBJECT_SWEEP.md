@@ -199,10 +199,13 @@ coordination, liveness, or exactly-once execution.
 4. ~~Pure anchored recovery classification.~~ Implemented with exact committed
    prefix and distinct short-body, absent-footer, partial-footer, and corrupt
    states without I/O.
-5. Capability-scoped durable publication with crash points before and after the
-   footer.
-6. Multi-bundle and parent-checkpoint reachability composition.
-7. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+5. ~~Snapshot-bound capability publication with crash points before and after
+   every body/footer operation.~~ Implemented over deterministic storage.
+6. Real directory adapter and durable publication-before-deallocation ordering.
+7. Multi-bundle and parent-checkpoint reachability composition.
+8. ResourceBank/LeaseTree reacquisition and end-to-end restart.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
-the fixed evidence wire and the remaining durability boundary.
+the fixed evidence wire and
+[Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for the
+scoped writer/repair contract and remaining real-durability boundary.

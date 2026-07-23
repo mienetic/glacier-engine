@@ -32,7 +32,7 @@ energy, or production reliability.
 | `zig build continuation-collection-demo -Dmetal=false` | Exact root multiplicity, complete lease coverage, bounded classification, and a non-mutating collection-plan root |
 | `zig build continuation-sweep-demo -Dmetal=false` | Separately scoped plan regeneration, staging ceilings, functional prepare/abort roots, and zero payload deallocation |
 | `zig build continuation-sweep-commit-demo -Dmetal=false` | Separate destructive authority, repeated plan regeneration, canonical target removal, exact accounting, and allocator tail reclamation |
-| `zig build continuation-sweep-record-demo -Dmetal=false` | Fixed 784-byte body/footer record, semantic receipt reconstruction, chain expectation, and mutation/foreign-record rejection |
+| `zig build continuation-sweep-record-demo -Dmetal=false` | Fixed record verification, anchored tail classification, snapshot-bound append/repair capabilities, ordered sync, and deterministic crash-storage conformance |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -143,6 +143,17 @@ byte, reject rehashed semantic contradictions and valid foreign chains, and
 verify an authenticated suffix anchor. Native classification allocates no heap
 memory and returns only committed-prefix metadata; this is not evidence of file
 repair, sync behavior, restart correctness, or storage performance.
+
+The writer fixture binds the first record to exclusive storage epoch 41 and
+lease generation 1. Zig and Python share snapshot SHA-256
+`b02d101a…ee3897`, then append the second record through body-write, body-sync,
+footer-write, and footer-sync. The fault campaigns cover all eight before/after
+I/O outcomes, all 737 body prefixes, all 49 footer prefixes, every incomplete
+tail from 1 through 783 bytes, and both crash lengths around an uncertain
+truncate. Append and repair capabilities expose disjoint operations, and every
+uncertain error poisons the local state until fresh lease/snapshot reopen. This
+is allocation-free deterministic storage-model evidence—not proof of real lock,
+filesystem sync, directory durability, process restart, or storage performance.
 
 The sweep-commit demo separately encodes its actual native store receipts into
 the same 784-byte format and verifies record root `6f60f970…c7fa52`.

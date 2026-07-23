@@ -178,15 +178,17 @@ cover every body/footer append boundary, every mutation in the second complete
 record, valid-but-foreign epoch/sequence/previous-root chains, a rehashed
 semantic contradiction, empty streams, and authenticated suffix scans.
 
-## What remains
+## Publication layer
 
-The next bounded slice is a capability-scoped writer contract exercised through
-a deterministic fake I/O backend. It must model exclusive ownership, ordered
-body/footer writes and syncs, uncertain-writer poisoning, reopen classification,
-and explicit repair decisions without granting payload deletion authority.
-Later work must separately prove real directory capabilities, platform sync and
-locking behavior, destructive-transition ordering, and end-to-end crash tests.
+The capability-scoped writer contract and deterministic crash backend are now
+implemented. They bind the classified bytes to one exclusive lease snapshot,
+separate append from repair, enforce ordered body/footer sync, poison uncertain
+operations, and cover every modeled partial-write boundary. They still perform
+no real filesystem I/O. A directory adapter, platform lock/sync evidence,
+destructive-transition ordering, and end-to-end process restart remain.
 
 See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
 the in-memory transition whose evidence this format carries and
+[Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for the
+least-authority publication and repair state machines, and
 [Roadmap](ROADMAP.md) for the durability sequence.

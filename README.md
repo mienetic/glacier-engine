@@ -54,6 +54,11 @@ formats, and independent verifiers.
   anchored classifier identifies a verified committed prefix and distinguishes
   short body, missing-footer, partial-footer, and corrupt tails without receiving
   file, repair, deletion, or recovery authority.
+- **Least-authority crash publication.** Snapshot-bound exclusive capabilities
+  separate ordered body/footer append from explicit incomplete-tail repair.
+  Uncertain I/O poisons the writer, and an allocation-free reference backend
+  explores every modeled byte boundary without granting real filesystem or
+  payload-deletion authority.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
@@ -103,6 +108,7 @@ request
                                      └─ sweep prepare/abort + atomic commit
                                         └─ fixed body/footer evidence record
                                            └─ pure anchored stream classifier
+                                              └─ scoped writer/repair model
 
 provider request
   │
@@ -157,7 +163,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, fixed evidence record, and pure recovery classification | Capability-scoped durable writer/repair policy, ownership reacquisition, and restart |
+| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, fixed evidence record, anchored recovery, and a scoped crash-writer model | Real directory durability, ownership reacquisition, and restart |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
@@ -204,6 +210,7 @@ valuable as new features.
 - [Continuation object sweep journal](docs/CONTINUATION_OBJECT_SWEEP.md)
 - [Continuation object sweep commit](docs/CONTINUATION_OBJECT_SWEEP_COMMIT.md)
 - [Continuation object sweep record](docs/CONTINUATION_OBJECT_SWEEP_RECORD.md)
+- [Continuation object sweep writer](docs/CONTINUATION_OBJECT_SWEEP_WRITER.md)
 - [Glossary](docs/GLOSSARY.md)
 
 Research tracks are documented separately in

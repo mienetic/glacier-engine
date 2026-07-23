@@ -54,6 +54,15 @@ clean, incomplete-body, incomplete-footer, or corrupt status. Classification is
 evidence only and grants no truncation, repair, deletion, or filesystem
 authority.
 
+**Sweep publication capability** — A snapshot-bound exclusive operation view.
+Its append form exposes only ordered body/footer write and sync; its separately
+requested repair form exposes only truncate and sync for an explicitly
+classified incomplete tail. Neither form grants payload deletion authority.
+
+**Poisoned writer** — A process-local writer or repairer that observed an
+uncertain I/O result and therefore rejects reuse until storage is reacquired,
+read again, and reclassified under a fresh snapshot.
+
 **Retired entry** — A retained store payload with zero semantic references and
 no active lease. It is eligible for a future separately authorized sweep only
 after an exact collection plan classifies it as collectible.

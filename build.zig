@@ -771,8 +771,8 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&continuation_sweep_commit_demo_exe.step);
 
     // Fixed pointer-free body/footer record for an already committed sweep.
-    // The codec reconstructs both receipts, and its anchored classifier names
-    // clean/incomplete/corrupt stream tails without performing filesystem I/O.
+    // The demo also exercises snapshot-bound append/repair capabilities and a
+    // deterministic crash-storage model without performing real filesystem I/O.
     const continuation_sweep_record_demo_exe = b.addExecutable(.{
         .name = "glacier-continuation-object-sweep-record-demo",
         .root_module = b.createModule(.{
@@ -790,7 +790,7 @@ pub fn build(b: *std.Build) void {
     );
     const continuation_sweep_record_demo_step = b.step(
         "continuation-sweep-record-demo",
-        "Run the sweep evidence-record and recovery-classifier demo",
+        "Run sweep record, recovery, writer and repair conformance",
     );
     continuation_sweep_record_demo_step.dependOn(
         &run_continuation_sweep_record_demo.step,

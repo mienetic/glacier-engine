@@ -6,6 +6,7 @@ const capsule = core.continuation_capsule;
 const object_store = core.continuation_object_store;
 const sweep = core.continuation_object_sweep;
 const record = core.continuation_object_sweep_record;
+const sweep_writer = core.continuation_object_sweep_writer;
 
 pub fn main() !void {
     const input = demoInput(0x6a, 0x6b);
@@ -56,6 +57,61 @@ pub fn main() !void {
         corrupt_recovery.status != .corrupt_record or
         corrupt_recovery.committed_records != 1)
         return error.RecoveryClassificationMismatch;
+
+    var writer_backing: [record.encoded_bytes * 2]u8 = undefined;
+    var model_storage = try sweep_writer.DeterministicStorageV1.init(
+        &writer_backing,
+        encoded,
+        41,
+    );
+    var writer_lease = try model_storage.acquire();
+    var durable_writer = try sweep_writer.WriterV1.openClean(
+        model_storage.bytes(),
+        recovery_anchor,
+        try writer_lease.appendCapability(),
+    );
+    const append_receipt = try durable_writer.appendRecord(second);
+    if (!std.mem.eql(u8, model_storage.bytes(), &stream) or
+        model_storage.trace().len != 4 or
+        append_receipt.sequence != 2 or
+        !append_receipt.body_sync_exercised or
+        !append_receipt.footer_sync_exercised)
+        return error.WriterContractMismatch;
+    try writer_lease.release();
+
+    var repair_backing: [record.encoded_bytes * 2]u8 = undefined;
+    const repair_tail_bytes = record.body_bytes + 7;
+    var repair_storage = try sweep_writer.DeterministicStorageV1.init(
+        &repair_backing,
+        stream[0 .. record.encoded_bytes + repair_tail_bytes],
+        42,
+    );
+    var repair_lease = try repair_storage.acquire();
+    const recovery_plan = try sweep_writer.planRecoveryV1(
+        repair_storage.bytes(),
+        recovery_anchor,
+        repair_lease.snapshot,
+    );
+    var repairer = try sweep_writer.RepairerV1.init(
+        repair_storage.bytes(),
+        recovery_anchor,
+        try repair_lease.prepareRepair(repair_storage.bytes(), recovery_anchor),
+    );
+    const repair_receipt = try repairer.apply();
+    try repair_lease.release();
+    var repaired_lease = try repair_storage.acquire();
+    var repaired_writer = try sweep_writer.WriterV1.openClean(
+        repair_storage.bytes(),
+        recovery_anchor,
+        try repaired_lease.appendCapability(),
+    );
+    _ = try repaired_writer.appendRecord(second);
+    if (recovery_plan.action != .repair_incomplete_tail or
+        recovery_plan.classification.status != .partial_footer_tail or
+        repair_receipt.discarded_tail_bytes != repair_tail_bytes or
+        !std.mem.eql(u8, repair_storage.bytes(), &stream))
+        return error.RepairContractMismatch;
+    try repaired_lease.release();
 
     var corrupted = storage;
     corrupted[record.accounting_before_offset] ^= 1;
@@ -114,6 +170,16 @@ pub fn main() !void {
             "\"recovery_corrupt_safe_records\":{d}," ++
             "\"recovery_modifies_input\":false," ++
             "\"recovery_repair_authority\":false," ++
+            "\"writer_snapshot_bound\":true," ++
+            "\"writer_exclusive_lease\":true," ++
+            "\"writer_phase_count\":{d}," ++
+            "\"writer_body_sync\":true,\"writer_footer_sync\":true," ++
+            "\"writer_poison_on_uncertain_io\":true," ++
+            "\"repair_action\":\"{s}\",\"repair_status\":\"{s}\"," ++
+            "\"repair_discarded_tail_bytes\":{d}," ++
+            "\"repair_requires_reacquire\":true," ++
+            "\"append_authority_can_truncate\":false," ++
+            "\"repair_authority_can_append\":false," ++
             "\"heap_allocations\":0,\"filesystem_authority\":false," ++
             "\"network_authority\":false,\"clock_authority\":false," ++
             "\"deletion_authority\":false,\"recovery_authority\":false," ++
@@ -145,6 +211,10 @@ pub fn main() !void {
             @tagName(partial_footer_recovery.status),
             @tagName(corrupt_recovery.status),
             corrupt_recovery.committed_records,
+            model_storage.trace().len,
+            @tagName(recovery_plan.action),
+            @tagName(recovery_plan.classification.status),
+            repair_receipt.discarded_tail_bytes,
             &record_hex,
             &encoded_hex,
             &stream_hex,

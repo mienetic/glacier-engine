@@ -161,10 +161,12 @@ trusting a historical receipt as live authority.
    filesystem, deletion, or recovery authority.
 8. ~~Pure anchored sweep-record classification.~~ Implemented without I/O or
    repair authority.
-9. Atomic manifest/bundle publication and crash recovery.
-10. Resource and page ownership reacquisition.
-11. Live restore between two transactional token publications.
-12. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
+9. ~~Snapshot-bound append/repair capability and deterministic crash model.~~
+   Implemented without real filesystem or deletion authority.
+10. Real atomic manifest/bundle publication and crash recovery.
+11. Resource and page ownership reacquisition.
+12. Live restore between two transactional token publications.
+13. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
 
 Each layer must keep manifest identity separate from storage and execution
 authority.
@@ -183,3 +185,5 @@ See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
 the exact retired-target removal and accounting boundary.
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the fixed portable commit evidence and its non-durable boundary.
+See [Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for
+the scoped publication model and remaining platform boundary.
