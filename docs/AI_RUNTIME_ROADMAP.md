@@ -321,7 +321,7 @@ expand the base adapter's capabilities.
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder plus overlap-safe typed transcript fixture integrated; production model gated | Carry transcript publication through a streaming model restart | No sample loss/duplication, exact streaming restart, transcript transaction |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
-| Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder plus fixed predecessor-bound segment result integrated; production model gated | Add canonical adjacent-segment merge policy | Variable-frame-rate mapping, audio/subtitle linkage, stateful continuation |
+| Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder, fixed predecessor-bound segment result, and canonical merge timeline integrated; production model gated | Link exact audio/transcript and video result ranges | Variable-frame-rate mapping, cross-modal linkage, stateful continuation |
 | Image generation | diffusion/flow step, decode latent, publish image | Exact two-step retained-state transaction with distinct-process intermediate restore; production model gated | Decode the terminal latent into a bounded generated-image transaction | Multi-step continuation, bounded decode, atomic image/provenance publication |
 | Video generation | temporal latent steps, frame/segment publication | Idea | Two-frame synthetic generation fixture | Temporal ordering, restart/cancel semantics, manifest/chunk publication |
 | Audio/music generation | acoustic or token steps, waveform decode | Idea | Short synthetic exact-integer output fixture | Timeline continuity, chunk lineage, rights/provenance policy |
@@ -424,8 +424,10 @@ while retaining different state and publication semantics.
   encoder now binds keyframe lineage, eviction boundary, charged gather
   scratch, and exact target time; a fixed typed video segment now adds
   event/confidence fields, complete source/cache lineage, predecessor chaining,
-  and transactional visibility, while variable-frame-rate, segment merge
-  policy, audio/subtitle linkage, and stateful model continuation remain;
+  and transactional visibility; fixed timeline and decision wires now coalesce
+  only touching/overlapping same-event results and retain gaps or different
+  events, while variable-frame-rate, audio/subtitle linkage, and stateful model
+  continuation remain;
 - extend checkpoints with family-specific processor/cache state; the fixed
   independently verified state and payload bundles now advance as the fifth
   and sixth atomic archive objects through a fresh-process successor.

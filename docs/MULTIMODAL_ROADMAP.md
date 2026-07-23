@@ -57,9 +57,10 @@ frame ordinals, keyframe lineage, eviction boundary, cache generation, and an
 exact rational target span; the gather scratch is scrubbed before return.
 A typed segment adapter now publishes that selection as a fixed
 predecessor-bound event/confidence result with complete source/cache lineage.
-Variable-frame-rate discontinuities, adjacent-segment merge policy,
-audio/subtitle linkage, stateful video models, and production quality remain
-gated.
+A fixed timeline and merge receipt now preserve the accumulated visible tail,
+coalesce only same-event overlap/touch, and retain gaps or different events.
+Variable-frame-rate discontinuities, audio/subtitle linkage, stateful video
+models, and production quality remain gated.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -355,7 +356,7 @@ Early contributions can proceed without a large model:
 - extend the bounded typed vision, audio, and temporal-video adapters with
   detection and richer transcript result forms over the completed post-restore
   cache ownership path; the first fixed predecessor-bound video-segment result
-  is complete;
+  and deterministic merge timeline are complete;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 

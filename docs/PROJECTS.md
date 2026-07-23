@@ -150,6 +150,12 @@ canonical strided selection, publishes exact frame/time boundaries plus
 event/confidence fields, and binds live cache ownership and predecessor
 lineage. See [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md).
 
+**Completed slice:** fixed timeline and merge-receipt wires now preserve an
+accumulated visible tail across repeated decisions. Same-event overlap
+coalesces, while gaps and event changes remain distinct under transactional
+publication. See
+[Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md).
+
 **Next slice:** carry transcript or video-model state through a process restart,
 or link synchronized audio/transcript and video results, reusing
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md),

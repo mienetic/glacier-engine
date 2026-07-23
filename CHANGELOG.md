@@ -18,6 +18,10 @@ before the first stable release.
 
 ### Added
 
+- Canonical video-segment timeline: fixed 384-byte state and merge receipts
+  coalesce only touching/overlapping results of the same event, retain gaps or
+  different events, preserve raw predecessor lineage, and publish through an
+  exact resource-backed transaction with independent golden roots.
 - Typed video-segment adapter: a fixed 512-byte result binds a bounded strided
   frame selection, exact target-time span, event/confidence fields, live
   processor/cache ownership, and predecessor lineage to transactional

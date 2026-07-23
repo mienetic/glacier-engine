@@ -122,8 +122,10 @@ zig test src/core/vision_encoder_adapter.zig -OReleaseSafe
 zig test src/core/audio_window_adapter.zig -OReleaseSafe
 zig test src/core/temporal_video_adapter.zig -OReleaseSafe
 zig test src/core/video_segment_adapter.zig -OReleaseSafe
+zig test src/core/video_segment_timeline.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_model_contract
 python3 -m unittest bench.tests.test_video_segment_adapter
+python3 -m unittest bench.tests.test_video_segment_timeline
 ```
 
 ## Additional adapters
@@ -145,6 +147,10 @@ A typed video-segment adapter now turns one canonical strided selection into a
 fixed source/time-bound event result with processor/cache lineage and a
 previous-segment root. See
 [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md).
+
+The canonical video-segment timeline reduces ordered raw results with one
+fixed merge policy and resource-backed decision transaction. See
+[Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md).
 
 Vision, audio, transcripts, temporal video, and typed segments use the
 extracted shared stateless lifecycle.

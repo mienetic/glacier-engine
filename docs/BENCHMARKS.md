@@ -51,6 +51,7 @@ energy, or production reliability.
 | `zig test src/core/audio_transcript_adapter.zig -OReleaseSafe` | Canonical overlap and transcript wires, context-only versus publishable sample ranges, live cache ownership, predecessor/candidate substitution rejection, transactional text visibility, and final zero ownership |
 | `zig test src/core/temporal_video_adapter.zig -OReleaseSafe` | Live temporal cache, canonical strided-frame selection, keyframe/eviction lineage, charged-and-scrubbed gather scratch, exact target-time mapping, candidate drift rejection, and final zero ownership |
 | `zig test src/core/video_segment_adapter.zig -OReleaseSafe` | Canonical 512-byte video segments, exact frame/time bounds, live selection/cache lineage, predecessor binding, mutation rejection, transactional visibility, and final zero ownership |
+| `zig test src/core/video_segment_timeline.zig -OReleaseSafe` | Canonical 384-byte timeline/merge wires, same-event overlap coalescing, gap/event separation, raw/decision lineage, mutation and candidate-drift rejection, and final zero ownership |
 | `zig test src/core/latent_step_adapter.zig -OReleaseSafe` | Canonical retained-state wire, pinned model/state snapshots, buffer-alias rejection, exact latent candidate, atomic state/result publication, abort/drift preservation, and final zero ownership |
 | `zig build stateful-model-live-restart-demo -Dmetal=false` | Canonical intermediate checkpoint, distinct source/target PIDs, fresh-Bank charge-before-materialization latent restore, chained terminal plan, zero duplicate results, and final zero ownership |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
@@ -72,10 +73,11 @@ accelerator performance, or physical memory evidence.
 
 The audio and temporal-video adapters add exact signed-window projection,
 strided frame gathering, and cross-language source-mapping roots. The segment
-fixture adds a fixed source/time-bound event result and predecessor lineage.
-They do not measure transcription or video quality, streaming model restart,
-latency, throughput, or physical memory. The transcript fixture proves overlap
-ownership and publication semantics only; its fixed ASCII text is not
+fixture adds a fixed source/time-bound event result and predecessor lineage;
+the timeline fixture adds deterministic overlap decisions and accumulated-tail
+state. They do not measure transcription or video quality, streaming model
+restart, latency, throughput, or physical memory. The transcript fixture proves
+overlap ownership and publication semantics only; its fixed ASCII text is not
 recognition-quality evidence.
 
 The latent-step fixture adds state/result atomicity and a cross-language

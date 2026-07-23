@@ -578,6 +578,9 @@ still require real machines for each promoted platform.
 - [Typed video-segment adapter](VIDEO_SEGMENT_ADAPTER.md): fixed source/time
   bounds, event/confidence fields, processor/cache/selection lineage,
   predecessor chaining, and transactional typed publication.
+- [Canonical video-segment timeline](VIDEO_SEGMENT_TIMELINE.md): fixed
+  accumulated-tail state, deterministic coalesce/retain decisions, raw segment
+  plus decision chains, and exact resource-backed publication.
 - [Stateful model adapter and latent-step fixture](STATEFUL_MODEL_ADAPTER.md):
   canonical retained-state publication, pinned lineage, disjoint candidates,
   and atomic state/result replacement.

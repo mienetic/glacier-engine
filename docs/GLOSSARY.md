@@ -299,6 +299,14 @@ input shape, and typed result.
 frame ordinals, exact target-time span, event/confidence values, complete
 processor/cache/selection lineage, and a previous-segment root.
 
+**Video-segment timeline** — Canonical accumulated visible-tail state derived
+from an immutable raw segment chain. Same-event intervals coalesce only when
+they touch or overlap; gaps and different events remain distinct.
+
+**Video-segment merge receipt** — A fixed decision record binding previous and
+incoming raw segment roots, prior decision, merge policy, chosen output bounds,
+overlap ticks, and visible-count effect.
+
 **Synchronized media watermark** — The lower exact master-clock tick reached by
 the bound audio and video processor states, accepted only when integer mapping
 is exact and declared stream skew remains within policy.
