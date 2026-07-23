@@ -108,9 +108,12 @@ python3 -m unittest bench.tests.test_audio_window_adapter
 
 The temporal-video slice now covers strided selection over the existing
 keyframe/window cache. The separate transcript slice covers overlap/context
-ownership and predecessor-bound text; its next gate is model restart. See
+ownership and predecessor-bound text. The typed video-segment slice turns a
+selection into an ordered source/time-bound event result; model restart remains
+the next shared gate. See
 [Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md) and
-[Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md).
+[Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md), and
+[Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md).
 
 See [Typed Model-Family Contracts and Vision Adapter](MODEL_FAMILY_ADAPTER.md),
 [Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md), and

@@ -129,6 +129,10 @@ python3 -m unittest bench.tests.test_audio_transcript_adapter
 zig test src/core/temporal_video_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_temporal_video_adapter
 
+# Publish one source-bound typed video segment transactionally
+zig test src/core/video_segment_adapter.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_video_segment_adapter
+
 # Verify one atomic retained-state/result transition
 zig test src/core/latent_step_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_stateful_model_adapter

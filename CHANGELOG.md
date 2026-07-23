@@ -18,6 +18,10 @@ before the first stable release.
 
 ### Added
 
+- Typed video-segment adapter: a fixed 512-byte result binds a bounded strided
+  frame selection, exact target-time span, event/confidence fields, live
+  processor/cache ownership, and predecessor lineage to transactional
+  publication with cross-language golden roots and mutation-complete tests.
 - Overlapping-audio transcript adapter: a canonical context/new-sample plan
   binds live processor-cache ownership to a fixed transcript segment, excludes
   context samples from the publishable range, rejects predecessor/candidate

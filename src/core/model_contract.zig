@@ -91,6 +91,7 @@ pub const OutputKindV1 = enum(u64) {
     detection_set = 7,
     segmentation_mask = 8,
     typed_action = 9,
+    video_segment = 10,
 };
 
 pub const NumericalPolicyV1 = enum(u64) {

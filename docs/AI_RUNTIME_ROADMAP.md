@@ -234,7 +234,8 @@ exact terminal attempt; and no local byte count is presented as billed usage.
 Responsibilities:
 
 - atomic visibility for tokens, tensors, scores, labels, boxes, masks,
-  embeddings, retrieval results, transcripts, media chunks, and actions;
+  embeddings, retrieval results, transcripts, video segments, media chunks,
+  and actions;
 - provisional output separated from visible output;
 - sequence, lineage, ownership, scheduler permit, and evidence roots committed
   together;
@@ -320,7 +321,7 @@ expand the base adapter's capabilities.
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder plus overlap-safe typed transcript fixture integrated; production model gated | Carry transcript publication through a streaming model restart | No sample loss/duplication, exact streaming restart, transcript transaction |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
-| Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder integrated; production model gated | Extend from typed embedding to a bounded segment result | Variable-frame-rate mapping, audio/subtitle linkage, stateful continuation |
+| Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder plus fixed predecessor-bound segment result integrated; production model gated | Add canonical adjacent-segment merge policy | Variable-frame-rate mapping, audio/subtitle linkage, stateful continuation |
 | Image generation | diffusion/flow step, decode latent, publish image | Exact two-step retained-state transaction with distinct-process intermediate restore; production model gated | Decode the terminal latent into a bounded generated-image transaction | Multi-step continuation, bounded decode, atomic image/provenance publication |
 | Video generation | temporal latent steps, frame/segment publication | Idea | Two-frame synthetic generation fixture | Temporal ordering, restart/cancel semantics, manifest/chunk publication |
 | Audio/music generation | acoustic or token steps, waveform decode | Idea | Short synthetic exact-integer output fixture | Timeline continuity, chunk lineage, rights/provenance policy |
@@ -421,8 +422,10 @@ while retaining different state and publication semantics.
   ownership; fixed window/eviction state plus exact audio/video watermark is
   complete together with materialized cache ownership; a typed strided-frame
   encoder now binds keyframe lineage, eviction boundary, charged gather
-  scratch, and exact target time, while variable-frame-rate and stateful model
-  continuation remain;
+  scratch, and exact target time; a fixed typed video segment now adds
+  event/confidence fields, complete source/cache lineage, predecessor chaining,
+  and transactional visibility, while variable-frame-rate, segment merge
+  policy, audio/subtitle linkage, and stateful model continuation remain;
 - extend checkpoints with family-specific processor/cache state; the fixed
   independently verified state and payload bundles now advance as the fifth
   and sixth atomic archive objects through a fresh-process successor.

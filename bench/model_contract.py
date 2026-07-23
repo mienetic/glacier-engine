@@ -85,14 +85,16 @@ RESULT_DIGEST_FIELDS = (
 VISION_UNDERSTANDING = 3
 VIDEO_UNDERSTANDING = 6
 ENCODE = 3
+SEGMENT = 10
 IMAGE_FEATURE_U8 = 3
 VIDEO_FEATURE_U8 = 5
 EMBEDDING_I32 = 2
+VIDEO_SEGMENT = 10
 EXACT_INTEGER = 1
 FAMILY_IDS = frozenset(range(1, 18))
 OPERATION_IDS = frozenset(range(1, 13))
 INPUT_KIND_IDS = frozenset(range(1, 8))
-OUTPUT_KIND_IDS = frozenset(range(1, 10))
+OUTPUT_KIND_IDS = frozenset(range(1, 11))
 NUMERICAL_POLICY_IDS = frozenset(range(1, 5))
 
 
@@ -1003,6 +1005,30 @@ def materialize_temporal_video_selection(
     selection: Record,
     video_cache: bytes,
 ) -> bytes:
+    selected = materialize_temporal_video_frames(
+        video_state,
+        selection,
+        video_cache,
+    )
+    try:
+        parameters = video_state["parameters"]
+        if (
+            video_state["cache_content_sha256"] != plan["cache_payload_sha256"]
+            or plan["batch_items"] != selection["frame_count"]
+            or plan["input_features"] != parameters[1]
+            or plan["input_bytes"] != len(selected)
+        ):
+            raise ModelContractError("invalid temporal video cache")
+    except (KeyError, TypeError, OverflowError):
+        raise ModelContractError("invalid temporal video cache") from None
+    return selected
+
+
+def materialize_temporal_video_frames(
+    video_state: Record,
+    selection: Record,
+    video_cache: bytes,
+) -> bytes:
     selection = validate_temporal_video_selection(
         video_state,
         selection,
@@ -1013,12 +1039,6 @@ def materialize_temporal_video_selection(
             not isinstance(video_cache, bytes)
             or len(video_cache) != video_state["cache_bytes"]
             or sha256(video_cache) != video_state["cache_content_sha256"]
-            or video_state["cache_content_sha256"]
-            != plan["cache_payload_sha256"]
-            or plan["batch_items"] != selection["frame_count"]
-            or plan["input_features"] != parameters[1]
-            or plan["input_bytes"]
-            != selection["frame_count"] * parameters[1]
         ):
             raise ModelContractError("invalid temporal video cache")
         selected = bytearray()
@@ -1029,7 +1049,7 @@ def materialize_temporal_video_selection(
             )
             offset = (frame - parameters[2]) * parameters[1]
             selected.extend(video_cache[offset : offset + parameters[1]])
-        if len(selected) != plan["input_bytes"]:
+        if len(selected) != selection["frame_count"] * parameters[1]:
             raise ModelContractError("invalid temporal video cache")
     except (KeyError, TypeError, OverflowError):
         raise ModelContractError("invalid temporal video cache") from None

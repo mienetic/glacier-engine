@@ -108,9 +108,11 @@ zig test src/core/temporal_video_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_temporal_video_adapter
 ```
 
-The next multimodal slices are overlapping audio-window ownership, typed
-transcript publication, and then one stateful model-family adapter whose
-continuation semantics differ from these stateless encoders.
+The selection and charged gather are now also reused by the
+[Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md), which publishes one
+fixed source/time-bound event result. Remaining video slices include adjacent
+segment merge policy, synchronized audio/subtitle linkage, and stateful
+video-model continuation.
 
 See [Typed Model-Family Contracts and Vision Adapter](MODEL_FAMILY_ADAPTER.md),
 [Typed Audio-Window Encoder Adapter](AUDIO_WINDOW_ADAPTER.md), and

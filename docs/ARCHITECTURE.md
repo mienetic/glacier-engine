@@ -575,6 +575,9 @@ still require real machines for each promoted platform.
 - [Typed temporal-video encoder adapter](TEMPORAL_VIDEO_ADAPTER.md): canonical
   strided-frame selection, keyframe/eviction lineage, charged gather scratch,
   exact target-time mapping, and transactional embedding publication.
+- [Typed video-segment adapter](VIDEO_SEGMENT_ADAPTER.md): fixed source/time
+  bounds, event/confidence fields, processor/cache/selection lineage,
+  predecessor chaining, and transactional typed publication.
 - [Stateful model adapter and latent-step fixture](STATEFUL_MODEL_ADAPTER.md):
   canonical retained-state publication, pinned lineage, disjoint candidates,
   and atomic state/result replacement.

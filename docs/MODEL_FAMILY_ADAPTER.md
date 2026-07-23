@@ -121,7 +121,9 @@ zig test src/core/model_contract.zig -OReleaseSafe
 zig test src/core/vision_encoder_adapter.zig -OReleaseSafe
 zig test src/core/audio_window_adapter.zig -OReleaseSafe
 zig test src/core/temporal_video_adapter.zig -OReleaseSafe
+zig test src/core/video_segment_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_model_contract
+python3 -m unittest bench.tests.test_video_segment_adapter
 ```
 
 ## Additional adapters
@@ -139,8 +141,13 @@ An overlap-safe audio transcript adapter now separates conditioning context
 from newly publishable samples and emits a predecessor-bound typed transcript.
 See [Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md).
 
-Vision, audio, transcripts, and temporal video use the extracted shared
-stateless lifecycle.
+A typed video-segment adapter now turns one canonical strided selection into a
+fixed source/time-bound event result with processor/cache lineage and a
+previous-segment root. See
+[Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md).
+
+Vision, audio, transcripts, temporal video, and typed segments use the
+extracted shared stateless lifecycle.
 The stateful lifecycle and exact latent-step fixture now publish replacement
 state with each result, checkpoint the intermediate publication, restore it
 under fresh ownership in another process, and commit the terminal step exactly

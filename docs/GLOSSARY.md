@@ -295,6 +295,10 @@ charged caller-owned scratch.
 to the complete live video-cache root, processor window, time base, model batch,
 input shape, and typed result.
 
+**Video segment** — A fixed typed video-understanding result carrying selected
+frame ordinals, exact target-time span, event/confidence values, complete
+processor/cache/selection lineage, and a previous-segment root.
+
 **Synchronized media watermark** — The lower exact master-clock tick reached by
 the bound audio and video processor states, accepted only when integer mapping
 is exact and declared stream skew remains within policy.

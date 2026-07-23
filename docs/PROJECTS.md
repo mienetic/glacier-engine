@@ -145,8 +145,13 @@ plan and a fixed predecessor-bound transcript wire. Context-only samples cannot
 be mistaken for newly publishable text. See
 [Overlap-Safe Audio Transcript Adapter](AUDIO_TRANSCRIPT_ADAPTER.md).
 
-**Next slice:** carry transcript publication through a model restart or add a
-bounded typed video-segment result, reusing
+**Completed slice:** a bounded typed video-segment result now reuses the
+canonical strided selection, publishes exact frame/time boundaries plus
+event/confidence fields, and binds live cache ownership and predecessor
+lineage. See [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md).
+
+**Next slice:** carry transcript or video-model state through a process restart,
+or link synchronized audio/transcript and video results, reusing
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md),
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), and
 [Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md).

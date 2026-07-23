@@ -252,6 +252,93 @@ pub fn validateTemporalSelectionV1(
         return Error.InvalidVideoBinding;
 }
 
+pub fn selectedFrameBytesV1(
+    video_state: processor.ProcessorStateV1,
+    selection: TemporalSelectionV1,
+) Error!u64 {
+    try validateTemporalSelectionV1(video_state, selection);
+    return std.math.mul(
+        u64,
+        selection.frame_count,
+        video_state.parameters[1],
+    ) catch return Error.InvalidVideoBinding;
+}
+
+pub fn materializeSelectedFramesV1(
+    video_state: processor.ProcessorStateV1,
+    selection: TemporalSelectionV1,
+    video_cache: []const u8,
+    selected_input: []u8,
+) Error![]u8 {
+    const selected_bytes = try selectedFrameBytesV1(
+        video_state,
+        selection,
+    );
+    const bytes_per_entry = std.math.cast(
+        usize,
+        video_state.parameters[1],
+    ) orelse return Error.InvalidVideoBinding;
+    if (selected_input.len != selected_bytes or
+        video_cache.len != video_state.cache_bytes or
+        !std.mem.eql(
+            u8,
+            &model.sha256(video_cache),
+            &video_state.cache_content_sha256,
+        ))
+        return Error.InvalidVideoBinding;
+    @memset(selected_input, 0);
+    for (0..std.math.cast(
+        usize,
+        selection.frame_count,
+    ) orelse return Error.InvalidVideoBinding) |index| {
+        const frame = std.math.add(
+            u64,
+            selection.first_frame,
+            std.math.mul(
+                u64,
+                index,
+                selection.frame_stride,
+            ) catch return Error.InvalidVideoBinding,
+        ) catch return Error.InvalidVideoBinding;
+        const relative = std.math.sub(
+            u64,
+            frame,
+            video_state.parameters[2],
+        ) catch return Error.InvalidVideoBinding;
+        const source_offset = std.math.cast(
+            usize,
+            std.math.mul(
+                u64,
+                relative,
+                video_state.parameters[1],
+            ) catch return Error.InvalidVideoBinding,
+        ) orelse return Error.InvalidVideoBinding;
+        const destination_offset = std.math.mul(
+            usize,
+            index,
+            bytes_per_entry,
+        ) catch return Error.InvalidVideoBinding;
+        const source_end = std.math.add(
+            usize,
+            source_offset,
+            bytes_per_entry,
+        ) catch return Error.InvalidVideoBinding;
+        const destination_end = std.math.add(
+            usize,
+            destination_offset,
+            bytes_per_entry,
+        ) catch return Error.InvalidVideoBinding;
+        if (source_end > video_cache.len or
+            destination_end > selected_input.len)
+            return Error.InvalidVideoBinding;
+        @memcpy(
+            selected_input[destination_offset..destination_end],
+            video_cache[source_offset..source_end],
+        );
+    }
+    return selected_input;
+}
+
 pub fn makeAdapterDescriptorV1(
     manifest: model.ArtifactManifestV1,
     implementation_sha256: Digest,
@@ -397,10 +484,6 @@ pub fn materializeSelectionV1(
         usize,
         plan.input_bytes,
     ) orelse return Error.InvalidVideoBinding;
-    const bytes_per_entry = std.math.cast(
-        usize,
-        video_state.parameters[1],
-    ) orelse return Error.InvalidVideoBinding;
     if (selected_input.len != input_bytes or
         video_cache.len != video_state.cache_bytes or
         plan.batch_items != selection.frame_count or
@@ -416,57 +499,12 @@ pub fn materializeSelectionV1(
             &plan.cache_payload_sha256,
         ))
         return Error.InvalidVideoBinding;
-    @memset(selected_input, 0);
-    for (0..std.math.cast(
-        usize,
-        selection.frame_count,
-    ) orelse return Error.InvalidVideoBinding) |index| {
-        const frame = std.math.add(
-            u64,
-            selection.first_frame,
-            std.math.mul(
-                u64,
-                index,
-                selection.frame_stride,
-            ) catch return Error.InvalidVideoBinding,
-        ) catch return Error.InvalidVideoBinding;
-        const relative = std.math.sub(
-            u64,
-            frame,
-            video_state.parameters[2],
-        ) catch return Error.InvalidVideoBinding;
-        const source_offset = std.math.cast(
-            usize,
-            std.math.mul(
-                u64,
-                relative,
-                video_state.parameters[1],
-            ) catch return Error.InvalidVideoBinding,
-        ) orelse return Error.InvalidVideoBinding;
-        const destination_offset = std.math.mul(
-            usize,
-            index,
-            bytes_per_entry,
-        ) catch return Error.InvalidVideoBinding;
-        const source_end = std.math.add(
-            usize,
-            source_offset,
-            bytes_per_entry,
-        ) catch return Error.InvalidVideoBinding;
-        const destination_end = std.math.add(
-            usize,
-            destination_offset,
-            bytes_per_entry,
-        ) catch return Error.InvalidVideoBinding;
-        if (source_end > video_cache.len or
-            destination_end > selected_input.len)
-            return Error.InvalidVideoBinding;
-        @memcpy(
-            selected_input[destination_offset..destination_end],
-            video_cache[source_offset..source_end],
-        );
-    }
-    return selected_input;
+    return materializeSelectedFramesV1(
+        video_state,
+        selection,
+        video_cache,
+        selected_input,
+    );
 }
 
 pub fn referenceExecuteV1(
