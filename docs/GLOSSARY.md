@@ -270,6 +270,10 @@ and publication root.
 a step, execution plan, output root, successor-state root, adapter, challenge,
 and next step. It is carried as the typed result's source mapping.
 
+**Stateful model checkpoint** — A fixed record binding one non-terminal state
+publication to its model-publication root, last plan/result/output, source and
+restore Bank epochs, retained-state bytes, and exact fresh ownership keys.
+
 **Audio-window source mapping** — A commitment joining an audio result to its
 time base, sample cursor, window/hop/context parameters, feature shape, live
 cache payload, processor state, and model batch.

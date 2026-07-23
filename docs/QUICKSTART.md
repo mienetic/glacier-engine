@@ -129,6 +129,10 @@ python3 -m unittest bench.tests.test_temporal_video_adapter
 zig test src/core/latent_step_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_stateful_model_adapter
 
+# Restore the intermediate latent in another process and publish step two once
+zig build stateful-model-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
+python3 -m unittest bench.tests.test_stateful_model_continuation
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

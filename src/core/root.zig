@@ -63,6 +63,8 @@ pub const stateless_model_adapter =
     @import("stateless_model_adapter.zig");
 pub const stateful_model_adapter =
     @import("stateful_model_adapter.zig");
+pub const stateful_model_continuation =
+    @import("stateful_model_continuation.zig");
 pub const vision_encoder_adapter =
     @import("vision_encoder_adapter.zig");
 pub const audio_window_adapter =
@@ -127,6 +129,8 @@ pub const MediaProcessorCache = media_processor_cache;
 pub const ModelContract = model_contract;
 pub const StatelessModelAdapter = stateless_model_adapter;
 pub const StatefulModelAdapter = stateful_model_adapter;
+pub const StatefulModelContinuation =
+    stateful_model_continuation;
 pub const VisionEncoderAdapter = vision_encoder_adapter;
 pub const AudioWindowAdapter = audio_window_adapter;
 pub const TemporalVideoAdapter = temporal_video_adapter;

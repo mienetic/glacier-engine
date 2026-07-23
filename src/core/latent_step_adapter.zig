@@ -31,6 +31,17 @@ pub const AdapterDescriptorV1 = stateful.AdapterDescriptorV1;
 pub const AdapterV1 = stateful.AdapterV1;
 pub const StatePublicationV1 = stateful.StatePublicationV1;
 pub const Phase = stateful.Phase;
+pub const reference_weights = [_]u8{2};
+pub const reference_conditioning = [_]u8{ 1, 2, 3, 4 };
+pub const reference_initial_state = [_]u8{ 10, 20, 30, 40 };
+pub const reference_request_epoch: u64 = 301;
+
+pub const ReferenceFixtureV1 = struct {
+    manifest: model.ArtifactManifestV1,
+    model_publication: model.PublicationStateV1,
+    state_publication: StatePublicationV1,
+    plan: model.ExecutionPlanV1,
+};
 
 pub const Session = struct {
     inner: stateful.Session = .{},
@@ -118,6 +129,156 @@ pub fn makeAdapterDescriptorV1(
         model.no_capabilities,
         implementation_sha256,
     );
+}
+
+pub fn makeReferenceFixtureV1() Error!ReferenceFixtureV1 {
+    const manifest = try model.makeArtifactManifestV1(
+        .image_generation,
+        0x4c41_5445_4e54_0001,
+        .latent_tensor,
+        .media_chunk,
+        .exact_integer,
+        1,
+        reference_initial_state.len,
+        reference_initial_state.len,
+        1,
+        1,
+        1,
+        &reference_weights,
+        model.sha256("latent step fixture metadata"),
+        model.sha256("fixture-only license"),
+    );
+    const state_publication =
+        try stateful.initializeStatePublicationV1(
+            reference_request_epoch,
+            2,
+            reference_initial_state.len,
+            manifest.artifact_sha256,
+            model.sha256(&reference_initial_state),
+            referenceChallengeV1(),
+        );
+    const model_publication =
+        try model.initializePublicationStateV1(
+            reference_request_epoch,
+            manifest.artifact_sha256,
+        );
+    return .{
+        .manifest = manifest,
+        .model_publication = model_publication,
+        .state_publication = state_publication,
+        .plan = try makeReferencePlanV1(
+            manifest,
+            model_publication,
+            state_publication,
+            referenceGenesisPlanRootV1(),
+        ),
+    };
+}
+
+pub fn referenceChallengeV1() Digest {
+    return model.sha256("latent step challenge");
+}
+
+pub fn referenceGenesisPlanRootV1() Digest {
+    return model.sha256("latent genesis plan");
+}
+
+pub fn makeReferencePlanV1(
+    manifest: model.ArtifactManifestV1,
+    model_publication: model.PublicationStateV1,
+    state_publication: StatePublicationV1,
+    previous_plan_sha256: Digest,
+) Error!model.ExecutionPlanV1 {
+    try validateLatentManifestV1(manifest);
+    try stateful.validateStatePublicationV1(state_publication);
+    const generation = std.math.add(
+        u64,
+        state_publication.current_step,
+        1,
+    ) catch return Error.InvalidLatentBinding;
+    if (state_publication.current_step >=
+        state_publication.total_steps or
+        model_publication.request_epoch !=
+            state_publication.request_epoch or
+        model_publication.next_sequence !=
+            state_publication.current_step or
+        model_publication.visible_results !=
+            state_publication.current_step or
+        !std.mem.eql(
+            u8,
+            &model_publication.artifact_sha256,
+            &manifest.artifact_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &model_publication.previous_result_sha256,
+            &state_publication.previous_result_sha256,
+        ) or
+        std.mem.allEqual(u8, &previous_plan_sha256, 0))
+        return Error.InvalidLatentBinding;
+    const state_bytes = state_publication.state_bytes;
+    const publication_bytes = std.math.mul(
+        u64,
+        state_bytes,
+        2,
+    ) catch return Error.InvalidLatentBinding;
+    return model.makeExecutionPlanV1(
+        manifest,
+        .diffuse_step,
+        .{
+            .request_epoch = state_publication.request_epoch,
+            .generation = generation,
+            .batch_items = 1,
+            .publication_next_sequence = model_publication.next_sequence,
+            .maximum_absolute_output = 255,
+            .claim = .{
+                .capsule_bytes = manifest.weight_bytes,
+                .activation_bytes = state_bytes,
+                .partial_bytes = state_bytes,
+                .output_journal_bytes = publication_bytes,
+                .staging_bytes = state_bytes,
+                .queue_slots = 1,
+            },
+            .media_object_sha256 = model.sha256(
+                "latent target image",
+            ),
+            .processor_state_sha256 = state_publication.publication_sha256,
+            .processor_bundle_sha256 = model.sha256(
+                "latent scheduler bundle",
+            ),
+            .cache_bundle_sha256 = model.sha256(
+                "latent cache bundle",
+            ),
+            .cache_payload_sha256 = state_publication.current_state_sha256,
+            .ownership_sha256 = model.sha256(
+                "latent state ownership",
+            ),
+            .challenge_sha256 = state_publication.challenge_sha256,
+            .previous_plan_sha256 = previous_plan_sha256,
+            .input_schema_sha256 = model.sha256(
+                "four u8 conditioning deltas",
+            ),
+            .output_schema_sha256 = model.sha256(
+                "four u8 next latent",
+            ),
+            .scratch_bytes = state_bytes,
+        },
+    );
+}
+
+pub fn referenceAdapterV1(
+    manifest: model.ArtifactManifestV1,
+    context: *anyopaque,
+) Error!AdapterV1 {
+    return .{
+        .context = context,
+        .descriptor = try makeAdapterDescriptorV1(
+            manifest,
+            model.sha256("reference exact latent denoise v1"),
+        ),
+        .execute_fn = referenceExecuteV1,
+        .validate_candidate_fn = validateCandidateV1,
+    };
 }
 
 pub fn validateLatentAdapterV1(
@@ -277,78 +438,15 @@ const TestFixture = struct {
     current_state: [4]u8,
 
     fn init() !TestFixture {
-        const weights = [_]u8{2};
-        const conditioning = [_]u8{ 1, 2, 3, 4 };
-        const current_state = [_]u8{ 10, 20, 30, 40 };
-        const request_epoch: u64 = 301;
-        const challenge = model.sha256("latent step challenge");
-        const manifest = try model.makeArtifactManifestV1(
-            .image_generation,
-            0x4c41_5445_4e54_0001,
-            .latent_tensor,
-            .media_chunk,
-            .exact_integer,
-            1,
-            4,
-            4,
-            1,
-            1,
-            1,
-            &weights,
-            model.sha256("latent step fixture metadata"),
-            model.sha256("fixture-only license"),
-        );
-        const state_publication =
-            try stateful.initializeStatePublicationV1(
-                request_epoch,
-                2,
-                current_state.len,
-                manifest.artifact_sha256,
-                model.sha256(&current_state),
-                challenge,
-            );
-        const claim: resource_bank.Claim = .{
-            .capsule_bytes = weights.len,
-            .activation_bytes = conditioning.len,
-            .partial_bytes = current_state.len,
-            .output_journal_bytes = current_state.len * 2,
-            .staging_bytes = current_state.len,
-            .queue_slots = 1,
-        };
-        const plan = try model.makeExecutionPlanV1(
-            manifest,
-            .diffuse_step,
-            .{
-                .request_epoch = request_epoch,
-                .generation = 1,
-                .batch_items = 1,
-                .publication_next_sequence = 0,
-                .maximum_absolute_output = 255,
-                .claim = claim,
-                .media_object_sha256 = model.sha256("latent target image"),
-                .processor_state_sha256 = state_publication.publication_sha256,
-                .processor_bundle_sha256 = model.sha256("latent scheduler bundle"),
-                .cache_bundle_sha256 = model.sha256("latent cache bundle"),
-                .cache_payload_sha256 = state_publication.current_state_sha256,
-                .ownership_sha256 = model.sha256("latent state ownership"),
-                .challenge_sha256 = challenge,
-                .previous_plan_sha256 = model.sha256("latent genesis plan"),
-                .input_schema_sha256 = model.sha256("four u8 conditioning deltas"),
-                .output_schema_sha256 = model.sha256("four u8 next latent"),
-                .scratch_bytes = current_state.len,
-            },
-        );
+        const reference = try makeReferenceFixtureV1();
         return .{
-            .manifest = manifest,
-            .plan = plan,
-            .model_publication = try model.initializePublicationStateV1(
-                request_epoch,
-                manifest.artifact_sha256,
-            ),
-            .state_publication = state_publication,
-            .weights = weights,
-            .conditioning = conditioning,
-            .current_state = current_state,
+            .manifest = reference.manifest,
+            .plan = reference.plan,
+            .model_publication = reference.model_publication,
+            .state_publication = reference.state_publication,
+            .weights = reference_weights,
+            .conditioning = reference_conditioning,
+            .current_state = reference_initial_state,
         };
     }
 };
@@ -365,15 +463,7 @@ fn testAdapter(
     fixture: *const TestFixture,
     context: *u8,
 ) !AdapterV1 {
-    return .{
-        .context = context,
-        .descriptor = try makeAdapterDescriptorV1(
-            fixture.manifest,
-            model.sha256("reference exact latent denoise v1"),
-        ),
-        .execute_fn = referenceExecuteV1,
-        .validate_candidate_fn = validateCandidateV1,
-    };
+    return referenceAdapterV1(fixture.manifest, context);
 }
 
 test "state publication wire is canonical and mutation complete" {

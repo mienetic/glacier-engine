@@ -50,6 +50,7 @@ energy, or production reliability.
 | `zig test src/core/audio_window_adapter.zig -OReleaseSafe` | Live signed feature windows, exact sample/window/hop source mapping, shared stateless adapter publication, abort/drift rejection, and final zero ownership |
 | `zig test src/core/temporal_video_adapter.zig -OReleaseSafe` | Live temporal cache, canonical strided-frame selection, keyframe/eviction lineage, charged-and-scrubbed gather scratch, exact target-time mapping, candidate drift rejection, and final zero ownership |
 | `zig test src/core/latent_step_adapter.zig -OReleaseSafe` | Canonical retained-state wire, pinned model/state snapshots, buffer-alias rejection, exact latent candidate, atomic state/result publication, abort/drift preservation, and final zero ownership |
+| `zig build stateful-model-live-restart-demo -Dmetal=false` | Canonical intermediate checkpoint, distinct source/target PIDs, fresh-Bank charge-before-materialization latent restore, chained terminal plan, zero duplicate results, and final zero ownership |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -73,8 +74,11 @@ measure transcription, classification, or video quality; overlapping-window
 behavior; streaming model restart; latency; throughput; or physical memory.
 
 The latent-step fixture adds state/result atomicity and a cross-language
-transition root. It does not measure generation quality, scheduler fidelity,
-multi-step continuation, accelerator performance, or production compatibility.
+transition root. The live-restart fixture then chains two exact steps across
+distinct processes through a cross-language 512-byte checkpoint and fresh
+retained-state ownership. It does not measure generation quality, production
+scheduler fidelity, accelerator performance, crash-atomic checkpoint
+publication, or production compatibility.
 
 ## Shared media contract
 

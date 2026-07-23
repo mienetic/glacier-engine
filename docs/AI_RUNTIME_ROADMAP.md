@@ -159,10 +159,12 @@ Responsibilities:
 - process restart, host migration, and eventually device-failure policies;
 - exact resumed publication position.
 
-Current state: **integrated model-free continuation prototype**. Glacier has
-capsules, bounded object resolution/storage/lifecycle, paged-KV remap,
-sampler/output restore, two-process next-token publication, and atomic complete
-checkpoint selection. Production-model and non-token state adapters are pending.
+Current state: **integrated model-free continuation plus typed stateful-model
+prototype**. Glacier has capsules, bounded object resolution/storage/lifecycle,
+paged-KV remap, sampler/output restore, two-process next-token publication,
+atomic complete checkpoint selection, and a synthetic two-step latent chain
+that restores its intermediate state in a distinct process. Production-model
+state adapters remain pending.
 
 Promotion gate: uninterrupted and resumed output satisfy one declared numerical
 mode, no output is duplicated, foreign state rejects, and all reacquired
@@ -319,7 +321,7 @@ expand the base adapter's capabilities.
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder fixture integrated; production model gated | Add overlap/context ownership and a typed transcript fixture | No sample loss/duplication, exact streaming restart, transcript transaction |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
 | Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder integrated; production model gated | Extend from typed embedding to a bounded segment result | Variable-frame-rate mapping, audio/subtitle linkage, stateful continuation |
-| Image generation | diffusion/flow step, decode latent, publish image | Exact one-step retained-state/result transaction prototype; production model gated | Chain the committed latent into a second plan and fresh-process restore | Multi-step continuation, bounded decode, atomic image/provenance publication |
+| Image generation | diffusion/flow step, decode latent, publish image | Exact two-step retained-state transaction with distinct-process intermediate restore; production model gated | Decode the terminal latent into a bounded generated-image transaction | Multi-step continuation, bounded decode, atomic image/provenance publication |
 | Video generation | temporal latent steps, frame/segment publication | Idea | Two-frame synthetic generation fixture | Temporal ordering, restart/cancel semantics, manifest/chunk publication |
 | Audio/music generation | acoustic or token steps, waveform decode | Idea | Short synthetic exact-integer output fixture | Timeline continuity, chunk lineage, rights/provenance policy |
 | Multimodal fusion | cross-attention, joint embedding, interleaved generation | Idea; shared identities exist | Image+text or audio+text synthetic fusion fixture | Each modality retains source/state identity through one output transaction |
@@ -431,9 +433,10 @@ stay within admitted memory/time bounds, and resume or cancel at declared units.
 ### R4 — Generative media and multimodal fusion
 
 - add diffusion/flow scheduler and latent-state adapters; a canonical
-  state-publication wire plus one exact latent step now atomically commits the
-  typed result and replacement state, while multi-step and fresh-process
-  continuation remain;
+  state-publication wire plus two exact latent steps now commit typed results
+  and replacement state; the intermediate checkpoint restores under fresh
+  ownership in a distinct process and reaches the terminal step without a
+  duplicate result;
 - add generated image/audio/video chunk manifests and provenance;
 - add cross-modal cache/state identity and fusion fixtures;
 - extend checkpoint and provider evidence to generative media units.

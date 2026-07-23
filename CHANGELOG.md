@@ -18,6 +18,11 @@ before the first stable release.
 
 ### Added
 
+- Stateful model continuation: a canonical 512-byte intermediate checkpoint
+  reconstructs model/state publications in a distinct process, charges a fresh
+  `LeaseTree` before latent materialization, chains the terminal plan, prevents
+  duplicate publication, and releases predecessor and successor ownership to
+  zero.
 - Stateful model publication and exact latent-step fixture: a canonical
   320-byte state record, pinned model/state snapshots, disjoint candidate
   buffers, and one transition root publish replacement state with its typed

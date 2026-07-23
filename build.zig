@@ -1293,6 +1293,62 @@ pub fn build(b: *std.Build) void {
         &media_stream_live_restart_worker_exe.step,
     );
 
+    // A stateful model process commits one latent step and syncs its canonical
+    // checkpoint. A distinct target process reacquires retained-state
+    // ownership before materialization and publishes the terminal step once.
+    const stateful_model_live_restart_worker_exe =
+        b.addExecutable(.{
+            .name = "glacier-stateful-model-live-restart-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/stateful_model_live_restart_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    stateful_model_live_restart_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    stateful_model_live_restart_worker_exe.linkLibC();
+    const stateful_model_live_restart_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-stateful-model-live-restart-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/stateful_model_live_restart.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    const run_stateful_model_live_restart_demo =
+        b.addRunArtifact(
+            stateful_model_live_restart_demo_exe,
+        );
+    run_stateful_model_live_restart_demo.addArtifactArg(
+        stateful_model_live_restart_worker_exe,
+    );
+    const stateful_model_live_restart_demo_step = b.step(
+        "stateful-model-live-restart-demo",
+        "Run two-process retained-state model continuation",
+    );
+    stateful_model_live_restart_demo_step.dependOn(
+        &run_stateful_model_live_restart_demo.step,
+    );
+    test_step.dependOn(
+        &run_stateful_model_live_restart_demo.step,
+    );
+    test_compile_step.dependOn(
+        &stateful_model_live_restart_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &stateful_model_live_restart_worker_exe.step,
+    );
+
     // Three stream checkpoints plus retained-output, processor-state, and
     // processor-cache bundles share a single immutable archive root. The
     // source produces two generations; a publisher dies after every durability

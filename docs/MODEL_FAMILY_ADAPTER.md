@@ -136,10 +136,12 @@ timeline mapping, and keyframe/eviction lineage through that same common wire.
 See [Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md).
 
 Vision, audio, and temporal video use the extracted shared stateless lifecycle.
-The first stateful lifecycle and exact latent-step fixture now publish
-replacement state with its result; the next gate is a multi-step,
-fresh-process continuation proof. See
-[Stateful Model Adapter and Latent-Step Fixture](STATEFUL_MODEL_ADAPTER.md).
+The stateful lifecycle and exact latent-step fixture now publish replacement
+state with each result, checkpoint the intermediate publication, restore it
+under fresh ownership in another process, and commit the terminal step exactly
+once. See
+[Stateful Model Adapter and Latent-Step Fixture](STATEFUL_MODEL_ADAPTER.md) and
+[Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md).
 
 The next stateless family work is a generic non-media encoder with typed score
 or ranked-item output.

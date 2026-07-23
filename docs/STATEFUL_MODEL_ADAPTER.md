@@ -1,9 +1,10 @@
 # Stateful Model Adapter and Latent-Step Fixture
 
-Status: **prototype**. Glacier now retains one exact synthetic latent-denoise
-step whose model result and replacement state publish together. It proves a
-stateful runtime transaction; it is not a production diffusion model or image
-quality evidence.
+Status: **prototype**. Glacier now retains two exact synthetic latent-denoise
+steps whose model results and replacement states publish together. The
+intermediate state crosses a real process restart under fresh ownership. This
+proves a stateful runtime transaction and continuation boundary; it is not a
+production diffusion model or image-quality evidence.
 
 ## Why a second lifecycle exists
 
@@ -112,9 +113,10 @@ claim.
 
 ## Claim boundary
 
-This slice performs one in-memory step. It does not yet provide a multi-step
-plan chain, fresh-process state restore, scheduler variants, floating-point
-latent tensors, external weights, image decoding, accelerator execution,
+The retained fixture performs two exact steps and one distinct-process restore.
+Its checkpoint files are synced but not published through a crash-atomic
+selector. It does not provide scheduler variants, floating-point latent
+tensors, external weights, image decoding, accelerator execution,
 physical-memory measurement, model quality, or compatibility evidence.
 
 ## Run the retained proof
@@ -122,11 +124,14 @@ physical-memory measurement, model quality, or compatibility evidence.
 ```sh
 zig test src/core/latent_step_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_stateful_model_adapter
+zig build stateful-model-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
+python3 -m unittest bench.tests.test_stateful_model_continuation
 ```
 
-The next stateful slice should create a second execution plan from the committed
-state, run the terminal step, then restore the intermediate state in a fresh
-process without duplicating either result.
+The continuation details and exact claim boundary are in
+[Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md). The next
+generative-image slice should decode the terminal latent through a bounded
+generated-media transaction with provenance.
 
 See [Typed Model-Family Contracts and Vision Adapter](MODEL_FAMILY_ADAPTER.md),
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md), and

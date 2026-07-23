@@ -91,8 +91,9 @@ formats, and independent verifiers.
   strided frames through explicitly charged scratch and scrubs it on return.
 - **Atomic retained-state steps.** A separate stateful lifecycle pins model and
   state publication snapshots, executes into disjoint private output/state
-  candidates, and publishes both together. A canonical one-step latent fixture
-  proves abort/drift preservation and exact release.
+  candidates, and publishes both together. A canonical two-step latent fixture
+  checkpoints the intermediate state, reacquires it in a distinct process
+  before materialization, and publishes the terminal result exactly once.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -290,7 +291,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | AI runtime | CPU execution, optional Metal backend, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes | More family adapters, stable API, distribution and retained compatibility matrix |
-| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, shared stateless and stateful lifecycles, and one exact latent-state step | Multi-step/fresh-process state continuation, generic embeddings/reranking/classification, production generative media, multimodal, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
+| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, shared stateless/stateful lifecycles, and exact two-step latent continuation across distinct processes | Generic embeddings/reranking/classification, bounded generated-image publication, multimodal, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
@@ -340,6 +341,7 @@ valuable as new features.
 - [Typed audio-window encoder adapter](docs/AUDIO_WINDOW_ADAPTER.md)
 - [Typed temporal-video encoder adapter](docs/TEMPORAL_VIDEO_ADAPTER.md)
 - [Stateful model adapter and latent-step fixture](docs/STATEFUL_MODEL_ADAPTER.md)
+- [Stateful model continuation](docs/STATEFUL_MODEL_CONTINUATION.md)
 - [Paging contract](docs/PAGING.md)
 - [Continuation capsule](docs/CONTINUATION_CAPSULE.md)
 - [Continuation object resolver](docs/CONTINUATION_OBJECT_RESOLVER.md)
