@@ -307,6 +307,15 @@ they touch or overlap; gaps and different events remain distinct.
 incoming raw segment roots, prior decision, merge policy, chosen output bounds,
 overlap ticks, and visible-count effect.
 
+**Audio/video result link** — A fixed cross-modal record mapping only newly
+publishable transcript samples into the canonical video target time base. It
+requires positive exact overlap and binds the transcript, processor/cache,
+video timeline/tail, challenge, policy, and predecessor roots.
+
+**Audio/video link state** — Canonical request-local chain state that pins the
+audio and video media identities, shared challenge, next sequence, visible link
+count, previous link, and fixed relation policy.
+
 **Synchronized media watermark** — The lower exact master-clock tick reached by
 the bound audio and video processor states, accepted only when integer mapping
 is exact and declared stream skew remains within policy.

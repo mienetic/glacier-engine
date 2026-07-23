@@ -86,6 +86,10 @@ language, measure word error rate, or run a production speech model.
 The next audio slice is transcript-model restart with exact segment continuity.
 The same publication vocabulary can later carry timestamps, tokens, speakers,
 and confidence only after each field receives a bounded canonical contract.
+The current newly publishable sample range can already be joined to a verified
+video timeline through
+[Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md); conditioning-only
+context is excluded from that temporal link.
 
 See [Typed Audio-Window Encoder Adapter](AUDIO_WINDOW_ADAPTER.md),
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md), and

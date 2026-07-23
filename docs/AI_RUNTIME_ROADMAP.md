@@ -203,8 +203,11 @@ now advances image tile/patch progress, audio feature windows, video temporal
 cache state, and an exact integer synchronized watermark through two verified
 generations. The bundle is now the fifth checkpoint object, while a sixth
 object carries exact cache payloads through fresh-Bank charge-before-visibility
-restore. External codecs, capture, playback, media models, and generated-media
-publication remain gated.
+restore. Typed transcript/video-segment fixtures now preserve source/cache
+lineage, a deterministic video timeline preserves accumulated event bounds, and
+an exact cross-modal result-link transaction maps only newly publishable audio
+samples onto that tail. External codecs, capture, playback, production media
+models, and generated-media publication remain gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -242,12 +245,13 @@ Responsibilities:
 - idempotent retry and replay rejection;
 - streaming acknowledgement and partial-result policy.
 
-Current state: **integrated for tokens and model-free media fixtures**. The
-media transaction composes exact resource admission, transformed output,
-timeline advancement, and logical chunk visibility behind one commit boundary;
-abort scrubs provisional bytes and leaves both publication sequences unchanged.
-Generic tensor/action envelopes, streaming acknowledgement, durable media
-output, and model-generated media transactions remain planned.
+Current state: **integrated for tokens, model-free media, and bounded typed
+perception fixtures**. Media transactions compose exact resource admission,
+transformed output, timeline advancement, transcript/video-segment visibility,
+deterministic merge decisions, and cross-modal result links behind explicit
+commit boundaries; abort scrubs provisional bytes and leaves publication state
+unchanged. Generic tensor/action envelopes, streaming acknowledgement, durable
+media output, and model-generated media transactions remain planned.
 
 Promotion gate: every output family has a named atomic unit, rollback behavior,
 replay rule, and continuation position; cancellation cannot expose an
@@ -321,7 +325,7 @@ expand the base adapter's capabilities.
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder plus overlap-safe typed transcript fixture integrated; production model gated | Carry transcript publication through a streaming model restart | No sample loss/duplication, exact streaming restart, transcript transaction |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
-| Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder, fixed predecessor-bound segment result, and canonical merge timeline integrated; production model gated | Link exact audio/transcript and video result ranges | Variable-frame-rate mapping, cross-modal linkage, stateful continuation |
+| Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder, fixed predecessor-bound segment result, canonical merge timeline, and exact audio/transcript-video result link integrated; production model gated | Carry transcript or video-model state through a fresh-process restart | Variable-frame-rate mapping, stateful continuation, production quality evidence |
 | Image generation | diffusion/flow step, decode latent, publish image | Exact two-step retained-state transaction with distinct-process intermediate restore; production model gated | Decode the terminal latent into a bounded generated-image transaction | Multi-step continuation, bounded decode, atomic image/provenance publication |
 | Video generation | temporal latent steps, frame/segment publication | Idea | Two-frame synthetic generation fixture | Temporal ordering, restart/cancel semantics, manifest/chunk publication |
 | Audio/music generation | acoustic or token steps, waveform decode | Idea | Short synthetic exact-integer output fixture | Timeline continuity, chunk lineage, rights/provenance policy |
@@ -426,8 +430,10 @@ while retaining different state and publication semantics.
   event/confidence fields, complete source/cache lineage, predecessor chaining,
   and transactional visibility; fixed timeline and decision wires now coalesce
   only touching/overlapping same-event results and retain gaps or different
-  events, while variable-frame-rate, audio/subtitle linkage, and stateful model
-  continuation remain;
+  events; a fixed cross-modal transaction now maps only newly publishable
+  transcript samples to the accumulated video tail, rejects non-integral or
+  non-overlapping time, and binds both histories, while variable-frame-rate
+  handling and stateful transcript/video-model continuation remain;
 - extend checkpoints with family-specific processor/cache state; the fixed
   independently verified state and payload bundles now advance as the fifth
   and sixth atomic archive objects through a fresh-process successor.

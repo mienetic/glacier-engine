@@ -123,9 +123,11 @@ zig test src/core/audio_window_adapter.zig -OReleaseSafe
 zig test src/core/temporal_video_adapter.zig -OReleaseSafe
 zig test src/core/video_segment_adapter.zig -OReleaseSafe
 zig test src/core/video_segment_timeline.zig -OReleaseSafe
+zig test src/core/audio_video_result_link.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_model_contract
 python3 -m unittest bench.tests.test_video_segment_adapter
 python3 -m unittest bench.tests.test_video_segment_timeline
+python3 -m unittest bench.tests.test_audio_video_result_link
 ```
 
 ## Additional adapters
@@ -152,8 +154,13 @@ The canonical video-segment timeline reduces ordered raw results with one
 fixed merge policy and resource-backed decision transaction. See
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md).
 
-Vision, audio, transcripts, temporal video, and typed segments use the
-extracted shared stateless lifecycle.
+The exact audio/video result-link transaction maps only the transcript's
+newly visible sample range onto the accumulated video tail and retains both
+lineages under one challenge. See
+[Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md).
+
+Vision, audio, transcripts, temporal video, typed segments, and cross-modal
+links use bounded typed publication contracts.
 The stateful lifecycle and exact latent-step fixture now publish replacement
 state with each result, checkpoint the intermediate publication, restore it
 under fresh ownership in another process, and commit the terminal step exactly

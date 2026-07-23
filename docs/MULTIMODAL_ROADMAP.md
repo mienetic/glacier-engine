@@ -59,8 +59,11 @@ A typed segment adapter now publishes that selection as a fixed
 predecessor-bound event/confidence result with complete source/cache lineage.
 A fixed timeline and merge receipt now preserve the accumulated visible tail,
 coalesce only same-event overlap/touch, and retain gaps or different events.
-Variable-frame-rate discontinuities, audio/subtitle linkage, stateful video
-models, and production quality remain gated.
+A fixed audio/video result-link transaction now maps only newly publishable
+transcript samples into that tail, rejects non-integral or non-overlapping
+time, and binds both modality lineages. Variable-frame-rate discontinuities,
+stateful transcript/video models, richer subtitle semantics, and production
+quality remain gated.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -284,7 +287,9 @@ First slices:
 6. feature-window or audio-token mapping back to source sample ranges; exact
    window/hop/context cursor state is complete for the bounded feature fixture,
    while token mapping remains;
-7. partial transcript publication without duplicated text after restart;
+7. partial transcript publication without duplicated text after restart; the
+   publish-only transcript range and exact video linkage are complete, while
+   transcript-model restart remains;
 8. generated-audio chunk ordering and playback acknowledgement;
 9. microphone/network adapters outside the authority-free core.
 
@@ -318,7 +323,9 @@ First slices:
 6. ~~bounded two-frame chunk publication with target continuity, retained
    outputs, and cancellation-safe ownership;~~ complete for the fixture;
 7. decode queue admission under deadline and cancellation ceilings;
-8. audio/subtitle linkage through `MediaTimeline`;
+8. ~~exact audio/transcript linkage to the accumulated video timeline;~~
+   complete for one positive-overlap result using exact integer target-time
+   mapping and dual-modality lineage; word/subtitle semantics remain;
 9. temporal-cache ownership and continuation state; fixed temporal-window,
    eviction, logical byte, ownership-root, and predecessor state is complete,
    while ResourceBank materialization and checkpoint-archive restore remain;
@@ -356,7 +363,7 @@ Early contributions can proceed without a large model:
 - extend the bounded typed vision, audio, and temporal-video adapters with
   detection and richer transcript result forms over the completed post-restore
   cache ownership path; the first fixed predecessor-bound video-segment result
-  and deterministic merge timeline are complete;
+  deterministic merge timeline, and exact audio/video result link are complete;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 

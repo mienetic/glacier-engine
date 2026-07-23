@@ -129,5 +129,7 @@ fresh-Bank ownership. Typed vision and audio fixtures now consume their live
 caches, and a typed temporal-video fixture gathers a charged strided selection
 from its live window. A separate overlap-safe adapter publishes typed transcript
 segments, the same video selection now publishes a fixed source-bound segment,
-and stateful-model continuation crosses one process boundary; transcript/video
-model restart and production-model integration remain.
+a canonical timeline reduces those segments, an exact result link joins newly
+publishable transcript time to its accumulated tail, and stateful-model
+continuation crosses one process boundary; transcript/video model restart and
+production-model integration remain.

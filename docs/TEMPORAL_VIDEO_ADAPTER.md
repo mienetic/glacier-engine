@@ -112,8 +112,10 @@ The selection and charged gather are now also reused by the
 [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md), which publishes one
 fixed source/time-bound event result. The
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md) now resolves
-adjacent overlap deterministically. Remaining video slices include synchronized
-audio/subtitle linkage and stateful video-model continuation.
+adjacent overlap deterministically, and
+[Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md) binds newly
+publishable transcript time to that accumulated tail. Remaining video slices
+include richer subtitle semantics and stateful video-model continuation.
 
 See [Typed Model-Family Contracts and Vision Adapter](MODEL_FAMILY_ADAPTER.md),
 [Typed Audio-Window Encoder Adapter](AUDIO_WINDOW_ADAPTER.md), and

@@ -156,8 +156,14 @@ coalesces, while gaps and event changes remain distinct under transactional
 publication. See
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md).
 
-**Next slice:** carry transcript or video-model state through a process restart,
-or link synchronized audio/transcript and video results, reusing
+**Completed slice:** a fixed cross-modal state and result transaction maps only
+newly publishable transcript samples onto the accumulated video tail. Exact
+integer time, positive overlap, one challenge, and both modality lineages must
+verify before publication. See
+[Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md).
+
+**Next slice:** carry transcript or video-model state through a process restart
+while preserving the exact result-link predecessor, reusing
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md),
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), and
 [Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md).

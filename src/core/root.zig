@@ -77,6 +77,8 @@ pub const video_segment_adapter =
     @import("video_segment_adapter.zig");
 pub const video_segment_timeline =
     @import("video_segment_timeline.zig");
+pub const audio_video_result_link =
+    @import("audio_video_result_link.zig");
 pub const latent_step_adapter =
     @import("latent_step_adapter.zig");
 pub const continuation_ownership_manifest =
@@ -144,6 +146,7 @@ pub const AudioTranscriptAdapter =
 pub const TemporalVideoAdapter = temporal_video_adapter;
 pub const VideoSegmentAdapter = video_segment_adapter;
 pub const VideoSegmentTimeline = video_segment_timeline;
+pub const AudioVideoResultLink = audio_video_result_link;
 pub const LatentStepAdapter = latent_step_adapter;
 pub const ContinuationOwnershipManifest = continuation_ownership_manifest;
 pub const ContinuationObjectSweep = continuation_object_sweep;

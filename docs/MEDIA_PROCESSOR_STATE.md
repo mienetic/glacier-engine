@@ -137,7 +137,8 @@ payloads across a fresh process. Each cache is charged through
 does not prove measured process memory, allocator behavior, or device
 residency.
 
-Typed vision, audio, transcript, temporal-video, and bounded video-segment
-adapters now consume these contracts. The next state milestone carries a
-transcript- or video-model continuation across a fresh process while preserving
-the same cache and publication lineage.
+Typed vision, audio, transcript, temporal-video, bounded video-segment, and
+exact audio/video result-link adapters now consume these contracts. The next
+state milestone carries a transcript- or video-model continuation across a
+fresh process while preserving the same cache, publication, and cross-modal
+predecessor lineage.

@@ -18,6 +18,11 @@ before the first stable release.
 
 ### Added
 
+- Exact audio/video result linking: canonical 320-byte state and 576-byte result
+  wires map only newly publishable transcript samples to the accumulated video
+  timeline using exact integer time conversion, reject non-overlap and
+  fractional mapping, preserve both modality lineages, and publish through an
+  exact resource-backed transaction with independent golden roots.
 - Canonical video-segment timeline: fixed 384-byte state and merge receipts
   coalesce only touching/overlapping results of the same event, retain gaps or
   different events, preserve raw predecessor lineage, and publish through an

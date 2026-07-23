@@ -89,14 +89,15 @@ The transactional Zig fixture also proves:
 
 The reference backend maps four synthetic bytes to one deterministic event ID
 and confidence. It does not decode external containers, infer useful events,
-handle variable-frame-rate discontinuities, link audio/subtitles, restore a
-stateful video model, run on an accelerator, or measure physical memory.
+handle variable-frame-rate discontinuities, infer subtitle semantics, restore
+a stateful video model, run on an accelerator, or measure physical memory.
 
 Useful next slices are:
 
 1. ~~canonical overlap/merge policy for adjacent segment candidates~~ —
    complete through fixed timeline and receipt wires;
-2. transcript/audio linkage under one synchronized source range;
+2. ~~transcript/audio linkage under one synchronized source range~~ —
+   complete through an exact publish-only result-link transaction;
 3. stateful video-model continuation across a process boundary; and
 4. production backend conformance against the same candidate validator.
 
@@ -108,6 +109,7 @@ python3 -m unittest bench.tests.test_video_segment_adapter
 ```
 
 See [Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md),
+[Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md),
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md),
 [Typed Model-Family Contracts and Vision Adapter](MODEL_FAMILY_ADAPTER.md),
 [Materialized Multimodal Processor Caches](MEDIA_PROCESSOR_CACHE.md), and

@@ -137,6 +137,10 @@ python3 -m unittest bench.tests.test_video_segment_adapter
 zig test src/core/video_segment_timeline.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_video_segment_timeline
 
+# Link newly published transcript samples to the verified video timeline
+zig test src/core/audio_video_result_link.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_audio_video_result_link
+
 # Verify one atomic retained-state/result transition
 zig test src/core/latent_step_adapter.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_stateful_model_adapter

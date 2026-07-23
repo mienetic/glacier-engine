@@ -101,12 +101,13 @@ Additional tests prove:
 
 The fixture consumes deterministic synthetic segments. It does not run an event
 model, infer labels, merge different event IDs, resolve variable-frame-rate
-discontinuities, join audio/transcripts, persist the timeline to a durable
-checkpoint, or restore a model across processes.
+discontinuities, persist the timeline to a durable checkpoint, or restore a
+model across processes.
 
-The next video-understanding slice links one exact audio/transcript range to a
-verified video timeline interval. Stateful video-model continuation follows
-after that cross-modal source contract.
+The next cross-modal source contract is now complete: one exact newly
+publishable transcript range can link to the verified accumulated timeline
+through [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md). Stateful
+video-model continuation is the next video-understanding slice.
 
 ## Run the retained proof
 
@@ -117,5 +118,6 @@ python3 -m unittest bench.tests.test_video_segment_timeline
 
 See [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md),
 [Typed Temporal-Video Encoder Adapter](TEMPORAL_VIDEO_ADAPTER.md),
+[Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and
 [AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

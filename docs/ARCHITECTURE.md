@@ -16,7 +16,7 @@ not.
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
-| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `TemporalVideoAdapter`, `LatentStepAdapter` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, and publish typed embeddings, transcripts, or restartable state/result transitions only after family validation |
+| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `AudioVideoResultLink`, `LatentStepAdapter` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, and publish typed embeddings, transcripts, timeline decisions, cross-modal links, or restartable state/result transitions only after family validation |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -187,6 +187,14 @@ keyframe lineage, eviction boundary, cache generation, and an exactly mapped
 target span, gathers only selected frames into charged caller-owned scratch,
 scrubs the gather buffer on every return, and then enters the same publication
 lifecycle.
+`VideoSegmentAdapter` turns that verified selection into a fixed typed event
+result. `VideoSegmentTimeline` preserves the immutable raw result chain while
+reducing same-event overlap into a separate accumulated visible tail.
+`AudioVideoResultLink` then maps only the transcript's newly publishable sample
+range onto that visible tail using exact integer time conversion. Positive
+overlap, both media identities, processor/cache/timeline lineage, one challenge,
+and the link predecessor must all verify before its fixed result and successor
+state become visible together.
 `StatefulModelAdapter` adds a distinct retained-state transaction. It pins the
 model and state publication roots, executes into disjoint output/state
 candidates, revalidates both, and makes the typed result plus successor state
@@ -581,6 +589,9 @@ still require real machines for each promoted platform.
 - [Canonical video-segment timeline](VIDEO_SEGMENT_TIMELINE.md): fixed
   accumulated-tail state, deterministic coalesce/retain decisions, raw segment
   plus decision chains, and exact resource-backed publication.
+- [Exact audio/video result link](AUDIO_VIDEO_RESULT_LINK.md): fixed
+  cross-modal state/result wires, publish-only audio mapping, positive-overlap
+  policy, dual-modality lineage, and atomic publication.
 - [Stateful model adapter and latent-step fixture](STATEFUL_MODEL_ADAPTER.md):
   canonical retained-state publication, pinned lineage, disjoint candidates,
   and atomic state/result replacement.
