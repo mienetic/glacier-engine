@@ -265,9 +265,10 @@ output/source overlap with store memory.
    promotion, seven native death boundaries, and independent Python
    verification on the macOS host.
 10. Replica adapter with independently verified repair transport.
-11. Durable lifecycle metadata plus Resource and paged-KV ownership
-    reacquisition.
-12. End-to-end restart and paired physical-resource campaigns.
+11. ~~Canonical ResourceBank/LeaseTree ownership-plan reacquisition.~~
+    Implemented as a separate model-free prototype.
+12. Durable object-store lifecycle metadata and paged-KV generation restore.
+13. End-to-end restart and paired physical-resource campaigns.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the portable commit evidence and non-durable append plan.

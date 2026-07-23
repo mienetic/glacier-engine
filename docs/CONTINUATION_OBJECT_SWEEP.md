@@ -211,8 +211,10 @@ coordination, liveness, or exactly-once execution.
    canonical snapshots, exact-target reclaim records, copy-on-write promotion,
    and seven native plus Python process-death boundaries on the macOS host.
 9. Multi-bundle and parent-checkpoint reachability composition.
-10. Durable lifecycle metadata, ResourceBank/LeaseTree reacquisition, and
-    end-to-end restart.
+10. ~~Canonical ResourceBank/LeaseTree ownership-plan reacquisition.~~
+    Implemented as a separate model-free prototype.
+11. Durable object-store lifecycle metadata and paged-KV generation restore.
+12. End-to-end restart.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the fixed evidence wire and

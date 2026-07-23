@@ -1762,6 +1762,39 @@ pub const Bank = struct {
         );
     }
 
+    /// Bind a freshly reacquired tree at the exact next sequence recorded by a
+    /// durable checkpoint. This is a restore-only authority boundary: the
+    /// source epoch must be nonzero and different from this Bank, and the
+    /// target receipt/tree must never have carried a publication session.
+    pub fn bindRestoredPublicationSessionWithLeaseTree(
+        self: *Bank,
+        tree: LeaseTreeV1,
+        source_bank_epoch: u64,
+        request_epoch: u64,
+        session_id: usize,
+        restored_next_sequence: u64,
+    ) Error!void {
+        if (source_bank_epoch == 0 or source_bank_epoch == self.epoch or
+            request_epoch == 0 or session_id == 0 or
+            restored_next_sequence == 0)
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const root = try self.validateLeaseTreeLocked(tree);
+        const slot = try self.validateReceipt(tree.parent);
+        if (root.pending_kind != .none or slot.state != .committed or
+            slot.publication_session_id != 0 or
+            slot.publication_request_epoch != 0 or
+            slot.publication_active)
+            return Error.InvalidTransition;
+        slot.publication_request_epoch = request_epoch;
+        slot.publication_session_id = session_id;
+        slot.publication_next_sequence = restored_next_sequence;
+        slot.publication_active = false;
+        slot.publication_permit_integrity = 0;
+    }
+
     pub fn bindPublicationSessionWithTree(
         self: *Bank,
         tree: LeaseTreeV1,

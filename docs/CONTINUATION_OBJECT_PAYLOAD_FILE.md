@@ -114,6 +114,11 @@ python3 -m unittest \
   bench.tests.test_continuation_object_payload_file
 ```
 
+The next authority layer is
+[Continuation Ownership Restore](CONTINUATION_OWNERSHIP_RESTORE.md), which binds
+this verified payload root into a fresh ResourceBank/LeaseTree before restored
+objects may become live.
+
 ## Evidence boundary
 
 This prototype proves on the retained host:
@@ -130,7 +135,7 @@ It does not yet prove:
 - device power-cut durability;
 - native Linux filesystem behavior beyond compilation;
 - durable lease, quarantine, reference-count, or repair metadata;
-- ResourceBank/LeaseTree ownership reacquisition;
+- paged-KV and other runtime object reconstruction under reacquired ownership;
 - paged-KV, RNG, sampler, tokenizer, or output restoration;
 - live request restart; or
 - lower RSS, disk use, latency, or energy.

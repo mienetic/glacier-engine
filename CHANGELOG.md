@@ -64,6 +64,10 @@ before the first stable release.
   adapter with fixed exact-target reclaim records, copy-on-write promotion,
   stable locking across inode replacement, independent Python verification, and
   seven native plus Python process-death boundaries.
+- Fixed continuation ownership manifest with capsule/payload binding,
+  fresh-epoch ResourceBank/LeaseTree reacquisition, exact restored publication
+  sequence, charge-before-materialization ordering, explicit abort, and
+  mutation-complete Zig/Python verification.
 - A gated multimodal roadmap for a shared media identity/timeline/transaction
   substrate followed by bounded image, streaming audio, and video execution.
 

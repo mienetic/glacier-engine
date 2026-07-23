@@ -164,9 +164,11 @@ trusting a historical receipt as live authority.
 9. ~~Snapshot-bound append/repair capability and deterministic crash model.~~
    Implemented without real filesystem or deletion authority.
 10. Real atomic manifest/bundle publication and crash recovery.
-11. Resource and page ownership reacquisition.
-12. Live restore between two transactional token publications.
-13. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
+11. ~~Canonical resource ownership plan and fresh-Bank LeaseTree
+    reacquisition.~~ Implemented as a separate model-free prototype.
+12. Paged-KV generation restore under reacquired ownership.
+13. Live restore between two transactional token publications.
+14. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
 
 Each layer must keep manifest identity separate from storage and execution
 authority.

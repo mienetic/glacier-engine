@@ -90,6 +90,16 @@ release operations, then check exact zero-state recovery.
 
 **First slice:** one deterministic seed and one minimized stale-handle failure.
 
+### Paged-KV ownership restore fixture
+
+Join one tiny page image and page-map generation to the canonical continuation
+ownership plan. Restore into caller-owned buffers under the already reacquired
+LeaseTree node and reject a foreign page generation before publication.
+
+**First slice:** one page, one scope, one exact claim, no model weights or
+accelerator dependency. See
+[Continuation Ownership Restore](CONTINUATION_OWNERSHIP_RESTORE.md).
+
 ### Live provider adapter boundary
 
 Design a small out-of-core interface that renders requests, counts the exact
@@ -147,10 +157,12 @@ fresh process recovers the exact old or new root idempotently.
 **Completed slice:** native durable payload bytes and seven-boundary
 process-death conformance on the macOS development host.
 
-**Next slice:** persist lifecycle metadata and reacquire ResourceBank/LeaseTree
-ownership without duplication before exposing restored payloads. A separate
-contributor slice can run the existing evidence and payload campaigns on native
-Linux filesystems.
+**Completed slice:** a canonical ownership plan now reacquires a fresh
+ResourceBank/LeaseTree and charges exact objects before they become live.
+
+**Next slice:** rebuild one paged-KV generation under those reacquired nodes and
+reject foreign page identity before publication. A separate contributor slice
+can run the existing evidence and payload campaigns on native Linux filesystems.
 
 ### Resolver adversarial fixtures
 

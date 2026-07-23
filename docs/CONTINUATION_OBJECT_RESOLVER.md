@@ -178,8 +178,10 @@ capsule substitution, and changed resolved output.
 8. ~~Snapshot-bound append/repair capability and deterministic crash model.~~
    Implemented without real filesystem or deletion authority.
 9. Real atomic bundle publication and crash recovery.
-10. ResourceBank/LeaseTree and paged-KV reacquisition.
-11. End-to-end restart with paired physical measurements.
+10. ~~Canonical ResourceBank/LeaseTree ownership-plan reacquisition.~~
+    Implemented as a separate model-free prototype.
+11. Paged-KV generation restore under reacquired ownership.
+12. End-to-end restart with paired physical measurements.
 
 Each layer must preserve the separation between content identity, access
 authority, live resource ownership, and token publication authority.

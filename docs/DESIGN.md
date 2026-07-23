@@ -209,8 +209,10 @@ writes and syncs a root-named candidate, verifies the active old root, atomicall
 renames the candidate, syncs the directory, and reopens the exact new root.
 Recovery therefore reconstructs authority after process death and accepts only
 old, new, or rejection—not an inferred merge. This makes payload bytes durable
-for the retained host contract; lifecycle metadata, ResourceBank/LeaseTree
-ownership, paged KV, and visible runtime continuation remain later layers.
+for the retained host contract. A separate canonical ownership manifest now
+reacquires fresh-epoch ResourceBank/LeaseTree accounting before reconstructed
+objects become live. Object-store lifecycle metadata, paged KV, and visible
+runtime continuation remain later layers.
 
 ### State machines fail closed
 

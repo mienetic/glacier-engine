@@ -27,6 +27,12 @@ pub const continuation_capsule = core.continuation_capsule;
 pub const continuation_object_resolver = core.continuation_object_resolver;
 pub const continuation_bundle = core.continuation_bundle;
 pub const continuation_object_store = core.continuation_object_store;
+pub const continuation_object_payload_store =
+    core.continuation_object_payload_store;
+pub const continuation_object_payload_file =
+    core.continuation_object_payload_file;
+pub const continuation_ownership_manifest =
+    core.continuation_ownership_manifest;
 pub const continuation_object_sweep = core.continuation_object_sweep;
 pub const continuation_object_sweep_record =
     core.continuation_object_sweep_record;
@@ -58,6 +64,12 @@ pub const ContinuationCapsule = core.ContinuationCapsule;
 pub const ContinuationObjectResolver = core.ContinuationObjectResolver;
 pub const ContinuationBundle = core.ContinuationBundle;
 pub const ContinuationObjectStore = core.ContinuationObjectStore;
+pub const ContinuationObjectPayloadStore =
+    core.ContinuationObjectPayloadStore;
+pub const ContinuationObjectPayloadFile =
+    core.ContinuationObjectPayloadFile;
+pub const ContinuationOwnershipManifest =
+    core.ContinuationOwnershipManifest;
 pub const ContinuationObjectSweep = core.ContinuationObjectSweep;
 pub const ContinuationObjectSweepRecord =
     core.ContinuationObjectSweepRecord;

@@ -181,8 +181,10 @@ deterministic backend into power-loss evidence. Native Linux filesystem
 campaigns remain pending. The downstream ordered commit path now syncs an exact
 predicted receipt before in-memory payload removal and reconciles old/new
 snapshots. The payload-file layer now carries that authority into canonical
-payload-byte promotion across seven process-death boundaries; lifecycle
-metadata, ownership reacquisition, and live restart remain pending.
+payload-byte promotion across seven process-death boundaries. A separate
+ownership-manifest prototype reacquires logical ResourceBank/LeaseTree state;
+object-store lifecycle metadata, paged-KV reconstruction, and live restart
+remain pending.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the wire format and pure classifier, and

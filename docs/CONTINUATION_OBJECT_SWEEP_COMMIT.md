@@ -286,8 +286,10 @@ production garbage-collection performance.
 7. Multi-bundle and parent-checkpoint reachability composition.
 8. Allocator campaigns covering non-tail reuse, fragmentation, RSS, and peak
    memory without conflating them with logical accounting.
-9. Durable lifecycle metadata, ResourceBank/LeaseTree reacquisition, and
-   end-to-end continuation restore.
+9. ~~Canonical ResourceBank/LeaseTree ownership-plan reacquisition.~~
+   Implemented as a separate model-free prototype.
+10. Durable object-store lifecycle metadata and paged-KV generation restore.
+11. End-to-end continuation restore.
 
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 non-destructive prepare/abort boundary and

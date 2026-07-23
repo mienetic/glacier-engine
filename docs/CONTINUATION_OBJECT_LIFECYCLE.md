@@ -261,6 +261,7 @@ savings, replica trust, secure erasure, or end-to-end restart.
    Implemented without real filesystem or deletion authority.
 6. Replica transport separated from repair admission and content verification.
 7. Real durable transition journal across every publication crash point.
-8. ResourceBank/LeaseTree ownership reacquisition using generation-linked
-   receipts.
-9. Paged-KV restore and end-to-end restart without duplicated output.
+8. ~~Canonical ResourceBank/LeaseTree ownership-plan reacquisition.~~
+   Implemented as a separate model-free prototype.
+9. Durable object-store lifecycle metadata.
+10. Paged-KV restore and end-to-end restart without duplicated output.

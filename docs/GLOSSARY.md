@@ -86,6 +86,12 @@ and syncs an exact successor snapshot before atomically renaming it over the
 active file. Recovery accepts only the reclaim record's old or new root and
 therefore never edits an ambiguous third state.
 
+**Continuation ownership manifest** — A fixed resource-state plan binding one
+checkpoint to source/target Bank epochs, exact claims, canonical LeaseTree
+scopes, allocation identities, materialized-object roots, and the next
+publication sequence. It enables logical ownership reacquisition but does not
+restore runtime object contents by itself.
+
 **MediaObject** — Planned content-addressed identity for an immutable image,
 audio, or video payload plus its bounded semantic metadata. It does not grant
 file, network, camera, or microphone access.

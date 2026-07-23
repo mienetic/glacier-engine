@@ -189,11 +189,20 @@ implementations share sweep-record SHA-256
 `f1105b70…35f926de34`; Python also rejects mutation of every reclaim-record
 byte and a valid unrelated third snapshot.
 
-This proves the named fixture's canonical payload-byte encoding, exact target
-reconstruction, copy-on-write ordering, and fresh-process old/new
-reconciliation on the retained macOS host. It does not persist lifecycle
-metadata, reacquire ResourceBank/LeaseTree ownership, emulate device power loss,
-establish native Linux filesystem behavior, or measure disk use, latency, RSS,
+The ownership fixture then consumes a capsule-bound 3,360-byte resource-state
+plan. It requires a fresh target Bank epoch, charges two allocation nodes before
+private materialization, keeps both nodes pending after a wrong-byte attempt,
+commits exact bytes to `live`, acquires the restored publication sequence, and
+rejects same-Bank replay plus the old source receipt. Zig and Python share
+ownership root `59c777c9…fe68f394f` and reject mutation of every serialized
+position plus a re-rooted semantic contradiction.
+
+Together these fixtures prove canonical payload-byte encoding, exact target
+reconstruction, copy-on-write ordering, fresh-process old/new reconciliation,
+and safe model-free logical ownership reacquisition on the retained host. They
+do not restore real paged-KV mappings, object-store lifecycle metadata,
+accelerator allocations, or a live request; emulate device power loss;
+establish native Linux filesystem behavior; or measure disk use, latency, RSS,
 or energy.
 
 ## Provider evidence checkpoint

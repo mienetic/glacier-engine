@@ -192,8 +192,10 @@ extension, capsule substitution, and overlapping native output storage.
    Implemented without real filesystem or deletion authority.
 9. Compact/dynamic index experiment with full overhead measurement.
 10. Real atomic bundle publication and crash recovery.
-11. Resource and paged-KV ownership reacquisition.
-12. End-to-end restart and paired physical-resource campaigns.
+11. ~~Canonical resource ownership plan and fresh-Bank LeaseTree
+    reacquisition.~~ Implemented as a separate model-free prototype.
+12. Paged-KV generation restore under reacquired ownership.
+13. End-to-end restart and paired physical-resource campaigns.
 
 The store must preserve the distinction between semantic identity, tenant-bound
 blob identity, access authority, live ownership, and publication authority.

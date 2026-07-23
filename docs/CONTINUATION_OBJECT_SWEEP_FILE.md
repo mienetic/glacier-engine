@@ -218,10 +218,10 @@ This prototype does not yet prove:
 - detection of same-length in-place writes by a process ignoring the lock;
 - power-cut durability on any device;
 - durable lease, quarantine, reference-count, or repair metadata;
-- ResourceBank/LeaseTree ownership reacquisition; or
 - live restoration of model, tokenizer, KV, RNG, sampler, and output state.
 
 Canonical payload-byte durability is implemented in the downstream
 [Continuation Object Payload File](CONTINUATION_OBJECT_PAYLOAD_FILE.md). The
-next continuation milestone persists lifecycle metadata and reacquires exact
-runtime ownership before any restored payload becomes visible.
+separate [Continuation Ownership Restore](CONTINUATION_OWNERSHIP_RESTORE.md)
+prototype reacquires exact logical runtime ownership before restored payloads
+may become live. Paged-KV reconstruction and live restart remain later layers.

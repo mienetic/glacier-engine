@@ -238,7 +238,9 @@ reachability.
 7. Multi-bundle and parent-checkpoint reachability composition.
 8. Replica transport that keeps admission, verification, and deletion authority
    separate.
-9. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+9. ~~Canonical ResourceBank/LeaseTree ownership-plan reacquisition.~~
+   Implemented as a separate model-free prototype.
+10. Paged-KV generation restore and end-to-end restart.
 
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 implemented staging boundary and

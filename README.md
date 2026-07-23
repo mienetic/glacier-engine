@@ -32,6 +32,10 @@ formats, and independent verifiers.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
+- **Restore-before-visible ownership.** A canonical resource-state plan
+  reacquires a fresh `ResourceBank`/`LeaseTree`, charges every allocation before
+  materialization, verifies exact reconstructed bytes, and only then marks the
+  batch live at its restored publication sequence.
 - **Tenant-scoped object resolution.** A least-authority grant admits only exact
   capsule objects under bounded scan, object, total-byte, and resolution limits.
 - **Canonical continuation bundles.** Semantic roots remain kind-specific while
@@ -232,6 +236,7 @@ valuable as new features.
 - [Continuation object sweep writer](docs/CONTINUATION_OBJECT_SWEEP_WRITER.md)
 - [Continuation object sweep file adapter](docs/CONTINUATION_OBJECT_SWEEP_FILE.md)
 - [Continuation object payload file](docs/CONTINUATION_OBJECT_PAYLOAD_FILE.md)
+- [Continuation ownership restore](docs/CONTINUATION_OWNERSHIP_RESTORE.md)
 - [Multimodal roadmap](docs/MULTIMODAL_ROADMAP.md)
 - [Glossary](docs/GLOSSARY.md)
 

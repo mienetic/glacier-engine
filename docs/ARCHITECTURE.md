@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, evidence file, payload file | Bind a checkpoint, own bounded tenant payloads, separate collection/staging/destructive/publication authority, and recover canonical payload bytes through an identity-fenced copy-on-write transition |
+| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, evidence file, payload file, ownership manifest | Bind a checkpoint, recover canonical payload bytes, and reacquire charged runtime ownership before restored objects become live |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -243,8 +243,18 @@ the active file, syncs the directory, and accepts only the exact new root.
 Native and independent Python campaigns terminate after seven plan/promotion
 boundaries and recover idempotently from fresh processes. Lease, quarantine,
 reference, repair, and runtime ownership metadata remain in memory; power-cut
-durability, ownership reacquisition, paged-KV restoration, and live restart are
-later boundaries.
+durability, paged-KV restoration, and live restart are later boundaries.
+
+The ownership-manifest layer adds a canonical `resource_state` object after
+payload recovery. Its fixed plan binds source and target Bank epochs, the exact
+next publication sequence, parent/tree claims, canonical tenant scopes, and
+typed roots for every allocation. Reacquisition requires a fresh target Bank,
+then reserves the parent, opens the LeaseTree, binds the restored sequence, and
+charges all allocation nodes as `reserved_unmaterialized`. Only exact
+kind/length/byte matches may commit the batch to `live`; mismatch remains
+charged for retry or explicit free-then-abort. This restores logical in-memory
+ownership, not paged-KV contents, accelerator residency, object-store lifecycle
+metadata, or a running request.
 
 ## Provider execution flow
 
@@ -352,6 +362,9 @@ still require real machines for each promoted platform.
 - [Continuation object payload file](CONTINUATION_OBJECT_PAYLOAD_FILE.md):
   canonical durable payload bytes, fixed exact-target reclaim plans, and
   copy-on-write process-death recovery.
+- [Continuation ownership restore](CONTINUATION_OWNERSHIP_RESTORE.md):
+  canonical resource-state wire, fresh-epoch ResourceBank/LeaseTree
+  reacquisition, and charge-before-live materialization.
 - [Multimodal roadmap](MULTIMODAL_ROADMAP.md): gated shared media identity,
   timeline, transaction, image, audio, and video tracks.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.
