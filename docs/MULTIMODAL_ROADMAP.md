@@ -3,8 +3,9 @@
 Status: **integrated model-free image/audio/video runtime, bounded streaming,
 two-process continuation, crash-atomic checkpoint sets, and a post-restore
 generation-three successor; bounded image processor, audio feature-window,
-video temporal-cache, and synchronized-watermark state integrated outside the
-durable archive; media-model execution and external formats remain gated**.
+video temporal-cache, and synchronized-watermark state integrated as a fifth
+durable archive object; media-model execution and external formats remain
+gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -24,16 +25,20 @@ production promotion still waits for an uninterrupted/resumed production-model
 comparison and retained platform evidence. The model-free stream itself now
 crosses a real process boundary: a fixed checkpoint restores retained outputs
 under a fresh Bank and publishes the next chunk for every modality. Three
-checkpoints and one retained-output bundle now share an atomic archive root;
-fresh targets resume the complete previous or successor generation across all
-seven root-switch process-death boundaries. Another fresh process now restores
-generation two, rebinds six retained-output leases under three fresh Banks,
-appends one image/audio/video chunk, and atomically publishes generation three.
+checkpoints, one retained-output bundle, and the optional processor/cache bundle
+now share an atomic archive root; fresh targets resume the complete previous or
+successor generation across all seven root-switch process-death boundaries.
+Another fresh process now restores generation two, rebinds six retained-output
+leases under three fresh Banks, advances processor state, appends one
+image/audio/video chunk, and atomically publishes generation three.
 A second fresh process opens generation three and continues all three streams.
 A fixed processor-state layer now advances image tile/patch progress, audio
 feature windows, and video temporal-cache windows together. It maps audio and
 video cursors to one exact integer master clock and commits the lower end tick
-as a synchronized watermark.
+as a synchronized watermark. The complete processor bundle is the fifth
+stateful checkpoint object, cross-bound to each stream's media, output, and
+ownership roots, and advances through the fresh-process generation-three
+publication.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -185,9 +190,15 @@ logical cache bytes, processor/decoder identities, ownership and output roots,
 generation predecessors, and an integer audio/video watermark. Zig and Python
 share the bundle golden and reject every byte mutation.
 
-Durable integration remains: the processor-state bundle is not yet the fifth
-object in the atomic media checkpoint set, so this slice does not claim that a
-process restart reconstructs processor or temporal-cache payloads.
+Durable logical-state integration is complete: the processor-state bundle is
+the fifth object in the stateful atomic media checkpoint set, its records are
+cross-bound to all three stream checkpoints, and the fresh-process successor
+advances stream and processor lineage together. Four-object archives remain
+readable through the explicit compatibility reader.
+
+Physical cache integration remains: the archive does not yet reacquire
+`ResourceBank`/`LeaseTree` ownership for cache payload bytes or reconstruct
+device residency.
 
 ## Image track
 
@@ -318,8 +329,8 @@ Early contributions can proceed without a large model:
 - decompression and allocation ceiling tests;
 - extend the completed deterministic crop/nearest, mix/exact-decimation, and
   keyframe-selection reference models with new bounded cases;
-- bind the completed processor/cache state bundle into the post-restore
-  checkpoint successor and materialize its cache ownership;
+- materialize the completed processor/cache state bundle under exact
+  post-restore cache ownership and byte verification;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 

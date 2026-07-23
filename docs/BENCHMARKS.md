@@ -45,7 +45,7 @@ energy, or production reliability.
 | `zig build media-stream-demo -Dmetal=false` | Six bounded image/audio/video chunks, two retained outputs per stream, cancellation-safe retry, exact target gap/overlap rejection, portable chunk chaining, and final zero state |
 | `zig build media-stream-continuation-demo -Dmetal=false` | Three portable 2,048-byte checkpoints, fresh-Bank charge-before-materialization output restore, exact next-chunk publication, and final zero state |
 | `zig build media-stream-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, synced image/audio/video checkpoints and retained outputs, three resumed chunks, zero duplicates, and explicit non-atomic-set disclosure |
-| `zig build media-stream-checkpoint-set-demo -Dmetal=false` | Two one-root image/audio/video generations, canonical retained-output bundling, seven `SIGKILL` boundaries, complete previous/successor resume, idempotent recovery, and final zero ownership |
+| `zig build media-stream-checkpoint-set-demo -Dmetal=false` | Five-object stateful image/audio/video generations, canonical retained-output and processor-state bundles, seven `SIGKILL` boundaries, complete previous/successor resume, fresh-process generation three, idempotent recovery, and final zero ownership |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -134,16 +134,17 @@ restart-conformance counts and do not claim that their separate files form one
 crash-atomic set.
 
 The checkpoint-set demo closes that visibility gap. It packs three fixed
-checkpoints and six retained outputs into four archive objects using one
-canonical bundle, then publishes generation two over generation one. Seven
+checkpoints, six retained outputs, and one processor/cache bundle into five
+archive objects, then publishes generation two over generation one. Seven
 publisher deaths expose generation one five times and generation two twice;
 fresh targets resume all three streams both before repair and after idempotent
 recovery. The observed campaign performs 42 resumed modality-chunks with zero
 duplicates and zero final Bank usage. A fresh worker then restores generation
-two, rebinds six output leases, appends three chunks, publishes a nine-output
-generation three, and releases all ownership. Another fresh worker opens that
-new root and resumes three more chunks, bringing the demo total to 45. It
-exercises real process death and sync calls, not storage-device power loss.
+two, rebinds six output leases, advances processor state, appends three chunks,
+publishes a five-object nine-output generation three, and releases all
+ownership. Another fresh worker opens that new root and resumes three more
+chunks, bringing the demo total to 45. It exercises real process death and sync
+calls, not storage-device power loss.
 
 The processor-state demo advances two generations of a fixed 2,272-byte
 image/audio/video state bundle. Generation two records two processed image

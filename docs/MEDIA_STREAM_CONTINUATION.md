@@ -112,15 +112,16 @@ Bank usage, live allocations, and active trees.
 The subsequent
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md) layer now
 places all three checkpoints and one retained-output bundle under the existing
-immutable archive and atomic selector. It accepts only the complete previous or
-successor generation after every process-death write/sync/root-switch boundary.
-It also rebinds the restored output leases into generation three, appends one
-chunk per modality, publishes that successor atomically, and resumes it from
-another fresh process.
+immutable archive and atomic selector. Its stateful form adds the fixed
+processor/cache bundle as a fifth object. It accepts only the complete previous
+or successor generation after every process-death write/sync/root-switch
+boundary. It also rebinds the restored output leases into generation three,
+advances the processor lineage, appends one chunk per modality, publishes that
+successor atomically, and resumes it from another fresh process.
 
 It does not provide multi-writer leader election, emulate storage-device power
 loss, or carry external codecs, capture/playback, media-model state, or
 generated-media publication. Fixed family-specific audio windows, video
 temporal caches, image processor state, and a synchronized watermark now exist
-as a separate bundle. The next milestone carries that bundle through the
-completed ownership transition and atomic checkpoint archive.
+as an atomic stateful bundle. The next milestone materializes its cache payloads
+under exact post-restore ownership.

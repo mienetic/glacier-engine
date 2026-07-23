@@ -8,6 +8,7 @@ from typing import Any
 
 from bench import continuation_checkpoint_file as archive
 from bench import media_contract as media
+from bench import media_processor_state as processor
 from bench import media_stream_continuation as continuation
 
 
@@ -28,8 +29,10 @@ BUNDLE_DIRECTORY_BYTES = MAXIMUM_OUTPUTS * BUNDLE_ENTRY_BYTES
 BUNDLE_PAYLOAD_OFFSET = BUNDLE_HEADER_BYTES + BUNDLE_DIRECTORY_BYTES
 BUNDLE_FOOTER_BYTES = 32
 ARCHIVE_OBJECT_COUNT = STREAM_COUNT + 1
+STATEFUL_ARCHIVE_OBJECT_COUNT = ARCHIVE_OBJECT_COUNT + 1
 CHECKPOINT_OBJECT_ABI = continuation.CHECKPOINT_ABI
 BUNDLE_OBJECT_ABI = BUNDLE_ABI
+PROCESSOR_OBJECT_ABI = processor.PROCESSOR_BUNDLE_ABI
 EXTENSION_OBJECT_KIND = 7
 ALLOWED_FLAGS = 0
 ZERO_DIGEST = bytes(32)
@@ -295,6 +298,31 @@ def encode_set(
     streams: list[Record],
     parent_archive_sha256: bytes,
 ) -> bytes:
+    return _encode_set(streams, parent_archive_sha256, None)
+
+
+def encode_stateful_set(
+    streams: list[Record],
+    processor_states: list[Record],
+    sync: Record,
+    parent_archive_sha256: bytes,
+) -> bytes:
+    processor_bundle = processor.encode_bundle(
+        processor_states,
+        sync,
+    )
+    return _encode_set(
+        streams,
+        parent_archive_sha256,
+        processor_bundle,
+    )
+
+
+def _encode_set(
+    streams: list[Record],
+    parent_archive_sha256: bytes,
+    processor_bundle: bytes | None,
+) -> bytes:
     if len(streams) != STREAM_COUNT:
         raise MediaStreamCheckpointSetError("invalid stream count")
     parent = _digest(parent_archive_sha256, allow_zero=True)
@@ -389,6 +417,16 @@ def encode_set(
             "bytes": bundle,
         }
     )
+    if processor_bundle is not None:
+        processor.decode_bundle(processor_bundle)
+        objects.append(
+            {
+                "kind": EXTENSION_OBJECT_KIND,
+                "ordinal": ARCHIVE_OBJECT_COUNT,
+                "abi_version": PROCESSOR_OBJECT_ABI,
+                "bytes": processor_bundle,
+            }
+        )
     encoded = archive.encode_set(
         {
             "generation": generation,
@@ -399,14 +437,58 @@ def encode_set(
         },
         objects,
     )
-    decode_set(encoded)
+    if processor_bundle is None:
+        decode_set(encoded)
+    else:
+        decode_stateful_set(encoded)
     return encoded
 
 
 def decode_set(encoded: bytes) -> Record:
+    return _decode_set(encoded, ARCHIVE_OBJECT_COUNT)
+
+
+def decode_compatible_set(encoded: bytes) -> Record:
+    decoded_archive = archive.decode_set(encoded)
+    object_count = len(decoded_archive["objects"])
+    if object_count not in (
+        ARCHIVE_OBJECT_COUNT,
+        STATEFUL_ARCHIVE_OBJECT_COUNT,
+    ):
+        raise MediaStreamCheckpointSetError(
+            "invalid archive object count"
+        )
+    return _decode_set(encoded, object_count)
+
+
+def decode_stateful_set(encoded: bytes) -> Record:
+    result = _decode_set(encoded, STATEFUL_ARCHIVE_OBJECT_COUNT)
+    object_entry = result["archive"]["objects"][
+        ARCHIVE_OBJECT_COUNT
+    ]
+    if (
+        object_entry["kind"] != EXTENSION_OBJECT_KIND
+        or object_entry["ordinal"] != ARCHIVE_OBJECT_COUNT
+        or object_entry["abi_version"] != PROCESSOR_OBJECT_ABI
+    ):
+        raise MediaStreamCheckpointSetError(
+            "invalid processor object"
+        )
+    try:
+        bundle = processor.decode_bundle(object_entry["bytes"])
+    except processor.MediaProcessorStateError:
+        raise MediaStreamCheckpointSetError(
+            "invalid processor bundle"
+        ) from None
+    _validate_processor_binding(result, bundle)
+    result["processor_bundle"] = bundle
+    return result
+
+
+def _decode_set(encoded: bytes, expected_object_count: int) -> Record:
     decoded_archive = archive.decode_set(encoded)
     objects = decoded_archive["objects"]
-    if len(objects) != ARCHIVE_OBJECT_COUNT:
+    if len(objects) != expected_object_count:
         raise MediaStreamCheckpointSetError("invalid archive object count")
     checkpoints: list[Record] = []
     for index in range(STREAM_COUNT):
@@ -444,7 +526,7 @@ def decode_set(encoded: bytes) -> Record:
                 "duplicate stream identity"
             )
         checkpoints.append(checkpoint)
-    bundle_object = objects[-1]
+    bundle_object = objects[STREAM_COUNT]
     if (
         bundle_object["kind"] != EXTENSION_OBJECT_KIND
         or bundle_object["ordinal"] != STREAM_COUNT
@@ -496,14 +578,52 @@ def decode_set(encoded: bytes) -> Record:
     }
 
 
+def _validate_processor_binding(
+    media_set: Record,
+    processor_bundle: Record,
+) -> None:
+    metadata = media_set["archive"]["metadata"]
+    sync = processor_bundle["sync"]
+    if (
+        sync["generation"] != metadata["generation"]
+        or sync["request_epoch"] != metadata["request_epoch"]
+        or sync["challenge_sha256"] != metadata["challenge_sha256"]
+    ):
+        raise MediaStreamCheckpointSetError(
+            "processor metadata mismatch"
+        )
+    for checkpoint, state in zip(
+        media_set["checkpoints"],
+        processor_bundle["states"],
+    ):
+        if (
+            state["kind"] != checkpoint["kind"]
+            or state["generation"]
+            != checkpoint["checkpoint_generation"]
+            or state["request_epoch"] != checkpoint["request_epoch"]
+            or state["stream_key"] != checkpoint["stream_key"]
+            or state["media_object_sha256"]
+            != checkpoint["media_object_sha256"]
+            or state["challenge_sha256"]
+            != checkpoint["challenge_sha256"]
+            or state["output_chain_sha256"]
+            != checkpoint["last_chunk_sha256"]
+            or state["ownership_receipt_sha256"]
+            != checkpoint["retained_manifest_sha256"]
+        ):
+            raise MediaStreamCheckpointSetError(
+                "processor checkpoint mismatch"
+            )
+
+
 def validate_successor(previous: Record, successor: Record) -> None:
-    prior = decode_set(
+    prior = decode_compatible_set(
         archive.encode_set(
             previous["archive"]["metadata"],
             previous["archive"]["objects"],
         )
     )
-    next_set = decode_set(
+    next_set = decode_compatible_set(
         archive.encode_set(
             successor["archive"]["metadata"],
             successor["archive"]["objects"],
@@ -573,13 +693,13 @@ def validate_restored_successor(
     successor: Record,
 ) -> None:
     validate_successor(previous, successor)
-    prior = decode_set(
+    prior = decode_compatible_set(
         archive.encode_set(
             previous["archive"]["metadata"],
             previous["archive"]["objects"],
         )
     )
-    next_set = decode_set(
+    next_set = decode_compatible_set(
         archive.encode_set(
             successor["archive"]["metadata"],
             successor["archive"]["objects"],
@@ -625,6 +745,62 @@ def validate_restored_successor(
                 raise MediaStreamCheckpointSetError(
                     "invalid resumed output owner"
                 )
+
+
+def validate_stateful_successor(
+    previous: Record,
+    successor: Record,
+) -> None:
+    prior = decode_stateful_set(
+        archive.encode_set(
+            previous["archive"]["metadata"],
+            previous["archive"]["objects"],
+        )
+    )
+    next_set = decode_stateful_set(
+        archive.encode_set(
+            successor["archive"]["metadata"],
+            successor["archive"]["objects"],
+        )
+    )
+    validate_successor(prior, next_set)
+    try:
+        processor.validate_successor(
+            prior["processor_bundle"],
+            next_set["processor_bundle"],
+        )
+    except processor.MediaProcessorStateError:
+        raise MediaStreamCheckpointSetError(
+            "invalid processor successor"
+        ) from None
+
+
+def validate_restored_stateful_successor(
+    previous: Record,
+    successor: Record,
+) -> None:
+    prior = decode_stateful_set(
+        archive.encode_set(
+            previous["archive"]["metadata"],
+            previous["archive"]["objects"],
+        )
+    )
+    next_set = decode_stateful_set(
+        archive.encode_set(
+            successor["archive"]["metadata"],
+            successor["archive"]["objects"],
+        )
+    )
+    validate_restored_successor(prior, next_set)
+    try:
+        processor.validate_successor(
+            prior["processor_bundle"],
+            next_set["processor_bundle"],
+        )
+    except processor.MediaProcessorStateError:
+        raise MediaStreamCheckpointSetError(
+            "invalid processor successor"
+        ) from None
 
 
 def _output(value: Record, stream_index: int, chunk_index: int) -> bytes:

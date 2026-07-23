@@ -8,6 +8,10 @@ before the first stable release.
 
 ### Added
 
+- Stateful atomic media checkpoints: the fixed processor/cache bundle is now a
+  fifth lineage-bound archive object cross-checked against all three stream
+  checkpoints. Four-object archives remain readable, while a fresh process
+  restores generation two and publishes processor-aware generation three.
 - Fixed multimodal processor/cache state: image tile/patch progress, audio
   feature windows, video temporal-cache windows, and an exact synchronized
   watermark share a 2,272-byte lineage-bound bundle with an independent Python

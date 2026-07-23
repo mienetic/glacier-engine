@@ -4,6 +4,7 @@ const std = @import("std");
 const core = @import("core");
 const checkpoint_file = core.continuation_checkpoint_file;
 const media_set = core.media_stream_checkpoint_set;
+const processor = core.media_processor_state;
 const continuation = core.media_stream_continuation;
 const resource_bank = core.resource_bank;
 const media = core.media_contract;
@@ -70,7 +71,7 @@ pub fn main() !void {
         &active_storage,
     );
     defer lease.close();
-    const selected = try media_set.decodeSetV1(
+    const selected = try media_set.decodeCompatibleSetV1(
         lease.stream(),
     );
 
@@ -267,10 +268,11 @@ fn publishSuccessorV1(
         &active_storage,
     );
     defer lease.close();
-    const selected = try media_set.decodeSetV1(
+    const selected = try media_set.decodeStatefulSetV1(
         lease.stream(),
     );
-    if (selected.archive.metadata.generation != 2)
+    const selected_media = selected.media_set;
+    if (selected_media.archive.metadata.generation != 2)
         return error.InvalidSelectedGeneration;
 
     var fixture_storage: [fixture_api.maximum_fixture_bytes]u8 =
@@ -306,12 +308,12 @@ fn publishSuccessorV1(
             &decode_plan_storage,
             &decoded_for_plan,
         );
-        const prior = selected.checkpoints[stream_index];
+        const prior = selected_media.checkpoints[stream_index];
         for (
             restored[0..prior.retained_output_count],
             0..,
         ) |*output, chunk_index| {
-            output.* = try selected.retainedOutput(
+            output.* = try selected_media.retainedOutput(
                 stream_index,
                 chunk_index,
             );
@@ -337,7 +339,7 @@ fn publishSuccessorV1(
         try resumed.prepareV1(
             &bank,
             &state,
-            selected.archive.objects[stream_index].bytes,
+            selected_media.archive.objects[stream_index].bytes,
             prior.checkpoint_sha256,
         );
         const reserved = try bank.snapshotV3();
@@ -420,17 +422,26 @@ fn publishSuccessorV1(
 
     var bundle_storage: [maximum_bundle_bytes]u8 =
         undefined;
+    var processor_storage: [processor.processor_bundle_bytes]u8 = undefined;
     var set_storage: [maximum_set_bytes]u8 = undefined;
-    const successor = try media_set.encodeSetV1(
+    const processor_snapshot = try makeProcessorSnapshotV1(
+        checkpoints,
+        3,
+        &selected.processor_bundle,
+    );
+    const successor = try media_set.encodeStatefulSetV1(
         inputs,
-        selected.archive.checkpoint_sha256,
+        processor_snapshot.states,
+        processor_snapshot.sync,
+        selected_media.archive.checkpoint_sha256,
         &bundle_storage,
+        &processor_storage,
         &set_storage,
     );
-    const decoded_successor = try media_set.decodeSetV1(
+    const decoded_successor = try media_set.decodeStatefulSetV1(
         successor.archive.bytes,
     );
-    try media_set.validateRestoredSuccessorV1(
+    try media_set.validateRestoredStatefulSuccessorV1(
         &selected,
         &decoded_successor,
     );
@@ -450,6 +461,10 @@ fn publishSuccessorV1(
         successor.archive.checkpoint_sha256,
         .lower,
     );
+    const processor_hex = std.fmt.bytesToHex(
+        successor.processor_bundle_sha256,
+        .lower,
+    );
     var stdout_buffer: [1536]u8 = undefined;
     var stdout_writer =
         std.fs.File.stdout().writer(&stdout_buffer);
@@ -465,15 +480,18 @@ fn publishSuccessorV1(
             "\"new_chunks\":3,\"retained_outputs\":9," ++
             "\"stale_source_authority\":false," ++
             "\"charge_before_materialize\":true," ++
+            "\"processor_state_rebound\":true," ++
             "\"atomic_publication\":true," ++
             "\"ownership_released\":true," ++
             "\"archive_sha256\":\"{s}\"," ++
+            "\"processor_bundle_sha256\":\"{s}\"," ++
             "\"verified\":true}}\n",
         .{
             source_pid,
             target_pid,
             rebound_outputs,
             &archive_hex,
+            &processor_hex,
         },
     );
     try stdout.flush();
@@ -499,6 +517,88 @@ fn successorCheckpointPlanV1(
         .challenge_sha256 = prior.challenge_sha256,
         .previous_checkpoint_sha256 = prior.checkpoint_sha256,
     };
+}
+
+const ProcessorSnapshotV1 = struct {
+    states: [processor.processor_count]processor.ProcessorStateV1,
+    sync: processor.SyncStateV1,
+};
+
+fn makeProcessorSnapshotV1(
+    checkpoints: [media_set.stream_count]continuation.CheckpointV1,
+    generation: u64,
+    previous: *const processor.DecodedBundleV1,
+) !ProcessorSnapshotV1 {
+    var plans: [processor.processor_count]processor.StatePlanV1 =
+        undefined;
+    for (&plans, 0..) |*plan, index| {
+        const checkpoint = checkpoints[index];
+        const timeline_base: media.TimeBaseV1 = switch (index) {
+            0 => .{ .numerator = 0, .denominator = 1 },
+            1 => .{ .numerator = 1, .denominator = 48_000 },
+            2 => .{ .numerator = 1, .denominator = 120 },
+            else => unreachable,
+        };
+        plan.* = .{
+            .kind = checkpoint.kind,
+            .request_epoch = checkpoint.request_epoch,
+            .generation = generation,
+            .stream_key = checkpoint.stream_key,
+            .timeline_base = timeline_base,
+            .media_object_sha256 = checkpoint.media_object_sha256,
+            .processor_plan_sha256 = [_]u8{@intCast(0x31 + index)} ** 32,
+            .previous_state_sha256 = previous.states[index].state_sha256,
+            .challenge_sha256 = checkpoint.challenge_sha256,
+            .cache_content_sha256 = [_]u8{@intCast(0x50 + index * 8 + generation)} ** 32,
+            .output_chain_sha256 = checkpoint.last_chunk_sha256,
+            .ownership_receipt_sha256 = checkpoint.retained_manifest_sha256,
+            .decoder_state_sha256 = [_]u8{@intCast(0x41 + index)} ** 32,
+        };
+    }
+    const window_start = generation -| 2;
+    const states = [_]processor.ProcessorStateV1{
+        try processor.makeImageStateV1(
+            plans[0],
+            generation,
+            4,
+            4,
+            4,
+            2,
+            2,
+            3,
+        ),
+        try processor.makeAudioStateV1(
+            plans[1],
+            generation,
+            48_000,
+            1,
+            400,
+            160,
+            80,
+            2,
+        ),
+        try processor.makeVideoStateV1(
+            plans[2],
+            2,
+            128,
+            window_start,
+            generation,
+            window_start,
+        ),
+    };
+    const sync = try processor.makeSyncStateV1(
+        states,
+        .{
+            .generation = generation,
+            .request_epoch = checkpoints[0].request_epoch,
+            .master_ticks_per_second = 48_000,
+            .maximum_skew_ticks = 800,
+            .challenge_sha256 = checkpoints[0].challenge_sha256,
+            .sync_policy_sha256 = [_]u8{0x6d} ** 32,
+            .previous_sync_sha256 = previous.sync.sync_sha256,
+        },
+    );
+    return .{ .states = states, .sync = sync };
 }
 
 const Context = struct {

@@ -228,8 +228,9 @@ runtime-visible.
 
 **Media stream checkpoint set** — One immutable archive generation containing
 fixed image, audio, and video stream checkpoints plus a canonical
-retained-output bundle. A single selector root makes only the complete previous
-or successor multimodal generation visible across process death.
+retained-output bundle and, for stateful archives, one fixed processor/cache
+bundle. A single selector root makes only the complete previous or successor
+multimodal generation visible across process death.
 
 **Media processor state** — A fixed record for lineage-bound preprocessing
 progress and logical cache accounting. The current bounded forms cover image

@@ -145,8 +145,9 @@ native proof performs this transition under distinct PIDs and Bank epochs for
 image, audio, and video.
 
 `MediaStreamCheckpointSet` joins the three fixed checkpoints with one canonical
-retained-output bundle inside the immutable checkpoint archive. One selector
-rename publishes the complete multimodal generation. The source produces two
+retained-output bundle and an optional fixed processor/cache bundle inside the
+immutable checkpoint archive. One selector rename publishes the complete
+multimodal generation. The source produces two
 lineage-bound generations; native workers die after all seven archive/selector
 durability phases, and fresh targets resume whichever complete generation is
 selected before idempotent recovery converges to the successor. Another fresh
@@ -160,8 +161,9 @@ bind image tile/patch progress, audio feature windows, and video temporal-cache
 windows. A fourth record maps audio/video cursors to one exact integer master
 clock and binds the committed watermark, skew ceiling, ownership set, output
 set, sync policy, and predecessor. The complete state bundle is 2,272 bytes and
-has an independent verifier. It is not yet an object in the atomic checkpoint
-archive.
+has an independent verifier. Stateful media checkpoints store it as the fifth
+archive object and cross-bind every processor record to the matching stream
+checkpoint before advancing both lineages through generation three.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
@@ -169,7 +171,7 @@ decimation, and keyframe selection. It has no external codec, encoder,
 network, camera, microphone, model, or accelerator authority. The atomic-set
 worker has explicit filesystem authority but does not emulate device power
 loss. External formats, real processor/cache payload materialization, durable
-processor-state restore, and model adapters remain future layers. See
+cache ownership, and model adapters remain future layers. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), then
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and

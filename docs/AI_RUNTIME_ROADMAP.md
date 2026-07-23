@@ -401,8 +401,9 @@ while retaining different state and publication semantics.
   ownership; fixed window/eviction state plus exact audio/video watermark is
   complete, while physical cache ownership remains;
 - extend checkpoints with family-specific processor/cache state; the fixed
-  independently verified bundle is complete outside the archive, and durable
-  object integration is next.
+  independently verified bundle now advances as the fifth atomic archive
+  object through a fresh-process successor, while physical cache payload
+  ownership is next.
 
 Exit gate: image, audio, and video input paths preserve exact source mappings,
 stay within admitted memory/time bounds, and resume or cancel at declared units.

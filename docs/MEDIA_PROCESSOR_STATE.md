@@ -47,6 +47,11 @@ A canonical 2,272-byte bundle contains:
 The order is fixed. Reserved bytes must be zero. The Zig decoder and independent
 Python decoder reject a mutation to every serialized byte.
 
+The bundle is also the fifth object in the stateful atomic media checkpoint
+archive. Its three processor records are cross-bound to the matching stream
+checkpoints through media, output-chain, and retained-ownership roots. The
+stateful successor validator advances stream and processor lineage together.
+
 ## Image processor progress
 
 The retained fixture records processed and total tiles, tile geometry, patch
@@ -124,10 +129,11 @@ replay, skipped audio windows, non-integral time mapping, and byte mutation.
 
 The roots bind declared fixture state; they are not proof that a particular
 codec, processor, model, allocator, or accelerator executed. Cache bytes are
-logical ownership quantities, not measured resident memory. The state bundle
-is not yet an object in the crash-atomic media checkpoint archive, so durable
-processor-state restart is not claimed in this slice.
+logical ownership quantities, not measured resident memory. The crash-atomic
+archive now preserves and advances the logical processor state across a fresh
+process, but does not yet reconstruct physical cache payload bytes or device
+residency.
 
-The next milestone adds this bundle as one lineage-bound archive object, binds
-it to the image/audio/video stream checkpoints, and carries it through the
-completed post-restore generation successor.
+The next milestone gives each materialized cache payload exact
+`ResourceBank`/`LeaseTree` ownership, verifies its bytes before visibility, and
+then adds typed vision, speech, and video model adapters.

@@ -6,6 +6,7 @@ import unittest
 from bench import continuation_checkpoint_file as archive
 from bench import media_contract as media
 from bench import media_decode_fixture as fixture
+from bench import media_processor_state as processor
 from bench import media_runtime_lease as lease
 from bench import media_stream_checkpoint_set as checkpoint_set
 from bench import media_stream_continuation as continuation
@@ -322,6 +323,153 @@ def restored_checkpoint_generations() -> tuple[bytes, bytes]:
     return second_set, third_set
 
 
+def stream_inputs(value: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        {
+            "checkpoint": checkpoint,
+            "retained_outputs": [
+                entry["output"]
+                for entry in value["bundle"]["outputs"]
+                if entry["kind"] == checkpoint["kind"]
+            ],
+        }
+        for checkpoint in value["checkpoints"]
+    ]
+
+
+def bound_processor_state(
+    value: dict[str, object],
+    previous: dict[str, object] | None = None,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    generation = value["archive"]["metadata"]["generation"]
+    checkpoints = value["checkpoints"]
+    previous_roots = (
+        [
+            state["state_sha256"]
+            for state in previous["processor_bundle"]["states"]
+        ]
+        if previous is not None
+        else [
+            (
+                processor.ZERO_DIGEST
+                if generation == 1
+                else digest(0x60 + index)
+            )
+            for index in range(processor.PROCESSOR_COUNT)
+        ]
+    )
+
+    def plan(index: int, timeline: tuple[int, int]) -> dict[str, object]:
+        checkpoint = checkpoints[index]
+        return {
+            "kind": checkpoint["kind"],
+            "request_epoch": checkpoint["request_epoch"],
+            "generation": generation,
+            "stream_key": checkpoint["stream_key"],
+            "timeline_numerator": timeline[0],
+            "timeline_denominator": timeline[1],
+            "media_object_sha256": checkpoint["media_object_sha256"],
+            "processor_plan_sha256": digest(0x80 + index),
+            "previous_state_sha256": previous_roots[index],
+            "challenge_sha256": checkpoint["challenge_sha256"],
+            "cache_content_sha256": digest(
+                0x90 + index * 4 + generation
+            ),
+            "output_chain_sha256": checkpoint["last_chunk_sha256"],
+            "ownership_receipt_sha256": checkpoint[
+                "retained_manifest_sha256"
+            ],
+            "decoder_state_sha256": digest(0xB0 + index),
+        }
+
+    states = [
+        processor.make_image_state(
+            plan(0, (0, 1)),
+            generation,
+            4,
+            4,
+            4,
+            2,
+            2,
+            3,
+        ),
+        processor.make_audio_state(
+            plan(1, (1, 48_000)),
+            generation,
+            48_000,
+            1,
+            400,
+            160,
+            80,
+            2,
+        ),
+        processor.make_video_state(
+            plan(2, (1, 120)),
+            2,
+            128,
+            max(0, generation - 2),
+            generation,
+            max(0, generation - 2),
+        ),
+    ]
+    sync = processor.make_sync_state(
+        states,
+        {
+            "generation": generation,
+            "request_epoch": checkpoints[0]["request_epoch"],
+            "master_ticks_per_second": 48_000,
+            "maximum_skew_ticks": 800,
+            "challenge_sha256": checkpoints[0]["challenge_sha256"],
+            "sync_policy_sha256": digest(0xD0),
+            "previous_sync_sha256": (
+                previous["processor_bundle"]["sync"]["sync_sha256"]
+                if previous is not None
+                else (
+                    processor.ZERO_DIGEST
+                    if generation == 1
+                    else digest(0xD1)
+                )
+            ),
+        },
+    )
+    return states, sync
+
+
+def stateful_generations(
+    restored: bool = False,
+) -> tuple[bytes, bytes]:
+    plain_first, plain_second = (
+        restored_checkpoint_generations()
+        if restored
+        else checkpoint_generations()
+    )
+    first_media = checkpoint_set.decode_set(plain_first)
+    second_media = checkpoint_set.decode_set(plain_second)
+    first_states, first_sync = bound_processor_state(first_media)
+    first_wire = checkpoint_set.encode_stateful_set(
+        stream_inputs(first_media),
+        first_states,
+        first_sync,
+        (
+            checkpoint_set.ZERO_DIGEST
+            if first_media["archive"]["metadata"]["generation"] == 1
+            else digest(0x91)
+        ),
+    )
+    first = checkpoint_set.decode_stateful_set(first_wire)
+    second_states, second_sync = bound_processor_state(
+        second_media,
+        first,
+    )
+    second_wire = checkpoint_set.encode_stateful_set(
+        stream_inputs(second_media),
+        second_states,
+        second_sync,
+        first["archive"]["checkpoint_sha256"],
+    )
+    return first_wire, second_wire
+
+
 class MediaStreamCheckpointSetTests(unittest.TestCase):
     def test_bundle_round_trip_and_native_golden_root(self) -> None:
         encoded, _streams = bundle_fixture()
@@ -376,6 +524,55 @@ class MediaStreamCheckpointSetTests(unittest.TestCase):
             second["archive"]["metadata"]["parent_checkpoint_sha256"],
             first["archive"]["checkpoint_sha256"],
         )
+
+    def test_stateful_archive_preserves_legacy_reader_contract(self) -> None:
+        legacy, _legacy_successor = checkpoint_generations()
+        first_wire, second_wire = stateful_generations()
+        first = checkpoint_set.decode_stateful_set(first_wire)
+        second = checkpoint_set.decode_stateful_set(second_wire)
+        checkpoint_set.validate_stateful_successor(first, second)
+        self.assertEqual(
+            len(second["archive"]["objects"]),
+            checkpoint_set.STATEFUL_ARCHIVE_OBJECT_COUNT,
+        )
+        self.assertEqual(
+            second["processor_bundle"]["states"][1]["output_chain_sha256"],
+            second["checkpoints"][1]["last_chunk_sha256"],
+        )
+        checkpoint_set.decode_compatible_set(legacy)
+        checkpoint_set.decode_compatible_set(second_wire)
+        with self.assertRaises(
+            checkpoint_set.MediaStreamCheckpointSetError
+        ):
+            checkpoint_set.decode_set(second_wire)
+
+    def test_stateful_post_restore_successor(self) -> None:
+        second_wire, third_wire = stateful_generations(restored=True)
+        second = checkpoint_set.decode_stateful_set(second_wire)
+        third = checkpoint_set.decode_stateful_set(third_wire)
+        checkpoint_set.validate_restored_stateful_successor(
+            second,
+            third,
+        )
+        self.assertEqual(
+            third["processor_bundle"]["sync"]["generation"],
+            3,
+        )
+
+    def test_foreign_processor_bundle_rejects_after_archive_reroot(
+        self,
+    ) -> None:
+        first_wire, second_wire = stateful_generations()
+        decoded = archive.decode_set(second_wire)
+        objects = [dict(entry) for entry in decoded["objects"]]
+        objects[-1]["bytes"] = archive.decode_set(first_wire)["objects"][
+            -1
+        ]["bytes"]
+        rerooted = archive.encode_set(decoded["metadata"], objects)
+        with self.assertRaises(
+            checkpoint_set.MediaStreamCheckpointSetError
+        ):
+            checkpoint_set.decode_stateful_set(rerooted)
 
     def test_post_restore_successor_rebinds_every_stream(self) -> None:
         second_wire, third_wire = restored_checkpoint_generations()
