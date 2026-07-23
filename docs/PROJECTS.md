@@ -102,12 +102,18 @@ two chunks per retained modality, rejects target gap/overlap and length drift
 before admission, reclaims cancelled unpublished chunks, retains one output
 lease per commit, and chains fixed portable receipts.
 
-**Next slice:** define a fixed stream checkpoint containing the latest chunk
-root, exact visible unit and sequence, retained-output manifest, and a
-fresh-generation ownership plan. The first fixture should checkpoint after
-chunk one, release all source-process ownership, reacquire the retained output
-in a fresh Bank, and publish chunk two exactly once. Reuse
-[Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md).
+The first continuation slice is complete too: a fixed 2,048-byte checkpoint
+binds the last chunk, exact publication state, retained-output manifest, and
+fresh-Bank ownership plan. Separate source and target processes exercise image,
+audio, and video restore, with charge before materialization, no duplicate next
+chunk, and final zero ownership.
+
+**Next slice:** store the media checkpoint and retained outputs as one immutable
+checkpoint archive selected by the existing atomic root-switch protocol. Inject
+source-process death after every archive write/sync and selector write/sync,
+accept only the previous or successor generation, then resume exactly once.
+Reuse [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md) and
+[Continuation Checkpoint File](CONTINUATION_CHECKPOINT_FILE.md).
 
 ### AI runtime family registry
 

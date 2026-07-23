@@ -61,6 +61,10 @@ formats, and independent verifiers.
   target timeline while each chunk keeps an independently owned output.
   Gap/overlap, cancellation, candidate drift, capacity, and chain substitution
   reject without orphaning unpublished leases.
+- **Two-process media continuation.** A fixed checkpoint carries exact stream
+  state and retained-output ownership across a real process exit. The target
+  charges a fresh Bank before materialization and appends the next image,
+  audio, or video chunk without duplicating publication.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -189,6 +193,11 @@ media object
                   ├─ append ── exact contiguous target interval
                   ├─ retain ── one output lease per committed chunk
                   └─ chain ─── portable predecessor-bound chunk receipts
+                       │
+                       └─ MediaStreamContinuation
+                            ├─ checkpoint ─ fixed state + output plan
+                            ├─ reacquire ── charge before materialize
+                            └─ resume ───── next chunk in a fresh process
 ```
 
 See [Architecture](docs/ARCHITECTURE.md) for the component map and
@@ -228,6 +237,8 @@ zig build media-transform-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-runtime-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-runtime-lease-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-stream-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build media-stream-continuation-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build media-stream-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -252,7 +263,7 @@ model conversion, generation, and every demo command, continue with the
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline, bounded decode and deterministic transforms, exact admission, per-buffer LeaseTree ownership, bounded multi-chunk streams, target gap/overlap rejection, cancellation-safe retry, retained outputs, portable chunk chains, and exact release for image, audio, and video fixtures | Durable stream continuation, external formats, typed model adapters, and generated-media publication |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, fixed checkpoints, charge-before-materialization output restore, and two-process next-chunk resume for image, audio, and video fixtures | Crash-atomic checkpoint-set selection, repeated generations, external formats, typed model adapters, and generated-media publication |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -289,6 +300,7 @@ valuable as new features.
 - [Native runtime image](docs/RUNTIME_IMAGE.md)
 - [Hierarchical media buffer ownership](docs/MEDIA_RUNTIME_LEASE.md)
 - [Bounded media stream runtime](docs/MEDIA_STREAM_RUNTIME.md)
+- [Media stream continuation](docs/MEDIA_STREAM_CONTINUATION.md)
 - [Paging contract](docs/PAGING.md)
 - [Continuation capsule](docs/CONTINUATION_CAPSULE.md)
 - [Continuation object resolver](docs/CONTINUATION_OBJECT_RESOLVER.md)

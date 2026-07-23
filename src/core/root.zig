@@ -50,6 +50,8 @@ pub const media_transform = @import("media_transform.zig");
 pub const media_runtime_txn = @import("media_runtime_txn.zig");
 pub const media_runtime_lease = @import("media_runtime_lease.zig");
 pub const media_stream_runtime = @import("media_stream_runtime.zig");
+pub const media_stream_continuation =
+    @import("media_stream_continuation.zig");
 pub const continuation_ownership_manifest =
     @import("continuation_ownership_manifest.zig");
 pub const continuation_object_sweep =
@@ -97,6 +99,8 @@ pub const MediaTransform = media_transform;
 pub const MediaRuntimeTxn = media_runtime_txn;
 pub const MediaRuntimeLease = media_runtime_lease;
 pub const MediaStreamRuntime = media_stream_runtime;
+pub const MediaStreamContinuation =
+    media_stream_continuation;
 pub const ContinuationOwnershipManifest = continuation_ownership_manifest;
 pub const ContinuationObjectSweep = continuation_object_sweep;
 pub const ContinuationObjectSweepRecord = continuation_object_sweep_record;

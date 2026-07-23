@@ -142,6 +142,13 @@ before the first stable release.
   golden chains, every-byte mutation rejection, state/execution/key/predecessor
   substitution tests, and a six-chunk native demo ending with zero Bank usage,
   live allocations, and active trees.
+- A fixed 2,048-byte media stream checkpoint with exact retained-output
+  ownership plans, shared Zig/Python golden roots, every-byte mutation
+  rejection, and charge-before-materialization restore into a fresh Bank.
+- A two-process image/audio/video restart proof that syncs checkpoint/output
+  bytes, releases all source ownership before exit, restores under a distinct
+  PID and Bank epoch, appends the exact next chunks without duplicates, and
+  closes every restored and new lease to zero.
 - A full Glacier AI Runtime roadmap defining shared runtime planes, universal
   family adapters, model-family coverage, promotion gates, delivery sequence,
   use cases, and contributor-sized lanes.

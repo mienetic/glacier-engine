@@ -1201,6 +1201,98 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_media_stream_demo.step);
     test_compile_step.dependOn(&media_stream_demo_exe.step);
 
+    // Portable media stream checkpoints: release the source Bank, charge
+    // retained outputs in a fresh Bank before materialization, then append
+    // the exact next image/audio/video chunk.
+    const media_stream_continuation_demo_exe = b.addExecutable(.{
+        .name = "glacier-media-stream-continuation-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/media_stream_continuation.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    media_stream_continuation_demo_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    const run_media_stream_continuation_demo =
+        b.addRunArtifact(
+            media_stream_continuation_demo_exe,
+        );
+    const media_stream_continuation_demo_step = b.step(
+        "media-stream-continuation-demo",
+        "Run fresh-Bank image/audio/video stream resume",
+    );
+    media_stream_continuation_demo_step.dependOn(
+        &run_media_stream_continuation_demo.step,
+    );
+    test_step.dependOn(
+        &run_media_stream_continuation_demo.step,
+    );
+    test_compile_step.dependOn(
+        &media_stream_continuation_demo_exe.step,
+    );
+
+    // A source process syncs three media checkpoints and retained outputs,
+    // releases all source ownership, and exits. A distinct target process
+    // restores every output in a fresh Bank and publishes the next chunks.
+    const media_stream_live_restart_worker_exe =
+        b.addExecutable(.{
+            .name = "glacier-media-stream-live-restart-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/media_stream_live_restart_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    media_stream_live_restart_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    media_stream_live_restart_worker_exe.linkLibC();
+    const media_stream_live_restart_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-media-stream-live-restart-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/media_stream_live_restart.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    const run_media_stream_live_restart_demo =
+        b.addRunArtifact(
+            media_stream_live_restart_demo_exe,
+        );
+    run_media_stream_live_restart_demo.addArtifactArg(
+        media_stream_live_restart_worker_exe,
+    );
+    const media_stream_live_restart_demo_step = b.step(
+        "media-stream-live-restart-demo",
+        "Run two-process image/audio/video stream resume",
+    );
+    media_stream_live_restart_demo_step.dependOn(
+        &run_media_stream_live_restart_demo.step,
+    );
+    test_step.dependOn(
+        &run_media_stream_live_restart_demo.step,
+    );
+    test_compile_step.dependOn(
+        &media_stream_live_restart_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &media_stream_live_restart_worker_exe.step,
+    );
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

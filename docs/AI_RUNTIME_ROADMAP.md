@@ -187,9 +187,13 @@ revalidation, atomic media/resource publication, abort scrubbing, retry, early
 provisional retirement, exact release, and fixed independently verified runtime
 receipts. A bounded stream session now commits two retained chunks for each
 modality, rejects target gaps/overlaps before admission, reclaims cancelled
-chunks, and emits a portable predecessor-bound receipt chain. Durable stream
-continuation, external codecs, capture, playback, media models, and
-generated-media publication remain gated.
+chunks, and emits a portable predecessor-bound receipt chain. A fixed stream
+checkpoint now carries retained-output ownership through a real source/target
+process restart; the target charges a fresh Bank before materialization and
+publishes the next chunk exactly once for all three retained modalities.
+Crash-atomic media checkpoint-set selection, repeated generations, external
+codecs, capture, playback, media models, and generated-media publication remain
+gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -368,10 +372,16 @@ while retaining different state and publication semantics.
 - compose bounded image/audio/video chunks under one target timeline with
   cancellation-safe ownership and portable chain receipts; complete for two
   retained chunks per modality;
+- bind stream state and retained output ownership into a fixed checkpoint,
+  release the source process, reacquire in a fresh Bank, and append the exact
+  next chunk; complete for retained image/audio/video fixtures under distinct
+  source and target PIDs;
+- publish media checkpoint/output objects through one crash-atomic archive and
+  selector, then repeat checkpoint generations after resumed chunks;
 - integrate image processors and vision encoder fixtures;
 - add audio feature windows, transcript transactions, and streaming restart;
 - add video temporal selection, synchronized timeline state, and cache ownership;
-- bind committed media receipts into continuation/checkpoint state.
+- extend checkpoints with family-specific processor/cache state.
 
 Exit gate: image, audio, and video input paths preserve exact source mappings,
 stay within admitted memory/time bounds, and resume or cancel at declared units.

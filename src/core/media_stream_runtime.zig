@@ -271,6 +271,7 @@ pub const StreamSession = struct {
     tenant_key: u64 = 0,
     request_epoch: u64 = 0,
     chunk_limit: usize = 0,
+    chunk_index_base: usize = 0,
     committed_chunks: usize = 0,
     active_slot: ?usize = null,
     active_generation: u64 = 0,
@@ -292,26 +293,92 @@ pub const StreamSession = struct {
         request_epoch: u64,
         chunk_limit: usize,
     ) Error!void {
+        try self.initAtChunkV1(
+            bank,
+            media_state,
+            stream_key,
+            owner_key_base,
+            tree_key_base,
+            authority_key_base,
+            tenant_key,
+            request_epoch,
+            chunk_limit,
+            0,
+            [_]u8{0} ** 32,
+        );
+    }
+
+    pub fn initContinuationV1(
+        self: *StreamSession,
+        bank: *resource_bank.Bank,
+        media_state: *media.PublicationStateV1,
+        stream_key: u64,
+        owner_key_base: u64,
+        tree_key_base: u64,
+        authority_key_base: u64,
+        tenant_key: u64,
+        request_epoch: u64,
+        chunk_limit: usize,
+        committed_chunks_before: usize,
+        previous_chunk_sha256: Digest,
+    ) Error!void {
+        if (committed_chunks_before == 0 or
+            isZero(previous_chunk_sha256))
+            return Error.InvalidStream;
+        try self.initAtChunkV1(
+            bank,
+            media_state,
+            stream_key,
+            owner_key_base,
+            tree_key_base,
+            authority_key_base,
+            tenant_key,
+            request_epoch,
+            chunk_limit,
+            committed_chunks_before,
+            previous_chunk_sha256,
+        );
+    }
+
+    fn initAtChunkV1(
+        self: *StreamSession,
+        bank: *resource_bank.Bank,
+        media_state: *media.PublicationStateV1,
+        stream_key: u64,
+        owner_key_base: u64,
+        tree_key_base: u64,
+        authority_key_base: u64,
+        tenant_key: u64,
+        request_epoch: u64,
+        chunk_limit: usize,
+        chunk_index_base: usize,
+        previous_chunk_sha256: Digest,
+    ) Error!void {
         if (self.initialized or self.closed)
             return Error.InvalidState;
         if (stream_key == 0 or owner_key_base == 0 or
             tree_key_base == 0 or authority_key_base == 0 or
             tenant_key == 0 or request_epoch == 0 or
             media_state.request_epoch != request_epoch or
+            media_state.visible_chunks != chunk_index_base or
             chunk_limit == 0 or
-            chunk_limit > maximum_stream_chunks)
+            chunk_limit > maximum_stream_chunks or
+            chunk_index_base >= chunk_limit or
+            (chunk_index_base == 0 and
+                !isZero(previous_chunk_sha256)))
             return Error.InvalidStream;
+        const remaining_chunks = chunk_limit - chunk_index_base;
         _ = try derivedKey(
             owner_key_base,
-            chunk_limit - 1,
+            remaining_chunks - 1,
         );
         _ = try derivedKey(
             tree_key_base,
-            chunk_limit - 1,
+            remaining_chunks - 1,
         );
         _ = try derivedKey(
             authority_key_base,
-            chunk_limit - 1,
+            remaining_chunks - 1,
         );
         self.* = .{
             .bank = bank,
@@ -323,6 +390,8 @@ pub const StreamSession = struct {
             .tenant_key = tenant_key,
             .request_epoch = request_epoch,
             .chunk_limit = chunk_limit,
+            .chunk_index_base = chunk_index_base,
+            .previous_chunk_sha256 = previous_chunk_sha256,
             .initialized = true,
         };
     }
@@ -345,7 +414,8 @@ pub const StreamSession = struct {
         if (self.active_slot != null or
             self.active_generation != 0)
             return Error.InvalidState;
-        if (self.committed_chunks >= self.chunk_limit)
+        if (self.chunk_index_base + self.committed_chunks >=
+            self.chunk_limit)
             return Error.StreamCapacityExceeded;
         const plan = transform.decodeTransformPlanV1(
             encoded_transform_plan,
@@ -489,7 +559,9 @@ pub const ChunkTransaction = struct {
         const chunk = makeChunkReceiptV1(
             self.state_before,
             stream.stream_key,
-            @intCast(self.slot_index),
+            @intCast(
+                stream.chunk_index_base + self.slot_index,
+            ),
             stream.previous_chunk_sha256,
             execution,
         ) catch unreachable;

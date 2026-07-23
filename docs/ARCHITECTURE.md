@@ -15,7 +15,7 @@ not.
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
-| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, admit exact per-buffer ownership, transform canonical units into provisional storage, reject target gaps/overlaps, retain committed outputs, and atomically advance a bounded chunk chain |
+| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers exactly, advance bounded chunk chains, checkpoint retained outputs, reacquire them before visibility, and resume after a process exit |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -136,14 +136,25 @@ buffers, retains its output lease, and appends a fixed predecessor-bound stream
 receipt. Cancellation closes only the unpublished chunk and leaves the prior
 timeline and outputs unchanged.
 
+`MediaStreamContinuation` serializes that boundary into a fixed 2,048-byte
+checkpoint. A source process can sync the checkpoint and retained output bytes,
+release its Bank, and exit. A fresh target Bank reserves output ownership as
+unmaterialized, verifies exact bytes, commits it live, reconstructs the media
+timeline, and starts `MediaStreamRuntime` at the next global chunk index. The
+native proof performs this transition under distinct PIDs and Bank epochs for
+image, audio, and video.
+
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
 decimation, and keyframe selection. It has no external codec, encoder,
-filesystem, network, camera, microphone, model, or accelerator authority.
-Durable stream continuation and model adapters are future layers. See
+network, camera, microphone, model, or accelerator authority. The live restart
+worker has explicit filesystem authority and syncs its files, but does not yet
+publish them as one crash-atomic selected checkpoint set. External formats,
+model adapters, and atomic repeated media checkpoints remain future layers. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), then
-[Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md).
+[Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
+[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md).
 
 ### ResourceBank
 

@@ -176,8 +176,12 @@ The next runtime slices are:
 3. ~~add multi-chunk image/audio/video sessions with exact target gap/overlap
    and cancellation policy;~~ complete in
    [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md);
-4. bind the committed media receipt into continuation/checkpoint state; and
-5. place the first vision or speech family adapter above this media vertical.
+4. ~~bind committed media state and retained output ownership into a fixed
+   checkpoint, reacquire it in a fresh process, and publish the next chunk;~~
+   complete in [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md);
+5. make the media checkpoint/output set crash-atomic under the existing
+   archive/selector protocol; and
+6. place the first vision or speech family adapter above this media vertical.
 
 See the [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and

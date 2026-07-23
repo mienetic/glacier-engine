@@ -221,6 +221,11 @@ its own hierarchical media transaction. Its portable receipt binds the exact
 target interval, retained output lease receipt, publication commit, and previous
 stream chunk.
 
+**Media stream checkpoint** — A fixed record that binds one bounded stream's
+publication state, last chunk root, retained output identities and bytes, plus
+the exact fresh-Bank ownership plan required before resumed output becomes
+runtime-visible.
+
 **Object lease receipt** — A commitment to one blob, owner, retained generation,
 explicit expiry tick, and lifecycle grant. It is valid only while every field
 equals the active store slot.

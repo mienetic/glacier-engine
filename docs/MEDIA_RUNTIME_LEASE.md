@@ -111,16 +111,19 @@ node exhaustion, and stale handles.
 
 ## Deliberate limits
 
-This milestone does not add production decoders, model execution, device
-allocation authority, durable output storage, or cross-process media
-continuation. Those are separate layers so each can retain charge-before-use,
-exact publication, and zero-orphan guarantees.
+This ownership layer by itself does not add production decoders, model
+execution, device allocation authority, durable output storage, or
+cross-process media continuation. Those remain separate layers so each can
+retain charge-before-use, exact publication, and zero-orphan guarantees.
 
 The next media-runtime sequence is:
 
 1. ~~bounded multi-chunk input and output streams under one timeline;~~ complete
    in [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md);
-2. checkpointable stream position and fresh-generation lease reacquisition;
-3. typed image, audio, and video model adapters;
-4. generated-media publication with partial-output cancellation policy; and
-5. external codec adapters outside the authority-free core.
+2. ~~checkpointable stream position, fresh-generation lease reacquisition, and
+   two-process next-chunk resume;~~ complete in
+   [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md);
+3. crash-atomic media checkpoint archive/selection and repeated generations;
+4. typed image, audio, and video model adapters;
+5. generated-media publication with partial-output cancellation policy; and
+6. external codec adapters outside the authority-free core.

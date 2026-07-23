@@ -102,14 +102,19 @@ boundary, state, execution, stream-key, and predecessor substitutions.
 The native suite also constrains the Bank to one committed chunk and proves
 that pressure rejection leaves the earlier output allocation and tree live.
 
-## Next boundary
+## Continuation boundary
 
-The next layer is durable media continuation:
+The first continuation layer is complete in
+[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md):
 
-1. a fixed stream checkpoint binding the latest chunk root, exact visible unit,
-   publication sequence, retained output manifests, and ownership plan;
-2. fresh-generation reacquisition of retained output leases before resume;
-3. process restart at every boundary before and after chunk publication;
-4. family-specific state for audio windows, video temporal caches, and image
-   processor/cross-attention state; and
-5. generated-media partial-output and cancellation policy.
+1. ~~a fixed stream checkpoint binding the latest chunk root, exact visible
+   unit, publication sequence, retained output manifests, and ownership plan;~~
+2. ~~fresh-generation reacquisition of retained output leases before resume;~~
+3. ~~a real source/target process restart for image, audio, and video retained
+   fixtures;~~
+4. place checkpoint and output objects under one crash-atomic archive/selector,
+   then repeat process death at every write, sync, and root-switch boundary;
+5. add repeated checkpoint generations after resumed chunks;
+6. add family-specific state for audio windows, video temporal caches, and
+   image processor/cross-attention state; and
+7. define generated-media partial-output and cancellation policy.
