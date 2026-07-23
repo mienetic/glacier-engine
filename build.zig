@@ -855,6 +855,64 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&continuation_sweep_file_demo_exe.step);
     test_compile_step.dependOn(&continuation_sweep_file_worker_exe.step);
 
+    // Canonical durable payload snapshots use a stable lock inode and
+    // copy-on-write promotion. The worker dies after candidate write/sync,
+    // atomic rename, and directory sync so recovery sees real process loss.
+    const continuation_payload_file_worker_exe = b.addExecutable(.{
+        .name = "glacier-continuation-object-payload-file-worker",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "bench/continuation_object_payload_file_worker.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_payload_file_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    const continuation_payload_file_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-object-payload-file-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_object_payload_file.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_payload_file_demo_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    continuation_payload_file_demo_exe.root_module.addImport(
+        "sweep_fixture",
+        continuation_sweep_fixture_mod,
+    );
+    const run_continuation_payload_file_demo = b.addRunArtifact(
+        continuation_payload_file_demo_exe,
+    );
+    run_continuation_payload_file_demo.addArtifactArg(
+        continuation_payload_file_worker_exe,
+    );
+    const continuation_payload_file_demo_step = b.step(
+        "continuation-payload-file-demo",
+        "Run durable payload promotion and process-death conformance",
+    );
+    continuation_payload_file_demo_step.dependOn(
+        &run_continuation_payload_file_demo.step,
+    );
+    test_step.dependOn(&run_continuation_payload_file_demo.step);
+    test_compile_step.dependOn(
+        &continuation_payload_file_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &continuation_payload_file_worker_exe.step,
+    );
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

@@ -123,9 +123,10 @@ state; the Python model also repeats record-mutation rejection.
 
 This closes the ordering gap for the in-memory payload store. The low-level
 in-memory commit primitive remains available for authority-free fixtures; a
-caller requiring publication ordering must use the ordered adapter. Durable
-payload storage and real process death across payload mutation remain separate
-promotion gates.
+caller requiring publication ordering must use the ordered adapter. The
+downstream [payload file](CONTINUATION_OBJECT_PAYLOAD_FILE.md) now carries the
+exact published sweep authority into canonical payload-byte promotion and real
+process-death recovery.
 
 ## Replacement and link defense
 
@@ -194,6 +195,7 @@ zig test src/core/continuation_object_sweep_file.zig -O ReleaseFast
 python3 -m unittest bench.tests.test_continuation_object_sweep_file
 zig build continuation-sweep-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-payload-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
 The focused native root currently runs 49 tests including imported record,
@@ -215,11 +217,11 @@ This prototype does not yet prove:
 - protection from privileged or kernel-level namespace mutation;
 - detection of same-length in-place writes by a process ignoring the lock;
 - power-cut durability on any device;
-- durable object payload storage;
-- process-death recovery across mutation of a durable payload store;
+- durable lease, quarantine, reference-count, or repair metadata;
 - ResourceBank/LeaseTree ownership reacquisition; or
 - live restoration of model, tokenizer, KV, RNG, sampler, and output state.
 
-The next continuation milestone applies the same old/new reconciliation to a
-native durable payload store under real process death, then reacquires exact
-runtime ownership before any restored state becomes visible.
+Canonical payload-byte durability is implemented in the downstream
+[Continuation Object Payload File](CONTINUATION_OBJECT_PAYLOAD_FILE.md). The
+next continuation milestone persists lifecycle metadata and reacquires exact
+runtime ownership before any restored payload becomes visible.

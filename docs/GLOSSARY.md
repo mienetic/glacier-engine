@@ -77,6 +77,15 @@ receipt is fully published before mutation. Recovery compares the current state
 with the receipt's old/new roots to apply once, accept an already-applied state,
 or reject an unrelated state.
 
+**Canonical payload snapshot** — A tenant-bound, explicitly serialized set of
+payload references and bytes sorted by digest and length. Decode re-hashes every
+payload and rejects mutation, duplication, reordering, or foreign tenant scope.
+
+**Copy-on-write payload promotion** — A durable reclaim transition that writes
+and syncs an exact successor snapshot before atomically renaming it over the
+active file. Recovery accepts only the reclaim record's old or new root and
+therefore never edits an ambiguous third state.
+
 **MediaObject** — Planned content-addressed identity for an immutable image,
 audio, or video payload plus its bounded semantic metadata. It does not grant
 file, network, camera, or microphone access.

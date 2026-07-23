@@ -257,8 +257,10 @@ This proves deterministic atomic in-memory commit conformance for the fixture.
 The ordered adapter additionally predicts the exact receipt without mutation,
 syncs it as a fixed record before deallocation, injects a failure at that
 boundary, and reconciles the exact old/new snapshots idempotently. It does not
-prove durable payload-store recovery after process loss, power-loss survival,
-secure erasure, multi-process safety, distributed reachability, lower RSS, or
+by itself prove durable payload-store recovery after process loss. The
+downstream payload file now proves canonical byte-plane promotion across process
+death for its retained fixture, but neither layer proves lifecycle durability,
+power-loss survival, secure erasure, distributed reachability, lower RSS, or
 production garbage-collection performance.
 
 ## Next layers
@@ -277,12 +279,15 @@ production garbage-collection performance.
 5. ~~Publication-before-deallocation ordering without double deallocation.~~
    Implemented for the in-memory store with exact preview, real file sync,
    injected boundary failure, and idempotent old/new recovery.
-6. Native durable payload-store and real process-death recovery across the
-   destructive boundary.
+6. ~~Native durable payload bytes and real process-death recovery across the
+   destructive boundary.~~ Implemented with a fixed exact-target reclaim record,
+   copy-on-write promotion, and seven native plus Python death boundaries on the
+   macOS host.
 7. Multi-bundle and parent-checkpoint reachability composition.
 8. Allocator campaigns covering non-tail reuse, fragmentation, RSS, and peak
    memory without conflating them with logical accounting.
-9. ResourceBank/LeaseTree reacquisition and end-to-end continuation restore.
+9. Durable lifecycle metadata, ResourceBank/LeaseTree reacquisition, and
+   end-to-end continuation restore.
 
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 non-destructive prepare/abort boundary and
@@ -293,4 +298,6 @@ portable commit-evidence format, and
 [Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for its
 least-authority modeled publication boundary, and
 [Continuation Object Sweep File Adapter](CONTINUATION_OBJECT_SWEEP_FILE.md) for
-the real-file implementation and its claim boundary.
+the real-file implementation and its claim boundary, and
+[Continuation Object Payload File](CONTINUATION_OBJECT_PAYLOAD_FILE.md) for the
+durable payload-byte transition.

@@ -138,9 +138,19 @@ exact old/new snapshots idempotently in Zig and Python.
 **Completed slice:** publication-before-deallocation ordering for the in-memory
 payload store.
 
-**Next slice:** implement a native durable payload store and run real
-process-death recovery before, during, and after payload mutation on macOS and
-Linux filesystems. Keep live ownership restore outside that destructive slice.
+The payload byte plane now uses a canonical tenant snapshot, a fixed 968-byte
+reclaim record carrying every exact target, and copy-on-write promotion under a
+stable lock inode. Native and independent Python workers terminate after plan
+write/sync/directory-sync and candidate write/sync/rename/directory-sync, then a
+fresh process recovers the exact old or new root idempotently.
+
+**Completed slice:** native durable payload bytes and seven-boundary
+process-death conformance on the macOS development host.
+
+**Next slice:** persist lifecycle metadata and reacquire ResourceBank/LeaseTree
+ownership without duplication before exposing restored payloads. A separate
+contributor slice can run the existing evidence and payload campaigns on native
+Linux filesystems.
 
 ### Resolver adversarial fixtures
 

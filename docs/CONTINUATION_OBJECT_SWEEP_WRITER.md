@@ -180,11 +180,15 @@ fences, and subprocess-death tests on the macOS host. It does not turn the
 deterministic backend into power-loss evidence. Native Linux filesystem
 campaigns remain pending. The downstream ordered commit path now syncs an exact
 predicted receipt before in-memory payload removal and reconciles old/new
-snapshots; a durable payload-store process-death campaign remains pending.
+snapshots. The payload-file layer now carries that authority into canonical
+payload-byte promotion across seven process-death boundaries; lifecycle
+metadata, ownership reacquisition, and live restart remain pending.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the wire format and pure classifier, and
 [Continuation Object Sweep File Adapter](CONTINUATION_OBJECT_SWEEP_FILE.md) for
 the real-file implementation and its claim boundary, and
+[Continuation Object Payload File](CONTINUATION_OBJECT_PAYLOAD_FILE.md) for the
+durable payload-byte transition, and
 [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for the
 in-memory transition whose evidence is published.

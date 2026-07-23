@@ -14,6 +14,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const capsule = @import("continuation_capsule.zig");
+const bundle = @import("continuation_bundle.zig");
 const object_store = @import("continuation_object_store.zig");
 const sweep = @import("continuation_object_sweep.zig");
 const record = @import("continuation_object_sweep_record.zig");
@@ -145,6 +146,65 @@ pub fn prepareCommitRecordV1(
     };
 }
 
+/// Reconstructs the allocation-free commit preview needed after process death
+/// from one verified fixed record plus its exact canonical target list.
+pub fn commitPreviewFromRecordV1(
+    prepared: PreparedCommitRecordV1,
+    targets: []const bundle.BlobRefV1,
+) Error!sweep.CommitPreviewV1 {
+    if (targets.len == 0 or targets.len > object_store.default_capacity)
+        return Error.PublishedCommitMismatch;
+    const decoded = try record.decodeV1(&prepared.bytes);
+    if (!std.mem.eql(
+        u8,
+        &decoded.record_sha256,
+        &prepared.record_sha256,
+    )) return Error.PublishedCommitMismatch;
+    try sweep.verifyCommitReceiptV1(
+        decoded.input.commit_grant,
+        decoded.input.commit_receipt,
+        decoded.input.store_receipt,
+    );
+    const targets_sha256 = try object_store.retiredTargetsRootV1(targets);
+    if (!std.mem.eql(
+        u8,
+        &targets_sha256,
+        &decoded.input.commit_receipt.targets_sha256,
+    )) return Error.PublishedCommitMismatch;
+    const grant_sha256 = try sweep.commitGrantRootV1(
+        decoded.input.commit_grant,
+    );
+    var fixed_targets = [_]bundle.BlobRefV1{.{
+        .byte_length = 0,
+        .sha256 = capsule.zero_digest,
+    }} ** object_store.default_capacity;
+    std.mem.copyForwards(
+        bundle.BlobRefV1,
+        fixed_targets[0..targets.len],
+        targets,
+    );
+    const grant = decoded.input.commit_grant;
+    return .{
+        .commit_grant = grant,
+        .permit = .{
+            .authority_epoch = grant.authority_epoch,
+            .tenant_scope_sha256 = grant.tenant_scope_sha256,
+            .bundle_sha256 = grant.bundle_sha256,
+            .store_grant_sha256 = grant.store_grant_sha256,
+            .expected_snapshot_sha256 = grant.expected_snapshot_sha256,
+            .authorization_sha256 = grant_sha256,
+            .max_freed_entries = grant.max_freed_entries,
+            .max_freed_bytes = grant.max_freed_bytes,
+        },
+        .targets = fixed_targets,
+        .target_count = targets.len,
+        .result = .{
+            .receipt = decoded.input.commit_receipt,
+            .store_receipt = decoded.input.store_receipt,
+        },
+    };
+}
+
 /// Appends and synchronizes the exact preview record before entering the
 /// destructive no-failure suffix. If publication or its boundary observer
 /// fails, no payload is freed.
@@ -183,19 +243,12 @@ pub fn recoverPublishedCommitV1(
     durable_stream: []const u8,
     anchor: record.RecoveryAnchorV1,
 ) Error!PublishedCommitRecoveryV1 {
-    try validatePreparedCommitRecordV1(preview, prepared);
-    const classification = try record.classifyRecoveryV1(
+    try verifyPublishedCommitRecordV1(
+        preview,
+        prepared,
         durable_stream,
         anchor,
     );
-    if (classification.status != .clean or
-        classification.committed_bytes != durable_stream.len or
-        !std.mem.eql(
-            u8,
-            &classification.final_record_sha256,
-            &prepared.record_sha256,
-        ))
-        return Error.PublishedCommitMismatch;
     const snapshot = try store.auditSnapshotRootV2();
     if (std.mem.eql(
         u8,
@@ -216,6 +269,30 @@ pub fn recoverPublishedCommitV1(
         };
     }
     return Error.PublishedCommitStateMismatch;
+}
+
+/// Verifies that an exact preview record is the complete anchored durable
+/// publication. Downstream durable payload adapters use this without receiving
+/// in-memory deallocation authority.
+pub fn verifyPublishedCommitRecordV1(
+    preview: sweep.CommitPreviewV1,
+    prepared: PreparedCommitRecordV1,
+    durable_stream: []const u8,
+    anchor: record.RecoveryAnchorV1,
+) Error!void {
+    try validatePreparedCommitRecordV1(preview, prepared);
+    const classification = try record.classifyRecoveryV1(
+        durable_stream,
+        anchor,
+    );
+    if (classification.status != .clean or
+        classification.committed_bytes != durable_stream.len or
+        !std.mem.eql(
+            u8,
+            &classification.final_record_sha256,
+            &prepared.record_sha256,
+        ))
+        return Error.PublishedCommitMismatch;
 }
 
 fn validateCommitPreviewV1(

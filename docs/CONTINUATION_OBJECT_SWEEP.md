@@ -207,13 +207,18 @@ coordination, liveness, or exactly-once execution.
 7. ~~Publication-before-deallocation ordering.~~ Implemented for the in-memory
    store with an exact no-mutation preview, real file sync, injected boundary
    failure, and idempotent old/new snapshot recovery.
-8. Native durable payload-store process-death recovery.
+8. ~~Native durable payload-byte process-death recovery.~~ Implemented with
+   canonical snapshots, exact-target reclaim records, copy-on-write promotion,
+   and seven native plus Python process-death boundaries on the macOS host.
 9. Multi-bundle and parent-checkpoint reachability composition.
-10. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+10. Durable lifecycle metadata, ResourceBank/LeaseTree reacquisition, and
+    end-to-end restart.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the fixed evidence wire and
 [Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for the
 scoped writer/repair contract, and
 [Continuation Object Sweep File Adapter](CONTINUATION_OBJECT_SWEEP_FILE.md) for
-the real-file boundary and its precise durability limits.
+the real-file boundary and its precise durability limits, and
+[Continuation Object Payload File](CONTINUATION_OBJECT_PAYLOAD_FILE.md) for
+durable payload-byte promotion and recovery.

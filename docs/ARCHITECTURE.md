@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer/file adapter | Bind a checkpoint, own bounded tenant payloads, separate collection/staging/destructive/publication authority, and carry portable commit evidence into an identity-fenced file |
+| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, evidence file, payload file | Bind a checkpoint, own bounded tenant payloads, separate collection/staging/destructive/publication authority, and recover canonical payload bytes through an identity-fenced copy-on-write transition |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -59,6 +59,7 @@ validated model + request
                                                                └─ fixed body/footer evidence record
                                                                     └─ anchored recovery + scoped writer model
                                                                          └─ locked descriptor-relative file
+                                                                              └─ durable payload plan + promotion
 ```
 
 ### ResourceBank
@@ -215,12 +216,13 @@ following the final symlink, acquires an exclusive advisory lock, and requires
 one owner-private regular-file link. Device, inode, length, permissions, and
 directory-entry identity are checked around every write, sync, and truncate.
 Creation synchronizes both file and directory. Six native subprocess deaths
-cover every append and repair phase, while the independent Python adapter repeats
-the file and lock contract. This is process-death and namespace-replacement
-evidence, not device power-cut evidence. Durable destructive ordering,
-ownership reacquisition, and live restore remain separate layers. The advisory
-lock contract also requires cooperating writers; same-length in-place writes
-that preserve visible identity metadata are outside its detection boundary.
+cover every append and repair phase, while the independent Python adapter
+repeats the file and lock contract. This is process-death and
+namespace-replacement evidence, not device power-cut evidence. Durable payload
+promotion, ownership reacquisition, and live restore remain separate layers.
+The advisory lock contract also requires cooperating writers; same-length
+in-place writes that preserve visible identity metadata are outside its
+detection boundary.
 
 The publication-ordered commit layer removes the earlier record-after-delete
 gap. Before mutation, the store derives the exact target set, before/after
@@ -229,8 +231,20 @@ adapter publishes that fixed record through body/footer sync before invoking the
 no-failure removal suffix. An injected failure at the boundary leaves the old
 store untouched. Recovery verifies the anchored record and accepts only the
 exact old snapshot (apply once) or predicted new snapshot (already applied).
-The current payload store remains in memory, so native durable-store
-process-death recovery is still a separate boundary.
+That ordered commit fixture still uses the in-memory lifecycle store.
+
+The durable payload-file layer persists the byte plane separately. Its canonical
+snapshot re-hashes every tenant-bound payload and sorts exact references before
+encoding. A fixed reclaim record binds the published sweep root, complete target
+list, old/new payload roots and lengths, accounting, preview root, and
+challenge. Under one stable lock inode, recovery writes and syncs a deterministic
+candidate, verifies the active old root, atomically renames the candidate over
+the active file, syncs the directory, and accepts only the exact new root.
+Native and independent Python campaigns terminate after seven plan/promotion
+boundaries and recover idempotently from fresh processes. Lease, quarantine,
+reference, repair, and runtime ownership metadata remain in memory; power-cut
+durability, ownership reacquisition, paged-KV restoration, and live restart are
+later boundaries.
 
 ## Provider execution flow
 
@@ -335,6 +349,9 @@ still require real machines for each promoted platform.
 - [Continuation object sweep file adapter](CONTINUATION_OBJECT_SWEEP_FILE.md):
   descriptor-relative locking, identity fencing, ordered sync, explicit repair,
   real subprocess-death conformance, and publication-ordered commit recovery.
+- [Continuation object payload file](CONTINUATION_OBJECT_PAYLOAD_FILE.md):
+  canonical durable payload bytes, fixed exact-target reclaim plans, and
+  copy-on-write process-death recovery.
 - [Multimodal roadmap](MULTIMODAL_ROADMAP.md): gated shared media identity,
   timeline, transaction, image, audio, and video tracks.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

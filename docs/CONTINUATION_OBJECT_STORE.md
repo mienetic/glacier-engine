@@ -200,6 +200,7 @@ zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-record-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-payload-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
 Run the independent state model:
@@ -259,9 +260,13 @@ output/source overlap with store memory.
 8. ~~Exact preview publication before payload deallocation.~~ Implemented for
    the in-memory store with predicted post-state roots, real file sync, injected
    boundary failure, and idempotent old/new reconciliation.
-9. Native durable payload-store process-death recovery.
+9. ~~Native durable payload-byte process-death recovery.~~ Implemented with a
+   canonical tenant snapshot, fixed exact-target reclaim record, copy-on-write
+   promotion, seven native death boundaries, and independent Python
+   verification on the macOS host.
 10. Replica adapter with independently verified repair transport.
-11. Resource and paged-KV ownership reacquisition.
+11. Durable lifecycle metadata plus Resource and paged-KV ownership
+    reacquisition.
 12. End-to-end restart and paired physical-resource campaigns.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
@@ -270,3 +275,5 @@ See [Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for
 the scoped publication model.
 See [Continuation Object Sweep File Adapter](CONTINUATION_OBJECT_SWEEP_FILE.md)
 for the real-file publication boundary and remaining platform limits.
+See [Continuation Object Payload File](CONTINUATION_OBJECT_PAYLOAD_FILE.md) for
+canonical durable payload bytes and process-death promotion recovery.

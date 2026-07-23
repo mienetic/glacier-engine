@@ -34,6 +34,7 @@ energy, or production reliability.
 | `zig build continuation-sweep-commit-demo -Dmetal=false` | Exact no-mutation preview, real file publication before deallocation, injected-boundary recovery, idempotent old/new reconciliation, exact accounting, and allocator tail reclamation |
 | `zig build continuation-sweep-record-demo -Dmetal=false` | Fixed record verification, anchored tail classification, snapshot-bound append/repair capabilities, ordered sync, and deterministic crash-storage conformance |
 | `zig build continuation-sweep-file-demo -Dmetal=false` | Descriptor-relative lock/identity/sync checks and six native subprocess-death recovery boundaries |
+| `zig build continuation-payload-file-demo -Dmetal=false` | Canonical payload snapshots, fixed exact-target reclaim plans, copy-on-write promotion, and seven native subprocess-death recovery boundaries |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -171,9 +172,29 @@ the same 784-byte format and verifies record root `6f60f970…c7fa52`. Version 2
 first predicts that exact receipt without mutation, publishes and syncs it
 through the POSIX adapter, injects a failure before deallocation, then recovers
 against the old snapshot, proves a second recovery is already applied, and
-rejects a valid third store state. The payload store remains in memory, so this
-is ordering and reconciliation evidence—not durable payload-store or power-loss
-evidence.
+rejects a valid third store state. This specific commit fixture keeps payloads
+and lifecycle metadata in memory, so it proves ordering and reconciliation, not
+process-death mutation or power-loss behavior.
+
+The payload-file demo then exercises the downstream durable byte plane. Its
+three-entry canonical snapshot contains 55 logical payload bytes; one exact
+13-byte target is removed into a two-entry, 42-byte successor. A fixed 968-byte
+record binds the published sweep root, exact target list, old/new snapshot roots
+and lengths, accounting, preview root, and challenge. Native workers terminate
+after seven plan and promotion boundaries. Fresh recovery observes the old
+snapshot in five cases and the already-promoted new snapshot in two, then a
+second recovery is always `already_applied`. Zig and independent Python
+implementations share sweep-record SHA-256
+`871e9f22…a2a7cc977` and reclaim-record SHA-256
+`f1105b70…35f926de34`; Python also rejects mutation of every reclaim-record
+byte and a valid unrelated third snapshot.
+
+This proves the named fixture's canonical payload-byte encoding, exact target
+reconstruction, copy-on-write ordering, and fresh-process old/new
+reconciliation on the retained macOS host. It does not persist lifecycle
+metadata, reacquire ResourceBank/LeaseTree ownership, emulate device power loss,
+establish native Linux filesystem behavior, or measure disk use, latency, RSS,
+or energy.
 
 ## Provider evidence checkpoint
 

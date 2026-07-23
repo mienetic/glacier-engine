@@ -37,6 +37,10 @@ pub const continuation_object_resolver =
 pub const continuation_bundle = @import("continuation_bundle.zig");
 pub const continuation_object_store =
     @import("continuation_object_store.zig");
+pub const continuation_object_payload_store =
+    @import("continuation_object_payload_store.zig");
+pub const continuation_object_payload_file =
+    @import("continuation_object_payload_file.zig");
 pub const continuation_object_sweep =
     @import("continuation_object_sweep.zig");
 pub const continuation_object_sweep_record =
@@ -72,6 +76,8 @@ pub const ContinuationCapsule = continuation_capsule;
 pub const ContinuationObjectResolver = continuation_object_resolver;
 pub const ContinuationBundle = continuation_bundle;
 pub const ContinuationObjectStore = continuation_object_store;
+pub const ContinuationObjectPayloadStore = continuation_object_payload_store;
+pub const ContinuationObjectPayloadFile = continuation_object_payload_file;
 pub const ContinuationObjectSweep = continuation_object_sweep;
 pub const ContinuationObjectSweepRecord = continuation_object_sweep_record;
 pub const ContinuationObjectSweepWriter = continuation_object_sweep_writer;

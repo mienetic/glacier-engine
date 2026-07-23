@@ -71,6 +71,9 @@ zig build continuation-sweep-record-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Exercise descriptor-relative locking, sync, and six real process deaths
 zig build continuation-sweep-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Recover canonical payload bytes across seven plan/promotion process deaths
+zig build continuation-payload-file-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

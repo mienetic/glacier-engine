@@ -60,6 +60,10 @@ before the first stable release.
 - Exact no-mutation sweep commit previews with predicted post-state roots,
   file-synced publication before payload deallocation, injected-boundary
   recovery, and idempotent old/new snapshot reconciliation in Zig and Python.
+- Canonical tenant payload snapshots and a descriptor-relative durable payload
+  adapter with fixed exact-target reclaim records, copy-on-write promotion,
+  stable locking across inode replacement, independent Python verification, and
+  seven native plus Python process-death boundaries.
 - A gated multimodal roadmap for a shared media identity/timeline/transaction
   substrate followed by bounded image, streaming audio, and video execution.
 

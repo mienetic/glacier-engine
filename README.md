@@ -67,6 +67,10 @@ formats, and independent verifiers.
   receipt without mutation, syncs that record before freeing payloads, and
   reconciles exact old/new snapshots so recovery applies once or recognizes an
   already-applied transition.
+- **Durable payload promotion.** Canonical tenant payload snapshots use a
+  copy-on-write candidate and fixed reclaim plan that preserve exact targets
+  across process death. Fresh recovery accepts only the old or predicted new
+  root across seven write, sync, rename, and directory-sync boundaries.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
@@ -119,7 +123,8 @@ request
                                               └─ scoped writer/repair model
                                                  └─ locked real-file adapter
                                                     └─ exact preview publication
-                                                       └─ destructive apply
+                                                       └─ durable payload plan
+                                                          └─ copy-on-write apply
 
 provider request
   │
@@ -156,6 +161,7 @@ zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-record-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-file-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-payload-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -175,7 +181,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, fixed evidence record, anchored recovery, locked POSIX publication, exact pre-deallocation preview, and idempotent old/new reconciliation | Native durable payload-store recovery, ownership reacquisition, and live restart |
+| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, fixed evidence record, anchored recovery, locked POSIX publication, exact pre-deallocation preview, canonical durable payload snapshots, and seven-boundary copy-on-write recovery | Durable ownership/lifecycle reacquisition, paged-KV restore, and live restart |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
@@ -225,6 +231,7 @@ valuable as new features.
 - [Continuation object sweep record](docs/CONTINUATION_OBJECT_SWEEP_RECORD.md)
 - [Continuation object sweep writer](docs/CONTINUATION_OBJECT_SWEEP_WRITER.md)
 - [Continuation object sweep file adapter](docs/CONTINUATION_OBJECT_SWEEP_FILE.md)
+- [Continuation object payload file](docs/CONTINUATION_OBJECT_PAYLOAD_FILE.md)
 - [Multimodal roadmap](docs/MULTIMODAL_ROADMAP.md)
 - [Glossary](docs/GLOSSARY.md)
 

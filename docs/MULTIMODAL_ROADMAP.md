@@ -23,8 +23,10 @@ Every modality must preserve the same Glacier properties:
 Multimodal execution starts after all of these continuation requirements pass:
 
 1. evidence publication is durably ordered before destructive payload removal;
-2. a native durable payload store can reconcile old/new transition snapshots
-   after process death;
+2. ~~a native durable payload-byte store can reconcile old/new transition
+   snapshots after process death;~~ complete for canonical payload bytes across
+   seven retained macOS process-death boundaries; lifecycle metadata is outside
+   this completed slice;
 3. ResourceBank and LeaseTree ownership can be reacquired without duplication;
 4. paged KV restoration rejects foreign model, tokenizer, or generation state;
 5. a process restart between token publications produces no duplicated output;

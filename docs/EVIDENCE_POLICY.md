@@ -70,6 +70,11 @@ Keep these distinct:
   fully synced preview-record root, publication/deallocation boundary outcome,
   and old/new snapshot reconciliation without implied durable payload storage,
   power-cut survival, or secure erasure;
+- **payload file:** canonical tenant snapshot bytes, fixed exact-target reclaim
+  record, tenant/storage-epoch scope, old/new roots and lengths, stable lock
+  identity, candidate write/sync, atomic rename, directory sync, and
+  fresh-process reconciliation without implied lifecycle durability, power-cut
+  survival, secure erasure, or live ownership restoration;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;

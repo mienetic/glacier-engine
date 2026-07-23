@@ -2,6 +2,7 @@
 
 const core = @import("core");
 const capsule = core.continuation_capsule;
+const bundle = core.continuation_bundle;
 const object_store = core.continuation_object_store;
 const sweep = core.continuation_object_sweep;
 const record = core.continuation_object_sweep_record;
@@ -41,6 +42,100 @@ pub fn originAnchorV1() record.RecoveryAnchorV1 {
         .next_sequence = 1,
         .previous_record_sha256 = capsule.zero_digest,
     };
+}
+
+pub fn payloadRecordV1(
+    tenant_scope_sha256: Digest,
+    target: bundle.BlobRefV1,
+    entry_count_before: u64,
+    payload_bytes_before: u64,
+) ![record.encoded_bytes]u8 {
+    if (entry_count_before < 1 or
+        payload_bytes_before < target.byte_length)
+        return error.InvalidPayloadFixture;
+    var targets = [_]bundle.BlobRefV1{target};
+    object_store.sortRootReferencesV1(&targets);
+    const targets_sha256 = try object_store.retiredTargetsRootV1(&targets);
+    const commit_grant: sweep.CommitGrantV1 = .{
+        .authority_epoch = 21,
+        .tenant_scope_sha256 = tenant_scope_sha256,
+        .bundle_sha256 = digest(0x82),
+        .store_grant_sha256 = digest(0x83),
+        .sweep_grant_sha256 = digest(0x84),
+        .prepare_sha256 = digest(0x85),
+        .expected_snapshot_sha256 = digest(0x86),
+        .collection_plan_sha256 = digest(0x87),
+        .max_freed_entries = 1,
+        .max_freed_bytes = target.byte_length,
+        .challenge_sha256 = digest(0x88),
+    };
+    const grant_sha256 = try sweep.commitGrantRootV1(commit_grant);
+    const live_entries = entry_count_before - 1;
+    var store_receipt: object_store.RetiredCommitReceiptV1 = .{
+        .authorization_sha256 = grant_sha256,
+        .targets_sha256 = targets_sha256,
+        .snapshot_before_sha256 = commit_grant.expected_snapshot_sha256,
+        .snapshot_after_sha256 = digest(0x89),
+        .accounting_before = .{
+            .entry_count = entry_count_before,
+            .live_entries = live_entries,
+            .quarantined_entries = 0,
+            .retired_entries = 1,
+            .payload_bytes = payload_bytes_before,
+            .logical_index_bytes = entry_count_before * object_store.logical_index_entry_bytes,
+            .reference_count = live_entries,
+            .active_leases = 0,
+            .repair_count = 0,
+        },
+        .accounting_after = .{
+            .entry_count = live_entries,
+            .live_entries = live_entries,
+            .quarantined_entries = 0,
+            .retired_entries = 0,
+            .payload_bytes = payload_bytes_before - target.byte_length,
+            .logical_index_bytes = live_entries * object_store.logical_index_entry_bytes,
+            .reference_count = live_entries,
+            .active_leases = 0,
+            .repair_count = 0,
+        },
+        .freed_entries = 1,
+        .freed_payload_bytes = target.byte_length,
+        .freed_index_bytes = object_store.logical_index_entry_bytes,
+        .freed_repair_count = 0,
+        .allocator_deallocation_calls = 1,
+        .commit_sha256 = capsule.zero_digest,
+    };
+    store_receipt.commit_sha256 =
+        object_store.retiredCommitReceiptRootV1(store_receipt);
+    var commit_receipt: sweep.CommitReceiptV1 = .{
+        .commit_grant_sha256 = grant_sha256,
+        .sweep_grant_sha256 = commit_grant.sweep_grant_sha256,
+        .prepare_sha256 = commit_grant.prepare_sha256,
+        .collection_plan_sha256 = commit_grant.collection_plan_sha256,
+        .targets_sha256 = targets_sha256,
+        .snapshot_before_sha256 = store_receipt.snapshot_before_sha256,
+        .snapshot_after_sha256 = store_receipt.snapshot_after_sha256,
+        .store_commit_sha256 = store_receipt.commit_sha256,
+        .freed_entries = 1,
+        .freed_payload_bytes = target.byte_length,
+        .freed_index_bytes = object_store.logical_index_entry_bytes,
+        .freed_repair_count = 0,
+        .allocator_deallocation_calls = 1,
+        .commit_sha256 = capsule.zero_digest,
+    };
+    commit_receipt.commit_sha256 = sweep.commitRootV1(commit_receipt);
+    const input: record.InputV1 = .{
+        .record_epoch = 0x5357_4545_5000_0001,
+        .sequence = 1,
+        .previous_record_sha256 = capsule.zero_digest,
+        .record_challenge_sha256 = digest(0x8a),
+        .commit_grant = commit_grant,
+        .commit_receipt = commit_receipt,
+        .store_receipt = store_receipt,
+    };
+    var encoded: [record.encoded_bytes]u8 = undefined;
+    _ = try record.encodeV1(input, &encoded);
+    return encoded;
 }
 
 fn inputV1(commit_challenge: u8, record_challenge: u8) record.InputV1 {

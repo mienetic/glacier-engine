@@ -197,7 +197,20 @@ primitive. A failure injected immediately after publication leaves every
 payload intact. Recovery accepts only a complete anchored record: the exact old
 snapshot applies the preview once, the exact predicted new snapshot is
 idempotent success, and any third state rejects. This proves ordering around the
-in-memory store; it does not make payload storage durable across process death.
+in-memory lifecycle store.
+
+Payload bytes cross a separate durable boundary. The canonical snapshot wire
+binds one tenant, exact references, byte lengths, payload content, and aggregate
+accounting. Reclaim preview writes an exact successor into caller-owned storage
+without changing the active snapshot. A fixed reclaim record persists the
+published sweep root, every exact target, old/new snapshot roots and lengths,
+accounting, preview root, and challenge. Under a stable lock inode, the adapter
+writes and syncs a root-named candidate, verifies the active old root, atomically
+renames the candidate, syncs the directory, and reopens the exact new root.
+Recovery therefore reconstructs authority after process death and accepts only
+old, new, or rejection—not an inferred merge. This makes payload bytes durable
+for the retained host contract; lifecycle metadata, ResourceBank/LeaseTree
+ownership, paged KV, and visible runtime continuation remain later layers.
 
 ### State machines fail closed
 
