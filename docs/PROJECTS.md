@@ -98,16 +98,21 @@ canonical retired target before mutation, emits exact before/after accounting,
 and rejects replay against the changed snapshot. A fixed 784-byte body/footer
 record now carries the canonical commit evidence, reconstructs both receipts,
 and passes independent Zig/Python mutation-complete verification. It performs no
-filesystem I/O and does not make the transition durable.
+filesystem I/O and does not make the transition durable. An allocation-free
+anchored classifier now returns the exact committed prefix and distinguishes
+short bodies, a body without footer, a matching partial footer, and corrupt
+complete evidence.
 
-**Completed slice:** fixed pointer-free evidence record, separate commit footer,
+**Completed slices:** fixed pointer-free evidence record, separate commit footer,
 chain position, exact pinned expectations, semantic receipt reconstruction, and
-cross-language golden fixtures.
+a pure stream classifier with exhaustive cross-language append-boundary,
+mutation, foreign-chain, and suffix-anchor fixtures.
 
-**Next slice:** implement a pure recovery classifier over concatenated record
-bytes. It must identify a clean committed prefix, a short body tail, a complete
-body missing its footer, and a corrupt complete record. Return classification
-and safe-prefix length only; do not open, truncate, sync, or modify files.
+**Next slice:** define a capability-scoped writer contract and deterministic fake
+I/O backend. Exercise exclusive ownership, short body/footer writes, sync
+failure, uncertain-writer poisoning, close/reopen, and classifier-driven repair
+decisions at every phase. Keep real filesystem access, payload deletion, and
+destructive replay outside this slice.
 
 ### Resolver adversarial fixtures
 

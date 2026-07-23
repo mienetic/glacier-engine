@@ -160,7 +160,11 @@ commit grant and both receipts, repeats its body root in a commit footer, and
 binds epoch, sequence, previous record, and an exact expectation. Verification
 replays semantic accounting rather than accepting a correctly rehashed
 contradiction. The codec can describe a future body-then-footer append order but
-cannot write, sync, repair, delete, or recover storage.
+cannot write, sync, repair, delete, or recover storage. Its pure stream
+classifier requires an exact epoch/next-sequence/previous-root anchor and admits
+only fully replayed records to the committed prefix. Incomplete body/footer
+states are descriptive evidence, not implicit permission to truncate or retry;
+a complete semantic or chain contradiction remains corrupt.
 
 ### State machines fail closed
 

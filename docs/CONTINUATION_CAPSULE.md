@@ -159,10 +159,12 @@ trusting a historical receipt as live authority.
    Implemented as a separately authorized atomic in-memory transition.
 7. ~~Fixed body/footer sweep commit evidence record.~~ Implemented without
    filesystem, deletion, or recovery authority.
-8. Atomic manifest/bundle publication and crash recovery.
-9. Resource and page ownership reacquisition.
-10. Live restore between two transactional token publications.
-11. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
+8. ~~Pure anchored sweep-record classification.~~ Implemented without I/O or
+   repair authority.
+9. Atomic manifest/bundle publication and crash recovery.
+10. Resource and page ownership reacquisition.
+11. Live restore between two transactional token publications.
+12. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
 
 Each layer must keep manifest identity separate from storage and execution
 authority.

@@ -55,7 +55,8 @@ Keep these distinct:
   implied RSS reduction, secure erase, or durability;
 - **sweep record:** fixed body/footer bytes, epoch/sequence/previous root,
   reconstructed grant and receipts, semantic accounting verification, and an
-  ordered append plan without implied file writes, sync, recovery, or durability;
+  ordered append plan plus anchored committed-prefix/tail classification without
+  implied file writes, sync, truncation, repair, recovery, or durability;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;

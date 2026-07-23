@@ -46,6 +46,9 @@ before the first stable release.
 - Fixed 784-byte continuation sweep evidence record with body/footer framing,
   record chaining, semantic reconstruction of the commit grant and both
   receipts, pinned expectation checks, and independent Zig/Python fixtures.
+- Pure anchored sweep-record classifier with exact committed-prefix metadata,
+  five clean/incomplete/corrupt statuses, semantic and chain verification, and
+  exhaustive cross-language append-boundary and mutation fixtures.
 
 ### Status
 

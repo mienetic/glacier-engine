@@ -192,8 +192,12 @@ commit as a fixed 736-byte body plus a separate 48-byte footer. Decoding
 reconstructs the commit grant, store receipt, and outer receipt and rechecks
 their semantic accounting; exact expectations reject a valid record from a
 different chain position. The append plan returns body and footer slices only.
-It does not open, write, sync, truncate, delete, or recover files, so the format
-is durable-ready evidence rather than a durable state machine.
+An anchored allocation-free classifier then admits only a semantically verified
+epoch/sequence/previous-root chain into its committed prefix and names short
+body, absent footer, matching partial footer, and corrupt tails separately. The
+codec and classifier do not open, write, sync, truncate, repair, delete, or
+recover files, so they are durable-ready evidence rather than a durable state
+machine.
 
 ## Provider execution flow
 
@@ -290,5 +294,6 @@ still require real machines for each promoted platform.
 - [Continuation object sweep commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md):
   separately authorized exact retired-target removal and accounting evidence.
 - [Continuation object sweep record](CONTINUATION_OBJECT_SWEEP_RECORD.md):
-  fixed body/footer commit evidence and chain verification without file I/O.
+  fixed body/footer commit evidence and pure anchored stream classification
+  without file I/O or repair authority.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

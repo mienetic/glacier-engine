@@ -263,15 +263,17 @@ production garbage-collection performance.
 1. ~~Fixed body/footer sweep commit evidence record.~~ Implemented as a
    784-byte pointer-free wire with chain fields and semantic receipt
    reconstruction; it performs no I/O.
-2. Pure recovery classification followed by a durable writer with explicit
-   crash points.
-3. Recovery that distinguishes unstarted, prepared, committed, and ambiguous
-   durable states without double deallocation.
-4. Durable retirement and file-publication ordering.
-5. Multi-bundle and parent-checkpoint reachability composition.
-6. Allocator campaigns covering non-tail reuse, fragmentation, RSS, and peak
+2. ~~Pure anchored recovery classification.~~ Implemented over concatenated
+   records with exact committed-prefix metadata and named incomplete/corrupt
+   tails; it performs no I/O or repair.
+3. Capability-scoped durable writer with explicit crash points.
+4. Recovery policy that distinguishes unstarted, prepared, committed, and
+   ambiguous durable states without double deallocation.
+5. Durable retirement and file-publication ordering.
+6. Multi-bundle and parent-checkpoint reachability composition.
+7. Allocator campaigns covering non-tail reuse, fragmentation, RSS, and peak
    memory without conflating them with logical accounting.
-7. ResourceBank/LeaseTree reacquisition and end-to-end continuation restore.
+8. ResourceBank/LeaseTree reacquisition and end-to-end continuation restore.
 
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 non-destructive prepare/abort boundary and

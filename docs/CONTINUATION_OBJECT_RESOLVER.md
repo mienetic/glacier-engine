@@ -173,9 +173,11 @@ capsule substitution, and changed resolved output.
    Implemented as a separately authorized atomic in-memory transition.
 6. ~~Fixed body/footer sweep commit evidence record.~~ Implemented without
    filesystem or recovery authority.
-7. Atomic bundle publication and crash recovery.
-8. ResourceBank/LeaseTree and paged-KV reacquisition.
-9. End-to-end restart with paired physical measurements.
+7. ~~Pure anchored sweep-record classification.~~ Implemented without I/O or
+   repair authority.
+8. Atomic bundle publication and crash recovery.
+9. ResourceBank/LeaseTree and paged-KV reacquisition.
+10. End-to-end restart with paired physical measurements.
 
 Each layer must preserve the separation between content identity, access
 authority, live resource ownership, and token publication authority.

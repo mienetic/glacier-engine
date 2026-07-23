@@ -16,6 +16,47 @@ pub fn main() !void {
     _ = try record.decodeAndVerifyV1(encoded, expected);
     const plan = try record.appendPlanV1(encoded);
 
+    var second_input = demoInput(0x6b, 0x6c);
+    second_input.sequence = 2;
+    second_input.previous_record_sha256 = decoded.record_sha256;
+    var second_storage: [record.encoded_bytes]u8 = undefined;
+    const second = try record.encodeV1(second_input, &second_storage);
+    var stream: [record.encoded_bytes * 2]u8 = undefined;
+    @memcpy(stream[0..record.encoded_bytes], encoded);
+    @memcpy(stream[record.encoded_bytes..], second);
+    const recovery_anchor: record.RecoveryAnchorV1 = .{
+        .record_epoch = input.record_epoch,
+        .next_sequence = 1,
+        .previous_record_sha256 = capsule.zero_digest,
+    };
+    const clean_recovery = try record.classifyRecoveryV1(&stream, recovery_anchor);
+    const short_recovery = try record.classifyRecoveryV1(
+        stream[0 .. record.encoded_bytes + 100],
+        recovery_anchor,
+    );
+    const body_recovery = try record.classifyRecoveryV1(
+        stream[0 .. record.encoded_bytes + record.body_bytes],
+        recovery_anchor,
+    );
+    const partial_footer_recovery = try record.classifyRecoveryV1(
+        stream[0 .. record.encoded_bytes + record.body_bytes + 1],
+        recovery_anchor,
+    );
+    var corrupt_stream = stream;
+    corrupt_stream[record.encoded_bytes + record.accounting_before_offset] ^= 1;
+    const corrupt_recovery = try record.classifyRecoveryV1(
+        &corrupt_stream,
+        recovery_anchor,
+    );
+    if (clean_recovery.status != .clean or
+        clean_recovery.committed_records != 2 or
+        short_recovery.status != .short_body_tail or
+        body_recovery.status != .body_without_footer or
+        partial_footer_recovery.status != .partial_footer_tail or
+        corrupt_recovery.status != .corrupt_record or
+        corrupt_recovery.committed_records != 1)
+        return error.RecoveryClassificationMismatch;
+
     var corrupted = storage;
     corrupted[record.accounting_before_offset] ^= 1;
     if (record.decodeV1(&corrupted)) |_| {
@@ -35,12 +76,15 @@ pub fn main() !void {
 
     var encoded_sha256: record.Digest = undefined;
     std.crypto.hash.sha2.Sha256.hash(encoded, &encoded_sha256, .{});
+    var stream_sha256: record.Digest = undefined;
+    std.crypto.hash.sha2.Sha256.hash(&stream, &stream_sha256, .{});
     const record_hex = std.fmt.bytesToHex(decoded.record_sha256, .lower);
     const encoded_hex = std.fmt.bytesToHex(encoded_sha256, .lower);
     const sweep_commit_hex = std.fmt.bytesToHex(
         input.commit_receipt.commit_sha256,
         .lower,
     );
+    const stream_hex = std.fmt.bytesToHex(stream_sha256, .lower);
 
     var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
@@ -61,12 +105,22 @@ pub fn main() !void {
             "\"append_plan_body_first\":true," ++
             "\"mutation_rejected\":true," ++
             "\"valid_foreign_record_rejected\":true," ++
+            "\"stream_records\":{d},\"stream_bytes\":{d}," ++
+            "\"recovery_clean_status\":\"{s}\"," ++
+            "\"recovery_short_status\":\"{s}\"," ++
+            "\"recovery_body_status\":\"{s}\"," ++
+            "\"recovery_partial_footer_status\":\"{s}\"," ++
+            "\"recovery_corrupt_status\":\"{s}\"," ++
+            "\"recovery_corrupt_safe_records\":{d}," ++
+            "\"recovery_modifies_input\":false," ++
+            "\"recovery_repair_authority\":false," ++
             "\"heap_allocations\":0,\"filesystem_authority\":false," ++
             "\"network_authority\":false,\"clock_authority\":false," ++
             "\"deletion_authority\":false,\"recovery_authority\":false," ++
             "\"durable\":false," ++
             "\"record_sha256\":\"{s}\"," ++
             "\"encoded_sha256\":\"{s}\"," ++
+            "\"stream_sha256\":\"{s}\"," ++
             "\"sweep_commit_sha256\":\"{s}\",\"verified\":true}}\n",
         .{
             encoded.len,
@@ -83,8 +137,17 @@ pub fn main() !void {
             input.commit_receipt.freed_payload_bytes,
             input.commit_receipt.freed_index_bytes,
             input.commit_receipt.allocator_deallocation_calls,
+            clean_recovery.committed_records,
+            stream.len,
+            @tagName(clean_recovery.status),
+            @tagName(short_recovery.status),
+            @tagName(body_recovery.status),
+            @tagName(partial_footer_recovery.status),
+            @tagName(corrupt_recovery.status),
+            corrupt_recovery.committed_records,
             &record_hex,
             &encoded_hex,
+            &stream_hex,
             &sweep_commit_hex,
         },
     );

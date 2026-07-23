@@ -186,10 +186,12 @@ extension, capsule substitution, and overlapping native output storage.
    Implemented as a separately authorized atomic in-memory transition.
 6. ~~Fixed body/footer sweep commit evidence record.~~ Implemented without
    filesystem, deletion, or recovery authority.
-7. Compact/dynamic index experiment with full overhead measurement.
-8. Atomic bundle publication and crash recovery.
-9. Resource and paged-KV ownership reacquisition.
-10. End-to-end restart and paired physical-resource campaigns.
+7. ~~Pure anchored sweep-record classification.~~ Implemented without I/O or
+   repair authority.
+8. Compact/dynamic index experiment with full overhead measurement.
+9. Atomic bundle publication and crash recovery.
+10. Resource and paged-KV ownership reacquisition.
+11. End-to-end restart and paired physical-resource campaigns.
 
 The store must preserve the distinction between semantic identity, tenant-bound
 blob identity, access authority, live ownership, and publication authority.

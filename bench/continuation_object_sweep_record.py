@@ -40,6 +40,7 @@ FREED_FIELDS = (
     "allocator_deallocation_calls",
 )
 ACCOUNTING_BEFORE_OFFSET = 456
+SEQUENCE_OFFSET = 40
 BODY_PREFIX_BYTES = 704
 BODY_BYTES = 736
 COMMIT_FOOTER_BYTES = 48
@@ -346,6 +347,224 @@ def append_plan(encoded: bytes) -> Record:
         "commit_footer": encoded[BODY_BYTES:],
         "record_sha256": decoded["record_sha256"],
     }
+
+
+def origin_recovery_anchor(record_epoch: int = 0x5357_4545_5000_0001) -> Record:
+    anchor = {
+        "record_epoch": record_epoch,
+        "next_sequence": 1,
+        "previous_record_sha256": ZERO_DIGEST,
+    }
+    _validate_recovery_anchor(anchor)
+    return anchor
+
+
+def _validate_recovery_anchor(anchor: Record) -> None:
+    try:
+        record_epoch = anchor["record_epoch"]
+        next_sequence = anchor["next_sequence"]
+        previous = _chain_digest(anchor["previous_record_sha256"])
+        _u64(record_epoch)
+        _u64(next_sequence)
+    except KeyError as exc:
+        raise SweepRecordError("missing recovery anchor field") from exc
+    if record_epoch == 0 or next_sequence == 0:
+        raise SweepRecordError("invalid recovery anchor position")
+    if (next_sequence == 1) != (previous == ZERO_DIGEST):
+        raise SweepRecordError("invalid recovery anchor chain")
+
+
+def _expected_footer(body: bytes) -> bytes:
+    if not isinstance(body, bytes) or len(body) != BODY_BYTES:
+        raise SweepRecordError("invalid recovery body")
+    return b"".join(
+        (
+            COMMIT_MAGIC,
+            body[SEQUENCE_OFFSET : SEQUENCE_OFFSET + 8],
+            body[BODY_PREFIX_BYTES:BODY_BYTES],
+        )
+    )
+
+
+def _decode_body_for_recovery(body: bytes) -> Record:
+    return decode(body + _expected_footer(body))
+
+
+def _recovery_classification(
+    status: str,
+    anchor: Record,
+    last_sequence: int,
+    committed_records: int,
+    committed_bytes: int,
+    tail_bytes: int,
+    final_record_sha256: bytes,
+) -> Record:
+    return {
+        "status": status,
+        "record_epoch": anchor["record_epoch"],
+        "first_sequence": anchor["next_sequence"],
+        "last_sequence": last_sequence,
+        "committed_records": committed_records,
+        "committed_bytes": committed_bytes,
+        "tail_bytes": tail_bytes,
+        "final_record_sha256": final_record_sha256,
+    }
+
+
+def _recovery_record_matches(
+    decoded: Record,
+    record_epoch: int,
+    sequence: int,
+    previous_record_sha256: bytes,
+) -> bool:
+    value = decoded["input"]
+    return (
+        value["record_epoch"] == record_epoch
+        and value["sequence"] == sequence
+        and value["previous_record_sha256"] == previous_record_sha256
+    )
+
+
+def classify_recovery(stream: bytes, anchor: Record) -> Record:
+    """Classify a record stream without modifying it or granting repair authority."""
+
+    if not isinstance(stream, bytes):
+        raise SweepRecordError("invalid recovery stream")
+    _validate_recovery_anchor(anchor)
+    offset = 0
+    committed_records = 0
+    expected_sequence = anchor["next_sequence"]
+    expected_previous = anchor["previous_record_sha256"]
+    last_sequence = expected_sequence - 1
+    final_record_sha256 = expected_previous
+
+    while len(stream) - offset >= ENCODED_BYTES:
+        try:
+            decoded = decode(stream[offset : offset + ENCODED_BYTES])
+        except SweepRecordError:
+            return _recovery_classification(
+                "corrupt_record",
+                anchor,
+                last_sequence,
+                committed_records,
+                offset,
+                len(stream) - offset,
+                final_record_sha256,
+            )
+        if not _recovery_record_matches(
+            decoded,
+            anchor["record_epoch"],
+            expected_sequence,
+            expected_previous,
+        ):
+            return _recovery_classification(
+                "corrupt_record",
+                anchor,
+                last_sequence,
+                committed_records,
+                offset,
+                len(stream) - offset,
+                final_record_sha256,
+            )
+        offset += ENCODED_BYTES
+        committed_records += 1
+        last_sequence = decoded["input"]["sequence"]
+        final_record_sha256 = decoded["record_sha256"]
+        expected_previous = final_record_sha256
+        if offset < len(stream):
+            if last_sequence == 0xFFFFFFFFFFFFFFFF:
+                return _recovery_classification(
+                    "corrupt_record",
+                    anchor,
+                    last_sequence,
+                    committed_records,
+                    offset,
+                    len(stream) - offset,
+                    final_record_sha256,
+                )
+            expected_sequence = last_sequence + 1
+
+    tail_bytes = len(stream) - offset
+    if tail_bytes == 0:
+        return _recovery_classification(
+            "clean",
+            anchor,
+            last_sequence,
+            committed_records,
+            offset,
+            0,
+            final_record_sha256,
+        )
+    if tail_bytes < BODY_BYTES:
+        return _recovery_classification(
+            "short_body_tail",
+            anchor,
+            last_sequence,
+            committed_records,
+            offset,
+            tail_bytes,
+            final_record_sha256,
+        )
+
+    body = stream[offset : offset + BODY_BYTES]
+    try:
+        decoded_body = _decode_body_for_recovery(body)
+    except SweepRecordError:
+        return _recovery_classification(
+            "corrupt_record",
+            anchor,
+            last_sequence,
+            committed_records,
+            offset,
+            tail_bytes,
+            final_record_sha256,
+        )
+    if not _recovery_record_matches(
+        decoded_body,
+        anchor["record_epoch"],
+        expected_sequence,
+        expected_previous,
+    ):
+        return _recovery_classification(
+            "corrupt_record",
+            anchor,
+            last_sequence,
+            committed_records,
+            offset,
+            tail_bytes,
+            final_record_sha256,
+        )
+    if tail_bytes == BODY_BYTES:
+        return _recovery_classification(
+            "body_without_footer",
+            anchor,
+            last_sequence,
+            committed_records,
+            offset,
+            tail_bytes,
+            final_record_sha256,
+        )
+
+    partial_footer = stream[offset + BODY_BYTES :]
+    if partial_footer != _expected_footer(body)[: len(partial_footer)]:
+        return _recovery_classification(
+            "corrupt_record",
+            anchor,
+            last_sequence,
+            committed_records,
+            offset,
+            tail_bytes,
+            final_record_sha256,
+        )
+    return _recovery_classification(
+        "partial_footer_tail",
+        anchor,
+        last_sequence,
+        committed_records,
+        offset,
+        tail_bytes,
+        final_record_sha256,
+    )
 
 
 def demo_input(commit_challenge: int = 0x6A, record_challenge: int = 0x6B) -> Record:

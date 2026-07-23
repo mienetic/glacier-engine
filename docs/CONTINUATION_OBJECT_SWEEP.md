@@ -196,10 +196,13 @@ coordination, liveness, or exactly-once execution.
    bound into a sweep receipt.~~ Implemented with independent verification.
 3. ~~Fixed body/footer record carrying one committed sweep.~~ Implemented with
    semantic receipt reconstruction and no filesystem authority.
-4. Pure recovery classification and durable publication with crash points
-   before and after the footer.
-5. Multi-bundle and parent-checkpoint reachability composition.
-6. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+4. ~~Pure anchored recovery classification.~~ Implemented with exact committed
+   prefix and distinct short-body, absent-footer, partial-footer, and corrupt
+   states without I/O.
+5. Capability-scoped durable publication with crash points before and after the
+   footer.
+6. Multi-bundle and parent-checkpoint reachability composition.
+7. ResourceBank/LeaseTree reacquisition and end-to-end restart.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the fixed evidence wire and the remaining durability boundary.

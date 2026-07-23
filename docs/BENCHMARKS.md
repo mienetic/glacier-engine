@@ -135,6 +135,15 @@ correctly rehashed accounting contradiction, and a valid foreign record under a
 pinned expectation. This proves the codec and semantic verifier for the named
 fixture. It is not a filesystem throughput, sync latency, crash recovery, or
 durability result; the append plan performs no I/O.
+
+The anchored classifier then scans a two-record 1,568-byte stream with shared
+Zig/Python SHA-256 `25009ee1…ee5538`. Both implementations classify all 785
+possible second-record append lengths, reject a mutation at every second-record
+byte, reject rehashed semantic contradictions and valid foreign chains, and
+verify an authenticated suffix anchor. Native classification allocates no heap
+memory and returns only committed-prefix metadata; this is not evidence of file
+repair, sync behavior, restart correctness, or storage performance.
+
 The sweep-commit demo separately encodes its actual native store receipts into
 the same 784-byte format and verifies record root `6f60f970…c7fa52`.
 

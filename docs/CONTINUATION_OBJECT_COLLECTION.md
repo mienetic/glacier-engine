@@ -231,11 +231,12 @@ reachability.
    Implemented in memory with a separate grant and repeated plan regeneration.
 3. ~~Fixed body/footer commit evidence record.~~ Implemented without file or
    recovery authority.
-4. Crash-safe durable publication and recovery of retirement/sweep decisions.
-5. Multi-bundle and parent-checkpoint reachability composition.
-6. Replica transport that keeps admission, verification, and deletion authority
+4. ~~Pure anchored record classification.~~ Implemented without I/O or repair.
+5. Crash-safe durable publication and recovery of retirement/sweep decisions.
+6. Multi-bundle and parent-checkpoint reachability composition.
+7. Replica transport that keeps admission, verification, and deletion authority
    separate.
-7. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+8. ResourceBank/LeaseTree reacquisition and end-to-end restart.
 
 See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
 implemented staging boundary and

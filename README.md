@@ -50,8 +50,10 @@ formats, and independent verifiers.
   entry, payload, index, and allocator-call accounting.
 - **Portable sweep evidence.** A fixed 784-byte body/footer record reconstructs
   and verifies the commit grant plus both receipts, rejects foreign chain
-  positions, and exposes an ordered future append plan without receiving file,
-  deletion, or recovery authority.
+  positions, and exposes an ordered future append plan. An allocation-free
+  anchored classifier identifies a verified committed prefix and distinguishes
+  short body, missing-footer, partial-footer, and corrupt tails without receiving
+  file, repair, deletion, or recovery authority.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
@@ -100,6 +102,7 @@ request
                                      ├─ retire + collection plan
                                      └─ sweep prepare/abort + atomic commit
                                         └─ fixed body/footer evidence record
+                                           └─ pure anchored stream classifier
 
 provider request
   │
@@ -154,7 +157,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, and a fixed sweep evidence record | Durable writer/recovery policy, ownership reacquisition, and restart |
+| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, fixed evidence record, and pure recovery classification | Capability-scoped durable writer/repair policy, ownership reacquisition, and restart |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |

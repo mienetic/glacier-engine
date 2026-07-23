@@ -2,9 +2,9 @@
 
 Status: **prototype durable-ready evidence format**. Native Zig and an
 independent Python implementation encode, decode, and semantically verify the
-same fixed 784-byte record. The format performs no filesystem I/O and is not a
-durable journal, recovery policy, deletion authority, or crash-atomic state
-machine by itself.
+same fixed 784-byte record and classify concatenated record streams. The format
+and classifier perform no filesystem I/O and are not a durable journal, repair
+policy, deletion authority, or crash-atomic state machine by themselves.
 
 The record preserves the evidence for one already completed in-memory object
 sweep. It embeds enough canonical data to reconstruct and verify the separate
@@ -28,6 +28,10 @@ verified CommitGrantV1
                          ▼
                  48-byte commit footer
                   magic + sequence + root
+                         │
+                         ▼
+           pure anchored stream classifier
+      committed prefix + named incomplete/corrupt tail
 
 heap/filesystem/network/clock authority: none
 deletion/recovery authority: none
@@ -37,6 +41,10 @@ durability: not provided by this format alone
 `appendPlanV1` first verifies the complete record, then returns the body and
 footer as two ordered slices. A future storage adapter must write and sync the
 body before it appends and syncs the footer. The current function does neither.
+
+`classifyRecoveryV1` accepts caller-owned bytes and a pinned chain anchor. It
+returns only classification and safe-prefix metadata. It never opens, writes,
+syncs, truncates, repairs, or deletes storage.
 
 ## Fixed wire layout
 
@@ -101,6 +109,30 @@ not enough to make contradictory evidence valid. A fully valid record from
 another epoch, chain position, previous root, or sweep commit also fails an
 exact pinned expectation.
 
+## Pure stream classification
+
+`RecoveryAnchorV1` pins the record epoch, next expected sequence, and exact
+previous record root at byte zero. An origin stream uses sequence 1 and the zero
+previous root. A caller may scan a previously authenticated suffix by supplying
+its predecessor root and next sequence.
+
+The classifier walks fixed 784-byte records without allocation. A record enters
+the committed prefix only after full framing, body/footer roots, embedded grant
+and receipt semantics, epoch, sequence, and previous-root linkage verify.
+
+| Status | Meaning |
+| --- | --- |
+| `clean` | Every supplied byte belongs to the verified committed chain; an empty origin is also clean |
+| `short_body_tail` | 1–735 bytes remain after the committed prefix; incomplete bytes are not interpreted as a record |
+| `body_without_footer` | One exact 736-byte body verifies semantically and against the next chain position, but no footer byte exists |
+| `partial_footer_tail` | A verified body is followed by 1–47 bytes matching the canonical footer prefix |
+| `corrupt_record` | A complete record, complete body, partial footer, or chain position contradicts the contract |
+
+The result includes committed record/byte counts, tail bytes, first and last
+sequence, and the final committed record root. `committed_bytes` is an observed
+safe prefix, not permission to truncate the remaining bytes. In particular, a
+complete invalid record is never downgraded to a recoverable torn tail.
+
 ## Deterministic fixture
 
 The model-free fixture records one committed removal:
@@ -119,6 +151,7 @@ The cross-language golden values are:
 | --- | --- |
 | Record root | `a9adfd0946468252bd879acc81456e2afe2e145b38f850869c75fd471d0bba06` |
 | Complete encoded record | `3b3fb1adf8ed0b13b8e8719a3ade7dbb2a7133c0ea6d307598ee3b2941d7c6d3` |
+| Two-record chained stream | `25009ee1f7e27989e54554fc797f19cec21dd96d3c392f25364d7ab868ee5538` |
 
 The separate sweep-commit demo also feeds the receipts produced by a real
 bounded-store mutation directly into this codec and verifies the resulting
@@ -140,16 +173,19 @@ python3 -m unittest bench.tests.test_continuation_object_sweep_record
 Both suites reject every one-byte mutation across all 784 positions, every
 truncation length, extension, a correctly rehashed accounting contradiction,
 and a valid foreign record. The Zig encoder also proves that rejected input and
-short destination buffers leave caller output unchanged.
+short destination buffers leave caller output unchanged. Classifier fixtures
+cover every body/footer append boundary, every mutation in the second complete
+record, valid-but-foreign epoch/sequence/previous-root chains, a rehashed
+semantic contradiction, empty streams, and authenticated suffix scans.
 
 ## What remains
 
-The next bounded slice is a pure recovery classifier over concatenated record
-bytes. It should distinguish a clean committed prefix, a short body tail, a
-complete body missing its footer, and a corrupt complete record without opening
-or modifying a file. Later work must separately define directory capabilities,
-locking, body/footer sync, uncertain-writer poisoning, truncation policy,
-destructive-transition ordering, and end-to-end crash tests.
+The next bounded slice is a capability-scoped writer contract exercised through
+a deterministic fake I/O backend. It must model exclusive ownership, ordered
+body/footer writes and syncs, uncertain-writer poisoning, reopen classification,
+and explicit repair decisions without granting payload deletion authority.
+Later work must separately prove real directory capabilities, platform sync and
+locking behavior, destructive-transition ordering, and end-to-end crash tests.
 
 See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
 the in-memory transition whose evidence this format carries and

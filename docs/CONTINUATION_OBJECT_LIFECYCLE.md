@@ -237,8 +237,10 @@ Native and independent tests cover:
   count, invalid window, excessive span, early expiry, and final-release fence;
 - quarantine invalidation of an active receipt;
 - corrupt, wrong-target, wrong-source, wrong-reason, and aliased repair inputs;
-- repair-generation accounting through final object release; and
-- reconstruction of active lease and repair counters during full verification.
+- repair-generation accounting through final object release;
+- reconstruction of active lease and repair counters during full verification;
+  and
+- fixed sweep-record verification and anchored stream-tail classification.
 
 This proves deterministic state-machine conformance for the fixture. It does not
 prove distributed consensus, wall-clock lease safety, crash durability, memory
@@ -252,8 +254,10 @@ savings, replica trust, secure erasure, or end-to-end restart.
    Implemented as an atomic single-owner in-memory suffix.
 3. ~~Fixed body/footer sweep evidence record.~~ Implemented with independent
    verification and no filesystem authority.
-4. Replica transport separated from repair admission and content verification.
-5. Durable transition journal with crash points before and after publication.
-6. ResourceBank/LeaseTree ownership reacquisition using generation-linked
+4. ~~Pure anchored sweep-record classification.~~ Implemented without I/O or
+   repair authority.
+5. Replica transport separated from repair admission and content verification.
+6. Durable transition journal with crash points before and after publication.
+7. ResourceBank/LeaseTree ownership reacquisition using generation-linked
    receipts.
-7. Paged-KV restore and end-to-end restart without duplicated output.
+8. Paged-KV restore and end-to-end restart without duplicated output.
