@@ -1,7 +1,7 @@
 # Multimodal Roadmap
 
-Status: **shared foundation plus deterministic transform prototype; media-model
-execution remains gated**.
+Status: **integrated model-free image/audio/video runtime vertical; media-model
+execution, streaming, and external formats remain gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -9,12 +9,13 @@ resume without duplicated visible output. Format research and tiny legal
 fixtures may begin earlier, but production execution does not bypass that gate.
 The model-free continuation proof now meets ownership, exact-output, atomic
 whole-checkpoint, and phase-complete process-death requirements. Separately, a
-model-free media prototype now supplies shared identity, sealed decode plans,
+model-free media runtime now supplies shared identity, sealed decode plans,
 bounded RGB/PCM/intra-frame fixtures, exact source-unit mapping, rational
-timeline events, and logical chunk publication. Integrated media execution
-still waits for an uninterrupted/resumed production-model comparison and
-retained platform evidence. Pure transform fixtures remain eligible before that
-gate.
+timeline events, exact `ResourceBank` admission, provisional execution,
+candidate revalidation, atomic chunk publication, abort/retry, portable
+receipts, and exact release. Media-model execution still waits for an
+uninterrupted/resumed production-model comparison and retained platform
+evidence.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -51,10 +52,11 @@ Multimodal execution starts after all of these continuation requirements pass:
 8. an uninterrupted and resumed production-model fixture has equivalent
    visible output under one declared numerical mode.
 
-Until then, the shared contract may advance as a `prototype`, while decoder,
-model, provider, capture, playback, and generated-media paths remain `idea` or
-`prototype fixture`, never `integrated`. This is the media specialization of
-the broader [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).
+Until then, the bounded model-free runtime may advance independently, while
+external decoder, model, provider, capture, playback, and generated-media paths
+remain `idea` or `prototype fixture`, never `integrated`. This is the media
+specialization of the broader
+[Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).
 
 ## Shared media foundation
 
@@ -113,19 +115,23 @@ state, sequence, chunk/unit range, media and event roots, output root,
 resource-claim root, and previous commit. Commit revalidates the complete value,
 advances the logical state once, and rejects stale replay without mutation.
 
-The integrated transaction must additionally stage:
+The first integrated model-free transaction is also complete. It:
 
-- decoded or generated chunks;
-- model embeddings and cross-attention state;
-- logical timeline advancement;
-- ResourceBank/LeaseTree ownership;
-- output bytes or references; and
-- evidence roots.
+- derives and admits the exact decoded-source, mapping, scratch, output, I/O, and
+  queue claim before execution;
+- decodes and transforms into provisional caller-owned buffers;
+- reconstructs output, every mapping, and the transform receipt before commit;
+- prepares timeline and output publication against the exact prior media state;
+- revalidates the `ResourceBank` permit and complete candidate;
+- commits both publication sequences once or scrubs all provisional buffers on
+  abort; and
+- emits a fixed 640-byte receipt before closing and releasing the exact claim.
 
-Only that future composition may claim that payload bytes, embeddings, concrete
-ownership, and timeline visibility commit together. The current prototype binds
-their evidence roots but does not allocate, release, or durably store them. See
-the [Shared Media Contract](MEDIA_CONTRACT.md).
+The current claim is request-wide rather than subdivided through `LeaseTree`.
+The transaction does not durably store output, stream multiple chunks, retain
+model embeddings or cross-attention state, or resume across process death. See
+the [Shared Media Contract](MEDIA_CONTRACT.md) and
+[Media Runtime Transaction](MEDIA_RUNTIME_TXN.md).
 
 ## Image track
 
@@ -146,10 +152,12 @@ First slices:
 3. ~~canonical resize/crop/tile plan with source-region mapping;~~ complete for
    a sealed crop plus nearest-resize plan with 1×1 output tiles and exact source
    pixel mappings over the retained fixture;
-4. patch/token correspondence evidence without storing private pixels;
-5. vision-encoder capability negotiation and exact resource admission;
-6. continuation binding for processed regions and cross-attention state;
-7. generated-image chunk publication with cancellation and provenance.
+4. ~~exact runtime admission, provisional execution, atomic publication,
+   abort/retry, receipt, and release;~~ complete for the retained fixture;
+5. patch/token correspondence evidence without storing private pixels;
+6. vision-encoder capability negotiation and per-buffer lease ownership;
+7. continuation binding for processed regions and cross-attention state;
+8. generated-image chunk publication with cancellation and provenance.
 
 Promotion gate: every accepted pixel maps to an exact source region and
 preprocessing plan; orientation/color drift, decompression bombs, foreign
@@ -174,11 +182,13 @@ First slices:
 2. ~~canonical channel mix and resample plan with exact input/output ranges;~~
    complete for weighted stereo-to-mono mixing and exact integer decimation
    from 48 kHz to 16 kHz over the retained fixture; general resampling remains;
-3. streaming chunk transaction with overlap and gap evidence;
-4. feature-window or audio-token mapping back to source sample ranges;
-5. partial transcript publication without duplicated text after restart;
-6. generated-audio chunk ordering and playback acknowledgement;
-7. microphone/network adapters outside the authority-free core.
+3. ~~exact runtime admission, provisional execution, atomic publication,
+   abort/retry, receipt, and release;~~ complete for the retained fixture;
+4. streaming chunk transaction with overlap and gap evidence;
+5. feature-window or audio-token mapping back to source sample ranges;
+6. partial transcript publication without duplicated text after restart;
+7. generated-audio chunk ordering and playback acknowledgement;
+8. microphone/network adapters outside the authority-free core.
 
 Promotion gate: no sample is silently dropped, duplicated, reordered, mixed, or
 resampled; streaming restart resumes at an exact sample/timeline boundary; input
@@ -204,10 +214,12 @@ First slices:
 3. ~~deterministic frame-selection plan with exact source coverage;~~ complete
    for keyframe-only selection with exact source bytes and source/target ticks
    over the retained fixture;
-4. decode queue admission under memory, deadline, and cancellation ceilings;
-5. audio/subtitle linkage through `MediaTimeline`;
-6. temporal-cache ownership and continuation state;
-7. generated segment publication with ordered manifest and chunk roots.
+4. ~~exact runtime admission, provisional execution, atomic publication,
+   abort/retry, receipt, and release;~~ complete for the retained fixture;
+5. decode queue admission under deadline and cancellation ceilings;
+6. audio/subtitle linkage through `MediaTimeline`;
+7. temporal-cache ownership and continuation state;
+8. generated segment publication with ordered manifest and chunk roots.
 
 Promotion gate: frame selection and temporal ordering replay exactly; seek,
 variable-frame-rate, corrupt-frame, missing-audio, cancellation, and restart
@@ -238,6 +250,8 @@ Early contributions can proceed without a large model:
 - decompression and allocation ceiling tests;
 - extend the completed deterministic crop/nearest, mix/exact-decimation, and
   keyframe-selection reference models with new bounded cases;
+- subdivide the admitted media claim through `LeaseTree` and prove zero-state
+  recovery under abort, commit, and cancellation;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 

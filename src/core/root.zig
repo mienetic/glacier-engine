@@ -47,6 +47,7 @@ pub const media_contract = @import("media_contract.zig");
 pub const media_decode_plan = @import("media_decode_plan.zig");
 pub const media_fixture = @import("media_fixture.zig");
 pub const media_transform = @import("media_transform.zig");
+pub const media_runtime_txn = @import("media_runtime_txn.zig");
 pub const continuation_ownership_manifest =
     @import("continuation_ownership_manifest.zig");
 pub const continuation_object_sweep =
@@ -91,6 +92,7 @@ pub const MediaContract = media_contract;
 pub const MediaDecodePlan = media_decode_plan;
 pub const MediaFixture = media_fixture;
 pub const MediaTransform = media_transform;
+pub const MediaRuntimeTxn = media_runtime_txn;
 pub const ContinuationOwnershipManifest = continuation_ownership_manifest;
 pub const ContinuationObjectSweep = continuation_object_sweep;
 pub const ContinuationObjectSweepRecord = continuation_object_sweep_record;

@@ -142,9 +142,10 @@ history without floating-point wall-clock rounding.
 
 **Media publication** — A prepared logical state transition binding one exact
 next sequence, chunk/unit range, media and timeline roots, output root,
-resource-claim root, and prior commit. The prototype advances in-memory logical
-state exactly once; concrete resource and output publication remain an
-integration requirement.
+resource-claim root, and prior commit. The model-free runtime transaction now
+joins this transition to exact `ResourceBank` admission, candidate
+revalidation, and one commit/abort boundary; durable output and model execution
+remain separate requirements.
 
 **MediaDecodePlan** — A fixed sealed value binding one media object to an exact
 decoder implementation, source/destination representation, execution and
@@ -161,6 +162,18 @@ operation, geometry or time/rate parameters, exact output/scratch bounds,
 implementation, resource policy, challenge, and capabilities. The current
 reference operations are image crop/nearest/tile, audio weighted mix/exact
 decimation, and video keyframe selection.
+
+**MediaRuntimeTxn** — A request-local, single-owner lifecycle that derives and
+admits one exact media claim, decodes and transforms into provisional
+caller-owned storage, independently revalidates the candidate, atomically
+publishes media/resource state, scrubs on abort, permits exact retry, and
+releases the full claim.
+
+**Media runtime receipt** — A fixed 640-byte evidence value binding the complete
+resource receipt and claim, fixture, transform plan and receipt, output,
+mapping chain, timeline event, publication commit, and both publication
+sequences. Verification reconstructs the transition from its explicit inputs
+without granting execution or I/O authority.
 
 **Retired entry** — A retained store payload with zero semantic references and
 no active lease. It is eligible for a future separately authorized sweep only

@@ -29,6 +29,7 @@ pub const Error = error{
     BufferTooSmall,
     InvalidFixture,
     InvalidPlan,
+    InvalidReceipt,
     UnsafeDestination,
 };
 
@@ -518,6 +519,123 @@ pub fn executeV1(
     return receipt;
 }
 
+pub fn verifyReceiptV1(
+    encoded_fixture: []const u8,
+    encoded_transform_plan: []const u8,
+    receipt: TransformReceiptV1,
+    output: []const u8,
+    mappings: []const TransformMappingV1,
+) Error!void {
+    const fixture = fixture_api.parseFixtureV1(
+        encoded_fixture,
+    ) catch return Error.InvalidFixture;
+    const plan = try decodeTransformPlanV1(encoded_transform_plan);
+    const plan_sha256 = try transformPlanSha256V1(
+        encoded_transform_plan,
+    );
+    const output_bytes = std.math.cast(
+        usize,
+        plan.output_bytes,
+    ) orelse return Error.InvalidReceipt;
+    const mapping_count = std.math.cast(
+        usize,
+        plan.logical_units,
+    ) orelse return Error.InvalidReceipt;
+    if (output.len != output_bytes or
+        mappings.len != mapping_count or
+        plan.kind != fixture.kind or
+        plan.input_representation_id !=
+            @intFromEnum(fixture.representation) or
+        plan.source_bytes != fixture.payload.len or
+        !std.meta.eql(plan.source_axes, fixture.target_axes) or
+        !std.meta.eql(plan.source_time_base, fixture.time_base) or
+        !std.mem.eql(
+            u8,
+            &plan.media_object_sha256,
+            &fixture.media_object_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &plan.transform_implementation_sha256,
+            &transformImplementationSha256V1(),
+        ) or
+        receipt.operation != plan.operation or
+        receipt.kind != plan.kind or
+        receipt.logical_units != plan.logical_units or
+        receipt.output_bytes != plan.output_bytes or
+        receipt.mapping_count != plan.logical_units or
+        !std.mem.eql(
+            u8,
+            &receipt.transform_plan_sha256,
+            &plan_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &receipt.decode_receipt_sha256,
+            &plan.decode_receipt_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &receipt.source_output_sha256,
+            &plan.source_output_sha256,
+        ))
+        return Error.InvalidReceipt;
+    var source_output_sha256: Digest = undefined;
+    std.crypto.hash.sha2.Sha256.hash(
+        fixture.payload,
+        &source_output_sha256,
+        .{},
+    );
+    var output_sha256: Digest = undefined;
+    std.crypto.hash.sha2.Sha256.hash(
+        output,
+        &output_sha256,
+        .{},
+    );
+    if (!std.mem.eql(
+        u8,
+        &plan.source_output_sha256,
+        &source_output_sha256,
+    ) or
+        !std.mem.eql(
+            u8,
+            &receipt.output_sha256,
+            &output_sha256,
+        ))
+        return Error.InvalidReceipt;
+    for (mappings, 0..) |mapping, index| {
+        const output_unit: u64 = @intCast(index);
+        const expected = expectedMappingV1(
+            plan,
+            fixture,
+            output_unit,
+        ) catch return Error.InvalidReceipt;
+        if (!std.meta.eql(mapping, expected) or
+            !(expectedOutputUnitV1(
+                plan,
+                fixture,
+                output_unit,
+                output,
+            ) catch return Error.InvalidReceipt))
+            return Error.InvalidReceipt;
+    }
+    const mapping_chain_sha256 = mappingChainRootV1(
+        plan_sha256,
+        mappings,
+    );
+    if (!std.mem.eql(
+        u8,
+        &receipt.mapping_chain_sha256,
+        &mapping_chain_sha256,
+    ) or
+        !std.mem.eql(
+            u8,
+            &receipt.receipt_sha256,
+            &transformReceiptRootV1(receipt),
+        ))
+        return Error.InvalidReceipt;
+}
+
 pub fn validateTransformPlanV1(plan: TransformPlanV1) Error!void {
     if (plan.input_representation_id == 0 or
         plan.output_representation_id == 0 or
@@ -740,9 +858,18 @@ fn validateAudioPlanV1(plan: TransformPlanV1) Error!void {
         left_weight,
         right_weight,
     ) catch return Error.InvalidPlan;
+    const divisor = checkedMul(
+        denominator,
+        factor,
+    ) catch return Error.InvalidPlan;
+    const maximum_accumulator = checkedMul(
+        divisor,
+        32_768,
+    ) catch return Error.InvalidPlan;
     if (source_count == 0 or denominator == 0 or factor == 0 or
         left_weight > 65_535 or right_weight > 65_535 or
         weight_sum != denominator or
+        maximum_accumulator > std.math.maxInt(i64) or
         plan.source_axes[2] % plan.target_axes[2] != 0 or
         plan.source_axes[2] / plan.target_axes[2] != factor or
         source_count % factor != 0)
@@ -1005,6 +1132,178 @@ fn makeMappingV1(
     return mapping;
 }
 
+fn expectedMappingV1(
+    plan: TransformPlanV1,
+    fixture: fixture_api.ParsedFixtureV1,
+    output_unit: u64,
+) Error!TransformMappingV1 {
+    if (output_unit >= plan.logical_units)
+        return Error.InvalidReceipt;
+    return switch (plan.operation) {
+        .image_crop_nearest_tile => blk: {
+            const target_width = plan.target_axes[0];
+            const output_y = output_unit / target_width;
+            const output_x = output_unit % target_width;
+            const source_x = plan.parameters[0] +
+                output_x * plan.parameters[2] / target_width;
+            const source_y = plan.parameters[1] +
+                output_y * plan.parameters[3] / plan.target_axes[1];
+            const source_unit =
+                source_y * plan.source_axes[0] + source_x;
+            const channels = plan.target_axes[2];
+            break :blk makeMappingV1(
+                plan.operation,
+                output_unit,
+                source_unit,
+                1,
+                source_unit * channels,
+                channels,
+                output_unit * channels,
+                channels,
+                0,
+                0,
+                0,
+                0,
+                plan.decode_receipt_sha256,
+            );
+        },
+        .audio_mix_decimate => blk: {
+            const factor = plan.parameters[5];
+            const source_first =
+                plan.parameters[0] + output_unit * factor;
+            break :blk makeMappingV1(
+                plan.operation,
+                output_unit,
+                source_first,
+                factor,
+                source_first * 4,
+                factor * 4,
+                output_unit * 2,
+                2,
+                fixture.start_ticks + source_first,
+                fixture.start_ticks + source_first + factor,
+                output_unit,
+                output_unit + 1,
+                plan.decode_receipt_sha256,
+            );
+        },
+        .video_keyframe_select => blk: {
+            const frame_bytes =
+                plan.source_axes[0] * plan.source_axes[1];
+            const source_frame =
+                plan.parameters[@as(usize, @intCast(output_unit)) + 1];
+            const source_offset = source_frame * frame_bytes;
+            break :blk makeMappingV1(
+                plan.operation,
+                output_unit,
+                source_frame,
+                1,
+                source_offset,
+                frame_bytes,
+                output_unit * frame_bytes,
+                frame_bytes,
+                fixture.start_ticks + source_frame,
+                fixture.start_ticks + source_frame + 1,
+                output_unit,
+                output_unit + 1,
+                plan.decode_receipt_sha256,
+            );
+        },
+    };
+}
+
+fn expectedOutputUnitV1(
+    plan: TransformPlanV1,
+    fixture: fixture_api.ParsedFixtureV1,
+    output_unit: u64,
+    output: []const u8,
+) Error!bool {
+    const mapping = try expectedMappingV1(
+        plan,
+        fixture,
+        output_unit,
+    );
+    const source_offset: usize = std.math.cast(
+        usize,
+        mapping.source_byte_offset,
+    ) orelse return Error.InvalidReceipt;
+    const source_bytes: usize = std.math.cast(
+        usize,
+        mapping.source_bytes,
+    ) orelse return Error.InvalidReceipt;
+    const output_offset: usize = std.math.cast(
+        usize,
+        mapping.output_byte_offset,
+    ) orelse return Error.InvalidReceipt;
+    const output_bytes: usize = std.math.cast(
+        usize,
+        mapping.output_bytes,
+    ) orelse return Error.InvalidReceipt;
+    const source_end = std.math.add(
+        usize,
+        source_offset,
+        source_bytes,
+    ) catch return Error.InvalidReceipt;
+    const output_end = std.math.add(
+        usize,
+        output_offset,
+        output_bytes,
+    ) catch return Error.InvalidReceipt;
+    if (source_end > fixture.payload.len or output_end > output.len)
+        return Error.InvalidReceipt;
+    return switch (plan.operation) {
+        .image_crop_nearest_tile => std.mem.eql(
+            u8,
+            fixture.payload[source_offset..source_end],
+            output[output_offset..output_end],
+        ),
+        .audio_mix_decimate => blk: {
+            const left_weight: i64 = @intCast(plan.parameters[2]);
+            const right_weight: i64 = @intCast(plan.parameters[3]);
+            const denominator: i64 = @intCast(plan.parameters[4]);
+            const factor = plan.parameters[5];
+            const divisor = denominator * @as(i64, @intCast(factor));
+            var sum: i64 = 0;
+            for (0..factor) |raw_frame| {
+                const frame = mapping.source_first_unit + raw_frame;
+                const offset: usize = @intCast(frame * 4);
+                const left = std.mem.readInt(
+                    i16,
+                    fixture.payload[offset .. offset + 2][0..2],
+                    .little,
+                );
+                const right = std.mem.readInt(
+                    i16,
+                    fixture.payload[offset + 2 .. offset + 4][0..2],
+                    .little,
+                );
+                sum += @as(i64, left) * left_weight +
+                    @as(i64, right) * right_weight;
+            }
+            const expected_sample: i16 = @intCast(
+                @divTrunc(sum, divisor),
+            );
+            const actual_sample = std.mem.readInt(
+                i16,
+                output[output_offset..output_end][0..2],
+                .little,
+            );
+            break :blk actual_sample == expected_sample;
+        },
+        .video_keyframe_select => blk: {
+            const bit = @as(u64, 1) <<
+                @intCast(mapping.source_first_unit);
+            if (fixture.keyframe_bits & bit == 0)
+                break :blk false;
+            break :blk std.mem.eql(
+                u8,
+                fixture.payload[source_offset..source_end],
+                output[output_offset..output_end],
+            );
+        },
+    };
+}
+
 fn mappingRootV1(
     mapping: TransformMappingV1,
     decode_receipt_sha256: Digest,
@@ -1200,6 +1499,33 @@ test "image crop nearest resize and tile mappings are exact" {
     try std.testing.expectEqualStrings(
         "97c68e6b178db4e7b807b80e6987186ffa1b4ef856a8b1bbbba03b57d3f35da0",
         &receipt_hex,
+    );
+    try verifyReceiptV1(
+        context.encoded_fixture,
+        encoded_transform,
+        receipt,
+        &output,
+        &mappings,
+    );
+    output[0] ^= 1;
+    var forged_receipt = receipt;
+    std.crypto.hash.sha2.Sha256.hash(
+        &output,
+        &forged_receipt.output_sha256,
+        .{},
+    );
+    forged_receipt.receipt_sha256 = transformReceiptRootV1(
+        forged_receipt,
+    );
+    try std.testing.expectError(
+        Error.InvalidReceipt,
+        verifyReceiptV1(
+            context.encoded_fixture,
+            encoded_transform,
+            forged_receipt,
+            &output,
+            &mappings,
+        ),
     );
 }
 

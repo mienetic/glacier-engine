@@ -29,9 +29,9 @@ evidence. The plane and model-family sequence is specified in the
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
-| AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, and media preprocessing | Common family/operation adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
+| AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, and an integrated model-free image/audio/video transaction vertical | Common family/operation adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
 | Model-family breadth | Text-generation prototype; other families gated | Shared artifact, tensor, state, provider, media, and evidence building blocks | Encoders/embeddings first, then perception, generative media, multimodal, agents/retrieval, and specialized families |
-| Multimodal execution | Transform prototype; model execution gated | Shared identity/timeline/publication, bounded RGB8/PCM/intra-frame decode, plus deterministic image crop/nearest/tile, audio mix/exact decimation, and video keyframe selection | Concrete resource/output integration, streaming state, external formats, model adapters, and generated-media publication |
+| Multimodal execution | Model-free runtime vertical integrated; model execution gated | Shared identity/timeline, bounded RGB8/PCM/intra-frame decode, deterministic transforms, exact ResourceBank admission, candidate revalidation, atomic commit/abort/retry, fixed receipts, and exact release | LeaseTree buffer ownership, streaming/continuation, external formats, model adapters, and generated-media publication |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -100,6 +100,10 @@ evidence. The plane and model-family sequence is specified in the
 - [x] Fixed sealed media transform plan with allocation-free image
   crop/nearest/tile, audio weighted mix/exact decimation, and video keyframe
   selection, exact mappings, and shared Zig/Python plan and receipt roots.
+- [x] Integrated model-free media runtime transaction with exact ResourceBank
+  claims, provisional caller-owned storage, transform candidate revalidation,
+  atomic image/audio/video publication, abort scrubbing, retry, exact release,
+  a fixed receipt, and independent mutation-complete verification.
 - [x] Full AI runtime architecture roadmap with shared planes, universal adapter
   contracts, model-family coverage map, promotion gates, and contributor lanes.
 - [x] Bounded contributor project catalog and issue template.
@@ -300,26 +304,31 @@ for unsupported inputs, and reproducible generation instructions.
 
 ### Multimodal execution
 
-Status: **deterministic transform prototype; model execution gated**. Shared
-identity, rational timeline/events, logical chunk publication, sealed plans,
-bounded canonical RGB/PCM/intra-frame decode, and three deterministic transforms
-now work in isolation. External format decoding or model execution still starts
-only after its stated continuation and integration gates. Tiny legal fixtures do
-not imply integrated model support.
+Status: **integrated model-free runtime vertical; model execution gated**.
+Shared identity, rational timeline/events, sealed plans, bounded canonical
+RGB/PCM/intra-frame decode, three deterministic transforms, exact
+`ResourceBank` admission, candidate revalidation, atomic logical publication,
+abort/retry, fixed receipts, and exact release now work as one lifecycle.
+External format decoding or model execution still starts only after its stated
+continuation and integration gates. Tiny legal fixtures do not imply integrated
+model support.
 
 The implementation sequence is:
 
 1. shared `MediaObject`, sealed `MediaDecodePlan`, rational `MediaTimeline`,
    bounded three-modality fixture decode, and logical transactional publication
-   are complete as model-free prototypes; concrete ResourceBank/output
-   composition remains;
+   are complete as model-free prototypes;
 2. bounded image crop/nearest/tile and exact source-pixel mapping are complete;
 3. weighted stereo-to-mono mixing and exact integer decimation are complete;
    streaming chunks, feature windows, transcript, and playback state remain;
 4. keyframe selection and exact frame/time mappings are complete;
    audio/subtitle synchronization, temporal cache, and segment publication
-   remain; and
-5. generated image/audio/video output only after cancellation, restart, and
+   remain;
+5. exact request admission, provisional execution, full candidate
+   revalidation, commit/abort/retry, portable runtime receipts, and release are
+   complete for all three retained fixtures; `LeaseTree` subdivision and
+   durable continuation remain; and
+6. generated image/audio/video output only after cancellation, restart, and
    provenance rules are proven.
 
 Every modality uses content identity separate from tenant access, explicit
@@ -386,7 +395,7 @@ ideas unless a different status is stated.
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
 | Object Fabric | Prototype (durable payload bytes and logical ownership reacquisition; in-memory object lifecycle) | Tenant-safe content-addressed model, plan, KV, continuation, media, and evidence objects |
 | Media Capsule | Idea (gated) | Typed image, audio, and video identity with explicit decode/preprocess meaning |
-| MediaTimeline and MediaTxn | Idea (gated) | Exact sample/frame/token position and atomic multimodal state publication |
+| MediaTimeline and MediaTxn | Integrated model-free fixture vertical; model/streaming gated | Exact sample/frame position, admitted transform execution, and atomic multimodal state publication |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |

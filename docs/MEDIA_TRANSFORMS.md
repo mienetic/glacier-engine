@@ -109,4 +109,6 @@ execution.
 
 It is the first implemented transform layer under the
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md) and
-[Multimodal Roadmap](MULTIMODAL_ROADMAP.md).
+[Multimodal Roadmap](MULTIMODAL_ROADMAP.md). The next composed layer is the
+[Media Runtime Transaction](MEDIA_RUNTIME_TXN.md), which adds exact admission,
+candidate revalidation, atomic publication, abort/retry, and release.

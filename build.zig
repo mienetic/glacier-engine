@@ -1116,6 +1116,34 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_media_transform_demo.step);
     test_compile_step.dependOn(&media_transform_demo_exe.step);
 
+    // Full model-free media runtime vertical: exact ResourceBank admission,
+    // transform candidate execution, candidate revalidation, transactional
+    // media publication, explicit abort/scrub, and exact final release.
+    const media_runtime_demo_exe = b.addExecutable(.{
+        .name = "glacier-media-runtime-txn-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/media_runtime_txn.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    media_runtime_demo_exe.root_module.addImport("core", core_mod);
+    const run_media_runtime_demo = b.addRunArtifact(
+        media_runtime_demo_exe,
+    );
+    const media_runtime_demo_step = b.step(
+        "media-runtime-demo",
+        "Run resource-admitted transactional media publication",
+    );
+    media_runtime_demo_step.dependOn(
+        &run_media_runtime_demo.step,
+    );
+    test_step.dependOn(&run_media_runtime_demo.step);
+    test_compile_step.dependOn(&media_runtime_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

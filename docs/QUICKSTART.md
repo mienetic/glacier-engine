@@ -88,6 +88,9 @@ zig build media-decode-fixture-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Transform the fixtures with exact image/audio/video source mappings
 zig build media-transform-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Admit, execute, validate, commit/abort, receipt, and release all three media kinds
+zig build media-runtime-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

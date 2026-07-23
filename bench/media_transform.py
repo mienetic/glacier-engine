@@ -290,6 +290,8 @@ def _validate_audio(plan: Record) -> None:
         and left <= 65_535
         and right <= 65_535
         and _checked_add(left, right) == denominator
+        and _checked_mul(denominator, factor)
+        <= ((1 << 63) - 1) // 32_768
         and plan["source_axes"][2] % plan["target_axes"][2] == 0
         and plan["source_axes"][2] // plan["target_axes"][2]
         == factor
@@ -816,6 +818,64 @@ def receipt_root(receipt: Record) -> bytes:
             )
         ),
     )
+
+
+def verify_receipt(
+    encoded_fixture: bytes,
+    encoded_transform_plan: bytes,
+    receipt: Record,
+    output: bytes,
+    mappings: list[Record],
+) -> None:
+    parsed_fixture = fixture_api.parse_fixture(encoded_fixture)
+    plan = decode_plan(encoded_transform_plan)
+    if not isinstance(output, bytes) or not isinstance(mappings, list):
+        raise MediaTransformError("invalid receipt evidence")
+    source = parsed_fixture["payload"]
+    if plan["operation"] == VIDEO_KEYFRAME_SELECT:
+        selected = plan["parameters"][1 : plan["logical_units"] + 1]
+        if any(
+            not parsed_fixture["keyframe_bits"] & (1 << frame) for frame in selected
+        ):
+            raise MediaTransformError("selected frame is not a keyframe")
+        expected_output, expected_mappings = _execute_video(
+            plan, parsed_fixture, source
+        )
+    elif plan["operation"] == IMAGE_CROP_NEAREST_TILE:
+        expected_output, expected_mappings = _execute_image(plan, source)
+    else:
+        expected_output, expected_mappings = _execute_audio(
+            plan, parsed_fixture, source
+        )
+    expected_plan_root = plan_sha256(encoded_transform_plan)
+    expected_chain = _mapping_chain_root(expected_plan_root, expected_mappings)
+    try:
+        valid = (
+            plan["kind"] == parsed_fixture["kind"]
+            and plan["input_representation_id"] == parsed_fixture["representation"]
+            and plan["source_bytes"] == len(source)
+            and plan["source_axes"] == parsed_fixture["target_axes"]
+            and plan["source_time_base"] == parsed_fixture["time_base"]
+            and plan["media_object_sha256"] == parsed_fixture["media_object_sha256"]
+            and plan["transform_implementation_sha256"] == implementation_sha256()
+            and output == expected_output
+            and mappings == expected_mappings
+            and receipt["operation"] == plan["operation"]
+            and receipt["kind"] == plan["kind"]
+            and receipt["logical_units"] == plan["logical_units"]
+            and receipt["output_bytes"] == plan["output_bytes"]
+            and receipt["mapping_count"] == plan["logical_units"]
+            and receipt["transform_plan_sha256"] == expected_plan_root
+            and receipt["decode_receipt_sha256"] == plan["decode_receipt_sha256"]
+            and receipt["source_output_sha256"] == plan["source_output_sha256"]
+            and receipt["output_sha256"] == hashlib.sha256(output).digest()
+            and receipt["mapping_chain_sha256"] == expected_chain
+            and receipt["receipt_sha256"] == receipt_root(receipt)
+        )
+    except (KeyError, TypeError, MediaTransformError):
+        valid = False
+    if not valid:
+        raise MediaTransformError("invalid transform receipt")
 
 
 def execute(

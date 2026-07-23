@@ -15,7 +15,7 @@ not.
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
-| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, transform canonical units with exact mappings, then advance logical chunks exactly once without ambient I/O authority |
+| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, admit exact resources, transform canonical units into provisional storage, revalidate candidates, then atomically advance logical chunks |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -81,16 +81,24 @@ sealed DecodePlan + bounded fixture
           ├─ foreign decoder/object/bounds ──reject──> output unchanged
           │
           ▼
-caller-owned canonical bytes + exact source-unit mappings
-          │
-          ▼
 sealed TransformPlan
  crop/nearest/tile │ weighted mix/exact decimation │ keyframe select
           │
-          ├─ stale source/root/bounds/geometry ──reject──> output unchanged
+derive exact activation/output/staging/I/O claim
+          │
+          ├─ over capacity ──reject──> no reservation or output mutation
           │
           ▼
-caller-owned transformed bytes + exact output-unit mappings + receipt
+ResourceBank reservation + publication session
+          │
+          ▼
+decode + transform into provisional caller-owned buffers
+          │
+          ├─ stale source/root/bounds/geometry ──> scrub buffers
+          ├─ abort/candidate drift ──> scrub buffers; keep prior state
+          │
+          ▼
+reverify output + every source mapping + transform receipt
           │
           ▼
 exact rational source span + explicit transform event
@@ -104,17 +112,27 @@ prepared media publication
           ├─ stale/substituted/overlapping state ──reject──> unchanged state
           │
           ▼
-next sequence + chunk count + logical units + timeline/commit roots
+next media/resource sequences + chunk count + logical units
+          │
+          ▼
+fixed runtime receipt + exact ResourceBank release
 ```
 
-The shared media layer is a model-free prototype. It verifies descriptors,
-sealed decode and transform identity, integer-only positions, event lineage,
-logical publication state, and a tiny bounded fixture container. The reference
-path supports only retained RGB8, PCM s16le, and intra-frame gray8 fixtures plus
-image crop/nearest/tile, weighted audio mix/exact decimation, and keyframe
-selection. It has no external codec, encoder, filesystem, network, camera,
-microphone, model, or accelerator authority. A future integration must compose
-concrete resource/output transitions without weakening those boundaries.
+The shared media layer is an integrated model-free runtime vertical. It verifies
+descriptors, sealed decode and transform identity, exact logical resource
+claims, provisional output, every source mapping, integer-only positions, event
+lineage, and logical publication state before a single-owner commit. Abort
+scrubs decoded/output/mapping storage, retry keeps both sequences unchanged, and
+close releases the complete request claim. The fixed runtime receipt lets an
+independent verifier reconstruct the resource receipt, transform evidence,
+timeline event, publication commit, and output.
+
+The reference path supports only retained RGB8, PCM s16le, and intra-frame
+gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
+decimation, and keyframe selection. It has no external codec, encoder,
+filesystem, network, camera, microphone, model, or accelerator authority.
+`LeaseTree` subdivision, streaming, continuation, and model adapters are future
+layers. See [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md).
 
 ### ResourceBank
 

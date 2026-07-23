@@ -117,8 +117,10 @@ Responsibilities:
 
 Current state: **integrated for logical ownership**, **prototype for physical
 residency**. Exact claims and hierarchical leases are used by current runtime
-state paths. Production weight paging and complete device/network accounting
-remain planned.
+state paths. The model-free media vertical now derives and reserves exact
+activation, output, staging, I/O, and queue claims before execution, then
+releases them exactly. Per-buffer media `LeaseTree` ownership, production
+weight paging, and complete device/network accounting remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
 cancellation returns the declared delta, and measured physical counters are
@@ -174,11 +176,15 @@ Responsibilities:
 - bounded streaming input and generated-media chunk publication;
 - model-visible processor identity and cross-modal synchronization.
 
-Current state: **prototype**. Fixed media objects, rational timelines, logical
-publication, bounded RGB8/PCM s16le/intra-frame gray8 decode, and deterministic
-image crop/nearest/tile, audio weighted mix/exact decimation, and video keyframe
-selection work with cross-language golden evidence. External codecs, capture,
-playback, media models, and generated-media publication remain gated.
+Current state: **integrated model-free runtime vertical**. Fixed media objects,
+rational timelines, bounded RGB8/PCM s16le/intra-frame gray8 decode, and
+deterministic image crop/nearest/tile, audio weighted mix/exact decimation, and
+video keyframe selection now compose with exact `ResourceBank` admission,
+provisional caller-owned storage, candidate revalidation, atomic media/resource
+publication, abort scrubbing, retry, exact release, and a fixed independently
+verified runtime receipt. Multi-chunk streaming, `LeaseTree` buffer
+subdivision, continuation, external codecs, capture, playback, media models,
+and generated-media publication remain gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -215,9 +221,12 @@ Responsibilities:
 - idempotent retry and replay rejection;
 - streaming acknowledgement and partial-result policy.
 
-Current state: **integrated for tokens**, **prototype for logical media chunks**.
-Generic typed result envelopes and concrete tensor/media/action transactions are
-planned.
+Current state: **integrated for tokens and model-free media fixtures**. The
+media transaction composes exact resource admission, transformed output,
+timeline advancement, and logical chunk visibility behind one commit boundary;
+abort scrubs provisional bytes and leaves both publication sequences unchanged.
+Generic tensor/action envelopes, streaming acknowledgement, durable media
+output, and model-generated media transactions remain planned.
 
 Promotion gate: every output family has a named atomic unit, rollback behavior,
 replay rule, and continuation position; cancellation cannot expose an
@@ -288,10 +297,10 @@ expand the base adapter's capabilities.
 | --- | --- | --- | --- | --- |
 | Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication integrated | Small legal artifact through uninterrupted and resumed output | Declared numerical equivalence, exact KV ownership, no duplicate token |
 | Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Idea; shared tensor/kernel pieces exist | Tiny encoder fixture with exact tensor/output schema | Deterministic batch mapping, stable normalization, typed vector/score publication |
-| Vision understanding | encode image, OCR, detect, segment, VQA inputs | Media preprocessing prototype | Tiny image processor plus patch/source mapping | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
-| Speech and audio understanding | ASR, translation, audio classification | Media preprocessing prototype | PCM window to feature/source-range evidence | No sample loss/duplication, exact streaming restart, transcript transaction |
+| Vision understanding | encode image, OCR, detect, segment, VQA inputs | Model-free image runtime vertical integrated; model gated | Tiny image processor plus patch/source mapping | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
+| Speech and audio understanding | ASR, translation, audio classification | Model-free audio runtime vertical integrated; model gated | PCM window to feature/source-range evidence | No sample loss/duplication, exact streaming restart, transcript transaction |
 | Speech and audio generation | TTS, codec/audio token generation | Idea | Synthetic bounded waveform chunk fixture | Ordered chunk publication, playback acknowledgement, cancellation/provenance |
-| Video understanding | frame/segment encode, search, summarize | Media preprocessing prototype | Keyframe selection plus temporal window plan | Exact frame/time mapping, temporal-cache ownership, synchronized stream policy |
+| Video understanding | frame/segment encode, search, summarize | Model-free video runtime vertical integrated; model gated | Keyframe selection plus temporal window plan | Exact frame/time mapping, temporal-cache ownership, synchronized stream policy |
 | Image generation | diffusion/flow step, decode latent, publish image | Idea | Tiny deterministic latent scheduler state machine | Latent/step continuation, bounded decode, atomic image/provenance publication |
 | Video generation | temporal latent steps, frame/segment publication | Idea | Two-frame synthetic generation fixture | Temporal ordering, restart/cancel semantics, manifest/chunk publication |
 | Audio/music generation | acoustic or token steps, waveform decode | Idea | Short synthetic exact-integer output fixture | Timeline continuity, chunk lineage, rights/provenance policy |
@@ -346,10 +355,14 @@ while retaining different state and publication semantics.
 
 ### R3 — Streaming perception
 
+- bind bounded image/audio/video transforms to exact request admission and one
+  atomic media publication transaction; complete for retained model-free
+  fixtures;
+- add `LeaseTree` ownership for decoded source, mappings, output, and scratch;
 - integrate image processors and vision encoder fixtures;
 - add audio feature windows, transcript transactions, and streaming restart;
 - add video temporal selection, synchronized timeline state, and cache ownership;
-- compose concrete media resource and output publication.
+- bind committed media receipts into continuation/checkpoint state.
 
 Exit gate: image, audio, and video input paths preserve exact source mappings,
 stay within admitted memory/time bounds, and resume or cancel at declared units.

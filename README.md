@@ -49,6 +49,10 @@ formats, and independent verifiers.
   allocation-free image crop/nearest/tile, audio weighted mix/exact decimation,
   and video keyframe selection with exact per-output-unit mappings and
   cross-language receipts.
+- **Transactional media execution.** One request-local runtime lifecycle admits
+  an exact image/audio/video claim, executes into provisional caller-owned
+  buffers, revalidates every output mapping, commits media and resource
+  publication together, scrubs on abort, and releases the claim to zero.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -166,7 +170,11 @@ media object
   ├─ fixture decode ─ caller-owned RGB / PCM / intra-frame bytes + mappings
   ├─ TransformPlan ── crop/nearest/tile, mix/decimate, keyframe selection
   ├─ MediaTimeline ─ checked rational positions + explicit transform events
-  └─ publication ─── output + resource root + timeline (one logical commit)
+  ├─ ResourceBank ─── exact activation/output/staging/I/O claim
+  └─ MediaRuntimeTxn
+       ├─ prepare ─── transform + independent candidate revalidation
+       ├─ abort ───── scrub provisional bytes; prior state remains visible
+       └─ commit ──── output + resource root + timeline (one atomic boundary)
 ```
 
 See [Architecture](docs/ARCHITECTURE.md) for the component map and
@@ -203,6 +211,7 @@ zig build continuation-checkpoint-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-contract-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-decode-fixture-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-transform-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build media-runtime-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -227,7 +236,7 @@ model conversion, generation, and every demo command, continue with the
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline/publication, bounded decode, and deterministic image crop/nearest/tile, audio mix/exact decimation, and video keyframe-selection plans with exact mappings | Concrete resource/output composition, streaming state, model adapters, and generated-media publication |
+| Multimodal | Shared identity/timeline, bounded decode and deterministic transforms, plus exact ResourceBank admission and atomic commit/abort/retry/release for image, audio, and video fixtures | LeaseTree buffer ownership, multi-chunk streaming and continuation, external formats, model adapters, and generated-media publication |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -282,6 +291,7 @@ valuable as new features.
 - [Shared media contract](docs/MEDIA_CONTRACT.md)
 - [Bounded media decode fixtures](docs/MEDIA_DECODE_FIXTURES.md)
 - [Deterministic media transforms](docs/MEDIA_TRANSFORMS.md)
+- [Media runtime transaction](docs/MEDIA_RUNTIME_TXN.md)
 - [Multimodal roadmap](docs/MULTIMODAL_ROADMAP.md)
 - [Glossary](docs/GLOSSARY.md)
 

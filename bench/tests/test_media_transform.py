@@ -311,6 +311,58 @@ class MediaTransformTests(unittest.TestCase):
                 bytearray(4),
             )
 
+    def test_public_receipt_verifier_rejects_output_and_mapping_drift(
+        self,
+    ) -> None:
+        (
+            encoded_fixture,
+            encoded_decode_plan,
+            parsed,
+            decode_receipt,
+        ) = context(fixture.video_spec())
+        encoded_plan = transform.encode_plan(
+            transform.make_video_plan(
+                parsed,
+                decode_receipt,
+                (1,),
+                digest(0xF1),
+                digest(0xF2),
+            )
+        )
+        output = bytearray(4)
+        receipt, mappings = transform.execute(
+            encoded_fixture,
+            encoded_decode_plan,
+            encoded_plan,
+            output,
+        )
+        transform.verify_receipt(
+            encoded_fixture,
+            encoded_plan,
+            receipt,
+            bytes(output),
+            mappings,
+        )
+        damaged_output = bytes((output[0] ^ 1,)) + bytes(output[1:])
+        with self.assertRaises(transform.MediaTransformError):
+            transform.verify_receipt(
+                encoded_fixture,
+                encoded_plan,
+                receipt,
+                damaged_output,
+                mappings,
+            )
+        damaged_mappings = [dict(mapping) for mapping in mappings]
+        damaged_mappings[0]["source_first_unit"] = 0
+        with self.assertRaises(transform.MediaTransformError):
+            transform.verify_receipt(
+                encoded_fixture,
+                encoded_plan,
+                receipt,
+                bytes(output),
+                damaged_mappings,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -87,6 +87,20 @@ to a production codec. Preserve the existing plan/mapping identity or propose a
 versioned ABI with migration fixtures. Reuse
 [Deterministic Media Transforms](MEDIA_TRANSFORMS.md).
 
+### Media runtime LeaseTree ownership
+
+The model-free media transaction now admits and releases one exact request-wide
+`ResourceBank` claim across image, audio, and video. The next slice should
+subdivide that receipt into decoded-source, mapping, scratch, and output child
+leases without changing the existing transform or 640-byte runtime receipt
+semantics.
+
+**First slice:** implement the image path with deterministic child identities,
+charge-before-use ordering, candidate-mutation abort, exact child retirement,
+and a final zero-state assertion. Add one independent allocation/retirement
+oracle and stale-child tests before extending the same contract to audio and
+video. Reuse [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md).
+
 ### AI runtime family registry
 
 Define one small part of the common vocabulary from the

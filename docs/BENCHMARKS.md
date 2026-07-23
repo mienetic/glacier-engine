@@ -40,6 +40,7 @@ energy, or production reliability.
 | `zig build media-contract-demo -Dmetal=false` | Fixed image/audio/video descriptors, exact rational mapping, explicit event lineage, two logical chunk commits, and stale-replay rejection |
 | `zig build media-decode-fixture-demo -Dmetal=false` | Sealed plans plus bounded RGB8, PCM s16le, and intra-frame gray8 fixture decode with complete per-unit source mapping |
 | `zig build media-transform-demo -Dmetal=false` | Sealed image/audio/video transform plans, caller-owned allocation-free execution, exact output-unit mappings, and shared cross-language plan/receipt roots |
+| `zig build media-runtime-demo -Dmetal=false` | Exact image/audio/video ResourceBank admission, provisional execution, candidate revalidation, atomic commit/abort/retry, fixed receipts, and complete release |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -89,6 +90,19 @@ oracle share all three 512-byte plan roots and all three receipt roots.
 These are correctness fixtures, not latency, throughput, signal-quality,
 format-coverage, or model-execution results. See
 [Deterministic Media Transforms](MEDIA_TRANSFORMS.md).
+
+The runtime-transaction fixture composes those operations with exact logical
+admission and publication. Across the three requests it admits 3,752 host bytes,
+publishes 20 output bytes with seven exact mappings, exercises one explicit
+abort/scrub/retry path, commits three media transitions, emits three fixed
+640-byte receipts, releases all three claims, and ends with zero Bank usage.
+The independent Python verifier reconstructs each transform, mapping chain,
+resource receipt, timeline event, publication commit, and runtime receipt.
+
+These values are deterministic conformance counts. They do not measure process
+memory, physical device residency, throughput, latency, model quality, codec
+coverage, or provider usage. See
+[Media Runtime Transaction](MEDIA_RUNTIME_TXN.md).
 
 ## Continuation checkpoint
 

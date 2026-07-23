@@ -114,6 +114,18 @@ before the first stable release.
 - Shared Zig/Python transform plan, mapping-chain, output, and receipt evidence,
   including every-byte plan mutation, re-rooted contradiction, stale binding,
   capacity, substitution, and native overlap rejection.
+- An integrated model-free media runtime transaction that derives exact
+  image/audio/video `ResourceBank` claims, executes into provisional
+  caller-owned storage, revalidates transformed output and every mapping,
+  atomically commits media and resource publication, scrubs on abort, permits
+  exact retry, and releases each complete claim.
+- A fixed 640-byte media runtime receipt with independent Python reconstruction
+  of resource integrity, transform evidence, timeline events, output mappings,
+  publication lineage, and every-byte mutation rejection.
+- A native three-modality runtime demo covering three admitted/committed
+  sessions, explicit audio abort/scrub/retry, seven exact mappings, three
+  releases, and final zero Bank usage without filesystem, network, device, or
+  model authority.
 - A full Glacier AI Runtime roadmap defining shared runtime planes, universal
   family adapters, model-family coverage, promotion gates, delivery sequence,
   use cases, and contributor-sized lanes.
