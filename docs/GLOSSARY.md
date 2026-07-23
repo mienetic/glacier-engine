@@ -101,6 +101,10 @@ being promoted into live target authority.
 paged-KV root, RNG, sampler count, output prefix, exact next sequence, and prior
 commit so one fresh process can publish the next token atomically.
 
+**Checkpoint root switch** — Selection of one immutable canonical checkpoint
+archive through a fixed lineage-bound record whose atomic rename makes the
+complete successor visible at one filesystem boundary.
+
 **MediaObject** — Planned content-addressed identity for an immutable image,
 audio, or video payload plus its bounded semantic metadata. It does not grant
 file, network, camera, or microphone access.

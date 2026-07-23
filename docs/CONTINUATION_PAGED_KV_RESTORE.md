@@ -186,12 +186,12 @@ transaction, tokenizer state, accelerator residency, or worker pins.
 
 It also does not yet prove:
 
-- atomic promotion of the complete checkpoint file set;
-- process death at every checkpoint publication phase;
 - device power-cut durability;
 - native Linux filesystem recovery;
 - numerically equivalent continuation for production model kernels; or
 - lower latency, memory, disk, token, or energy use.
 
-The next slice should promote one complete checkpoint candidate atomically and
-exercise fresh recovery after termination at every durable phase.
+The downstream
+[checkpoint-file layer](CONTINUATION_CHECKPOINT_FILE.md) now promotes one
+complete checkpoint candidate atomically and exercises fresh recovery after
+termination at every archive/selector durability phase.

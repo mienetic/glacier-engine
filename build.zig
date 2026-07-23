@@ -971,6 +971,68 @@ pub fn build(b: *std.Build) void {
         &continuation_live_restart_worker_exe.step,
     );
 
+    // Complete checkpoint sets are immutable archives selected by one fixed
+    // root switch. A worker dies after every archive and selector durability
+    // phase; fresh recovery accepts only the previous or successor set, then
+    // the existing restart worker resumes from that selected archive.
+    const continuation_checkpoint_file_worker_exe = b.addExecutable(.{
+        .name = "glacier-continuation-checkpoint-file-worker",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "bench/continuation_checkpoint_file_worker.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_checkpoint_file_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    const continuation_checkpoint_file_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-checkpoint-file-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_checkpoint_file.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_checkpoint_file_demo_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    continuation_checkpoint_file_demo_exe.root_module.addImport(
+        "engine",
+        engine_mod,
+    );
+    const run_continuation_checkpoint_file_demo = b.addRunArtifact(
+        continuation_checkpoint_file_demo_exe,
+    );
+    run_continuation_checkpoint_file_demo.addArtifactArg(
+        continuation_checkpoint_file_worker_exe,
+    );
+    run_continuation_checkpoint_file_demo.addArtifactArg(
+        continuation_live_restart_worker_exe,
+    );
+    const continuation_checkpoint_file_demo_step = b.step(
+        "continuation-checkpoint-file-demo",
+        "Run atomic checkpoint root-switch process-death conformance",
+    );
+    continuation_checkpoint_file_demo_step.dependOn(
+        &run_continuation_checkpoint_file_demo.step,
+    );
+    test_step.dependOn(&run_continuation_checkpoint_file_demo.step);
+    test_compile_step.dependOn(
+        &continuation_checkpoint_file_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &continuation_checkpoint_file_worker_exe.step,
+    );
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

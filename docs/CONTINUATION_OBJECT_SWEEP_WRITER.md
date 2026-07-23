@@ -184,8 +184,8 @@ snapshots. The payload-file layer now carries that authority into canonical
 payload-byte promotion across seven process-death boundaries. A separate
 ownership-manifest prototype reacquires logical ResourceBank/LeaseTree state;
 later layers now reconstruct paged KV and prove a model-free natural-exit
-restart. Object-store lifecycle metadata and atomic whole-checkpoint crash
-recovery remain pending.
+restart. The checkpoint-file layer adds atomic whole-checkpoint crash recovery.
+Object-store lifecycle metadata remains pending.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the wire format and pure classifier, and

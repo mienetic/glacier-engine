@@ -225,5 +225,5 @@ Canonical payload-byte durability is implemented in the downstream
 separate [Continuation Ownership Restore](CONTINUATION_OWNERSHIP_RESTORE.md)
 prototype reacquires exact logical runtime ownership before restored payloads
 may become live. Paged-KV reconstruction and a model-free natural-exit restart
-are now implemented as later layers; atomic whole-checkpoint crash recovery
-remains pending.
+are now implemented as later layers; the checkpoint-file layer adds atomic
+whole-checkpoint root switching and seven-phase process-death recovery.

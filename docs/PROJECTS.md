@@ -101,9 +101,14 @@ restored cache with sampler/RNG, output, sequence, and commit lineage, then a
 fresh process publishes the next model-free token without duplicated output.
 See [Continuation Live Restart](CONTINUATION_LIVE_RESTART.md).
 
-**Next slice:** publish the complete checkpoint set through one atomic
-candidate/active root and terminate workers after every write, sync, promotion,
-and directory-sync phase.
+The durability slice is now also complete as a model-free prototype: one
+immutable archive plus a fixed selector survives worker termination after all
+seven write, sync, rename, and directory-sync phases, then a fresh process
+resumes the next token. See
+[Continuation Checkpoint File](CONTINUATION_CHECKPOINT_FILE.md).
+
+**Next slice:** compare uninterrupted and resumed output for one small legal
+production-model fixture under a declared deterministic numerical mode.
 
 ### Live provider adapter boundary
 
@@ -173,9 +178,13 @@ before publication.
 logical KV, exact sequence, and commit lineage; a fresh process publishes the
 next token without duplication and returns ownership to zero.
 
-**Next slice:** atomically promote a complete checkpoint set and exercise
-process death at every durable phase. A separate contributor slice can run the
-existing evidence, payload, and restart campaigns on native Linux filesystems.
+**Completed slice:** an immutable complete checkpoint archive plus fixed root
+selector now survives process death at every archive/selector durability phase
+and launches a fresh live resume after recovery.
+
+**Next slice:** add an uninterrupted/resumed small production-model comparison.
+A separate contributor slice can run the existing evidence, payload, and
+restart campaigns on native Linux filesystems.
 
 ### Resolver adversarial fixtures
 

@@ -175,7 +175,6 @@ It does not yet prove:
 
 - accelerator allocation reconstruction;
 - tokenizer or production-model reconstruction;
-- atomic whole-checkpoint promotion or crash coverage at every phase;
 - cross-process prevention if an operator reuses one target epoch;
 - device power-cut durability;
 - native Linux filesystem recovery; or
@@ -187,5 +186,6 @@ entries to canonical page images, rebuilds page-map generations under the
 reacquired nodes, and rejects foreign or stale page generations before any
 publication can begin. The
 [live-restart layer](CONTINUATION_LIVE_RESTART.md) adds sampler/RNG/output
-composition and a visible natural-exit process restart. Whole-checkpoint atomic
-promotion and crash-phase recovery remain the next continuation boundary.
+composition and a visible natural-exit process restart. The
+[checkpoint-file layer](CONTINUATION_CHECKPOINT_FILE.md) then adds atomic
+whole-checkpoint root selection and seven-phase process-death recovery.

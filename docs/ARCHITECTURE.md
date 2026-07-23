@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, evidence file, payload file, ownership manifest, paged-KV images, runtime state | Bind a checkpoint, recover canonical payload bytes, reacquire charged ownership, remap committed KV pages, and resume one publication across a process boundary |
+| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -60,8 +60,9 @@ validated model + request
                                                                     └─ anchored recovery + scoped writer model
                                                                          └─ locked descriptor-relative file
                                                                               └─ durable payload plan + promotion
-                                                                                   └─ ownership + paged-KV restore
-                                                                                        └─ runtime state + next token
+                                                                                   └─ immutable checkpoint archive
+                                                                                        └─ atomic root selector
+                                                                                             └─ ownership + KV + runtime resume
 ```
 
 ### ResourceBank
@@ -276,9 +277,21 @@ token, synchronizes the fixture files, releases its Bank ownership, and exits.
 A fresh target worker verifies the capsule, reacquires charged ownership,
 rebuilds KV under a different cache identity, then atomically publishes the next
 KV row, RNG state, sampler count, output token, receipt chain, and Bank fence.
-The current proof is model-free and uses a natural exit. Atomic promotion of the
-complete checkpoint set, crash injection at each durable phase, and production
-model reconstruction remain separate gates.
+The standalone proof is model-free and uses a natural exit. The following
+checkpoint-file layer adds atomic set promotion and crash phases; production
+model reconstruction remains a separate gate.
+
+The checkpoint-file layer closes the multi-file visibility gap for the
+model-free proof. It encodes capsule, ownership, durable payload membership,
+ordered KV pages, runtime state, and source-process evidence into one canonical
+immutable archive. A fixed selector binds the archive root and length, request
+position, challenge, and both checkpoint/selector lineages. Publication syncs
+the archive before atomically renaming a selector candidate over the active
+selector. Seven native worker deaths cover archive write/sync/directory-sync
+and selector write/sync/rename/directory-sync; fresh recovery accepts only the
+previous or successor root, then another process resumes token publication.
+Device power loss, native Linux execution, and production-model numerical
+comparison remain outside this evidence.
 
 ## Provider execution flow
 
@@ -394,6 +407,9 @@ still require real machines for each promoted platform.
   fresh target cache/page generations.
 - [Continuation live restart](CONTINUATION_LIVE_RESTART.md): fixed runtime
   state plus an exact-once two-process publication proof.
+- [Continuation checkpoint file](CONTINUATION_CHECKPOINT_FILE.md): immutable
+  whole-checkpoint archives, one atomic root selector, and seven-phase
+  process-death recovery.
 - [Multimodal roadmap](MULTIMODAL_ROADMAP.md): gated shared media identity,
   timeline, transaction, image, audio, and video tracks.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

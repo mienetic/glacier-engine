@@ -192,8 +192,9 @@ before in-memory deallocation and reconciles old/new snapshots idempotently.
 The payload-file layer additionally reconstructs exact targets and promotes a
 canonical successor across seven process-death boundaries on the macOS host.
 A later runtime layer proves one model-free natural-exit restart between token
-publications. Durable lifecycle metadata, power-loss evidence, native Linux
-filesystem campaigns, and atomic whole-checkpoint crash recovery remain.
+publications, and the checkpoint-file layer adds seven-phase atomic
+whole-checkpoint recovery. Durable lifecycle metadata, power-loss evidence, and
+native Linux filesystem campaigns remain.
 
 See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
 the in-memory transition whose evidence this format carries and

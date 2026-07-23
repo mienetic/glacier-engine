@@ -6,9 +6,11 @@ Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
 resume without duplicated visible output. Format research and tiny legal
 fixtures may begin earlier, but production execution does not bypass that gate.
-The natural-exit model-free proof now meets the ownership and exact-output
-portion; atomic whole-checkpoint promotion and phase-complete crash recovery
-still gate integrated media execution.
+The model-free proof now meets ownership, exact-output, atomic whole-checkpoint,
+and phase-complete process-death requirements. Integrated media execution still
+waits for an uninterrupted/resumed production-model comparison and retained
+platform evidence. Format contracts and tiny legal fixtures remain eligible
+before that gate.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -39,8 +41,11 @@ Multimodal execution starts after all of these continuation requirements pass:
    output;~~ complete for the natural-exit model-free proof;
 6. ~~the retained platform matrix distinguishes process death from device power
    loss;~~ the current evidence explicitly claims process death only;
-7. one atomic candidate/active protocol publishes the complete checkpoint set
-   and survives termination at every durable phase.
+7. ~~one atomic candidate/active protocol publishes the complete checkpoint set
+   and survives termination at every durable phase;~~ complete for the
+   seven-phase model-free root-switch campaign;
+8. an uninterrupted and resumed production-model fixture has equivalent
+   visible output under one declared numerical mode.
 
 Until then, the tracks below remain `idea` or `prototype fixture`, never
 `integrated`.

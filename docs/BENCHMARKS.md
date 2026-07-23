@@ -36,6 +36,7 @@ energy, or production reliability.
 | `zig build continuation-sweep-file-demo -Dmetal=false` | Descriptor-relative lock/identity/sync checks and six native subprocess-death recovery boundaries |
 | `zig build continuation-payload-file-demo -Dmetal=false` | Canonical payload snapshots, fixed exact-target reclaim plans, copy-on-write promotion, and seven native subprocess-death recovery boundaries |
 | `zig build continuation-live-restart-demo -Dmetal=false` | Fresh-process ownership/KV/RNG/output restore and exact-once publication of the next token |
+| `zig build continuation-checkpoint-file-demo -Dmetal=false` | Immutable whole-checkpoint archive, atomic selector switch, seven process-death phases, and fresh live resume after each recovery |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -219,15 +220,25 @@ commit, and tears down to zero Bank usage. The runtime wire, output root, and
 receipt root have independent Python fixtures with complete wire mutation and
 stale-position rejection.
 
+The checkpoint-file fixture packages seven real restart objects into one
+6,421-byte archive in the observed run, then selects it with a fixed 192-byte
+record. Workers die after archive write, archive sync, archive directory sync,
+selector write, selector sync, selector rename, and selector directory sync.
+Fresh recovery observes the previous root in five cases and the successor root
+in two, reaches the successor idempotently, and launches a separate live-resume
+process after every phase. The independent Python codec shares fixed two-object
+archive/selector roots and rejects every serialized-byte mutation, re-rooted
+semantic contradictions, and foreign recovery roots.
+
 Together these fixtures prove canonical payload-byte encoding, exact target
 reconstruction, copy-on-write ordering, fresh-process old/new reconciliation,
 safe logical ownership reacquisition, model-free paged-KV reconstruction, and
-one natural-exit process restart with exact-once next-token publication on the
-retained host. They do not atomically promote the complete checkpoint set,
-inject process death across all checkpoint phases, restore object-store
-lifecycle metadata, reconstruct a production model, restore accelerator
-allocations, emulate device power loss, establish native Linux filesystem
-behavior, or measure disk use, latency, RSS, or energy.
+one natural-exit process restart with exact-once next-token publication, and an
+atomic whole-checkpoint root switch across seven process-death phases on the
+retained host. They do not restore object-store lifecycle metadata, compare an
+uninterrupted and resumed production model, restore accelerator allocations,
+emulate device power loss, establish native Linux filesystem behavior, or
+measure disk use, latency, RSS, or energy.
 
 ## Provider evidence checkpoint
 

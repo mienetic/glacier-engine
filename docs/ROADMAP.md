@@ -22,10 +22,10 @@ transactional state publication, and independently verifiable evidence.
 | Track | Status | What works now | Main gap |
 | --- | --- | --- | --- |
 | Exact admission | Integrated | ResourceBank receipts, capacity rejection, release, snapshots | Physical telemetry adapters and long-running pressure campaigns |
-| Hierarchical ownership | Integrated | LeaseTree child scopes, publication fences, fresh-Bank reacquisition, paged-KV remap, and a two-process handoff proof | Atomic whole-checkpoint promotion and crash-phase recovery |
+| Hierarchical ownership | Integrated | LeaseTree child scopes, fresh-Bank reacquisition, paged-KV remap, two-process handoff, and seven-phase checkpoint root-switch recovery | Production-model continuation and durable lifecycle metadata |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
-| Token publication | Integrated | Contiguous and paged KV transactions plus exact-once next-token publication after a model-free process restart | Production request integration and crash-phase continuation |
-| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV reconstruction, fixed runtime state, and two-process resume | Atomic checkpoint-set promotion, phase-complete crash recovery, and production model state |
+| Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
+| Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Multimodal execution | Planned and gated | Shared image/audio/video architecture and contributor slices are specified; no media execution is integrated | Enter only after the durable-continuation promotion gate |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
@@ -84,6 +84,9 @@ transactional state publication, and independently verifiable evidence.
 - [x] Fixed runtime state plus a natural-exit two-process continuation proof
   joining KV, RNG, sampler, output, sequence, commit lineage, and zero-leak
   ownership teardown.
+- [x] Canonical whole-checkpoint archive and fixed root selector with exact
+  previous/successor recovery, seven process-death phases, independent
+  verification, and a fresh live resume after every phase.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -169,6 +172,10 @@ Next slices:
     a model-free natural-exit proof with a fixed runtime wire, different source
     and target process/cache identities, exact output append, chained receipt,
     and zero Bank usage after each process.
+14. ~~Atomic publication and phase-complete process-death recovery for the
+    whole checkpoint set.~~ Complete as an immutable archive plus fixed selector
+    root switch across seven write, sync, rename, and directory-sync phases,
+    followed by a fresh live resume after every recovery.
 
 Promotion gate: byte-identical continuation of the selected deterministic mode,
 no duplicated output, no orphaned ownership, and crash coverage at every durable
@@ -186,17 +193,19 @@ live. Canonical page images then rebuild an actual paged-KV map under fresh
 cache/page generations while preserving the logical KV hash. A fixed runtime
 wire joins sequence, RNG, sampler count, output prefix, KV digest, and commit
 lineage; a source worker exits and a fresh target publishes the next model-free
-token exactly once. This does not yet atomically promote the multi-file
-checkpoint, cover termination at each checkpoint phase, restore object-store
-lease/quarantine/repair metadata, or reconstruct a production request. Process
-death is not power loss, and Linux has compile evidence rather than a retained
-native filesystem campaign.
+token exactly once. The checkpoint-file layer packages all restart objects into
+one immutable archive and atomically switches a fixed selector; fresh recovery
+accepts only the previous or successor root across seven process-death phases,
+then resumes live publication. This does not yet restore object-store
+lease/quarantine/repair metadata or reconstruct and compare a production
+request. Process death is not power loss, and Linux has compile evidence rather
+than a retained native filesystem campaign.
 The fixture avoids one 25-byte duplicate payload allocation and the commit
 fixture reclaims a 39-byte allocator tail, but lifecycle metadata, fixed index,
 and backing capacity remain larger than those deltas. No lower RSS, disk use, or
 restart latency is claimed. Those require compact index experiments, durable
-metadata integration, whole-checkpoint crash recovery, production execution,
-and complete physical measurements.
+metadata integration, production execution comparisons, native campaigns, and
+complete physical measurements.
 
 ### Evidence inspection
 
@@ -473,7 +482,9 @@ First slices:
   complete as a model-free actual-cache prototype;
 - ~~sampler/RNG/output composition and end-to-end visible restart;~~ complete
   as a model-free natural-exit two-process proof;
-- atomic whole-checkpoint promotion and crash recovery at every durable phase;
+- ~~atomic whole-checkpoint promotion and crash recovery at every durable
+  phase;~~ complete for the model-free seven-phase root-switch campaign;
+- uninterrupted/resumed production-model equivalence fixture;
 - native Linux filesystem campaigns across evidence and payload transitions;
 - trusted replica transport with independently verified fetch evidence;
 - optional encrypted storage adapter whose ciphertext identity is separate from

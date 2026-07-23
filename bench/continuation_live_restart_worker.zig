@@ -1,4 +1,4 @@
-//! Two-mode subprocess fixture for a real continuation process boundary.
+//! Source, loose-file resume, and root-selected archive resume subprocess.
 
 const std = @import("std");
 const core = @import("core");
@@ -8,6 +8,7 @@ const capsule = core.continuation_capsule;
 const ownership = core.continuation_ownership_manifest;
 const payload_store = core.continuation_object_payload_store;
 const resource_bank = core.resource_bank;
+const checkpoint_file = core.continuation_checkpoint_file;
 const live = engine.continuation_live_restart;
 const paged_kv = engine.paged_kv_cache;
 const paged_restore = engine.continuation_paged_kv_restore;
@@ -30,13 +31,23 @@ pub fn main() !void {
     const allocator = std.heap.page_allocator;
     const arguments = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, arguments);
-    if (arguments.len != 3) return error.InvalidArguments;
+    if (arguments.len < 3 or arguments.len > 4)
+        return error.InvalidArguments;
     var directory = try std.fs.openDirAbsolute(arguments[2], .{});
     defer directory.close();
     if (std.mem.eql(u8, arguments[1], "checkpoint")) {
+        if (arguments.len != 3) return error.InvalidArguments;
         try writeCheckpointV1(allocator, directory);
     } else if (std.mem.eql(u8, arguments[1], "resume")) {
+        if (arguments.len != 3) return error.InvalidArguments;
         try resumeCheckpointV1(allocator, directory);
+    } else if (std.mem.eql(u8, arguments[1], "resume-set")) {
+        if (arguments.len != 4) return error.InvalidArguments;
+        try resumeCheckpointSetV1(
+            allocator,
+            directory,
+            try std.fmt.parseInt(u64, arguments[3], 10),
+        );
     } else return error.InvalidArguments;
 }
 
@@ -382,6 +393,72 @@ fn resumeCheckpointV1(
         32,
     );
     defer allocator.free(source_pid_wire);
+    try resumeCheckpointObjectsV1(
+        allocator,
+        capsule_wire,
+        manifest_wire,
+        payload_wire,
+        page_zero,
+        page_one,
+        runtime_wire,
+        source_pid_wire,
+    );
+}
+
+fn resumeCheckpointSetV1(
+    allocator: std.mem.Allocator,
+    directory: std.fs.Dir,
+    storage_epoch: u64,
+) !void {
+    var lock_storage: [1]u8 = undefined;
+    var active_storage: [8192]u8 = undefined;
+    var lease = try checkpoint_file.LeaseV1.open(
+        directory,
+        storage_epoch,
+        challenge_sha256,
+        active_storage.len,
+        &lock_storage,
+        &active_storage,
+    );
+    defer lease.close();
+    const set = try lease.activeSet();
+    const capsule_object = try set.object(.capsule, 0);
+    const manifest_object = try set.object(.ownership_manifest, 0);
+    const payload_object = try set.object(.payload_snapshot, 0);
+    const page_zero = try set.object(.kv_page, 0);
+    const page_one = try set.object(.kv_page, 1);
+    const runtime_object = try set.object(.runtime_state, 0);
+    const source_process = try set.object(.source_process, 0);
+    if (capsule_object.abi_version != capsule.wire_abi or
+        manifest_object.abi_version != ownership.abi_version or
+        payload_object.abi_version != payload_store.schema_version or
+        page_zero.abi_version != paged_restore.page_image_abi or
+        page_one.abi_version != paged_restore.page_image_abi or
+        runtime_object.abi_version != live.runtime_state_abi or
+        source_process.abi_version != 1)
+        return error.InvalidCheckpointSet;
+    try resumeCheckpointObjectsV1(
+        allocator,
+        capsule_object.bytes,
+        manifest_object.bytes,
+        payload_object.bytes,
+        page_zero.bytes,
+        page_one.bytes,
+        runtime_object.bytes,
+        source_process.bytes,
+    );
+}
+
+fn resumeCheckpointObjectsV1(
+    allocator: std.mem.Allocator,
+    capsule_wire: []const u8,
+    manifest_wire: []const u8,
+    payload_wire: []const u8,
+    page_zero: []const u8,
+    page_one: []const u8,
+    runtime_wire: []const u8,
+    source_pid_wire: []const u8,
+) !void {
     const source_pid = try std.fmt.parseInt(
         i32,
         source_pid_wire,

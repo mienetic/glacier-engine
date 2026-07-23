@@ -80,6 +80,12 @@ before the first stable release.
   ownership to zero.
 - Cross-process paged-KV cache-instance collision detection and forced target
   remapping so process-local identity counters cannot revive source PageRefs.
+- Canonical whole-checkpoint archives plus a fixed root selector, immutable
+  content-addressed generations, exact previous/successor recovery, and seven
+  native process-death boundaries followed by seven fresh live resumes.
+- An independent checkpoint archive/selector verifier with shared golden roots,
+  mutation-complete wire coverage, re-rooted contradiction rejection, and a
+  pure foreign-state recovery model.
 - A gated multimodal roadmap for a shared media identity/timeline/transaction
   substrate followed by bounded image, streaming audio, and video execution.
 

@@ -145,8 +145,6 @@ python3 -m unittest \
 
 This is a model-free natural-exit process restart. It does not yet prove:
 
-- one atomic durable promotion for the complete multi-file checkpoint set;
-- recovery after termination at every checkpoint write/promotion phase;
 - device power-cut durability;
 - production model or tokenizer reconstruction;
 - numerical equivalence for production kernels;
@@ -154,6 +152,9 @@ This is a model-free natural-exit process restart. It does not yet prove:
 - output prefixes longer than the fixed conformance wire; or
 - restart latency, throughput, RSS, disk, token, or energy improvements.
 
-The next durability slice should publish the complete checkpoint set through one
-root-selected candidate/active protocol, inject process death at every durable
-phase, and accept only the previous or complete successor checkpoint.
+The downstream
+[checkpoint-file layer](CONTINUATION_CHECKPOINT_FILE.md) now publishes the
+complete fixture through one root-selected candidate/active protocol, injects
+process death at all seven archive/selector phases, accepts only the previous or
+complete successor checkpoint, and performs a fresh live resume after every
+recovery.
