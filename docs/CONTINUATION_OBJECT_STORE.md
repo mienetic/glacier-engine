@@ -195,6 +195,7 @@ Run the model-free native demo:
 ```sh
 zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
 Run the independent state model:
@@ -202,6 +203,7 @@ Run the independent state model:
 ```sh
 python3 -m unittest bench.tests.test_continuation_object_store
 python3 -m unittest bench.tests.test_continuation_object_collection
+python3 -m unittest bench.tests.test_continuation_object_sweep
 ```
 
 The suites cover exact cross-language store/lifecycle/repair grant and receipt
@@ -210,7 +212,8 @@ freeing, renewal and explicit expiry, stale and denied authority, foreign
 provenance and bundle scope, entry/payload/index/reference/lease limits,
 allocator rollback, missing reads, corruption, quarantine fencing, repair-source
 and reason rejection, retirement, exact root/lease coverage, collection budgets,
-dry-run immutability, and output/source overlap with store memory.
+dry-run immutability, sweep plan regeneration, prepare/abort journal tamper and
+stale-snapshot rejection, and output/source overlap with store memory.
 
 ## Security and authority boundary
 
@@ -231,8 +234,10 @@ dry-run immutability, and output/source overlap with store memory.
 ## Next layers
 
 1. Compact or dynamic index experiment with complete overhead measurement.
-2. Journaled sweep that consumes an exact plan before deallocation.
-3. Replica adapter with independently verified repair transport.
-4. Atomic filesystem publication and crash recovery.
-5. Resource and paged-KV ownership reacquisition.
-6. End-to-end restart and paired physical-resource campaigns.
+2. ~~Sweep prepare/abort consuming an exact plan.~~ Implemented with separate
+   capability scope, plan regeneration, and zero payload deallocation.
+3. Destructive sweep commit with exact allocator/accounting evidence.
+4. Replica adapter with independently verified repair transport.
+5. Atomic filesystem publication and crash recovery.
+6. Resource and paged-KV ownership reacquisition.
+7. End-to-end restart and paired physical-resource campaigns.

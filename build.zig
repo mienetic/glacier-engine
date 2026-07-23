@@ -713,6 +713,34 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_continuation_collection_demo.step);
     test_compile_step.dependOn(&continuation_collection_demo_exe.step);
 
+    // Capability-scoped prepare/abort journal for a previously approved
+    // collection plan. It regenerates the plan and stages totals without
+    // mutating or deallocating store payloads.
+    const continuation_sweep_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-object-sweep-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_object_sweep.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_sweep_demo_exe.root_module.addImport("core", core_mod);
+    const run_continuation_sweep_demo = b.addRunArtifact(
+        continuation_sweep_demo_exe,
+    );
+    const continuation_sweep_demo_step = b.step(
+        "continuation-sweep-demo",
+        "Run the capability-scoped object sweep journal demo",
+    );
+    continuation_sweep_demo_step.dependOn(
+        &run_continuation_sweep_demo.step,
+    );
+    test_step.dependOn(&run_continuation_sweep_demo.step);
+    test_compile_step.dependOn(&continuation_sweep_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

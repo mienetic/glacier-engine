@@ -90,19 +90,18 @@ into core.
 
 ## Advanced projects
 
-### Collection sweep journal
+### Sweep commit state machine
 
-The in-memory store now retains explicit retired entries and emits a
-deterministic dry-run plan only after exact semantic-root multiplicity, complete
-current-lease coverage, snapshot identity, and collectible ceilings pass. It
-does not free payloads.
+The collection planner now proves exact eligibility, and the separate sweep
+journal regenerates that plan before emitting capability-scoped prepare/abort
+roots. Both layers leave payloads untouched.
 
-**First slice:** define a bounded in-memory sweep journal that accepts one exact
-collection plan, stages each collectible slot once, and emits prepare/abort
-roots while leaving payload bytes untouched. Cover stale plans, duplicate slot
-decisions, non-collectible decisions, quota overflow, and abort-to-identical-
-snapshot recovery. Keep actual deallocation and filesystem access out of this
-slice.
+**First slice:** consume one canonical prepared journal, revalidate every staged
+retired slot before mutation, and free exactly that set only after all checks
+pass. Emit before/after snapshot, entry, payload, index, allocator-observed, and
+freed-target roots. Cover stale snapshots, tampered prepare roots, partial-set
+failure, counter underflow, and double commit. Keep filesystem durability out of
+this slice.
 
 ### Resolver adversarial fixtures
 

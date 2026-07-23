@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | capsule, resolver, bundle, store, collection planner | Bind a checkpoint, admit tenant objects, own bounded payloads, and prove collection eligibility |
+| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal | Bind a checkpoint, admit tenant objects, own bounded payloads, and separate collection evidence from destructive authority |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -52,6 +52,8 @@ validated model + request
                        └─ bounded object store ──> owned bytes + references
                                   │
                                   └─ dry-run collection ──> retained/eligible evidence
+                                              │
+                                              └─ sweep prepare/abort ──> staged evidence; no free
 ```
 
 ### ResourceBank
@@ -164,6 +166,15 @@ making an object eligible. The output root binds every decision, while the
 operation performs no allocation, deallocation, filesystem access, or state
 mutation.
 
+The sweep journal is a separate module and capability boundary. A sweep grant
+pins one exact store scope, audit snapshot, previously reviewed collection-plan
+root, and staging ceilings. Prepare does not trust that plan by assertion: it
+regenerates the plan from the original root multiset and lease receipts, then
+returns a new caller-owned journal value. Abort validates the prepared root and
+requires the same live snapshot before returning another journal value. Neither
+transition mutates the input journal or store, allocates heap memory, or frees
+payloads. Destructive commit and durability remain later layers.
+
 ## Provider execution flow
 
 ```text
@@ -254,4 +265,6 @@ still require real machines for each promoted platform.
   ownership and accounting.
 - [Continuation object collection plan](CONTINUATION_OBJECT_COLLECTION.md):
   exact reachability and dry-run collection evidence.
+- [Continuation object sweep journal](CONTINUATION_OBJECT_SWEEP.md):
+  capability-scoped prepare/abort staging without deallocation.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

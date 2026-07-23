@@ -153,11 +153,13 @@ trusting a historical receipt as live authority.
    atomic import rollback, references, and quarantine; no durability yet.
 4. ~~Generation-fenced lifecycle and dry-run collection evidence.~~ Implemented
    with explicit leases, repair, retirement, and exact root/lease coverage.
-5. Journaled collection sweep consuming an exact plan.
-6. Atomic manifest/bundle publication and crash recovery.
-7. Resource and page ownership reacquisition.
-8. Live restore between two transactional token publications.
-9. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
+5. ~~Sweep prepare/abort consuming an exact plan.~~ Implemented with plan
+   regeneration, a separate capability, and zero payload deallocation.
+6. Destructive sweep commit with exact allocator/accounting evidence.
+7. Atomic manifest/bundle publication and crash recovery.
+8. Resource and page ownership reacquisition.
+9. Live restore between two transactional token publications.
+10. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
 
 Each layer must keep manifest identity separate from storage and execution
 authority.
@@ -170,3 +172,5 @@ See [Continuation Object Store](CONTINUATION_OBJECT_STORE.md) for the bounded
 in-memory ownership and resource-accounting contract.
 See [Continuation Object Collection Plan](CONTINUATION_OBJECT_COLLECTION.md)
 for exact dry-run reachability and collection evidence.
+See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for
+capability-scoped prepare/abort staging.

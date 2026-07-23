@@ -36,6 +36,9 @@ before the first stable release.
 - Retained object retirement and bounded dry-run collection planning with exact
   root multiplicity, complete current-lease coverage, per-slot decisions,
   collectible ceilings, and matching Zig/Python evidence roots.
+- Capability-scoped functional sweep prepare/abort journals that regenerate an
+  approved collection plan, reject stale snapshots and tampered journals, stage
+  exact collectible totals, and leave all payload bytes untouched.
 
 ### Status
 

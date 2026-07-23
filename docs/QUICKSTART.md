@@ -59,6 +59,9 @@ zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Prove exact reachability and emit a dry-run object collection plan
 zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Regenerate an approved plan and emit functional sweep prepare/abort roots
+zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

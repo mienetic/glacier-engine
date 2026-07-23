@@ -137,6 +137,15 @@ Missing evidence rejects rather than reclassifying live data as collectible.
 Quarantined data is always retained. Successful planning writes a canonical
 decision for every occupied slot but never frees bytes or mutates the store.
 
+Sweep staging adds another explicit authority boundary. A grant must pin the
+exact store, snapshot, reviewed collection-plan root, and staging ceilings.
+Prepare regenerates the plan from the original root and lease evidence instead
+of trusting a copied receipt. It returns a new immutable-style journal value
+only when the regenerated plan and snapshot match. Abort likewise returns a new
+value only while the store snapshot remains unchanged. Neither transition
+implies deallocation, durability, exactly-once execution, or mutation of the
+input journal.
+
 ### State machines fail closed
 
 Named errors are preferable to implicit recovery when the correct alternative is

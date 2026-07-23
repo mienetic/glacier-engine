@@ -25,7 +25,7 @@ transactional state publication, and independently verifiable evidence.
 | Hierarchical ownership | Integrated | LeaseTree child scopes and paged-KV publication fences | Cross-worker and durable ownership identity |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
-| Continuation identity | Prototype | Capsule, resolver, bundle, atomic tenant store, generation-fenced leases, repair receipts, retirement, dry-run collection evidence, Zig/Python verification | Durable publication, journaled sweep, ownership reacquisition, and live restore |
+| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, leases/repair, retirement, collection evidence, sweep prepare/abort, Zig/Python verification | Exact sweep commit, durable publication, ownership reacquisition, and live restore |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
@@ -51,6 +51,8 @@ transactional state publication, and independently verifiable evidence.
   quarantine invalidation, scoped repair, and cross-language receipt roots.
 - [x] Exact root/lease reachability evidence with retained retirement, bounded
   dry-run classification, cross-language plan roots, and no deallocation.
+- [x] Separately scoped sweep prepare/abort journal with plan regeneration,
+  staging ceilings, unchanged snapshots, and cross-language evidence roots.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -92,22 +94,25 @@ Next slices:
 7. ~~Reachability evidence and dry-run collection eligibility.~~ Complete with
    explicit retirement, exact root multiplicity, complete lease receipts,
    bounded slot classification, and independent plan verification.
-8. Journaled collection sweep consuming an exact plan.
-9. Atomic file publication and crash-recovery state machine.
-10. ResourceBank/LeaseTree reacquisition without duplicated ownership.
-11. Paged-KV restore with foreign-generation rejection.
-12. End-to-end process restart between two token publications.
+8. ~~Bounded sweep prepare/abort journal.~~ Complete with a separate capability,
+   collection-plan regeneration, exact staging ceilings, functional journal
+   values, stale-snapshot rejection, and independent verification.
+9. Destructive sweep commit with exact allocator/accounting receipt.
+10. Durable sweep and file-publication crash-recovery state machine.
+11. ResourceBank/LeaseTree reacquisition without duplicated ownership.
+12. Paged-KV restore with foreign-generation rejection.
+13. End-to-end process restart between two token publications.
 
 Promotion gate: byte-identical continuation of the selected deterministic mode,
 no duplicated output, no orphaned ownership, and crash coverage at every durable
 phase.
 
-The current capsule, resolver, bundle, store, lifecycle receipts, and collection
-plan form identity, least-authority lookup, canonical planning, bounded payload
-ownership, and deterministic in-memory lifecycle/evidence boundaries—not a
-saved session. The fixture avoids one 25-byte duplicate payload allocation, but
-lifecycle metadata,
-fixed index, and backing capacity are larger than that delta. No lower RSS, disk
+The current capsule, resolver, bundle, store, lifecycle receipts, collection
+plan, and sweep journal form identity, least-authority lookup, canonical
+planning, bounded payload ownership, and deterministic in-memory
+lifecycle/evidence boundaries—not a saved session. The fixture avoids one
+25-byte duplicate payload allocation, but lifecycle metadata, fixed index, and
+backing capacity are larger than that delta. No lower RSS, disk
 use, or restart latency is claimed. Those require compact index experiments,
 durable integration, ownership reacquisition, and complete physical
 measurements.
@@ -243,7 +248,7 @@ ideas unless a different status is stated.
 | Capability Grant | Prototype (resolver scope) | Least-authority extensions for planners, tokenizers, stores, tools, and transports |
 | ToolTxn and ActionOutbox | Idea | Recoverable AI tool execution without duplicated external side effects |
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
-| Object Fabric | Prototype (collection plan) | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
+| Object Fabric | Prototype (sweep staging) | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |
@@ -342,8 +347,10 @@ First slices:
 - ~~reference counts, bundle provenance, and quarantine state;~~
 - ~~lease/generation fencing and target/reason/source-scoped repair admission;~~
 - ~~retained retirement plus exact reachability and dry-run collection evidence;~~
+- ~~separately scoped sweep prepare/abort with plan regeneration and no free;~~
 - trusted replica transport with independently verified fetch evidence;
-- journaled collection sweep with crash-safe recovery;
+- destructive sweep commit with exact allocator/accounting evidence;
+- durable sweep recovery across every publication crash point;
 - optional encrypted storage adapter whose ciphertext identity is separate from
   semantic content identity.
 

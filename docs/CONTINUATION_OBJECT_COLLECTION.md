@@ -3,8 +3,9 @@
 Status: **prototype deterministic dry-run planner**. Native Zig and an
 independent Python model share canonical collection-grant, root-set,
 lease-set, audit-snapshot, and plan roots. Retirement and classification are
-implemented. Deallocation, durable sweep journaling, concurrent mutation, and
-multi-bundle reachability are not.
+implemented. A separately scoped in-memory sweep prepare/abort journal is also
+implemented. Deallocation, durable journal persistence, concurrent mutation,
+and multi-bundle reachability are not.
 
 The planner answers a deliberately narrow question: given one exact store
 snapshot, a complete multiset of semantic roots, and one current receipt for
@@ -222,10 +223,14 @@ or multi-bundle global reachability.
 
 ## Next layers
 
-1. A separately authorized sweep state machine that consumes an exact plan and
-   emits a reversible journal before freeing any payload.
-2. Crash-safe durable publication and recovery of retirement/sweep decisions.
-3. Multi-bundle and parent-checkpoint reachability composition.
-4. Replica transport that keeps admission, verification, and deletion authority
+1. ~~Separately authorized sweep prepare/abort journal.~~ Implemented with plan
+   regeneration, exact staging ceilings, functional values, and no deallocation.
+2. Destructive commit with exact post-sweep allocator/accounting evidence.
+3. Crash-safe durable publication and recovery of retirement/sweep decisions.
+4. Multi-bundle and parent-checkpoint reachability composition.
+5. Replica transport that keeps admission, verification, and deletion authority
    separate.
-5. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+6. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+
+See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
+implemented staging boundary.

@@ -167,10 +167,12 @@ capsule substitution, and changed resolved output.
 3. ~~Lease/generation accounting and evidence-producing dry-run collection.~~
    Implemented with explicit retirement, complete root/lease coverage, and
    cross-language plan roots.
-4. Journaled collection sweep consuming an exact plan.
-5. Atomic bundle publication and crash recovery.
-6. ResourceBank/LeaseTree and paged-KV reacquisition.
-7. End-to-end restart with paired physical measurements.
+4. ~~Sweep prepare/abort consuming an exact plan.~~ Implemented with plan
+   regeneration and cross-language journal roots.
+5. Destructive sweep commit with exact allocator/accounting evidence.
+6. Atomic bundle publication and crash recovery.
+7. ResourceBank/LeaseTree and paged-KV reacquisition.
+8. End-to-end restart with paired physical measurements.
 
 Each layer must preserve the separation between content identity, access
 authority, live resource ownership, and token publication authority.
@@ -181,3 +183,5 @@ See [Continuation Object Store](CONTINUATION_OBJECT_STORE.md) for the bounded
 payload-ownership and rollback boundary.
 See [Continuation Object Collection Plan](CONTINUATION_OBJECT_COLLECTION.md)
 for the non-destructive reachability evidence boundary.
+See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
+non-destructive prepare/abort staging boundary.

@@ -27,6 +27,7 @@ pub const continuation_capsule = core.continuation_capsule;
 pub const continuation_object_resolver = core.continuation_object_resolver;
 pub const continuation_bundle = core.continuation_bundle;
 pub const continuation_object_store = core.continuation_object_store;
+pub const continuation_object_sweep = core.continuation_object_sweep;
 
 pub const Precision = core.Precision;
 pub const Pager = core.Pager;
@@ -51,6 +52,7 @@ pub const ContinuationCapsule = core.ContinuationCapsule;
 pub const ContinuationObjectResolver = core.ContinuationObjectResolver;
 pub const ContinuationBundle = core.ContinuationBundle;
 pub const ContinuationObjectStore = core.ContinuationObjectStore;
+pub const ContinuationObjectSweep = core.ContinuationObjectSweep;
 
 pub const cpu_backend = @import("backends/cpu/backend.zig");
 pub const int4_matmul = @import("backends/cpu/int4_matmul.zig");

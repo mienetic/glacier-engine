@@ -32,6 +32,11 @@ every occupied store slot against one exact snapshot, complete semantic-root
 multiplicity, and complete current-lease coverage. Its evidence root grants no
 deallocation authority.
 
+**Continuation object sweep journal** — A caller-owned functional state value
+whose prepare transition regenerates one separately approved collection plan
+and whose abort transition requires the pinned snapshot to remain current. It
+stages exact totals but grants no commit or deallocation authority.
+
 **Retired entry** — A retained store payload with zero semantic references and
 no active lease. It is eligible for a future separately authorized sweep only
 after an exact collection plan classifies it as collectible.

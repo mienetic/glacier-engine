@@ -30,6 +30,7 @@ energy, or production reliability.
 | `zig build continuation-bundle-demo -Dmetal=false` | Fixed tenant bundle, semantic/blob identity separation, canonical ordinals, and exact logical/unique totals |
 | `zig build continuation-store-demo -Dmetal=false` | Atomic bundle import, duplicate reuse, generation-fenced leases, quarantine repair, exact accounting, and v1/v2 snapshots |
 | `zig build continuation-collection-demo -Dmetal=false` | Exact root multiplicity, complete lease coverage, bounded classification, and a non-mutating collection-plan root |
+| `zig build continuation-sweep-demo -Dmetal=false` | Separately scoped plan regeneration, staging ceilings, functional prepare/abort roots, and zero payload deallocation |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -97,6 +98,16 @@ zero. Zig and the independent Python model share the grant, input, snapshot,
 and plan roots. This proves bounded dry-run classification for the fixture—not
 safe deletion, lower RSS, durable sweep recovery, or global reachability across
 stores.
+
+The sweep fixture separately authorizes that plan, regenerates it from the same
+eight roots and one lease receipt, stages one entry/30 bytes, and aborts while
+the store remains at the exact audit snapshot. Its caller-owned journal is 184
+bytes on the current 64-bit build, performs zero sweep heap allocations, and
+does not enlarge the 3,480-byte store value. All 255 payload bytes remain
+allocated and zero bytes are freed. Zig and Python share the sweep grant,
+prepare, and abort roots. This is functional in-memory staging evidence—not a
+destructive commit, durable journal, exactly-once transition, secure erase, or
+memory reduction.
 
 ## Provider evidence checkpoint
 

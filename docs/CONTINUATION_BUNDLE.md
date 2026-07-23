@@ -180,11 +180,13 @@ extension, capsule substitution, and overlapping native output storage.
    Implemented with generation-fenced leases and scoped repair.
 3. ~~Lease accounting and evidence-producing dry-run collection.~~ Implemented
    with retained retirement and exact root/lease coverage.
-4. Journaled collection sweep consuming an exact plan.
-5. Compact/dynamic index experiment with full overhead measurement.
-6. Atomic bundle publication and crash recovery.
-7. Resource and paged-KV ownership reacquisition.
-8. End-to-end restart and paired physical-resource campaigns.
+4. ~~Sweep prepare/abort consuming an exact plan.~~ Implemented with a separate
+   capability, plan regeneration, and no deallocation.
+5. Destructive sweep commit with exact allocator/accounting evidence.
+6. Compact/dynamic index experiment with full overhead measurement.
+7. Atomic bundle publication and crash recovery.
+8. Resource and paged-KV ownership reacquisition.
+9. End-to-end restart and paired physical-resource campaigns.
 
 The store must preserve the distinction between semantic identity, tenant-bound
 blob identity, access authority, live ownership, and publication authority.
@@ -193,3 +195,5 @@ See [Continuation Object Store](CONTINUATION_OBJECT_STORE.md) for the implemente
 in-memory ownership, rollback, and resource-accounting boundary.
 See [Continuation Object Collection Plan](CONTINUATION_OBJECT_COLLECTION.md)
 for the implemented dry-run evidence boundary.
+See [Continuation Object Sweep Journal](CONTINUATION_OBJECT_SWEEP.md) for the
+implemented prepare/abort staging boundary.

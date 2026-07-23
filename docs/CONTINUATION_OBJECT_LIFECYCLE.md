@@ -220,7 +220,9 @@ layout. These are compile-target layout observations, not RSS measurements.
 
 ```sh
 zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
 python3 -m unittest bench.tests.test_continuation_object_store
+python3 -m unittest bench.tests.test_continuation_object_sweep
 ```
 
 Native and independent tests cover:
@@ -240,9 +242,11 @@ savings, replica trust, secure erasure, or end-to-end restart.
 
 ## Next layers
 
-1. Journaled sweep consuming an exact dry-run collection plan.
-2. Replica transport separated from repair admission and content verification.
-3. Durable transition journal with crash points before and after publication.
-4. ResourceBank/LeaseTree ownership reacquisition using generation-linked
+1. ~~Sweep prepare/abort consuming an exact dry-run plan.~~ Implemented with a
+   separate capability, plan regeneration, and no deallocation.
+2. Destructive sweep commit with exact allocator/accounting evidence.
+3. Replica transport separated from repair admission and content verification.
+4. Durable transition journal with crash points before and after publication.
+5. ResourceBank/LeaseTree ownership reacquisition using generation-linked
    receipts.
-5. Paged-KV restore and end-to-end restart without duplicated output.
+6. Paged-KV restore and end-to-end restart without duplicated output.
