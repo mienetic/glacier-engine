@@ -1087,6 +1087,35 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_media_decode_fixture_demo.step);
     test_compile_step.dependOn(&media_decode_fixture_demo_exe.step);
 
+    // Deterministic bounded transforms over the decoded fixtures: image crop,
+    // nearest resize and tile mappings; weighted PCM mix with exact integer
+    // decimation; and keyframe-only video selection. All output and mapping
+    // storage remains caller-owned and no model or I/O authority is present.
+    const media_transform_demo_exe = b.addExecutable(.{
+        .name = "glacier-media-transform-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/media_transform.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    media_transform_demo_exe.root_module.addImport("core", core_mod);
+    const run_media_transform_demo = b.addRunArtifact(
+        media_transform_demo_exe,
+    );
+    const media_transform_demo_step = b.step(
+        "media-transform-demo",
+        "Run deterministic bounded image/audio/video transforms",
+    );
+    media_transform_demo_step.dependOn(
+        &run_media_transform_demo.step,
+    );
+    test_step.dependOn(&run_media_transform_demo.step);
+    test_compile_step.dependOn(&media_transform_demo_exe.step);
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

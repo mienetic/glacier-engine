@@ -1,7 +1,7 @@
 # Multimodal Roadmap
 
-Status: **shared foundation and bounded fixtures; media execution remains
-gated**.
+Status: **shared foundation plus deterministic transform prototype; media-model
+execution remains gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -53,7 +53,8 @@ Multimodal execution starts after all of these continuation requirements pass:
 
 Until then, the shared contract may advance as a `prototype`, while decoder,
 model, provider, capture, playback, and generated-media paths remain `idea` or
-`prototype fixture`, never `integrated`.
+`prototype fixture`, never `integrated`. This is the media specialization of
+the broader [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).
 
 ## Shared media foundation
 
@@ -142,7 +143,9 @@ First slices:
    for the retained 2×2 RGB8 fixture;
 2. ~~bounded decoder output into caller-owned storage;~~ complete for the
    identity fixture decoder with per-pixel source-byte mappings;
-3. canonical resize/crop/tile plan with source-region mapping;
+3. ~~canonical resize/crop/tile plan with source-region mapping;~~ complete for
+   a sealed crop plus nearest-resize plan with 1×1 output tiles and exact source
+   pixel mappings over the retained fixture;
 4. patch/token correspondence evidence without storing private pixels;
 5. vision-encoder capability negotiation and exact resource admission;
 6. continuation binding for processed regions and cross-attention state;
@@ -168,7 +171,9 @@ First slices:
 1. ~~bounded PCM fixture with sample format, sample rate, channel count/layout,
    frame count, and rational start time;~~ complete for eight interleaved stereo
    s16le frames at 48 kHz with per-frame source/timeline mappings;
-2. canonical channel mix and resample plan with exact input/output ranges;
+2. ~~canonical channel mix and resample plan with exact input/output ranges;~~
+   complete for weighted stereo-to-mono mixing and exact integer decimation
+   from 48 kHz to 16 kHz over the retained fixture; general resampling remains;
 3. streaming chunk transaction with overlap and gap evidence;
 4. feature-window or audio-token mapping back to source sample ranges;
 5. partial transcript publication without duplicated text after restart;
@@ -196,7 +201,9 @@ First slices:
 2. bounded frame-index/keyframe map; the current fixture has a verified
    64-frame-bounded keyframe bitmap and per-frame byte/timeline mappings, while
    a seek/index structure remains;
-3. deterministic frame-selection plan with exact source coverage;
+3. ~~deterministic frame-selection plan with exact source coverage;~~ complete
+   for keyframe-only selection with exact source bytes and source/target ticks
+   over the retained fixture;
 4. decode queue admission under memory, deadline, and cancellation ceilings;
 5. audio/subtitle linkage through `MediaTimeline`;
 6. temporal-cache ownership and continuation state;
@@ -229,7 +236,8 @@ Early contributions can proceed without a large model:
 - extend canonical descriptor/plan codecs and mutation-complete verifiers;
 - checked geometry and rational-time arithmetic;
 - decompression and allocation ceiling tests;
-- deterministic crop/resample/frame-selection reference models;
+- extend the completed deterministic crop/nearest, mix/exact-decimation, and
+  keyframe-selection reference models with new bounded cases;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 
@@ -237,4 +245,6 @@ Each contribution must name its authority, resource ceiling, rejection paths,
 retained evidence, and nonclaims. See [Roadmap](ROADMAP.md) for sequencing and
 [Evidence policy](EVIDENCE_POLICY.md) for promotion requirements. The completed
 baseline is specified in
-[Bounded Media Decode Fixtures](MEDIA_DECODE_FIXTURES.md).
+[Bounded Media Decode Fixtures](MEDIA_DECODE_FIXTURES.md), and the implemented
+transform layer is specified in
+[Deterministic Media Transforms](MEDIA_TRANSFORMS.md).

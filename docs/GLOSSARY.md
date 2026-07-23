@@ -105,6 +105,32 @@ commit so one fresh process can publish the next token atomically.
 archive through a fixed lineage-bound record whose atomic rename makes the
 complete successor visible at one filesystem boundary.
 
+**Glacier AI Runtime** — The complete shared execution fabric spanning artifact
+identity, planning, resources, scheduling, state/continuation, media, providers,
+publication, evidence, capabilities, and distribution. Individual planes have
+different maturity; the name is an architectural scope, not a claim that every
+model family is already supported.
+
+**ModelFamilyAdapter** — A proposed least-authority adapter that inspects
+bounded artifact metadata, creates a sealed family-specific plan, prepares
+backend views, validates candidate results, and requests typed publication or
+abort. Registration does not imply executable or validated support.
+
+**ModelExecutionPlan** — A proposed sealed value binding one model operation to
+artifact, input/output schema, state, exact resource/scratch/output ceilings,
+numerical policy, backend capabilities, challenge, and rejection/fallback
+policy before execution begins.
+
+**StateAdapter** — A proposed family-specific contract for verifying,
+checkpointing, restoring, and releasing typed state such as KV, recurrent
+state, encoder caches, latents, temporal caches, media windows, retrieval
+cursors, or action history.
+
+**Typed result publication** — A proposed generalization of token and media
+publication in which each family declares its atomic visible unit—such as a
+token, tensor, score, box, mask, transcript span, media chunk, retrieval result,
+or authorized action—and its replay, cancellation, and continuation rules.
+
 **MediaObject** — A fixed pointer-free, content-addressed identity for an
 immutable image, audio, or video payload plus exact byte length, kind-specific
 axes, semantic ABI, policy, provenance, and tenant scope. It does not grant
@@ -129,6 +155,12 @@ policy, resource policy, and challenge. A valid plan grants no I/O authority.
 payload, provenance, and footer reconstruct one `MediaObject`. The reference
 identity decoder maps every output pixel, PCM frame, or video frame to exact
 source bytes; it is not a general external-format codec.
+
+**MediaTransformPlan** — A fixed sealed plan binding decoded source evidence,
+operation, geometry or time/rate parameters, exact output/scratch bounds,
+implementation, resource policy, challenge, and capabilities. The current
+reference operations are image crop/nearest/tile, audio weighted mix/exact
+decimation, and video keyframe selection.
 
 **Retired entry** — A retained store payload with zero semantic references and
 no active lease. It is eligible for a future separately authorized sweep only

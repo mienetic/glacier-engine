@@ -39,6 +39,7 @@ energy, or production reliability.
 | `zig build continuation-checkpoint-file-demo -Dmetal=false` | Immutable whole-checkpoint archive, atomic selector switch, seven process-death phases, and fresh live resume after each recovery |
 | `zig build media-contract-demo -Dmetal=false` | Fixed image/audio/video descriptors, exact rational mapping, explicit event lineage, two logical chunk commits, and stale-replay rejection |
 | `zig build media-decode-fixture-demo -Dmetal=false` | Sealed plans plus bounded RGB8, PCM s16le, and intra-frame gray8 fixture decode with complete per-unit source mapping |
+| `zig build media-transform-demo -Dmetal=false` | Sealed image/audio/video transform plans, caller-owned allocation-free execution, exact output-unit mappings, and shared cross-language plan/receipt roots |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -77,6 +78,17 @@ mutation-checks every byte of all six wires.
 These deliberately tiny counts describe test coverage, not performance or
 format support. See [Bounded Media Decode Fixtures](MEDIA_DECODE_FIXTURES.md)
 for the exact claim boundary.
+
+The transform conformance fixture adds three operations over those decoded
+bytes: crop/nearest/tile mapping for the image, weighted stereo-to-mono mix with
+an exact factor-three decimation for audio, and keyframe selection for video.
+It emits 20 output bytes and seven exact mappings with zero heap allocation,
+zero scratch, and zero ambient capabilities. Zig and the independent Python
+oracle share all three 512-byte plan roots and all three receipt roots.
+
+These are correctness fixtures, not latency, throughput, signal-quality,
+format-coverage, or model-execution results. See
+[Deterministic Media Transforms](MEDIA_TRANSFORMS.md).
 
 ## Continuation checkpoint
 

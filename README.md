@@ -45,6 +45,10 @@ formats, and independent verifiers.
 - **Bounded media inputs.** Sealed decode plans and tiny RGB, PCM, and
   intra-frame video fixtures decode into caller-owned storage while mapping
   every pixel, audio frame, and video frame to exact source bytes.
+- **Deterministic media transforms.** A sealed 512-byte plan drives
+  allocation-free image crop/nearest/tile, audio weighted mix/exact decimation,
+  and video keyframe selection with exact per-output-unit mappings and
+  cross-language receipts.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -160,12 +164,14 @@ media object
   ├─ MediaObject ─── fixed image/audio/video content + policy identity
   ├─ DecodePlan ───── sealed decoder + representation + exact bounds
   ├─ fixture decode ─ caller-owned RGB / PCM / intra-frame bytes + mappings
+  ├─ TransformPlan ── crop/nearest/tile, mix/decimate, keyframe selection
   ├─ MediaTimeline ─ checked rational positions + explicit transform events
   └─ publication ─── output + resource root + timeline (one logical commit)
 ```
 
 See [Architecture](docs/ARCHITECTURE.md) for the component map and
-[Design](docs/DESIGN.md) for the invariants behind it.
+[Glacier AI Runtime Roadmap](docs/AI_RUNTIME_ROADMAP.md) for the full runtime
+planes, model-family adapter map, promotion gates, and contributor sequence.
 
 ## Quick start
 
@@ -196,6 +202,7 @@ zig build continuation-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-checkpoint-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-contract-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build media-decode-fixture-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build media-transform-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -214,12 +221,13 @@ model conversion, generation, and every demo command, continue with the
 
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
-| Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
+| AI runtime | CPU execution, optional Metal backend, prepared `.glrt` images, exact admission/scheduling/publication, continuation, provider and media planes | Common family/operation adapters, stable API, distribution and retained compatibility matrix |
+| Model families | Text-generation prototype plus shared tensor, state, provider, and media building blocks | Encoders/embeddings, vision, speech/audio, video, diffusion/generative media, multimodal, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline/publication plus sealed plans and bounded RGB, PCM, and intra-frame video fixtures with exact source mapping | Deterministic crop, resample, and frame-selection plans; model execution remains gated |
+| Multimodal | Shared identity/timeline/publication, bounded decode, and deterministic image crop/nearest/tile, audio mix/exact decimation, and video keyframe-selection plans with exact mappings | Concrete resource/output composition, streaming state, model adapters, and generated-media publication |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -248,6 +256,7 @@ valuable as new features.
 - [Quickstart](docs/QUICKSTART.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Glacier AI Runtime roadmap](docs/AI_RUNTIME_ROADMAP.md)
 - [Contributor projects](docs/PROJECTS.md)
 - [Benchmark and evidence guide](docs/BENCHMARKS.md)
 - [Evidence policy](docs/EVIDENCE_POLICY.md)
@@ -272,6 +281,7 @@ valuable as new features.
 - [Continuation checkpoint file](docs/CONTINUATION_CHECKPOINT_FILE.md)
 - [Shared media contract](docs/MEDIA_CONTRACT.md)
 - [Bounded media decode fixtures](docs/MEDIA_DECODE_FIXTURES.md)
+- [Deterministic media transforms](docs/MEDIA_TRANSFORMS.md)
 - [Multimodal roadmap](docs/MULTIMODAL_ROADMAP.md)
 - [Glossary](docs/GLOSSARY.md)
 

@@ -212,7 +212,10 @@ prove:
 
 - decoding of PNG, JPEG, WAV, FLAC, MP4, WebM, or another external format;
 - safety of third-party codec libraries or compressed untrusted input;
-- crop, resize, channel mix, resampling, frame selection, or synchronization;
+- crop, resize, channel mix, resampling, frame selection, or synchronization
+  within this decoder milestone; a separate retained transform prototype now
+  implements a narrow crop/nearest/tile, weighted mix/exact-decimation, and
+  keyframe-selection subset;
 - model embeddings, attention state, inference quality, or generated media;
 - durable media publication, capture, playback, or provider integration; or
 - throughput, latency, memory, energy, token, or cost improvements.
@@ -221,9 +224,12 @@ prove:
 
 The next work should preserve the sealed-plan and mapping roots:
 
-1. image: deterministic crop/tile reference plan with source-region coverage;
-2. audio: exact channel-mix and rational-resample reference plan;
-3. video: deterministic frame-selection plan over the keyframe/index surface;
+1. ~~image: deterministic crop/tile reference plan with source-region
+   coverage;~~ complete for crop/nearest/tile over the retained RGB fixture;
+2. ~~audio: exact channel-mix and rational-resample reference plan;~~ complete
+   for weighted stereo-to-mono mix plus exact factor-three decimation;
+3. ~~video: deterministic frame-selection plan over the keyframe/index
+   surface;~~ complete for retained keyframe selection;
 4. resource: bind exact output/scratch ceilings to a concrete
    `ResourceBank`/`LeaseTree` transaction;
 5. publication: compose decoded bytes, ownership, timeline, and output visibility
@@ -233,4 +239,5 @@ The next work should preserve the sealed-plan and mapping roots:
 
 See the [Shared Media Contract](MEDIA_CONTRACT.md) for identity and publication
 semantics and the [Multimodal Roadmap](MULTIMODAL_ROADMAP.md) for promotion
-gates.
+gates. See [Deterministic Media Transforms](MEDIA_TRANSFORMS.md) for the
+completed follow-on slice and its narrower claim boundary.

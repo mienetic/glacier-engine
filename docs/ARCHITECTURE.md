@@ -8,13 +8,14 @@ not.
 
 | Layer | Primary components | Responsibility |
 | --- | --- | --- |
+| Family adaptation | future `ModelFamilyAdapter`, operation registry, typed state/output adapters | Describe family-specific artifacts, planning, state, candidate validation, and publication units without expanding authority |
 | Model | `.glacier`, `.glrt`, loader, prepared model | Validate source and execution layouts before use |
-| Execution | CPU kernels, optional Metal backend, DecodePlan | Produce candidate activations, KV rows, and tokens |
+| Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
-| Media | `MediaObjectV1`, sealed decode plan, bounded fixture decoder, rational positions, timeline events, publication state | Bind image/audio/video identity and decoder bounds, map canonical fixture units to source bytes, then advance logical chunks exactly once without ambient I/O authority |
+| Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, transform canonical units with exact mappings, then advance logical chunks exactly once without ambient I/O authority |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -83,6 +84,15 @@ sealed DecodePlan + bounded fixture
 caller-owned canonical bytes + exact source-unit mappings
           │
           ▼
+sealed TransformPlan
+ crop/nearest/tile │ weighted mix/exact decimation │ keyframe select
+          │
+          ├─ stale source/root/bounds/geometry ──reject──> output unchanged
+          │
+          ▼
+caller-owned transformed bytes + exact output-unit mappings + receipt
+          │
+          ▼
 exact rational source span + explicit transform event
           │
           ├─ non-integral/invalid mapping ──reject──> no timeline change
@@ -98,12 +108,13 @@ next sequence + chunk count + logical units + timeline/commit roots
 ```
 
 The shared media layer is a model-free prototype. It verifies descriptors,
-sealed plan identity, integer-only positions, event lineage, logical
-publication state, and a tiny bounded fixture container. The reference identity
-decoder supports only retained RGB8, PCM s16le, and intra-frame gray8 fixtures;
-it has no external codec, encoder, filesystem, network, camera, microphone,
-model, or accelerator authority. A future integration must compose concrete
-resource/output transitions without weakening those boundaries.
+sealed decode and transform identity, integer-only positions, event lineage,
+logical publication state, and a tiny bounded fixture container. The reference
+path supports only retained RGB8, PCM s16le, and intra-frame gray8 fixtures plus
+image crop/nearest/tile, weighted audio mix/exact decimation, and keyframe
+selection. It has no external codec, encoder, filesystem, network, camera,
+microphone, model, or accelerator authority. A future integration must compose
+concrete resource/output transitions without weakening those boundaries.
 
 ### ResourceBank
 
@@ -455,6 +466,10 @@ still require real machines for each promoted platform.
   publication.
 - [Bounded media decode fixtures](MEDIA_DECODE_FIXTURES.md): sealed plans,
   caller-owned RGB/PCM/video fixture decode, and complete source-unit mapping.
+- [Deterministic media transforms](MEDIA_TRANSFORMS.md): sealed transform plans,
+  allocation-free reference execution, exact mappings, and cross-language roots.
 - [Multimodal roadmap](MULTIMODAL_ROADMAP.md): gated shared media identity,
   timeline, transaction, image, audio, and video tracks.
+- [Glacier AI Runtime roadmap](AI_RUNTIME_ROADMAP.md): shared runtime planes,
+  universal family adapters, coverage map, gates, and delivery sequence.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

@@ -13,9 +13,12 @@ Every track advances through evidence-backed states:
 
 ## North star
 
-Build a local and provider-backed AI execution fabric where every visible token
-can be connected to exact resource ownership, deterministic scheduling,
-transactional state publication, and independently verifiable evidence.
+Build a full local, edge, accelerator, and provider-backed AI runtime where
+every visible token, tensor, score, media chunk, retrieval result, or authorized
+action can be connected to exact artifact identity, resource ownership,
+scheduling, state, transactional publication, and independently verifiable
+evidence. The plane and model-family sequence is specified in the
+[Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).
 
 ## Current snapshot
 
@@ -26,8 +29,9 @@ transactional state publication, and independently verifiable evidence.
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
-| Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
-| Multimodal execution | Prototype fixtures; execution gated | Shared identity/timeline/publication, sealed plan ABI, and bounded RGB8, PCM s16le, and intra-frame gray8 fixtures with complete source mapping | Crop, resample, and frame-selection plans; concrete resource/output integration; then the production-continuation gate |
+| AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, and media preprocessing | Common family/operation adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
+| Model-family breadth | Text-generation prototype; other families gated | Shared artifact, tensor, state, provider, media, and evidence building blocks | Encoders/embeddings first, then perception, generative media, multimodal, agents/retrieval, and specialized families |
+| Multimodal execution | Transform prototype; model execution gated | Shared identity/timeline/publication, bounded RGB8/PCM/intra-frame decode, plus deterministic image crop/nearest/tile, audio mix/exact decimation, and video keyframe selection | Concrete resource/output integration, streaming state, external formats, model adapters, and generated-media publication |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -93,6 +97,11 @@ transactional state publication, and independently verifiable evidence.
 - [x] Fixed sealed media decode plan plus bounded RGB, PCM, and intra-frame
   video fixtures with caller-owned output, complete unit mappings, and
   cross-language mutation-complete verification.
+- [x] Fixed sealed media transform plan with allocation-free image
+  crop/nearest/tile, audio weighted mix/exact decimation, and video keyframe
+  selection, exact mappings, and shared Zig/Python plan and receipt roots.
+- [x] Full AI runtime architecture roadmap with shared planes, universal adapter
+  contracts, model-family coverage map, promotion gates, and contributor lanes.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -278,6 +287,8 @@ valid prefixes survive process loss, and corrupt complete frames fail closed.
 
 ### Model and tokenizer support
 
+- define the common family, operation, artifact, state, and result vocabulary
+  from the [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md);
 - expand tiny legal fixtures before adding large model downloads;
 - separate architecture parsing from tensor naming;
 - add tokenizer normalization and special-token conformance;
@@ -289,12 +300,12 @@ for unsupported inputs, and reproducible generation instructions.
 
 ### Multimodal execution
 
-Status: **prototype fixtures; execution gated**. Shared identity, rational
-timeline/events, logical chunk publication, sealed plans, and bounded canonical
-RGB/PCM/intra-frame fixture decode now work in isolation. External format
-decoding or model execution still starts only after the durable-continuation
-promotion gate above. Tiny legal fixtures do not imply integrated model
-support.
+Status: **deterministic transform prototype; model execution gated**. Shared
+identity, rational timeline/events, logical chunk publication, sealed plans,
+bounded canonical RGB/PCM/intra-frame decode, and three deterministic transforms
+now work in isolation. External format decoding or model execution still starts
+only after its stated continuation and integration gates. Tiny legal fixtures do
+not imply integrated model support.
 
 The implementation sequence is:
 
@@ -302,10 +313,12 @@ The implementation sequence is:
    bounded three-modality fixture decode, and logical transactional publication
    are complete as model-free prototypes; concrete ResourceBank/output
    composition remains;
-2. bounded image input and exact source-region/patch mapping;
-3. streaming audio with sample-range, resample, transcript, and playback state;
-4. video frame selection, audio/subtitle synchronization, temporal cache, and
-   segment publication; and
+2. bounded image crop/nearest/tile and exact source-pixel mapping are complete;
+3. weighted stereo-to-mono mixing and exact integer decimation are complete;
+   streaming chunks, feature windows, transcript, and playback state remain;
+4. keyframe selection and exact frame/time mappings are complete;
+   audio/subtitle synchronization, temporal cache, and segment publication
+   remain; and
 5. generated image/audio/video output only after cancellation, restart, and
    provenance rules are proven.
 

@@ -105,6 +105,18 @@ before the first stable release.
 - Mutation-complete verification for all three fixture and decode-plan wires
   plus foreign-plan, output-capacity, overlap, truncation, and re-rooted
   semantic contradiction rejection.
+- A fixed 512-byte sealed media transform plan binding source decode evidence,
+  implementation, exact geometry/time/rate parameters, resource policy,
+  challenge, capabilities, output bounds, and its domain-separated root.
+- Allocation-free caller-owned image crop/nearest/tile, audio weighted
+  stereo-to-mono mix with exact integer decimation, and video keyframe-selection
+  executors with one exact mapping per visible output unit.
+- Shared Zig/Python transform plan, mapping-chain, output, and receipt evidence,
+  including every-byte plan mutation, re-rooted contradiction, stale binding,
+  capacity, substitution, and native overlap rejection.
+- A full Glacier AI Runtime roadmap defining shared runtime planes, universal
+  family adapters, model-family coverage, promotion gates, delivery sequence,
+  use cases, and contributor-sized lanes.
 
 ### Status
 

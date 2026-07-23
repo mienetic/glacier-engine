@@ -75,18 +75,44 @@ Add a tiny, redistributable fixture covering one loader or tensor-layout branch.
 
 ### Media transform reference models
 
-The first fixture slice is complete: one canonical container now covers tiny
-RGB8, PCM s16le, and intra-frame gray8 video through sealed plans, bounded
-caller-owned decode, complete source mappings, and independent golden vectors.
+The first transform slice is complete: one fixed plan now covers image
+crop/nearest/tile mapping, weighted stereo-to-mono mixing with exact integer
+decimation, and keyframe-only video selection. Zig and Python share plan and
+receipt roots, every output unit maps to exact source units/bytes/time, and
+unsupported geometry, rate, selection, identity, capacity, and overlap reject.
 
-Add one deterministic transform without importing a production codec: image
-crop/tile, audio channel mix/resample, or video frame selection. Preserve exact
-input/output ranges and make unsupported geometry reject.
+**Next slice:** add one bounded case—grayscale crop, a second convex channel
+mix, a second exact rate factor, or multi-keyframe selection—without expanding
+to a production codec. Preserve the existing plan/mapping identity or propose a
+versioned ABI with migration fixtures. Reuse
+[Deterministic Media Transforms](MEDIA_TRANSFORMS.md).
 
-**First slice:** pure plan + reference transform + exhaustive tiny mapping
-fixtures; no model, device, or network integration. Reuse
-[Bounded Media Decode Fixtures](MEDIA_DECODE_FIXTURES.md) and see the
-[Multimodal Roadmap](MULTIMODAL_ROADMAP.md).
+### AI runtime family registry
+
+Define one small part of the common vocabulary from the
+[Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md): a family ID, operation ID,
+typed input/output kind, numerical policy, or explicit unsupported result.
+
+**First slice:** a fixed bounded registry value plus malformed/unknown fixtures
+and a read-only renderer. It must not claim that registering a family makes it
+executable.
+
+### Stateless encoder result envelope
+
+Design a typed result for one embedding, reranking, or classification fixture.
+Keep logical batch-item identity, tensor shape, normalization/tie policy,
+artifact root, execution-plan root, and publication sequence explicit.
+
+**First slice:** pure encode/decode/verify plus an independent Python model; no
+weights, model download, backend, or quality claim.
+
+### Model-family adapter lifecycle
+
+Prototype `inspect → plan → prepare → validate candidate → publish/abort` with
+two fake families that have different state/output semantics.
+
+**First slice:** one stateless vector family and one stateful step family under
+zero ambient capabilities, fixed buffers, and deterministic rejection tests.
 
 ### ResourceBank property tests
 
@@ -212,6 +238,24 @@ Define an extension boundary whose declared capabilities can be admitted and
 recorded before executing third-party planner, tokenizer, or transport code.
 
 **First slice:** capability vocabulary and fail-closed negotiation tests.
+
+### Generative-media state adapter
+
+Model a tiny deterministic latent plus scheduler-step state without an image or
+video model. Bind artifact, numerical policy, current step, latent root,
+candidate output, cancellation, checkpoint, and publication lineage.
+
+**First slice:** pure state machine that survives one process restart and never
+publishes the same synthetic media chunk twice.
+
+### Agent action authorization boundary
+
+Separate a model-proposed action from permission to invoke a tool. A proposal
+may name a schema and arguments but cannot acquire network, filesystem, process,
+or credential authority by itself.
+
+**First slice:** one fake idempotent tool, exact proposal/result roots,
+operation/byte ceilings, cancellation, replay rejection, and no real I/O.
 
 ### Production weight pager
 
