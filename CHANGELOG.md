@@ -8,6 +8,10 @@ before the first stable release.
 
 ### Added
 
+- Fixed multimodal processor/cache state: image tile/patch progress, audio
+  feature windows, video temporal-cache windows, and an exact synchronized
+  watermark share a 2,272-byte lineage-bound bundle with an independent Python
+  verifier and mutation-complete tests.
 - Post-restore multimodal successor checkpoints: a fresh process rebinds six
   retained image/audio/video outputs, appends three chunks, atomically
   publishes generation three, releases ownership, and supports another

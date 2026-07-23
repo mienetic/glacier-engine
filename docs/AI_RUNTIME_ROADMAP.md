@@ -196,8 +196,12 @@ atomic archive root. Two lineage-bound generations resume as complete
 previous/successor sets across all seven native process-death boundaries.
 A restarted runtime now rebinds all retained outputs, appends one chunk for
 each modality, publishes generation three, and supports another fresh-process
-resume from that new root. External codecs, capture, playback, media models,
-and generated-media publication remain gated.
+resume from that new root. A separate fixed 2,272-byte processor-state bundle
+now advances image tile/patch progress, audio feature windows, video temporal
+cache state, and an exact integer synchronized watermark through two verified
+generations. Binding that bundle into the durable checkpoint archive, external
+codecs, capture, playback, media models, and generated-media publication remain
+gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -387,10 +391,18 @@ while retaining different state and publication semantics.
   retained ownership and rejecting stale source authority; complete for a
   fresh-process generation-two to generation-three transition, six rebound
   outputs, three appended chunks, and a second fresh-process resume;
-- integrate image processors and vision encoder fixtures;
+- integrate image processors and vision encoder fixtures; bounded tile/patch
+  progress and logical cache accounting are complete, while encoder execution
+  remains;
 - add audio feature windows, transcript transactions, and streaming restart;
-- add video temporal selection, synchronized timeline state, and cache ownership;
-- extend checkpoints with family-specific processor/cache state.
+  fixed window/hop/context and feature-cache state are complete, while
+  transcript and restart integration remain;
+- add video temporal selection, synchronized timeline state, and cache
+  ownership; fixed window/eviction state plus exact audio/video watermark is
+  complete, while physical cache ownership remains;
+- extend checkpoints with family-specific processor/cache state; the fixed
+  independently verified bundle is complete outside the archive, and durable
+  object integration is next.
 
 Exit gate: image, audio, and video input paths preserve exact source mappings,
 stay within admitted memory/time bounds, and resume or cancel at declared units.

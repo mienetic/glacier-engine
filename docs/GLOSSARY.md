@@ -231,6 +231,14 @@ fixed image, audio, and video stream checkpoints plus a canonical
 retained-output bundle. A single selector root makes only the complete previous
 or successor multimodal generation visible across process death.
 
+**Media processor state** — A fixed record for lineage-bound preprocessing
+progress and logical cache accounting. The current bounded forms cover image
+tile/patch progress, audio feature windows, and video temporal windows.
+
+**Synchronized media watermark** — The lower exact master-clock tick reached by
+the bound audio and video processor states, accepted only when integer mapping
+is exact and declared stream skew remains within policy.
+
 **Restored ownership receipt** — A domain-separated commitment that replaces a
 dead source's retained-output authority with the fresh Bank epoch, receipt
 identity, owner and claims actually reacquired during restore. It also binds the

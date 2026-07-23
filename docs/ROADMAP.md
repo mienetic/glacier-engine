@@ -31,7 +31,7 @@ evidence. The plane and model-family sequence is specified in the
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, and an integrated model-free image/audio/video transaction vertical | Common family/operation adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
 | Model-family breadth | Text-generation prototype; other families gated | Shared artifact, tensor, state, provider, media, and evidence building blocks | Encoders/embeddings first, then perception, generative media, multimodal, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime, streaming, two-process continuation, atomic checkpoint sets, and a restored-process generation-three successor integrated; model execution gated | Shared identity/timeline, exact per-buffer ownership, chunk chains, fixed checkpoints, fresh-Bank restore/rebinding, canonical retained-output bundles, one-root image/audio/video selection, seven process-death boundaries, and a second resume from the post-restore successor | External formats, typed model adapters, synchronized audio/video state, temporal caches, and generated-media publication |
+| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, and bounded processor/cache state integrated; model execution gated | Shared identity/timeline, exact per-buffer ownership, atomic checkpoint sets, image tile/patch state, audio window/hop/context state, video temporal-window state, logical cache bytes, and an exact synchronized watermark | Bind processor/cache bundle into checkpoint generations, then external formats, typed model adapters, physical cache ownership, and generated-media publication |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -347,7 +347,9 @@ The implementation sequence is:
    release are complete for all three retained fixtures; crash-atomic media
    selection, two source-side generations, restored ownership rebinding, a
    fresh-process generation-three checkpoint, and another resume from that
-   checkpoint are complete; and
+   checkpoint are complete; fixed image tile/patch, audio feature-window, video
+   temporal-cache, and synchronized-watermark state is also complete outside
+   the durable archive; and
 6. generated image/audio/video output only after cancellation, restart, and
    provenance rules are proven.
 
@@ -415,7 +417,7 @@ ideas unless a different status is stated.
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
 | Object Fabric | Prototype (durable payload bytes and logical ownership reacquisition; in-memory object lifecycle) | Tenant-safe content-addressed model, plan, KV, continuation, media, and evidence objects |
 | Media Capsule | Idea (gated) | Typed image, audio, and video identity with explicit decode/preprocess meaning |
-| MediaTimeline and MediaTxn | Integrated model-free fixture, bounded stream, two-process restart, atomic set vertical, and post-restore successor; model/external-format gated | Exact sample/frame position, per-buffer execution, cancellation-safe chunk chaining, retained-output reacquisition and rebinding, one-root generation selection, and repeated next-chunk publication across fresh processes |
+| MediaTimeline and MediaTxn | Integrated model-free fixture, bounded stream, post-restore successor, and fixed processor/cache bundle; model/external-format gated | Exact sample/frame position, per-buffer execution, retained-output rebinding, image/audio/video processor progress, logical temporal-cache accounting, and an integer synchronized watermark |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |

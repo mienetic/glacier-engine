@@ -107,6 +107,10 @@ zig build media-stream-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 # boundaries, then create and resume generation three from a restored process
 zig build media-stream-checkpoint-set-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Verify image processor, audio feature-window, video temporal-cache, and sync
+# state through two lineage-bound generations
+zig build media-processor-state-demo -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

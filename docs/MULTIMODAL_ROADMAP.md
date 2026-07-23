@@ -2,8 +2,9 @@
 
 Status: **integrated model-free image/audio/video runtime, bounded streaming,
 two-process continuation, crash-atomic checkpoint sets, and a post-restore
-generation-three successor; media-model execution and external formats remain
-gated**.
+generation-three successor; bounded image processor, audio feature-window,
+video temporal-cache, and synchronized-watermark state integrated outside the
+durable archive; media-model execution and external formats remain gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -29,6 +30,10 @@ seven root-switch process-death boundaries. Another fresh process now restores
 generation two, rebinds six retained-output leases under three fresh Banks,
 appends one image/audio/video chunk, and atomically publishes generation three.
 A second fresh process opens generation three and continues all three streams.
+A fixed processor-state layer now advances image tile/patch progress, audio
+feature windows, and video temporal-cache windows together. It maps audio and
+video cursors to one exact integer master clock and commits the lower end tick
+as a synchronized watermark.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -167,7 +172,22 @@ archive and selector durability phase without mixed visibility. See the
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), followed by
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), then
-[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md).
+[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md) and
+[Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md).
+
+### MediaProcessorState
+
+The bounded model-free state ABI is complete. Three fixed 512-byte processor
+records and one fixed 512-byte synchronized record form a canonical 2,272-byte
+bundle. The records bind image tile/patch progress, audio window/hop/context
+and feature-cache accounting, video temporal-window/eviction state, exact
+logical cache bytes, processor/decoder identities, ownership and output roots,
+generation predecessors, and an integer audio/video watermark. Zig and Python
+share the bundle golden and reject every byte mutation.
+
+Durable integration remains: the processor-state bundle is not yet the fifth
+object in the atomic media checkpoint set, so this slice does not claim that a
+process restart reconstructs processor or temporal-cache payloads.
 
 ## Image track
 
@@ -226,7 +246,9 @@ First slices:
 4. ~~per-buffer lease ownership;~~ complete in the shared hierarchical runtime;
 5. ~~bounded streaming chunk transaction with target overlap/gap evidence and
    cancellation-safe retry;~~ complete for two adjacent retained source ranges;
-6. feature-window or audio-token mapping back to source sample ranges;
+6. feature-window or audio-token mapping back to source sample ranges; exact
+   window/hop/context cursor state is complete for the bounded feature fixture,
+   while token mapping remains;
 7. partial transcript publication without duplicated text after restart;
 8. generated-audio chunk ordering and playback acknowledgement;
 9. microphone/network adapters outside the authority-free core.
@@ -262,7 +284,9 @@ First slices:
    outputs, and cancellation-safe ownership;~~ complete for the fixture;
 7. decode queue admission under deadline and cancellation ceilings;
 8. audio/subtitle linkage through `MediaTimeline`;
-9. temporal-cache ownership and continuation state;
+9. temporal-cache ownership and continuation state; fixed temporal-window,
+   eviction, logical byte, ownership-root, and predecessor state is complete,
+   while ResourceBank materialization and checkpoint-archive restore remain;
 10. generated segment publication with ordered manifest and chunk roots.
 
 Promotion gate: frame selection and temporal ordering replay exactly; seek,
@@ -294,8 +318,8 @@ Early contributions can proceed without a large model:
 - decompression and allocation ceiling tests;
 - extend the completed deterministic crop/nearest, mix/exact-decimation, and
   keyframe-selection reference models with new bounded cases;
-- extend the completed post-restore successor proof with external decoder
-  state, audio feature windows, and video temporal caches;
+- bind the completed processor/cache state bundle into the post-restore
+  checkpoint successor and materialize its cache ownership;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 

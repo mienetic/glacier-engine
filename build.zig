@@ -1358,6 +1358,41 @@ pub fn build(b: *std.Build) void {
         &media_stream_checkpoint_set_worker_exe.step,
     );
 
+    // Fixed image processor, audio feature-window, video temporal-cache, and
+    // exact synchronized-watermark state share one independently verifiable
+    // bundle and advance through lineage-bound generations.
+    const media_processor_state_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-media-processor-state-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/media_processor_state.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    media_processor_state_demo_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    const run_media_processor_state_demo =
+        b.addRunArtifact(media_processor_state_demo_exe);
+    const media_processor_state_demo_step = b.step(
+        "media-processor-state-demo",
+        "Run bounded multimodal processor/cache state proof",
+    );
+    media_processor_state_demo_step.dependOn(
+        &run_media_processor_state_demo.step,
+    );
+    test_step.dependOn(
+        &run_media_processor_state_demo.step,
+    );
+    test_compile_step.dependOn(
+        &media_processor_state_demo_exe.step,
+    );
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

@@ -145,11 +145,21 @@ generation three, and releases all ownership. Another fresh worker opens that
 new root and resumes three more chunks, bringing the demo total to 45. It
 exercises real process death and sync calls, not storage-device power loss.
 
+The processor-state demo advances two generations of a fixed 2,272-byte
+image/audio/video state bundle. Generation two records two processed image
+tiles, two audio feature windows with a 400-sample window and 160-sample hop,
+and two temporal video-cache entries. Exact integer mapping produces audio tick
+560, video tick 800, and synchronized watermark 560 under a 400-tick skew
+ceiling. Rehashed processor substitution, ownership replay, and skipped audio
+windows reject. These are logical state and cache-byte conformance values, not
+processor throughput or physical memory measurements.
+
 These values are deterministic conformance counts. They do not measure process
 memory, physical device residency, throughput, latency, model quality, codec
 coverage, or provider usage. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), followed by
+[Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md),
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), followed by
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md).

@@ -116,8 +116,11 @@ The first continuation layer is complete in
    then repeat process death at every write, sync, and root-switch boundary;~~
    complete for two whole image/audio/video generations and seven native
    `SIGKILL` boundaries;
-5. add repeated checkpoint generations after resumed chunks, rebinding fresh
-   ownership without accepting stale source receipts;
+5. ~~add repeated checkpoint generations after resumed chunks, rebinding fresh
+   ownership without accepting stale source receipts;~~ complete for one
+   generation-two to generation-three transition and another fresh resume;
 6. add family-specific state for audio windows, video temporal caches, and
-   image processor/cross-attention state; and
+   image processor/cross-attention state; fixed image/audio/video processor and
+   synchronized state is complete, while checkpoint binding and
+   cross-attention state remain; and
 7. define generated-media partial-output and cancellation policy.

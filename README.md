@@ -73,6 +73,9 @@ formats, and independent verifiers.
   ownership from the selected generation, appends image/audio/video chunks,
   atomically publishes generation three, releases its Banks, and supports
   another fresh-process resume without accepting stale source authority.
+- **Multimodal processor/cache state.** Fixed image tile/patch progress, audio
+  feature windows, video temporal-cache windows, and an exact synchronized
+  watermark form one lineage-bound, independently verified state bundle.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -275,7 +278,7 @@ model conversion, generation, and every demo command, continue with the
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, fixed checkpoints, charge-before-materialization restore, atomic generations, post-restore ownership rebinding, and a fresh-process generation-three successor for image/audio/video fixtures | External formats, typed model adapters, synchronized audio/video state, temporal caches, and generated-media publication |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, fixed checkpoints, post-restore generation three, image processor progress, audio feature windows, video temporal caches, and an exact synchronized watermark | Bind processor/cache state into the atomic checkpoint archive, then add external formats, typed model adapters, and generated-media publication |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -314,6 +317,7 @@ valuable as new features.
 - [Bounded media stream runtime](docs/MEDIA_STREAM_RUNTIME.md)
 - [Media stream continuation](docs/MEDIA_STREAM_CONTINUATION.md)
 - [Atomic media stream checkpoint sets](docs/MEDIA_STREAM_CHECKPOINT_SET.md)
+- [Multimodal processor and cache state](docs/MEDIA_PROCESSOR_STATE.md)
 - [Paging contract](docs/PAGING.md)
 - [Continuation capsule](docs/CONTINUATION_CAPSULE.md)
 - [Continuation object resolver](docs/CONTINUATION_OBJECT_RESOLVER.md)

@@ -120,6 +120,7 @@ another fresh process.
 
 It does not provide multi-writer leader election, emulate storage-device power
 loss, or carry external codecs, capture/playback, media-model state, or
-generated-media publication. The next media-state milestone adds
-family-specific audio windows, video temporal caches, image processor state,
-and generated-output policy to the completed ownership transition.
+generated-media publication. Fixed family-specific audio windows, video
+temporal caches, image processor state, and a synchronized watermark now exist
+as a separate bundle. The next milestone carries that bundle through the
+completed ownership transition and atomic checkpoint archive.

@@ -118,12 +118,18 @@ three, releases its ownership, and a second fresh process resumes that root.
 Rehashed stale epochs, replayed receipts, and substituted restored owners
 reject independently.
 
-**Next slice:** carry external decoder/processor state through the same
-successor path. Start with bounded audio feature windows and video temporal
-cache entries, bind synchronized timeline roots, then add cancellation and
-restart cases without expanding ambient authority. Reuse
-[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md) and
-[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md).
+The first processor-state slice is complete too. Fixed records now bind image
+tile/patch progress, audio window/hop/context and feature-cache accounting,
+video temporal-window/eviction state, logical cache bytes, and an exact
+audio/video watermark. Zig and Python share one canonical bundle root.
+
+**Next slice:** add the processor-state bundle as the fifth atomic checkpoint
+object. Bind its generation, request, challenge, three stream roots, ownership
+set and output set to the checkpoint archive, then reconstruct it during the
+post-restore successor without expanding ambient authority. Reuse
+[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md),
+[Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), and
+[Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md).
 
 ### AI runtime family registry
 

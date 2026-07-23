@@ -154,18 +154,28 @@ worker restores generation two, binds the retained leases to its new Bank
 epochs, appends all three modality chunks, and publishes generation three.
 The next process opens that root and resumes again.
 
+`MediaProcessorState` adds a separate canonical state plane for the work
+between bounded decode and future model adapters. Three fixed modality records
+bind image tile/patch progress, audio feature windows, and video temporal-cache
+windows. A fourth record maps audio/video cursors to one exact integer master
+clock and binds the committed watermark, skew ceiling, ownership set, output
+set, sync policy, and predecessor. The complete state bundle is 2,272 bytes and
+has an independent verifier. It is not yet an object in the atomic checkpoint
+archive.
+
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
 decimation, and keyframe selection. It has no external codec, encoder,
 network, camera, microphone, model, or accelerator authority. The atomic-set
 worker has explicit filesystem authority but does not emulate device power
-loss. External formats, synchronized audio/video processor state, temporal
-caches, and model adapters remain future layers. See
+loss. External formats, real processor/cache payload materialization, durable
+processor-state restore, and model adapters remain future layers. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), then
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), followed by
-[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md).
+[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md) and
+[Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md).
 
 ### ResourceBank
 

@@ -129,5 +129,7 @@ second seven-phase campaign specifically during restored execution is not
 claimed.
 
 Multi-writer leader election, archive garbage collection policy, external
-codecs, capture/playback, family-specific processor/cache state, media-model
-execution, and generated-media publication also remain gated.
+codecs, capture/playback, processor/cache bundle integration, media-model
+execution, and generated-media publication also remain gated. The fixed
+processor/cache bundle exists independently, but is not yet a checkpoint-set
+object.
