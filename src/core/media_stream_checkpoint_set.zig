@@ -735,6 +735,25 @@ pub fn validateSuccessorV1(
     }
 }
 
+pub fn validateRestoredSuccessorV1(
+    previous: *const DecodedSetV1,
+    successor: *const DecodedSetV1,
+) Error!void {
+    validateSuccessorV1(
+        previous,
+        successor,
+    ) catch return Error.InvalidSuccessor;
+    for (
+        previous.checkpoints,
+        successor.checkpoints,
+    ) |prior, next| {
+        continuation.validateRestoredSuccessorCheckpointV1(
+            prior,
+            next,
+        ) catch return Error.InvalidSuccessor;
+    }
+}
+
 pub fn bundleRootV1(body: []const u8) Digest {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
     hash.update(bundle_domain);

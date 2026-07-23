@@ -83,7 +83,12 @@ def bundle_fixture() -> tuple[bytes, list[dict[str, object]]]:
 
 def stream_generations(
     stream_index: int,
-) -> tuple[dict[str, object], dict[str, object], list[bytes]]:
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    list[bytes],
+]:
     spec = (
         fixture.image_spec(),
         fixture.audio_spec(),
@@ -110,13 +115,13 @@ def stream_generations(
     checkpoints: list[dict[str, object]] = []
     previous_chunk = stream.ZERO_DIGEST
     previous_checkpoint = continuation.ZERO_DIGEST
-    for chunk_index in range(2):
+    for chunk_index in range(3):
         if stream_index == 0:
             plan = transform.make_image_plan(
                 parsed,
                 decode_receipt,
                 0,
-                chunk_index,
+                chunk_index % 2,
                 2,
                 1,
                 2,
@@ -130,7 +135,7 @@ def stream_generations(
             plan = transform.make_audio_plan(
                 parsed,
                 decode_receipt,
-                chunk_index * 3,
+                (chunk_index % 2) * 3,
                 3,
                 16_000,
                 1,
@@ -143,7 +148,7 @@ def stream_generations(
             plan = transform.make_video_plan(
                 parsed,
                 decode_receipt,
-                (chunk_index,),
+                (chunk_index % 2,),
                 digest(0xF1),
                 digest(0xF2),
             )
@@ -193,7 +198,11 @@ def stream_generations(
         outputs.append(bytes(output))
         generation = chunk_index + 1
         generation_base = (
-            17_000 if generation == 1 else 18_000
+            17_000
+            if generation == 1
+            else 18_000
+            if generation == 2
+            else 19_000
         ) + stream_index * 100
         checkpoint = continuation.make_checkpoint(
             state,
@@ -201,7 +210,7 @@ def stream_generations(
             16_200 + stream_index,
             {
                 "checkpoint_generation": generation,
-                "chunk_limit": 3,
+                "chunk_limit": 4,
                 "restore_bank_epoch": generation_base,
                 "restore_owner_key_base": generation_base + 10,
                 "restore_tree_key_base": generation_base + 20,
@@ -220,14 +229,16 @@ def stream_generations(
         checkpoints.append(checkpoint)
         previous_chunk = chunk["receipt_sha256"]
         previous_checkpoint = checkpoint["checkpoint_sha256"]
-    return checkpoints[0], checkpoints[1], outputs
+    return checkpoints[0], checkpoints[1], checkpoints[2], outputs
 
 
 def checkpoint_generations() -> tuple[bytes, bytes]:
     first_streams: list[dict[str, object]] = []
     second_streams: list[dict[str, object]] = []
     for stream_index in range(checkpoint_set.STREAM_COUNT):
-        first, second, outputs = stream_generations(stream_index)
+        first, second, _third, outputs = stream_generations(
+            stream_index
+        )
         first_streams.append(
             {
                 "checkpoint": first,
@@ -237,7 +248,7 @@ def checkpoint_generations() -> tuple[bytes, bytes]:
         second_streams.append(
             {
                 "checkpoint": second,
-                "retained_outputs": outputs,
+                "retained_outputs": outputs[:2],
             }
         )
     first_set = checkpoint_set.encode_set(
@@ -249,6 +260,66 @@ def checkpoint_generations() -> tuple[bytes, bytes]:
         archive.decode_set(first_set)["checkpoint_sha256"],
     )
     return first_set, second_set
+
+
+def restored_checkpoint_generations() -> tuple[bytes, bytes]:
+    second_streams: list[dict[str, object]] = []
+    third_streams: list[dict[str, object]] = []
+    for stream_index in range(checkpoint_set.STREAM_COUNT):
+        _first, second, direct_third, outputs = stream_generations(
+            stream_index
+        )
+        restored_third = dict(direct_third)
+        entries = [dict(entry) for entry in direct_third["entries"]]
+        for index, entry in enumerate(entries):
+            entry["source_bank_epoch"] = second["restore_bank_epoch"]
+            if index < len(second["entries"]):
+                prior = second["entries"][index]
+                entry["source_owner_key"] = prior["restore_owner_key"]
+                entry["parent_claim"] = prior["parent_claim"]
+                entry["output_claim"] = prior["output_claim"]
+                entry["publication_next_sequence"] = prior[
+                    "publication_next_sequence"
+                ]
+                entry["lease_receipt_sha256"] = (
+                    continuation.restored_ownership_receipt_root(
+                        second["checkpoint_sha256"],
+                        prior,
+                        entry,
+                    )
+                )
+            else:
+                entry["source_owner_key"] = second[
+                    "next_owner_key_base"
+                ]
+        restored_third["entries"] = entries
+        restored_third["retained_manifest_sha256"] = (
+            continuation.retained_manifest_root(entries)
+        )
+        restored_third["checkpoint_sha256"] = (
+            continuation.checkpoint_root(restored_third)
+        )
+        second_streams.append(
+            {
+                "checkpoint": second,
+                "retained_outputs": outputs[:2],
+            }
+        )
+        third_streams.append(
+            {
+                "checkpoint": restored_third,
+                "retained_outputs": outputs,
+            }
+        )
+    second_set = checkpoint_set.encode_set(
+        second_streams,
+        digest(0x91),
+    )
+    third_set = checkpoint_set.encode_set(
+        third_streams,
+        archive.decode_set(second_set)["checkpoint_sha256"],
+    )
+    return second_set, third_set
 
 
 class MediaStreamCheckpointSetTests(unittest.TestCase):
@@ -305,6 +376,105 @@ class MediaStreamCheckpointSetTests(unittest.TestCase):
             second["archive"]["metadata"]["parent_checkpoint_sha256"],
             first["archive"]["checkpoint_sha256"],
         )
+
+    def test_post_restore_successor_rebinds_every_stream(self) -> None:
+        second_wire, third_wire = restored_checkpoint_generations()
+        second = checkpoint_set.decode_set(second_wire)
+        third = checkpoint_set.decode_set(third_wire)
+        checkpoint_set.validate_restored_successor(second, third)
+        self.assertEqual(third["archive"]["metadata"]["generation"], 3)
+        self.assertEqual(len(third["bundle"]["outputs"]), 9)
+        for old, new in zip(
+            second["checkpoints"],
+            third["checkpoints"],
+        ):
+            self.assertNotEqual(
+                new["restore_bank_epoch"],
+                old["restore_bank_epoch"],
+            )
+            for index, entry in enumerate(new["entries"]):
+                self.assertEqual(
+                    entry["source_bank_epoch"],
+                    old["restore_bank_epoch"],
+                )
+                if index < len(old["entries"]):
+                    self.assertEqual(
+                        entry["source_owner_key"],
+                        old["entries"][index]["restore_owner_key"],
+                    )
+                else:
+                    self.assertEqual(
+                        entry["source_owner_key"],
+                        old["next_owner_key_base"],
+                    )
+
+    def test_rehashed_stale_restored_authority_rejects(self) -> None:
+        second_wire, third_wire = restored_checkpoint_generations()
+        second = checkpoint_set.decode_set(second_wire)
+        third = checkpoint_set.decode_set(third_wire)
+
+        for attack in ("stale_epoch", "receipt_replay", "foreign_owner"):
+            streams: list[dict[str, object]] = []
+            for stream_index, (old, checkpoint) in enumerate(
+                zip(second["checkpoints"], third["checkpoints"])
+            ):
+                forged = dict(checkpoint)
+                entries = [dict(entry) for entry in checkpoint["entries"]]
+                if attack == "stale_epoch":
+                    for entry in entries:
+                        entry["source_bank_epoch"] += 10_000
+                    for index, prior in enumerate(old["entries"]):
+                        entries[index]["lease_receipt_sha256"] = (
+                            continuation.restored_ownership_receipt_root(
+                                old["checkpoint_sha256"],
+                                prior,
+                                entries[index],
+                            )
+                        )
+                elif attack == "receipt_replay":
+                    entries[0]["lease_receipt_sha256"] = old["entries"][0][
+                        "lease_receipt_sha256"
+                    ]
+                else:
+                    entries[0]["source_owner_key"] += 1
+                    entries[0]["lease_receipt_sha256"] = (
+                        continuation.restored_ownership_receipt_root(
+                            old["checkpoint_sha256"],
+                            old["entries"][0],
+                            entries[0],
+                        )
+                    )
+                forged["entries"] = entries
+                forged["retained_manifest_sha256"] = (
+                    continuation.retained_manifest_root(entries)
+                )
+                forged["checkpoint_sha256"] = (
+                    continuation.checkpoint_root(forged)
+                )
+                outputs = [
+                    entry["output"]
+                    for entry in third["bundle"]["outputs"]
+                    if entry["kind"] == checkpoint_set.KINDS[stream_index]
+                ]
+                streams.append(
+                    {
+                        "checkpoint": forged,
+                        "retained_outputs": outputs,
+                    }
+                )
+            forged_wire = checkpoint_set.encode_set(
+                streams,
+                second["archive"]["checkpoint_sha256"],
+            )
+            forged_set = checkpoint_set.decode_set(forged_wire)
+            checkpoint_set.validate_successor(second, forged_set)
+            with self.subTest(attack=attack), self.assertRaises(
+                checkpoint_set.MediaStreamCheckpointSetError
+            ):
+                checkpoint_set.validate_restored_successor(
+                    second,
+                    forged_set,
+                )
 
     def test_foreign_rehashed_bundle_root_rejects(self) -> None:
         _first_wire, second_wire = checkpoint_generations()

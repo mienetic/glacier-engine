@@ -216,6 +216,52 @@ class MediaStreamContinuationTests(unittest.TestCase):
                 [output],
             )
 
+    def test_restored_ownership_receipt_shared_golden(self) -> None:
+        claim = {field: 0 for field in lease.CLAIM_FIELDS}
+        claim["output_journal_bytes"] = 17
+        prior = {
+            "chunk_index": 0,
+            "publication_sequence": 7,
+            "output_bytes": 17,
+            "source_bank_epoch": 11,
+            "source_receipt_slot_index": 2,
+            "source_receipt_generation": 3,
+            "source_owner_key": 13,
+            "restore_owner_key": 14,
+            "restore_tree_key": 15,
+            "restore_authority_key": 16,
+            "tenant_key": 17,
+            "scope_key": 18,
+            "allocation_key": 19,
+            "binding_key": 20,
+            "publication_next_sequence": 8,
+            "parent_claim": claim,
+            "output_claim": claim,
+            "output_sha256": digest(0x22),
+            "chunk_receipt_sha256": digest(0x33),
+            "lease_receipt_sha256": digest(0x11),
+        }
+        successor = dict(prior)
+        successor.update(
+            source_bank_epoch=21,
+            source_receipt_slot_index=4,
+            source_receipt_generation=5,
+            source_owner_key=23,
+            publication_next_sequence=9,
+            output_sha256=digest(0x44),
+            chunk_receipt_sha256=digest(0x55),
+            lease_receipt_sha256=digest(0x66),
+        )
+        self.assertEqual(
+            continuation.restored_ownership_receipt_root(
+                digest(0xAA),
+                prior,
+                successor,
+            ).hex(),
+            "3bf4bd7b8efd19644f86a59476c37580"
+            "cc12887be45a29810e29b8a53444b38a",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1295,8 +1295,8 @@ pub fn build(b: *std.Build) void {
 
     // Three stream checkpoints and one canonical retained-output bundle share
     // a single immutable archive root. The source produces two generations;
-    // a publisher dies after every durability phase, and fresh target
-    // processes resume image/audio/video from either selected generation.
+    // a publisher dies after every durability phase, then a restored process
+    // rebinds ownership and publishes a third generation for another resume.
     const media_stream_checkpoint_set_worker_exe =
         b.addExecutable(.{
             .name = "glacier-media-stream-checkpoint-set-worker",

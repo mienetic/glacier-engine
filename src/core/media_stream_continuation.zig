@@ -30,6 +30,8 @@ const checkpoint_domain =
     "glacier-media-stream-checkpoint-v1\x00";
 const retained_manifest_domain =
     "glacier-media-stream-retained-manifest-v1\x00";
+const restored_ownership_domain =
+    "glacier-media-stream-restored-ownership-v1\x00";
 const restored_scope_key_base: u64 =
     0x6d73_6373_0000_0000;
 const restored_allocation_key_base: u64 =
@@ -441,6 +443,168 @@ pub fn retainedManifestRootV1(
     return root;
 }
 
+pub fn restoredOwnershipReceiptRootV1(
+    previous_checkpoint_sha256: Digest,
+    prior: CheckpointEntryV1,
+    successor: CheckpointEntryV1,
+) Digest {
+    var body: [416]u8 = [_]u8{0} ** 416;
+    writeU64(&body, 0, successor.chunk_index);
+    writeU64(&body, 8, successor.publication_sequence);
+    writeU64(&body, 16, successor.output_bytes);
+    writeU64(&body, 24, successor.source_bank_epoch);
+    writeU64(
+        &body,
+        32,
+        successor.source_receipt_slot_index,
+    );
+    writeU64(
+        &body,
+        40,
+        successor.source_receipt_generation,
+    );
+    writeU64(&body, 48, successor.source_owner_key);
+    writeU64(
+        &body,
+        56,
+        successor.publication_next_sequence,
+    );
+    writeClaim(&body, 64, successor.parent_claim);
+    writeClaim(&body, 144, successor.output_claim);
+    @memcpy(body[224..256], &previous_checkpoint_sha256);
+    @memcpy(
+        body[256..288],
+        &prior.lease_receipt_sha256,
+    );
+    @memcpy(body[288..320], &prior.output_sha256);
+    @memcpy(
+        body[320..352],
+        &prior.chunk_receipt_sha256,
+    );
+    @memcpy(body[352..384], &successor.output_sha256);
+    @memcpy(
+        body[384..416],
+        &successor.chunk_receipt_sha256,
+    );
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(restored_ownership_domain);
+    hash.update(&body);
+    var root: Digest = undefined;
+    hash.final(&root);
+    return root;
+}
+
+pub fn validateRestoredSuccessorCheckpointV1(
+    previous: CheckpointV1,
+    successor: CheckpointV1,
+) Error!void {
+    try validateCheckpointV1(previous);
+    try validateCheckpointV1(successor);
+    const expected_generation = std.math.add(
+        u64,
+        previous.checkpoint_generation,
+        1,
+    ) catch return Error.InvalidCheckpoint;
+    if (successor.checkpoint_generation !=
+        expected_generation or
+        successor.kind != previous.kind or
+        successor.request_epoch != previous.request_epoch or
+        successor.stream_key != previous.stream_key or
+        successor.chunk_limit != previous.chunk_limit or
+        successor.tenant_key != previous.tenant_key or
+        successor.committed_chunks !=
+            previous.committed_chunks + 1 or
+        successor.visible_chunks !=
+            previous.visible_chunks + 1 or
+        successor.next_sequence !=
+            previous.next_sequence + 1 or
+        successor.visible_units <= previous.visible_units or
+        successor.restore_bank_epoch ==
+            previous.restore_bank_epoch or
+        !std.meta.eql(
+            successor.timeline_base,
+            previous.timeline_base,
+        ) or
+        !std.mem.eql(
+            u8,
+            &successor.media_object_sha256,
+            &previous.media_object_sha256,
+        ) or
+        std.mem.eql(
+            u8,
+            &successor.timeline_sha256,
+            &previous.timeline_sha256,
+        ) or
+        std.mem.eql(
+            u8,
+            &successor.previous_commit_sha256,
+            &previous.previous_commit_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &successor.challenge_sha256,
+            &previous.challenge_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &successor.previous_checkpoint_sha256,
+            &previous.checkpoint_sha256,
+        ))
+        return Error.InvalidCheckpoint;
+
+    for (
+        successor.entries[0..successor.retained_output_count],
+        0..,
+    ) |entry, index| {
+        if (entry.source_bank_epoch !=
+            previous.restore_bank_epoch)
+            return Error.InvalidCheckpoint;
+        if (index < previous.retained_output_count) {
+            const prior = previous.entries[index];
+            if (entry.chunk_index != prior.chunk_index or
+                entry.publication_sequence !=
+                    prior.publication_sequence or
+                entry.output_bytes != prior.output_bytes or
+                entry.source_owner_key !=
+                    prior.restore_owner_key or
+                entry.publication_next_sequence !=
+                    prior.publication_next_sequence or
+                !std.meta.eql(
+                    entry.parent_claim,
+                    prior.parent_claim,
+                ) or
+                !std.meta.eql(
+                    entry.output_claim,
+                    prior.output_claim,
+                ) or
+                !std.mem.eql(
+                    u8,
+                    &entry.output_sha256,
+                    &prior.output_sha256,
+                ) or
+                !std.mem.eql(
+                    u8,
+                    &entry.chunk_receipt_sha256,
+                    &prior.chunk_receipt_sha256,
+                ) or
+                !std.mem.eql(
+                    u8,
+                    &entry.lease_receipt_sha256,
+                    &restoredOwnershipReceiptRootV1(
+                        previous.checkpoint_sha256,
+                        prior,
+                        entry,
+                    ),
+                ))
+                return Error.InvalidCheckpoint;
+        } else if (entry.source_owner_key !=
+            previous.next_owner_key_base)
+        {
+            return Error.InvalidCheckpoint;
+        }
+    }
+}
+
 pub fn verifyMaterializedOutputsV1(
     checkpoint: CheckpointV1,
     outputs: []const []const u8,
@@ -618,6 +782,310 @@ pub const ResumeSession = struct {
             return Error.ResumePoisoned;
         };
         self.phase = .active;
+    }
+
+    pub fn makeSuccessorCheckpointV1(
+        self: *ResumeSession,
+        kind: media.MediaKindV1,
+        plan: CheckpointPlanV1,
+        retained_outputs: []const []const u8,
+    ) Error!CheckpointV1 {
+        if (self.phase != .active or
+            self.stream.closed or self.stream.poisoned or
+            self.stream.active_slot != null or
+            self.stream.active_generation != 0 or
+            self.stream.chunk_index_base !=
+                self.checkpoint.committed_chunks or
+            self.stream.committed_chunks != 1 or
+            self.active_count !=
+                self.checkpoint.retained_output_count)
+            return Error.InvalidCheckpoint;
+        const expected_generation = std.math.add(
+            u64,
+            self.checkpoint.checkpoint_generation,
+            1,
+        ) catch return Error.ArithmeticOverflow;
+        const retained_count = std.math.add(
+            usize,
+            self.checkpoint.retained_output_count,
+            self.stream.committed_chunks,
+        ) catch return Error.ArithmeticOverflow;
+        if (plan.checkpoint_generation != expected_generation or
+            plan.chunk_limit != self.stream.chunk_limit or
+            retained_count != retained_outputs.len or
+            retained_count >= plan.chunk_limit or
+            plan.restore_bank_epoch ==
+                self.checkpoint.restore_bank_epoch or
+            plan.tenant_key != self.checkpoint.tenant_key or
+            !std.mem.eql(
+                u8,
+                &plan.challenge_sha256,
+                &self.checkpoint.challenge_sha256,
+            ) or
+            !std.mem.eql(
+                u8,
+                &plan.previous_checkpoint_sha256,
+                &self.checkpoint.checkpoint_sha256,
+            ))
+            return Error.InvalidCheckpoint;
+        try verifyMaterializedOutputsV1(
+            self.checkpoint,
+            retained_outputs[0..self.checkpoint.retained_output_count],
+        );
+        const snapshot = try self.bank.snapshotV3();
+        if (snapshot.bank_epoch !=
+            self.checkpoint.restore_bank_epoch or
+            snapshot.used.isZero() or
+            snapshot.live_allocations <
+                self.checkpoint.retained_output_count)
+            return Error.InvalidCheckpoint;
+
+        const state = self.media_state.*;
+        if (state.request_epoch !=
+            self.checkpoint.request_epoch or
+            state.visible_chunks != retained_count or
+            std.mem.eql(
+                u8,
+                &self.stream.previous_chunk_sha256,
+                &self.checkpoint.last_chunk_sha256,
+            ))
+            return Error.InvalidCheckpoint;
+
+        var checkpoint: CheckpointV1 = .{
+            .kind = kind,
+            .request_epoch = state.request_epoch,
+            .checkpoint_generation = plan.checkpoint_generation,
+            .stream_key = self.checkpoint.stream_key,
+            .committed_chunks = @intCast(retained_count),
+            .chunk_limit = @intCast(plan.chunk_limit),
+            .next_sequence = state.next_sequence,
+            .visible_chunks = state.visible_chunks,
+            .visible_units = state.visible_units,
+            .timeline_base = state.timeline_base,
+            .retained_output_count = retained_count,
+            .restore_bank_epoch = plan.restore_bank_epoch,
+            .next_owner_key_base = plan.next_owner_key_base,
+            .next_tree_key_base = plan.next_tree_key_base,
+            .next_authority_key_base = plan.next_authority_key_base,
+            .tenant_key = plan.tenant_key,
+            .media_object_sha256 = state.media_object_sha256,
+            .timeline_sha256 = state.timeline_sha256,
+            .previous_commit_sha256 = state.previous_commit_sha256,
+            .last_chunk_sha256 = self.stream.previous_chunk_sha256,
+            .challenge_sha256 = plan.challenge_sha256,
+            .retained_manifest_sha256 = [_]u8{0} ** 32,
+            .previous_checkpoint_sha256 = plan.previous_checkpoint_sha256,
+            .entries = [_]CheckpointEntryV1{.{}} **
+                maximum_retained_outputs,
+            .checkpoint_sha256 = [_]u8{0} ** 32,
+        };
+
+        for (
+            self.active_outputs[0..self.checkpoint.retained_output_count],
+            0..,
+        ) |active, index| {
+            if (!active.active)
+                return Error.InvalidCheckpoint;
+            try self.bank.validateCommitted(active.receipt);
+            try self.bank.validateLeaseTree(active.tree);
+            try self.bank.validateLeaseNode(
+                active.tree,
+                active.scope,
+            );
+            const prior = self.checkpoint.entries[index];
+            const output = retained_outputs[index];
+            const output_bytes = std.math.cast(
+                u64,
+                output.len,
+            ) orelse return Error.ArithmeticOverflow;
+            if (active.receipt.bank_epoch !=
+                self.checkpoint.restore_bank_epoch or
+                active.receipt.owner_key !=
+                    prior.restore_owner_key or
+                !std.meta.eql(
+                    active.receipt.claim,
+                    prior.parent_claim,
+                ) or
+                active.tree.tree_key !=
+                    prior.restore_tree_key or
+                active.tree.authority_key !=
+                    prior.restore_authority_key or
+                active.scope.node_key != prior.scope_key or
+                active.scope.tenant_key !=
+                    prior.tenant_key or
+                active.publication_next_sequence !=
+                    prior.publication_next_sequence or
+                output_bytes != prior.output_bytes or
+                !std.mem.eql(
+                    u8,
+                    &sha256(output),
+                    &prior.output_sha256,
+                ))
+                return Error.InvalidCheckpoint;
+            var entry: CheckpointEntryV1 = .{
+                .chunk_index = prior.chunk_index,
+                .publication_sequence = prior.publication_sequence,
+                .output_bytes = prior.output_bytes,
+                .source_bank_epoch = active.receipt.bank_epoch,
+                .source_receipt_slot_index = @intCast(active.receipt.slot_index),
+                .source_receipt_generation = active.receipt.generation,
+                .source_owner_key = active.receipt.owner_key,
+                .restore_owner_key = try derivedKey(
+                    plan.restore_owner_key_base,
+                    index,
+                ),
+                .restore_tree_key = try derivedKey(
+                    plan.restore_tree_key_base,
+                    index,
+                ),
+                .restore_authority_key = try derivedKey(
+                    plan.restore_authority_key_base,
+                    index,
+                ),
+                .tenant_key = plan.tenant_key,
+                .scope_key = try derivedKey(
+                    restored_scope_key_base,
+                    index,
+                ),
+                .allocation_key = try derivedKey(
+                    restored_allocation_key_base,
+                    index,
+                ),
+                .binding_key = try derivedKey(
+                    restored_binding_key_base,
+                    index,
+                ),
+                .publication_next_sequence = active.publication_next_sequence,
+                .parent_claim = active.receipt.claim,
+                .output_claim = prior.output_claim,
+                .output_sha256 = prior.output_sha256,
+                .chunk_receipt_sha256 = prior.chunk_receipt_sha256,
+                .lease_receipt_sha256 = [_]u8{0} ** 32,
+            };
+            entry.lease_receipt_sha256 =
+                restoredOwnershipReceiptRootV1(
+                    self.checkpoint.checkpoint_sha256,
+                    prior,
+                    entry,
+                );
+            checkpoint.entries[index] = entry;
+        }
+
+        const local_index: usize = 0;
+        const global_index =
+            self.checkpoint.retained_output_count;
+        const execution =
+            try self.stream.executionReceipt(local_index);
+        const chunk =
+            try self.stream.chunkReceipt(local_index);
+        const output = retained_outputs[global_index];
+        const output_bytes = std.math.cast(
+            u64,
+            output.len,
+        ) orelse return Error.ArithmeticOverflow;
+        const publication_next_sequence = std.math.add(
+            u64,
+            execution.resource_sequence,
+            1,
+        ) catch return Error.ArithmeticOverflow;
+        var execution_wire: [lease.receipt_bytes]u8 =
+            undefined;
+        _ = lease.encodeLeaseExecutionReceiptV1(
+            execution,
+            &execution_wire,
+        ) catch return Error.InvalidCheckpoint;
+        if (execution.kind != kind or
+            chunk.kind != kind or
+            execution.request_epoch !=
+                self.checkpoint.request_epoch or
+            chunk.request_epoch !=
+                self.checkpoint.request_epoch or
+            chunk.stream_key != self.checkpoint.stream_key or
+            chunk.stream_chunk_index != global_index or
+            chunk.publication_sequence !=
+                execution.media_sequence or
+            execution.tree.parent.bank_epoch !=
+                self.checkpoint.restore_bank_epoch or
+            execution.tree.parent.owner_key !=
+                self.checkpoint.next_owner_key_base or
+            output_bytes != execution.output_bytes or
+            !std.mem.eql(
+                u8,
+                &sha256(output),
+                &execution.output_sha256,
+            ) or
+            !std.mem.eql(
+                u8,
+                &chunk.output_sha256,
+                &execution.output_sha256,
+            ) or
+            !std.mem.eql(
+                u8,
+                &chunk.lease_receipt_sha256,
+                &execution.receipt_sha256,
+            ) or
+            !std.mem.eql(
+                u8,
+                &chunk.previous_chunk_sha256,
+                &self.checkpoint.last_chunk_sha256,
+            ))
+            return Error.InvalidCheckpoint;
+        checkpoint.entries[global_index] = .{
+            .chunk_index = chunk.stream_chunk_index,
+            .publication_sequence = chunk.publication_sequence,
+            .output_bytes = output_bytes,
+            .source_bank_epoch = execution.tree.parent.bank_epoch,
+            .source_receipt_slot_index = @intCast(
+                execution.tree.parent.slot_index,
+            ),
+            .source_receipt_generation = execution.tree.parent.generation,
+            .source_owner_key = execution.tree.parent.owner_key,
+            .restore_owner_key = try derivedKey(
+                plan.restore_owner_key_base,
+                global_index,
+            ),
+            .restore_tree_key = try derivedKey(
+                plan.restore_tree_key_base,
+                global_index,
+            ),
+            .restore_authority_key = try derivedKey(
+                plan.restore_authority_key_base,
+                global_index,
+            ),
+            .tenant_key = plan.tenant_key,
+            .scope_key = try derivedKey(
+                restored_scope_key_base,
+                global_index,
+            ),
+            .allocation_key = try derivedKey(
+                restored_allocation_key_base,
+                global_index,
+            ),
+            .binding_key = try derivedKey(
+                restored_binding_key_base,
+                global_index,
+            ),
+            .publication_next_sequence = publication_next_sequence,
+            .parent_claim = execution.tree.parent.claim,
+            .output_claim = .{
+                .output_journal_bytes = output_bytes,
+            },
+            .output_sha256 = execution.output_sha256,
+            .chunk_receipt_sha256 = chunk.receipt_sha256,
+            .lease_receipt_sha256 = execution.receipt_sha256,
+        };
+        checkpoint.retained_manifest_sha256 =
+            retainedManifestRootV1(
+                checkpoint.entries[0..retained_count],
+            );
+        checkpoint.checkpoint_sha256 =
+            checkpointRootV1(checkpoint);
+        try validateCheckpointV1(checkpoint);
+        try validateRestoredSuccessorCheckpointV1(
+            self.checkpoint,
+            checkpoint,
+        );
+        return checkpoint;
     }
 
     pub fn abortPreparedV1(
@@ -1304,6 +1772,58 @@ fn makeChunkPlan(
     };
 }
 
+test "restored ownership receipt matches the independent golden" {
+    const claim: resource_bank.Claim = .{
+        .output_journal_bytes = 17,
+    };
+    const prior: CheckpointEntryV1 = .{
+        .chunk_index = 0,
+        .publication_sequence = 7,
+        .output_bytes = 17,
+        .source_bank_epoch = 11,
+        .source_receipt_slot_index = 2,
+        .source_receipt_generation = 3,
+        .source_owner_key = 13,
+        .restore_owner_key = 14,
+        .restore_tree_key = 15,
+        .restore_authority_key = 16,
+        .tenant_key = 17,
+        .scope_key = 18,
+        .allocation_key = 19,
+        .binding_key = 20,
+        .publication_next_sequence = 8,
+        .parent_claim = claim,
+        .output_claim = claim,
+        .output_sha256 = [_]u8{0x22} ** 32,
+        .chunk_receipt_sha256 = [_]u8{0x33} ** 32,
+        .lease_receipt_sha256 = [_]u8{0x11} ** 32,
+    };
+    var successor = prior;
+    successor.source_bank_epoch = 21;
+    successor.source_receipt_slot_index = 4;
+    successor.source_receipt_generation = 5;
+    successor.source_owner_key = 23;
+    successor.publication_next_sequence = 9;
+    successor.output_sha256 = [_]u8{0x44} ** 32;
+    successor.chunk_receipt_sha256 = [_]u8{0x55} ** 32;
+    successor.lease_receipt_sha256 = [_]u8{0x66} ** 32;
+    var expected: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &expected,
+        "3bf4bd7b8efd19644f86a59476c37580" ++
+            "cc12887be45a29810e29b8a53444b38a",
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &expected,
+        &restoredOwnershipReceiptRootV1(
+            [_]u8{0xaa} ** 32,
+            prior,
+            successor,
+        ),
+    );
+}
+
 test "checkpoint releases source reacquires output and resumes every media kind" {
     for (0..3) |case_index| {
         var fixture_storage: [fixture_api.maximum_fixture_bytes]u8 =
@@ -1350,7 +1870,7 @@ test "checkpoint releases source reacquires output and resumes every media kind"
             6330 + case_index * 10,
             6340 + case_index,
             request_epoch,
-            2,
+            3,
         );
 
         var plan_storage: [transform.transform_plan_bytes]u8 =
@@ -1393,7 +1913,7 @@ test "checkpoint releases source reacquires output and resumes every media kind"
             first_committed.execution.kind,
             .{
                 .checkpoint_generation = 1,
-                .chunk_limit = 2,
+                .chunk_limit = 3,
                 .restore_bank_epoch = restore_bank_epoch,
                 .restore_owner_key_base = 6410 + case_index * 10,
                 .restore_tree_key_base = 6420 + case_index * 10,
@@ -1411,8 +1931,8 @@ test "checkpoint releases source reacquires output and resumes every media kind"
                 undefined;
             _ = try std.fmt.hexToBytes(
                 &expected_checkpoint_root,
-                "4ff87146ea02e635fd80bd90ea96fb98" ++
-                    "aac6a8592777f61473f7aa58e6899bdf",
+                "68931cd23e921fd810ddd78b6fcdfee5" ++
+                    "c4a06cc030e8ff67752ef18c9a54fa6a",
             );
             try std.testing.expectEqualSlices(
                 u8,
@@ -1531,6 +2051,70 @@ test "checkpoint releases source reacquires output and resumes every media kind"
         try std.testing.expectEqual(
             @as(u64, 2),
             target_state.visible_chunks,
+        );
+        const second_output =
+            outputs[1][0..@intCast(second_plan.output_bytes)];
+        const successor_retained = [_][]const u8{
+            first_output,
+            second_output,
+        };
+        const successor = try resumed.makeSuccessorCheckpointV1(
+            first_committed.execution.kind,
+            .{
+                .checkpoint_generation = 2,
+                .chunk_limit = 3,
+                .restore_bank_epoch = 6480 + case_index,
+                .restore_owner_key_base = 6490 + case_index * 10,
+                .restore_tree_key_base = 6500 + case_index * 10,
+                .restore_authority_key_base = 6510 + case_index * 10,
+                .next_owner_key_base = 6520 + case_index * 10,
+                .next_tree_key_base = 6530 + case_index * 10,
+                .next_authority_key_base = 6540 + case_index * 10,
+                .tenant_key = checkpoint.tenant_key,
+                .challenge_sha256 = checkpoint.challenge_sha256,
+                .previous_checkpoint_sha256 = checkpoint.checkpoint_sha256,
+            },
+            &successor_retained,
+        );
+        try validateRestoredSuccessorCheckpointV1(
+            checkpoint,
+            successor,
+        );
+        try std.testing.expectEqual(
+            checkpoint.restore_bank_epoch,
+            successor.entries[0].source_bank_epoch,
+        );
+        try std.testing.expectEqual(
+            checkpoint.entries[0].restore_owner_key,
+            successor.entries[0].source_owner_key,
+        );
+        try std.testing.expect(!std.mem.eql(
+            u8,
+            &checkpoint.entries[0].lease_receipt_sha256,
+            &successor.entries[0].lease_receipt_sha256,
+        ));
+
+        var stale_authority = successor;
+        stale_authority.entries[0].source_bank_epoch =
+            source_bank_epoch;
+        stale_authority.entries[0].lease_receipt_sha256 =
+            restoredOwnershipReceiptRootV1(
+                checkpoint.checkpoint_sha256,
+                checkpoint.entries[0],
+                stale_authority.entries[0],
+            );
+        stale_authority.retained_manifest_sha256 =
+            retainedManifestRootV1(
+                stale_authority.entries[0..stale_authority.retained_output_count],
+            );
+        stale_authority.checkpoint_sha256 =
+            checkpointRootV1(stale_authority);
+        try std.testing.expectError(
+            Error.InvalidCheckpoint,
+            validateRestoredSuccessorCheckpointV1(
+                checkpoint,
+                stale_authority,
+            ),
         );
         try resumed.closeAndRelease();
         const final = try target_bank.snapshotV3();

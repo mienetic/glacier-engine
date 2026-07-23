@@ -149,15 +149,18 @@ retained-output bundle inside the immutable checkpoint archive. One selector
 rename publishes the complete multimodal generation. The source produces two
 lineage-bound generations; native workers die after all seven archive/selector
 durability phases, and fresh targets resume whichever complete generation is
-selected before idempotent recovery converges to the successor.
+selected before idempotent recovery converges to the successor. Another fresh
+worker restores generation two, binds the retained leases to its new Bank
+epochs, appends all three modality chunks, and publishes generation three.
+The next process opens that root and resumes again.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
 decimation, and keyframe selection. It has no external codec, encoder,
 network, camera, microphone, model, or accelerator authority. The atomic-set
 worker has explicit filesystem authority but does not emulate device power
-loss. Creating a successor checkpoint after restoring an earlier generation,
-external formats, and model adapters remain future layers. See
+loss. External formats, synchronized audio/video processor state, temporal
+caches, and model adapters remain future layers. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), then
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and

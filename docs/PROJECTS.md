@@ -108,16 +108,20 @@ fresh-Bank ownership plan. Separate source and target processes exercise image,
 audio, and video restore, with charge before materialization, no duplicate next
 chunk, and final zero ownership.
 
-The atomic-set slice is now complete for two source-side generations. Three
-fixed checkpoints and one canonical retained-output bundle share one immutable
+The atomic-set and post-restore successor slices are complete. Three fixed
+checkpoints and one canonical retained-output bundle share one immutable
 archive root. Seven `SIGKILL` boundaries expose only the complete previous or
 successor generation; fresh targets resume all modalities before repair and
-again after idempotent convergence to generation two.
+again after idempotent convergence to generation two. A separate fresh process
+then rebinds six retained outputs, appends three chunks, publishes generation
+three, releases its ownership, and a second fresh process resumes that root.
+Rehashed stale epochs, replayed receipts, and substituted restored owners
+reject independently.
 
-**Next slice:** create a successor checkpoint after restoring generation one.
-Bind the fresh target receipts/trees into new retained ownership evidence,
-reject stale source authority, publish the successor atomically, then kill and
-resume it at every durability boundary. Reuse
+**Next slice:** carry external decoder/processor state through the same
+successor path. Start with bounded audio feature windows and video temporal
+cache entries, bind synchronized timeline roots, then add cancellation and
+restart cases without expanding ambient authority. Reuse
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md) and
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md).
 

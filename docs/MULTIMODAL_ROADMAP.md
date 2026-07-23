@@ -1,9 +1,9 @@
 # Multimodal Roadmap
 
 Status: **integrated model-free image/audio/video runtime, bounded streaming,
-two-process continuation, and crash-atomic two-generation checkpoint sets;
-media-model execution, post-restore successor checkpoints, and external formats
-remain gated**.
+two-process continuation, crash-atomic checkpoint sets, and a post-restore
+generation-three successor; media-model execution and external formats remain
+gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -25,7 +25,10 @@ crosses a real process boundary: a fixed checkpoint restores retained outputs
 under a fresh Bank and publishes the next chunk for every modality. Three
 checkpoints and one retained-output bundle now share an atomic archive root;
 fresh targets resume the complete previous or successor generation across all
-seven root-switch process-death boundaries.
+seven root-switch process-death boundaries. Another fresh process now restores
+generation two, rebinds six retained-output leases under three fresh Banks,
+appends one image/audio/video chunk, and atomically publishes generation three.
+A second fresh process opens generation three and continues all three streams.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -291,8 +294,8 @@ Early contributions can proceed without a large model:
 - decompression and allocation ceiling tests;
 - extend the completed deterministic crop/nearest, mix/exact-decimation, and
   keyframe-selection reference models with new bounded cases;
-- create a new generation after restoring an older media checkpoint, rebinding
-  retained ownership evidence without accepting stale source authority;
+- extend the completed post-restore successor proof with external decoder
+  state, audio feature windows, and video temporal caches;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 

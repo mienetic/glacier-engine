@@ -8,6 +8,11 @@ before the first stable release.
 
 ### Added
 
+- Post-restore multimodal successor checkpoints: a fresh process rebinds six
+  retained image/audio/video outputs, appends three chunks, atomically
+  publishes generation three, releases ownership, and supports another
+  fresh-process resume. Independent verification rejects rehashed stale Bank
+  epochs, receipt replay, and restored-owner substitution.
 - One-root image/audio/video checkpoint generations: three fixed stream
   checkpoints plus a canonical retained-output bundle publish through the
   immutable archive and atomic selector. A seven-boundary `SIGKILL` campaign

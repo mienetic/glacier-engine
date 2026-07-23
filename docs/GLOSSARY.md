@@ -231,6 +231,12 @@ fixed image, audio, and video stream checkpoints plus a canonical
 retained-output bundle. A single selector root makes only the complete previous
 or successor multimodal generation visible across process death.
 
+**Restored ownership receipt** — A domain-separated commitment that replaces a
+dead source's retained-output authority with the fresh Bank epoch, receipt
+identity, owner and claims actually reacquired during restore. It also binds the
+prior checkpoint, lease, output and chunk roots so a successor cannot replay
+stale source authority.
+
 **Object lease receipt** — A commitment to one blob, owner, retained generation,
 explicit expiry tick, and lifecycle grant. It is valid only while every field
 equals the active store slot.

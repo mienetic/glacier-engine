@@ -82,7 +82,7 @@ pub fn main() !void {
             12_320 + stream_index * 100,
             12_330 + stream_index,
             request_epoch,
-            3,
+            4,
         );
 
         for (0..2) |chunk_index| {
@@ -407,6 +407,144 @@ pub fn main() !void {
         resumes_after_repair += 1;
     }
 
+    const successor_directory_name =
+        "media-post-restore-successor";
+    try temporary.dir.makeDir(successor_directory_name);
+    var successor_directory = try temporary.dir.openDir(
+        successor_directory_name,
+        .{},
+    );
+    defer successor_directory.close();
+    var successor_absolute_storage: [std.fs.max_path_bytes]u8 = undefined;
+    const successor_absolute =
+        try successor_directory.realpath(
+            ".",
+            &successor_absolute_storage,
+        );
+    var source_pid_storage: [32]u8 = undefined;
+    const source_pid = try std.fmt.bufPrint(
+        &source_pid_storage,
+        "{d}",
+        .{std.c.getpid()},
+    );
+    try writeSyncedV1(
+        &successor_directory,
+        "source.pid",
+        source_pid,
+    );
+    try std.posix.fsync(successor_directory.fd);
+
+    const successor_storage_epoch: u64 = 19_000;
+    const successor_initial_selector =
+        try checkpoint_file.prepareInitialSelectorV1(
+            first_set.archive,
+        );
+    var successor_lock_storage: [1]u8 = undefined;
+    var successor_active_storage: [maximum_set_bytes]u8 = undefined;
+    var successor_lease =
+        try checkpoint_file.LeaseV1.create(
+            successor_directory,
+            successor_storage_epoch,
+            challenge_sha256,
+            first_set.archive,
+            successor_initial_selector,
+            successor_active_storage.len,
+            &successor_lock_storage,
+            &successor_active_storage,
+        );
+    const second_publication =
+        try checkpoint_file.preparePublicationV1(
+            &successor_lease,
+            second_set.archive,
+        );
+    _ = try checkpoint_file.publishV1(
+        &successor_lease,
+        second_publication,
+    );
+    successor_lease.close();
+
+    var successor_epoch_storage: [32]u8 = undefined;
+    const successor_epoch_text = try std.fmt.bufPrint(
+        &successor_epoch_storage,
+        "{d}",
+        .{successor_storage_epoch},
+    );
+    const successor_evidence = try runChildV1(
+        allocator,
+        &.{
+            resume_worker,
+            successor_absolute,
+            successor_epoch_text,
+            "publish-successor",
+        },
+    );
+    inline for ([_][]const u8{
+        "\"process_restart\":true",
+        "\"previous_generation\":2",
+        "\"published_generation\":3",
+        "\"modalities\":3",
+        "\"rebound_outputs\":6",
+        "\"new_chunks\":3",
+        "\"retained_outputs\":9",
+        "\"stale_source_authority\":false",
+        "\"charge_before_materialize\":true",
+        "\"atomic_publication\":true",
+        "\"ownership_released\":true",
+        "\"verified\":true",
+    }) |required| {
+        if (std.mem.indexOf(
+            u8,
+            successor_evidence,
+            required,
+        ) == null)
+            return error.InvalidSuccessorEvidence;
+    }
+
+    var generation_three_lock: [1]u8 = undefined;
+    var generation_three_storage: [maximum_set_bytes]u8 = undefined;
+    var generation_three_lease =
+        try checkpoint_file.LeaseV1.open(
+            successor_directory,
+            successor_storage_epoch,
+            challenge_sha256,
+            generation_three_storage.len,
+            &generation_three_lock,
+            &generation_three_storage,
+        );
+    const generation_three =
+        try media_set.decodeSetV1(
+            generation_three_lease.stream(),
+        );
+    if (generation_three.archive.metadata.generation != 3)
+        return error.InvalidSuccessorGeneration;
+    try media_set.validateRestoredSuccessorV1(
+        &second_decoded,
+        &generation_three,
+    );
+    const generation_three_archive_sha256 =
+        generation_three.archive.checkpoint_sha256;
+    const generation_three_bundle_sha256 =
+        generation_three.bundle.bundle_sha256;
+    generation_three_lease.close();
+
+    const resumed_generation_three = try runChildV1(
+        allocator,
+        &.{
+            resume_worker,
+            successor_absolute,
+            successor_epoch_text,
+        },
+    );
+    try validateResumeEvidenceV1(
+        resumed_generation_three,
+    );
+    if (std.mem.indexOf(
+        u8,
+        resumed_generation_three,
+        "\"selected_generation\":3",
+    ) == null)
+        return error.InvalidSuccessorGeneration;
+
     if (source_releases != 3 or
         process_deaths != 7 or
         selected_previous != 5 or
@@ -418,11 +556,11 @@ pub fn main() !void {
         return error.InvalidPhaseAccounting;
 
     const archive_hex = std.fmt.bytesToHex(
-        second_set.archive.checkpoint_sha256,
+        generation_three_archive_sha256,
         .lower,
     );
     const bundle_hex = std.fmt.bytesToHex(
-        second_decoded.bundle.bundle_sha256,
+        generation_three_bundle_sha256,
         .lower,
     );
     var stdout_buffer: [2048]u8 = undefined;
@@ -431,8 +569,8 @@ pub fn main() !void {
     const stdout = &stdout_writer.interface;
     try stdout.print(
         "{{\"schema\":\"glacier.media-stream-checkpoint-set/demo-v1\"," ++
-            "\"modalities\":3,\"checkpoint_generations\":2," ++
-            "\"archive_objects\":4,\"retained_outputs\":6," ++
+            "\"modalities\":3,\"checkpoint_generations\":3," ++
+            "\"archive_objects\":4,\"retained_outputs\":9," ++
             "\"source_ownership_releases\":3," ++
             "\"process_deaths\":7,\"archive_phase_deaths\":3," ++
             "\"selector_phase_deaths\":4," ++
@@ -440,11 +578,14 @@ pub fn main() !void {
             "\"selected_successor_generation\":2," ++
             "\"fresh_resumes_before_repair\":7," ++
             "\"fresh_resumes_after_repair\":7," ++
-            "\"resumed_chunks\":42," ++
+            "\"resumed_chunks\":45," ++
             "\"duplicate_publications\":0," ++
             "\"atomic_root_switch\":true," ++
             "\"exact_previous_or_successor\":true," ++
             "\"foreign_lineage_rejected\":true," ++
+            "\"post_restore_successor\":true," ++
+            "\"restored_ownership_rebound\":true," ++
+            "\"stale_source_authority_rejected\":true," ++
             "\"recovery_idempotent\":true," ++
             "\"charge_before_materialize\":true," ++
             "\"filesystem_authority\":true," ++
@@ -573,13 +714,17 @@ fn checkpointPlanV1(
     generation: u64,
     previous_checkpoint_sha256: continuation.Digest,
 ) continuation.CheckpointPlanV1 {
-    const generation_base: u64 =
-        if (generation == 1) 13_000 else 14_000;
+    const generation_base: u64 = switch (generation) {
+        1 => 13_000,
+        2 => 14_000,
+        3 => 15_000,
+        else => unreachable,
+    };
     const stream_base =
         generation_base + stream_index * 100;
     return .{
         .checkpoint_generation = generation,
-        .chunk_limit = 3,
+        .chunk_limit = 4,
         .restore_bank_epoch = stream_base,
         .restore_owner_key_base = stream_base + 10,
         .restore_tree_key_base = stream_base + 20,

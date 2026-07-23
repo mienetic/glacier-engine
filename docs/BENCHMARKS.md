@@ -139,9 +139,11 @@ canonical bundle, then publishes generation two over generation one. Seven
 publisher deaths expose generation one five times and generation two twice;
 fresh targets resume all three streams both before repair and after idempotent
 recovery. The observed campaign performs 42 resumed modality-chunks with zero
-duplicates and zero final Bank usage. It exercises real process death and sync
-calls, not storage-device power loss or checkpoint creation after restored
-execution.
+duplicates and zero final Bank usage. A fresh worker then restores generation
+two, rebinds six output leases, appends three chunks, publishes a nine-output
+generation three, and releases all ownership. Another fresh worker opens that
+new root and resumes three more chunks, bringing the demo total to 45. It
+exercises real process death and sync calls, not storage-device power loss.
 
 These values are deterministic conformance counts. They do not measure process
 memory, physical device residency, throughput, latency, model quality, codec

@@ -69,6 +69,10 @@ formats, and independent verifiers.
   canonical retained-output bundle share a single immutable archive root.
   Process-death campaigns prove that readers resume the complete previous or
   successor image/audio/video generation, never a mixed set.
+- **Post-restore checkpoint successor.** A fresh process rebinds retained
+  ownership from the selected generation, appends image/audio/video chunks,
+  atomically publishes generation three, releases its Banks, and supports
+  another fresh-process resume without accepting stale source authority.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -271,7 +275,7 @@ model conversion, generation, and every demo command, continue with the
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, fixed checkpoints, charge-before-materialization restore, two-process resume, and crash-atomic two-generation checkpoint sets for image/audio/video fixtures | Post-restore successor checkpoints, external formats, typed model adapters, and generated-media publication |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, fixed checkpoints, charge-before-materialization restore, atomic generations, post-restore ownership rebinding, and a fresh-process generation-three successor for image/audio/video fixtures | External formats, typed model adapters, synchronized audio/video state, temporal caches, and generated-media publication |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the

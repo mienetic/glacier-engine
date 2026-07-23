@@ -114,11 +114,12 @@ The subsequent
 places all three checkpoints and one retained-output bundle under the existing
 immutable archive and atomic selector. It accepts only the complete previous or
 successor generation after every process-death write/sync/root-switch boundary.
+It also rebinds the restored output leases into generation three, appends one
+chunk per modality, publishes that successor atomically, and resumes it from
+another fresh process.
 
-It does not yet create a new checkpoint generation after restoring an older
-generation, provide multi-writer leader election, emulate storage-device power
+It does not provide multi-writer leader election, emulate storage-device power
 loss, or carry external codecs, capture/playback, media-model state, or
-generated-media publication. The next ownership milestone rebinds restored
-output leases into a successor checkpoint, then adds family-specific audio
-windows, video temporal caches, image processor state, and generated-output
-policy.
+generated-media publication. The next media-state milestone adds
+family-specific audio windows, video temporal caches, image processor state,
+and generated-output policy to the completed ownership transition.

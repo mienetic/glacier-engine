@@ -103,8 +103,8 @@ zig build media-stream-continuation-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Repeat that path across distinct source and target OS processes
 zig build media-stream-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 
-# Atomically select two complete image/audio/video checkpoint generations and
-# resume both previous/successor roots across seven SIGKILL boundaries
+# Atomically select complete image/audio/video generations across seven SIGKILL
+# boundaries, then create and resume generation three from a restored process
 zig build media-stream-checkpoint-set-demo -Doptimize=ReleaseSafe -Dmetal=false
 
 # Provider request, settlement, cost, and durable journal evidence

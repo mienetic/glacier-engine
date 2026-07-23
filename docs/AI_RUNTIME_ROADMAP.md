@@ -194,8 +194,10 @@ publishes the next chunk exactly once for all three retained modalities.
 Three checkpoints plus one canonical retained-output bundle now publish as one
 atomic archive root. Two lineage-bound generations resume as complete
 previous/successor sets across all seven native process-death boundaries.
-Post-restore successor checkpoint creation, external codecs, capture, playback,
-media models, and generated-media publication remain gated.
+A restarted runtime now rebinds all retained outputs, appends one chunk for
+each modality, publishes generation three, and supports another fresh-process
+resume from that new root. External codecs, capture, playback, media models,
+and generated-media publication remain gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -382,7 +384,9 @@ while retaining different state and publication semantics.
   selector; complete for two source-side generations, three modalities, and
   every archive/selector process-death boundary;
 - create the next checkpoint generation after resumed chunks while rebinding
-  retained ownership and rejecting stale source authority;
+  retained ownership and rejecting stale source authority; complete for a
+  fresh-process generation-two to generation-three transition, six rebound
+  outputs, three appended chunks, and a second fresh-process resume;
 - integrate image processors and vision encoder fixtures;
 - add audio feature windows, transcript transactions, and streaming restart;
 - add video temporal selection, synchronized timeline state, and cache ownership;

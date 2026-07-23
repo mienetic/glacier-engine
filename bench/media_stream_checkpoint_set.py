@@ -568,6 +568,65 @@ def validate_successor(previous: Record, successor: Record) -> None:
                 )
 
 
+def validate_restored_successor(
+    previous: Record,
+    successor: Record,
+) -> None:
+    validate_successor(previous, successor)
+    prior = decode_set(
+        archive.encode_set(
+            previous["archive"]["metadata"],
+            previous["archive"]["objects"],
+        )
+    )
+    next_set = decode_set(
+        archive.encode_set(
+            successor["archive"]["metadata"],
+            successor["archive"]["objects"],
+        )
+    )
+    for old, new in zip(
+        prior["checkpoints"],
+        next_set["checkpoints"],
+    ):
+        if new["restore_bank_epoch"] == old["restore_bank_epoch"]:
+            raise MediaStreamCheckpointSetError(
+                "reused restore bank epoch"
+            )
+        for index, entry in enumerate(new["entries"]):
+            if entry["source_bank_epoch"] != old["restore_bank_epoch"]:
+                raise MediaStreamCheckpointSetError(
+                    "foreign restored authority"
+                )
+            if index < len(old["entries"]):
+                prior_entry = old["entries"][index]
+                expected_root = (
+                    continuation.restored_ownership_receipt_root(
+                        old["checkpoint_sha256"],
+                        prior_entry,
+                        entry,
+                    )
+                )
+                if (
+                    entry["source_owner_key"]
+                    != prior_entry["restore_owner_key"]
+                    or entry["publication_next_sequence"]
+                    != prior_entry["publication_next_sequence"]
+                    or entry["parent_claim"]
+                    != prior_entry["parent_claim"]
+                    or entry["output_claim"]
+                    != prior_entry["output_claim"]
+                    or entry["lease_receipt_sha256"] != expected_root
+                ):
+                    raise MediaStreamCheckpointSetError(
+                        "invalid restored ownership rebind"
+                    )
+            elif entry["source_owner_key"] != old["next_owner_key_base"]:
+                raise MediaStreamCheckpointSetError(
+                    "invalid resumed output owner"
+                )
+
+
 def _output(value: Record, stream_index: int, chunk_index: int) -> bytes:
     kind = KINDS[stream_index]
     for entry in value["bundle"]["outputs"]:

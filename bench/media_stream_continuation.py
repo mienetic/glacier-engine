@@ -28,6 +28,9 @@ CHECKPOINT_DOMAIN = b"glacier-media-stream-checkpoint-v1\x00"
 RETAINED_MANIFEST_DOMAIN = (
     b"glacier-media-stream-retained-manifest-v1\x00"
 )
+RESTORED_OWNERSHIP_DOMAIN = (
+    b"glacier-media-stream-restored-ownership-v1\x00"
+)
 RESTORED_SCOPE_KEY_BASE = 0x6D73637300000000
 RESTORED_ALLOCATION_KEY_BASE = 0x6D73636100000000
 RESTORED_BINDING_KEY_BASE = 0x6D73636200000000
@@ -183,6 +186,38 @@ def retained_manifest_root(entries: list[Record]) -> bytes:
         RETAINED_MANIFEST_DOMAIN,
         _u64(len(entries)),
         *(_entry_body(entry) for entry in entries),
+    )
+
+
+def restored_ownership_receipt_root(
+    previous_checkpoint_sha256: bytes,
+    prior: Record,
+    successor: Record,
+) -> bytes:
+    previous_root = _digest(previous_checkpoint_sha256)
+    prior_entry = _entry(prior)
+    next_entry = _entry(successor)
+    scalars = (
+        "chunk_index",
+        "publication_sequence",
+        "output_bytes",
+        "source_bank_epoch",
+        "source_receipt_slot_index",
+        "source_receipt_generation",
+        "source_owner_key",
+        "publication_next_sequence",
+    )
+    return _hash(
+        RESTORED_OWNERSHIP_DOMAIN,
+        *(_u64(next_entry[field]) for field in scalars),
+        _claim_bytes(next_entry["parent_claim"]),
+        _claim_bytes(next_entry["output_claim"]),
+        previous_root,
+        prior_entry["lease_receipt_sha256"],
+        prior_entry["output_sha256"],
+        prior_entry["chunk_receipt_sha256"],
+        next_entry["output_sha256"],
+        next_entry["chunk_receipt_sha256"],
     )
 
 
