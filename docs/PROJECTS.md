@@ -73,6 +73,16 @@ Add a tiny, redistributable fixture covering one loader or tensor-layout branch.
 
 **First slice:** parser and shape validation only; do not bundle large weights.
 
+### Tiny media fixture contracts
+
+Add one redistributable image, PCM audio, or intra-frame video fixture plus a
+machine-readable manifest of exact bytes, geometry/time base, and provenance.
+This prepares the gated multimodal track without claiming integrated execution.
+
+**First slice:** fixture generation, checksum, bounded parser, and malformed
+length/geometry rejection only. See
+[Multimodal Roadmap](MULTIMODAL_ROADMAP.md).
+
 ### ResourceBank property tests
 
 Generate bounded sequences of admit, subdivide, publish, retire, cancel, and
@@ -120,10 +130,17 @@ repair. Native and Python workers terminate after all six append/repair phases.
 **Completed slice:** real host-filesystem adapter and process-death conformance
 on the promoted macOS development host, plus portable Linux compilation.
 
-**Next slice:** run the same retained matrix natively across Linux filesystems,
-then join evidence publication to destructive payload deallocation under an
-explicit ordering protocol. Keep live ownership restore outside that destructive
-slice.
+The destructive path now computes an exact receipt and predicted post-state
+without mutation, syncs that fixed record before deallocation, proves an
+injected post-publication failure leaves the store unchanged, and reconciles the
+exact old/new snapshots idempotently in Zig and Python.
+
+**Completed slice:** publication-before-deallocation ordering for the in-memory
+payload store.
+
+**Next slice:** implement a native durable payload store and run real
+process-death recovery before, during, and after payload mutation on macOS and
+Linux filesystems. Keep live ownership restore outside that destructive slice.
 
 ### Resolver adversarial fixtures
 

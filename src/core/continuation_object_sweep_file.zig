@@ -26,6 +26,8 @@ pub const Error = sweep_writer.Error || error{
     BufferTooSmall,
     InvalidName,
     MultipleLinks,
+    PublishedCommitMismatch,
+    PublishedCommitStateMismatch,
     UnsafePermissions,
 };
 
@@ -47,6 +49,48 @@ pub const LeaseStateV1 = enum(u8) {
 pub const FileIdentityV1 = struct {
     device: u64,
     inode: u64,
+};
+
+pub const CommitRecordMetadataV1 = struct {
+    record_epoch: u64,
+    sequence: u64,
+    previous_record_sha256: Digest,
+    record_challenge_sha256: Digest,
+};
+
+pub const PreparedCommitRecordV1 = struct {
+    bytes: [record.encoded_bytes]u8,
+    record_sha256: Digest,
+};
+
+pub const CommitBoundaryObserverV1 = struct {
+    context: *anyopaque,
+    after_publication_fn: *const fn (
+        context: *anyopaque,
+        record_sha256: Digest,
+    ) sweep_writer.Error!void,
+
+    fn afterPublication(
+        self: CommitBoundaryObserverV1,
+        record_sha256: Digest,
+    ) sweep_writer.Error!void {
+        try self.after_publication_fn(self.context, record_sha256);
+    }
+};
+
+pub const PublishedCommitResultV1 = struct {
+    publication: sweep_writer.AppendReceiptV1,
+    commit: sweep.CommitResultV1,
+};
+
+pub const CommitRecoveryDispositionV1 = enum(u8) {
+    applied,
+    already_applied,
+};
+
+pub const PublishedCommitRecoveryV1 = struct {
+    disposition: CommitRecoveryDispositionV1,
+    commit: sweep.CommitResultV1,
 };
 
 /// Called after an OS operation has returned but before its postcondition is
@@ -74,6 +118,148 @@ pub const AcquireOptionsV1 = struct {
     require_private_mode: bool = true,
     observer: ?PhaseObserverV1 = null,
 };
+
+/// Materializes the exact sweep receipt that must become durable before its
+/// matching payload transition may run. `preview` itself was computed without
+/// mutating the store.
+pub fn prepareCommitRecordV1(
+    preview: sweep.CommitPreviewV1,
+    metadata: CommitRecordMetadataV1,
+) Error!PreparedCommitRecordV1 {
+    try validateCommitPreviewV1(preview);
+    const input: record.InputV1 = .{
+        .record_epoch = metadata.record_epoch,
+        .sequence = metadata.sequence,
+        .previous_record_sha256 = metadata.previous_record_sha256,
+        .record_challenge_sha256 = metadata.record_challenge_sha256,
+        .commit_grant = preview.commit_grant,
+        .commit_receipt = preview.result.receipt,
+        .store_receipt = preview.result.store_receipt,
+    };
+    var bytes: [record.encoded_bytes]u8 = undefined;
+    _ = try record.encodeV1(input, &bytes);
+    const decoded = try record.decodeV1(&bytes);
+    return .{
+        .bytes = bytes,
+        .record_sha256 = decoded.record_sha256,
+    };
+}
+
+/// Appends and synchronizes the exact preview record before entering the
+/// destructive no-failure suffix. If publication or its boundary observer
+/// fails, no payload is freed.
+pub fn publishThenCommitV1(
+    store: *object_store.Store,
+    preview: sweep.CommitPreviewV1,
+    prepared: PreparedCommitRecordV1,
+    publication_writer: *sweep_writer.WriterV1,
+    observer: ?CommitBoundaryObserverV1,
+) Error!PublishedCommitResultV1 {
+    try validatePreparedCommitRecordV1(preview, prepared);
+    const publication = try publication_writer.appendRecord(&prepared.bytes);
+    if (!std.mem.eql(
+        u8,
+        &publication.record_sha256,
+        &prepared.record_sha256,
+    )) return Error.PublishedCommitMismatch;
+    if (observer) |value|
+        try value.afterPublication(publication.record_sha256);
+    const committed = try sweep.commitPreviewV1(store, preview);
+    if (!std.mem.eql(
+        u8,
+        &committed.receipt.snapshot_after_sha256,
+        &preview.result.receipt.snapshot_after_sha256,
+    )) return Error.PublishedCommitMismatch;
+    return .{ .publication = publication, .commit = committed };
+}
+
+/// Reconciles one fully verified durable intent against the exact store
+/// snapshot. The old snapshot applies once; the predicted new snapshot is an
+/// idempotent success; every third state rejects.
+pub fn recoverPublishedCommitV1(
+    store: *object_store.Store,
+    preview: sweep.CommitPreviewV1,
+    prepared: PreparedCommitRecordV1,
+    durable_stream: []const u8,
+    anchor: record.RecoveryAnchorV1,
+) Error!PublishedCommitRecoveryV1 {
+    try validatePreparedCommitRecordV1(preview, prepared);
+    const classification = try record.classifyRecoveryV1(
+        durable_stream,
+        anchor,
+    );
+    if (classification.status != .clean or
+        classification.committed_bytes != durable_stream.len or
+        !std.mem.eql(
+            u8,
+            &classification.final_record_sha256,
+            &prepared.record_sha256,
+        ))
+        return Error.PublishedCommitMismatch;
+    const snapshot = try store.auditSnapshotRootV2();
+    if (std.mem.eql(
+        u8,
+        &snapshot,
+        &preview.result.receipt.snapshot_before_sha256,
+    )) {
+        const committed = try sweep.commitPreviewV1(store, preview);
+        return .{ .disposition = .applied, .commit = committed };
+    }
+    if (std.mem.eql(
+        u8,
+        &snapshot,
+        &preview.result.receipt.snapshot_after_sha256,
+    )) {
+        return .{
+            .disposition = .already_applied,
+            .commit = preview.result,
+        };
+    }
+    return Error.PublishedCommitStateMismatch;
+}
+
+fn validateCommitPreviewV1(
+    preview: sweep.CommitPreviewV1,
+) Error!void {
+    if (preview.target_count == 0 or
+        preview.target_count > preview.targets.len)
+        return Error.PublishedCommitMismatch;
+    try sweep.verifyCommitReceiptV1(
+        preview.commit_grant,
+        preview.result.receipt,
+        preview.result.store_receipt,
+    );
+    const targets_root = try object_store.retiredTargetsRootV1(
+        preview.targets[0..preview.target_count],
+    );
+    if (!std.mem.eql(
+        u8,
+        &targets_root,
+        &preview.result.receipt.targets_sha256,
+    )) return Error.PublishedCommitMismatch;
+}
+
+fn validatePreparedCommitRecordV1(
+    preview: sweep.CommitPreviewV1,
+    prepared: PreparedCommitRecordV1,
+) Error!void {
+    try validateCommitPreviewV1(preview);
+    const decoded = try record.decodeV1(&prepared.bytes);
+    if (!std.mem.eql(
+        u8,
+        &decoded.record_sha256,
+        &prepared.record_sha256,
+    ) or !std.meta.eql(
+        decoded.input.commit_grant,
+        preview.commit_grant,
+    ) or !std.meta.eql(
+        decoded.input.commit_receipt,
+        preview.result.receipt,
+    ) or !std.meta.eql(
+        decoded.input.store_receipt,
+        preview.result.store_receipt,
+    )) return Error.PublishedCommitMismatch;
+}
 
 var next_lease_generation = std.atomic.Value(u64).init(1);
 

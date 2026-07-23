@@ -189,6 +189,16 @@ deallocation or restored runtime ownership. Because the lock is advisory, this
 contract requires cooperating writers; device/inode/length checks do not detect
 a same-length in-place overwrite by a process that ignores the lock.
 
+Destructive publication is ordered through an exact preview. The store computes
+the future accounting, target root, receipt, and post-state snapshot without
+mutation. The file adapter encodes that preview as the existing fixed sweep
+record, completes body/footer sync, and only then calls the destructive
+primitive. A failure injected immediately after publication leaves every
+payload intact. Recovery accepts only a complete anchored record: the exact old
+snapshot applies the preview once, the exact predicted new snapshot is
+idempotent success, and any third state rejects. This proves ordering around the
+in-memory store; it does not make payload storage durable across process death.
+
 ### State machines fail closed
 
 Named errors are preferable to implicit recovery when the correct alternative is

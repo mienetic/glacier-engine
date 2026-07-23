@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import struct
 from typing import Any, Optional
@@ -913,7 +914,7 @@ class Store:
             "repair_count": self.repair_count,
         }
 
-    def commit_retired(self, permit: Record, targets: list[Record]) -> Record:
+    def preview_retired(self, permit: Record, targets: list[Record]) -> Record:
         self._operation(OPERATION_RELEASE)
         for name in (
             "authority_epoch",
@@ -991,22 +992,24 @@ class Store:
         after["logical_index_bytes"] -= freed_index_bytes
         after["repair_count"] -= released_repairs
 
+        shadow = copy.copy(self)
+        shadow.slots = list(self.slots)
         for index in indexes:
-            self.slots[index] = None
-        self.entry_count = after["entry_count"]
-        self.live_entries = after["live_entries"]
-        self.quarantined_entries = after["quarantined_entries"]
-        self.retired_entries = after["retired_entries"]
-        self.payload_bytes = after["payload_bytes"]
-        self.logical_index_bytes = after["logical_index_bytes"]
-        self.reference_count = after["reference_count"]
-        self.active_leases = after["active_leases"]
-        self.repair_count = after["repair_count"]
+            shadow.slots[index] = None
+        shadow.entry_count = after["entry_count"]
+        shadow.live_entries = after["live_entries"]
+        shadow.quarantined_entries = after["quarantined_entries"]
+        shadow.retired_entries = after["retired_entries"]
+        shadow.payload_bytes = after["payload_bytes"]
+        shadow.logical_index_bytes = after["logical_index_bytes"]
+        shadow.reference_count = after["reference_count"]
+        shadow.active_leases = after["active_leases"]
+        shadow.repair_count = after["repair_count"]
         receipt = {
             "authorization_sha256": permit["authorization_sha256"],
             "targets_sha256": targets_sha256,
             "snapshot_before_sha256": snapshot_before,
-            "snapshot_after_sha256": self.snapshot_root_v2_unchecked(),
+            "snapshot_after_sha256": shadow.snapshot_root_v2_unchecked(),
             "accounting_before": before,
             "accounting_after": after,
             "freed_entries": freed_entries,
@@ -1017,6 +1020,41 @@ class Store:
         }
         receipt["commit_sha256"] = retired_commit_receipt_root(receipt)
         return receipt
+
+    def commit_retired_preview(
+        self,
+        permit: Record,
+        targets: list[Record],
+        expected_preview: Record,
+    ) -> Record:
+        preview = self.preview_retired(permit, targets)
+        if preview != expected_preview:
+            raise StoreError("retired commit preview mismatch")
+        indexes = []
+        for target in targets:
+            index = self._find(target)
+            if index is None:
+                raise AssertionError("validated retired target disappeared")
+            indexes.append(index)
+        for index in indexes:
+            self.slots[index] = None
+        after = preview["accounting_after"]
+        self.entry_count = after["entry_count"]
+        self.live_entries = after["live_entries"]
+        self.quarantined_entries = after["quarantined_entries"]
+        self.retired_entries = after["retired_entries"]
+        self.payload_bytes = after["payload_bytes"]
+        self.logical_index_bytes = after["logical_index_bytes"]
+        self.reference_count = after["reference_count"]
+        self.active_leases = after["active_leases"]
+        self.repair_count = after["repair_count"]
+        if self.snapshot_root_v2_unchecked() != preview["snapshot_after_sha256"]:
+            raise AssertionError("previewed retired snapshot drifted")
+        return preview
+
+    def commit_retired(self, permit: Record, targets: list[Record]) -> Record:
+        preview = self.preview_retired(permit, targets)
+        return self.commit_retired_preview(permit, targets, preview)
 
     def verify_all(self) -> None:
         self._operation(OPERATION_VERIFY)

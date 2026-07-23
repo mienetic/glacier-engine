@@ -25,8 +25,9 @@ transactional state publication, and independently verifiable evidence.
 | Hierarchical ownership | Integrated | LeaseTree child scopes and paged-KV publication fences | Cross-worker and durable ownership identity |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
 | Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
-| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, leases/repair, retirement, collection evidence, atomic in-memory sweep, fixed evidence record, anchored recovery, snapshot-bound writer/repair, descriptor-relative POSIX file publication, and real process-death conformance | Native Linux filesystem campaigns, publication-before-deallocation, ownership reacquisition, and live restore |
+| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, leases/repair, retirement, collection evidence, atomic in-memory sweep, fixed evidence record, anchored recovery, descriptor-relative POSIX publication, exact no-mutation commit preview, publication-before-deallocation orchestration, and idempotent old/new snapshot recovery | Native durable payload-store recovery, ownership reacquisition, and live restore |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
+| Multimodal execution | Planned and gated | Shared image/audio/video architecture and contributor slices are specified; no media execution is integrated | Enter only after the durable-continuation promotion gate |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
@@ -68,6 +69,9 @@ transactional state publication, and independently verifiable evidence.
 - [x] Descriptor-relative POSIX sweep file adapter with exclusive locking,
   identity/link/mode fences, ordered file and directory sync, explicit repair,
   and six real subprocess-death boundaries on the macOS host.
+- [x] Exact no-mutation destructive preview plus an ordered file adapter that
+  syncs the predicted receipt before deallocation and reconciles old/new
+  snapshots idempotently after an injected publication boundary failure.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -129,8 +133,12 @@ Next slices:
       sync, replacement detection, and subprocess death tests;~~ complete for
       the POSIX adapter on the macOS host, with Linux compilation retained and
       native Linux filesystem campaigns still pending;
-    - crash campaign joining durable publication to destructive transition
-      ordering.
+    - ~~join durable evidence publication to destructive transition ordering;~~
+      complete for the in-memory payload store with an exact precomputed receipt,
+      real file sync, injected post-publication failure, and idempotent old/new
+      snapshot reconciliation;
+    - native durable payload-store adapter and real process-death campaign across
+      publication, deallocation, and completion recovery.
 11. ResourceBank/LeaseTree reacquisition without duplicated ownership.
 12. Paged-KV restore with foreign-generation rejection.
 13. End-to-end process restart between two token publications.
@@ -145,15 +153,18 @@ writer, and POSIX file adapter form identity, least-authority lookup, canonical
 planning, bounded payload ownership, a deterministic destructive in-memory
 boundary, portable commit evidence, and host-filesystem publication/recovery
 decisions—not a saved session. The adapter performs real file/directory sync,
-locking, identity checks, and subprocess-death recovery on the macOS host.
-Process death is not power loss, Linux has compile evidence rather than a
-retained native filesystem campaign, and deletion ordering and process restore
-remain unproven. The fixture avoids one 25-byte duplicate payload allocation and
-the commit fixture reclaims a 39-byte allocator tail, but lifecycle metadata,
-fixed index, and backing capacity remain larger than those deltas. No lower RSS,
-disk use, or restart latency is claimed. Those require compact index
-experiments, durable integration, ownership reacquisition, and complete
-physical measurements.
+locking, identity checks, and subprocess-death recovery on the macOS host. The
+ordered commit path now predicts the exact post-state without mutation, syncs
+that receipt first, proves an injected boundary failure leaves payloads intact,
+and applies or recognizes the transition once from exact old/new snapshots.
+The payload store itself remains in memory, process death is not power loss, and
+Linux has compile evidence rather than a retained native filesystem campaign.
+The fixture avoids one 25-byte duplicate payload allocation and the commit
+fixture reclaims a 39-byte allocator tail, but lifecycle metadata, fixed index,
+and backing capacity remain larger than those deltas. No lower RSS, disk use, or
+restart latency is claimed. Those require compact index experiments, durable
+payload integration, ownership reacquisition, and complete physical
+measurements.
 
 ### Evidence inspection
 
@@ -229,6 +240,29 @@ valid prefixes survive process loss, and corrupt complete frames fail closed.
 Promotion gate: every listed combination has a retained fixture, clear failure
 for unsupported inputs, and reproducible generation instructions.
 
+### Multimodal execution
+
+Status: **planned and gated**. Image, audio, and video execution starts only
+after the durable-continuation promotion gate above. Format contracts and tiny
+legal fixtures may be developed earlier, but they do not imply integrated model
+support.
+
+The implementation sequence is:
+
+1. shared `MediaObject`, `MediaDecodePlan`, rational `MediaTimeline`, and
+   transactional media publication;
+2. bounded image input and exact source-region/patch mapping;
+3. streaming audio with sample-range, resample, transcript, and playback state;
+4. video frame selection, audio/subtitle synchronization, temporal cache, and
+   segment publication; and
+5. generated image/audio/video output only after cancellation, restart, and
+   provenance rules are proven.
+
+Every modality uses content identity separate from tenant access, explicit
+decoder/preprocessing identity, exact resource admission, and provider wire
+observations. See [Multimodal Roadmap](MULTIMODAL_ROADMAP.md) for use cases,
+first slices, promotion gates, and contributor-ready work.
+
 ### Production weight paging
 
 The current pager is a mechanics prototype and is not the generation weight
@@ -286,7 +320,9 @@ ideas unless a different status is stated.
 | Capability Grant | Prototype (resolver scope) | Least-authority extensions for planners, tokenizers, stores, tools, and transports |
 | ToolTxn and ActionOutbox | Idea | Recoverable AI tool execution without duplicated external side effects |
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
-| Object Fabric | Prototype (atomic in-memory sweep) | Tenant-safe content-addressed model, plan, KV, continuation, and evidence objects |
+| Object Fabric | Prototype (ordered host-file evidence and in-memory payload sweep) | Tenant-safe content-addressed model, plan, KV, continuation, media, and evidence objects |
+| Media Capsule | Idea (gated) | Typed image, audio, and video identity with explicit decode/preprocess meaning |
+| MediaTimeline and MediaTxn | Idea (gated) | Exact sample/frame/token position and atomic multimodal state publication |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |
@@ -392,8 +428,11 @@ First slices:
 - ~~snapshot-bound sweep writer/repair contract and deterministic crash model;~~
 - ~~descriptor-relative POSIX file adapter and subprocess recovery across every
   publication and repair crash point;~~ complete on the macOS host;
-- native Linux filesystem campaign plus publication-before-deallocation
-  recovery across every destructive transition;
+- ~~exact pre-mutation receipt preview plus file publication before
+  deallocation and idempotent old/new snapshot recovery;~~ complete for the
+  in-memory payload store with an injected post-publication boundary failure;
+- native Linux filesystem and durable payload-store process-death recovery
+  across every destructive transition;
 - trusted replica transport with independently verified fetch evidence;
 - optional encrypted storage adapter whose ciphertext identity is separate from
   semantic content identity.

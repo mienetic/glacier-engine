@@ -7,6 +7,21 @@ const bundle = core.continuation_bundle;
 const object_store = core.continuation_object_store;
 const sweep = core.continuation_object_sweep;
 const sweep_record = core.continuation_object_sweep_record;
+const sweep_writer = core.continuation_object_sweep_writer;
+const sweep_file = core.continuation_object_sweep_file;
+
+const StopAfterPublication = struct {
+    calls: usize = 0,
+
+    fn after(
+        context: *anyopaque,
+        _: sweep_file.Digest,
+    ) sweep_writer.Error!void {
+        const self: *StopAfterPublication = @ptrCast(@alignCast(context));
+        self.calls += 1;
+        return error.InjectedFault;
+    }
+};
 
 pub fn main() !void {
     const objects = demoObjects();
@@ -149,7 +164,7 @@ pub fn main() !void {
     };
 
     const allocator_before = fba.end_index;
-    const committed = try sweep.commitV1(
+    const preview = try sweep.previewCommitV1(
         &store,
         sweep_grant,
         commit_grant,
@@ -157,6 +172,105 @@ pub fn main() !void {
         &roots,
         &leases,
         prepared.journal,
+    );
+    if (fba.end_index != allocator_before or store.entry_count != 8 or
+        store.retired_entries != 1)
+        return error.PreviewMutatedStore;
+
+    const record_metadata: sweep_file.CommitRecordMetadataV1 = .{
+        .record_epoch = 0x5357_4545_5000_0001,
+        .sequence = 1,
+        .previous_record_sha256 = capsule.zero_digest,
+        .record_challenge_sha256 = [_]u8{0xd8} ** 32,
+    };
+    const prepared_record = try sweep_file.prepareCommitRecordV1(
+        preview,
+        record_metadata,
+    );
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var empty_storage: [1]u8 = undefined;
+    var file_lease = try sweep_file.FileLeaseV1.create(
+        temporary.dir,
+        "published-sweep.records",
+        .{
+            .storage_epoch = 901,
+            .max_bytes = sweep_record.encoded_bytes,
+        },
+        &empty_storage,
+    );
+    const anchor: sweep_record.RecoveryAnchorV1 = .{
+        .record_epoch = record_metadata.record_epoch,
+        .next_sequence = record_metadata.sequence,
+        .previous_record_sha256 = record_metadata.previous_record_sha256,
+    };
+    var publication_writer = try sweep_writer.WriterV1.openClean(
+        file_lease.stream(),
+        anchor,
+        try file_lease.appendCapability(),
+    );
+    var stop_after_publication: StopAfterPublication = .{};
+    try std.testing.expectError(
+        error.InjectedFault,
+        sweep_file.publishThenCommitV1(
+            &store,
+            preview,
+            prepared_record,
+            &publication_writer,
+            .{
+                .context = &stop_after_publication,
+                .after_publication_fn = StopAfterPublication.after,
+            },
+        ),
+    );
+    if (stop_after_publication.calls != 1 or
+        fba.end_index != allocator_before or
+        store.entry_count != 8 or
+        store.retired_entries != 1)
+        return error.PublicationBoundaryMutatedStore;
+    file_lease.close();
+
+    var reopened_storage: [sweep_record.encoded_bytes]u8 = undefined;
+    var reopened = try sweep_file.FileLeaseV1.open(
+        temporary.dir,
+        "published-sweep.records",
+        .{
+            .storage_epoch = 901,
+            .max_bytes = reopened_storage.len,
+        },
+        &reopened_storage,
+    );
+    defer reopened.close();
+    const recovered = try sweep_file.recoverPublishedCommitV1(
+        &store,
+        preview,
+        prepared_record,
+        reopened.stream(),
+        anchor,
+    );
+    if (recovered.disposition != .applied)
+        return error.CommitRecoveryMismatch;
+    const committed = recovered.commit;
+    const idempotent = try sweep_file.recoverPublishedCommitV1(
+        &store,
+        preview,
+        prepared_record,
+        reopened.stream(),
+        anchor,
+    );
+    if (idempotent.disposition != .already_applied)
+        return error.CommitRecoveryMismatch;
+    try store.releaseV1(model);
+    try store.verifyAllV1();
+    try std.testing.expectError(
+        error.PublishedCommitStateMismatch,
+        sweep_file.recoverPublishedCommitV1(
+            &store,
+            preview,
+            prepared_record,
+            reopened.stream(),
+            anchor,
+        ),
     );
     try sweep.verifyCommitReceiptV1(
         commit_grant,
@@ -186,25 +300,12 @@ pub fn main() !void {
         else => return err,
     }
 
-    const record_input: sweep_record.InputV1 = .{
-        .record_epoch = 0x5357_4545_5000_0001,
-        .sequence = 1,
-        .previous_record_sha256 = capsule.zero_digest,
-        .record_challenge_sha256 = [_]u8{0xd8} ** 32,
-        .commit_grant = commit_grant,
-        .commit_receipt = committed.receipt,
-        .store_receipt = committed.store_receipt,
-    };
-    var record_storage: [sweep_record.encoded_bytes]u8 = undefined;
-    const record_wire = try sweep_record.encodeV1(
-        record_input,
-        &record_storage,
-    );
+    const record_wire = &prepared_record.bytes;
     const record_decoded = try sweep_record.decodeV1(record_wire);
     _ = try sweep_record.decodeAndVerifyV1(
         record_wire,
         try sweep_record.expectationV1(
-            record_input,
+            record_decoded.input,
             record_decoded.record_sha256,
         ),
     );
@@ -250,7 +351,7 @@ pub fn main() !void {
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
     try stdout.print(
-        "{{\"schema\":\"glacier.continuation-object-sweep-commit/demo-v1\"," ++
+        "{{\"schema\":\"glacier.continuation-object-sweep-commit/demo-v2\"," ++
             "\"freed_entries\":{d},\"freed_payload_bytes\":{d}," ++
             "\"freed_index_bytes\":{d}," ++
             "\"freed_repair_count\":{d}," ++
@@ -267,9 +368,19 @@ pub fn main() !void {
             "\"all_fallible_checks_before_deallocation\":true," ++
             "\"collection_plan_regenerated\":true," ++
             "\"input_journal_unchanged\":true," ++
-            "\"filesystem_authority\":false," ++
+            "\"preview_without_mutation\":true," ++
+            "\"publication_before_deallocation\":true," ++
+            "\"publication_boundary_fault_injected\":true," ++
+            "\"recovery_applied_once\":true," ++
+            "\"recovery_idempotent\":true," ++
+            "\"recovery_third_state_rejected\":true," ++
+            "\"filesystem_authority\":true," ++
+            "\"publication_file_sync\":true," ++
+            "\"publication_directory_sync\":true," ++
             "\"network_authority\":false,\"clock_authority\":false," ++
-            "\"durable\":false,\"secure_erase\":false," ++
+            "\"evidence_publication_synced\":true," ++
+            "\"payload_store_durable\":false," ++
+            "\"power_loss_emulated\":false,\"secure_erase\":false," ++
             "\"sweep_record_bytes\":{d}," ++
             "\"sweep_record_verified\":true," ++
             "\"sweep_record_filesystem_authority\":false," ++

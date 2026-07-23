@@ -101,6 +101,32 @@ incomplete tail. It binds the exact old length and verified committed prefix.
 The adapter truncates only that pre-bound target, synchronizes the file, and
 requires close/reacquire before append.
 
+## Publication-ordered commit
+
+The adapter now joins the file boundary to the in-memory destructive sweep:
+
+1. `previewCommitV1` regenerates the exact targets and predicts before/after
+   accounting, the post-state snapshot, and both receipts without mutation;
+2. `prepareCommitRecordV1` encodes that prediction as the existing fixed
+   784-byte sweep record;
+3. `publishThenCommitV1` completes body write, file sync, footer write, and file
+   sync before calling the destructive preview-bound primitive; and
+4. `recoverPublishedCommitV1` accepts only a fully anchored record plus either
+   the exact old snapshot (`applied`) or exact predicted new snapshot
+   (`already_applied`).
+
+The commit demo injects a failure immediately after synced publication. Store
+payloads and counters remain unchanged, fresh-open recovery applies the
+transition once, and a repeated recovery performs no second deallocation.
+Both the native demo and independent Python model reject a valid third store
+state; the Python model also repeats record-mutation rejection.
+
+This closes the ordering gap for the in-memory payload store. The low-level
+in-memory commit primitive remains available for authority-free fixtures; a
+caller requiring publication ordering must use the ordered adapter. Durable
+payload storage and real process death across payload mutation remain separate
+promotion gates.
+
 ## Replacement and link defense
 
 An advisory lock protects cooperating users of the opened inode; it does not
@@ -167,6 +193,7 @@ zig test src/core/continuation_object_sweep_file.zig -O ReleaseSafe
 zig test src/core/continuation_object_sweep_file.zig -O ReleaseFast
 python3 -m unittest bench.tests.test_continuation_object_sweep_file
 zig build continuation-sweep-file-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
 The focused native root currently runs 49 tests including imported record,
@@ -188,11 +215,11 @@ This prototype does not yet prove:
 - protection from privileged or kernel-level namespace mutation;
 - detection of same-length in-place writes by a process ignoring the lock;
 - power-cut durability on any device;
-- atomic ordering between evidence publication and payload deallocation;
 - durable object payload storage;
+- process-death recovery across mutation of a durable payload store;
 - ResourceBank/LeaseTree ownership reacquisition; or
 - live restoration of model, tokenizer, KV, RNG, sampler, and output state.
 
-The next continuation milestone joins this durable evidence boundary to
-publication-before-deallocation ordering, then reacquires exact runtime
-ownership before any restored state becomes visible.
+The next continuation milestone applies the same old/new reconciliation to a
+native durable payload store under real process death, then reacquires exact
+runtime ownership before any restored state becomes visible.

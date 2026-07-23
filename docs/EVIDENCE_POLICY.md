@@ -66,6 +66,10 @@ Keep these distinct:
   write/sync/truncate phase, file/directory sync result, namespace-replacement
   decision, and fresh-process reopen without implied power-cut durability or
   payload deletion;
+- **sweep transition:** exact no-mutation preview, predicted post-state root,
+  fully synced preview-record root, publication/deallocation boundary outcome,
+  and old/new snapshot reconciliation without implied durable payload storage,
+  power-cut survival, or secure erasure;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;

@@ -256,10 +256,13 @@ output/source overlap with store memory.
 7. ~~Descriptor-relative POSIX file publication and subprocess crash
    recovery.~~ Implemented on the macOS host with Linux compilation evidence;
    native Linux filesystem and power-loss campaigns remain.
-8. Replica adapter with independently verified repair transport.
-9. Publication-before-deallocation ordering across durable payload state.
-10. Resource and paged-KV ownership reacquisition.
-11. End-to-end restart and paired physical-resource campaigns.
+8. ~~Exact preview publication before payload deallocation.~~ Implemented for
+   the in-memory store with predicted post-state roots, real file sync, injected
+   boundary failure, and idempotent old/new reconciliation.
+9. Native durable payload-store process-death recovery.
+10. Replica adapter with independently verified repair transport.
+11. Resource and paged-KV ownership reacquisition.
+12. End-to-end restart and paired physical-resource campaigns.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the portable commit evidence and non-durable append plan.

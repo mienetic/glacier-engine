@@ -57,6 +57,11 @@ before the first stable release.
   exclusive advisory locks, device/inode/link/permission fencing, ordered file
   and directory sync, replacement detection, independent Python verification,
   and six native plus Python subprocess-death boundaries.
+- Exact no-mutation sweep commit previews with predicted post-state roots,
+  file-synced publication before payload deallocation, injected-boundary
+  recovery, and idempotent old/new snapshot reconciliation in Zig and Python.
+- A gated multimodal roadmap for a shared media identity/timeline/transaction
+  substrate followed by bounded image, streaming audio, and video execution.
 
 ### Status
 

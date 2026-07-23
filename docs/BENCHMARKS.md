@@ -31,7 +31,7 @@ energy, or production reliability.
 | `zig build continuation-store-demo -Dmetal=false` | Atomic bundle import, duplicate reuse, generation-fenced leases, quarantine repair, exact accounting, and v1/v2 snapshots |
 | `zig build continuation-collection-demo -Dmetal=false` | Exact root multiplicity, complete lease coverage, bounded classification, and a non-mutating collection-plan root |
 | `zig build continuation-sweep-demo -Dmetal=false` | Separately scoped plan regeneration, staging ceilings, functional prepare/abort roots, and zero payload deallocation |
-| `zig build continuation-sweep-commit-demo -Dmetal=false` | Separate destructive authority, repeated plan regeneration, canonical target removal, exact accounting, and allocator tail reclamation |
+| `zig build continuation-sweep-commit-demo -Dmetal=false` | Exact no-mutation preview, real file publication before deallocation, injected-boundary recovery, idempotent old/new reconciliation, exact accounting, and allocator tail reclamation |
 | `zig build continuation-sweep-record-demo -Dmetal=false` | Fixed record verification, anchored tail classification, snapshot-bound append/repair capabilities, ordered sync, and deterministic crash-storage conformance |
 | `zig build continuation-sweep-file-demo -Dmetal=false` | Descriptor-relative lock/identity/sync checks and six native subprocess-death recovery boundaries |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
@@ -167,7 +167,13 @@ behavior, or justify filesystem latency, energy, RSS, or durability claims
 beyond the recorded host run.
 
 The sweep-commit demo separately encodes its actual native store receipts into
-the same 784-byte format and verifies record root `6f60f970…c7fa52`.
+the same 784-byte format and verifies record root `6f60f970…c7fa52`. Version 2
+first predicts that exact receipt without mutation, publishes and syncs it
+through the POSIX adapter, injects a failure before deallocation, then recovers
+against the old snapshot, proves a second recovery is already applied, and
+rejects a valid third store state. The payload store remains in memory, so this
+is ordering and reconciliation evidence—not durable payload-store or power-loss
+evidence.
 
 ## Provider evidence checkpoint
 

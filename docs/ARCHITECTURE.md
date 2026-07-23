@@ -222,6 +222,16 @@ ownership reacquisition, and live restore remain separate layers. The advisory
 lock contract also requires cooperating writers; same-length in-place writes
 that preserve visible identity metadata are outside its detection boundary.
 
+The publication-ordered commit layer removes the earlier record-after-delete
+gap. Before mutation, the store derives the exact target set, before/after
+accounting, predicted post-state snapshot, and both commit receipts. The POSIX
+adapter publishes that fixed record through body/footer sync before invoking the
+no-failure removal suffix. An injected failure at the boundary leaves the old
+store untouched. Recovery verifies the anchored record and accepts only the
+exact old snapshot (apply once) or predicted new snapshot (already applied).
+The current payload store remains in memory, so native durable-store
+process-death recovery is still a separate boundary.
+
 ## Provider execution flow
 
 ```text
@@ -324,5 +334,7 @@ still require real machines for each promoted platform.
   deterministic crash-boundary conformance without real filesystem authority.
 - [Continuation object sweep file adapter](CONTINUATION_OBJECT_SWEEP_FILE.md):
   descriptor-relative locking, identity fencing, ordered sync, explicit repair,
-  and real subprocess-death conformance.
+  real subprocess-death conformance, and publication-ordered commit recovery.
+- [Multimodal roadmap](MULTIMODAL_ROADMAP.md): gated shared media identity,
+  timeline, transaction, image, audio, and video tracks.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

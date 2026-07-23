@@ -63,6 +63,10 @@ formats, and independent verifiers.
   adds exclusive locking, no-follow lookup, single-link/private-mode checks,
   file and directory sync, namespace-replacement detection, and six real
   subprocess-death boundaries without adding payload deletion authority.
+- **Publication-ordered reclamation.** Glacier predicts the exact post-removal
+  receipt without mutation, syncs that record before freeing payloads, and
+  reconciles exact old/new snapshots so recovery applies once or recognizes an
+  already-applied transition.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
@@ -114,6 +118,8 @@ request
                                            └─ pure anchored stream classifier
                                               └─ scoped writer/repair model
                                                  └─ locked real-file adapter
+                                                    └─ exact preview publication
+                                                       └─ destructive apply
 
 provider request
   │
@@ -169,10 +175,11 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, fixed evidence record, anchored recovery, scoped crash model, and a locked POSIX file adapter | Publication-before-deallocation ordering, ownership reacquisition, and live restart |
+| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, fixed evidence record, anchored recovery, locked POSIX publication, exact pre-deallocation preview, and idempotent old/new reconciliation | Native durable payload-store recovery, ownership reacquisition, and live restart |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
+| Multimodal | Gated image/audio/video architecture and contributor slices | Begin execution only after the durable-continuation promotion gate |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -218,6 +225,7 @@ valuable as new features.
 - [Continuation object sweep record](docs/CONTINUATION_OBJECT_SWEEP_RECORD.md)
 - [Continuation object sweep writer](docs/CONTINUATION_OBJECT_SWEEP_WRITER.md)
 - [Continuation object sweep file adapter](docs/CONTINUATION_OBJECT_SWEEP_FILE.md)
+- [Multimodal roadmap](docs/MULTIMODAL_ROADMAP.md)
 - [Glossary](docs/GLOSSARY.md)
 
 Research tracks are documented separately in

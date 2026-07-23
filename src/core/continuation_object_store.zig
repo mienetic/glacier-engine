@@ -126,6 +126,7 @@ pub const Error = bundle.Error || std.mem.Allocator.Error || error{
     RetiredCommitBudgetExceeded,
     NonCanonicalRetiredTargets,
     RetiredTargetMismatch,
+    RetiredCommitPreviewMismatch,
     InvalidRetiredCommitReceipt,
 };
 
@@ -1033,6 +1034,18 @@ pub fn StoreV1(comptime capacity: usize) type {
             permit: RetiredCommitPermitV1,
             targets: []const bundle.BlobRefV1,
         ) Error!RetiredCommitReceiptV1 {
+            const preview = try self.previewRetiredCommitV1(permit, targets);
+            return self.commitRetiredPreviewV1(permit, targets, preview);
+        }
+
+        /// Computes the exact receipt and post-state root without freeing or
+        /// mutating any payload. A publication layer can durably bind this
+        /// preview before granting destructive authority.
+        pub fn previewRetiredCommitV1(
+            self: *Self,
+            permit: RetiredCommitPermitV1,
+            targets: []const bundle.BlobRefV1,
+        ) Error!RetiredCommitReceiptV1 {
             try self.ensureOperation(operation_release);
             try validateRetiredCommitPermitV1(permit);
             if (permit.authority_epoch != self.grant.authority_epoch or
@@ -1070,11 +1083,14 @@ pub fn StoreV1(comptime capacity: usize) type {
                 exact_targets[0..targets.len],
                 targets,
             );
+            var removed_slots = [_]bool{false} ** capacity;
             var freed_payload_bytes: u64 = 0;
             var released_repairs: u64 = 0;
             for (exact_targets[0..targets.len]) |target| {
                 const index = self.findExactSlot(target) orelse
                     return Error.RetiredTargetMismatch;
+                if (removed_slots[index])
+                    return Error.NonCanonicalRetiredTargets;
                 const slot = self.slots[index].?;
                 if (slot.state != .retired or
                     slot.reference_count != 0 or
@@ -1091,6 +1107,7 @@ pub fn StoreV1(comptime capacity: usize) type {
                     released_repairs,
                     slot.repair_generation,
                 ) catch return Error.InvalidAccounting;
+                removed_slots[index] = true;
             }
             if (freed_payload_bytes > permit.max_freed_bytes)
                 return Error.RetiredCommitBudgetExceeded;
@@ -1121,25 +1138,10 @@ pub fn StoreV1(comptime capacity: usize) type {
                 .repair_count = accounting_before.repair_count -
                     released_repairs,
             };
-
-            // All fallible checks finish above. Freeing exact, distinct retired
-            // slots and assigning the precomputed counters cannot fail.
-            for (exact_targets[0..targets.len]) |target| {
-                const index = self.findExactSlot(target) orelse unreachable;
-                const removed = self.slots[index].?;
-                self.allocator.free(removed.payload);
-                self.slots[index] = null;
-            }
-            self.entry_count = accounting_after.entry_count;
-            self.live_entries = accounting_after.live_entries;
-            self.quarantined_entries = accounting_after.quarantined_entries;
-            self.retired_entries = accounting_after.retired_entries;
-            self.payload_bytes = accounting_after.payload_bytes;
-            self.logical_index_bytes = accounting_after.logical_index_bytes;
-            self.reference_count = accounting_after.reference_count;
-            self.active_leases = accounting_after.active_leases;
-            self.repair_count = accounting_after.repair_count;
-            const snapshot_after = self.snapshotRootV2Unchecked();
+            const snapshot_after = self.snapshotRootV2AfterRetiredV1(
+                &removed_slots,
+                accounting_after,
+            );
             var receipt: RetiredCommitReceiptV1 = .{
                 .authorization_sha256 = permit.authorization_sha256,
                 .targets_sha256 = targets_root,
@@ -1156,6 +1158,46 @@ pub fn StoreV1(comptime capacity: usize) type {
             };
             receipt.commit_sha256 = retiredCommitReceiptRootV1(receipt);
             return receipt;
+        }
+
+        /// Revalidates an exact published preview, then enters a no-failure
+        /// mutation suffix. A stale, foreign, or changed preview cannot free.
+        pub fn commitRetiredPreviewV1(
+            self: *Self,
+            permit: RetiredCommitPermitV1,
+            targets: []const bundle.BlobRefV1,
+            expected_preview: RetiredCommitReceiptV1,
+        ) Error!RetiredCommitReceiptV1 {
+            const preview = try self.previewRetiredCommitV1(permit, targets);
+            if (!std.meta.eql(preview, expected_preview))
+                return Error.RetiredCommitPreviewMismatch;
+
+            // Every fallible check finishes above. Exact canonical targets were
+            // revalidated against the unchanged snapshot, so freeing and
+            // assigning the precomputed counters cannot fail.
+            for (targets) |target| {
+                const index = self.findExactSlot(target) orelse unreachable;
+                const removed = self.slots[index].?;
+                self.allocator.free(removed.payload);
+                self.slots[index] = null;
+            }
+            const accounting = preview.accounting_after;
+            self.entry_count = accounting.entry_count;
+            self.live_entries = accounting.live_entries;
+            self.quarantined_entries = accounting.quarantined_entries;
+            self.retired_entries = accounting.retired_entries;
+            self.payload_bytes = accounting.payload_bytes;
+            self.logical_index_bytes = accounting.logical_index_bytes;
+            self.reference_count = accounting.reference_count;
+            self.active_leases = accounting.active_leases;
+            self.repair_count = accounting.repair_count;
+            const actual_snapshot = self.snapshotRootV2Unchecked();
+            std.debug.assert(std.mem.eql(
+                u8,
+                &actual_snapshot,
+                &preview.snapshot_after_sha256,
+            ));
+            return preview;
         }
 
         pub fn verifyAllV1(self: *Self) Error!void {
@@ -1426,6 +1468,58 @@ pub fn StoreV1(comptime capacity: usize) type {
             }
             var digest: Digest = undefined;
             hash.final(&digest);
+            return digest;
+        }
+
+        fn snapshotRootV2AfterRetiredV1(
+            self: *const Self,
+            removed_slots: *const [capacity]bool,
+            accounting: LogicalAccountingV1,
+        ) Digest {
+            var content_hash = std.crypto.hash.sha2.Sha256.init(.{});
+            content_hash.update(snapshot_domain);
+            content_hash.update(&self.grant_sha256);
+            hashU64(&content_hash, accounting.entry_count);
+            hashU64(&content_hash, accounting.live_entries);
+            hashU64(&content_hash, accounting.quarantined_entries);
+            hashU64(&content_hash, accounting.payload_bytes);
+            hashU64(&content_hash, accounting.logical_index_bytes);
+            hashU64(&content_hash, accounting.reference_count);
+            for (self.slots, 0..) |maybe_slot, index| {
+                if (removed_slots[index]) continue;
+                if (maybe_slot) |slot| {
+                    hashU64(&content_hash, index);
+                    hashU64(&content_hash, @intFromEnum(slot.state));
+                    hashU64(&content_hash, slot.byte_length);
+                    content_hash.update(&slot.sha256);
+                    hashU64(&content_hash, slot.reference_count);
+                    content_hash.update(&slot.provenance_sha256);
+                    content_hash.update(&slot.quarantine_reason_sha256);
+                }
+            }
+            var content_root: Digest = undefined;
+            content_hash.final(&content_root);
+
+            var lifecycle_hash = std.crypto.hash.sha2.Sha256.init(.{});
+            lifecycle_hash.update(lifecycle_snapshot_domain);
+            lifecycle_hash.update(&content_root);
+            hashU64(&lifecycle_hash, accounting.active_leases);
+            hashU64(&lifecycle_hash, accounting.repair_count);
+            for (self.slots, 0..) |maybe_slot, index| {
+                if (removed_slots[index]) continue;
+                if (maybe_slot) |slot| {
+                    hashU64(&lifecycle_hash, index);
+                    hashU64(
+                        &lifecycle_hash,
+                        @intFromBool(slot.lease_active),
+                    );
+                    hashU64(&lifecycle_hash, slot.lease_generation);
+                    lifecycle_hash.update(&slot.lease_receipt_sha256);
+                    hashU64(&lifecycle_hash, slot.repair_generation);
+                }
+            }
+            var digest: Digest = undefined;
+            lifecycle_hash.final(&digest);
             return digest;
         }
 

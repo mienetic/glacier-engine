@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import copy
+import tempfile
 import unittest
 
 from bench import continuation_bundle as bundle
 from bench import continuation_capsule as capsule
 from bench import continuation_object_collection as collection
+from bench import continuation_object_sweep_file as file_api
+from bench import continuation_object_sweep_record as record
+from bench import continuation_object_sweep_writer as writer
 from bench import continuation_object_store as object_store
 from bench import continuation_object_sweep as sweep
 
@@ -136,6 +140,7 @@ class ContinuationObjectSweepTests(unittest.TestCase):
         )
         return {
             "store": store,
+            "model": key(0),
             "roots": roots,
             "leases": leases,
             "retired": retired,
@@ -378,6 +383,127 @@ class ContinuationObjectSweepTests(unittest.TestCase):
                 contradictory_receipt,
                 contradictory_store_receipt,
             )
+
+    def test_file_publication_precedes_commit_and_recovery_is_idempotent(
+        self,
+    ) -> None:
+        fixture = self.commit_fixture()
+        store = fixture["store"]
+        self.assertIsInstance(store, object_store.Store)
+        snapshot_before = store.audit_snapshot_root_v2()
+        preview = sweep.preview_commit(
+            store,
+            fixture["sweep_grant"],
+            fixture["commit_grant"],
+            fixture["collection_grant"],
+            fixture["roots"],
+            fixture["leases"],
+            fixture["prepared"],
+        )
+        self.assertEqual(snapshot_before, store.audit_snapshot_root_v2())
+        self.assertEqual(
+            (store.entry_count, store.retired_entries, store.payload_bytes),
+            (8, 1, 255),
+        )
+        anchor = record.origin_recovery_anchor()
+        prepared_record = file_api.prepare_commit_record(
+            preview,
+            {
+                "record_epoch": anchor["record_epoch"],
+                "sequence": anchor["next_sequence"],
+                "previous_record_sha256": anchor[
+                    "previous_record_sha256"
+                ],
+                "record_challenge_sha256": bytes((0xD8,)) * 32,
+            },
+        )
+
+        class BoundaryStop(RuntimeError):
+            pass
+
+        def stop_after_publication(_: bytes) -> None:
+            raise BoundaryStop
+
+        with tempfile.TemporaryDirectory() as directory:
+            with file_api.LockedSweepFile.create(
+                directory,
+                "published.records",
+                901,
+                record.ENCODED_BYTES,
+            ) as lease:
+                publication_writer = writer.Writer.open_clean(
+                    lease.observed,
+                    anchor,
+                    lease.append_capability(),
+                )
+                with self.assertRaises(BoundaryStop):
+                    file_api.publish_then_commit(
+                        store,
+                        preview,
+                        prepared_record,
+                        publication_writer,
+                        stop_after_publication,
+                    )
+                self.assertEqual(
+                    (
+                        store.entry_count,
+                        store.retired_entries,
+                        store.payload_bytes,
+                    ),
+                    (8, 1, 255),
+                )
+
+            with file_api.LockedSweepFile.open(
+                directory,
+                "published.records",
+                901,
+                record.ENCODED_BYTES,
+            ) as reopened:
+                recovered = file_api.recover_published_commit(
+                    store,
+                    preview,
+                    prepared_record,
+                    reopened.observed,
+                    anchor,
+                )
+                self.assertEqual(recovered["disposition"], "applied")
+                repeated = file_api.recover_published_commit(
+                    store,
+                    preview,
+                    prepared_record,
+                    reopened.observed,
+                    anchor,
+                )
+                self.assertEqual(
+                    repeated["disposition"],
+                    "already_applied",
+                )
+                mutated = copy.deepcopy(prepared_record)
+                damaged = bytearray(mutated["bytes"])
+                damaged[0] ^= 1
+                mutated["bytes"] = bytes(damaged)
+                with self.assertRaises(file_api.FileAdapterError):
+                    file_api.recover_published_commit(
+                        store,
+                        preview,
+                        mutated,
+                        reopened.observed,
+                        anchor,
+                    )
+                store.release(fixture["model"])
+                store.verify_all()
+                with self.assertRaises(file_api.FileAdapterError):
+                    file_api.recover_published_commit(
+                        store,
+                        preview,
+                        prepared_record,
+                        reopened.observed,
+                        anchor,
+                    )
+        self.assertEqual(
+            (store.entry_count, store.retired_entries, store.payload_bytes),
+            (7, 0, 216),
+        )
         with self.assertRaises(collection.CollectionError):
             sweep.commit(
                 store,

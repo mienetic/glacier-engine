@@ -171,7 +171,6 @@ The deterministic backend alone does not prove:
 - advisory or mandatory lock behavior on a promoted platform;
 - short-write and sync semantics of a particular adapter;
 - directory-entry durability, replacement resistance, or path safety;
-- durable ordering between evidence publication and payload deallocation;
 - process restart of live AI state;
 - lower RSS, disk usage, latency, or energy.
 
@@ -179,8 +178,9 @@ The downstream descriptor-relative POSIX adapter now provides platform-specific
 locking, write-all loops, file and directory sync, fresh-read reopen, identity
 fences, and subprocess-death tests on the macOS host. It does not turn the
 deterministic backend into power-loss evidence. Native Linux filesystem
-campaigns and destructive object-store replay remain pending until
-publication-before-deallocation ordering is separately proven.
+campaigns remain pending. The downstream ordered commit path now syncs an exact
+predicted receipt before in-memory payload removal and reconciles old/new
+snapshots; a durable payload-store process-death campaign remains pending.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the wire format and pure classifier, and

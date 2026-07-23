@@ -254,7 +254,10 @@ Native and independent tests cover:
 - replayed commit rejection against the changed snapshot.
 
 This proves deterministic atomic in-memory commit conformance for the fixture.
-It does not prove durable exactly-once execution, recovery after process loss,
+The ordered adapter additionally predicts the exact receipt without mutation,
+syncs it as a fixed record before deallocation, injects a failure at that
+boundary, and reconciles the exact old/new snapshots idempotently. It does not
+prove durable payload-store recovery after process loss, power-loss survival,
 secure erasure, multi-process safety, distributed reachability, lower RSS, or
 production garbage-collection performance.
 
@@ -271,8 +274,11 @@ production garbage-collection performance.
 4. ~~Descriptor-relative POSIX file adapter and subprocess recovery under
    platform lock/sync/identity semantics.~~ Implemented on the macOS host;
    native Linux filesystem campaigns remain.
-5. Publication-before-deallocation ordering without double deallocation.
-6. Durable retirement and file-publication ordering.
+5. ~~Publication-before-deallocation ordering without double deallocation.~~
+   Implemented for the in-memory store with exact preview, real file sync,
+   injected boundary failure, and idempotent old/new recovery.
+6. Native durable payload-store and real process-death recovery across the
+   destructive boundary.
 7. Multi-bundle and parent-checkpoint reachability composition.
 8. Allocator campaigns covering non-tail reuse, fragmentation, RSS, and peak
    memory without conflating them with logical accounting.

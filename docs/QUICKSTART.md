@@ -62,7 +62,7 @@ zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
 # Regenerate an approved plan and emit functional sweep prepare/abort roots
 zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
 
-# Commit one exact retired set and report logical plus allocator reclamation
+# Sync an exact preview before applying/recovering one retired-set commit
 zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
 
 # Verify a sweep record, classify tails, and exercise scoped crash publication

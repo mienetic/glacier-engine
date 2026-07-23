@@ -11,6 +11,8 @@ import stat
 import sys
 from typing import Any
 
+from bench import continuation_object_store as object_store
+from bench import continuation_object_sweep as sweep
 from bench import continuation_object_sweep_record as record
 from bench import continuation_object_sweep_writer as writer
 
@@ -595,6 +597,126 @@ class LockedSweepFile:
         self.repair_snapshot_sha256 = bytes(32)
         self.repair_expected_bytes = 0
         self.repair_target_bytes = 0
+
+
+def _validate_commit_preview(preview: dict[str, Any]) -> None:
+    try:
+        commit_grant = preview["commit_grant"]
+        receipt = preview["receipt"]
+        store_receipt = preview["store_receipt"]
+        targets = preview["targets"]
+        sweep.verify_commit_receipt(
+            commit_grant,
+            receipt,
+            store_receipt,
+        )
+        if (
+            not targets
+            or object_store.retired_targets_root(targets)
+            != receipt["targets_sha256"]
+        ):
+            raise FileAdapterError("published commit targets changed")
+    except (
+        KeyError,
+        TypeError,
+        object_store.StoreError,
+        sweep.SweepError,
+    ) as exc:
+        raise FileAdapterError("invalid commit preview") from exc
+
+
+def prepare_commit_record(
+    preview: dict[str, Any],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    _validate_commit_preview(preview)
+    value = {
+        "record_epoch": metadata["record_epoch"],
+        "sequence": metadata["sequence"],
+        "previous_record_sha256": metadata["previous_record_sha256"],
+        "record_challenge_sha256": metadata["record_challenge_sha256"],
+        "commit_grant": preview["commit_grant"],
+        "commit_receipt": preview["receipt"],
+        "store_receipt": preview["store_receipt"],
+    }
+    encoded = record.encode(value)
+    return {
+        "bytes": encoded,
+        "record_sha256": record.decode(encoded)["record_sha256"],
+    }
+
+
+def _validate_prepared_commit(
+    preview: dict[str, Any],
+    prepared: dict[str, Any],
+) -> None:
+    _validate_commit_preview(preview)
+    try:
+        decoded = record.decode(prepared["bytes"])
+        value = decoded["input"]
+        if (
+            decoded["record_sha256"] != prepared["record_sha256"]
+            or value["commit_grant"] != preview["commit_grant"]
+            or value["commit_receipt"] != preview["receipt"]
+            or value["store_receipt"] != preview["store_receipt"]
+        ):
+            raise FileAdapterError("prepared commit record changed")
+    except (KeyError, TypeError, record.SweepRecordError) as exc:
+        raise FileAdapterError("invalid prepared commit record") from exc
+
+
+def publish_then_commit(
+    store: object_store.Store,
+    preview: dict[str, Any],
+    prepared: dict[str, Any],
+    publication_writer: writer.Writer,
+    observer: Callable[[bytes], None] | None = None,
+) -> dict[str, Any]:
+    _validate_prepared_commit(preview, prepared)
+    publication = publication_writer.append_record(prepared["bytes"])
+    if publication["record_sha256"] != prepared["record_sha256"]:
+        raise FileAdapterError("published commit root changed")
+    if observer is not None:
+        observer(publication["record_sha256"])
+    receipt, store_receipt = sweep.commit_preview(store, preview)
+    return {
+        "publication": publication,
+        "receipt": receipt,
+        "store_receipt": store_receipt,
+    }
+
+
+def recover_published_commit(
+    store: object_store.Store,
+    preview: dict[str, Any],
+    prepared: dict[str, Any],
+    durable_stream: bytes,
+    anchor: dict[str, Any],
+) -> dict[str, Any]:
+    _validate_prepared_commit(preview, prepared)
+    classification = record.classify_recovery(durable_stream, anchor)
+    if (
+        classification["status"] != "clean"
+        or classification["committed_bytes"] != len(durable_stream)
+        or classification["final_record_sha256"]
+        != prepared["record_sha256"]
+    ):
+        raise FileAdapterError("published commit is not a complete prefix")
+    snapshot = store.audit_snapshot_root_v2()
+    if snapshot == preview["receipt"]["snapshot_before_sha256"]:
+        receipt, store_receipt = sweep.commit_preview(store, preview)
+        return {
+            "disposition": "applied",
+            "receipt": receipt,
+            "store_receipt": store_receipt,
+        }
+    if snapshot == preview["receipt"]["snapshot_after_sha256"]:
+        return {
+            "disposition": "already_applied",
+            "receipt": preview["receipt"],
+            "store_receipt": preview["store_receipt"],
+        }
+    raise FileAdapterError("published commit store state changed")
 
 
 def _crash_observer(target_phase: str) -> PhaseObserver:

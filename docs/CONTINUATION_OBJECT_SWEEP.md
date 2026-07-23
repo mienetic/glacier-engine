@@ -204,9 +204,12 @@ coordination, liveness, or exactly-once execution.
 6. ~~Descriptor-relative POSIX file adapter with lock/sync/identity fences and
    subprocess death recovery.~~ Implemented on the macOS host; native Linux
    filesystem campaigns remain.
-7. Durable publication-before-deallocation ordering.
-8. Multi-bundle and parent-checkpoint reachability composition.
-9. ResourceBank/LeaseTree reacquisition and end-to-end restart.
+7. ~~Publication-before-deallocation ordering.~~ Implemented for the in-memory
+   store with an exact no-mutation preview, real file sync, injected boundary
+   failure, and idempotent old/new snapshot recovery.
+8. Native durable payload-store process-death recovery.
+9. Multi-bundle and parent-checkpoint reachability composition.
+10. ResourceBank/LeaseTree reacquisition and end-to-end restart.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the fixed evidence wire and

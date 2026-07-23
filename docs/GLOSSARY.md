@@ -72,6 +72,19 @@ descendant directories.
 publishing process terminates. It proves lock release and host page-cache/file
 semantics for the observed run, but does not emulate device power loss.
 
+**Publication-ordered commit** — A destructive transition whose exact predicted
+receipt is fully published before mutation. Recovery compares the current state
+with the receipt's old/new roots to apply once, accept an already-applied state,
+or reject an unrelated state.
+
+**MediaObject** — Planned content-addressed identity for an immutable image,
+audio, or video payload plus its bounded semantic metadata. It does not grant
+file, network, camera, or microphone access.
+
+**MediaTimeline** — Planned checked rational position system connecting audio
+sample ranges, video frames, image regions, subtitles, generated chunks, and
+model-visible state without relying on floating-point wall-clock time.
+
 **Retired entry** — A retained store payload with zero semantic references and
 no active lease. It is eligible for a future separately authorized sweep only
 after an exact collection plan classifies it as collectible.

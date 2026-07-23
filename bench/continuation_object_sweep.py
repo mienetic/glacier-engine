@@ -388,7 +388,7 @@ def abort(
     return journal, receipt
 
 
-def commit(
+def preview_commit(
     store: object_store.Store,
     sweep_grant: Record,
     commit_grant: Record,
@@ -396,7 +396,7 @@ def commit(
     root_references: list[Record],
     lease_receipts: list[Record],
     current: Record,
-) -> tuple[Record, Record]:
+) -> Record:
     sweep_grant_sha256 = _ensure_grant(store, sweep_grant)
     _verify_prepared_journal(sweep_grant, sweep_grant_sha256, current)
     commit_grant_sha256 = _ensure_commit_grant(
@@ -456,7 +456,7 @@ def commit(
         "max_freed_entries": commit_grant["max_freed_entries"],
         "max_freed_bytes": commit_grant["max_freed_bytes"],
     }
-    store_receipt = store.commit_retired(permit, targets)
+    store_receipt = store.preview_retired(permit, targets)
     receipt = {
         "commit_grant_sha256": commit_grant_sha256,
         "sweep_grant_sha256": sweep_grant_sha256,
@@ -475,7 +475,67 @@ def commit(
         ],
     }
     receipt["commit_sha256"] = commit_root(receipt)
+    return {
+        "commit_grant": dict(commit_grant),
+        "permit": permit,
+        "targets": targets,
+        "receipt": receipt,
+        "store_receipt": store_receipt,
+    }
+
+
+def commit_preview(
+    store: object_store.Store,
+    preview: Record,
+) -> tuple[Record, Record]:
+    try:
+        commit_grant = preview["commit_grant"]
+        permit = preview["permit"]
+        targets = preview["targets"]
+        receipt = preview["receipt"]
+        store_receipt = preview["store_receipt"]
+        verify_commit_receipt(commit_grant, receipt, store_receipt)
+        if (
+            not targets
+            or object_store.retired_targets_root(targets)
+            != receipt["targets_sha256"]
+        ):
+            raise SweepError("sweep commit preview mismatch")
+        actual = store.commit_retired_preview(
+            permit,
+            targets,
+            store_receipt,
+        )
+    except (
+        KeyError,
+        TypeError,
+        object_store.StoreError,
+    ) as exc:
+        raise SweepError("sweep commit preview mismatch") from exc
+    if actual != store_receipt:
+        raise SweepError("sweep commit preview mismatch")
     return receipt, store_receipt
+
+
+def commit(
+    store: object_store.Store,
+    sweep_grant: Record,
+    commit_grant: Record,
+    collection_grant: Record,
+    root_references: list[Record],
+    lease_receipts: list[Record],
+    current: Record,
+) -> tuple[Record, Record]:
+    preview = preview_commit(
+        store,
+        sweep_grant,
+        commit_grant,
+        collection_grant,
+        root_references,
+        lease_receipts,
+        current,
+    )
+    return commit_preview(store, preview)
 
 
 def verify_commit_receipt(

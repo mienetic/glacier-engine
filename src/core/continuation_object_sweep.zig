@@ -40,6 +40,7 @@ pub const Error = object_store.Error || error{
     SweepCommitScopeMismatch,
     SweepCommitJournalMismatch,
     SweepCommitBudgetExceeded,
+    SweepCommitPreviewMismatch,
     InvalidSweepCommitReceipt,
 };
 
@@ -136,6 +137,17 @@ pub const CommitReceiptV1 = struct {
 pub const CommitResultV1 = struct {
     receipt: CommitReceiptV1,
     store_receipt: object_store.RetiredCommitReceiptV1,
+};
+
+/// Exact no-mutation transition prediction. The fixed target array keeps the
+/// preview caller-owned and allocation-free while its roots bind only the
+/// initialized prefix.
+pub const CommitPreviewV1 = struct {
+    commit_grant: CommitGrantV1,
+    permit: object_store.RetiredCommitPermitV1,
+    targets: [object_store.default_capacity]bundle.BlobRefV1,
+    target_count: usize,
+    result: CommitResultV1,
 };
 
 pub fn grantRootV1(grant: GrantV1) Error!Digest {
@@ -338,6 +350,27 @@ pub fn commitV1(
     lease_receipts: []const object_store.LeaseReceiptV1,
     current: JournalV1,
 ) Error!CommitResultV1 {
+    const preview = try previewCommitV1(
+        store,
+        sweep_grant,
+        commit_grant,
+        collection_grant,
+        root_references,
+        lease_receipts,
+        current,
+    );
+    return commitPreviewV1(store, preview);
+}
+
+pub fn previewCommitV1(
+    store: *object_store.Store,
+    sweep_grant: GrantV1,
+    commit_grant: CommitGrantV1,
+    collection_grant: object_store.CollectionGrantV1,
+    root_references: []const bundle.BlobRefV1,
+    lease_receipts: []const object_store.LeaseReceiptV1,
+    current: JournalV1,
+) Error!CommitPreviewV1 {
     const sweep_grant_root = try ensureGrantV1(store, sweep_grant);
     try verifyPreparedJournalV1(sweep_grant, sweep_grant_root, current);
     const commit_grant_root = try ensureCommitGrantV1(
@@ -370,7 +403,10 @@ pub fn commitV1(
         usize,
         plan.occupied_entries,
     ) orelse return Error.SweepCommitBudgetExceeded;
-    var targets: [object_store.default_capacity]bundle.BlobRefV1 = undefined;
+    var targets = [_]bundle.BlobRefV1{.{
+        .byte_length = 0,
+        .sha256 = zero_digest,
+    }} ** object_store.default_capacity;
     var target_count: usize = 0;
     var target_bytes: u64 = 0;
     for (decisions[0..decision_count]) |decision| {
@@ -406,7 +442,7 @@ pub fn commitV1(
         .max_freed_entries = commit_grant.max_freed_entries,
         .max_freed_bytes = commit_grant.max_freed_bytes,
     };
-    const store_receipt = try store.commitRetiredV1(
+    const store_receipt = try store.previewRetiredCommitV1(
         permit,
         targets[0..target_count],
     );
@@ -427,7 +463,49 @@ pub fn commitV1(
         .commit_sha256 = zero_digest,
     };
     receipt.commit_sha256 = commitRootV1(receipt);
-    return .{ .receipt = receipt, .store_receipt = store_receipt };
+    return .{
+        .commit_grant = commit_grant,
+        .permit = permit,
+        .targets = targets,
+        .target_count = target_count,
+        .result = .{
+            .receipt = receipt,
+            .store_receipt = store_receipt,
+        },
+    };
+}
+
+pub fn commitPreviewV1(
+    store: *object_store.Store,
+    preview: CommitPreviewV1,
+) Error!CommitResultV1 {
+    if (preview.target_count == 0 or
+        preview.target_count > preview.targets.len)
+        return Error.SweepCommitPreviewMismatch;
+    verifyCommitReceiptV1(
+        preview.commit_grant,
+        preview.result.receipt,
+        preview.result.store_receipt,
+    ) catch return Error.SweepCommitPreviewMismatch;
+    const targets = preview.targets[0..preview.target_count];
+    const targets_root = object_store.retiredTargetsRootV1(targets) catch
+        return Error.SweepCommitPreviewMismatch;
+    if (!std.mem.eql(
+        u8,
+        &targets_root,
+        &preview.result.store_receipt.targets_sha256,
+    )) return Error.SweepCommitPreviewMismatch;
+    const actual = store.commitRetiredPreviewV1(
+        preview.permit,
+        targets,
+        preview.result.store_receipt,
+    ) catch |err| switch (err) {
+        error.RetiredCommitPreviewMismatch => return error.SweepCommitPreviewMismatch,
+        else => |other| return other,
+    };
+    if (!std.meta.eql(actual, preview.result.store_receipt))
+        return Error.SweepCommitPreviewMismatch;
+    return preview.result;
 }
 
 pub fn verifyCommitReceiptV1(
@@ -1010,7 +1088,8 @@ test "sweep commit atomically frees exact retired target and reclaims allocator 
         prepared.journal,
     );
     const allocator_before = fba.end_index;
-    const committed = try commitV1(
+    const snapshot_before_preview = try store.auditSnapshotRootV2();
+    const preview = try previewCommitV1(
         &store,
         sweep_grant,
         commit_grant,
@@ -1019,6 +1098,23 @@ test "sweep commit atomically frees exact retired target and reclaims allocator 
         &collection.leases,
         prepared.journal,
     );
+    try std.testing.expectEqual(@as(usize, 255), fba.end_index);
+    try std.testing.expectEqual(@as(u64, 8), store.entry_count);
+    const snapshot_after_preview = try store.auditSnapshotRootV2();
+    try std.testing.expectEqualSlices(
+        u8,
+        &snapshot_before_preview,
+        &snapshot_after_preview,
+    );
+    var invalid_preview = preview;
+    invalid_preview.target_count = 0;
+    try std.testing.expectError(
+        Error.SweepCommitPreviewMismatch,
+        commitPreviewV1(&store, invalid_preview),
+    );
+    try std.testing.expectEqual(@as(usize, 255), fba.end_index);
+    try std.testing.expectEqual(@as(u64, 8), store.entry_count);
+    const committed = try commitPreviewV1(&store, preview);
     try verifyCommitReceiptV1(
         commit_grant,
         committed.receipt,

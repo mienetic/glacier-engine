@@ -153,9 +153,10 @@ The cross-language golden values are:
 | Complete encoded record | `3b3fb1adf8ed0b13b8e8719a3ade7dbb2a7133c0ea6d307598ee3b2941d7c6d3` |
 | Two-record chained stream | `25009ee1f7e27989e54554fc797f19cec21dd96d3c392f25364d7ab868ee5538` |
 
-The separate sweep-commit demo also feeds the receipts produced by a real
-bounded-store mutation directly into this codec and verifies the resulting
-record root `6f60f970772e06c422bccd2ac8bf99049126ad3df8d1fb5ee731c77c86c7fa52`.
+The separate sweep-commit demo predicts the exact receipts and post-state root
+for a real bounded store without mutation, encodes and syncs that record, then
+requires the actual transition to match it exactly. The resulting record root
+is `6f60f970772e06c422bccd2ac8bf99049126ad3df8d1fb5ee731c77c86c7fa52`.
 The cross-language fixture above remains intentionally model-free and minimal.
 
 Run the native demo:
@@ -186,8 +187,10 @@ separate append from repair, enforce ordered body/footer sync, poison uncertain
 operations, and cover every modeled partial-write boundary. The downstream
 POSIX adapter now adds descriptor-relative lookup, platform locking, real file
 and directory sync, identity fences, and subprocess-death recovery on the
-macOS host. Native Linux filesystem campaigns, destructive-transition ordering,
-power-loss evidence, and end-to-end process restart remain.
+macOS host. The ordered commit path now publishes the predicted exact receipt
+before in-memory deallocation and reconciles old/new snapshots idempotently.
+Native durable payload-store process-death campaigns, power-loss evidence, and
+end-to-end process restart remain.
 
 See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
 the in-memory transition whose evidence this format carries and
