@@ -96,10 +96,14 @@ This slice is now implemented with canonical committed-row images, durable
 payload membership, full source-chain verification, an actual fresh cache, and
 foreign-generation rejection.
 
-**Next slice:** compose the restored cache with sampler/RNG and output-journal
-state, then terminate and resume one model-free request between publication
-sequences without duplicated output. See
-[Continuation Paged-KV Restore](CONTINUATION_PAGED_KV_RESTORE.md).
+The following slice is also complete: a fixed runtime state composes the
+restored cache with sampler/RNG, output, sequence, and commit lineage, then a
+fresh process publishes the next model-free token without duplicated output.
+See [Continuation Live Restart](CONTINUATION_LIVE_RESTART.md).
+
+**Next slice:** publish the complete checkpoint set through one atomic
+candidate/active root and terminate workers after every write, sync, promotion,
+and directory-sync phase.
 
 ### Live provider adapter boundary
 
@@ -165,10 +169,13 @@ ResourceBank/LeaseTree and charges exact objects before they become live.
 paged-KV cache under those reacquired nodes and reject foreign page identity
 before publication.
 
-**Next slice:** compose sampler/RNG/output state and demonstrate a process
-restart between two publications without duplicated output. A separate
-contributor slice can run the existing evidence and payload campaigns on native
-Linux filesystems.
+**Completed slice:** a fixed runtime wire now composes sampler/RNG/output,
+logical KV, exact sequence, and commit lineage; a fresh process publishes the
+next token without duplication and returns ownership to zero.
+
+**Next slice:** atomically promote a complete checkpoint set and exercise
+process death at every durable phase. A separate contributor slice can run the
+existing evidence, payload, and restart campaigns on native Linux filesystems.
 
 ### Resolver adversarial fixtures
 

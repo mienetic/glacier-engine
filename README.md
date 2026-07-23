@@ -32,6 +32,10 @@ formats, and independent verifiers.
 - **Generation-remapped KV restore.** Canonical committed-row images rebuild a
   fresh paged cache under charged ownership; historical cache/page generations
   remain stale evidence and never become target authority.
+- **Cross-process token continuation.** A fixed runtime wire joins paged KV,
+  RNG, sampler count, output prefix, publication sequence, and commit lineage;
+  a two-process proof resumes the next token exactly once and returns ownership
+  to zero.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -169,6 +173,7 @@ zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-record-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-sweep-file-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build continuation-payload-file-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig build continuation-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
@@ -188,7 +193,7 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | Runtime | CPU execution, optional Metal backend, INT4 paths, prepared `.glrt` images | Broader model and platform validation |
-| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, sweep staging/commit, fixed evidence record, anchored recovery, locked POSIX publication, exact pre-deallocation preview, canonical durable payload snapshots, and seven-boundary copy-on-write recovery | Durable ownership/lifecycle reacquisition, paged-KV restore, and live restart |
+| State | Token transactions, capsule, resolver, bundle, tenant store, lease/repair receipts, retirement, collection evidence, durable payload recovery, ownership reacquisition, paged-KV remap, and a model-free two-process live restart | Atomic whole-checkpoint promotion, crash-phase recovery, and production request integration |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
@@ -241,6 +246,7 @@ valuable as new features.
 - [Continuation object payload file](docs/CONTINUATION_OBJECT_PAYLOAD_FILE.md)
 - [Continuation ownership restore](docs/CONTINUATION_OWNERSHIP_RESTORE.md)
 - [Continuation paged-KV restore](docs/CONTINUATION_PAGED_KV_RESTORE.md)
+- [Continuation live restart](docs/CONTINUATION_LIVE_RESTART.md)
 - [Multimodal roadmap](docs/MULTIMODAL_ROADMAP.md)
 - [Glossary](docs/GLOSSARY.md)
 

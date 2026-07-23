@@ -224,4 +224,6 @@ Canonical payload-byte durability is implemented in the downstream
 [Continuation Object Payload File](CONTINUATION_OBJECT_PAYLOAD_FILE.md). The
 separate [Continuation Ownership Restore](CONTINUATION_OWNERSHIP_RESTORE.md)
 prototype reacquires exact logical runtime ownership before restored payloads
-may become live. Paged-KV reconstruction and live restart remain later layers.
+may become live. Paged-KV reconstruction and a model-free natural-exit restart
+are now implemented as later layers; atomic whole-checkpoint crash recovery
+remains pending.

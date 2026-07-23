@@ -3,7 +3,8 @@
 Status: prototype. Canonical page images, complete source-chain verification,
 fresh target-generation remapping, durable payload membership, and
 ResourceBank/LeaseTree ordering are implemented with model-free tests.
-End-to-end process restart between token publications remains the next gate.
+The next layer now composes this cache with runtime state in a two-process
+model-free publication proof.
 
 ## Purpose
 
@@ -104,7 +105,8 @@ returns to its exact fresh state.
 
 On success:
 
-- the target cache instance is newly allocated;
+- the target cache instance is newly allocated and differs from the source,
+  including when a restarted process-local counter initially repeats it;
 - target page generations are `1..page_count`;
 - the target committed root generation is two;
 - the next root generation is three;
@@ -176,18 +178,20 @@ python3 -m unittest \
 ## Evidence boundary
 
 This prototype restores actual `PagedKVCache` page allocations and logical f32
-content under reacquired ownership. It does not yet reconstruct the full
-`LeasedPagedKVCache` coordinator, an active row transaction, RNG/sampler state,
-tokenizer state, output journal bytes, accelerator residency, or worker pins.
+content under reacquired ownership. The
+[live-restart layer](CONTINUATION_LIVE_RESTART.md) now composes its root with
+RNG/sampler/output state and publishes a next token in a fresh process. It does
+not yet reconstruct the full `LeasedPagedKVCache` coordinator, an active row
+transaction, tokenizer state, accelerator residency, or worker pins.
 
 It also does not yet prove:
 
-- a process exit between two token publications followed by visible resume;
-- no duplicated output across that restart;
+- atomic promotion of the complete checkpoint file set;
+- process death at every checkpoint publication phase;
 - device power-cut durability;
 - native Linux filesystem recovery;
 - numerically equivalent continuation for production model kernels; or
 - lower latency, memory, disk, token, or energy use.
 
-The next slice composes the restored cache root, sampler/RNG counters, output
-journal position, and publication receipt into one end-to-end restart fixture.
+The next slice should promote one complete checkpoint candidate atomically and
+exercise fresh recovery after termination at every durable phase.

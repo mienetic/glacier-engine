@@ -71,6 +71,15 @@ before the first stable release.
 - Canonical paged-KV page images with durable payload membership, complete
   source ownership-chain verification, atomic fresh-cache reconstruction, new
   target generations, and stale source-ref rejection.
+- Fixed 304-byte continuation runtime state joining the exact publication
+  sequence, logical KV digest, RNG, sampler count, output prefix, checkpoint
+  challenge, and previous commit, with mutation-complete Zig/Python verification.
+- A model-free two-process continuation proof that synchronizes a checkpoint,
+  releases source ownership, exits, reacquires a fresh Bank and paged cache,
+  resumes the next token exactly once, chains its receipt, and returns target
+  ownership to zero.
+- Cross-process paged-KV cache-instance collision detection and forced target
+  remapping so process-local identity counters cannot revive source PageRefs.
 - A gated multimodal roadmap for a shared media identity/timeline/transaction
   substrate followed by bounded image, streaming audio, and video execution.
 

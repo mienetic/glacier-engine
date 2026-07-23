@@ -183,8 +183,9 @@ predicted receipt before in-memory payload removal and reconciles old/new
 snapshots. The payload-file layer now carries that authority into canonical
 payload-byte promotion across seven process-death boundaries. A separate
 ownership-manifest prototype reacquires logical ResourceBank/LeaseTree state;
-object-store lifecycle metadata, paged-KV reconstruction, and live restart
-remain pending.
+later layers now reconstruct paged KV and prove a model-free natural-exit
+restart. Object-store lifecycle metadata and atomic whole-checkpoint crash
+recovery remain pending.
 
 See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the wire format and pure classifier, and

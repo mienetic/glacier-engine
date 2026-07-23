@@ -459,11 +459,12 @@ pub fn restoreAndCommitV1(
             return Error.InvalidRestorePlan;
     }
 
-    var cache = try paged_kv.PagedKVCache.init(
+    var cache = try paged_kv.PagedKVCache.initForCheckpoint(
         allocator,
         num_layers,
         dim,
         max_seq,
+        source_root.cache_instance,
     );
     errdefer cache.deinit();
     var target_refs: [ownership.max_allocations]paged_kv.PageRefV1 = undefined;

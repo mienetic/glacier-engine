@@ -563,6 +563,35 @@ pub const PagedKVCache = struct {
         };
     }
 
+    /// Construct a fresh restore target whose process-local cache identity is
+    /// guaranteed to differ from the source evidence. Process restart resets
+    /// the local instance allocator, so ordinary `init` alone cannot provide
+    /// this source/target inequality.
+    pub fn initForCheckpoint(
+        allocator: std.mem.Allocator,
+        num_layers: usize,
+        dim: usize,
+        max_seq: usize,
+        source_cache_instance: u64,
+    ) Error!PagedKVCache {
+        if (source_cache_instance == 0)
+            return error.InvalidCheckpoint;
+        var cache = try init(allocator, num_layers, dim, max_seq);
+        errdefer cache.deinit();
+        if (cache.instance_id == source_cache_instance) {
+            const target_instance = try reserveCacheInstance();
+            cache.instance_id = target_instance;
+            cache.committed_root.cache_instance = target_instance;
+            cache.committed_root.ownership_sha256 = emptyOwnershipDigest(
+                target_instance,
+                num_layers,
+                dim,
+                max_seq,
+            );
+        }
+        return cache;
+    }
+
     pub fn deinit(self: *PagedKVCache) void {
         for (self.entries) |entry| {
             if (entry.payload) |payload|
@@ -585,6 +614,7 @@ pub const PagedKVCache = struct {
         try self.validateFreshCheckpointTarget();
         if (source_root.abi_version != page_map_root_abi or
             source_root.cache_instance == 0 or source_root.generation == 0 or
+            source_root.cache_instance == self.instance_id or
             source_root.committed_len == 0 or
             source_root.committed_len > self.max_seq or
             source_root.committed_pages == 0 or
@@ -2221,6 +2251,72 @@ test "checkpoint restore second-page OOM returns exact fresh cache" {
     try testing.expectEqual(@as(u64, 2), cache.next_root_generation);
     for (cache.entries) |entry|
         try testing.expectEqualDeep(PageEntry{}, entry);
+}
+
+test "checkpoint target remaps a process-reused source cache instance" {
+    var ordinary = try PagedKVCache.init(testing.allocator, 1, 1, 16);
+    const reused_instance = ordinary.root().cache_instance;
+    const source_ref: PageRefV1 = .{
+        .cache_instance = reused_instance,
+        .logical_page = 0,
+        .ownership_generation = 7,
+    };
+    var ownership = try checkpointEmptyOwnershipDigestV1(
+        reused_instance,
+        1,
+        1,
+        16,
+    );
+    ownership = try checkpointAppendOwnershipDigestV1(
+        ownership,
+        source_ref,
+    );
+    const source_root: PageMapRootV1 = .{
+        .cache_instance = reused_instance,
+        .generation = 9,
+        .committed_len = 16,
+        .committed_pages = 1,
+        .ownership_sha256 = ownership,
+    };
+    const payload = [_]u8{0x33} ** (2 * page_positions * @sizeOf(f32));
+    const pages = [_]CheckpointPageV1{.{
+        .source_ref = source_ref,
+        .committed_rows = page_positions,
+        .canonical_f32_le = &payload,
+    }};
+    var refs: [1]PageRefV1 = undefined;
+    try testing.expectError(
+        error.InvalidCheckpoint,
+        ordinary.restoreCheckpointV1(source_root, &pages, &refs),
+    );
+    try testing.expectEqual(@as(usize, 0), ordinary.len);
+    ordinary.deinit();
+
+    var remapped = try PagedKVCache.initForCheckpoint(
+        testing.allocator,
+        1,
+        1,
+        16,
+        reused_instance,
+    );
+    defer remapped.deinit();
+    try testing.expect(
+        remapped.root().cache_instance != source_root.cache_instance,
+    );
+    const restored = try remapped.restoreCheckpointV1(
+        source_root,
+        &pages,
+        &refs,
+    );
+    try testing.expect(
+        restored.target_root.cache_instance !=
+            restored.source_root.cache_instance,
+    );
+    try remapped.validateCommittedPageRef(refs[0]);
+    try testing.expectError(
+        error.InvalidPageRef,
+        remapped.validateCommittedPageRef(source_ref),
+    );
 }
 
 test "planned allocation OOM leaves entry root generations and count unchanged" {

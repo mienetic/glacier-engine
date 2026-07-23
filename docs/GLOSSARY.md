@@ -97,6 +97,10 @@ page-root/ref chain followed by reconstruction into a new cache instance and
 new page ownership generations. Source refs remain stale evidence rather than
 being promoted into live target authority.
 
+**Restart publication bridge** — A runtime-state contract that joins a restored
+paged-KV root, RNG, sampler count, output prefix, exact next sequence, and prior
+commit so one fresh process can publish the next token atomically.
+
 **MediaObject** — Planned content-addressed identity for an immutable image,
 audio, or video payload plus its bounded semantic metadata. It does not grant
 file, network, camera, or microphone access.

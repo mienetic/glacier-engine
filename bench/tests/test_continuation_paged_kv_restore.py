@@ -111,6 +111,15 @@ class ContinuationPagedKVRestoreTests(unittest.TestCase):
                 777,
             )
 
+    def test_target_cache_instance_cannot_reuse_source_identity(self) -> None:
+        encoded, _ = fixture()
+        with self.assertRaises(restore.PagedKVRestoreError):
+            restore.verify_and_remap(
+                [encoded],
+                digest(0x61),
+                501,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

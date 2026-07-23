@@ -22,10 +22,10 @@ transactional state publication, and independently verifiable evidence.
 | Track | Status | What works now | Main gap |
 | --- | --- | --- | --- |
 | Exact admission | Integrated | ResourceBank receipts, capacity rejection, release, snapshots | Physical telemetry adapters and long-running pressure campaigns |
-| Hierarchical ownership | Integrated | LeaseTree child scopes, publication fences, fresh-Bank reacquisition, and generation-remapped paged-KV restore | Cross-worker handoff and end-to-end live restart |
+| Hierarchical ownership | Integrated | LeaseTree child scopes, publication fences, fresh-Bank reacquisition, paged-KV remap, and a two-process handoff proof | Atomic whole-checkpoint promotion and crash-phase recovery |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
-| Token publication | Integrated | Contiguous and paged KV, RNG, sampler, and output transactions | Restartable durable continuation |
-| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, durable payload recovery, canonical ownership reacquisition, and generation-remapped paged-KV reconstruction | Sampler/output composition and live restart |
+| Token publication | Integrated | Contiguous and paged KV transactions plus exact-once next-token publication after a model-free process restart | Production request integration and crash-phase continuation |
+| Continuation identity | Prototype | Capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV reconstruction, fixed runtime state, and two-process resume | Atomic checkpoint-set promotion, phase-complete crash recovery, and production model state |
 | Model runtime | Prototype | CPU execution, optional Metal, INT4, prepared `.glrt` images | Broader models, platforms, quality campaigns, stable API |
 | Multimodal execution | Planned and gated | Shared image/audio/video architecture and contributor slices are specified; no media execution is integrated | Enter only after the durable-continuation promotion gate |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
@@ -81,6 +81,9 @@ transactional state publication, and independently verifiable evidence.
 - [x] Canonical paged-KV images with durable membership, complete source-chain
   validation, atomic fresh-cache reconstruction, new target generations, and
   independent mutation-complete verification.
+- [x] Fixed runtime state plus a natural-exit two-process continuation proof
+  joining KV, RNG, sampler, output, sequence, commit lineage, and zero-leak
+  ownership teardown.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -162,7 +165,10 @@ Next slices:
     preserve the logical KV root, remap cache/page generations, require exact
     durable membership and ownership claims, and reject stale source refs before
     publication.
-13. End-to-end process restart between two token publications.
+13. ~~End-to-end process restart between two token publications.~~ Complete as
+    a model-free natural-exit proof with a fixed runtime wire, different source
+    and target process/cache identities, exact output append, chained receipt,
+    and zero Bank usage after each process.
 
 Promotion gate: byte-identical continuation of the selected deterministic mode,
 no duplicated output, no orphaned ownership, and crash coverage at every durable
@@ -177,16 +183,20 @@ real file/directory sync, locking, identity checks, and subprocess-death
 recovery on the macOS host. The ownership plan then binds the durable payload
 root to a new Bank epoch and restores charged LeaseTree nodes before they become
 live. Canonical page images then rebuild an actual paged-KV map under fresh
-cache/page generations while preserving the logical KV hash. Object-store
-lease/quarantine/repair metadata, sampler/RNG/output composition, and visible
-request execution are not restored yet. Process death is not power loss, and
-Linux has compile evidence rather than a retained native filesystem campaign.
+cache/page generations while preserving the logical KV hash. A fixed runtime
+wire joins sequence, RNG, sampler count, output prefix, KV digest, and commit
+lineage; a source worker exits and a fresh target publishes the next model-free
+token exactly once. This does not yet atomically promote the multi-file
+checkpoint, cover termination at each checkpoint phase, restore object-store
+lease/quarantine/repair metadata, or reconstruct a production request. Process
+death is not power loss, and Linux has compile evidence rather than a retained
+native filesystem campaign.
 The fixture avoids one 25-byte duplicate payload allocation and the commit
 fixture reclaims a 39-byte allocator tail, but lifecycle metadata, fixed index,
 and backing capacity remain larger than those deltas. No lower RSS, disk use, or
 restart latency is claimed. Those require compact index experiments, durable
-metadata integration, paged-KV/live-restart integration, and complete physical
-measurements.
+metadata integration, whole-checkpoint crash recovery, production execution,
+and complete physical measurements.
 
 ### Evidence inspection
 
@@ -461,7 +471,9 @@ First slices:
   prototype;
 - ~~paged-KV generation and page-map restore under reacquired ownership;~~
   complete as a model-free actual-cache prototype;
-- sampler/RNG/output composition and end-to-end visible restart;
+- ~~sampler/RNG/output composition and end-to-end visible restart;~~ complete
+  as a model-free natural-exit two-process proof;
+- atomic whole-checkpoint promotion and crash recovery at every durable phase;
 - native Linux filesystem campaigns across evidence and payload transitions;
 - trusted replica transport with independently verified fetch evidence;
 - optional encrypted storage adapter whose ciphertext identity is separate from

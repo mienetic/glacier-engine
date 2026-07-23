@@ -262,6 +262,8 @@ def verify_and_remap(
         decode(image, expected_challenge_sha256) for image in page_images
     ]
     source_root = images[0]["source_root"]
+    if target_cache_instance == source_root["cache_instance"]:
+        raise PagedKVRestoreError("target cache instance reuses source identity")
     num_layers = images[0]["num_layers"]
     dim = images[0]["dim"]
     max_seq = images[0]["max_seq"]

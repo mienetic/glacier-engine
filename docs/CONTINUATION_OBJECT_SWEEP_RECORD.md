@@ -191,8 +191,9 @@ macOS host. The ordered commit path now publishes the predicted exact receipt
 before in-memory deallocation and reconciles old/new snapshots idempotently.
 The payload-file layer additionally reconstructs exact targets and promotes a
 canonical successor across seven process-death boundaries on the macOS host.
-Durable lifecycle metadata, power-loss evidence, native Linux filesystem
-campaigns, and end-to-end process restart remain.
+A later runtime layer proves one model-free natural-exit restart between token
+publications. Durable lifecycle metadata, power-loss evidence, native Linux
+filesystem campaigns, and atomic whole-checkpoint crash recovery remain.
 
 See [Continuation Object Sweep Commit](CONTINUATION_OBJECT_SWEEP_COMMIT.md) for
 the in-memory transition whose evidence this format carries and
@@ -201,5 +202,7 @@ least-authority publication and repair state machines, and
 [Continuation Object Sweep File Adapter](CONTINUATION_OBJECT_SWEEP_FILE.md) for
 the real-file adapter and claim boundary, and
 [Continuation Object Payload File](CONTINUATION_OBJECT_PAYLOAD_FILE.md) for the
-durable payload-byte transition, and
+durable payload-byte transition,
+[Continuation Live Restart](CONTINUATION_LIVE_RESTART.md) for the downstream
+process-boundary proof, and
 [Roadmap](ROADMAP.md) for the durability sequence.

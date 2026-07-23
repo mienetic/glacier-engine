@@ -2,8 +2,8 @@
 
 Status: prototype. The wire contract and model-free reacquisition path are
 implemented and independently verified. The next layer now restores paged-KV
-bytes into fresh cache/page generations; end-to-end live request restart
-remains a later stage.
+bytes into fresh cache/page generations, and the runtime layer composes those
+objects into a model-free two-process publication proof.
 
 ## Purpose
 
@@ -174,8 +174,8 @@ are not yet restored through this plan.
 It does not yet prove:
 
 - accelerator allocation reconstruction;
-- RNG, sampler, tokenizer, or output-journal byte restoration;
-- an end-to-end process restart between token publications;
+- tokenizer or production-model reconstruction;
+- atomic whole-checkpoint promotion or crash coverage at every phase;
 - cross-process prevention if an operator reuses one target epoch;
 - device power-cut durability;
 - native Linux filesystem recovery; or
@@ -185,5 +185,7 @@ The implemented
 [paged-KV restore layer](CONTINUATION_PAGED_KV_RESTORE.md) joins allocation
 entries to canonical page images, rebuilds page-map generations under the
 reacquired nodes, and rejects foreign or stale page generations before any
-publication can begin. Sampler/RNG/output composition and visible process
-restart are the next continuation boundary.
+publication can begin. The
+[live-restart layer](CONTINUATION_LIVE_RESTART.md) adds sampler/RNG/output
+composition and a visible natural-exit process restart. Whole-checkpoint atomic
+promotion and crash-phase recovery remain the next continuation boundary.

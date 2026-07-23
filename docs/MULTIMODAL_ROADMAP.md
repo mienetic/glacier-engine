@@ -6,6 +6,9 @@ Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
 resume without duplicated visible output. Format research and tiny legal
 fixtures may begin earlier, but production execution does not bypass that gate.
+The natural-exit model-free proof now meets the ownership and exact-output
+portion; atomic whole-checkpoint promotion and phase-complete crash recovery
+still gate integrated media execution.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -22,16 +25,22 @@ Every modality must preserve the same Glacier properties:
 
 Multimodal execution starts after all of these continuation requirements pass:
 
-1. evidence publication is durably ordered before destructive payload removal;
+1. ~~evidence publication is durably ordered before destructive payload
+   removal;~~ complete for the current payload-store transition;
 2. ~~a native durable payload-byte store can reconcile old/new transition
    snapshots after process death;~~ complete for canonical payload bytes across
    seven retained macOS process-death boundaries; lifecycle metadata is outside
    this completed slice;
-3. ResourceBank and LeaseTree ownership can be reacquired without duplication;
-4. paged KV restoration rejects foreign model, tokenizer, or generation state;
-5. a process restart between token publications produces no duplicated output;
-6. the retained platform matrix distinguishes process death from device power
-   loss.
+3. ~~ResourceBank and LeaseTree ownership can be reacquired without
+   duplication;~~ complete as a model-free fresh-Bank prototype;
+4. ~~paged KV restoration rejects foreign model, tokenizer, or generation
+   state;~~ complete through capsule composition plus fresh-generation remap;
+5. ~~a process restart between token publications produces no duplicated
+   output;~~ complete for the natural-exit model-free proof;
+6. ~~the retained platform matrix distinguishes process death from device power
+   loss;~~ the current evidence explicitly claims process death only;
+7. one atomic candidate/active protocol publishes the complete checkpoint set
+   and survives termination at every durable phase.
 
 Until then, the tracks below remain `idea` or `prototype fixture`, never
 `integrated`.

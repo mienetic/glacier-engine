@@ -913,6 +913,64 @@ pub fn build(b: *std.Build) void {
         &continuation_payload_file_worker_exe.step,
     );
 
+    // A source worker publishes token 503, syncs a complete checkpoint and
+    // exits. A fresh target worker reacquires ownership, remaps paged-KV,
+    // restores RNG/output/commit state and publishes token 504 exactly once.
+    const continuation_live_restart_worker_exe = b.addExecutable(.{
+        .name = "glacier-continuation-live-restart-worker",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "bench/continuation_live_restart_worker.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_live_restart_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    continuation_live_restart_worker_exe.root_module.addImport(
+        "engine",
+        engine_mod,
+    );
+    continuation_live_restart_worker_exe.linkLibC();
+    if (int4_neon) |lib|
+        continuation_live_restart_worker_exe.linkLibrary(lib);
+    const continuation_live_restart_demo_exe = b.addExecutable(.{
+        .name = "glacier-continuation-live-restart-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/continuation_live_restart.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    continuation_live_restart_demo_exe.linkLibC();
+    const run_continuation_live_restart_demo = b.addRunArtifact(
+        continuation_live_restart_demo_exe,
+    );
+    run_continuation_live_restart_demo.addArtifactArg(
+        continuation_live_restart_worker_exe,
+    );
+    const continuation_live_restart_demo_step = b.step(
+        "continuation-live-restart-demo",
+        "Run two-process paged-KV/RNG/output continuation proof",
+    );
+    continuation_live_restart_demo_step.dependOn(
+        &run_continuation_live_restart_demo.step,
+    );
+    test_step.dependOn(&run_continuation_live_restart_demo.step);
+    test_compile_step.dependOn(
+        &continuation_live_restart_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &continuation_live_restart_worker_exe.step,
+    );
+
     // Credential-free provider control-plane demo. Two exact logical requests
     // share one dispatch permit, one conservative reservation, one
     // authoritative usage settlement, one fixed-point quote/cost record and

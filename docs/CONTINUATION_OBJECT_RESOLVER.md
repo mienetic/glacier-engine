@@ -1,8 +1,10 @@
 # Continuation Object Resolver v1
 
 Status: **prototype in-memory resolver**. The native resolver, independent
-Python model, adversarial tests, and model-free demo are implemented. Durable
-storage, process restart, cache eviction, and resource reacquisition are not.
+Python model, adversarial tests, and model-free demo are implemented. This
+resolver itself grants no durable storage, process restart, cache eviction, or
+resource-reacquisition authority; downstream layers provide bounded versions
+of several of those capabilities.
 
 `ContinuationObjectResolver` turns the nine external roots in one verified
 `ContinuationCapsule` into exact caller-owned bytes under a least-authority,

@@ -5,10 +5,12 @@ Python state model, exact accounting, duplicate reuse, reference release,
 quarantine, corruption verification, atomic bundle import, and allocator-failure
 rollback are implemented. Generation-fenced leases, deterministic expiry,
 quarantine fencing, capability-bound repair, explicit retirement, and
-evidence-producing dry-run collection planning are also implemented. Filesystem
-durability, concurrent access, replica transport, encryption, secure erase, and
-live restart are not. A separately authorized in-memory sweep commit now removes
-an exact validated retired set and emits before/after accounting evidence.
+evidence-producing dry-run collection planning are also implemented. This
+in-memory store itself provides no filesystem durability, concurrent access,
+replica transport, encryption, secure erase, or live restart. Separately
+authorized downstream layers provide durable payload recovery and a model-free
+restart proof. An in-memory sweep commit removes an exact validated retired set
+and emits before/after accounting evidence.
 
 `ContinuationObjectStore` turns the canonical bundle plan into owned immutable
 payload copies under one tenant and one bundle-scoped grant. Its index has fixed

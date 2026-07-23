@@ -35,6 +35,7 @@ energy, or production reliability.
 | `zig build continuation-sweep-record-demo -Dmetal=false` | Fixed record verification, anchored tail classification, snapshot-bound append/repair capabilities, ordered sync, and deterministic crash-storage conformance |
 | `zig build continuation-sweep-file-demo -Dmetal=false` | Descriptor-relative lock/identity/sync checks and six native subprocess-death recovery boundaries |
 | `zig build continuation-payload-file-demo -Dmetal=false` | Canonical payload snapshots, fixed exact-target reclaim plans, copy-on-write promotion, and seven native subprocess-death recovery boundaries |
+| `zig build continuation-live-restart-demo -Dmetal=false` | Fresh-process ownership/KV/RNG/output restore and exact-once publication of the next token |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -55,9 +56,10 @@ golden root, flips every one of the 608 serialized byte positions, reseals the
 outer digest where applicable, and requires rejection. A separately valid
 foreign KV object also rejects.
 
-This proves deterministic identity composition for the fixture. It does not yet
-prove durable storage, live process restart, reduced RSS, content-addressed cache
-savings, or recovery after power loss.
+This proves deterministic identity composition for the fixture. Later fixtures
+exercise durable payload storage and a model-free live process restart, but the
+capsule alone does not grant either property. No reduced RSS, storage savings,
+or recovery after power loss follows from this identity proof.
 
 The resolver fixture then admits all nine objects under a 16-entry catalog-scan
 limit, 64-byte per-object limit, exact 264-byte total limit, and nine-resolution
@@ -206,13 +208,26 @@ cache fresh and publication remains blocked while ownership is pending. The
 shared 752-byte codec fixture has root `e052306f…3437d1e4` and mutation-complete
 Zig/Python coverage.
 
+The live-restart fixture then joins the exact sequence, KV length/digest, RNG,
+sampler count, output prefix, previous commit, and challenge in one fixed
+304-byte runtime wire. A source process publishes token `503`, synchronizes six
+checkpoint objects plus its process identity, releases its LeaseTree and Bank,
+then exits. A different target process verifies and restores the checkpoint,
+forces a target cache instance distinct from the source, publishes token `504`
+at sequence `18`, observes output `[501, 502, 503, 504]`, chains the source
+commit, and tears down to zero Bank usage. The runtime wire, output root, and
+receipt root have independent Python fixtures with complete wire mutation and
+stale-position rejection.
+
 Together these fixtures prove canonical payload-byte encoding, exact target
 reconstruction, copy-on-write ordering, fresh-process old/new reconciliation,
-safe logical ownership reacquisition, and model-free paged-KV reconstruction on
-the retained host. They do not restore object-store lifecycle metadata,
-sampler/output state, accelerator allocations, or a live request; emulate
-device power loss; establish native Linux filesystem behavior; or measure disk
-use, latency, RSS, or energy.
+safe logical ownership reacquisition, model-free paged-KV reconstruction, and
+one natural-exit process restart with exact-once next-token publication on the
+retained host. They do not atomically promote the complete checkpoint set,
+inject process death across all checkpoint phases, restore object-store
+lifecycle metadata, reconstruct a production model, restore accelerator
+allocations, emulate device power loss, establish native Linux filesystem
+behavior, or measure disk use, latency, RSS, or energy.
 
 ## Provider evidence checkpoint
 

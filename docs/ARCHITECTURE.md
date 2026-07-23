@@ -13,7 +13,7 @@ not.
 | Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
-| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, evidence file, payload file, ownership manifest, paged-KV images | Bind a checkpoint, recover canonical payload bytes, reacquire charged ownership, and remap committed KV pages to fresh target generations |
+| Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, evidence file, payload file, ownership manifest, paged-KV images, runtime state | Bind a checkpoint, recover canonical payload bytes, reacquire charged ownership, remap committed KV pages, and resume one publication across a process boundary |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -60,6 +60,8 @@ validated model + request
                                                                     └─ anchored recovery + scoped writer model
                                                                          └─ locked descriptor-relative file
                                                                               └─ durable payload plan + promotion
+                                                                                   └─ ownership + paged-KV restore
+                                                                                        └─ runtime state + next token
 ```
 
 ### ResourceBank
@@ -243,8 +245,9 @@ the active file, syncs the directory, and accepts only the exact new root.
 Native and independent Python campaigns terminate after seven plan/promotion
 boundaries and recover idempotently from fresh processes. Lease, quarantine,
 reference, repair, and runtime ownership metadata remain in memory; power-cut
-durability and live restart remain later boundaries. Paged-KV restoration is
-provided by the subsequent generation-remap layer described below.
+durability and whole-checkpoint atomicity remain later boundaries. Paged-KV
+restoration is provided by the subsequent generation-remap layer described
+below.
 
 The ownership-manifest layer adds a canonical `resource_state` object after
 payload recovery. Its fixed plan binds source and target Bank epochs, the exact
@@ -264,7 +267,18 @@ complete source ownership digest before allocation, zero-fills target padding,
 copies little-endian f32 values, and emits a new cache instance plus new page
 generations. A changed source generation rejects while the target remains
 fresh, and Bank publication stays blocked until exact images commit ownership
-nodes to live. Sampler/output restoration and a running request remain separate.
+nodes to live.
+
+The live-restart layer adds a fixed runtime object containing the exact next
+publication sequence, logical KV digest, RNG, sampler counter, visible output
+prefix, prior commit, and checkpoint challenge. A source worker publishes one
+token, synchronizes the fixture files, releases its Bank ownership, and exits.
+A fresh target worker verifies the capsule, reacquires charged ownership,
+rebuilds KV under a different cache identity, then atomically publishes the next
+KV row, RNG state, sampler count, output token, receipt chain, and Bank fence.
+The current proof is model-free and uses a natural exit. Atomic promotion of the
+complete checkpoint set, crash injection at each durable phase, and production
+model reconstruction remain separate gates.
 
 ## Provider execution flow
 
@@ -378,6 +392,8 @@ still require real machines for each promoted platform.
 - [Continuation paged-KV restore](CONTINUATION_PAGED_KV_RESTORE.md):
   canonical committed-row page images, complete source-chain validation, and
   fresh target cache/page generations.
+- [Continuation live restart](CONTINUATION_LIVE_RESTART.md): fixed runtime
+  state plus an exact-once two-process publication proof.
 - [Multimodal roadmap](MULTIMODAL_ROADMAP.md): gated shared media identity,
   timeline, transaction, image, audio, and video tracks.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

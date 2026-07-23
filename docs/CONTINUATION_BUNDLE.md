@@ -2,7 +2,8 @@
 
 Status: **prototype manifest ABI**. The fixed native codec, full verifier,
 independent Python verifier, mutation suite, and model-free demo are implemented.
-No object store, file writer, cache, lease system, or live restart exists yet.
+This manifest module itself provides no store, writer, cache, lease, or restart
+authority; those capabilities exist as separately verified downstream layers.
 
 `ContinuationBundle` binds one `ContinuationCapsule` and its nine exact external
 objects into a canonical tenant-scoped storage plan. It preserves separate
