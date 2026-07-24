@@ -133,8 +133,14 @@ fn benchFile(allocator: std.mem.Allocator, path: []const u8) !std.ArrayList(Tens
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
     const stat = try file.stat();
-    const mapped = try std.posix.mmap(null, @intCast(stat.size), std.posix.PROT.READ, .{ .TYPE = .PRIVATE }, file.handle, 0);
-    defer std.posix.munmap(mapped);
+    const map_len = std.math.cast(usize, stat.size) orelse
+        return error.FileTooLarge;
+    const mapping = try engine.runtime_image.ReadOnlyFileMapping.init(
+        file,
+        map_len,
+    );
+    defer mapping.close();
+    const mapped = mapping.bytes;
 
     var sf = try engine.safetensors.parseHeader(allocator, mapped);
     defer sf.deinit();

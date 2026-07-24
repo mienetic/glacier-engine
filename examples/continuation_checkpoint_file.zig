@@ -1,6 +1,7 @@
 //! Atomic whole-checkpoint root switch and process-death conformance.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const engine = @import("engine");
 const capsule = core.continuation_capsule;
@@ -350,11 +351,19 @@ fn expectKilledV1(
     });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
-    switch (result.term) {
-        .Signal => |value| {
-            if (value != std.posix.SIG.KILL)
-                return error.UnexpectedWorkerTermination;
-        },
-        else => return error.UnexpectedWorkerTermination,
+    if (!wasForceTerminated(result.term))
+        return error.UnexpectedWorkerTermination;
+}
+
+fn wasForceTerminated(term: std.process.Child.Term) bool {
+    if (comptime builtin.os.tag == .windows) {
+        return switch (term) {
+            .Exited => |code| code == 137,
+            else => false,
+        };
     }
+    return switch (term) {
+        .Signal => |signal| signal == std.posix.SIG.KILL,
+        else => false,
+    };
 }

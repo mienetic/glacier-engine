@@ -72,6 +72,7 @@ energy, or production reliability.
 | `zig test src/core/generated_media_output_registry.zig -OReleaseSafe` | Independent registry ABI, fixed 544-byte manifest and entries, canonical bounded multi-output ordering, exact ordinal/unit/timeline/payload/predecessor binding, structural completion fields, mutation plus stale-root/mixed-lineage substitution rejection, and independent golden roots |
 | `zig build generated-media-output-registry-restart-demo -Dmetal=false` | `2/3/2` then `2/2/3` image/audio/video outputs in exact three-object archives, one existing selector, seven process deaths, five previous and two successor selections, zero mixed generations, exact payload recovery, and idempotent convergence |
 | `zig test src/core/generated_media_producer_admission.zig -OReleaseSafe` | Canonical typed image/audio/video record decoding, exact raw pixel/PCM/frame-byte checks, common-envelope derivation, one-based image-position normalization, strict state/result/completion predecessor continuity, and construction of the unchanged registry contract mirrored by an independent Python test |
+| `zig test src/core/generated_media_producer_transition.zig -OReleaseSafe` | Host replay of retained deterministic source-model/materializer profiles, exact one-shot image and complete audio/video transitions, fixed per-output receipts, derived collection order, and paired sidecar/unchanged-registry lineage mirrored by an independent Python test |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -211,6 +212,27 @@ mapping. It does not prove model or renderer execution, encoder/codec
 correctness, authorization, physical playback/display, native Linux or
 power-loss behavior, media quality, latency, throughput, memory, or energy.
 
+The generated-media producer-transition fixture is a higher-assurance
+conformance path layered beside that structural admission. For every retained
+image, audio, or video output it replays the exact deterministic source-model
+and materializer callbacks over canonical byte witnesses, reconstructs
+publication and any required acknowledgement transition, and emits a fixed
+1,728-byte receipt. A separate `640 + output_count × 1,728`-byte sidecar binds
+the ordered receipt table to the exact unchanged registry manifest/archive and
+to the preceding evidence/registry pair. Image replay uses a fresh one-shot
+local transaction; its collection ordinal is derived separately from validated
+registry lineage. Audio/video replay includes observation,
+acknowledgement-plan, acknowledgement-result, and final quiescent state.
+
+These deterministic byte counts and replay results are conformance evidence,
+not a throughput benchmark. They do not establish that either callback ran
+historically, that a live resource authority approved the work, that a physical
+speaker/display consumed output, that an external codec/container is correct,
+or that any latency, throughput, memory, energy, quality, durability, or
+production target was met. Benchmark reports must keep transition correctness
+separate from measurements and name the artifact, adapter, machine, power
+state, workload, and retained raw results for every performance claim.
+
 The speech-annotation fixture maps `ice` and `berg` onto exact adjacent sample
 ranges and two opaque speaker identities. Its fresh target validates the
 persisted annotation predecessor before resource admission, aborts one
@@ -329,7 +351,9 @@ coverage, or provider usage. See
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), followed by
 [Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md), then the
-[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md).
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md)
+and
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md).
 
 ## Continuation checkpoint
 

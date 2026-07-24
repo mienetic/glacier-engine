@@ -1,6 +1,7 @@
 //! Source, loose-file resume, and root-selected archive resume subprocess.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const engine = @import("engine");
 const bundle = core.continuation_bundle;
@@ -302,7 +303,7 @@ fn writeCheckpointV1(
     const pid_wire = try std.fmt.bufPrint(
         &pid_storage,
         "{d}",
-        .{std.c.getpid()},
+        .{currentProcessId()},
     );
     try writeSyncedFileV1(directory, "source.pid", pid_wire);
     try std.posix.fsync(directory.fd);
@@ -342,7 +343,7 @@ fn writeCheckpointV1(
         "{{\"phase\":\"checkpoint\",\"pid\":{d}," ++
             "\"next_sequence\":18,\"kv_tokens\":17,\"output_tokens\":3," ++
             "\"source_commit_sha256\":\"{s}\",\"verified\":true}}\n",
-        .{ std.c.getpid(), &commit_hex },
+        .{ currentProcessId(), &commit_hex },
     );
     try stdout.flush();
 }
@@ -460,11 +461,11 @@ fn resumeCheckpointObjectsV1(
     source_pid_wire: []const u8,
 ) !void {
     const source_pid = try std.fmt.parseInt(
-        i32,
+        u32,
         source_pid_wire,
         10,
     );
-    const target_pid = std.c.getpid();
+    const target_pid = currentProcessId();
     if (source_pid == target_pid) return error.ProcessDidNotRestart;
 
     const objects = capsuleObjectsV1(
@@ -632,6 +633,12 @@ fn resumeCheckpointObjectsV1(
         },
     );
     try stdout.flush();
+}
+
+fn currentProcessId() u32 {
+    if (comptime builtin.os.tag == .windows)
+        return std.os.windows.GetCurrentProcessId();
+    return @intCast(std.c.getpid());
 }
 
 fn capsuleConfigV1() capsule.ConfigV1 {

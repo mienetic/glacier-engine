@@ -159,6 +159,15 @@ formats, and independent verifiers.
   state/result/completion predecessors, replays canonical audio/video
   application acknowledgements, and derives registry entry and predecessor
   roots for an unchanged registry generation.
+- **Host-verified generated-media transitions.** A higher-assurance gateway
+  replays the retained deterministic source-model and image/audio/video
+  materializer profiles over exact witnesses, reconstructs image publication
+  plus complete audio/video acknowledgement transitions, derives registry
+  order, and emits a separate evidence sidecar bound to the unchanged
+  three-object registry. Image collection order remains separate from each
+  one-shot local image transaction. Replay on the verifying host is not proof
+  of historical execution, live resource authority, physical playback/display,
+  external codec/container conformance, or performance.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -377,13 +386,13 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | AI runtime | CPU execution, optional Metal backend, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes | More family adapters, stable API, distribution and retained compatibility matrix |
-| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, and canonical typed producer admission | Generic embeddings/reranking/classification, stronger execution-transition proof, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
+| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, and exact deterministic producer-transition replay for retained reference profiles | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, and typed producer/raw-output admission into that unchanged registry | Add complete execution-transition reconstruction, production encoder/container adapters and external-format conformance, richer language/punctuation and overlapping-speaker policy, native Linux and power-loss campaigns, and authorized physical playback/display and quality evidence |
-| Platforms | Native macOS development-host evidence plus compile-only core probes for Linux x86_64/AArch64, Android AArch64, and iOS AArch64 | Split OS authority from the portable core; add native Linux/Windows adapters and gates, then mobile and reduced edge profiles |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, typed producer/raw-output admission, and host replay of exact deterministic source-model/materializer transitions with a separately bound evidence sidecar | Add production encoder/container adapters and external-format conformance, richer language/punctuation and overlapping-speaker policy, native Linux and power-loss campaigns, additional model/materializer profiles, and authorized physical playback/display and quality evidence |
+| Platforms | Native macOS development-host evidence; full cross-build gates for Linux x86_64/AArch64 musl and Windows x86_64 GNU; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64 | Run native Linux/Windows CPU, mapping, and recovery campaigns; finish Windows durable-file, clock, telemetry, and packaging adapters; then add mobile and reduced edge profiles |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -442,6 +451,7 @@ valuable as new features.
 - [Generated-media encoded payload archive](docs/GENERATED_MEDIA_PAYLOAD_ARCHIVE.md)
 - [Bounded generated-media output registry](docs/GENERATED_MEDIA_OUTPUT_REGISTRY.md)
 - [Canonical generated-media producer admission](docs/GENERATED_MEDIA_PRODUCER_ADMISSION.md)
+- [Host-verified generated-media producer transitions](docs/GENERATED_MEDIA_PRODUCER_TRANSITION.md)
 - [Exact speech annotation publication](docs/SPEECH_ANNOTATION_PUBLICATION.md)
 - [Stateful model adapter and latent-step fixture](docs/STATEFUL_MODEL_ADAPTER.md)
 - [Stateful model continuation](docs/STATEFUL_MODEL_CONTINUATION.md)

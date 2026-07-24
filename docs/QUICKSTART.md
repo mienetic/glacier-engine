@@ -29,10 +29,12 @@ zig build -Doptimize=ReleaseSafe -Dmetal=false
 On macOS, Metal is enabled by default. Keep `-Dmetal=false` while learning the
 portable core; remove it when working on the accelerator backend.
 
-The complete host build is currently scoped to macOS and Linux. Compile-only
-core probes for other targets are evidence-development tools, not support
-claims. See [Platform Portability](PLATFORM_PORTABILITY.md) before adding an OS,
-mobile, or edge adapter.
+Native host execution is currently scoped to macOS and Linux. The complete
+declared artifact set also cross-builds for Windows x86_64 GNU, but that is a
+compile/link gate rather than native Windows support. Compile-only mobile core
+probes are evidence-development tools, not support claims. See
+[Platform Portability](PLATFORM_PORTABILITY.md) before adding an OS, mobile, or
+edge adapter.
 
 Running `./zig-out/bin/glacier` without arguments executes a tiny synthetic
 paging smoke test.
@@ -226,6 +228,14 @@ zig build generated-media-output-registry-restart-demo \
 zig test src/core/generated_media_producer_admission.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_generated_media_producer_admission
 
+# The higher-assurance producer-transition path then replays the retained
+# deterministic source model and materializer, reconstructs image publication
+# or complete audio/video acknowledgement transitions, and returns a separate
+# evidence sidecar paired with the unchanged registry archive. Each image is a
+# fresh one-shot local transaction; collection order is derived independently.
+zig test src/core/generated_media_producer_transition.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_generated_media_producer_transition
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false
@@ -244,6 +254,12 @@ zig build test -Doptimize=Debug -Dmetal=false
 zig build test -Doptimize=ReleaseSafe -Dmetal=false
 python3 -m unittest discover -s bench/tests
 ```
+
+The producer-transition fixture proves exact deterministic replay on the
+verifying host. It does not prove historical execution, live resource
+authority, physical playback/display, external codec/container conformance, or
+performance. See
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md).
 
 Before submitting a runtime change, also run:
 

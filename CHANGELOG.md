@@ -21,6 +21,19 @@ before the first stable release.
 
 ### Added
 
+- Host-verified generated-media producer transitions: a bounded higher-assurance
+  gateway replays exact deterministic source-model and materializer callbacks
+  over canonical witnesses, reconstructs image publication and complete
+  audio/video observation and acknowledgement transitions, and derives the
+  unchanged generated-media registry. Every admitted output receives a fixed
+  1,728-byte transition receipt; a separate
+  `640 + output_count × 1,728`-byte evidence sidecar binds one to twelve
+  receipts, the exact unchanged three-object registry archive, and paired
+  predecessor evidence. Each image remains a one-shot local publication while
+  its zero-based collection ordinal is derived independently from validated
+  registry lineage. Replay proves deterministic reconstruction on the
+  verifying host, not historical execution, live resource authority, physical
+  playback/display, external codec/container conformance, or performance.
 - Canonical generated-media producer admission: a bounded pre-publication
   gateway decodes the existing generated-image plan/provenance/result wires,
   generated-audio quiescent state/plan/provenance/result/playback-
@@ -38,10 +51,12 @@ before the first stable release.
   behavior.
 - Platform portability ledger: an evidence matrix now separates source
   compilation, native CPU execution, filesystem recovery, accelerator
-  validation, and packaging support. It records current compile-only
-  Linux/Android/iOS observations, Windows/WASI blockers, explicit OS-adapter
-  boundaries, and staged G0–G7 promotion gates without promoting untested
-  targets.
+  validation, and packaging support. Full `ReleaseSafe` artifact cross-builds
+  now cover Linux x86_64/AArch64 musl and Windows x86_64 GNU; model conversion
+  and runtime images share a bounded POSIX/Windows read-only mapping; and
+  restart fixtures use compile-time process-ID and forced-termination seams.
+  Android/iOS remain core compile probes, WASI remains blocked, and no
+  cross-build is presented as native or recovery support.
 - Bounded generated-media output registry: an independent canonical ABI packs
   one to four output entries per present image/audio/video modality, up to
   twelve total, as fixed 544-byte entries in `(modality, ordinal)` order, one

@@ -18,7 +18,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
-| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay`, `GeneratedMediaCheckpoint`, `GeneratedMediaPayloadArchive`, `GeneratedMediaOutputRegistry`, `GeneratedMediaProducerAdmission` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, validate typed generated outputs and exact raw bytes before shared registry construction, and publish only through explicit family and atomic visibility boundaries |
+| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay`, `GeneratedMediaCheckpoint`, `GeneratedMediaPayloadArchive`, `GeneratedMediaOutputRegistry`, `GeneratedMediaProducerAdmission`, producer-transition replay/evidence | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, validate typed generated outputs and exact raw bytes, replay retained deterministic producer transitions, and publish only through explicit family and atomic visibility boundaries |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -277,6 +277,26 @@ generation/publication sequence, and requires exact typed
 state/result/completion predecessor continuity. It then constructs the
 unchanged three-object registry; it creates no fourth object or selector.
 
+The producer-transition layer is a higher-assurance sibling, not a silent
+upgrade to structural admission. Trusted host callbacks replay the exact
+retained source-model and image/audio/video materializer profiles into private
+scratch. The gateway exact-compares model output, successor state, raw media,
+publication, and completion transitions before it constructs the same
+three-object registry. Image replay preserves a fresh one-shot local
+publication and derives its separate zero-based collection ordinal from
+validated registry lineage. Audio/video replay includes the pending state,
+application observation, acknowledgement plan/result, and final quiescent
+state. Fixed per-output receipts and one batch header form a separate evidence
+sidecar bound to the registry manifest/archive; the sidecar is not a fourth
+registry object or a selector. A successor must present the preceding evidence
+and registry as an exact pair.
+
+Callbacks and their contexts remain host runtime values and are never
+serialized. Replaying them proves exact deterministic reconstruction on the
+verifying host, not historical execution, current resource authority, a
+physical playback/display sink, external codec/container correctness, or
+performance.
+
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
 decimation, and keyframe selection. Its encoded payload archive and output
@@ -300,7 +320,10 @@ and [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPL
 then [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and the
 [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
 followed by the
-[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md).
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md),
+[Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md),
+and
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md).
 
 ### ResourceBank
 
@@ -602,9 +625,12 @@ dispatch, filesystem, or network authority.
 ## Portability
 
 The portable core is Zig. AArch64 has specialized CPU kernels and macOS can use
-Metal through a small Objective-C bridge. Cross-target test compilation covers
-x86_64 and AArch64 Linux. Execution, numerical, and physical-resource validation
-still require real machines for each promoted platform.
+Metal through a small Objective-C bridge. Full artifact cross-builds cover
+x86_64/AArch64 Linux musl and x86_64 Windows GNU. Model conversion and runtime
+images share a bounded read-only mapping abstraction with POSIX and Windows
+implementations; fixture process IDs and hard termination are selected per OS.
+Execution, numerical, durable-recovery, and physical-resource validation still
+require real machines for each promoted platform.
 
 The full capability split, current compile evidence, OS-adapter boundaries, and
 promotion gates are maintained in
@@ -719,6 +745,11 @@ targets remain gated until their named native adapters and evidence pass.
   exact typed image/audio/video record decoding, raw-output verification,
   common-envelope and predecessor derivation, and construction of the
   unchanged output registry before publication.
+- [Host-verified generated-media producer transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md):
+  exact deterministic source-model/materializer replay, independent one-shot
+  image publication with derived collection order, complete audio/video
+  acknowledgement reconstruction, and a separate evidence sidecar paired with
+  the unchanged registry.
 - [Exact speech annotation publication](SPEECH_ANNOTATION_PUBLICATION.md):
   canonical word/sample/speaker mapping, abort-safe publication, and annotation
   state continuation across a real process restart.

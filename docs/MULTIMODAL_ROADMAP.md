@@ -8,8 +8,10 @@ acknowledgement across process restart, ordered generated-video manifests with
 exact application display acknowledgement, atomic generated-output checkpoint
 selection, exact eight-object generated-media payload archive composition,
 bounded multi-output registry continuity, canonical typed producer/raw-output
-admission, two-process continuation,
-crash-atomic checkpoint sets, and a post-restore generation-three successor;
+admission, host-verified deterministic source-model/materializer transition
+replay with a separate registry-bound evidence sidecar, two-process
+continuation, crash-atomic checkpoint sets, and a post-restore
+generation-three successor;
 bounded processor/cache state and payloads integrated as fifth and sixth
 durable archive objects with fresh-Bank restore; production-model execution,
 production encoder/container adapters, physical playback/display evidence,
@@ -143,6 +145,17 @@ derives common scope/policy/challenge, zero-based registry position,
 registry generation/publication sequence, and strict state/result/completion
 predecessors. It adds no archive object or selector; successful admission feeds
 the unchanged three-object registry.
+
+A higher-assurance sibling gateway now verifies exact deterministic
+source-model and materializer replay before constructing that same registry.
+It emits one fixed receipt per output and a separate batch evidence sidecar
+bound to the exact unchanged three-object archive. Each image replay is an
+independent one-shot local image transaction; its registry collection ordinal
+is derived separately from validated registry lineage. Audio and video replay
+the full publication, observation, acknowledgement-plan, acknowledgement, and
+final-state transitions. This proves reconstruction on the verifying host, not
+historical execution, live resource authority, physical playback/display,
+external codec/container correctness, or performance.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -352,9 +365,14 @@ First slices:
 13. ~~typed producer admission into the shared registry;~~ complete for
     canonical plan/provenance/result wires plus exact raw pixel bytes, with
     one-based producer image position normalized to a zero-based registry
-    ordinal and strict state/result predecessor continuity; and
-14. stronger execution-transition proof followed by production
-    decoder/encoder integration and external-format conformance.
+    ordinal and strict state/result predecessor continuity;
+14. ~~host-verified deterministic producer transitions;~~ complete for the
+    retained reference profile: exact source-model and decoder replay, a fresh
+    one-shot local image transaction, and a separate zero-based collection
+    ordinal derived from validated registry lineage rather than caller
+    authority; and
+15. production decoder/encoder integration, additional replay profiles, and
+    external-format conformance.
 
 Promotion gate: every accepted pixel maps to an exact source region and
 preprocessing plan; orientation/color drift, decompression bombs, foreign
@@ -412,10 +430,14 @@ First slices:
     canonical quiescent state/plan/provenance/result/playback-
     acknowledgement wires plus exact raw PCM bytes and strict
     state/result/completion predecessors;
-14. stronger execution-transition proof followed by production
-    renderer/codec/container adapters, external-format conformance,
+14. ~~host-verified deterministic producer transitions;~~ complete for the
+    retained source-model and PCM-renderer profile, including publication,
+    observation, acknowledgement-plan, acknowledgement, and exact final
+    quiescent-state replay in a registry-bound evidence sidecar;
+15. production renderer/codec/container adapters, additional replay profiles,
+    external-format conformance,
     and authorized physical playback evidence; and
-15. microphone/network adapters outside the authority-free core.
+16. microphone/network adapters outside the authority-free core.
 
 Promotion gate: no sample is silently dropped, duplicated, reordered, mixed, or
 resampled; streaming restart resumes at an exact sample/timeline boundary; input
@@ -472,10 +494,13 @@ First slices:
 15. ~~typed producer admission into the shared registry;~~ complete for
     canonical quiescent state/manifest/provenance/result/display-
     acknowledgement wires plus exact raw frame bytes and strict
-    state/result/completion predecessors; and
-16. stronger execution-transition proof followed by production
-    renderer/codec/container integration and external-container
-    conformance.
+    state/result/completion predecessors;
+16. ~~host-verified deterministic producer transitions;~~ complete for the
+    retained source-model and frame-renderer profile, including publication,
+    observation, acknowledgement-plan, acknowledgement, and exact final
+    quiescent-state replay in a registry-bound evidence sidecar; and
+17. production renderer/codec/container integration, additional replay
+    profiles, and external-container conformance.
 
 Promotion gate: frame selection and temporal ordering replay exactly; explicit
 VFR, stateful restart, and generated-segment restart fixtures are integrated,
@@ -513,11 +538,17 @@ audio, and video fixtures:
    `448/576/512/576/512`, and video `512/736/640/672/512`-byte wire sets plus
    exact raw media bytes, common envelope derivation, and strict
    state/result/completion continuity, without changing the registry archive;
-7. reconstruct complete typed execution transitions, then add production
-   encoder/container adapters and external-format conformance;
-8. retain native Linux and separately scoped initial-publication/power-loss
+7. ~~reconstruct complete typed execution transitions for the retained
+   reference profiles;~~ complete through exact deterministic source-model and
+   materializer replay, independent one-shot image publication with a derived
+   collection ordinal, complete audio/video acknowledgement transitions, fixed
+   per-output receipts, and a separate paired evidence sidecar bound to the
+   unchanged registry archive;
+8. add production encoder/container adapters, additional model/materializer
+   profiles, and external-format conformance;
+9. retain native Linux and separately scoped initial-publication/power-loss
    campaigns; and
-9. add quality, performance, and authorized device
+10. add quality, performance, and authorized device
    evidence.
 
 See [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and the
@@ -525,7 +556,9 @@ See [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and the
 then the
 [Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md)
 and
-[Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md).
+[Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md),
+followed by
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md).
 
 ## Provider efficiency
 

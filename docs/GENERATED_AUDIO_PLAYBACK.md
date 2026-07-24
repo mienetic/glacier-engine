@@ -1,8 +1,9 @@
 # Generated Audio Publication and Playback Acknowledgement
 
 Status: **integrated model-free conformance path with bounded downstream
-multi-chunk registry continuity; production synthesizers, device playback,
-external codecs, and crash-atomic publication of source records remain gated**.
+multi-chunk registry continuity and a host-verified producer-transition
+reference profile; production synthesizers, device playback, external codecs,
+and crash-atomic publication of source records remain gated**.
 
 Glacier can publish bounded generated PCM chunks, carry an outstanding chunk
 across a real process restart, and require an exact application acknowledgement
@@ -125,9 +126,17 @@ state/completion roots. Registry admission structurally requires
 decode these playback acknowledgement/state wires. The separate
 [Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md)
 gateway now validates those retained records and exact raw PCM before registry
-construction. Production renderer/codec/container integration,
-external-format conformance, partial-buffer policy where a product explicitly
-needs it, and physical playback adapters remain outside this registry slice.
+construction. The higher-assurance
+[host-verified producer-transition path](GENERATED_MEDIA_PRODUCER_TRANSITION.md)
+replays the exact retained source-model and PCM-renderer callbacks,
+reconstructs publication, playback observation, acknowledgement plan/result,
+and final quiescent state, then binds a fixed receipt in a separate sidecar to
+the unchanged registry. This proves deterministic reconstruction on the
+verifying host, not historical execution, live resource authority, physical
+playback, external codec/container correctness, or performance. Production
+renderer/codec/container integration, external-format conformance,
+partial-buffer policy where a product explicitly needs it, and physical
+playback adapters remain outside this registry slice.
 
 The sibling ordered raw-video path is specified in
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md).
@@ -136,4 +145,6 @@ The shared visibility boundary is specified in
 the
 [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
 then the
-[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md).
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md)
+and
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md).

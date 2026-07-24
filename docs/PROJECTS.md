@@ -271,16 +271,27 @@ constructs the unchanged three-object registry. The independent Python model
 checks the same mapping. See
 [Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md).
 
+**Completed slice:** a higher-assurance generated-media transition gateway now
+replays exact deterministic source-model and materializer callbacks for the
+retained image/audio/video reference profiles. It reconstructs one-shot image
+publication with a separately derived collection ordinal, complete audio/video
+observation and acknowledgement transitions, and the exact unchanged registry
+archive. Fixed per-output receipts are emitted in a separate batch sidecar
+paired with that archive and its predecessor. This is verifier-host
+reconstruction, not historical execution, live authority, physical sink,
+external-format, or performance evidence. See
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md).
+
 **Next slices:** add external container timestamp normalization, a production
 image decoder adapter, richer language/punctuation or overlapping-speaker
 policy, a production image/audio/video encoder or container adapter with an
-external-format fixture, complete producer execution-transition
-reconstruction, a native Linux checkpoint campaign, a separately scoped
-initial power-loss durability design, a verified registry inspector, or
-authorized device/quality evidence. Model-family contracts, backend placement,
-streaming/batching, observability, and runtime policy are parallel contributor
-lanes rather than dependencies on media-format work. Each slice must preserve
-the fixed core contracts.
+external-format fixture, an additional deterministic model/materializer replay
+profile, crash-atomic paired sidecar/registry retention, a native Linux
+checkpoint campaign, a separately scoped initial power-loss durability design,
+a verified registry inspector, or authorized device/quality evidence.
+Model-family contracts, backend placement, streaming/batching, observability,
+and runtime policy are parallel contributor lanes rather than dependencies on
+media-format work. Each slice must preserve the fixed core contracts.
 
 ### AI runtime family registry
 
@@ -328,8 +339,9 @@ releases all ownership. See
 
 **Next slice:** add a generic non-media encoder using the converged stateless
 lifecycle, adapt a production renderer/codec to the bounded generated-audio
-transaction and output registry, or build a read-only registry inspector that
-labels unverified bytes before rendering entries.
+transaction and output registry, add a redistributable deterministic
+producer-transition profile, or build a read-only paired evidence/registry
+inspector that labels unverified bytes before rendering entries.
 
 ### ResourceBank property tests
 

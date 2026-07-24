@@ -840,7 +840,7 @@ pub fn validateResultV1(result: GeneratedAudioResultV1) Error!void {
         return Error.InvalidResultRoot;
 }
 
-fn stateAfterPublicationV1(
+pub fn stateAfterPublicationV1(
     state: GeneratedAudioStateV1,
     plan: GeneratedAudioPlanV1,
     result: GeneratedAudioResultV1,

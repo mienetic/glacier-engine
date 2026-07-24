@@ -1,6 +1,7 @@
 //! Two-process retained-latent checkpoint worker used by the native demo.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const model = core.model_contract;
 const resource_bank = core.resource_bank;
@@ -130,7 +131,7 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
     const pid = try std.fmt.bufPrint(
         &pid_storage,
         "{d}",
-        .{std.c.getpid()},
+        .{currentProcessId()},
     );
     try writeSyncedV1(directory, source_pid_name, pid);
     try std.posix.fsync(directory.fd);
@@ -156,7 +157,7 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
             "\"checkpoint_sha256\":\"{s}\"," ++
             "\"verified\":true}}\n",
         .{
-            std.c.getpid(),
+            currentProcessId(),
             continuation.checkpoint_bytes,
             &checkpoint_hex,
         },
@@ -172,11 +173,11 @@ fn resumeV1(directory: *std.fs.Dir) !void {
         &pid_storage,
     );
     const source_pid = try std.fmt.parseInt(
-        i32,
+        u32,
         pid_wire,
         10,
     );
-    const target_pid = std.c.getpid();
+    const target_pid = currentProcessId();
     if (source_pid == target_pid)
         return error.ProcessDidNotRestart;
 
@@ -330,6 +331,12 @@ fn resumeV1(directory: *std.fs.Dir) !void {
         },
     );
     try stdout.flush();
+}
+
+fn currentProcessId() u32 {
+    if (comptime builtin.os.tag == .windows)
+        return std.os.windows.GetCurrentProcessId();
+    return @intCast(std.c.getpid());
 }
 
 fn writeSyncedV1(

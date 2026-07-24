@@ -21,6 +21,7 @@ const std = @import("std");
 const core = @import("core");
 const fmt = @import("format.zig");
 const st = @import("safetensors.zig");
+const runtime_image = @import("runtime_image.zig");
 const crc32 = @import("../crc32.zig");
 
 pub const ConvertError = error{
@@ -210,17 +211,15 @@ pub fn convertSafetensors(
     defer in_file.close();
     const stat = in_file.stat() catch return ConvertError.IoError;
     const total_size: u64 = stat.size;
+    const map_len = std.math.cast(usize, total_size) orelse
+        return ConvertError.BadInputFile;
 
-    // mmap read-only.
-    const mapped = std.posix.mmap(
-        null,
-        @intCast(total_size),
-        std.posix.PROT.READ,
-        .{ .TYPE = .PRIVATE },
-        in_file.handle,
-        0,
+    const mapping = runtime_image.ReadOnlyFileMapping.init(
+        in_file,
+        map_len,
     ) catch return ConvertError.IoError;
-    defer std.posix.munmap(mapped);
+    defer mapping.close();
+    const mapped = mapping.bytes;
 
     var sf = st.parseHeader(allocator, mapped) catch
         return ConvertError.NotSafetensors;

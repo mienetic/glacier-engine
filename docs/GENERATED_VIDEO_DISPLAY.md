@@ -1,9 +1,10 @@
 # Generated Video Manifest and Display Acknowledgement
 
 Status: **integrated model-free conformance path with bounded downstream
-multi-segment registry continuity; production video models, external
-codecs/containers, physical display evidence, and crash-atomic publication of
-source records remain gated**.
+multi-segment registry continuity and a host-verified producer-transition
+reference profile; production video models, external codecs/containers,
+physical display evidence, and crash-atomic publication of source records
+remain gated**.
 
 Glacier can publish an ordered bounded raw-video segment, carry its outstanding
 display receipt across a real process restart, and require exact application
@@ -125,11 +126,20 @@ requires `completion_required`, `completed`, and a nonzero completion root; it
 does not decode these display acknowledgement/state wires. The separate
 [Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md)
 gateway now validates those retained records and exact raw frames before
-registry construction. Production image/audio/video encoder/container
-adapters, external-format conformance, native Linux and separately scoped
-power-loss campaigns, and authorized physical playback/display evidence
-remain. See
+registry construction. The higher-assurance
+[host-verified producer-transition path](GENERATED_MEDIA_PRODUCER_TRANSITION.md)
+replays the exact retained source-model and frame-renderer callbacks,
+reconstructs publication, display observation, acknowledgement plan/result,
+and final quiescent state, then binds a fixed receipt in a separate sidecar to
+the unchanged registry. This proves deterministic reconstruction on the
+verifying host, not historical execution, live resource authority, physical
+display, external codec/container correctness, or performance. Production
+image/audio/video encoder/container adapters, external-format conformance,
+native Linux and separately scoped power-loss campaigns, and authorized
+physical playback/display evidence remain. See
 [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and the
 [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
 then the
-[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md).
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md)
+and
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md).

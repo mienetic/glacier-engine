@@ -1,6 +1,7 @@
 //! Process-death restart proof for atomically selected generated-media output registries.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const checkpoint_file = core.continuation_checkpoint_file;
 const output_registry = core.generated_media_output_registry;
@@ -73,7 +74,7 @@ pub fn main() !void {
         const source_pid = try std.fmt.bufPrint(
             &pid_storage,
             "{d}",
-            .{std.c.getpid()},
+            .{currentProcessId()},
         );
         try writeSyncedV1(
             &directory,
@@ -233,6 +234,12 @@ pub fn main() !void {
         .{&archive_hex},
     );
     try stdout.flush();
+}
+
+fn currentProcessId() u32 {
+    if (comptime builtin.os.tag == .windows)
+        return std.os.windows.GetCurrentProcessId();
+    return @intCast(std.c.getpid());
 }
 
 fn validateGenerationV1(
@@ -544,11 +551,19 @@ fn expectKilledV1(
     });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
-    switch (result.term) {
-        .Signal => |value| {
-            if (value != std.posix.SIG.KILL)
-                return error.UnexpectedWorkerTermination;
-        },
-        else => return error.UnexpectedWorkerTermination,
+    if (!wasForceTerminated(result.term))
+        return error.UnexpectedWorkerTermination;
+}
+
+fn wasForceTerminated(term: std.process.Child.Term) bool {
+    if (comptime builtin.os.tag == .windows) {
+        return switch (term) {
+            .Exited => |code| code == 137,
+            else => false,
+        };
     }
+    return switch (term) {
+        .Signal => |signal| signal == std.posix.SIG.KILL,
+        else => false,
+    };
 }

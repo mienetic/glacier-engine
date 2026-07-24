@@ -1,6 +1,7 @@
 //! Two-process word-timing and speaker-attribution publication worker.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const model = core.model_contract;
 const resource_bank = core.resource_bank;
@@ -114,7 +115,7 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
     const pid = try std.fmt.bufPrint(
         &pid_storage,
         "{d}",
-        .{std.c.getpid()},
+        .{currentProcessId()},
     );
     try writeSyncedV1(
         directory,
@@ -140,7 +141,7 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
             "\"file_sync\":true,\"directory_sync\":true," ++
             "\"result_sha256\":\"{s}\",\"verified\":true}}\n",
         .{
-            std.c.getpid(),
+            currentProcessId(),
             annotation.state_bytes,
             annotation.result_bytes,
             &result_hex,
@@ -157,11 +158,11 @@ fn resumeV1(directory: *std.fs.Dir) !void {
         &pid_storage,
     );
     const source_pid = try std.fmt.parseInt(
-        i32,
+        u32,
         pid_wire,
         10,
     );
-    const target_pid = std.c.getpid();
+    const target_pid = currentProcessId();
     if (source_pid == target_pid)
         return error.ProcessDidNotRestart;
     var state_wire: [annotation.state_bytes]u8 =
@@ -323,6 +324,12 @@ fn resumeV1(directory: *std.fs.Dir) !void {
         },
     );
     try stdout.flush();
+}
+
+fn currentProcessId() u32 {
+    if (comptime builtin.os.tag == .windows)
+        return std.os.windows.GetCurrentProcessId();
+    return @intCast(std.c.getpid());
 }
 
 fn writeSyncedV1(

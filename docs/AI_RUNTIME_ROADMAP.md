@@ -240,10 +240,16 @@ exact payload bytes in three extension objects under the same selector. Typed
 producer admission now closes that precondition: a separate gateway decodes
 the retained typed image, audio, and video record sets, verifies exact raw media
 bytes, derives their common request envelope and strict state/result/completion
-predecessors, and constructs the unchanged registry generation. Production
-encoder/container adapters, external-format conformance, native Linux
-filesystem campaigns, physical playback/display evidence, and power-loss
-durability remain gated.
+predecessors, and constructs the unchanged registry generation. A
+higher-assurance producer-transition path now adds exact deterministic
+source-model and
+materializer replay for the retained reference profiles. It reconstructs
+one-shot image publication and complete audio/video acknowledgement
+transitions, then emits fixed per-output receipts in a separate sidecar bound
+to the exact unchanged registry archive. Production encoder/container
+adapters, additional replay profiles, external-format conformance, native
+Linux filesystem campaigns, physical playback/display evidence, and
+power-loss durability remain gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -285,7 +291,8 @@ Current state: **integrated for tokens, model-free media, bounded typed
 perception fixtures, generated-image publication, generated audio/video
 publication with application acknowledgement, and atomic three-modality
 generated-output selection plus exact encoded-payload archive composition and
-bounded multi-output registry continuity with canonical producer admission**.
+bounded multi-output registry continuity with canonical producer admission and
+host-verified reference producer-transition replay**.
 Media transactions compose
 exact resource admission, transformed output, timeline advancement,
 transcript/video-segment visibility, deterministic merge decisions, cross-modal
@@ -304,10 +311,17 @@ under the same selector. Registry completion/state roots remain opaque; typed
 producer acknowledgement/state validation now occurs in the separate
 pre-publication gateway, which also checks exact raw bytes and derives rather
 than trusts the common envelope, registry generation/sequence, and
-predecessors. Generic tensor/action envelopes, partial-stream policy, stronger
-producer execution-transition reconstruction, production
-encoder/container adapters, external-format conformance, and physical
-playback/display evidence remain planned.
+predecessors. A higher-assurance sibling replays the exact deterministic
+source-model and materializer callbacks, reconstructs image or complete
+audio/video completion transitions, and binds fixed receipts in a separate
+evidence sidecar to that unchanged registry. Generic tensor/action envelopes,
+partial-stream policy, production encoder/container adapters, additional replay
+profiles, external-format conformance, and physical playback/display evidence
+remain planned.
+
+This replay proves deterministic reconstruction on the verifying host. It does
+not prove historical execution, live resource authority, physical sink
+behavior, external codec/container correctness, or performance.
 
 Promotion gate: every output family has a named atomic unit, rollback behavior,
 replay rule, and continuation position; cancellation cannot expose an
@@ -380,11 +394,11 @@ expand the base adapter's capabilities.
 | Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision, audio, and temporal-video embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, fresh-process stateful transcript continuation, and restartable exact word-timing/speaker publication integrated; production model gated | Add language/punctuation, overlapping-speaker policy, and crash-atomic checkpoint composition | No sample loss/duplication, exact streaming restart, annotation lineage, calibrated production quality |
-| Speech and audio generation | TTS, codec/audio token generation | Bounded exact-integer PCM publication, cancellation-safe retry, one-buffer backpressure, application acknowledgement, distinct-process restart, shared generated-output checkpoint composition, and multi-chunk registry continuity with exact encoded payloads integrated; production model/device paths gated | Add a production renderer/codec adapter and external-format conformance | Quality evidence, production container conformance, explicit device authority, physical playback evidence |
+| Speech and audio generation | TTS, codec/audio token generation | Bounded exact-integer PCM publication, cancellation-safe retry, one-buffer backpressure, application acknowledgement, distinct-process restart, shared generated-output checkpoint composition, multi-chunk registry continuity with exact encoded payloads, and host-verified retained source-model/renderer replay with separate registry-bound evidence integrated; production model/device paths gated | Add a production renderer/codec adapter, additional replay profiles, and external-format conformance | Quality evidence, production container conformance, explicit device authority, physical playback evidence |
 | Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder, explicit VFR windows, fresh-process stateful segment continuation, canonical merge timeline, and exact audio/transcript-video result-link continuation integrated; production model gated | Add external container timestamp normalization and production backend conformance | Stateful continuation, explicit discontinuity evidence, production quality evidence |
-| Image generation | diffusion/flow step, decode latent, publish image | Exact retained-state continuation plus bounded terminal-latent decode, cancellation-safe atomic image/provenance/result publication, distinct-process proof, shared generated-output checkpoint composition, and multi-image registry continuity with exact encoded payloads integrated; production model gated | Add a production decoder/encoder adapter and external-format conformance | Multi-step continuation, external format conformance, and quality/performance evidence |
-| Video generation | temporal latent steps, frame/segment publication | Ordered two-frame raw manifest publication, cancellation-safe retry, one-segment backpressure, application display acknowledgement, distinct-process restart, shared generated-output checkpoint composition, and multi-segment registry continuity with exact encoded payloads integrated; production model/device paths gated | Add production adapters and external-container conformance | Production model quality, external container conformance, explicit display authority |
-| Audio/music generation | acoustic or token steps, waveform decode | Shared bounded exact-integer waveform-output transaction and multi-chunk registry continuity integrated; music models gated | Add a legal production artifact or production renderer/codec fixture | Timeline continuity, chunk lineage, rights/provenance policy, calibrated quality |
+| Image generation | diffusion/flow step, decode latent, publish image | Exact retained-state continuation plus bounded terminal-latent decode, cancellation-safe atomic image/provenance/result publication, distinct-process proof, shared generated-output checkpoint composition, multi-image registry continuity with exact encoded payloads, and host-verified retained source-model/decoder replay with independent one-shot image state and derived collection order integrated; production model gated | Add a production decoder/encoder adapter, additional replay profiles, and external-format conformance | Multi-step continuation, external format conformance, and quality/performance evidence |
+| Video generation | temporal latent steps, frame/segment publication | Ordered two-frame raw manifest publication, cancellation-safe retry, one-segment backpressure, application display acknowledgement, distinct-process restart, shared generated-output checkpoint composition, multi-segment registry continuity with exact encoded payloads, and host-verified retained source-model/renderer plus complete acknowledgement replay integrated; production model/device paths gated | Add production adapters, additional replay profiles, and external-container conformance | Production model quality, external container conformance, explicit display authority |
+| Audio/music generation | acoustic or token steps, waveform decode | Shared bounded exact-integer waveform-output transaction, multi-chunk registry continuity, and a retained deterministic producer-transition replay profile integrated; music models gated | Add a legal production artifact, additional replay profile, or production renderer/codec fixture | Timeline continuity, chunk lineage, rights/provenance policy, calibrated quality |
 | Multimodal fusion | cross-attention, joint embedding, interleaved generation | Idea; shared identities exist | Image+text or audio+text synthetic fusion fixture | Each modality retains source/state identity through one output transaction |
 | Tool-use and agent policy | choose action, arguments, observation, continue | Idea; scheduler/provider primitives exist | Fake tool with bounded schema and no ambient I/O | Separate action authorization, idempotency, result identity, cancellation |
 | Retrieval and recommendation | embed, search, rerank, recommend | Idea | In-memory fixed corpus and exact top-k tie policy | Index/version identity, tenant filtering, deterministic tie/evidence policy |
@@ -557,10 +571,15 @@ stay within admitted memory/time bounds, and resume or cancel at declared units.
   generation and publication sequence, and strict
   state/result/completion predecessors while leaving the selected three-object
   registry unchanged;
-- reconstruct stronger producer execution transitions from typed pre-state,
-  plan/result, observation, acknowledgement plan/result, and exact post-state;
+- reconstruct stronger producer execution transitions; complete for the
+  retained deterministic source-model and materializer profiles. Image uses a
+  fresh one-shot local publication and a separately derived registry collection
+  ordinal; audio/video replay publication, observation, acknowledgement plan,
+  acknowledgement result, and exact final state. Fixed receipts live in a
+  separate predecessor-bound sidecar paired with the unchanged registry
+  archive;
 - add production image decoder/encoder and audio/video renderer/codec/container
-  adapters with external-format conformance;
+  adapters, additional replay profiles, and external-format conformance;
 - add authorized physical playback/display and quality evidence;
 - retain native Linux filesystem campaigns and design separately scoped initial
   publication and power-loss durability evidence;
@@ -574,11 +593,17 @@ on exact application acknowledgement. Shared generated-output checkpoint
 composition, exact encoded-payload archive composition, and bounded
 multi-image/chunk/segment registry continuity are complete for two model-free
 generations. Canonical typed producer admission now verifies the retained
-record sets and exact raw outputs before constructing that registry. The R4
-production exit gate still requires complete execution-transition evidence,
-production encoder/container adapters, external-format conformance, retained
-platform and power-loss evidence, and quality/performance evidence under
-declared artifacts.
+record sets and exact raw outputs before constructing that registry.
+Host-verified transition evidence now additionally replays the exact retained
+source-model and materializer profiles and binds the resulting receipts to that
+unchanged registry. The R4 production exit gate still requires production
+encoder/container adapters, broader replay coverage, external-format
+conformance, retained platform and power-loss evidence, and
+quality/performance evidence under declared artifacts.
+
+See
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md)
+for the replay, image-ordinal, sidecar-lineage, and claim boundaries.
 
 ### R5 — Agents, retrieval, and specialized families
 

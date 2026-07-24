@@ -374,6 +374,8 @@ pub const FileLeaseV1 = struct {
         options: AcquireOptionsV1,
         stream_storage: []u8,
     ) !FileLeaseV1 {
+        if (comptime !platformSupported())
+            return Error.UnsupportedPlatform;
         try validateAcquire(name, options);
         const generation = try reserveLeaseGeneration();
         var name_storage = [_]u8{0} ** max_name_bytes;
@@ -439,6 +441,8 @@ pub const FileLeaseV1 = struct {
         options: AcquireOptionsV1,
         stream_storage: []u8,
     ) !FileLeaseV1 {
+        if (comptime !platformSupported())
+            return Error.UnsupportedPlatform;
         try validateAcquire(name, options);
         const generation = try reserveLeaseGeneration();
         var name_storage = [_]u8{0} ** max_name_bytes;
@@ -509,6 +513,8 @@ pub const FileLeaseV1 = struct {
     pub fn appendCapability(
         self: *FileLeaseV1,
     ) Error!sweep_writer.AppendCapabilityV1 {
+        if (comptime !platformSupported())
+            return Error.UnsupportedPlatform;
         if (self.state != .ready or
             self.expected_phase != .body_write or
             self.current_bytes != self.snapshot.observed_bytes)
@@ -539,6 +545,8 @@ pub const FileLeaseV1 = struct {
         self: *FileLeaseV1,
         anchor: record.RecoveryAnchorV1,
     ) Error!sweep_writer.RepairCapabilityV1 {
+        if (comptime !platformSupported())
+            return Error.UnsupportedPlatform;
         if (self.state != .ready or
             self.expected_phase != .body_write or
             self.current_bytes != self.snapshot.observed_bytes)
@@ -840,7 +848,7 @@ fn openLockedFile(
     kind: OpenKind,
     lock_nonblocking: bool,
 ) !std.fs.File {
-    if (!platformSupported()) return Error.UnsupportedPlatform;
+    if (comptime !platformSupported()) return Error.UnsupportedPlatform;
     if (!@hasField(std.posix.O, "CLOEXEC") or
         !@hasField(std.posix.O, "NOFOLLOW"))
         return Error.UnsupportedPlatform;
@@ -1104,7 +1112,7 @@ fn testAnchor() record.RecoveryAnchorV1 {
 }
 
 test "directory lease creates locks appends and reopens exact records" {
-    if (!platformSupported()) return error.SkipZigTest;
+    if (comptime !platformSupported()) return error.SkipZigTest;
     const fixture = try testRecords();
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -1179,7 +1187,7 @@ test "directory lease creates locks appends and reopens exact records" {
 }
 
 test "directory lease rejects unsafe names symlinks hard links and permissions" {
-    if (!platformSupported()) return error.SkipZigTest;
+    if (comptime !platformSupported()) return error.SkipZigTest;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     var storage: [record.encoded_bytes]u8 = undefined;
@@ -1276,7 +1284,7 @@ const InjectObserver = struct {
 };
 
 test "every real file append phase poisons and reopens from exact evidence" {
-    if (!platformSupported()) return error.SkipZigTest;
+    if (comptime !platformSupported()) return error.SkipZigTest;
     const fixture = try testRecords();
     for ([_]sweep_writer.IoPhaseV1{
         .body_write,
@@ -1349,7 +1357,7 @@ test "every real file append phase poisons and reopens from exact evidence" {
 }
 
 test "real incomplete tail repair is explicit durable and requires reacquire" {
-    if (!platformSupported()) return error.SkipZigTest;
+    if (comptime !platformSupported()) return error.SkipZigTest;
     const fixture = try testRecords();
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -1421,7 +1429,7 @@ test "real incomplete tail repair is explicit durable and requires reacquire" {
 }
 
 test "namespace replacement poisons before append reaches replacement file" {
-    if (!platformSupported()) return error.SkipZigTest;
+    if (comptime !platformSupported()) return error.SkipZigTest;
     const fixture = try testRecords();
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();

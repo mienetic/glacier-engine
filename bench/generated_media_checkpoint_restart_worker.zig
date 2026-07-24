@@ -1,6 +1,7 @@
 //! Crash-boundary worker for generated-media checkpoint selection.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const generated = core.generated_media_checkpoint;
 
@@ -64,7 +65,7 @@ fn writeSourceV1(directory: *std.fs.Dir) !void {
     const pid = try std.fmt.bufPrint(
         &pid_storage,
         "{d}",
-        .{std.c.getpid()},
+        .{currentProcessId()},
     );
     try writeSyncedV1(directory, source_pid_name, pid);
     try std.posix.fsync(directory.fd);
@@ -109,8 +110,8 @@ fn recoverV1(directory: *std.fs.Dir, expected: u64) !void {
         source_pid_name,
         &pid_storage,
     );
-    const source_pid = try std.fmt.parseInt(i32, source_pid_wire, 10);
-    const recovery_pid = std.c.getpid();
+    const source_pid = try std.fmt.parseInt(u32, source_pid_wire, 10);
+    const recovery_pid = currentProcessId();
     if (source_pid == recovery_pid)
         return error.ProcessDidNotRestart;
     const selector = try validateSelectedGenerationV1(
@@ -372,9 +373,20 @@ fn selectorNameV1(generation: u64) []const u8 {
 }
 
 fn killSelfV1() noreturn {
-    std.posix.raise(std.posix.SIG.KILL) catch
+    forceTerminateCurrentProcess() catch
         std.process.exit(97);
     unreachable;
+}
+
+fn forceTerminateCurrentProcess() !void {
+    if (comptime builtin.os.tag == .windows) {
+        try std.os.windows.TerminateProcess(
+            std.os.windows.GetCurrentProcess(),
+            137,
+        );
+        std.process.exit(137);
+    }
+    try std.posix.raise(std.posix.SIG.KILL);
 }
 
 fn printSourceEvidenceV1() !void {
@@ -387,7 +399,13 @@ fn printSourceEvidenceV1() !void {
             "\"prepared_generations\":2,\"active_generation\":1," ++
             "\"immutable_objects_synced\":true," ++
             "\"directory_synced\":true,\"verified\":true}}\n",
-        .{std.c.getpid()},
+        .{currentProcessId()},
     );
     try stdout.flush();
+}
+
+fn currentProcessId() u32 {
+    if (comptime builtin.os.tag == .windows)
+        return std.os.windows.GetCurrentProcessId();
+    return @intCast(std.c.getpid());
 }

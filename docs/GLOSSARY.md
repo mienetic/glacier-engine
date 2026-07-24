@@ -320,6 +320,30 @@ exact raw output bytes and strict typed state/result/completion predecessor
 continuity; derives the shared registry envelope and successor coordinates; and
 feeds the unchanged generated-media output registry.
 
+**Generated-media producer transition** — A higher-assurance verification path
+that replays an allowed deterministic source-model callback and
+image/audio/video materializer over exact witnesses, reconstructs publication
+and any required acknowledgement transition, derives registry mapping, and
+binds the result into transition evidence. It proves reconstruction on the
+verifying host, not historical execution, live resource authority, physical
+sink behavior, external codec/container conformance, or performance.
+
+**Generated-media transition receipt** — A fixed per-output evidence record
+binding the common request envelope, exact model and materializer witnesses,
+publication/completion reconstruction, delivery identity, derived registry
+entry, and transition predecessor.
+
+**Generated-media transition sidecar** — A separate bounded batch-evidence
+artifact containing the ordered transition receipts and binding them to the
+exact unchanged three-object generated-media registry archive. A successor
+requires the preceding sidecar and registry as a validated pair. The sidecar is
+not a fourth registry object or a visibility selector.
+
+**Generated-image collection ordinal** — The zero-based registry position
+derived from validated registry lineage for a transition-verified image. It is
+separate from the image producer's fresh one-shot local publication index and
+is never accepted as caller authority.
+
 **Generated-media output-registry manifest** — A fixed 544-byte record binding
 one bounded ordered entry table and its exact concatenated encoded-payload pack
 to counts, lengths, generation plan, scope, policy, challenge, and the complete

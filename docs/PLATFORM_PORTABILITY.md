@@ -36,9 +36,9 @@ surface.
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
 | macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures exist | Optional Metal path exists; promotion still requires per-device retained gates | Development host, not a broad platform certification |
-| Linux / x86_64 | Core source-compilation probe passed; the repository also defines a full `test-compile` target | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Compile candidate |
-| Linux / AArch64 | Core source-compilation probe passed; build logic has a non-Apple AArch64 CPU-kernel path | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Compile candidate |
-| Windows / x86_64 | Core and full test compilation currently fail on POSIX-specific code | Not established | No Windows recovery adapter or campaign | No Windows accelerator backend | Unsupported; architecture work required |
+| Linux / x86_64 | Full musl artifact cross-build passes in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
+| Linux / AArch64 | Full musl artifact cross-build passes in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
+| Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
 | Android / AArch64 | Core source-compilation probe passed | No device or emulator execution evidence | No Android lifecycle/storage recovery campaign | No Android accelerator backend | Research target; not supported |
 | iOS / AArch64 | Core source-compilation probe passed | No device execution or application-lifecycle evidence | No iOS protection-class/background recovery campaign | No iOS backend has been verified; the macOS Metal bridge is not iOS evidence | Research target; not supported |
 | WASI / wasm32 | Core source-compilation currently fails | Not established | Durable local recovery is outside the current contract | None | Unsupported; requires a reduced edge profile |
@@ -47,8 +47,8 @@ surface.
 ### Probe record
 
 On 2026-07-24, Zig 0.15.2 was used for source-only probes of
-`src/core/root.zig` in `ReleaseSafe` mode. The probes used `--test-no-exec` and
-`-fno-emit-bin`.
+`src/core/root.zig` and full artifact cross-builds in `ReleaseSafe` mode. The
+source probes used `--test-no-exec` and `-fno-emit-bin`.
 
 Passed:
 
@@ -59,16 +59,27 @@ zig test src/core/root.zig -target aarch64-linux-android -OReleaseSafe --test-no
 zig test src/core/root.zig -target aarch64-ios -OReleaseSafe --test-no-exec -fno-emit-bin
 ```
 
-Failed:
+The full declared artifact set also cross-built for:
 
-- `x86_64-windows-gnu`: the durable object-sweep path depends on POSIX open
-  flags. A broader full-build probe also exposed POSIX `mmap`, Unix process IDs,
-  and `SIGKILL`-based restart fixtures.
-- `wasm32-wasi`: the current core test surface assumes threads, 64-bit atomics,
-  libc `fsync`, and a 64-bit `usize` in several fixture paths.
+```sh
+zig build -Dtarget=x86_64-linux-musl -Dmetal=false -Doptimize=ReleaseSafe
+zig build -Dtarget=aarch64-linux-musl -Dmetal=false -Doptimize=ReleaseSafe
+zig build -Dtarget=x86_64-windows-gnu -Dmetal=false -Doptimize=ReleaseSafe
+zig build test-compile -Dtarget=x86_64-windows-gnu -Dmetal=false -Doptimize=ReleaseSafe
+```
 
-These results prove only the named source-compilation observations. They do not
-promote Linux, Android, or iOS to native support.
+The Windows gate became possible after introducing one shared read-only
+POSIX/Windows model-file mapping, compile-time rejection for unsupported
+POSIX-only durable adapters, canonical `u32` process-ID normalization, and
+platform-specific hard-termination fixtures. These changes establish G1
+compile/link evidence only; no Windows binary was executed.
+
+`wasm32-wasi` still fails the core source probe because the current test surface
+assumes threads, 64-bit atomics, libc `fsync`, and a 64-bit `usize` in several
+fixture paths.
+
+These results prove only the named compile/link observations. They do not
+promote Linux, Windows, Android, or iOS to native support.
 
 ## Existing portability seams and blockers
 
@@ -85,10 +96,13 @@ Useful seams already exist:
 
 The main blockers are boundary violations rather than language choice:
 
-- model conversion and runtime images call POSIX `mmap` directly;
 - durable state uses `openat`, `fstatat`, `flock`, `linkat`, `fsync`, Unix mode
   bits, and POSIX open flags directly;
-- restart fixtures use Unix signals and Unix-shaped process identifiers;
+- read-only model-file mapping now has POSIX and Windows implementations, but
+  native Windows mapping, corruption, replacement, and pressure tests remain;
+- restart fixtures now normalize process IDs and hard termination across POSIX
+  and Windows at compile time, but Windows restart behavior is not yet
+  native-verified;
 - some telemetry and benchmark harnesses assume macOS commands, timers, and
   resource fields;
 - Metal discovery, compilation, and linking are coupled to macOS tooling;
@@ -161,9 +175,11 @@ of equivalent persistence behavior.
 
 ### Virtual-memory adapter
 
-Model loading should depend on a bounded read-only region interface rather than
-calling `mmap` from model code. It should expose map, unmap, prefetch/advice,
-alignment, and optional page-residency observations.
+Model loading now uses the first bounded read-only region interface instead of
+calling `mmap` from model conversion and runtime-image code. The current
+interface covers map/unmap and alignment through POSIX mappings or a Windows
+read-only section view. Prefetch/advice, optional page-residency observations,
+buffered fallback, and native Windows validation remain.
 
 Implementations may use POSIX mappings, Windows file-mapping objects, or
 bounded buffered reads. Mapping is an optimization, not a required semantic
@@ -172,9 +188,10 @@ property of the model format.
 ### Process, concurrency, clock, and telemetry adapters
 
 Process identity, spawn, termination injection, monotonic time, threads, memory
-pressure, energy counters, and machine state are distinct capabilities.
-Logical runtime accounting remains portable even when physical telemetry is
-unavailable.
+pressure, energy counters, and machine state are distinct capabilities. The
+first process seam now normalizes fixture PIDs to `u32` and selects POSIX
+`SIGKILL` or Windows process termination at compile time. Logical runtime
+accounting remains portable even when physical telemetry is unavailable.
 
 A recovery test may use an OS-specific hard-termination mechanism, but the
 canonical recovery verifier must consume the same retained evidence on every

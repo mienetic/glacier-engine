@@ -1,6 +1,7 @@
 //! Subprocess used by the real-file crash conformance demo.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const record = core.continuation_object_sweep_record;
 const sweep_writer = core.continuation_object_sweep_writer;
@@ -15,11 +16,22 @@ const CrashObserver = struct {
     ) sweep_writer.Error!void {
         const self: *CrashObserver = @ptrCast(@alignCast(context));
         if (phase != self.target) return;
-        std.posix.raise(std.posix.SIG.KILL) catch
+        forceTerminateCurrentProcess() catch
             return error.StorageIo;
         unreachable;
     }
 };
+
+fn forceTerminateCurrentProcess() !void {
+    if (comptime builtin.os.tag == .windows) {
+        try std.os.windows.TerminateProcess(
+            std.os.windows.GetCurrentProcess(),
+            137,
+        );
+        std.process.exit(137);
+    }
+    try std.posix.raise(std.posix.SIG.KILL);
+}
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;

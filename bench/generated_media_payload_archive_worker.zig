@@ -1,6 +1,7 @@
 //! Subprocess used by generated-media payload archive crash conformance.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const checkpoint_file = core.continuation_checkpoint_file;
 const payload_archive = core.generated_media_payload_archive;
@@ -16,7 +17,7 @@ const CrashObserver = struct {
     ) checkpoint_file.Error!void {
         const self: *CrashObserver = @ptrCast(@alignCast(context));
         if (phase != self.target) return;
-        std.posix.raise(std.posix.SIG.KILL) catch
+        forceTerminateCurrentProcess() catch
             return error.StorageIo;
         unreachable;
     }
@@ -54,11 +55,11 @@ pub fn main() !void {
     );
     defer allocator.free(source_pid_wire);
     const source_pid = try std.fmt.parseInt(
-        i32,
+        u32,
         source_pid_wire,
         10,
     );
-    if (source_pid == std.c.getpid())
+    if (source_pid == currentProcessId())
         return error.WorkerDidNotRestart;
 
     const set_wire = try directory.readFileAlloc(
@@ -109,6 +110,23 @@ pub fn main() !void {
         },
     );
     return error.ObserverDidNotTerminate;
+}
+
+fn currentProcessId() u32 {
+    if (comptime builtin.os.tag == .windows)
+        return std.os.windows.GetCurrentProcessId();
+    return @intCast(std.c.getpid());
+}
+
+fn forceTerminateCurrentProcess() !void {
+    if (comptime builtin.os.tag == .windows) {
+        try std.os.windows.TerminateProcess(
+            std.os.windows.GetCurrentProcess(),
+            137,
+        );
+        std.process.exit(137);
+    }
+    try std.posix.raise(std.posix.SIG.KILL);
 }
 
 fn validateSuccessorV1(

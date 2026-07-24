@@ -667,9 +667,110 @@ pub const PairNibbleSlices = struct {
     scales_f16_rows4: []const f16,
 };
 
+/// Cross-platform, read-only file mapping used by runtime images and tooling.
+///
+/// POSIX targets retain the direct `mmap` path. Windows uses an NT read-only
+/// section view so large model files remain demand-paged instead of being
+/// copied into an owned heap buffer.
+pub const ReadOnlyFileMapping = struct {
+    bytes: []align(std.heap.page_size_min) const u8,
+    platform_handle: if (builtin.os.tag == .windows)
+        std.os.windows.HANDLE
+    else
+        void,
+
+    pub fn init(file: std.fs.File, len: usize) !ReadOnlyFileMapping {
+        if (len == 0) return error.EmptyFile;
+        if (comptime builtin.os.tag == .windows) {
+            const windows = std.os.windows;
+            var section_handle: windows.HANDLE = undefined;
+            const create_status = windows.ntdll.NtCreateSection(
+                &section_handle,
+                windows.STANDARD_RIGHTS_REQUIRED |
+                    windows.SECTION_QUERY |
+                    windows.SECTION_MAP_READ,
+                null,
+                null,
+                windows.PAGE_READONLY,
+                windows.SEC_COMMIT,
+                file.handle,
+            );
+            if (create_status != .SUCCESS)
+                return windows.unexpectedStatus(create_status);
+            errdefer windows.CloseHandle(section_handle);
+
+            const process_handle = windows.GetCurrentProcess();
+            var base_address: usize = 0;
+            var view_size: usize = len;
+            const map_status = windows.ntdll.NtMapViewOfSection(
+                section_handle,
+                process_handle,
+                @ptrCast(&base_address),
+                null,
+                0,
+                null,
+                &view_size,
+                .ViewUnmap,
+                0,
+                windows.PAGE_READONLY,
+            );
+            if (map_status != .SUCCESS)
+                return windows.unexpectedStatus(map_status);
+            if (base_address == 0) return error.InvalidMapping;
+            errdefer std.debug.assert(
+                windows.ntdll.NtUnmapViewOfSection(
+                    process_handle,
+                    @ptrFromInt(base_address),
+                ) == .SUCCESS,
+            );
+            if (view_size < len) return error.InvalidMapping;
+
+            const bytes = @as(
+                [*]align(std.heap.page_size_min) const u8,
+                @ptrFromInt(base_address),
+            )[0..len];
+            return .{
+                .bytes = bytes,
+                .platform_handle = section_handle,
+            };
+        }
+
+        const mapped = try std.posix.mmap(
+            null,
+            len,
+            std.posix.PROT.READ,
+            .{ .TYPE = .PRIVATE },
+            file.handle,
+            0,
+        );
+        return .{
+            .bytes = mapped,
+            .platform_handle = {},
+        };
+    }
+
+    pub fn close(self: ReadOnlyFileMapping) void {
+        if (comptime builtin.os.tag == .windows) {
+            const windows = std.os.windows;
+            const status = windows.ntdll.NtUnmapViewOfSection(
+                windows.GetCurrentProcess(),
+                @ptrCast(@constCast(self.bytes.ptr)),
+            );
+            std.debug.assert(status == .SUCCESS);
+            windows.CloseHandle(self.platform_handle);
+        } else {
+            std.posix.munmap(self.bytes);
+        }
+    }
+};
+
 pub const MappedImage = struct {
     file: std.fs.File,
     mapped: []align(std.heap.page_size_min) const u8,
+    mapping_handle: if (builtin.os.tag == .windows)
+        std.os.windows.HANDLE
+    else
+        void,
     header: Header,
 
     pub fn open(path: []const u8) !MappedImage {
@@ -694,26 +795,27 @@ pub const MappedImage = struct {
         const stat = try file.stat();
         if (stat.size < HEADER_SIZE) return error.TruncatedHeader;
         const map_len = std.math.cast(usize, stat.size) orelse return error.FileTooLarge;
-        const mapped_mut = try std.posix.mmap(
-            null,
-            map_len,
-            std.posix.PROT.READ,
-            .{ .TYPE = .PRIVATE },
-            file.handle,
-            0,
-        );
-        const mapped: []align(std.heap.page_size_min) const u8 = mapped_mut;
-        errdefer std.posix.munmap(mapped);
+        const mapping = try ReadOnlyFileMapping.init(file, map_len);
+        errdefer mapping.close();
+        const mapped = mapping.bytes;
 
         const header = try Header.decode(mapped[0..HEADER_SIZE]);
         try validateHeaderBytes(mapped[0..HEADER_SIZE], header, stat.size, options);
-        var image: MappedImage = .{ .file = file, .mapped = mapped, .header = header };
+        var image: MappedImage = .{
+            .file = file,
+            .mapped = mapped,
+            .mapping_handle = mapping.platform_handle,
+            .header = header,
+        };
         try image.validateIndexAndRecords(options);
         return image;
     }
 
     pub fn close(self: *MappedImage) void {
-        std.posix.munmap(self.mapped);
+        ReadOnlyFileMapping.close(.{
+            .bytes = self.mapped,
+            .platform_handle = self.mapping_handle,
+        });
         self.file.close();
         self.* = undefined;
     }

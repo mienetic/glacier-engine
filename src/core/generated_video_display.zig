@@ -1319,7 +1319,7 @@ pub fn validateResultBindingV1(
         return Error.InvalidBinding;
 }
 
-fn stateAfterPublicationV1(
+pub fn stateAfterPublicationV1(
     state: GeneratedVideoStateV1,
     manifest: GeneratedVideoManifestV1,
     result: GeneratedVideoResultV1,

@@ -30,12 +30,12 @@ evidence. The plane and model-family sequence is specified in the
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, integrated perception transactions, and restart-safe generated-image/audio/video output verticals | More family adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
-| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, and canonical typed producer admission; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, stronger execution-transition proof, richer multimodal fusion, production generative-media adapters and formats, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, and a canonical typed-admission construction path into the unchanged three-object registry | Complete producer execution-transition reconstruction, production encoder/container adapters, external-format conformance, richer language/punctuation and overlapping-speaker policy, retained Linux and power-loss campaigns, and physical playback/display and quality evidence |
+| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, canonical typed producer admission, and exact deterministic producer-transition replay for retained reference profiles; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, production generative-media adapters and formats, additional replay profiles, agents/retrieval, and specialized families |
+| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, deterministic source-model/materializer replay, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, a canonical typed-admission construction path, and a separate transition-evidence sidecar bound to the unchanged three-object registry | Production encoder/container adapters, external-format conformance, additional model/materializer profiles, richer language/punctuation and overlapping-speaker policy, retained Linux and power-loss campaigns, and physical playback/display and quality evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
-| Platform portability | macOS development host plus compile candidates | Portable wires/state machines, CPU fallbacks, and Linux x86_64/AArch64 plus Android/iOS AArch64 core compile probes | OS capability split, native Linux/Windows adapters and recovery, mobile lifecycle gates, and a reduced edge profile |
+| Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, full Linux x86_64/AArch64 musl and Windows x86_64 GNU cross-build gates, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Native Linux/Windows CPU, mapping, recovery, telemetry, and packaging gates; mobile lifecycle gates; and a reduced edge profile |
 | Benchmark evidence | Prototype | Paired harnesses, machine envelope, independent verification | More complete CPU/energy telemetry and reproducible machines |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
@@ -169,6 +169,13 @@ evidence. The plane and model-family sequence is specified in the
   state/result/completion predecessors; deriving registry generation,
   publication sequence, and entry lineage; and feeding the unchanged
   three-object registry with independent Python verification.
+- [x] Host-verified generated-media producer-transition gateway replaying exact
+  deterministic source-model and materializer callbacks for the retained
+  image/audio/video reference profiles; reconstructing one-shot image
+  publication plus complete audio/video acknowledgement transitions; deriving
+  collection-aware registry order; and emitting fixed per-output receipts in a
+  separate predecessor-bound evidence sidecar paired with the unchanged
+  registry archive.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -190,15 +197,21 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
 
 - [x] Define compile, native CPU, recovery, accelerator, resource, and packaging
   evidence levels without treating cross-compilation as support.
-- [x] Record compile-only core probes for Linux x86_64/AArch64, Android AArch64,
-  and iOS AArch64, plus the current Windows and WASI blockers.
+- [x] Record full cross-build gates for Linux x86_64/AArch64 musl and Windows
+  x86_64 GNU, compile-only core probes for Android/iOS AArch64, and the current
+  WASI blockers.
+- [x] Add a bounded read-only model-file mapping abstraction with POSIX and
+  Windows implementations, plus portable process-ID and forced-termination
+  fixture seams.
 - [ ] Split `core-contract`, CPU runtime, durable runtime, device runtime, CLI,
   mobile library, reduced edge profile, and host-only tools in the build graph.
-- [ ] Replace direct POSIX mapping and durable-file calls with bounded
-  virtual-memory and recovery adapters.
+- [ ] Finish replacing direct durable-file calls with bounded recovery
+  adapters; model conversion and runtime images now share the first bounded
+  POSIX/Windows read-only mapping seam.
 - [ ] Retain native Linux x86_64/AArch64 CPU and filesystem-recovery campaigns.
-- [ ] Add Win32 file, mapping, process, clock, and recovery adapters before
-  declaring Windows support.
+- [ ] Add the remaining Win32 durable-file, clock, telemetry, recovery, and
+  packaging adapters, then retain native campaigns before declaring Windows
+  support.
 - [ ] Add Android/iOS library packaging, lifecycle, storage, memory-pressure,
   and native-device correctness gates.
 - [ ] Define explicit single-threaded/no-durable-filesystem edge capabilities
@@ -476,17 +489,30 @@ The implementation sequence is:
     fixed image, audio, and video record sets plus exact raw output bytes derive
     the shared envelope, zero-based registry position, state/result/completion
     predecessors, registry generation/sequence, and entry chain without adding
-    an archive object or selector; and
-13. stronger execution-transition reconstruction, production
-    encoder/container adapters and external-format conformance,
+    an archive object or selector;
+13. host-verified producer-transition reconstruction is complete for the
+    retained deterministic source-model and materializer profiles. Image
+    outputs remain independent one-shot local media transactions while their
+    registry collection ordinals are derived from validated lineage;
+    audio/video replay includes publication, observation, acknowledgement, and
+    final quiescent state. Fixed receipts live in a separate evidence sidecar
+    bound to the unchanged registry archive; and
+14. production encoder/container adapters and external-format conformance,
+    additional model/materializer profiles,
     retained native Linux filesystem campaigns, separately scoped initial
     power-loss durability, authorized physical playback/display, and quality
     evidence follow.
 
+The transition milestone proves exact reconstruction on the verifying host. It
+does not prove historical execution, live resource authority, a physical sink,
+external codec/container correctness, or performance.
+
 Every modality uses content identity separate from tenant access, explicit
 decoder/preprocessing identity, exact resource admission, and provider wire
-observations. See [Multimodal Roadmap](MULTIMODAL_ROADMAP.md) for use cases,
-first slices, promotion gates, and contributor-ready work.
+observations. See
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md)
+and the [Multimodal Roadmap](MULTIMODAL_ROADMAP.md) for use cases, promotion
+gates, and contributor-ready work.
 
 ### Production weight paging
 
@@ -547,7 +573,7 @@ ideas unless a different status is stated.
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
 | Object Fabric | Prototype (durable payload bytes and logical ownership reacquisition; in-memory object lifecycle) | Tenant-safe content-addressed model, plan, KV, continuation, media, and evidence objects |
 | Media Capsule | Idea (gated) | Typed image, audio, and video identity with explicit decode/preprocess meaning |
-| MediaTimeline and MediaTxn | Integrated model-free fixture, bounded stream, post-restore materialized successor, six-object input checkpoint, typed vision/audio/temporal-video fixtures, exact cross-modal result links, atomic generated image/audio/video checkpoint, exact eight-object encoded-payload archive, and bounded multi-output registry archive; production-model/external-format gated | Exact sample/frame position, per-buffer execution, retained-output/cache rebinding, image/audio/video processor progress, materialized temporal-cache accounting, typed media embeddings, cross-modal lineage, integer synchronized watermark, and complete previous-or-successor generated output plus ordered multi-output payload visibility |
+| MediaTimeline and MediaTxn | Integrated model-free fixture, bounded stream, post-restore materialized successor, six-object input checkpoint, typed vision/audio/temporal-video fixtures, exact cross-modal result links, atomic generated image/audio/video checkpoint, exact eight-object encoded-payload archive, bounded multi-output registry archive, and separately bound deterministic producer-transition evidence; production-model/external-format gated | Exact sample/frame position, per-buffer execution, retained-output/cache rebinding, image/audio/video processor progress, materialized temporal-cache accounting, typed media embeddings, cross-modal lineage, integer synchronized watermark, and complete previous-or-successor generated output plus ordered multi-output payload visibility |
 | Federated Execution Mesh | Idea | Deterministic ownership across local, accelerator, edge, and remote workers |
 | Local/Provider Work Router | Idea | One budget and settlement plane across local computation and external tokens |
 | Privacy Budget Capsule | Idea | Explicit data-use, retention, redaction, and export authority attached to work |

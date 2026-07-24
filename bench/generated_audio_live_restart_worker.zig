@@ -1,6 +1,7 @@
 //! Two-process generated-audio publication and application acknowledgement.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const model = core.model_contract;
 const media = core.media_contract;
@@ -96,7 +97,7 @@ fn publishSourceV1(directory: *std.fs.Dir) !void {
     const pid = try std.fmt.bufPrint(
         &pid_storage,
         "{d}",
-        .{std.c.getpid()},
+        .{currentProcessId()},
     );
     try writeSyncedV1(directory, source_pid_name, pid);
     try std.posix.fsync(directory.fd);
@@ -110,7 +111,7 @@ fn publishSourceV1(directory: *std.fs.Dir) !void {
             "\"acknowledged_chunks\":0,\"pending_chunks\":1," ++
             "\"source_ownership_released\":true," ++
             "\"file_sync\":true,\"verified\":true}}\n",
-        .{std.c.getpid()},
+        .{currentProcessId()},
     );
     try stdout.flush();
 }
@@ -122,8 +123,8 @@ fn resumeTargetV1(directory: *std.fs.Dir) !void {
         source_pid_name,
         &pid_storage,
     );
-    const source_pid = try std.fmt.parseInt(i32, pid_wire, 10);
-    const target_pid = std.c.getpid();
+    const source_pid = try std.fmt.parseInt(u32, pid_wire, 10);
+    const target_pid = currentProcessId();
     if (source_pid == target_pid)
         return error.ProcessDidNotRestart;
 
@@ -355,6 +356,12 @@ fn resumeTargetV1(directory: *std.fs.Dir) !void {
         },
     );
     try stdout.flush();
+}
+
+fn currentProcessId() u32 {
+    if (comptime builtin.os.tag == .windows)
+        return std.os.windows.GetCurrentProcessId();
+    return @intCast(std.c.getpid());
 }
 
 fn makeInitialStateV1() !audio.GeneratedAudioStateV1 {

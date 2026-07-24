@@ -1,6 +1,7 @@
 //! Generated image/audio/video checkpoint selector crash proof.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
@@ -143,9 +144,19 @@ fn expectSuccessV1(term: std.process.Child.Term) !void {
 }
 
 fn expectKilledV1(term: std.process.Child.Term) !void {
-    switch (term) {
-        .Signal => |signal| if (signal != std.posix.SIG.KILL)
-            return error.UnexpectedWorkerSignal,
-        else => return error.WorkerDidNotDie,
+    if (!wasForceTerminated(term))
+        return error.WorkerDidNotDie;
+}
+
+fn wasForceTerminated(term: std.process.Child.Term) bool {
+    if (comptime builtin.os.tag == .windows) {
+        return switch (term) {
+            .Exited => |code| code == 137,
+            else => false,
+        };
     }
+    return switch (term) {
+        .Signal => |signal| signal == std.posix.SIG.KILL,
+        else => false,
+    };
 }

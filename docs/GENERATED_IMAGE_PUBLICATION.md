@@ -1,7 +1,8 @@
 # Generated-Image Publication
 
-Status: **integrated deterministic runtime fixture; production decoder and
-image-quality evidence gated**.
+Status: **integrated deterministic runtime fixture with a host-verified
+producer-transition reference profile; production decoder and image-quality
+evidence gated**.
 
 Glacier can now take a terminal retained latent produced after a real process
 restart, decode it into a bounded caller-owned image, and publish the image,
@@ -131,8 +132,13 @@ The next image-generation slices are:
 4. external image format encoding outside the authority-free core;
 5. ~~model-free atomic composition of one exact encoded image with its typed
    member and shared generated-media checkpoint;~~ complete in the canonical
-   eight-object payload archive; and
-6. quality, memory, energy, and latency evidence on named artifacts and
+   eight-object payload archive;
+6. ~~host-verified deterministic source-model and decoder replay into the
+   unchanged output registry;~~ complete for the retained reference profile.
+   Every image remains a fresh one-shot local media transaction, while its
+   zero-based registry collection ordinal is derived separately from validated
+   registry lineage and bound into a separate transition-evidence sidecar; and
+7. quality, memory, energy, and latency evidence on named artifacts and
    platforms.
 
 Generated audio and video now reuse these principles in their own bounded
@@ -147,8 +153,16 @@ their exact payloads in each retained generation. The registry itself does not
 decode the typed producer wires; the separate
 [Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md)
 gateway now validates them and the exact raw output bytes before registry
-construction. Production decoder/encoder adapters, external-format
-conformance, multi-image generation quality, and device evidence remain gated.
+construction. The higher-assurance
+[host-verified producer-transition path](GENERATED_MEDIA_PRODUCER_TRANSITION.md)
+then replays the exact retained source model and decoder, reconstructs each
+independent one-shot image publication, derives collection order from registry
+lineage, and binds fixed receipts in a separate sidecar to the unchanged
+registry. This is deterministic reconstruction on the verifying host, not
+proof of historical execution, live resource authority, external image-format
+correctness, physical display, quality, or performance. Production
+decoder/encoder adapters, external-format conformance, multi-image generation
+quality, and device evidence remain gated.
 
 See [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md),
 [Shared Media Contract](MEDIA_CONTRACT.md),
@@ -157,5 +171,6 @@ See [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md),
 [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md),
 [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
 [Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md),
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

@@ -7,6 +7,7 @@
 //! recovery accepts only those plan-bound states.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const capsule = @import("continuation_capsule.zig");
 const bundle = @import("continuation_bundle.zig");
 const object_store = @import("continuation_object_store.zig");
@@ -135,6 +136,8 @@ pub const LeaseV1 = struct {
         lock_storage: []u8,
         active_storage: []u8,
     ) !LeaseV1 {
+        if (comptime !platformSupported())
+            return Error.UnsupportedPlatform;
         if (initial_snapshot.len > max_bytes or
             active_storage.len < max_bytes)
             return Error.BufferTooSmall;
@@ -189,6 +192,8 @@ pub const LeaseV1 = struct {
         lock_storage: []u8,
         active_storage: []u8,
     ) !LeaseV1 {
+        if (comptime !platformSupported())
+            return Error.UnsupportedPlatform;
         if (active_storage.len < max_bytes) return Error.BufferTooSmall;
         var lock = try sweep_file.FileLeaseV1.open(
             directory,
@@ -528,6 +533,8 @@ pub fn publishReclaimRecordObservedV1(
     prepared: PreparedReclaimRecordV1,
     observer: ?ObserverV1,
 ) Error!void {
+    if (comptime !platformSupported())
+        return Error.UnsupportedPlatform;
     if (lease.state != .ready) return Error.InvalidState;
     _ = try verifyLeaseRecordScopeV1(lease, prepared);
     var name_storage: [max_generated_name_bytes]u8 = undefined;
@@ -594,6 +601,8 @@ pub fn applyFromPublishedSweepV1(
     candidate: []const u8,
     observer: ?ObserverV1,
 ) Error!ApplyReceiptV1 {
+    if (comptime !platformSupported())
+        return Error.UnsupportedPlatform;
     if (lease.state != .ready) return Error.InvalidState;
     try sweep_file.verifyPublishedCommitRecordV1(
         sweep_preview,
@@ -628,6 +637,8 @@ pub fn recoverFromPublishedFilesV1(
     candidate_storage: []u8,
     observer: ?ObserverV1,
 ) Error!ApplyReceiptV1 {
+    if (comptime !platformSupported())
+        return Error.UnsupportedPlatform;
     if (lease.state != .ready) return Error.InvalidState;
     const decoded = try verifyLeaseRecordScopeV1(
         lease,
@@ -959,6 +970,8 @@ fn openSafeFile(
     name: []const u8,
     kind: OpenKind,
 ) !std.fs.File {
+    if (comptime !platformSupported())
+        return Error.UnsupportedPlatform;
     if (!@hasField(std.posix.O, "CLOEXEC") or
         !@hasField(std.posix.O, "NOFOLLOW"))
         return Error.UnsupportedPlatform;
@@ -1066,8 +1079,24 @@ fn slicesOverlap(a: []const u8, b: []const u8) bool {
     return a_start < b_end and b_start < a_end;
 }
 
+fn platformSupported() bool {
+    return switch (builtin.os.tag) {
+        .linux,
+        .macos,
+        .ios,
+        .freebsd,
+        .netbsd,
+        .dragonfly,
+        .openbsd,
+        .solaris,
+        .illumos,
+        => true,
+        else => false,
+    };
+}
+
 test "payload file publishes plan and atomically promotes exact successor" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    if (comptime !platformSupported()) return error.SkipZigTest;
     const tenant = [_]u8{0x6d} ** 32;
     const payloads = [_][]const u8{
         "payload-alpha",

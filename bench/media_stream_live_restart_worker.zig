@@ -1,6 +1,7 @@
 //! Two-process media stream checkpoint worker used by the native demo.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const resource_bank = core.resource_bank;
 const media = core.media_contract;
@@ -170,7 +171,7 @@ fn checkpointAllV1(directory: *std.fs.Dir) !void {
     const pid = try std.fmt.bufPrint(
         &pid_storage,
         "{d}",
-        .{std.c.getpid()},
+        .{currentProcessId()},
     );
     try writeSyncedV1(
         directory,
@@ -190,7 +191,7 @@ fn checkpointAllV1(directory: *std.fs.Dir) !void {
             "\"source_ownership_releases\":3," ++
             "\"file_sync\":true,\"directory_sync\":true," ++
             "\"verified\":true}}\n",
-        .{std.c.getpid()},
+        .{currentProcessId()},
     );
     try stdout.flush();
 }
@@ -203,11 +204,11 @@ fn resumeAllV1(directory: *std.fs.Dir) !void {
         &pid_storage,
     );
     const source_pid = try std.fmt.parseInt(
-        i32,
+        u32,
         pid_wire,
         10,
     );
-    const target_pid = std.c.getpid();
+    const target_pid = currentProcessId();
     if (source_pid == target_pid)
         return error.ProcessDidNotRestart;
 
@@ -376,6 +377,12 @@ fn resumeAllV1(directory: *std.fs.Dir) !void {
         },
     );
     try stdout.flush();
+}
+
+fn currentProcessId() u32 {
+    if (comptime builtin.os.tag == .windows)
+        return std.os.windows.GetCurrentProcessId();
+    return @intCast(std.c.getpid());
 }
 
 const Context = struct {

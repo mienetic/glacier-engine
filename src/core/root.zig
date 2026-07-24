@@ -103,6 +103,8 @@ pub const generated_media_output_registry =
     @import("generated_media_output_registry.zig");
 pub const generated_media_producer_admission =
     @import("generated_media_producer_admission.zig");
+pub const generated_media_producer_transition =
+    @import("generated_media_producer_transition.zig");
 pub const speech_annotation_publication =
     @import("speech_annotation_publication.zig");
 pub const continuation_ownership_manifest =
@@ -194,6 +196,8 @@ pub const GeneratedMediaOutputRegistry =
     generated_media_output_registry;
 pub const GeneratedMediaProducerAdmission =
     generated_media_producer_admission;
+pub const GeneratedMediaProducerTransition =
+    generated_media_producer_transition;
 pub const SpeechAnnotationPublication =
     speech_annotation_publication;
 pub const ContinuationOwnershipManifest = continuation_ownership_manifest;

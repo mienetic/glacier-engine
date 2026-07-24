@@ -2,9 +2,10 @@
 
 Status: **integrated pre-publication gateway for canonical generated-image,
 generated-audio, and generated-video records plus exact raw output bytes;
-stronger execution-transition evidence, production encoders/containers,
-external-format conformance, authorization, device evidence, and production
-quality remain gated**.
+host-verified deterministic producer-transition evidence is available as a
+separate higher-assurance path; production encoders/containers, external-format
+conformance, authorization, device evidence, and production quality remain
+gated**.
 
 Glacier now provides a typed construction path into the bounded output
 registry. The gateway connects modality-specific publication contracts to the
@@ -22,6 +23,27 @@ becomes visible.
 
 The gateway introduces no new selected archive object, selector, or replacement
 wire. The generated-media output-registry V1 remains byte-for-byte unchanged.
+
+## Relationship to transition evidence
+
+This admission gateway remains the structural, lower-assurance path. It accepts
+canonical retained producer records, verifies exact raw bytes and typed
+relations, and reconstructs audio/video acknowledgement state from those
+records. It does not execute the source model or materializer.
+
+The separate
+[host-verified producer-transition gateway](GENERATED_MEDIA_PRODUCER_TRANSITION.md)
+adds exact deterministic source-model and materializer replay. It reconstructs
+image publication or complete audio/video observation and acknowledgement
+transitions, constructs the same unchanged registry, and emits a distinct
+evidence sidecar bound to that archive. Structural admission is not silently
+promoted when transition evidence is absent.
+
+The transition path also keeps two image coordinates distinct: every retained
+image profile is a fresh one-shot local publication, while the zero-based
+registry collection ordinal is derived separately from validated registry
+lineage. This does not change the legacy structural normalization documented
+below.
 
 ## Admitted producer sets
 
@@ -172,7 +194,8 @@ mapping into one canonical registry identity.
 It does **not** prove that a model, decoder, renderer, playback sink, display
 sink, or encoder actually ran. Replaying a canonical acknowledgement transition
 is structural evidence, not device attestation. Self-consistent hashes are not
-signatures or authorization. The gateway does not establish codec/container correctness,
+signatures or authorization. The gateway does not establish historical
+execution, live resource authority, codec/container correctness,
 external-format compatibility, physical playback/display, native Linux
 behavior, storage-device power-loss durability, media quality, latency,
 throughput, memory, energy, or production readiness.
@@ -181,20 +204,23 @@ throughput, memory, energy, or production readiness.
 
 Contributor-sized follow-on work includes:
 
-1. reconstruct complete producer execution transitions from typed pre-state,
-   plan, result, observation, acknowledgement plan/result, and exact post-state;
-2. extend model-family contracts and adapters beyond the retained perception
+1. add crash-atomic paired retention and read-only inspection for the
+   transition evidence sidecar plus its exact unchanged registry archive;
+2. extend deterministic model/materializer replay profiles beyond the retained
+   image/audio/video references;
+3. extend model-family contracts and adapters beyond the retained perception
    and generative-media fixtures;
-3. add backend capability, placement, transfer-ownership, and scheduling
+4. add backend capability, placement, transfer-ownership, and scheduling
    contracts across CPU, accelerator, edge, and provider execution;
-4. add shared streaming, batching, cancellation, observability, and policy
+5. add shared streaming, batching, cancellation, observability, and policy
    controls without weakening atomic publication;
-5. integrate production image/audio/video encoders and containers with
+6. integrate production image/audio/video encoders and containers with
    redistributable external-format conformance fixtures; and
-6. expand richer image, speech, music, video, multimodal-fusion, retrieval,
+7. expand richer image, speech, music, video, multimodal-fusion, retrieval,
    agent, and scientific-model workloads under the same runtime planes.
 
 See [Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md),
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md),
 [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md),
 [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md),
 [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
