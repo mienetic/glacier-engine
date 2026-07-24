@@ -616,6 +616,43 @@ test "C ABI verifies a fully bound Model Contract V1 chain" {
     );
 }
 
+test "C artifact binding keeps V1 dimensions exact" {
+    const fixture = try makeFixture(1);
+    const artifact = try contract.decodeArtifactManifestV1(
+        &fixture.artifact_wire,
+    );
+    const plan = try contract.decodeExecutionPlanV1(&fixture.plan_wire);
+    try std.testing.expect(artifactBindsPlan(artifact, plan));
+
+    var different_input = plan;
+    different_input.input_features = 3;
+    different_input.input_bytes = 6;
+    different_input.plan_sha256 = zero_digest;
+    var different_input_wire: [contract.execution_plan_bytes]u8 = undefined;
+    try contract.encodeExecutionPlanV1(
+        different_input,
+        &different_input_wire,
+    );
+    different_input = try contract.decodeExecutionPlanV1(
+        &different_input_wire,
+    );
+    try std.testing.expect(!artifactBindsPlan(artifact, different_input));
+
+    var different_output = plan;
+    different_output.output_dimensions = 1;
+    different_output.output_bytes = 8;
+    different_output.plan_sha256 = zero_digest;
+    var different_output_wire: [contract.execution_plan_bytes]u8 = undefined;
+    try contract.encodeExecutionPlanV1(
+        different_output,
+        &different_output_wire,
+    );
+    different_output = try contract.decodeExecutionPlanV1(
+        &different_output_wire,
+    );
+    try std.testing.expect(!artifactBindsPlan(artifact, different_output));
+}
+
 test "C ABI permits the output root to alias the canonical result root" {
     const fixture = try makeFixture(1);
     var result_wire = fixture.result_wire;

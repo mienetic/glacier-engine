@@ -4,6 +4,11 @@
 #include <stdio.h>
 #include <string.h>
 
+_Static_assert(
+    GLACIER_MODEL_OUTPUT_TOKEN_IDS == UINT64_C(11),
+    "token ID output kind changed"
+);
+
 static int hex_value(int character) {
     if (character >= '0' && character <= '9') {
         return character - '0';

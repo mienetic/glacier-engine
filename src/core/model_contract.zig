@@ -92,6 +92,7 @@ pub const OutputKindV1 = enum(u64) {
     segmentation_mask = 8,
     typed_action = 9,
     video_segment = 10,
+    token_ids = 11,
 };
 
 pub const NumericalPolicyV1 = enum(u64) {
@@ -275,18 +276,55 @@ pub fn makeArtifactManifestV1(
     metadata_sha256: Digest,
     license_sha256: Digest,
 ) Error!ArtifactManifestV1 {
+    return makeArtifactManifestFromDigestV1(
+        family,
+        artifact_abi,
+        input_kind,
+        output_kind,
+        numerical_policy,
+        max_batch_items,
+        input_features,
+        output_dimensions,
+        input_element_bytes,
+        output_element_bytes,
+        weight_element_bytes,
+        @intCast(weights.len),
+        sha256(weights),
+        metadata_sha256,
+        license_sha256,
+    );
+}
+
+/// Constructs a manifest from a byte count and a digest that may be computed
+/// incrementally, without requiring the complete weight payload in memory.
+pub fn makeArtifactManifestFromDigestV1(
+    family: ModelFamilyIdV1,
+    artifact_abi: u64,
+    input_kind: InputKindV1,
+    output_kind: OutputKindV1,
+    numerical_policy: NumericalPolicyV1,
+    max_batch_items: u64,
+    input_features: u64,
+    output_dimensions: u64,
+    input_element_bytes: u64,
+    output_element_bytes: u64,
+    weight_element_bytes: u64,
+    weight_bytes: u64,
+    weights_sha256: Digest,
+    metadata_sha256: Digest,
+    license_sha256: Digest,
+) Error!ArtifactManifestV1 {
     if (artifact_abi == 0 or max_batch_items == 0 or
         input_features == 0 or output_dimensions == 0 or
         input_element_bytes == 0 or output_element_bytes == 0 or
-        weight_element_bytes == 0 or weights.len == 0 or
+        weight_element_bytes == 0 or weight_bytes == 0 or
+        isZero(weights_sha256) or
         isZero(metadata_sha256) or
         isZero(license_sha256))
         return Error.InvalidArtifactManifest;
-    if (weights.len % weight_element_bytes != 0)
+    if (weight_bytes % weight_element_bytes != 0)
         return Error.InvalidArtifactManifest;
-    const weight_elements: u64 =
-        @intCast(weights.len / weight_element_bytes);
-    const weight_bytes: u64 = @intCast(weights.len);
+    const weight_elements = weight_bytes / weight_element_bytes;
     var value: ArtifactManifestV1 = .{
         .family = family,
         .artifact_abi = artifact_abi,
@@ -301,7 +339,7 @@ pub fn makeArtifactManifestV1(
         .output_element_bytes = output_element_bytes,
         .weight_element_bytes = weight_element_bytes,
         .weight_bytes = weight_bytes,
-        .weights_sha256 = sha256(weights),
+        .weights_sha256 = weights_sha256,
         .metadata_sha256 = metadata_sha256,
         .license_sha256 = license_sha256,
         .artifact_sha256 = [_]u8{0} ** 32,
@@ -1078,6 +1116,48 @@ test "typed model contracts are canonical and fail closed" {
         sha256("fixture metadata"),
         sha256("fixture license"),
     );
+    const prehashed_manifest = try makeArtifactManifestFromDigestV1(
+        .vision_understanding,
+        0x5649_5349_4f4e_0001,
+        .image_feature_u8,
+        .embedding_i32,
+        .exact_integer,
+        2,
+        4,
+        2,
+        1,
+        4,
+        1,
+        weights.len,
+        sha256(&weights),
+        sha256("fixture metadata"),
+        sha256("fixture license"),
+    );
+    try std.testing.expectEqual(manifest, prehashed_manifest);
+    try std.testing.expectEqual(
+        @as(u64, 11),
+        @intFromEnum(OutputKindV1.token_ids),
+    );
+    try std.testing.expectError(
+        Error.InvalidArtifactManifest,
+        makeArtifactManifestFromDigestV1(
+            .vision_understanding,
+            0x5649_5349_4f4e_0001,
+            .image_feature_u8,
+            .embedding_i32,
+            .exact_integer,
+            2,
+            4,
+            2,
+            1,
+            4,
+            3,
+            weights.len,
+            sha256(&weights),
+            sha256("fixture metadata"),
+            sha256("fixture license"),
+        ),
+    );
     var manifest_bytes: [artifact_manifest_bytes]u8 = undefined;
     try encodeArtifactManifestV1(manifest, &manifest_bytes);
     try std.testing.expectEqual(
@@ -1091,7 +1171,7 @@ test "typed model contracts are canonical and fail closed" {
         .output_journal_bytes = 16,
         .queue_slots = 1,
     };
-    const plan = try makeExecutionPlanV1(manifest, .encode, .{
+    const plan_input: PlanInputV1 = .{
         .request_epoch = 41,
         .generation = 7,
         .batch_items = 2,
@@ -1109,7 +1189,8 @@ test "typed model contracts are canonical and fail closed" {
         .input_schema_sha256 = sha256("input schema"),
         .output_schema_sha256 = sha256("output schema"),
         .scratch_bytes = 16,
-    });
+    };
+    const plan = try makeExecutionPlanV1(manifest, .encode, plan_input);
     var plan_bytes: [execution_plan_bytes]u8 = undefined;
     try encodeExecutionPlanV1(plan, &plan_bytes);
     try std.testing.expectEqual(plan, try decodeExecutionPlanV1(&plan_bytes));
@@ -1245,4 +1326,110 @@ test "typed model contracts are canonical and fail closed" {
         Error.InvalidExecutionPlan,
         validateExecutionPlanV1(wrong_claim),
     );
+}
+
+test "token ID contract roots match the independent oracle" {
+    const weights = [_]u8{ 1, 2, 3, 4, 0xff, 0xfe, 1, 2 };
+    const manifest = try makeArtifactManifestFromDigestV1(
+        .autoregressive,
+        0x5445_5854_0000_0001,
+        .token_ids,
+        .token_ids,
+        .exact_integer,
+        1,
+        4,
+        1,
+        4,
+        4,
+        1,
+        weights.len,
+        sha256(&weights),
+        sha256("token ID fixture metadata"),
+        sha256("token ID fixture license"),
+    );
+    const claim: resource_bank.Claim = .{
+        .capsule_bytes = 8,
+        .activation_bytes = 16,
+        .partial_bytes = 8,
+        .output_journal_bytes = 4,
+        .queue_slots = 1,
+    };
+    const plan = try makeExecutionPlanV1(manifest, .decode_next, .{
+        .request_epoch = 73,
+        .generation = 5,
+        .batch_items = 1,
+        .publication_next_sequence = 0,
+        .maximum_absolute_output = 65535,
+        .claim = claim,
+        .media_object_sha256 = sha256("token prompt"),
+        .processor_state_sha256 = sha256("tokenizer state"),
+        .processor_bundle_sha256 = sha256("tokenizer bundle"),
+        .cache_bundle_sha256 = sha256("token cache bundle"),
+        .cache_payload_sha256 = sha256("token cache payload"),
+        .ownership_sha256 = sha256("token ownership"),
+        .challenge_sha256 = sha256("token challenge"),
+        .previous_plan_sha256 = [_]u8{0} ** 32,
+        .input_schema_sha256 = sha256("token input schema"),
+        .output_schema_sha256 = sha256("token output schema"),
+        .scratch_bytes = 8,
+    });
+    const state = try initializePublicationStateV1(
+        plan.request_epoch,
+        plan.artifact_sha256,
+    );
+    const receipt: resource_bank.Receipt = .{
+        .bank_epoch = 4,
+        .slot_index = 0,
+        .generation = 2,
+        .owner_key = 91,
+        .claim = claim,
+        .integrity = 123,
+    };
+    const output = [_]u8{ 42, 0, 0, 0 };
+    const result = try prepareResultEnvelopeV1(
+        state,
+        plan,
+        receipt,
+        sha256(&output),
+        sha256("token mapping"),
+        sha256("token adapter"),
+    );
+
+    var manifest_wire: [artifact_manifest_bytes]u8 = undefined;
+    var plan_wire: [execution_plan_bytes]u8 = undefined;
+    var result_wire: [result_envelope_bytes]u8 = undefined;
+    try encodeArtifactManifestV1(manifest, &manifest_wire);
+    try encodeExecutionPlanV1(plan, &plan_wire);
+    try encodeResultEnvelopeV1(result, &result_wire);
+    try std.testing.expectEqual(
+        manifest,
+        try decodeArtifactManifestV1(&manifest_wire),
+    );
+    try std.testing.expectEqual(plan, try decodeExecutionPlanV1(&plan_wire));
+    try std.testing.expectEqual(
+        result,
+        try decodeResultEnvelopeV1(&result_wire),
+    );
+
+    var expected_artifact: Digest = undefined;
+    var expected_plan: Digest = undefined;
+    var expected_result: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &expected_artifact,
+        "e850bc468da43295e4345122eb5389ba" ++
+            "e2df8e4bb003b518b0ae9b6bcbcf7843",
+    );
+    _ = try std.fmt.hexToBytes(
+        &expected_plan,
+        "9c572db5caaa229a20f4fc58bccb7dde" ++
+            "43d3a92289bb1c43f1536904dfdb7276",
+    );
+    _ = try std.fmt.hexToBytes(
+        &expected_result,
+        "e87cf08d3c42efe196db681392ce3899" ++
+            "6276c0a31bb5b3aae28b2a3ec54ff8ad",
+    );
+    try std.testing.expectEqual(expected_artifact, manifest.artifact_sha256);
+    try std.testing.expectEqual(expected_plan, plan.plan_sha256);
+    try std.testing.expectEqual(expected_result, result.result_sha256);
 }

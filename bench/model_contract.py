@@ -82,19 +82,23 @@ RESULT_DIGEST_FIELDS = (
 )
 
 # IDs are vocabulary, not claims of executable support.
+AUTOREGRESSIVE = 1
 VISION_UNDERSTANDING = 3
 VIDEO_UNDERSTANDING = 6
+DECODE_NEXT = 2
 ENCODE = 3
 SEGMENT = 10
+TOKEN_ID_INPUT = 1
 IMAGE_FEATURE_U8 = 3
 VIDEO_FEATURE_U8 = 5
 EMBEDDING_I32 = 2
 VIDEO_SEGMENT = 10
+TOKEN_IDS = 11
 EXACT_INTEGER = 1
 FAMILY_IDS = frozenset(range(1, 18))
 OPERATION_IDS = frozenset(range(1, 13))
 INPUT_KIND_IDS = frozenset(range(1, 8))
-OUTPUT_KIND_IDS = frozenset(range(1, 11))
+OUTPUT_KIND_IDS = frozenset(range(1, 12))
 NUMERICAL_POLICY_IDS = frozenset(range(1, 5))
 
 

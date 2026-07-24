@@ -8,6 +8,7 @@ static_assert(sizeof(glacier_model_support_profile_v1_t) == 96);
 static_assert(sizeof(glacier_model_support_query_v1_t) == 72);
 static_assert(sizeof(glacier_model_support_result_v1_t) == 24);
 static_assert(GLACIER_MODEL_SUPPORT_PROFILE_COUNT_V1 == 8);
+static_assert(GLACIER_MODEL_OUTPUT_TOKEN_IDS == UINT64_C(11));
 
 int main() {
     return glacier_contract_abi_v1() == GLACIER_CONTRACT_ABI_V1 &&

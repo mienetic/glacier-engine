@@ -99,6 +99,20 @@ pub fn abiFingerprintFor(arch: std.Target.Cpu.Arch) [32]u8 {
 pub const ABI_FINGERPRINT: [32]u8 = abiFingerprintFor(builtin.cpu.arch);
 pub const ABI_FINGERPRINT_V1: [32]u8 = abiFingerprintForVersion(builtin.cpu.arch, .v1);
 
+/// Exact identity of one validated runtime-image representation.
+///
+/// `source_fingerprint` is the semantic/provenance identity carried by the
+/// image header. `container_sha256` binds every physical byte in this exact
+/// `.glrt` representation, including its header, index, padding, descriptors,
+/// and payloads. Keeping both prevents a semantic repack from being confused
+/// with the byte-exact mapped artifact admitted by an execution plan.
+pub const ImageIdentityV1 = struct {
+    source_fingerprint: [32]u8,
+    abi_fingerprint: [32]u8,
+    container_bytes: u64,
+    container_sha256: [32]u8,
+};
+
 const HEADER_CRC_OFFSET: usize = 156;
 const V2_ROLE_OFFSET: usize = 120;
 const V2_PAIR_LAYOUT_OFFSET: usize = 122;
@@ -824,6 +838,19 @@ pub const MappedImage = struct {
         return @intCast(self.header.record_count);
     }
 
+    /// Hash the already validated read-only mapping without copying or
+    /// materializing tensor streams. This is deliberately explicit because
+    /// hashing a large mapped image is linear work and should happen at plan
+    /// construction, not on every decode step.
+    pub fn identityV1(self: *const MappedImage) ImageIdentityV1 {
+        return .{
+            .source_fingerprint = self.header.source_fingerprint,
+            .abi_fingerprint = self.header.abi_fingerprint,
+            .container_bytes = @intCast(self.mapped.len),
+            .container_sha256 = fingerprint(self.mapped),
+        };
+    }
+
     pub fn recordAt(self: *const MappedImage, index: usize) !Record {
         if (index >= self.recordCount()) return error.IndexOutOfBounds;
         const record_size = recordSizeFor(self.header.version);
@@ -1488,6 +1515,11 @@ test "atomic runtime image round-trip exposes mapped typed views" {
     try testing.expectEqual(@as(u16, RECORD_SIZE), getInt(u16, image.mapped[8..10]));
     try testing.expectEqual(@as(usize, 2), image.recordCount());
     try testing.expectEqual(@as(u64, 0), image.header.file_size % DATA_ALIGNMENT);
+    const identity = image.identityV1();
+    try testing.expectEqual(source_fingerprint, identity.source_fingerprint);
+    try testing.expectEqual(image.header.abi_fingerprint, identity.abi_fingerprint);
+    try testing.expectEqual(image.header.file_size, identity.container_bytes);
+    try testing.expectEqual(fingerprint(image.mapped), identity.container_sha256);
 
     const raw_record = image.find(0, .final_norm) orelse return error.MissingRecord;
     try testing.expectEqual(Role.tensor, raw_record.role);
