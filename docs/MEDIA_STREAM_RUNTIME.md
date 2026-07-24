@@ -131,5 +131,7 @@ The first continuation layer is complete in
    plus two acknowledgement-gated raw video segments through
    [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
    with shared output selection now complete through
-   [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md); durable
-   encoded payload composition remains.
+   [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and exact
+   encoded payload composition complete through the
+   [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md);
+   arbitrary multi-output continuity remains.

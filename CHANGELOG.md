@@ -21,6 +21,14 @@ before the first stable release.
 
 ### Added
 
+- Generated-media encoded payload archives: one canonical eight-object
+  generation binds an 864-byte manifest, the shared checkpoint, three typed
+  members, and exact encoded image/audio/video bytes while keeping raw-output,
+  encoded-payload, encoder-implementation, and format identities separate. An
+  independent Python oracle verifies the wire and two-generation lineage; a
+  seven-phase `SIGKILL` campaign selects the exact previous generation five
+  times and successor twice, rejects mixed generations, and converges
+  idempotently through one outer filesystem selector.
 - Atomic generated-media checkpoints: fixed 480-byte typed member, 800-byte
   checkpoint, and 352-byte selector records compose one generated image, one
   acknowledged PCM chunk, and one acknowledged raw-video segment without

@@ -67,6 +67,8 @@ energy, or production reliability.
 | `zig build generated-video-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, all retained records and frame roots validated before admission, publication blocked before acknowledgement, partial display rejection, one cancellation-safe successor retry, two exact raw-video segments, zero duplicates, and final zero ownership |
 | `zig test src/core/generated_media_checkpoint.zig -OReleaseSafe` | Canonical typed member/checkpoint/selector wires, exact image/audio/video completion binding, aggregate totals and continuity, mutation/substitution rejection, and independent golden roots |
 | `zig build generated-media-checkpoint-restart-demo -Dmetal=false` | Two immutable generated-output generations, four selector durability deaths, two previous and two successor recoveries, complete three-member validation in fresh processes, and zero mixed-generation observations |
+| `zig test src/core/generated_media_payload_archive.zig -OReleaseSafe` | Canonical 864-byte payload manifest, eight-object archive, exact raw/encoded/encoder/format binding, two-generation lineage, mutation/substitution rejection, and independent golden roots |
+| `zig build generated-media-payload-archive-restart-demo -Dmetal=false` | Exact image/audio/video encoded payloads, one outer selector, seven process deaths, five previous and two successor selections, zero mixed generations, and idempotent recovery |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -157,6 +159,21 @@ only the complete previous or successor set. This proves canonical composition,
 selector ordering, and process-death recovery. It does not prove encoded payload
 durability, production model compatibility, power-loss behavior, physical
 playback/display, or quality and performance.
+
+The generated-media payload-archive fixture adds one fixed manifest and three
+exact encoded payload objects to the checkpoint and its three members. It keeps
+raw source-output roots and byte counts distinct from encoded payload roots and
+lengths, and binds separate encoder-implementation and format roots for image,
+audio, and video. One generic outer selector publishes the canonical
+eight-object generation. The independent Python oracle checks all manifest and
+archive bytes plus split-binding and predecessor substitutions. Seven native
+publisher deaths expose generation one five times and generation two twice;
+recovery then converges idempotently to generation two with exact payload
+slices and no mixed generation. The fixture uses bounded identity envelopes
+rather than production containers, executes no model or encoder, and does not
+establish native Linux behavior, storage-device power-loss durability, initial
+archive power-loss durability, codec compatibility, quality, latency,
+throughput, memory, energy, or physical playback/display.
 
 The speech-annotation fixture maps `ice` and `berg` onto exact adjacent sample
 ranges and two opaque speaker identities. Its fresh target validates the
@@ -275,7 +292,8 @@ coverage, or provider usage. See
 [Multimodal Processor and Cache State](MEDIA_PROCESSOR_STATE.md),
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
 [Media Stream Continuation](MEDIA_STREAM_CONTINUATION.md), followed by
-[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md).
+[Atomic Media Stream Checkpoint Sets](MEDIA_STREAM_CHECKPOINT_SET.md), then the
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md).
 
 ## Continuation checkpoint
 

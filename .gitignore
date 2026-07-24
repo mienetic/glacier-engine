@@ -2,6 +2,9 @@
 zig-cache/
 zig-out/
 .zig-cache/
+.zig-global-cache/
+.zig-cache-*/
+.zig-global-cache-*/
 *.o
 *.a
 *.so

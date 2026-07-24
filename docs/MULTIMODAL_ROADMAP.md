@@ -6,12 +6,13 @@ video-model restart, bounded streaming, generated-image publication after
 terminal-latent restart, generated-PCM publication with exact application
 acknowledgement across process restart, ordered generated-video manifests with
 exact application display acknowledgement, atomic generated-output checkpoint
-selection, two-process continuation, crash-atomic checkpoint sets, and a
-post-restore generation-three successor; bounded processor/cache state and
-payloads integrated as fifth and sixth durable archive objects with fresh-Bank
-restore; production-model execution, encoded payload archives, physical
-playback/display evidence, power-loss campaigns, and external formats remain
-gated**.
+selection, exact eight-object generated-media payload archive composition,
+two-process continuation, crash-atomic checkpoint sets, and a post-restore
+generation-three successor; bounded processor/cache state and payloads
+integrated as fifth and sixth durable archive objects with fresh-Bank restore;
+production-model execution, production encoder/container adapters, arbitrary
+multi-output continuity, physical playback/display evidence, power-loss
+campaigns, and external formats remain gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -113,9 +114,16 @@ checkpoint binds exact totals, modality positions, results, outputs, states,
 completions, tenant scope, policy, challenge, and predecessor. An atomic
 selector exposes only the complete previous or successor generation. The
 independent Python oracle rejects every wire mutation, and a four-boundary
-native `SIGKILL` campaign reports no mixed-generation recovery. Actual encoded
-payload archives, production adapters, device evidence, and power-loss behavior
-remain separate gates.
+native `SIGKILL` campaign reports no mixed-generation recovery. Downstream
+encoded-payload archive composition is now integrated in a model-free layer:
+one fixed manifest, this checkpoint, its three members, and exact encoded
+image/audio/video bytes form one canonical eight-object generation. Raw output,
+encoded payload, encoder implementation, and format identities remain
+separate. One outer filesystem selector exposes generation one after five of
+the seven publication-phase deaths and generation two after the final two,
+then recovery converges idempotently. Production encoder/container adapters,
+arbitrary multi-output continuity, native Linux campaigns, device evidence, and
+power-loss behavior remain separate gates.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -315,8 +323,11 @@ First slices:
 10. ~~shared generated-output checkpoint membership;~~ complete as the image
     member of one atomic image/audio/video checkpoint with exact plan,
     provenance, result, output, state, scope, policy, and challenge binding;
-11. multi-image/chunk manifests, production decoder integration, and
-    crash-atomic external-format composition.
+11. ~~exact encoded-payload archive membership;~~ complete as one of three
+    payload objects in the canonical eight-object generation, with explicit
+    raw output, encoder, format, and encoded-byte identity; and
+12. multi-image/chunk manifests, production decoder/encoder integration, and
+    external-format conformance.
 
 Promotion gate: every accepted pixel maps to an exact source region and
 preprocessing plan; orientation/color drift, decompression bombs, foreign
@@ -364,9 +375,11 @@ First slices:
    visibility;
 10. ~~shared generated-output checkpoint membership;~~ complete only after
     exact playback acknowledgement and a quiescent post-acknowledgement state;
-11. production renderer/codec adapters, durable multi-chunk payload archives,
-    and authorized physical playback evidence; and
-12. microphone/network adapters outside the authority-free core.
+11. ~~exact encoded-payload archive membership;~~ complete for one
+    acknowledged chunk in the canonical eight-object generation;
+12. production renderer/codec/container adapters, multi-chunk continuity, and
+    authorized physical playback evidence; and
+13. microphone/network adapters outside the authority-free core.
 
 Promotion gate: no sample is silently dropped, duplicated, reordered, mixed, or
 resampled; streaming restart resumes at an exact sample/timeline boundary; input
@@ -414,8 +427,10 @@ First slices:
     and a real process restart;
 12. ~~shared generated-output checkpoint membership;~~ complete only after
     exact display acknowledgement and a quiescent post-acknowledgement state;
-13. multi-segment continuity, production renderer/codec integration, and
-    crash-atomic encoded payload archives.
+13. ~~exact encoded-payload archive membership;~~ complete for one
+    acknowledged segment in the canonical eight-object generation; and
+14. multi-segment continuity, production renderer/codec/container integration,
+    and external-container conformance.
 
 Promotion gate: frame selection and temporal ordering replay exactly; explicit
 VFR, stateful restart, and generated-segment restart fixtures are integrated,
@@ -434,13 +449,22 @@ audio, and video fixtures:
    with a fixed 800-byte checkpoint;
 3. ~~select the complete generation atomically;~~ complete with a fixed
    352-byte selector and four native process-death boundaries;
-4. bind exact encoded payload archives, not only their typed roots;
-5. extend continuity to multiple images, audio chunks, and video segments;
-6. retain native Linux and separately scoped power-loss campaigns; and
-7. add production adapter, quality, performance, and authorized device
+4. ~~bind exact encoded payload archives, not only their typed roots;~~
+   complete as one canonical eight-object archive with a fixed 864-byte
+   manifest, explicit raw/encoded/encoder/format identities, two-generation
+   lineage, an independent Python oracle, one outer selector, and seven
+   process-death phases selecting the exact previous generation five times and
+   successor twice before idempotent recovery;
+5. extend continuity through a bounded modality/output registry to multiple
+   images, audio chunks, and video segments;
+6. add production encoder/container adapters and external-format conformance;
+7. retain native Linux and separately scoped initial-publication/power-loss
+   campaigns; and
+8. add quality, performance, and authorized device
    evidence.
 
-See [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md).
+See [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and the
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md).
 
 ## Provider efficiency
 

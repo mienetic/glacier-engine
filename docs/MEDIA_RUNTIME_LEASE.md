@@ -136,6 +136,8 @@ The next media-runtime sequence is:
    plus two acknowledgement-gated raw video segments through
    [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
    with typed shared output selection complete through
-   [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md), while
-   durable encoded payload composition remains; and
+   [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and one
+   exact encoded payload per modality composed through the
+   [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md);
+   arbitrary multi-output continuity remains; and
 6. external codec adapters outside the authority-free core.

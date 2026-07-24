@@ -216,11 +216,22 @@ and four real process-death boundaries recover only the complete previous or
 successor set. See
 [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md).
 
+**Completed slice:** one canonical eight-object archive now binds a fixed
+payload manifest, the generated-media checkpoint, its three typed members, and
+three exact encoded payloads. Raw source outputs, encoded bytes,
+encoder-implementation roots, format roots, scope, policy, challenge, archive
+parent, and manifest predecessor remain explicit. Zig and an independent
+Python oracle share golden roots; seven real process-death phases select only
+the complete previous generation five times or successor twice through one
+outer selector, then converge idempotently. See the
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md).
+
 **Next slices:** add external container timestamp normalization, a production
 image decoder adapter, richer language/punctuation or overlapping-speaker
-policy, a production audio/video renderer or codec, durable encoded payload
-archives, multi-output continuity, or a native Linux checkpoint campaign. Each
-is independently contributor-sized and must preserve the fixed core contracts.
+policy, a production image/audio/video encoder or container adapter, bounded
+arbitrary multi-output continuity, a native Linux checkpoint campaign, or a
+separately scoped initial power-loss durability design. Each is independently
+contributor-sized and must preserve the fixed core contracts.
 
 ### AI runtime family registry
 
@@ -267,9 +278,10 @@ releases all ownership. See
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md).
 
 **Next slice:** add a generic non-media encoder using the converged stateless
-lifecycle, adapt a production renderer to the bounded generated-audio
-transaction, or bind durable encoded image/audio/video payloads into the
-existing atomic generated-output checkpoint.
+lifecycle, adapt a production renderer/codec to the bounded generated-audio
+transaction and exact payload archive, or extend the fixed three-payload
+archive through a bounded modality/output registry without weakening its
+lineage checks.
 
 ### ResourceBank property tests
 

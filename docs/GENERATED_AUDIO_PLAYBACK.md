@@ -115,12 +115,16 @@ capability, failure, timing, privacy, and calibration policy.
 
 Shared image/audio/video checkpoint selection is now integrated for fully
 acknowledged audio: a pending or partially acknowledged chunk cannot enter the
-checkpoint. Next work is production renderer/codec integration, durable
-multi-chunk encoded payload archives, partial-buffer policy where a product
-explicitly needs it, and physical playback adapters outside the
-authority-free core.
+checkpoint. One exact encoded audio payload now also composes with its typed
+member, the image/video members, and the shared checkpoint in the canonical
+eight-object payload archive. Next work is production renderer/codec/container
+integration, multi-chunk continuity, partial-buffer policy where a product
+explicitly needs it, and physical playback adapters outside the authority-free
+core.
 
 The sibling ordered raw-video path is specified in
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md).
 The shared visibility boundary is specified in
-[Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md).
+[Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md), followed by
+the
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md).

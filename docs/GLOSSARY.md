@@ -293,6 +293,17 @@ predecessor so a mixed or replayed set cannot become valid by rehashing it.
 complete generated-media checkpoint. It binds all three member roots, fixed wire
 sizes, predecessor checkpoint/selector lineage, and the selected generation.
 
+**Generated-media payload manifest** — A fixed 864-byte record that binds one
+generated-media checkpoint and its three members to separate raw source-output,
+exact encoded-payload, encoder-implementation, format, byte-count, scope,
+policy, challenge, and predecessor identities.
+
+**Generated-media payload archive** — One canonical eight-object generation
+containing the payload manifest, generated-media checkpoint, three typed
+members, and three exact encoded payloads. The generic checkpoint-file selector
+is its sole filesystem visibility authority; the retained proof covers
+previous-or-successor recovery after process death, not device power loss.
+
 **Model family** — A typed semantic class such as autoregressive generation,
 vision understanding, audio understanding, diffusion, retrieval, or agent
 policy. A family ID is vocabulary only; a matching support record and adapter

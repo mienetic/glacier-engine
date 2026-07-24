@@ -125,7 +125,9 @@ The next image-generation slices are:
    boundaries;
 3. multi-image and chunk-manifest publication under retained ownership;
 4. external image format encoding outside the authority-free core;
-5. crash-atomic composition of encoded bytes, provenance, and result records;
+5. ~~model-free atomic composition of one exact encoded image with its typed
+   member and shared generated-media checkpoint;~~ complete in the canonical
+   eight-object payload archive; and
 6. quality, memory, energy, and latency evidence on named artifacts and
    platforms.
 
@@ -133,13 +135,16 @@ Generated audio and video now reuse these principles in their own bounded
 publication contracts with timeline continuity, cancellation, and application
 playback/display acknowledgement. Shared checkpoint composition is integrated:
 one typed image completion plus acknowledged audio/video outputs now become
-visible through one atomic selector. Production adapters, durable encoded
-payload archives, and multi-output continuity remain.
+visible through one atomic selector. Exact encoded payload archive composition
+is also integrated for one image/audio/video output per generation. Production
+decoder/encoder adapters, external-format conformance, and multi-output
+continuity remain.
 
 See [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md),
 [Shared Media Contract](MEDIA_CONTRACT.md),
 [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
 [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md),
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

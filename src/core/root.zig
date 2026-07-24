@@ -97,6 +97,8 @@ pub const generated_video_display =
     @import("generated_video_display.zig");
 pub const generated_media_checkpoint =
     @import("generated_media_checkpoint.zig");
+pub const generated_media_payload_archive =
+    @import("generated_media_payload_archive.zig");
 pub const speech_annotation_publication =
     @import("speech_annotation_publication.zig");
 pub const continuation_ownership_manifest =
@@ -182,6 +184,8 @@ pub const GeneratedVideoDisplay =
     generated_video_display;
 pub const GeneratedMediaCheckpoint =
     generated_media_checkpoint;
+pub const GeneratedMediaPayloadArchive =
+    generated_media_payload_archive;
 pub const SpeechAnnotationPublication =
     speech_annotation_publication;
 pub const ContinuationOwnershipManifest = continuation_ownership_manifest;

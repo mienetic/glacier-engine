@@ -16,7 +16,7 @@ not.
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
-| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay`, `GeneratedMediaCheckpoint` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, publish typed outputs only after family validation, and atomically select one complete generated image/audio/video generation |
+| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay`, `GeneratedMediaCheckpoint`, `GeneratedMediaPayloadArchive` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, publish typed outputs only after family validation, and atomically select one complete generated image/audio/video generation with its exact encoded payloads |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -239,14 +239,27 @@ source/media/resource lineage, reject partial or duplicate application
 observations, and prove successor publication across distinct processes.
 Application acknowledgement advances logical backpressure; it does not prove
 physical playback or display.
+`GeneratedMediaCheckpoint` normalizes the completed image and acknowledged
+audio/video outputs into one typed three-member generation.
+`GeneratedMediaPayloadArchive` then places one fixed payload manifest, that
+checkpoint, the three members, and three exact encoded payloads into one
+canonical eight-object archive. The manifest keeps raw source-output roots,
+encoded-payload roots and lengths, encoder implementation, format, scope,
+policy, challenge, and predecessor lineage explicit. The generic
+checkpoint-file selector is the sole filesystem visibility authority. Seven
+publisher deaths select only the exact predecessor five times or successor
+twice before idempotent recovery; the independent Python oracle verifies the
+same archive without model execution.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
-decimation, and keyframe selection. It has no external codec, encoder,
+decimation, and keyframe selection. Its encoded payload archive contains
+bounded identity envelopes, not production containers. It has no external
+codec, encoder,
 network, camera, microphone, model, or accelerator authority. The atomic-set
-worker has explicit filesystem authority but does not emulate device power
-loss. External formats, measured accelerator residency, and production-model
-integrations remain future layers. See
+workers have explicit filesystem authority but do not emulate device power
+loss or establish native Linux behavior. External formats, measured accelerator
+residency, and production-model integrations remain future layers. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), then
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
@@ -257,7 +270,9 @@ integrations remain future layers. See
 by [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md).
 The generative output chain continues with
 [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md)
-and [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md).
+and [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
+then [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and the
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md).
 
 ### ResourceBank
 
@@ -658,6 +673,10 @@ still require real machines for each promoted platform.
 - [Atomic generated-media checkpoints](GENERATED_MEDIA_CHECKPOINT.md): typed
   image/audio/video member admission, one lineage-bound checkpoint, and atomic
   previous-or-successor selection across four process-death boundaries.
+- [Generated-media encoded payload archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md):
+  one canonical manifest/checkpoint/member/payload generation, explicit
+  raw/encoded/encoder/format identities, one outer selector, and idempotent
+  previous-or-successor recovery across seven process-death phases.
 - [Exact speech annotation publication](SPEECH_ANNOTATION_PUBLICATION.md):
   canonical word/sample/speaker mapping, abort-safe publication, and annotation
   state continuation across a real process restart.

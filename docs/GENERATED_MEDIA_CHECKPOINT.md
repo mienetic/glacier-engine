@@ -1,7 +1,8 @@
 # Atomic Generated-Media Checkpoints
 
-Status: **integrated model-free composition path; production model adapters,
-encoded payload archives, device evidence, and power-loss campaigns remain
+Status: **integrated model-free composition path; exact encoded-payload archive
+composition is integrated downstream, while production adapters,
+multi-output continuity, device evidence, and power-loss campaigns remain
 gated**.
 
 Glacier can seal one completed generated image, one acknowledged generated-audio
@@ -13,6 +14,10 @@ generations, tenants, policies, challenges, results, or completion receipts.
 This layer composes already validated output transactions. It does not generate
 media, encode an external file, grant file or device authority, or turn an
 application acknowledgement into proof of physical playback or display.
+The downstream
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md)
+binds this checkpoint, its members, and exact encoded image/audio/video bytes
+without changing the checkpoint's raw-output semantics.
 
 ## Portable records
 
@@ -101,21 +106,29 @@ two successor-generation recoveries, and zero mixed-generation observations.
 
 ## Promotion path
 
+The first downstream composition slice is complete: one fixed manifest, this
+checkpoint, its three members, and three exact encoded payloads now form a
+canonical eight-object generation behind one outer filesystem selector. It
+keeps raw-output, encoded-payload, encoder-implementation, and format identities
+separate, verifies two-generation lineage independently in Python, and accepts
+only the exact previous or successor archive across seven process-death phases.
+
 The next production-facing slices are:
 
-1. bind exact encoded image, audio, and video payload archives to each member;
-2. adapt production decoders, renderers, codecs, and model outputs without
-   weakening the typed admission boundary;
-3. add multi-image, multi-chunk audio, and multi-segment video continuity;
-4. retain native Linux filesystem campaigns and separately scoped power-loss
-   evidence;
-5. add authorized physical playback/display evidence outside the
+1. adapt production decoders, encoders, renderers, codecs, containers, and
+   model outputs without weakening the typed admission boundary;
+2. add bounded arbitrary multi-image, multi-chunk audio, and multi-segment
+   video continuity;
+3. retain native Linux filesystem campaigns and separately scoped
+   initial-publication and power-loss evidence;
+4. add authorized physical playback/display evidence outside the
    authority-free core; and
-6. measure quality, latency, throughput, memory, energy, and durability under
+5. measure quality, latency, throughput, memory, energy, and durability under
    declared artifacts and numerical modes.
 
 See [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md),
 [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

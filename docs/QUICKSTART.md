@@ -199,6 +199,14 @@ python3 -m unittest bench.tests.test_generated_media_checkpoint
 zig build generated-media-checkpoint-restart-demo \
   -Doptimize=ReleaseSafe -Dmetal=false
 
+# Bind the checkpoint, members, and exact encoded image/audio/video bytes into
+# one eight-object archive, then recover predecessor/successor generations
+# through one outer selector across all seven process-death phases
+zig test src/core/generated_media_payload_archive.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_generated_media_payload_archive
+zig build generated-media-payload-archive-restart-demo \
+  -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false
