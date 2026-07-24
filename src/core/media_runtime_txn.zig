@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const resource_bank = @import("resource_bank.zig");
+const qos = @import("lane_weave_qos.zig");
 const media = @import("media_contract.zig");
 const decode_plan = @import("media_decode_plan.zig");
 const fixture_api = @import("media_fixture.zig");
@@ -63,6 +64,40 @@ pub const ExecutionReceiptV1 = struct {
     output_sha256: Digest,
     mapping_chain_sha256: Digest,
     receipt_sha256: Digest,
+};
+
+pub const reference_maximum_payload_bytes: usize =
+    fixture_api.maximum_payload_bytes;
+pub const reference_maximum_mappings: usize = 4;
+
+/// Caller-owned backing storage for one retained image/audio/video reference
+/// input. Returned byte slices borrow this storage.
+pub const ReferenceInputStorageV1 = struct {
+    fixture: [fixture_api.maximum_fixture_bytes]u8 = undefined,
+    decode_plan: [decode_plan.plan_bytes]u8 = undefined,
+    transform_plan: [transform.transform_plan_bytes]u8 = undefined,
+    decoded_for_plan: [fixture_api.maximum_payload_bytes]u8 = undefined,
+};
+
+/// Per-session provisional buffers for the retained reference inputs.
+pub const ReferenceExecutionStorageV1 = struct {
+    decoded_source: [reference_maximum_payload_bytes]u8 = undefined,
+    output: [reference_maximum_payload_bytes]u8 = undefined,
+    mappings: [reference_maximum_mappings]transform.TransformMappingV1 =
+        undefined,
+};
+
+/// Fully sealed model-free input used by examples, conformance campaigns, and
+/// integration tests. It is deliberately separate from execution buffers.
+pub const ReferenceInputV1 = struct {
+    encoded_fixture: []const u8,
+    fixture: fixture_api.ParsedFixtureV1,
+    encoded_decode_plan: []const u8,
+    decode_receipt: fixture_api.DecodeReceiptV1,
+    transform_plan: transform.TransformPlanV1,
+    encoded_transform_plan: []const u8,
+    expected_output: []const u8,
+    timeline_base: media.TimeBaseV1,
 };
 
 pub fn claimForExecutionV1(
@@ -392,9 +427,21 @@ pub fn verifyExecutionReceiptV1(
         return Error.InvalidReceipt;
 }
 
+pub const SessionReceiptOwnerV1 = enum {
+    session,
+    scheduler,
+};
+
+const ValidatedSessionInputV1 = struct {
+    claim: resource_bank.Claim,
+    fixture_sha256: Digest,
+    plan_sha256: Digest,
+};
+
 const SessionPhase = enum {
     idle,
     prepared,
+    armed,
     committing,
     closed,
 };
@@ -407,6 +454,9 @@ pub const Session = struct {
     admitted_claim: resource_bank.Claim = .{},
     admitted_fixture_sha256: Digest = [_]u8{0} ** 32,
     admitted_plan_sha256: Digest = [_]u8{0} ** 32,
+    receipt_owner: SessionReceiptOwnerV1 = .session,
+    scheduler: ?*qos.Scheduler = null,
+    scheduled_handle: ?qos.Handle = null,
     initialized: bool = false,
     published: bool = false,
     phase: SessionPhase = .idle,
@@ -434,40 +484,17 @@ pub const Session = struct {
         encoded_transform_plan: []const u8,
     ) Error!void {
         if (self.initialized) return Error.InvalidState;
-        if (owner_key == 0 or request_epoch == 0 or
-            publication_state.request_epoch != request_epoch)
+        if (owner_key == 0)
             return Error.InvalidConfiguration;
-        const fixture = fixture_api.parseFixtureV1(
+        const admitted = try validateSessionInputV1(
+            request_epoch,
+            publication_state,
             encoded_fixture,
-        ) catch return Error.TransformFailed;
-        const plan = transform.decodeTransformPlanV1(
             encoded_transform_plan,
-        ) catch return Error.TransformFailed;
-        const plan_sha256 = transform.transformPlanSha256V1(
-            encoded_transform_plan,
-        ) catch return Error.TransformFailed;
-        if (!std.mem.eql(
-            u8,
-            &publication_state.media_object_sha256,
-            &plan.media_object_sha256,
-        ) or
-            !std.mem.eql(
-                u8,
-                &fixture.media_object_sha256,
-                &plan.media_object_sha256,
-            ) or
-            !std.meta.eql(
-                publication_state.timeline_base,
-                outputTimelineBaseV1(plan),
-            ))
-            return Error.InvalidConfiguration;
-        const claim = try claimForExecutionV1(
-            encoded_fixture.len,
-            plan,
         );
         const reservation = bank.reserve(
             owner_key,
-            claim,
+            admitted.claim,
         ) catch return Error.ResourceAdmissionFailed;
         const receipt = bank.commit(reservation) catch {
             bank.cancel(reservation) catch
@@ -488,9 +515,63 @@ pub const Session = struct {
             .receipt = receipt,
             .request_epoch = request_epoch,
             .media_state = publication_state,
-            .admitted_claim = claim,
-            .admitted_fixture_sha256 = fixture.fixture_sha256,
-            .admitted_plan_sha256 = plan_sha256,
+            .admitted_claim = admitted.claim,
+            .admitted_fixture_sha256 = admitted.fixture_sha256,
+            .admitted_plan_sha256 = admitted.plan_sha256,
+            .receipt_owner = .session,
+            .initialized = true,
+        };
+    }
+
+    /// Adopt the exact committed receipt created by one current LaneWeave
+    /// admission. The Session must already reside at its final address and
+    /// must not move until `cancelScheduledV1` or `retireScheduledV1` returns.
+    /// This path performs no ResourceBank reserve or commit.
+    pub fn initScheduledV1(
+        self: *Session,
+        scheduler: *qos.Scheduler,
+        admission: qos.Admission,
+        request_epoch: u64,
+        publication_state: *media.PublicationStateV1,
+        encoded_fixture: []const u8,
+        encoded_transform_plan: []const u8,
+    ) Error!void {
+        if (self.initialized) return Error.InvalidState;
+        const admitted = try validateSessionInputV1(
+            request_epoch,
+            publication_state,
+            encoded_fixture,
+            encoded_transform_plan,
+        );
+        const event = admission.event;
+        if (event.kind != .admission_accepted or
+            event.rejection_reason != .none or
+            !std.meta.eql(event.handle, admission.handle) or
+            !std.meta.eql(event.spec.claim, admitted.claim) or
+            !std.meta.eql(event.resource_receipt.claim, admitted.claim) or
+            event.spec.resource_owner_key !=
+                event.resource_receipt.owner_key)
+            return Error.InvalidConfiguration;
+
+        scheduler.bindFinalPublicationSession(
+            admission,
+            request_epoch,
+            @intFromPtr(self),
+        ) catch |err| switch (err) {
+            error.InvalidConfiguration => return Error.InvalidConfiguration,
+            else => return Error.ResourceReceiptInvalid,
+        };
+        self.* = .{
+            .bank = scheduler.bank,
+            .receipt = event.resource_receipt,
+            .request_epoch = request_epoch,
+            .media_state = publication_state,
+            .admitted_claim = admitted.claim,
+            .admitted_fixture_sha256 = admitted.fixture_sha256,
+            .admitted_plan_sha256 = admitted.plan_sha256,
+            .receipt_owner = .scheduler,
+            .scheduler = scheduler,
+            .scheduled_handle = admission.handle,
             .initialized = true,
         };
     }
@@ -653,7 +734,8 @@ pub const Session = struct {
     }
 
     pub fn closeAndRelease(self: *Session) Error!void {
-        if (!self.initialized or self.phase != .idle or
+        if (!self.initialized or self.receipt_owner != .session or
+            self.phase != .idle or
             self.active_generation != 0 or
             self.active_permit != null)
             return Error.InvalidState;
@@ -667,6 +749,64 @@ pub const Session = struct {
             return Error.ResourceReceiptInvalid;
         self.initialized = false;
         self.phase = .closed;
+    }
+
+    /// Cancel scheduler-owned work that has not published media state.
+    /// Session close and receipt release are one Bank transition.
+    pub fn cancelScheduledV1(self: *Session) Error!qos.EventV1 {
+        if (!self.scheduledReadyToFinish(false))
+            return Error.InvalidState;
+        const scheduler = self.scheduler orelse return Error.InvalidState;
+        const handle = self.scheduled_handle orelse return Error.InvalidState;
+        const event = scheduler.cancelBoundPublication(
+            handle,
+            self.request_epoch,
+            @intFromPtr(self),
+            self.next_resource_sequence,
+        ) catch |err| switch (err) {
+            error.InvalidConfiguration => return Error.InvalidConfiguration,
+            else => return Error.ResourceReceiptInvalid,
+        };
+        self.finishScheduledAssumeValid();
+        return event;
+    }
+
+    /// Retire scheduler-owned work only after its one media publication and
+    /// final service transition have both committed.
+    pub fn retireScheduledV1(self: *Session) Error!qos.EventV1 {
+        if (!self.scheduledReadyToFinish(true))
+            return Error.InvalidState;
+        const scheduler = self.scheduler orelse return Error.InvalidState;
+        const handle = self.scheduled_handle orelse return Error.InvalidState;
+        const event = scheduler.retireBoundPublication(
+            handle,
+            self.request_epoch,
+            @intFromPtr(self),
+            self.next_resource_sequence,
+        ) catch |err| switch (err) {
+            error.InvalidConfiguration => return Error.InvalidConfiguration,
+            else => return Error.ResourceReceiptInvalid,
+        };
+        self.finishScheduledAssumeValid();
+        return event;
+    }
+
+    fn scheduledReadyToFinish(
+        self: *const Session,
+        require_published: bool,
+    ) bool {
+        return self.initialized and self.receipt_owner == .scheduler and
+            self.phase == .idle and self.active_generation == 0 and
+            self.active_permit == null and
+            self.scheduler != null and self.scheduled_handle != null and
+            self.published == require_published;
+    }
+
+    fn finishScheduledAssumeValid(self: *Session) void {
+        self.initialized = false;
+        self.phase = .closed;
+        self.scheduler = null;
+        self.scheduled_handle = null;
     }
 
     fn clearActive(self: *Session) void {
@@ -687,8 +827,15 @@ pub const Session = struct {
 
 const TransactionState = enum {
     prepared,
+    armed,
     committed,
     aborted,
+};
+
+const CommitCandidateV1 = struct {
+    permit: resource_bank.PublicationPermit,
+    state_after: media.PublicationStateV1,
+    receipt: ExecutionReceiptV1,
 };
 
 pub const Transaction = struct {
@@ -697,6 +844,59 @@ pub const Transaction = struct {
     state: TransactionState,
 
     pub fn commit(self: *Transaction) Error!ExecutionReceiptV1 {
+        const candidate = try self.preflightCommitV1();
+        self.session.phase = .committing;
+        self.finalizeCandidateAssumeValid(candidate);
+        return candidate.receipt;
+    }
+
+    /// Freeze every fallible media-commit check against one already-armed
+    /// LaneWeave service intent. The returned object must remain address-stable
+    /// until its finalizer runs or `abort` is called. The Session, media state,
+    /// provisional buffers, and Bank permit are single-owner and immutable
+    /// across that bounded interval; violating this contract is process-fatal
+    /// under `ServiceFinalizerV2`.
+    pub fn armServiceV1(
+        self: *Transaction,
+        intent: qos.ServiceIntentV1,
+    ) Error!ArmedScheduledTransactionV1 {
+        if (!self.owns(.prepared))
+            return Error.InvalidState;
+        const session = self.session;
+        const scheduler = session.scheduler orelse
+            return Error.InvalidState;
+        const handle = session.scheduled_handle orelse
+            return Error.InvalidState;
+        if (session.receipt_owner != .scheduler or
+            !qos.serviceIntentValidV1(intent) or
+            intent.scheduler_epoch != scheduler.config.scheduler_epoch or
+            !std.meta.eql(intent.handle, handle) or
+            !std.meta.eql(intent.spec.claim, session.admitted_claim) or
+            !std.meta.eql(intent.resource_receipt, session.receipt) or
+            intent.remaining_before != 1)
+            return Error.InvalidConfiguration;
+        const candidate = try self.preflightCommitV1();
+        session.phase = .armed;
+        self.state = .armed;
+        return .{
+            .transaction = self,
+            .intent = intent,
+            .candidate = candidate,
+        };
+    }
+
+    pub fn abort(self: *Transaction) Error!void {
+        if (!self.owns(.prepared))
+            return Error.InvalidState;
+        const permit = self.session.active_permit orelse
+            return Error.InvalidState;
+        try rollbackActiveV1(self.session, permit);
+        self.state = .aborted;
+    }
+
+    fn preflightCommitV1(
+        self: *Transaction,
+    ) Error!CommitCandidateV1 {
         if (!self.owns(.prepared))
             return Error.InvalidState;
         const session = self.session;
@@ -718,7 +918,6 @@ pub const Transaction = struct {
             return Error.InvalidState;
         const mappings = session.active_mappings orelse
             return Error.InvalidState;
-        session.phase = .committing;
         session.bank.validatePublication(permit) catch {
             try rollbackActiveV1(session, permit);
             self.state = .aborted;
@@ -792,38 +991,150 @@ pub const Transaction = struct {
             self.state = .aborted;
             return Error.InvalidReceipt;
         };
+        _ = decoded_source;
+        return .{
+            .permit = permit,
+            .state_after = state_after,
+            .receipt = receipt,
+        };
+    }
 
-        // All remaining request-local mutations are bounded and infallible
-        // after the complete candidate, media state, and Bank permit checks.
-        session.media_state.* = state_after;
-        session.bank.commitPublicationAssumeValid(permit);
-        session.next_resource_sequence = permit.sequence + 1;
+    fn finalizeCandidateAssumeValid(
+        self: *Transaction,
+        candidate: CommitCandidateV1,
+    ) void {
+        const session = self.session;
+        session.media_state.* = candidate.state_after;
+        session.bank.commitPublicationAssumeValid(candidate.permit);
+        session.next_resource_sequence = candidate.permit.sequence + 1;
         session.published = true;
         session.clearActive();
         self.state = .committed;
-        _ = decoded_source;
-        return receipt;
-    }
-
-    pub fn abort(self: *Transaction) Error!void {
-        if (!self.owns(.prepared))
-            return Error.InvalidState;
-        const permit = self.session.active_permit orelse
-            return Error.InvalidState;
-        try rollbackActiveV1(self.session, permit);
-        self.state = .aborted;
     }
 
     fn owns(
         self: *const Transaction,
         expected: TransactionState,
     ) bool {
+        const phase: SessionPhase = switch (expected) {
+            .prepared => .prepared,
+            .armed => .armed,
+            .committed, .aborted => return false,
+        };
         return self.state == expected and
             self.session.initialized and
             self.session.active_generation == self.generation and
-            self.session.phase == .prepared;
+            self.session.phase == phase;
     }
 };
+
+const ArmedScheduledState = enum {
+    armed,
+    committed,
+    aborted,
+};
+
+/// In-process authority that joins one fully preflighted media publication to
+/// one exact LaneWeave service event. `finalizer` is bounded and infallible;
+/// caller-visible failures must happen before it is passed to the Scheduler.
+pub const ArmedScheduledTransactionV1 = struct {
+    transaction: *Transaction,
+    intent: qos.ServiceIntentV1,
+    candidate: CommitCandidateV1,
+    state: ArmedScheduledState = .armed,
+    committed_receipt: ?ExecutionReceiptV1 = null,
+    service_event_sha256: Digest = [_]u8{0} ** 32,
+
+    pub fn finalizer(self: *ArmedScheduledTransactionV1) qos.ServiceFinalizerV2 {
+        const session = self.transaction.session;
+        return .{
+            .publication_request_epoch = session.request_epoch,
+            .publication_session_id = @intFromPtr(session),
+            .context = self,
+            .finalize = finalize,
+        };
+    }
+
+    pub fn executionReceiptV1(
+        self: *const ArmedScheduledTransactionV1,
+    ) Error!ExecutionReceiptV1 {
+        if (self.state != .committed)
+            return Error.InvalidState;
+        return self.committed_receipt orelse Error.InvalidState;
+    }
+
+    /// Abort only the media publication permit and provisional buffers. The
+    /// caller must separately consume the LaneWeave armed ticket with
+    /// `abortArmedService`.
+    pub fn abort(self: *ArmedScheduledTransactionV1) Error!void {
+        if (self.state != .armed or
+            !self.transaction.owns(.armed))
+            return Error.InvalidState;
+        try rollbackActiveV1(
+            self.transaction.session,
+            self.candidate.permit,
+        );
+        self.transaction.state = .aborted;
+        self.state = .aborted;
+    }
+
+    fn finalize(
+        context: *anyopaque,
+        event: *const qos.EventV1,
+    ) void {
+        const self: *ArmedScheduledTransactionV1 =
+            @ptrCast(@alignCast(context));
+        if (self.state != .armed or
+            !self.transaction.owns(.armed) or
+            event.remaining_after != 0 or
+            !qos.eventMatchesServiceIntentV1(event.*, self.intent))
+            @panic("invalid armed media service finalization");
+        self.transaction.finalizeCandidateAssumeValid(self.candidate);
+        self.committed_receipt = self.candidate.receipt;
+        self.service_event_sha256 = event.event_sha256;
+        self.state = .committed;
+    }
+};
+
+fn validateSessionInputV1(
+    request_epoch: u64,
+    publication_state: *const media.PublicationStateV1,
+    encoded_fixture: []const u8,
+    encoded_transform_plan: []const u8,
+) Error!ValidatedSessionInputV1 {
+    if (request_epoch == 0 or
+        publication_state.request_epoch != request_epoch)
+        return Error.InvalidConfiguration;
+    const fixture = fixture_api.parseFixtureV1(
+        encoded_fixture,
+    ) catch return Error.TransformFailed;
+    const plan = transform.decodeTransformPlanV1(
+        encoded_transform_plan,
+    ) catch return Error.TransformFailed;
+    const plan_sha256 = transform.transformPlanSha256V1(
+        encoded_transform_plan,
+    ) catch return Error.TransformFailed;
+    if (!std.mem.eql(
+        u8,
+        &publication_state.media_object_sha256,
+        &plan.media_object_sha256,
+    ) or
+        !std.mem.eql(
+            u8,
+            &fixture.media_object_sha256,
+            &plan.media_object_sha256,
+        ) or
+        !std.meta.eql(
+            publication_state.timeline_base,
+            outputTimelineBaseV1(plan),
+        ))
+        return Error.InvalidConfiguration;
+    return .{
+        .claim = try claimForExecutionV1(encoded_fixture.len, plan),
+        .fixture_sha256 = fixture.fixture_sha256,
+        .plan_sha256 = plan_sha256,
+    };
+}
 
 fn rollbackActiveV1(
     session: *Session,
@@ -1097,16 +1408,20 @@ fn isZero(value: Digest) bool {
     return std.mem.allEqual(u8, &value, 0);
 }
 
-const TestContext = struct {
-    encoded_fixture: []const u8,
-    fixture: fixture_api.ParsedFixtureV1,
-    encoded_decode_plan: []const u8,
-    decode_receipt: fixture_api.DecodeReceiptV1,
-    transform_plan: transform.TransformPlanV1,
-    encoded_transform_plan: []const u8,
-    expected_output: []const u8,
-    timeline_base: media.TimeBaseV1,
-};
+const TestContext = ReferenceInputV1;
+
+pub fn prepareReferenceInputV1(
+    kind: media.MediaKindV1,
+    storage: *ReferenceInputStorageV1,
+) Error!ReferenceInputV1 {
+    return prepareReferenceInputIntoV1(
+        kind,
+        &storage.fixture,
+        &storage.decode_plan,
+        &storage.transform_plan,
+        &storage.decoded_for_plan,
+    );
+}
 
 fn prepareTestContext(
     case_index: usize,
@@ -1115,33 +1430,56 @@ fn prepareTestContext(
     transform_plan_storage: *[transform.transform_plan_bytes]u8,
     decoded: *[fixture_api.maximum_payload_bytes]u8,
 ) !TestContext {
-    const spec = switch (case_index) {
-        0 => fixture_api.imageSpecV1(),
-        1 => fixture_api.audioSpecV1(),
-        2 => fixture_api.videoSpecV1(),
+    const kind: media.MediaKindV1 = switch (case_index) {
+        0 => .image,
+        1 => .audio,
+        2 => .video,
         else => unreachable,
     };
-    const encoded_fixture = try fixture_api.encodeFixtureV1(
+    return prepareReferenceInputIntoV1(
+        kind,
+        fixture_storage,
+        decode_plan_storage,
+        transform_plan_storage,
+        decoded,
+    );
+}
+
+fn prepareReferenceInputIntoV1(
+    kind: media.MediaKindV1,
+    fixture_storage: *[fixture_api.maximum_fixture_bytes]u8,
+    decode_plan_storage: *[decode_plan.plan_bytes]u8,
+    transform_plan_storage: *[transform.transform_plan_bytes]u8,
+    decoded: *[fixture_api.maximum_payload_bytes]u8,
+) Error!ReferenceInputV1 {
+    const spec = switch (kind) {
+        .image => fixture_api.imageSpecV1(),
+        .audio => fixture_api.audioSpecV1(),
+        .video => fixture_api.videoSpecV1(),
+    };
+    const encoded_fixture = fixture_api.encodeFixtureV1(
         spec,
         fixture_storage,
-    );
-    const fixture = try fixture_api.parseFixtureV1(encoded_fixture);
-    const plan = try fixture_api.makeDecodePlanV1(
+    ) catch return Error.TransformFailed;
+    const fixture = fixture_api.parseFixtureV1(
+        encoded_fixture,
+    ) catch return Error.TransformFailed;
+    const plan = fixture_api.makeDecodePlanV1(
         fixture,
         [_]u8{0xd1} ** 32,
         [_]u8{0xe1} ** 32,
-    );
-    const encoded_decode_plan = try decode_plan.encodePlanV1(
+    ) catch return Error.TransformFailed;
+    const encoded_decode_plan = decode_plan.encodePlanV1(
         plan,
         decode_plan_storage,
-    );
-    const decode_receipt = try fixture_api.decodeFixtureV1(
+    ) catch return Error.TransformFailed;
+    const decode_receipt = fixture_api.decodeFixtureV1(
         encoded_fixture,
         encoded_decode_plan,
         decoded,
-    );
-    const transform_plan = switch (case_index) {
-        0 => try transform.makeImagePlanV1(
+    ) catch return Error.TransformFailed;
+    const transform_plan = switch (kind) {
+        .image => transform.makeImagePlanV1(
             fixture,
             decode_receipt,
             1,
@@ -1154,8 +1492,8 @@ fn prepareTestContext(
             1,
             [_]u8{0xf1} ** 32,
             [_]u8{0xf2} ** 32,
-        ),
-        1 => try transform.makeAudioPlanV1(
+        ) catch return Error.TransformFailed,
+        .audio => transform.makeAudioPlanV1(
             fixture,
             decode_receipt,
             0,
@@ -1166,32 +1504,34 @@ fn prepareTestContext(
             1,
             [_]u8{0xf1} ** 32,
             [_]u8{0xf2} ** 32,
-        ),
-        2 => blk: {
+        ) catch return Error.TransformFailed,
+        .video => blk: {
             const selected = [_]u64{1};
-            break :blk try transform.makeVideoPlanV1(
+            break :blk transform.makeVideoPlanV1(
                 fixture,
                 decode_receipt,
                 &selected,
                 [_]u8{0xf1} ** 32,
                 [_]u8{0xf2} ** 32,
-            );
+            ) catch return Error.TransformFailed;
         },
-        else => unreachable,
     };
     const encoded_transform_plan =
-        try transform.encodeTransformPlanV1(
+        transform.encodeTransformPlanV1(
             transform_plan,
             transform_plan_storage,
-        );
-    const expected_output: []const u8 = switch (case_index) {
-        0 => &[_]u8{
+        ) catch return Error.TransformFailed;
+    if (transform_plan.logical_units > reference_maximum_mappings or
+        transform_plan.source_bytes > reference_maximum_payload_bytes or
+        transform_plan.output_bytes > reference_maximum_payload_bytes)
+        return Error.InvalidConfiguration;
+    const expected_output: []const u8 = switch (kind) {
+        .image => &[_]u8{
             0,   255, 0,   0,   255, 0,
             255, 255, 255, 255, 255, 255,
         },
-        1 => &[_]u8{ 0x00, 0xc0, 0x55, 0x15 },
-        2 => &[_]u8{ 255, 128, 64, 0 },
-        else => unreachable,
+        .audio => &[_]u8{ 0x00, 0xc0, 0x55, 0x15 },
+        .video => &[_]u8{ 255, 128, 64, 0 },
     };
     return .{
         .encoded_fixture = encoded_fixture,
@@ -1203,6 +1543,432 @@ fn prepareTestContext(
         .expected_output = expected_output,
         .timeline_base = outputTimelineBaseV1(transform_plan),
     };
+}
+
+test "scheduled runtime adopts one receipt and commits every media kind" {
+    const kinds = [_]media.MediaKindV1{ .image, .audio, .video };
+    for (kinds, 0..) |kind, case_index| {
+        var reference_storage: ReferenceInputStorageV1 = .{};
+        const context = try prepareReferenceInputV1(
+            kind,
+            &reference_storage,
+        );
+        const claim = try claimForExecutionV1(
+            context.encoded_fixture.len,
+            context.transform_plan,
+        );
+        var bank_slots = [_]resource_bank.Slot{.{}};
+        var bank = try resource_bank.Bank.init(
+            &bank_slots,
+            try limitsForClaimV1(claim),
+            0x9000 + case_index,
+        );
+        var lane_slots = [_]qos.Slot{.{}};
+        var projection = [_]qos.ProjectionSlot{.{}};
+        var challenge = [_]u8{0} ** 32;
+        challenge[0] = @intCast(0xa0 + case_index);
+        var scheduler = try qos.Scheduler.init(
+            &bank,
+            .{
+                .slots = &lane_slots,
+                .projection = &projection,
+            },
+            .{
+                .scheduler_epoch = 0xa000 + case_index,
+                .challenge = challenge,
+                .max_weight = 1,
+                .max_projection_quanta = 8,
+                .max_projection_operations = 64,
+            },
+        );
+        const owner_key: u64 = 0xb000 + case_index;
+        const request_epoch: u64 = 0xc000 + case_index;
+        const decision = try scheduler.admit(.{
+            .tenant_key = 0xd000 + case_index,
+            .request_key = 0xe000 + case_index,
+            .request_generation = 1,
+            .resource_owner_key = owner_key,
+            .weight = 1,
+            .work_quanta = 1,
+            .deadline_tick = 8,
+            .claim = claim,
+        });
+        const admission = switch (decision) {
+            .admitted => |value| value,
+            .rejected => return Error.ResourceAdmissionFailed,
+        };
+        var previous_commit = [_]u8{0} ** 32;
+        previous_commit[0] = @intCast(0xf0 + case_index);
+        var publication_state =
+            try media.initializePublicationStateV1(
+                request_epoch,
+                1,
+                context.timeline_base,
+                context.fixture.media_object_sha256,
+                previous_commit,
+            );
+        const state_before = publication_state;
+        const bank_before_adopt = try bank.snapshot();
+        var session: Session = .{};
+        try session.initScheduledV1(
+            &scheduler,
+            admission,
+            request_epoch,
+            &publication_state,
+            context.encoded_fixture,
+            context.encoded_transform_plan,
+        );
+        try std.testing.expectEqualDeep(
+            bank_before_adopt,
+            try bank.snapshot(),
+        );
+        try std.testing.expectError(
+            Error.InvalidState,
+            session.closeAndRelease(),
+        );
+
+        var decoded = [_]u8{0} ** fixture_api.maximum_payload_bytes;
+        var output = [_]u8{0} ** fixture_api.maximum_payload_bytes;
+        var mappings: [reference_maximum_mappings]transform.TransformMappingV1 =
+            undefined;
+        const service_permit = try scheduler.prepareService();
+        var transaction = try session.prepare(
+            context.encoded_fixture,
+            context.encoded_decode_plan,
+            context.encoded_transform_plan,
+            &decoded,
+            &output,
+            &mappings,
+        );
+        const transform_receipt =
+            session.active_transform_receipt orelse
+            return Error.InvalidState;
+        const armed_service =
+            try scheduler.armServiceCommit(service_permit);
+        var armed_media = try transaction.armServiceV1(
+            armed_service.intent,
+        );
+        const service_event = try scheduler.commitArmedServiceV2(
+            armed_service.ticket,
+            armed_media.finalizer(),
+        );
+        try std.testing.expect(qos.eventMatchesServiceIntentV1(
+            service_event,
+            armed_service.intent,
+        ));
+        const execution_receipt =
+            try armed_media.executionReceiptV1();
+        try std.testing.expectEqual(
+            @as(u64, 0),
+            service_event.remaining_after,
+        );
+        try std.testing.expectEqualDeep(
+            admission.event.resource_receipt.claim,
+            execution_receipt.claim,
+        );
+        try std.testing.expectEqual(
+            admission.event.resource_receipt.slot_index,
+            execution_receipt.resource_slot_index,
+        );
+        try std.testing.expectEqual(
+            admission.event.resource_receipt.generation,
+            execution_receipt.resource_generation,
+        );
+        try std.testing.expectEqual(
+            admission.event.resource_receipt.owner_key,
+            execution_receipt.resource_owner_key,
+        );
+        const output_bytes: usize =
+            @intCast(execution_receipt.output_bytes);
+        const mapping_count: usize =
+            @intCast(execution_receipt.mapping_count);
+        try std.testing.expectEqualSlices(
+            u8,
+            context.expected_output,
+            output[0..output_bytes],
+        );
+        try verifyExecutionReceiptV1(
+            state_before,
+            context.encoded_fixture,
+            context.encoded_transform_plan,
+            transform_receipt,
+            output[0..output_bytes],
+            mappings[0..mapping_count],
+            execution_receipt,
+        );
+
+        const retire_event = try session.retireScheduledV1();
+        try std.testing.expectEqual(qos.EventKind.retire, retire_event.kind);
+        _ = try scheduler.close();
+        const final = try bank.snapshot();
+        try std.testing.expect(final.used.isZero());
+        try std.testing.expectEqual(@as(usize, 0), final.committed_receipts);
+        try std.testing.expectEqual(@as(u64, 1), final.successful_commits);
+        try std.testing.expectEqual(@as(u64, 1), final.releases);
+        try std.testing.expectEqual(
+            try claim.hostBytes(),
+            final.peak_host_bytes,
+        );
+    }
+}
+
+test "scheduled adoption rejects claim drift and bound cancellation is atomic" {
+    var reference_storage: ReferenceInputStorageV1 = .{};
+    const context = try prepareReferenceInputV1(
+        .image,
+        &reference_storage,
+    );
+    const exact_claim = try claimForExecutionV1(
+        context.encoded_fixture.len,
+        context.transform_plan,
+    );
+    var bank_slots = [_]resource_bank.Slot{.{}};
+    var limits = try limitsForClaimV1(exact_claim);
+    limits.host_bytes += 1;
+    limits.activation_bytes += 1;
+    var bank = try resource_bank.Bank.init(&bank_slots, limits, 0x9100);
+    var lane_slots = [_]qos.Slot{.{}};
+    var projection = [_]qos.ProjectionSlot{.{}};
+    var challenge = [_]u8{0} ** 32;
+    challenge[0] = 0xa1;
+    var scheduler = try qos.Scheduler.init(
+        &bank,
+        .{
+            .slots = &lane_slots,
+            .projection = &projection,
+        },
+        .{
+            .scheduler_epoch = 0xa100,
+            .challenge = challenge,
+            .max_weight = 1,
+            .max_projection_quanta = 16,
+            .max_projection_operations = 64,
+        },
+    );
+    const request_epoch: u64 = 0xc100;
+    const previous_commit = [_]u8{0xaa} ** 32;
+    var publication_state =
+        try media.initializePublicationStateV1(
+            request_epoch,
+            1,
+            context.timeline_base,
+            context.fixture.media_object_sha256,
+            previous_commit,
+        );
+    const state_before = publication_state;
+
+    var drift_claim = exact_claim;
+    drift_claim.activation_bytes += 1;
+    const drift_decision = try scheduler.admit(.{
+        .tenant_key = 1,
+        .request_key = 10,
+        .request_generation = 1,
+        .resource_owner_key = 100,
+        .weight = 1,
+        .work_quanta = 2,
+        .deadline_tick = 8,
+        .claim = drift_claim,
+    });
+    const drift_admission = switch (drift_decision) {
+        .admitted => |value| value,
+        .rejected => return Error.ResourceAdmissionFailed,
+    };
+    var rejected_session: Session = .{};
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        rejected_session.initScheduledV1(
+            &scheduler,
+            drift_admission,
+            request_epoch,
+            &publication_state,
+            context.encoded_fixture,
+            context.encoded_transform_plan,
+        ),
+    );
+    _ = try scheduler.cancel(drift_admission.handle);
+
+    const exact_decision = try scheduler.admit(.{
+        .tenant_key = 1,
+        .request_key = 10,
+        .request_generation = 2,
+        .resource_owner_key = 100,
+        .weight = 1,
+        .work_quanta = 2,
+        .deadline_tick = 8,
+        .claim = exact_claim,
+    });
+    const exact_admission = switch (exact_decision) {
+        .admitted => |value| value,
+        .rejected => return Error.ResourceAdmissionFailed,
+    };
+    var session: Session = .{};
+    try session.initScheduledV1(
+        &scheduler,
+        exact_admission,
+        request_epoch,
+        &publication_state,
+        context.encoded_fixture,
+        context.encoded_transform_plan,
+    );
+    const scheduler_before = try scheduler.snapshot();
+    const bank_before = try bank.snapshot();
+    session.next_resource_sequence = 1;
+    try std.testing.expectError(
+        Error.ResourceReceiptInvalid,
+        session.cancelScheduledV1(),
+    );
+    try std.testing.expectEqualDeep(
+        scheduler_before,
+        try scheduler.snapshot(),
+    );
+    try std.testing.expectEqualDeep(bank_before, try bank.snapshot());
+
+    session.next_resource_sequence = 0;
+    const cancel_event = try session.cancelScheduledV1();
+    try std.testing.expectEqual(qos.EventKind.cancel, cancel_event.kind);
+    try std.testing.expectEqualDeep(state_before, publication_state);
+    _ = try scheduler.close();
+    const final = try bank.snapshot();
+    try std.testing.expect(final.used.isZero());
+    try std.testing.expectEqual(@as(u64, 2), final.successful_commits);
+    try std.testing.expectEqual(@as(u64, 2), final.releases);
+}
+
+test "armed scheduled media drift aborts both coordinators and retries exactly" {
+    var reference_storage: ReferenceInputStorageV1 = .{};
+    const context = try prepareReferenceInputV1(
+        .image,
+        &reference_storage,
+    );
+    const claim = try claimForExecutionV1(
+        context.encoded_fixture.len,
+        context.transform_plan,
+    );
+    var bank_slots = [_]resource_bank.Slot{.{}};
+    var bank = try resource_bank.Bank.init(
+        &bank_slots,
+        try limitsForClaimV1(claim),
+        0x9200,
+    );
+    var lane_slots = [_]qos.Slot{.{}};
+    var projection = [_]qos.ProjectionSlot{.{}};
+    var challenge = [_]u8{0} ** 32;
+    challenge[0] = 0xa2;
+    var scheduler = try qos.Scheduler.init(
+        &bank,
+        .{
+            .slots = &lane_slots,
+            .projection = &projection,
+        },
+        .{
+            .scheduler_epoch = 0xa200,
+            .challenge = challenge,
+            .max_weight = 1,
+            .max_projection_quanta = 8,
+            .max_projection_operations = 64,
+        },
+    );
+    const request_epoch: u64 = 0xc200;
+    const decision = try scheduler.admit(.{
+        .tenant_key = 2,
+        .request_key = 20,
+        .request_generation = 1,
+        .resource_owner_key = 200,
+        .weight = 1,
+        .work_quanta = 1,
+        .deadline_tick = 8,
+        .claim = claim,
+    });
+    const admission = switch (decision) {
+        .admitted => |value| value,
+        .rejected => return Error.ResourceAdmissionFailed,
+    };
+    const previous_commit = [_]u8{0xab} ** 32;
+    var publication_state =
+        try media.initializePublicationStateV1(
+            request_epoch,
+            1,
+            context.timeline_base,
+            context.fixture.media_object_sha256,
+            previous_commit,
+        );
+    const state_before = publication_state;
+    var session: Session = .{};
+    try session.initScheduledV1(
+        &scheduler,
+        admission,
+        request_epoch,
+        &publication_state,
+        context.encoded_fixture,
+        context.encoded_transform_plan,
+    );
+    const scheduler_before = try scheduler.snapshot();
+    const bank_before = try bank.snapshot();
+
+    var decoded = [_]u8{0} ** fixture_api.maximum_payload_bytes;
+    var output = [_]u8{0} ** fixture_api.maximum_payload_bytes;
+    var mappings: [reference_maximum_mappings]transform.TransformMappingV1 =
+        undefined;
+    const first_permit = try scheduler.prepareService();
+    var first_transaction = try session.prepare(
+        context.encoded_fixture,
+        context.encoded_decode_plan,
+        context.encoded_transform_plan,
+        &decoded,
+        &output,
+        &mappings,
+    );
+    const first_armed = try scheduler.armServiceCommit(first_permit);
+    output[0] ^= 1;
+    try std.testing.expectError(
+        Error.TransformFailed,
+        first_transaction.armServiceV1(first_armed.intent),
+    );
+    try scheduler.abortArmedService(first_armed.ticket);
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        output[0..context.transform_plan.output_bytes],
+        0,
+    ));
+    try std.testing.expectEqualDeep(state_before, publication_state);
+    try std.testing.expectEqualDeep(
+        scheduler_before,
+        try scheduler.snapshot(),
+    );
+    try std.testing.expectEqualDeep(bank_before, try bank.snapshot());
+
+    const retry_permit = try scheduler.prepareService();
+    try std.testing.expectEqualDeep(
+        first_permit.state_before_sha256,
+        retry_permit.state_before_sha256,
+    );
+    var retry_transaction = try session.prepare(
+        context.encoded_fixture,
+        context.encoded_decode_plan,
+        context.encoded_transform_plan,
+        &decoded,
+        &output,
+        &mappings,
+    );
+    const retry_armed = try scheduler.armServiceCommit(retry_permit);
+    try std.testing.expectEqualDeep(
+        first_armed.intent,
+        retry_armed.intent,
+    );
+    var armed_media = try retry_transaction.armServiceV1(
+        retry_armed.intent,
+    );
+    _ = try scheduler.commitArmedServiceV2(
+        retry_armed.ticket,
+        armed_media.finalizer(),
+    );
+    _ = try armed_media.executionReceiptV1();
+    _ = try session.retireScheduledV1();
+    _ = try scheduler.close();
+    const final = try bank.snapshot();
+    try std.testing.expect(final.used.isZero());
+    try std.testing.expectEqual(@as(u64, 1), final.successful_commits);
+    try std.testing.expectEqual(@as(u64, 1), final.releases);
 }
 
 test "runtime admits commits and releases image audio and video exactly" {

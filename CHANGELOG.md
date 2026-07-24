@@ -21,6 +21,20 @@ before the first stable release.
 
 ### Added
 
+- Connected the deterministic mixed-media workload to real bounded media
+  execution without changing its frozen scenario or result wires. Accepted
+  work now adopts the scheduler-owned `ResourceBank` receipt directly; the
+  completed audio, video, and image requests decode, transform, validate exact
+  source mappings, and publish atomically with their final service quantum.
+  Cancellation and timeout close and release the same bound receipt without
+  media publication, while rejection never binds a session. A separately
+  versioned 5,472-byte sidecar binds all workload outcomes, five accepted
+  receipt identities, three complete media execution receipts, before/after
+  publication roots, exact outputs, and zero-orphan close. Zig and an
+  independent Python oracle agree on the frozen wire root and reject every byte
+  mutation, truncation, substitution, and rehashed semantic contradiction.
+  This remains deterministic fixture execution, not production model, native
+  timing, physical-memory, power, quality, or soak evidence.
 - Added the first portable deterministic workload-pressure contract. One
   versioned explicit-open-loop image/audio/video scenario now drives the real
   `LaneWeave` scheduler, `ResourceBank`, and scheduler verifier through capacity

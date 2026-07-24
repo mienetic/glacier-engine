@@ -5,7 +5,9 @@
 //! records logical queue/completion steps, and proves that all flat admission
 //! receipts are released. It performs no model execution, media publication,
 //! filesystem or network I/O, device work, timing, random generation, heap
-//! allocation, or thread creation.
+//! allocation, or thread creation. The built-in driver retains that boundary.
+//! An additive caller-supplied driver may bind external lifecycles to the same
+//! scheduler receipts; those effects are outside the default V1 evidence.
 
 const std = @import("std");
 const qos = @import("lane_weave_qos.zig");
@@ -67,6 +69,7 @@ pub const Error = qos.Error || resource_bank.Error || error{
     UnexpectedTerminalAction,
     MissingWorkItem,
     IncompleteScenario,
+    DriverFailed,
 };
 
 pub const ModeV1 = enum(u64) {
@@ -207,6 +210,90 @@ pub const ResultV1 = struct {
     summary: SummaryV1,
     outcomes: []const OutcomeV1,
     trace: []const TraceRecordV1,
+};
+
+pub const SchedulerV1 = qos.Scheduler;
+pub const SchedulerAdmissionV1 = qos.Admission;
+pub const SchedulerHandleV1 = qos.Handle;
+pub const SchedulerServicePermitV1 = qos.ServicePermitV1;
+pub const SchedulerEventV1 = qos.EventV1;
+
+/// Driver callbacks may return scheduler errors unchanged. A callback that
+/// encounters a family-specific failure stores its precise detail in
+/// `DriverV1.context` and returns `DriverFailed`.
+pub const DriverError = qos.Error || error{DriverFailed};
+
+pub const DriverBindAdmittedV1 = struct {
+    driver_step: u64,
+    item_index: usize,
+    item: WorkItemV1,
+    admission: SchedulerAdmissionV1,
+};
+
+pub const DriverCancelV1 = struct {
+    driver_step: u64,
+    item_index: usize,
+    item: WorkItemV1,
+    handle: SchedulerHandleV1,
+    terminal_action: TerminalActionV1,
+};
+
+pub const DriverCommitServiceV1 = struct {
+    driver_step: u64,
+    item_index: usize,
+    item: WorkItemV1,
+    permit: SchedulerServicePermitV1,
+    final_quantum: bool,
+};
+
+pub const DriverRetireV1 = struct {
+    driver_step: u64,
+    item_index: usize,
+    item: WorkItemV1,
+    handle: SchedulerHandleV1,
+    final_service_event: SchedulerEventV1,
+};
+
+/// Additive execution seam over the frozen workload V1 scenario/result wires.
+///
+/// `bind_admitted_fn` runs immediately after a successful admission while its
+/// event is still the scheduler chain head. The remaining callbacks replace
+/// the corresponding scheduler operation and must return the exact event
+/// emitted by that scheduler. `cleanup_fn` runs only on an error path while
+/// the scheduler and Bank are still live, allowing address-fenced extensions
+/// to close bound sessions before the runner discards its coordinators. A
+/// service callback may return an error with the original permit still
+/// unarmed; the runner aborts that permit before cleanup. If the callback arms
+/// the permit, it must either consume/abort its ticket before returning or
+/// retain enough context for `cleanup_fn` to abort it. The default callbacks
+/// only delegate to LaneWeave and therefore preserve the model-free V1
+/// behavior.
+pub const DriverV1 = struct {
+    context: ?*anyopaque = null,
+    bind_admitted_fn: *const fn (
+        ?*anyopaque,
+        *SchedulerV1,
+        DriverBindAdmittedV1,
+    ) DriverError!void = defaultBindAdmittedV1,
+    cancel_fn: *const fn (
+        ?*anyopaque,
+        *SchedulerV1,
+        DriverCancelV1,
+    ) DriverError!SchedulerEventV1 = defaultCancelV1,
+    commit_service_fn: *const fn (
+        ?*anyopaque,
+        *SchedulerV1,
+        DriverCommitServiceV1,
+    ) DriverError!SchedulerEventV1 = defaultCommitServiceV1,
+    retire_fn: *const fn (
+        ?*anyopaque,
+        *SchedulerV1,
+        DriverRetireV1,
+    ) DriverError!SchedulerEventV1 = defaultRetireV1,
+    cleanup_fn: *const fn (
+        ?*anyopaque,
+        *SchedulerV1,
+    ) void = defaultCleanupV1,
 };
 
 const RuntimeItem = struct {
@@ -607,9 +694,97 @@ pub fn decodeScenarioV1(
     };
 }
 
+fn defaultBindAdmittedV1(
+    context: ?*anyopaque,
+    scheduler: *SchedulerV1,
+    input: DriverBindAdmittedV1,
+) DriverError!void {
+    _ = context;
+    _ = scheduler;
+    _ = input;
+}
+
+fn defaultCancelV1(
+    context: ?*anyopaque,
+    scheduler: *SchedulerV1,
+    input: DriverCancelV1,
+) DriverError!SchedulerEventV1 {
+    _ = context;
+    return scheduler.cancel(input.handle);
+}
+
+fn defaultCommitServiceV1(
+    context: ?*anyopaque,
+    scheduler: *SchedulerV1,
+    input: DriverCommitServiceV1,
+) DriverError!SchedulerEventV1 {
+    _ = context;
+    return scheduler.commitService(input.permit);
+}
+
+fn defaultRetireV1(
+    context: ?*anyopaque,
+    scheduler: *SchedulerV1,
+    input: DriverRetireV1,
+) DriverError!SchedulerEventV1 {
+    _ = context;
+    return scheduler.retire(input.handle);
+}
+
+fn defaultCleanupV1(
+    context: ?*anyopaque,
+    scheduler: *SchedulerV1,
+) void {
+    _ = context;
+    _ = scheduler;
+}
+
+fn requireCurrentDriverEventV1(
+    scheduler: *SchedulerV1,
+    event: SchedulerEventV1,
+) Error!void {
+    const snapshot = try scheduler.snapshot();
+    if (event.event_sequence == std.math.maxInt(u64) or
+        event.scheduler_epoch != snapshot.scheduler_epoch or
+        event.event_sequence + 1 != snapshot.next_event_sequence or
+        !std.mem.eql(
+            u8,
+            &event.event_sha256,
+            &qos.eventSha256(event),
+        ) or
+        !std.mem.eql(
+            u8,
+            &event.event_sha256,
+            &snapshot.chain_head_sha256,
+        ) or
+        event.logical_tick_after != snapshot.logical_tick or
+        event.cursor_after != snapshot.cursor or
+        event.level_after != snapshot.level or
+        event.active_after != snapshot.active or
+        event.finished_after != snapshot.finished or
+        !std.meta.eql(event.bank_used_after, snapshot.used) or
+        event.maximum_service_gap != snapshot.maximum_service_gap or
+        snapshot.poisoned or snapshot.closed)
+        return Error.DriverFailed;
+}
+
+/// Runs the frozen model-free campaign through the built-in LaneWeave driver.
+/// This compatibility entry point preserves the exact V1 result roots.
 pub fn runScenarioV1(
     scenario: ScenarioV1,
     storage: StorageV1,
+) Error!ResultV1 {
+    return runScenarioWithDriverV1(scenario, storage, .{});
+}
+
+/// Runs a V1 scenario while allowing a caller-owned lifecycle driver to bind
+/// and finalize the exact scheduler receipts. The scenario/result formats and
+/// logical summary rules are unchanged; driver-specific evidence belongs in a
+/// separate additive contract.
+pub fn runScenarioWithDriverV1(
+    scenario: ScenarioV1,
+    storage: StorageV1,
+    driver: DriverV1,
 ) Error!ResultV1 {
     try validateScenarioV1(scenario);
     const capacity: usize = @intCast(scenario.capacity);
@@ -659,6 +834,23 @@ pub fn runScenarioV1(
         scheduler.bank_epoch,
         scheduler.limits,
     );
+    var driver_service_permit: ?SchedulerServicePermitV1 = null;
+    errdefer {
+        if (driver_service_permit) |permit|
+            _ = scheduler.abortService(permit) catch {};
+        driver.cleanup_fn(driver.context, &scheduler);
+        for (runtime_items) |runtime_item| {
+            if (runtime_item.state != .active) continue;
+            if (scheduler.cancel(runtime_item.handle)) |_| {} else |_| {
+                // A driver can commit the final service quantum and then fail
+                // before returning its event. In that case the runner still
+                // records the item as active while LaneWeave records it as
+                // finished, so cancellation is inapplicable and retirement
+                // is the only valid unbound cleanup.
+                _ = scheduler.retire(runtime_item.handle) catch {};
+            }
+        }
+    }
 
     var trace_count: usize = 0;
     var maximum_live_receipts: u64 = 0;
@@ -673,9 +865,26 @@ pub fn runScenarioV1(
             const decision = try scheduler.admit(requestSpecV1(item));
             switch (decision) {
                 .admitted => |admission| {
+                    // Stage ownership before the extension callback. If the
+                    // callback fails, error cleanup must still see and release
+                    // this already-committed Scheduler/Bank admission.
                     runtime_items[index].state = .active;
                     runtime_items[index].handle = admission.handle;
                     runtime_items[index].admitted_step = step;
+                    try driver.bind_admitted_fn(
+                        driver.context,
+                        &scheduler,
+                        .{
+                            .driver_step = step,
+                            .item_index = index,
+                            .item = item,
+                            .admission = admission,
+                        },
+                    );
+                    try requireCurrentDriverEventV1(
+                        &scheduler,
+                        admission.event,
+                    );
                     const admission_snapshot = try bank.snapshot();
                     maximum_live_receipts = @max(
                         maximum_live_receipts,
@@ -722,7 +931,21 @@ pub fn runScenarioV1(
             if (runtime_item.state != .active or
                 item.terminal_action == .none)
                 return Error.UnexpectedTerminalAction;
-            const event = try scheduler.cancel(runtime_item.handle);
+            const event = try driver.cancel_fn(
+                driver.context,
+                &scheduler,
+                .{
+                    .driver_step = step,
+                    .item_index = index,
+                    .item = item,
+                    .handle = runtime_item.handle,
+                    .terminal_action = item.terminal_action,
+                },
+            );
+            if (event.kind != .cancel or
+                !std.meta.eql(event.handle, runtime_item.handle))
+                return Error.DriverFailed;
+            try requireCurrentDriverEventV1(&scheduler, event);
             runtime_item.state = .terminal;
             runtime_item.terminal_step = step;
             runtime_item.terminal_action = item.terminal_action;
@@ -745,12 +968,32 @@ pub fn runScenarioV1(
         const before_service = try scheduler.snapshot();
         if (before_service.active != 0) {
             const permit = try scheduler.prepareService();
-            const event = try scheduler.commitService(permit);
-            const index = try findItemByHandle(
+            driver_service_permit = permit;
+            const permit_index = try findItemByHandle(
                 scenario.items,
                 runtime_items,
-                event.handle,
+                permit.handle,
             );
+            const event = try driver.commit_service_fn(
+                driver.context,
+                &scheduler,
+                .{
+                    .driver_step = step,
+                    .item_index = permit_index,
+                    .item = scenario.items[permit_index],
+                    .permit = permit,
+                    .final_quantum = permit.remaining_before == 1,
+                },
+            );
+            if (event.kind != .service or
+                !std.meta.eql(event.handle, permit.handle) or
+                event.remaining_before != permit.remaining_before or
+                (event.remaining_after == 0) !=
+                    (permit.remaining_before == 1))
+                return Error.DriverFailed;
+            try requireCurrentDriverEventV1(&scheduler, event);
+            driver_service_permit = null;
+            const index = permit_index;
             const runtime_item = &runtime_items[index];
             if (runtime_item.first_service_step == absent_step)
                 runtime_item.first_service_step = step;
@@ -779,7 +1022,27 @@ pub fn runScenarioV1(
                 event,
             );
             if (event.remaining_after == 0) {
-                const retire_event = try scheduler.retire(runtime_item.handle);
+                const retire_event = try driver.retire_fn(
+                    driver.context,
+                    &scheduler,
+                    .{
+                        .driver_step = step,
+                        .item_index = index,
+                        .item = scenario.items[index],
+                        .handle = runtime_item.handle,
+                        .final_service_event = event,
+                    },
+                );
+                if (retire_event.kind != .retire or
+                    !std.meta.eql(
+                        retire_event.handle,
+                        runtime_item.handle,
+                    ))
+                    return Error.DriverFailed;
+                try requireCurrentDriverEventV1(
+                    &scheduler,
+                    retire_event,
+                );
                 runtime_item.state = .terminal;
                 runtime_item.outcome = .completed;
                 runtime_item.terminal_step = step;
@@ -1268,7 +1531,7 @@ pub fn validateResultByReplayV1(
     }
 }
 
-fn validateScenarioV1(scenario: ScenarioV1) Error!void {
+pub fn validateScenarioV1(scenario: ScenarioV1) Error!void {
     if (scenario.mode != .explicit_open_loop or
         scenario.seed == 0 or
         scenario.max_driver_steps == 0 or
@@ -1686,7 +1949,8 @@ fn maximumValue(values: []const u64) u64 {
     return result;
 }
 
-fn itemSha256V1(item: WorkItemV1) Digest {
+/// Canonical semantic identity used by the frozen scenario item wire.
+pub fn itemSha256V1(item: WorkItemV1) Digest {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
     hash.update(scenario_item_domain);
     hashU64(&hash, item.ordinal);
@@ -2154,6 +2418,207 @@ fn checkedAdd(left: u64, right: u64) Error!u64 {
         return Error.ArithmeticOverflow;
 }
 
+const DriverProbeState = enum {
+    pending,
+    bound,
+    final_service,
+    cancelled,
+    retired,
+};
+
+const DriverProbe = struct {
+    states: [maximum_items]DriverProbeState =
+        [_]DriverProbeState{.pending} ** maximum_items,
+    binds: u64 = 0,
+    cancels: u64 = 0,
+    services: u64 = 0,
+    final_services: u64 = 0,
+    retires: u64 = 0,
+    failed_item_ordinal: ?u64 = null,
+
+    fn fromContext(context: ?*anyopaque) *DriverProbe {
+        return @ptrCast(@alignCast(context.?));
+    }
+
+    fn fail(
+        self: *DriverProbe,
+        item: WorkItemV1,
+    ) DriverError {
+        self.failed_item_ordinal = item.ordinal;
+        return error.DriverFailed;
+    }
+
+    fn bindAdmitted(
+        context: ?*anyopaque,
+        scheduler: *SchedulerV1,
+        input: DriverBindAdmittedV1,
+    ) DriverError!void {
+        _ = scheduler;
+        const self = fromContext(context);
+        if (input.item_index >= self.states.len or
+            self.states[input.item_index] != .pending)
+            return self.fail(input.item);
+        self.states[input.item_index] = .bound;
+        self.binds += 1;
+    }
+
+    fn cancel(
+        context: ?*anyopaque,
+        scheduler: *SchedulerV1,
+        input: DriverCancelV1,
+    ) DriverError!SchedulerEventV1 {
+        const self = fromContext(context);
+        if (input.item_index >= self.states.len or
+            self.states[input.item_index] != .bound)
+            return self.fail(input.item);
+        self.states[input.item_index] = .cancelled;
+        self.cancels += 1;
+        return defaultCancelV1(null, scheduler, input);
+    }
+
+    fn commitService(
+        context: ?*anyopaque,
+        scheduler: *SchedulerV1,
+        input: DriverCommitServiceV1,
+    ) DriverError!SchedulerEventV1 {
+        const self = fromContext(context);
+        if (input.item_index >= self.states.len or
+            self.states[input.item_index] != .bound)
+            return self.fail(input.item);
+        self.services += 1;
+        if (input.final_quantum) {
+            self.states[input.item_index] = .final_service;
+            self.final_services += 1;
+        }
+        return defaultCommitServiceV1(null, scheduler, input);
+    }
+
+    fn retire(
+        context: ?*anyopaque,
+        scheduler: *SchedulerV1,
+        input: DriverRetireV1,
+    ) DriverError!SchedulerEventV1 {
+        const self = fromContext(context);
+        if (input.item_index >= self.states.len or
+            self.states[input.item_index] != .final_service or
+            input.final_service_event.remaining_after != 0)
+            return self.fail(input.item);
+        self.states[input.item_index] = .retired;
+        self.retires += 1;
+        return defaultRetireV1(null, scheduler, input);
+    }
+
+    fn interface(self: *DriverProbe) DriverV1 {
+        return .{
+            .context = self,
+            .bind_admitted_fn = bindAdmitted,
+            .cancel_fn = cancel,
+            .commit_service_fn = commitService,
+            .retire_fn = retire,
+        };
+    }
+};
+
+const ForgedDriverTarget = enum {
+    cancel,
+    service,
+    final_service,
+    retire,
+};
+
+const ForgedDriver = struct {
+    target: ForgedDriverTarget,
+    mutations: u64 = 0,
+
+    fn fromContext(context: ?*anyopaque) *ForgedDriver {
+        return @ptrCast(@alignCast(context.?));
+    }
+
+    fn forge(
+        self: *ForgedDriver,
+        event: SchedulerEventV1,
+    ) SchedulerEventV1 {
+        var changed = event;
+        changed.logical_tick_after += 1;
+        changed.event_sha256 = qos.eventSha256(changed);
+        self.mutations += 1;
+        return changed;
+    }
+
+    fn cancel(
+        context: ?*anyopaque,
+        scheduler: *SchedulerV1,
+        input: DriverCancelV1,
+    ) DriverError!SchedulerEventV1 {
+        const self = fromContext(context);
+        const event = try defaultCancelV1(null, scheduler, input);
+        return if (self.target == .cancel)
+            self.forge(event)
+        else
+            event;
+    }
+
+    fn commitService(
+        context: ?*anyopaque,
+        scheduler: *SchedulerV1,
+        input: DriverCommitServiceV1,
+    ) DriverError!SchedulerEventV1 {
+        const self = fromContext(context);
+        const event = try defaultCommitServiceV1(null, scheduler, input);
+        return if (self.target == .service or
+            (self.target == .final_service and input.final_quantum))
+            self.forge(event)
+        else
+            event;
+    }
+
+    fn retire(
+        context: ?*anyopaque,
+        scheduler: *SchedulerV1,
+        input: DriverRetireV1,
+    ) DriverError!SchedulerEventV1 {
+        const self = fromContext(context);
+        const event = try defaultRetireV1(null, scheduler, input);
+        return if (self.target == .retire)
+            self.forge(event)
+        else
+            event;
+    }
+
+    fn interface(self: *ForgedDriver) DriverV1 {
+        return .{
+            .context = self,
+            .cancel_fn = cancel,
+            .commit_service_fn = commitService,
+            .retire_fn = retire,
+        };
+    }
+};
+
+const UnconsumedServiceDriver = struct {
+    calls: u64 = 0,
+
+    fn commitService(
+        context: ?*anyopaque,
+        scheduler: *SchedulerV1,
+        input: DriverCommitServiceV1,
+    ) DriverError!SchedulerEventV1 {
+        _ = scheduler;
+        _ = input;
+        const self: *UnconsumedServiceDriver =
+            @ptrCast(@alignCast(context.?));
+        self.calls += 1;
+        return error.DriverFailed;
+    }
+
+    fn interface(self: *UnconsumedServiceDriver) DriverV1 {
+        return .{
+            .context = self,
+            .commit_service_fn = commitService,
+        };
+    }
+};
+
 test "reference mixed-media pressure is exact and leaves zero ownership" {
     var items = makeReferenceItemsV1();
     const scenario = referenceScenarioV1(&items);
@@ -2201,6 +2666,145 @@ test "reference mixed-media pressure is exact and leaves zero ownership" {
         qos.RejectionReason.resource_limit,
         result.outcomes[5].rejection_reason,
     );
+}
+
+test "driver hooks preserve roots and run once in lifecycle order" {
+    var items = makeReferenceItemsV1();
+    const scenario = referenceScenarioV1(&items);
+    var default_storage: ReferenceStorageV1 = .{};
+    const expected = try runScenarioV1(
+        scenario,
+        default_storage.interface(),
+    );
+    var probe: DriverProbe = .{};
+    var driven_storage: ReferenceStorageV1 = .{};
+    const actual = try runScenarioWithDriverV1(
+        scenario,
+        driven_storage.interface(),
+        probe.interface(),
+    );
+
+    try std.testing.expectEqualDeep(
+        expected.scenario_sha256,
+        actual.scenario_sha256,
+    );
+    try std.testing.expectEqualDeep(
+        expected.outcome_sha256,
+        actual.outcome_sha256,
+    );
+    try std.testing.expectEqualDeep(
+        expected.trace_sha256,
+        actual.trace_sha256,
+    );
+    try std.testing.expectEqualDeep(
+        expected.summary_sha256,
+        actual.summary_sha256,
+    );
+    try std.testing.expectEqualDeep(expected.summary, actual.summary);
+    try std.testing.expectEqualDeep(expected.outcomes, actual.outcomes);
+    try std.testing.expectEqualDeep(expected.trace, actual.trace);
+    try std.testing.expectEqual(actual.summary.admitted, probe.binds);
+    try std.testing.expectEqual(
+        actual.summary.cancelled + actual.summary.timed_out,
+        probe.cancels,
+    );
+    try std.testing.expectEqual(actual.summary.service_quanta, probe.services);
+    try std.testing.expectEqual(actual.summary.completed, probe.final_services);
+    try std.testing.expectEqual(actual.summary.completed, probe.retires);
+    try std.testing.expectEqual(@as(?u64, null), probe.failed_item_ordinal);
+    for (actual.outcomes, 0..) |outcome, index| {
+        switch (outcome.kind) {
+            .completed => try std.testing.expectEqual(
+                DriverProbeState.retired,
+                probe.states[index],
+            ),
+            .cancelled, .timed_out => try std.testing.expectEqual(
+                DriverProbeState.cancelled,
+                probe.states[index],
+            ),
+            .rejected => try std.testing.expectEqual(
+                DriverProbeState.pending,
+                probe.states[index],
+            ),
+        }
+    }
+}
+
+test "driver failure preserves caller context detail" {
+    var items = makeReferenceItemsV1();
+    const scenario = referenceScenarioV1(&items);
+    var probe: DriverProbe = .{};
+    var storage_value: ReferenceStorageV1 = .{};
+    probe.states[0] = .bound;
+    try std.testing.expectError(
+        Error.DriverFailed,
+        runScenarioWithDriverV1(
+            scenario,
+            storage_value.interface(),
+            .{
+                .context = &probe,
+                .bind_admitted_fn = DriverProbe.bindAdmitted,
+            },
+        ),
+    );
+    try std.testing.expectEqual(
+        scenario.items[0].ordinal,
+        probe.failed_item_ordinal.?,
+    );
+    for (storage_value.bank_slots) |slot|
+        try std.testing.expect(std.meta.eql(slot, resource_bank.Slot{}));
+    for (storage_value.scheduler_slots) |slot|
+        try std.testing.expect(std.meta.eql(slot, qos.Slot{}));
+}
+
+test "service driver failure aborts its unconsumed permit before cleanup" {
+    var items = makeReferenceItemsV1();
+    const scenario = referenceScenarioV1(&items);
+    var storage_value: ReferenceStorageV1 = .{};
+    var driver: UnconsumedServiceDriver = .{};
+    try std.testing.expectError(
+        Error.DriverFailed,
+        runScenarioWithDriverV1(
+            scenario,
+            storage_value.interface(),
+            driver.interface(),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 1), driver.calls);
+    for (storage_value.bank_slots) |slot|
+        try std.testing.expect(std.meta.eql(slot, resource_bank.Slot{}));
+    for (storage_value.scheduler_slots) |slot|
+        try std.testing.expect(std.meta.eql(slot, qos.Slot{}));
+}
+
+test "driver callbacks reject resealed events that are not the chain head" {
+    const targets = [_]ForgedDriverTarget{
+        .cancel,
+        .service,
+        .final_service,
+        .retire,
+    };
+    for (targets) |target| {
+        var items = makeReferenceItemsV1();
+        const scenario = referenceScenarioV1(&items);
+        var storage_value: ReferenceStorageV1 = .{};
+        var driver: ForgedDriver = .{ .target = target };
+        try std.testing.expectError(
+            Error.DriverFailed,
+            runScenarioWithDriverV1(
+                scenario,
+                storage_value.interface(),
+                driver.interface(),
+            ),
+        );
+        try std.testing.expectEqual(@as(u64, 1), driver.mutations);
+        for (storage_value.bank_slots) |slot| {
+            try std.testing.expect(std.meta.eql(
+                slot,
+                resource_bank.Slot{},
+            ));
+        }
+    }
 }
 
 fn digestFromHex(hex: *const [64]u8) !Digest {

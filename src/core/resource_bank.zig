@@ -2083,6 +2083,43 @@ pub const Bank = struct {
         slot.publication_permit_integrity = 0;
     }
 
+    /// Atomically close one exact publication-session namespace and release
+    /// its committed receipt. External coordinators use this terminal path so
+    /// no observer can interleave between clearing the session fence and
+    /// returning the charged capacity.
+    pub fn closePublicationSessionAndRelease(
+        self: *Bank,
+        receipt: Receipt,
+        request_epoch: u64,
+        session_id: usize,
+        expected_next_sequence: u64,
+    ) Error!void {
+        if (request_epoch == 0 or session_id == 0)
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const slot = try self.validateReceipt(receipt);
+        const child_active = if (self.child_slots) |storage|
+            storage[receipt.slot_index].active
+        else
+            false;
+        const lease_tree_active = try self.hasActiveLeaseTreeLocked(
+            receipt.slot_index,
+        );
+        if (slot.state != .committed or
+            slot.publication_request_epoch != request_epoch or
+            slot.publication_session_id != session_id or
+            slot.publication_active or
+            slot.publication_next_sequence != expected_next_sequence or
+            child_active or lease_tree_active)
+            return Error.InvalidTransition;
+        const next_used = try subtractClaims(self.used, receipt.claim);
+        self.used = next_used;
+        slot.* = .{};
+        self.releases +|= 1;
+    }
+
     /// Release one committed receipt exactly once.
     pub fn release(self: *Bank, receipt: Receipt) Error!void {
         self.mutex.lock();
@@ -3380,6 +3417,63 @@ test "publication session fence pins receipt and serializes exact sequences" {
     try bank.abortPublication(second);
     try bank.closePublicationSession(receipt, request_epoch, session_id, 1);
     try bank.release(receipt);
+}
+
+test "publication close and release is one failure-atomic transition" {
+    var slots = [_]Slot{.{}} ** 1;
+    var bank = try Bank.init(
+        &slots,
+        .{ .host_bytes = 64, .queue_slots = 1 },
+        23,
+    );
+    const claim: Claim = .{
+        .activation_bytes = 64,
+        .queue_slots = 1,
+    };
+    const receipt = try bank.commit(try bank.reserve(8, claim));
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    try bank.bindPublicationSession(receipt, 100, session_id);
+    const permit = try bank.beginPublication(
+        receipt,
+        100,
+        session_id,
+        0,
+    );
+    bank.commitPublicationAssumeValid(permit);
+
+    const before = try bank.snapshot();
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.closePublicationSessionAndRelease(
+            receipt,
+            100,
+            session_id,
+            0,
+        ),
+    );
+    try std.testing.expectEqualDeep(before, try bank.snapshot());
+    try bank.validateCommitted(receipt);
+
+    try bank.closePublicationSessionAndRelease(
+        receipt,
+        100,
+        session_id,
+        1,
+    );
+    const after = try bank.snapshot();
+    try std.testing.expect(after.used.isZero());
+    try std.testing.expectEqual(@as(usize, 0), after.committed_receipts);
+    try std.testing.expectEqual(@as(u64, 1), after.releases);
+    try std.testing.expectError(
+        Error.StaleReservation,
+        bank.closePublicationSessionAndRelease(
+            receipt,
+            100,
+            session_id,
+            1,
+        ),
+    );
 }
 
 test "publication permit rejects wrong coordinator and forged identity" {

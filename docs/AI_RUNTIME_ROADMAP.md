@@ -126,7 +126,9 @@ state paths. The model-free media vertical now derives and reserves exact
 activation, output, staging, I/O, and queue claims before execution. Decoded
 source, mapping, optional scratch, and output regions now receive distinct
 `LeaseTree` allocations; provisional regions retire early after commit and all
-paths return ownership to zero. Production weight paging and complete
+paths return ownership to zero. The scheduled-media path additionally adopts
+the exact admission receipt instead of reserving again, then performs one
+failure-atomic bound close and release. Production weight paging and complete
 device/network accounting remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
@@ -149,9 +151,12 @@ deterministic weighted service and cancellation. The first versioned
 explicit-open-loop pressure fixture now composes real `LaneWeave`,
 `ResourceBank`, and verifier state across image/audio/video profiles and retains
 exact capacity/resource rejection, fairness, timeout, cancellation, delay,
-high-water, and zero-orphan evidence. Family-aware batch formation, preemption,
-multi-device placement, generated workloads, and closed-loop mode remain
-planned.
+high-water, and zero-orphan evidence. An additive sidecar now executes the
+completed audio, video, and image media transactions on their final service
+quanta and binds exact outputs/publication receipts without changing the
+workload wires. Family-aware batch formation, preemption, multi-device
+placement, generated workloads, closed-loop mode, and typed model-adapter
+workloads remain planned.
 
 Promotion gate: retained mixed-family pressure campaigns meet declared
 fairness, deadline, logical-resource, cancellation, and zero-orphan invariants;
@@ -372,9 +377,11 @@ predecessor pair for successors, and can optionally validate
 current/predecessor format sidecars through the composed oracle. The first
 portable workload-pressure contract drives a bounded mixed-media
 explicit-open-loop scenario through the real scheduler and resource bank, with
-exact Zig replay and an independent Python oracle. Both surfaces emit
-deterministic versioned evidence only after validation and grant no payload,
-filesystem-write, device, or live resource authority.
+exact Zig replay and an independent Python oracle. Its additive scheduled-media
+sidecar executes the three completed image/audio/video transactions under the
+same admission receipts and binds exact publication evidence. Both surfaces
+emit deterministic versioned evidence only after validation and grant no
+payload, filesystem-write, device, or live resource authority.
 
 Promotion gate: every promoted claim names the workload, platform, numerical
 mode, baseline conditions, verifier, retained artifacts, and nonclaims.
@@ -390,8 +397,12 @@ The track has three deliberately separate levels:
    logical accounting, and zero orphaned ownership. Its canonical
    scenario/result wires, nearest-rank logical-step summaries, exact replay,
    and independent Python verifier are documented in
-   [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md). Generated scenarios,
-   batching, real backpressure, and a separate closed-loop mode remain planned.
+   [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md). A separate sidecar
+   now proves final-quantum image/audio/video fixture execution, atomic
+   publication, single-receipt ownership, and terminal absence for rejected,
+   cancelled, and timed-out work. Generated scenarios, batching, typed
+   model-adapter execution, real backpressure, and a separate closed-loop mode
+   remain planned.
 2. **Native workload** runs declared model-family mixes against a real CPU,
    accelerator, or provider adapter and records completed/rejected/cancelled
    work, throughput, p50/p95/p99 latency, queue delay, memory high-water,
@@ -522,7 +533,10 @@ evidence.
 - add deterministic batch-item mapping and tie/normalization policy; exact
   batch mapping is complete for vision, audio, and selected video frames, while
   normalization and tie policies remain;
-- integrate ResourceBank, LaneWeave, cancellation, and provider routing.
+- integrate `ResourceBank`, `LaneWeave`, cancellation, and provider routing;
+  scheduler receipt handoff and cancellation are integrated for the retained
+  bounded media runtime, while typed stateless family adapters and provider
+  routing remain.
 
 Exit gate: text generation and one stateless encoder share the runtime planes
 while retaining different state and publication semantics.
@@ -531,7 +545,8 @@ while retaining different state and publication semantics.
 
 - bind bounded image/audio/video transforms to exact request admission and one
   atomic media publication transaction; complete for retained model-free
-  fixtures;
+  fixtures, including scheduler-receipt adoption and atomic final-service
+  publication in the pressure campaign;
 - add `LeaseTree` ownership for decoded source, mappings, output, and scratch;
   complete for retained model-free fixtures;
 - compose bounded image/audio/video chunks under one target timeline with

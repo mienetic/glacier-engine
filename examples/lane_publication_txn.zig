@@ -136,8 +136,7 @@ pub fn main() !void {
         state = transition.after;
     }
     const verified = verifier.snapshot();
-    try session.close();
-    _ = try scheduler.retire(admission.handle);
+    _ = try session.retire();
     const bank_snapshot = try bank.snapshot();
     const final_host_bytes = try bank_snapshot.used.hostBytes();
     _ = try scheduler.close();

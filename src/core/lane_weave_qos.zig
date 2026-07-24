@@ -20,6 +20,7 @@ pub const service_permit_abi: u64 = 0x474c_5750_0000_0001;
 pub const service_intent_abi: u64 = 0x474c_5749_0000_0001;
 pub const service_commit_ticket_abi: u64 = 0x474c_5743_0000_0001;
 pub const service_finalizer_abi: u64 = 0x474c_5746_0000_0001;
+pub const service_finalizer_v2_abi: u64 = 0x474c_5746_0000_0002;
 pub const Digest = [32]u8;
 pub const zero_digest: Digest = [_]u8{0} ** 32;
 
@@ -180,6 +181,29 @@ pub const ServiceFinalizerV1 = struct {
     ) void,
 };
 
+/// Additive bound-publication finalizer. V2 retains the V1 callback contract
+/// and adds the exact process-local session authority registered on the lane.
+/// These authority fields are operational only and never enter Event-v1.
+pub const ServiceFinalizerV2 = struct {
+    abi_version: u64 = service_finalizer_v2_abi,
+    publication_request_epoch: u64,
+    publication_session_id: usize,
+    context: *anyopaque,
+    finalize: *const fn (
+        context: *anyopaque,
+        event: *const EventV1,
+    ) void,
+};
+
+/// Selects which services of a bound lane both allow and require V2
+/// publication authority. Unprotected quanta retain only legacy raw/V1
+/// service paths. This is process-local policy, not portable Event-v1 state.
+pub const PublicationServicePolicy = enum(u8) {
+    none,
+    every_service,
+    final_service,
+};
+
 /// Lifecycle state retained in caller-owned storage.
 pub const SlotState = enum(u8) {
     free,
@@ -199,6 +223,12 @@ pub const Slot = struct {
     service_count: u64 = 0,
     receipt: resource_bank.Receipt = zeroReceipt(),
     receipt_sha256: Digest = zero_digest,
+    /// Process-local fence only. These fields intentionally remain outside
+    /// the V1 semantic state hash so binding preserves every legacy Event-v1
+    /// byte while still constraining live Scheduler methods.
+    publication_request_epoch: u64 = 0,
+    publication_session_id: usize = 0,
+    publication_service_policy: PublicationServicePolicy = .none,
 };
 
 /// Scratch state for fail-before-reserve deadline projection.
@@ -600,17 +630,52 @@ pub const Scheduler = struct {
         return .{ .admitted = .{ .handle = handle, .event = event } };
     }
 
-    /// Bind the exact just-admitted request receipt to an address-stable
-    /// publication coordinator. Requiring the admission Event-v1 to remain the
-    /// current chain head closes the validate-then-bind gap: no service,
-    /// cancellation, retirement or later admission may interleave first.
+    /// Bind every service of the exact just-admitted request to an
+    /// address-stable publication coordinator. This retains the original
+    /// three-argument source API; protected services require a V2 finalizer.
     pub fn bindPublicationSession(
         self: *Scheduler,
         admission: Admission,
         request_epoch: u64,
         session_id: usize,
     ) Error!void {
-        if (request_epoch == 0 or session_id == 0)
+        return self.bindPublicationSessionWithPolicy(
+            admission,
+            request_epoch,
+            session_id,
+            .every_service,
+        );
+    }
+
+    /// Bind only the final service of the exact just-admitted request. Earlier
+    /// services retain the legacy raw/V1 commit paths; the final service
+    /// requires a V2 finalizer with this session's exact authority.
+    pub fn bindFinalPublicationSession(
+        self: *Scheduler,
+        admission: Admission,
+        request_epoch: u64,
+        session_id: usize,
+    ) Error!void {
+        return self.bindPublicationSessionWithPolicy(
+            admission,
+            request_epoch,
+            session_id,
+            .final_service,
+        );
+    }
+
+    /// Requiring the admission Event-v1 to remain the current chain head
+    /// closes the validate-then-bind gap: no service, cancellation, retirement
+    /// or later admission may interleave first.
+    fn bindPublicationSessionWithPolicy(
+        self: *Scheduler,
+        admission: Admission,
+        request_epoch: u64,
+        session_id: usize,
+        service_policy: PublicationServicePolicy,
+    ) Error!void {
+        if (request_epoch == 0 or session_id == 0 or
+            service_policy == .none)
             return Error.InvalidConfiguration;
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -635,9 +700,10 @@ pub const Scheduler = struct {
 
         const index = self.validateHandle(admission.handle, .active) catch
             return Error.StaleHandle;
-        const slot = self.slots[index];
+        const slot = &self.slots[index];
         const lane_counts = self.counts();
-        if (!std.meta.eql(event.spec, slot.spec) or
+        if (slotPublicationBound(slot.*) or
+            !std.meta.eql(event.spec, slot.spec) or
             !std.meta.eql(event.resource_receipt, slot.receipt) or
             !std.mem.eql(
                 u8,
@@ -661,6 +727,9 @@ pub const Scheduler = struct {
             error.InvalidTransition => return Error.InvalidTransition,
             else => return self.poisonBank(),
         };
+        slot.publication_request_epoch = request_epoch;
+        slot.publication_session_id = session_id;
+        slot.publication_service_policy = service_policy;
     }
 
     /// Freeze the next deterministic service selection without advancing the
@@ -749,6 +818,8 @@ pub const Scheduler = struct {
         ) orelse return Error.NoRunnableRequest;
         const slot = &self.slots[selection.slot_index];
         self.bank.validateCommitted(slot.receipt) catch return self.poisonBank();
+        if (serviceRequiresBoundFinalizerV2(slot.*))
+            return Error.InvalidTransition;
 
         const before_state = self.stateSha256();
         const before_counts = self.counts();
@@ -815,6 +886,8 @@ pub const Scheduler = struct {
         const pending = try self.validatePendingService(permit);
         if (pending.commit_ticket != null) return Error.ServiceInFlight;
         const context = try self.validateServiceCommitLocked(permit);
+        if (serviceRequiresBoundFinalizerV2(self.slots[context.index]))
+            return Error.InvalidTransition;
         return self.commitServiceLocked(permit, context, null);
     }
 
@@ -866,10 +939,48 @@ pub const Scheduler = struct {
         try self.requireOpen();
         const pending = try self.validateServiceCommitTicket(ticket);
         const context = try self.validateServiceCommitLocked(pending.permit);
+        if (serviceRequiresBoundFinalizerV2(self.slots[context.index]))
+            return Error.InvalidTransition;
         return self.commitServiceLocked(
             pending.permit,
             context,
             finalizer,
+        );
+    }
+
+    /// Commit one protected service with exact bound publication authority.
+    /// V2 is accepted only on quanta selected by the lane's binding policy;
+    /// V1 remains layout- and behavior-compatible for unbound or unprotected
+    /// services.
+    pub fn commitArmedServiceV2(
+        self: *Scheduler,
+        ticket: ServiceCommitTicketV1,
+        finalizer: ServiceFinalizerV2,
+    ) Error!EventV1 {
+        if (finalizer.abi_version != service_finalizer_v2_abi or
+            finalizer.publication_request_epoch == 0 or
+            finalizer.publication_session_id == 0)
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        const pending = try self.validateServiceCommitTicket(ticket);
+        const context = try self.validateServiceCommitLocked(pending.permit);
+        const slot = self.slots[context.index];
+        if (!slotPublicationBindingValid(slot) or
+            !serviceRequiresBoundFinalizerV2(slot) or
+            finalizer.publication_request_epoch !=
+                slot.publication_request_epoch or
+            finalizer.publication_session_id !=
+                slot.publication_session_id)
+            return Error.InvalidTransition;
+        return self.commitServiceLocked(
+            pending.permit,
+            context,
+            .{
+                .context = finalizer.context,
+                .finalize = finalizer.finalize,
+            },
         );
     }
 
@@ -912,11 +1023,54 @@ pub const Scheduler = struct {
         return self.finishHandle(handle, .cancel, .active);
     }
 
+    /// Cancel an active lane whose scheduler-owned receipt is bound to one
+    /// publication session. Closing the session and releasing its receipt is
+    /// one Bank transition.
+    pub fn cancelBoundPublication(
+        self: *Scheduler,
+        handle: Handle,
+        request_epoch: u64,
+        session_id: usize,
+        expected_next_sequence: u64,
+    ) Error!EventV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.finishBoundPublication(
+            handle,
+            .cancel,
+            .active,
+            request_epoch,
+            session_id,
+            expected_next_sequence,
+        );
+    }
+
     /// Release a finished request after downstream state is safe to discard.
     pub fn retire(self: *Scheduler, handle: Handle) Error!EventV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
         return self.finishHandle(handle, .retire, .finished);
+    }
+
+    /// Retire a finished lane and atomically close/release its bound
+    /// publication session.
+    pub fn retireBoundPublication(
+        self: *Scheduler,
+        handle: Handle,
+        request_epoch: u64,
+        session_id: usize,
+        expected_next_sequence: u64,
+    ) Error!EventV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.finishBoundPublication(
+            handle,
+            .retire,
+            .finished,
+            request_epoch,
+            session_id,
+            expected_next_sequence,
+        );
     }
 
     /// Return a Bank-reconciled logical snapshot without advancing the chain.
@@ -988,6 +1142,7 @@ pub const Scheduler = struct {
         try self.preflightEvent();
         const index = try self.validateHandle(handle, required_state);
         const slot = &self.slots[index];
+        if (slotPublicationBound(slot.*)) return Error.InvalidTransition;
         self.bank.validateCommitted(slot.receipt) catch return self.poisonBank();
 
         const before_state = self.stateSha256();
@@ -1008,6 +1163,73 @@ pub const Scheduler = struct {
         self.bank.release(receipt) catch return self.poisonBank();
         self.used = subtractClaims(self.used, spec.claim) catch
             return self.poisonBank();
+        slot.* = .{};
+
+        return self.emitCurrent(.{
+            .kind = kind,
+            .state_before_sha256 = before_state,
+            .logical_tick_before = before_tick,
+            .cursor_before = before_cursor,
+            .level_before = before_level,
+            .handle = handle,
+            .spec = spec,
+            .resource_receipt = receipt,
+            .resource_receipt_sha256 = receipt_sha256,
+            .remaining_before = remaining,
+            .active_before = before_counts.active,
+            .finished_before = before_counts.finished,
+            .bank_used_before = before_used,
+        });
+    }
+
+    fn finishBoundPublication(
+        self: *Scheduler,
+        handle: Handle,
+        kind: EventKind,
+        required_state: SlotState,
+        request_epoch: u64,
+        session_id: usize,
+        expected_next_sequence: u64,
+    ) Error!EventV1 {
+        if (request_epoch == 0 or session_id == 0)
+            return Error.InvalidConfiguration;
+        try self.requireOpen();
+        try self.requireNoService();
+        try self.validateBank();
+        try self.preflightEvent();
+        const index = try self.validateHandle(handle, required_state);
+        const slot = &self.slots[index];
+        if (!slotPublicationBindingValid(slot.*) or
+            slot.publication_request_epoch != request_epoch or
+            slot.publication_session_id != session_id)
+            return Error.InvalidTransition;
+        self.bank.validateCommitted(slot.receipt) catch
+            return self.poisonBank();
+
+        const before_state = self.stateSha256();
+        const before_counts = self.counts();
+        const before_used = self.used;
+        const before_tick = self.logical_tick;
+        const before_cursor = self.cursor;
+        const before_level = self.level;
+        const spec = slot.spec;
+        const receipt = slot.receipt;
+        const receipt_sha256 = slot.receipt_sha256;
+        const remaining = slot.remaining_quanta;
+        const next_used = subtractClaims(self.used, spec.claim) catch
+            return self.poisonBank();
+
+        self.bank.closePublicationSessionAndRelease(
+            receipt,
+            request_epoch,
+            session_id,
+            expected_next_sequence,
+        ) catch |err| switch (err) {
+            error.InvalidConfiguration => return Error.InvalidConfiguration,
+            error.InvalidTransition => return Error.InvalidTransition,
+            else => return self.poisonBank(),
+        };
+        self.used = next_used;
         slot.* = .{};
 
         return self.emitCurrent(.{
@@ -1989,6 +2211,27 @@ fn handleFromSlot(scheduler_epoch: u64, index: usize, slot: Slot) Handle {
     };
 }
 
+fn slotPublicationBound(slot: Slot) bool {
+    return slot.publication_request_epoch != 0 or
+        slot.publication_session_id != 0 or
+        slot.publication_service_policy != .none;
+}
+
+fn slotPublicationBindingValid(slot: Slot) bool {
+    return slot.publication_request_epoch != 0 and
+        slot.publication_session_id != 0 and
+        slot.publication_service_policy != .none;
+}
+
+fn serviceRequiresBoundFinalizerV2(slot: Slot) bool {
+    if (!slotPublicationBound(slot)) return false;
+    return switch (slot.publication_service_policy) {
+        .none => true,
+        .every_service => true,
+        .final_service => slot.remaining_quanta == 1,
+    };
+}
+
 fn schedulerStateSha256(
     config: Config,
     logical_tick: u64,
@@ -2561,6 +2804,68 @@ fn expectAdmitted(decision: AdmissionDecision) !Admission {
     };
 }
 
+const BoundFinalizerCapture = struct {
+    calls: usize = 0,
+    event: ?EventV1 = null,
+
+    fn run(context: *anyopaque, event: *const EventV1) void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        self.calls += 1;
+        self.event = event.*;
+    }
+
+    fn interface(
+        self: *@This(),
+        request_epoch: u64,
+        session_id: usize,
+    ) ServiceFinalizerV2 {
+        return .{
+            .publication_request_epoch = request_epoch,
+            .publication_session_id = session_id,
+            .context = self,
+            .finalize = run,
+        };
+    }
+
+    fn interfaceV1(self: *@This()) ServiceFinalizerV1 {
+        return .{
+            .context = self,
+            .finalize = run,
+        };
+    }
+};
+
+test "LaneWeave ServiceFinalizer-v1 layout and source literal stay stable" {
+    const fields = std.meta.fields(ServiceFinalizerV1);
+    try std.testing.expectEqual(
+        @as(u64, 0x474c_5746_0000_0001),
+        service_finalizer_abi,
+    );
+    try std.testing.expectEqual(@as(usize, 3), fields.len);
+    try std.testing.expectEqualStrings("abi_version", fields[0].name);
+    try std.testing.expectEqualStrings("context", fields[1].name);
+    try std.testing.expectEqualStrings("finalize", fields[2].name);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        @offsetOf(ServiceFinalizerV1, "abi_version"),
+    );
+    try std.testing.expectEqual(
+        @sizeOf(u64),
+        @offsetOf(ServiceFinalizerV1, "context"),
+    );
+    try std.testing.expectEqual(
+        @sizeOf(u64) + @sizeOf(usize),
+        @offsetOf(ServiceFinalizerV1, "finalize"),
+    );
+    try std.testing.expectEqual(
+        @sizeOf(u64) + (2 * @sizeOf(usize)),
+        @sizeOf(ServiceFinalizerV1),
+    );
+    var capture: BoundFinalizerCapture = .{};
+    const finalizer = capture.interfaceV1();
+    try std.testing.expectEqual(service_finalizer_abi, finalizer.abi_version);
+}
+
 test "LaneWeave IWRR golden order is interleaved and bounded" {
     var fixture: TestFixture = .{};
     try fixture.init(3, 4);
@@ -2707,6 +3012,525 @@ test "LaneWeave stale handles cannot cancel a reused slot" {
     );
     _ = try fixture.scheduler.cancel(second.handle);
     _ = try fixture.scheduler.close();
+}
+
+test "LaneWeave bound terminal release preserves legacy Event-v1 bytes" {
+    var legacy: TestFixture = .{};
+    var bound: TestFixture = .{};
+    try legacy.init(1, 1);
+    try bound.init(1, 1);
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+
+    const legacy_cancel = try expectAdmitted(
+        try legacy.scheduler.admit(testSpec(1, 1, 2, 0)),
+    );
+    const bound_cancel = try expectAdmitted(
+        try bound.scheduler.admit(testSpec(1, 1, 2, 0)),
+    );
+    try bound.scheduler.bindPublicationSession(
+        bound_cancel,
+        77,
+        session_id,
+    );
+    const legacy_cancel_event =
+        try legacy.scheduler.cancel(legacy_cancel.handle);
+    const bound_cancel_event =
+        try bound.scheduler.cancelBoundPublication(
+            bound_cancel.handle,
+            77,
+            session_id,
+            0,
+        );
+    try std.testing.expectEqualDeep(
+        legacy_cancel_event,
+        bound_cancel_event,
+    );
+
+    const legacy_retire = try expectAdmitted(
+        try legacy.scheduler.admit(testSpec(2, 1, 1, 0)),
+    );
+    const bound_retire = try expectAdmitted(
+        try bound.scheduler.admit(testSpec(2, 1, 1, 0)),
+    );
+    try bound.scheduler.bindPublicationSession(
+        bound_retire,
+        78,
+        session_id,
+    );
+    const legacy_service_event = try legacy.scheduler.serveOne();
+    const bound_permit = try bound.scheduler.prepareService();
+    const bound_armed = try bound.scheduler.armServiceCommit(bound_permit);
+    var capture: BoundFinalizerCapture = .{};
+    const bound_service_event = try bound.scheduler.commitArmedServiceV2(
+        bound_armed.ticket,
+        capture.interface(78, session_id),
+    );
+    try std.testing.expectEqualDeep(
+        legacy_service_event,
+        bound_service_event,
+    );
+    try std.testing.expectEqual(@as(usize, 1), capture.calls);
+    try std.testing.expectEqualDeep(bound_service_event, capture.event.?);
+    const legacy_retire_event =
+        try legacy.scheduler.retire(legacy_retire.handle);
+    const bound_retire_event =
+        try bound.scheduler.retireBoundPublication(
+            bound_retire.handle,
+            78,
+            session_id,
+            0,
+        );
+    try std.testing.expectEqualDeep(
+        legacy_retire_event,
+        bound_retire_event,
+    );
+    try std.testing.expectEqualDeep(
+        try legacy.scheduler.close(),
+        try bound.scheduler.close(),
+    );
+    try std.testing.expectEqualDeep(
+        try legacy.bank.snapshot(),
+        try bound.bank.snapshot(),
+    );
+}
+
+test "LaneWeave every-service binding requires V2 from the first quantum" {
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    const admission = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 2, 0)),
+    );
+    try fixture.scheduler.bindPublicationSession(
+        admission,
+        89,
+        session_id,
+    );
+    const before = try fixture.scheduler.snapshot();
+
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.serveOne(),
+    );
+    const raw_permit = try fixture.scheduler.prepareService();
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.commitService(raw_permit),
+    );
+    try fixture.scheduler.abortService(raw_permit);
+
+    const v1_permit = try fixture.scheduler.prepareService();
+    const v1_armed = try fixture.scheduler.armServiceCommit(v1_permit);
+    var capture: BoundFinalizerCapture = .{};
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.commitArmedService(
+            v1_armed.ticket,
+            capture.interfaceV1(),
+        ),
+    );
+    try fixture.scheduler.abortArmedService(v1_armed.ticket);
+    try std.testing.expectEqual(@as(usize, 0), capture.calls);
+    try std.testing.expectEqualDeep(before, try fixture.scheduler.snapshot());
+
+    inline for (0..2) |index| {
+        const permit = try fixture.scheduler.prepareService();
+        const armed = try fixture.scheduler.armServiceCommit(permit);
+        const event = try fixture.scheduler.commitArmedServiceV2(
+            armed.ticket,
+            capture.interface(89, session_id),
+        );
+        try std.testing.expectEqual(
+            @as(u64, 1 - index),
+            event.remaining_after,
+        );
+    }
+    try std.testing.expectEqual(@as(usize, 2), capture.calls);
+    _ = try fixture.scheduler.retireBoundPublication(
+        admission.handle,
+        89,
+        session_id,
+        0,
+    );
+    _ = try fixture.scheduler.close();
+    try std.testing.expect((try fixture.bank.snapshot()).used.isZero());
+}
+
+test "LaneWeave partial binding metadata rejects terminal without poison" {
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    const admission = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 1, 0)),
+    );
+    try fixture.scheduler.bindPublicationSession(
+        admission,
+        93,
+        session_id,
+    );
+    const before = try fixture.scheduler.snapshot();
+    const bank_before = try fixture.bank.snapshot();
+    const index: usize = @intCast(admission.handle.slot_index);
+    try std.testing.expectEqual(
+        PublicationServicePolicy.every_service,
+        fixture.lane_slots[index].publication_service_policy,
+    );
+
+    fixture.lane_slots[index].publication_service_policy = .none;
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.cancelBoundPublication(
+            admission.handle,
+            93,
+            session_id,
+            0,
+        ),
+    );
+    try std.testing.expectEqualDeep(before, try fixture.scheduler.snapshot());
+    try std.testing.expectEqualDeep(bank_before, try fixture.bank.snapshot());
+    try std.testing.expect(!(try fixture.scheduler.snapshot()).poisoned);
+
+    fixture.lane_slots[index].publication_service_policy = .every_service;
+    _ = try fixture.scheduler.cancelBoundPublication(
+        admission.handle,
+        93,
+        session_id,
+        0,
+    );
+    _ = try fixture.scheduler.close();
+    try std.testing.expect((try fixture.bank.snapshot()).used.isZero());
+}
+
+test "LaneWeave final-service binding preserves legacy non-final commits" {
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    const admission = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 4, 0)),
+    );
+    try fixture.scheduler.bindFinalPublicationSession(
+        admission,
+        90,
+        session_id,
+    );
+
+    const before_non_final_v2 = try fixture.scheduler.snapshot();
+    const non_final_v2_permit = try fixture.scheduler.prepareService();
+    const non_final_v2_armed =
+        try fixture.scheduler.armServiceCommit(non_final_v2_permit);
+    var policy_capture: BoundFinalizerCapture = .{};
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.commitArmedServiceV2(
+            non_final_v2_armed.ticket,
+            policy_capture.interface(90, session_id),
+        ),
+    );
+    try fixture.scheduler.abortArmedService(non_final_v2_armed.ticket);
+    try std.testing.expectEqualDeep(
+        before_non_final_v2,
+        try fixture.scheduler.snapshot(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), policy_capture.calls);
+
+    const first = try fixture.scheduler.serveOne();
+    try std.testing.expectEqual(@as(u64, 3), first.remaining_after);
+    const non_final_permit = try fixture.scheduler.prepareService();
+    const second = try fixture.scheduler.commitService(non_final_permit);
+    try std.testing.expectEqual(@as(u64, 2), second.remaining_after);
+    const v1_non_final_permit = try fixture.scheduler.prepareService();
+    const v1_non_final_armed =
+        try fixture.scheduler.armServiceCommit(v1_non_final_permit);
+    var non_final_capture: BoundFinalizerCapture = .{};
+    const third = try fixture.scheduler.commitArmedService(
+        v1_non_final_armed.ticket,
+        non_final_capture.interfaceV1(),
+    );
+    try std.testing.expectEqual(@as(u64, 1), third.remaining_after);
+    try std.testing.expectEqual(@as(usize, 1), non_final_capture.calls);
+
+    const before_final = try fixture.scheduler.snapshot();
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.serveOne(),
+    );
+    const raw_final_permit = try fixture.scheduler.prepareService();
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.commitService(raw_final_permit),
+    );
+    try fixture.scheduler.abortService(raw_final_permit);
+
+    const v1_final_permit = try fixture.scheduler.prepareService();
+    const v1_final_armed =
+        try fixture.scheduler.armServiceCommit(v1_final_permit);
+    var capture: BoundFinalizerCapture = .{};
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.commitArmedService(
+            v1_final_armed.ticket,
+            capture.interfaceV1(),
+        ),
+    );
+    try fixture.scheduler.abortArmedService(v1_final_armed.ticket);
+    try std.testing.expectEqualDeep(
+        before_final,
+        try fixture.scheduler.snapshot(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), capture.calls);
+
+    const final_permit = try fixture.scheduler.prepareService();
+    const final_armed = try fixture.scheduler.armServiceCommit(final_permit);
+    const final_event = try fixture.scheduler.commitArmedServiceV2(
+        final_armed.ticket,
+        capture.interface(90, session_id),
+    );
+    try std.testing.expectEqual(@as(u64, 0), final_event.remaining_after);
+    try std.testing.expectEqual(@as(usize, 1), capture.calls);
+    _ = try fixture.scheduler.retireBoundPublication(
+        admission.handle,
+        90,
+        session_id,
+        0,
+    );
+    _ = try fixture.scheduler.close();
+    try std.testing.expect((try fixture.bank.snapshot()).used.isZero());
+}
+
+test "LaneWeave bound publication rejects legacy final and terminal paths without poison" {
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    var coordinator: u8 = 0;
+    var foreign_coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    const admission = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 1, 0)),
+    );
+    try fixture.scheduler.bindPublicationSession(
+        admission,
+        91,
+        session_id,
+    );
+    const scheduler_before = try fixture.scheduler.snapshot();
+    const bank_before = try fixture.bank.snapshot();
+
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.serveOne(),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.cancel(admission.handle),
+    );
+    try std.testing.expectEqualDeep(
+        scheduler_before,
+        try fixture.scheduler.snapshot(),
+    );
+    try std.testing.expectEqualDeep(bank_before, try fixture.bank.snapshot());
+
+    const raw_permit = try fixture.scheduler.prepareService();
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.commitService(raw_permit),
+    );
+    try fixture.scheduler.abortService(raw_permit);
+    try std.testing.expectEqualDeep(
+        scheduler_before,
+        try fixture.scheduler.snapshot(),
+    );
+
+    const wrong_permit = try fixture.scheduler.prepareService();
+    const wrong_armed = try fixture.scheduler.armServiceCommit(wrong_permit);
+    var wrong_capture: BoundFinalizerCapture = .{};
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.commitArmedServiceV2(
+            wrong_armed.ticket,
+            wrong_capture.interface(
+                91,
+                @intFromPtr(&foreign_coordinator),
+            ),
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.commitArmedServiceV2(
+            wrong_armed.ticket,
+            wrong_capture.interface(90, session_id),
+        ),
+    );
+    var bad_abi = wrong_capture.interface(91, session_id);
+    bad_abi.abi_version = service_finalizer_abi;
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        fixture.scheduler.commitArmedServiceV2(
+            wrong_armed.ticket,
+            bad_abi,
+        ),
+    );
+    var zero_epoch = wrong_capture.interface(91, session_id);
+    zero_epoch.publication_request_epoch = 0;
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        fixture.scheduler.commitArmedServiceV2(
+            wrong_armed.ticket,
+            zero_epoch,
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 0), wrong_capture.calls);
+    const event = try fixture.scheduler.commitArmedServiceV2(
+        wrong_armed.ticket,
+        wrong_capture.interface(91, session_id),
+    );
+    try std.testing.expectEqual(@as(u64, 0), event.remaining_after);
+    try std.testing.expectEqual(@as(usize, 1), wrong_capture.calls);
+    const finished_before = try fixture.scheduler.snapshot();
+    const finished_bank_before = try fixture.bank.snapshot();
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.retire(admission.handle),
+    );
+    try std.testing.expectEqualDeep(
+        finished_before,
+        try fixture.scheduler.snapshot(),
+    );
+    try std.testing.expectEqualDeep(
+        finished_bank_before,
+        try fixture.bank.snapshot(),
+    );
+    try std.testing.expect(!finished_before.poisoned);
+
+    _ = try fixture.scheduler.retireBoundPublication(
+        admission.handle,
+        91,
+        session_id,
+        0,
+    );
+    _ = try fixture.scheduler.close();
+    const final = try fixture.bank.snapshot();
+    try std.testing.expect(final.used.isZero());
+    try std.testing.expectEqual(@as(usize, 0), final.committed_receipts);
+}
+
+test "LaneWeave concurrent legacy final service cannot bypass bound finalizer" {
+    const LegacyWorker = struct {
+        scheduler: *Scheduler,
+        start: *std.atomic.Value(bool),
+        event: ?EventV1 = null,
+        operation_error: ?Error = null,
+
+        fn run(self: *@This()) void {
+            while (!self.start.load(.acquire)) std.atomic.spinLoopHint();
+            self.event = self.scheduler.serveOne() catch |err| {
+                self.operation_error = err;
+                return;
+            };
+        }
+    };
+    const BoundWorker = struct {
+        scheduler: *Scheduler,
+        start: *std.atomic.Value(bool),
+        request_epoch: u64,
+        session_id: usize,
+        capture: BoundFinalizerCapture = .{},
+        event: ?EventV1 = null,
+        operation_error: ?Error = null,
+
+        fn run(self: *@This()) void {
+            while (!self.start.load(.acquire)) std.atomic.spinLoopHint();
+            const permit = self.scheduler.prepareService() catch |err| {
+                self.operation_error = err;
+                return;
+            };
+            const armed = self.scheduler.armServiceCommit(permit) catch |err| {
+                self.scheduler.abortService(permit) catch {};
+                self.operation_error = err;
+                return;
+            };
+            self.event = self.scheduler.commitArmedServiceV2(
+                armed.ticket,
+                self.capture.interface(
+                    self.request_epoch,
+                    self.session_id,
+                ),
+            ) catch |err| {
+                self.scheduler.abortArmedService(armed.ticket) catch {};
+                self.operation_error = err;
+                return;
+            };
+        }
+    };
+
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    const admission = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 1, 0)),
+    );
+    try fixture.scheduler.bindPublicationSession(
+        admission,
+        92,
+        session_id,
+    );
+
+    var start = std.atomic.Value(bool).init(false);
+    var legacy: LegacyWorker = .{
+        .scheduler = &fixture.scheduler,
+        .start = &start,
+    };
+    var bound: BoundWorker = .{
+        .scheduler = &fixture.scheduler,
+        .start = &start,
+        .request_epoch = 92,
+        .session_id = session_id,
+    };
+    const legacy_thread = try std.Thread.spawn(
+        .{},
+        LegacyWorker.run,
+        .{&legacy},
+    );
+    const bound_thread = std.Thread.spawn(
+        .{},
+        BoundWorker.run,
+        .{&bound},
+    ) catch |err| {
+        start.store(true, .release);
+        legacy_thread.join();
+        return err;
+    };
+    start.store(true, .release);
+    legacy_thread.join();
+    bound_thread.join();
+
+    try std.testing.expectEqual(@as(?EventV1, null), legacy.event);
+    const legacy_error = legacy.operation_error orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expect(
+        legacy_error == Error.InvalidTransition or
+            legacy_error == Error.ServiceInFlight or
+            legacy_error == Error.NoRunnableRequest,
+    );
+    try std.testing.expectEqual(@as(?Error, null), bound.operation_error);
+    const bound_event = bound.event orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u64, 0), bound_event.remaining_after);
+    try std.testing.expectEqual(@as(usize, 1), bound.capture.calls);
+    try std.testing.expect(!(try fixture.scheduler.snapshot()).poisoned);
+
+    _ = try fixture.scheduler.retireBoundPublication(
+        admission.handle,
+        92,
+        session_id,
+        0,
+    );
+    _ = try fixture.scheduler.close();
+    const final = try fixture.bank.snapshot();
+    try std.testing.expect(final.used.isZero());
+    try std.testing.expectEqual(@as(usize, 0), final.committed_receipts);
 }
 
 test "LaneWeave service abort preserves exact logical and Bank state" {

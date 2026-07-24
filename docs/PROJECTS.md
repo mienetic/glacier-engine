@@ -377,6 +377,16 @@ zero-orphan ownership. Zig exact replay and an independent Python scheduler and
 accounting model agree on every record and frozen root. See
 [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md).
 
+**Completed execution slice:** an additive sidecar now adopts each accepted
+scheduler receipt into one bounded media session. The completed audio, video,
+and image requests run their bounded retained fixture
+decode-transform-publication
+lifecycle only on the final service quantum; cancel, timeout, and rejection
+produce no media execution. One armed finalizer joins scheduler service and
+media publication, five accepted receipts close exactly once, and independent
+Zig/Python verification agrees on the 5,472-byte evidence wire. See
+[Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md).
+
 This is deterministic conformance, not a throughput, wall-clock latency,
 physical-memory, energy, or soak result.
 
@@ -386,7 +396,8 @@ Small independent follow-up slices include:
 - add one new media or non-media profile without weakening exact replay;
 - specify a separately versioned closed-loop mode;
 - build a read-only scenario/result inspector that exposes no authority;
-- connect one real family-adapter lifecycle to the same receipt accounting; or
+- connect one typed family model-adapter lifecycle to the completed
+  scheduler-owned receipt accounting; or
 - add one native platform observer with explicit present/missing/denied states.
 
 **Done when:** the slice fixes all bounds and summary rules before execution,

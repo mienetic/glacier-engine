@@ -15,6 +15,11 @@ This answers a narrower question than a native load benchmark:
 The answer is retained without relying on wall-clock order, threads, random
 timing, a model download, a device, or network access.
 
+An additive scheduled-media layer now consumes the same accepted receipts and
+executes the retained image, audio, and video transactions on their final
+service quanta without changing any WorkloadPressure V1 scenario/result byte or
+root. See [Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md).
+
 ## What V1 exercises
 
 The reference campaign contains seven typed image, audio, and video work items:
@@ -118,26 +123,57 @@ deterministic scheduling observations, not milliseconds:
 - queue delay p50/p95/p99/max: `1/5/5/5` steps;
 - completion delay p50/p95/p99/max: `16/19/19/19` steps.
 
+## Additive scheduled-media execution
+
+The separately versioned scheduled-media sidecar adopts the exact scheduler
+receipt for all five accepted items. It runs a real bounded media transaction
+only for the three completed requests:
+
+- Audio 1 transforms to `00c05515` with two exact mappings;
+- Video 2 transforms to `ff804000` with one exact mapping; and
+- Image 6 transforms to `00ff0000ff00ffffffffffff` with four exact mappings.
+
+Candidate validation completes before one armed finalizer commits both media
+publication and the last scheduler service quantum. Cancelled and timed-out
+sessions close their publication fences and release the scheduler-owned receipt
+without media execution; rejected items never bind a session. The Bank still
+records five commits and five releases, proving that media execution did not
+double-charge the workload.
+
+The additive 5,472-byte evidence wire binds all seven workload outcomes, the
+five accepted receipt identities, three final-service trace positions, complete
+media execution receipts, exact output roots, before/after publication roots,
+and a zero-orphan summary. Zig and Python independently reconstruct and verify
+the same wire and retained root.
+
 ## Run the retained campaign
 
 ```sh
 zig test src/core/workload_pressure.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_workload_pressure
+zig test src/core/scheduled_media_pressure.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_scheduled_media_pressure
 ```
 
 The module is exported through both package surfaces as
 `glacier.workload_pressure` / `glacier.WorkloadPressure` and
-`glacier_core.workload_pressure` / `glacier_core.WorkloadPressure`.
+`glacier_core.workload_pressure` / `glacier_core.WorkloadPressure`. The
+additive executor is exported as
+`glacier.scheduled_media_pressure` / `glacier.ScheduledMediaPressure` and
+`glacier_core.scheduled_media_pressure` /
+`glacier_core.ScheduledMediaPressure`.
 
 ## Claim boundary
 
-This campaign proves deterministic contract behavior for one bounded logical
-workload. It does not yet measure:
+The base V1 campaign proves deterministic contract behavior for one bounded
+logical workload. The additive media campaign also proves deterministic
+fixture decode, transform, mapping verification, transactional publication, and
+terminal release. Neither layer measures:
 
 - native throughput, requests per second, first-output latency, or tail latency;
 - process RSS, allocator behavior, device memory, energy, or thermals;
 - threaded execution, asynchronous queues, real batching, or kernel overlap;
-- real model, tokenizer, decoder, encoder, codec, playback, or display work;
+- production model, tokenizer, external codec, playback, or display work;
 - filesystem, process, backend, or device disruption under sustained load; or
 - long-duration leak, soak, capacity-planning, or service-level behavior.
 
@@ -151,8 +187,9 @@ The load track can now grow without mixing conformance and performance claims:
 1. add generated bounded scenarios and shrinkable failure cases;
 2. add a separately versioned closed-loop mode with explicit completion-driven
    arrivals;
-3. connect the same receipt lifecycle to real text, embedding, image, audio,
-   video, provider, and tool adapters;
+3. connect the scheduler-owned receipt lifecycle to typed model, provider, and
+   tool adapters; the bounded image/audio/video media-runtime transaction is
+   now complete;
 4. add family-aware batching, safe preemption, and multi-tenant campaigns;
 5. build native per-OS runners that retain CPU, memory, power, thermal, backend,
    and machine-condition envelopes; and

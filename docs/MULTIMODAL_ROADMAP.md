@@ -2,7 +2,8 @@
 
 Status: **integrated model-free image/audio/video runtime plus typed
 vision/audio/temporal-video fixtures, stateful transcript and explicit-VFR
-video-model restart, bounded streaming, generated-image publication after
+video-model restart, scheduler-coupled final-quantum media evidence, bounded
+streaming, generated-image publication after
 terminal-latent restart, generated-PCM publication with exact application
 acknowledgement across process restart, ordered generated-video manifests with
 exact application display acknowledgement, atomic generated-output checkpoint
@@ -192,10 +193,14 @@ A separate portable workload-pressure fixture now binds fixed image, audio,
 and video family/profile identities to exact `ResourceBank` claims, then drives
 the real scheduler through weighted service, two overload paths, timeout,
 cancellation, completion, and final release. Exact Zig replay and an
-independent Python model agree on the canonical result. The fixture schedules
-logical media work; it does not execute models, transforms, encoders, codecs,
-playback, display, or native timing. See
-[Deterministic Workload Pressure](WORKLOAD_PRESSURE.md).
+independent Python model agree on the canonical result. An additive sidecar now
+adopts the accepted scheduler receipts and runs the completed audio, video, and
+image fixture transforms/publications only on their final service quanta.
+Cancelled, timed-out, and rejected work produces no media execution, and all
+accepted receipts close exactly once. This executes bounded fixture media
+rules, not production models, external codecs, playback, display, or native
+timing. See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md) and
+[Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md).
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -659,8 +664,9 @@ Early contributions can proceed without a large model:
   registry-transition-format campaign with new versioned profiles while
   preserving frozen V1 roots and bounded mutation coverage;
 - extend the deterministic workload-pressure campaign with generated bounded
-  schedules or one real media-adapter lifecycle while preserving exact replay
-  and keeping logical metrics separate from native measurements;
+  schedules or one typed family model-adapter lifecycle; the real bounded
+  media-runtime lifecycle is complete while exact replay remains separate from
+  native measurements;
 - extend format-aware inspection with privacy-safe export/retention policy
   without rendering payload bytes;
 - add a new strict profile under a new encoding ABI instead of silently

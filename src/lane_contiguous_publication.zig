@@ -137,9 +137,42 @@ pub const Session = struct {
         self.initialized = true;
     }
 
+    /// Cancel an active bound request and return its atomic Event-v1 terminal
+    /// evidence after verifying that no concrete state escaped privately.
+    pub fn cancel(
+        self: *Session,
+    ) (Error || publication.Error || lane.Error)!lane.EventV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.initialized or self.phase != .idle or self.active != null)
+            return Error.InvalidState;
+        _ = try self.snapshotVerifiedLocked();
+        const event = try self.inner.cancel();
+        self.initialized = false;
+        return event;
+    }
+
+    /// Retire a finished bound request and return its atomic Event-v1 terminal
+    /// evidence after re-verifying every concrete state commitment.
+    pub fn retire(
+        self: *Session,
+    ) (Error || publication.Error || lane.Error)!lane.EventV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.initialized or self.phase != .idle or self.active != null)
+            return Error.InvalidState;
+        _ = try self.snapshotVerifiedLocked();
+        const event = try self.inner.retire();
+        self.initialized = false;
+        return event;
+    }
+
+    /// Convenience atomic terminal path for callers that do not retain
+    /// Event-v1. The inner Session selects retire versus cancel from its exact
+    /// committed publication count.
     pub fn close(
         self: *Session,
-    ) (Error || publication.Error)!void {
+    ) (Error || publication.Error || lane.Error)!void {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (!self.initialized or self.phase != .idle or self.active != null)
@@ -814,8 +847,7 @@ const TestFixture = struct {
     }
 
     fn finishRequest(self: *TestFixture, session: *Session) !void {
-        try session.close();
-        _ = try self.scheduler.retire(self.admission.handle);
+        _ = try session.retire();
         const snapshot = try self.bank.snapshot();
         try testing.expect(snapshot.used.isZero());
         _ = try self.scheduler.close();

@@ -174,8 +174,9 @@ pub const TranscriptSnapshotV1 = struct {
 
 /// Address-stable single-request coordinator. Initialize immediately after
 /// admission, before another Scheduler event. Every selected service for this
-/// request must then publish through this Session. Call `close` before LaneWeave
-/// cancel/retire releases the receipt.
+/// request must then publish through this Session. Finish with `cancel`,
+/// `retire`, or `close`; those methods own the atomic Scheduler/Bank terminal
+/// transition, so callers must not separately cancel or retire the bound lane.
 pub const Session = struct {
     mutex: std.Thread.Mutex = .{},
     scheduler: *lane.Scheduler = undefined,
@@ -231,19 +232,59 @@ pub const Session = struct {
         };
     }
 
-    pub fn close(self: *Session) Error!void {
+    /// Cancel an active request and atomically close the bound publication
+    /// namespace, release its Scheduler-owned receipt, and emit Event-v1.
+    pub fn cancel(self: *Session) (Error || lane.Error)!lane.EventV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (!self.initialized) return Error.InvalidState;
-        self.bank.closePublicationSession(
-            self.admission.event.resource_receipt,
+        const event = try self.scheduler.cancelBoundPublication(
+            self.admission.handle,
             self.request_epoch,
             @intFromPtr(self),
             self.next_sequence,
-        ) catch |err| switch (err) {
-            error.StaleReservation => return Error.ResourceReceiptInvalid,
-            else => return Error.InvalidState,
-        };
+        );
+        self.initialized = false;
+        return event;
+    }
+
+    /// Retire a finished request and atomically close the bound publication
+    /// namespace, release its Scheduler-owned receipt, and emit Event-v1.
+    pub fn retire(self: *Session) (Error || lane.Error)!lane.EventV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.initialized) return Error.InvalidState;
+        const event = try self.scheduler.retireBoundPublication(
+            self.admission.handle,
+            self.request_epoch,
+            @intFromPtr(self),
+            self.next_sequence,
+        );
+        self.initialized = false;
+        return event;
+    }
+
+    /// Convenience terminal path for callers that do not retain Event-v1.
+    /// A complete publication sequence retires; an incomplete one cancels.
+    pub fn close(self: *Session) (Error || lane.Error)!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.initialized) return Error.InvalidState;
+        if (self.next_sequence == self.admission.event.spec.work_quanta) {
+            _ = try self.scheduler.retireBoundPublication(
+                self.admission.handle,
+                self.request_epoch,
+                @intFromPtr(self),
+                self.next_sequence,
+            );
+        } else {
+            _ = try self.scheduler.cancelBoundPublication(
+                self.admission.handle,
+                self.request_epoch,
+                @intFromPtr(self),
+                self.next_sequence,
+            );
+        }
         self.initialized = false;
     }
 
@@ -362,7 +403,9 @@ pub const Session = struct {
             .ack = ack,
             .sink = sink,
         };
-        _ = self.scheduler.commitArmedService(armed.ticket, .{
+        _ = self.scheduler.commitArmedServiceV2(armed.ticket, .{
+            .publication_request_epoch = self.request_epoch,
+            .publication_session_id = @intFromPtr(self),
             .context = &finalizer_context,
             .finalize = FinalizerContext.finalize,
         }) catch |err| {
@@ -1438,8 +1481,15 @@ test "Lane publication commits exact width-one AI state and verifies offline" {
         ),
     );
 
-    try session.close();
-    _ = try fixture.scheduler.retire(fixture.admission.handle);
+    const before_wrong_terminal = try fixture.scheduler.snapshot();
+    try testing.expectError(lane.Error.StaleHandle, session.cancel());
+    try testing.expectEqualDeep(
+        before_wrong_terminal,
+        try fixture.scheduler.snapshot(),
+    );
+    try testing.expectEqual(@as(u64, 2), (try session.snapshot()).next_sequence);
+    const retire_event = try session.retire();
+    try testing.expectEqual(lane.EventKind.retire, retire_event.kind);
     const bank_snapshot = try fixture.bank.snapshot();
     try testing.expect(bank_snapshot.used.isZero());
     try testing.expectEqual(@as(usize, 0), bank_snapshot.committed_receipts);
@@ -1496,8 +1546,7 @@ test "Lane publication rejection is private and retry keeps logical intent" {
     ));
     try testing.expect(commitReceiptValidV1(committed));
 
-    try session.close();
-    _ = try fixture.scheduler.retire(fixture.admission.handle);
+    _ = try session.retire();
     _ = try fixture.scheduler.close();
 }
 
@@ -1541,8 +1590,15 @@ test "Lane publication terminal token closes the Session output chain" {
     try testing.expectEqual(@as(usize, 1), sink.commit_calls);
     try testing.expectEqual(@as(u64, 1), (try session.snapshot()).next_sequence);
 
-    try session.close();
-    _ = try fixture.scheduler.cancel(fixture.admission.handle);
+    const before_wrong_terminal = try fixture.scheduler.snapshot();
+    try testing.expectError(lane.Error.StaleHandle, session.retire());
+    try testing.expectEqualDeep(
+        before_wrong_terminal,
+        try fixture.scheduler.snapshot(),
+    );
+    try testing.expectEqual(@as(u64, 1), (try session.snapshot()).next_sequence);
+    const cancel_event = try session.cancel();
+    try testing.expectEqual(lane.EventKind.cancel, cancel_event.kind);
     _ = try fixture.scheduler.close();
 }
 
@@ -1582,7 +1638,6 @@ test "Lane publication corrupt acknowledgment aborts reservation and retries" {
     );
     try testing.expectEqual(@as(usize, 1), sink.commit_calls);
     try session.close();
-    _ = try fixture.scheduler.retire(fixture.admission.handle);
     _ = try fixture.scheduler.close();
 }
 
@@ -1653,8 +1708,7 @@ test "Lane publication verifier rejects nested mutation and replay" {
         fresh_verifier.apply(substituted),
     );
 
-    try session.close();
-    _ = try fixture.scheduler.retire(fixture.admission.handle);
+    _ = try session.retire();
     _ = try fixture.scheduler.close();
 }
 
@@ -1718,7 +1772,12 @@ test "Lane publication copied Session fails closed at the Bank address fence" {
         sink.interface(),
     );
 
-    try session.close();
-    _ = try fixture.scheduler.retire(fixture.admission.handle);
+    var terminal_copy = session;
+    try testing.expectError(
+        lane.Error.InvalidTransition,
+        terminal_copy.retire(),
+    );
+    try testing.expectEqual(@as(u64, 1), (try session.snapshot()).next_sequence);
+    _ = try session.retire();
     _ = try fixture.scheduler.close();
 }
