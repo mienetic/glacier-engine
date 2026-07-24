@@ -40,6 +40,9 @@ fi
 
 cache_root=$(mktemp -d "$cache_parent/glacier-zig-cache.XXXXXX")
 chmod 700 "$cache_root"
+ZIG_LOCAL_CACHE_DIR="$cache_root/local"
+ZIG_GLOBAL_CACHE_DIR="$cache_root/global"
+export ZIG_LOCAL_CACHE_DIR ZIG_GLOBAL_CACHE_DIR
 zig_pid=
 
 cleanup_cache() {
@@ -76,8 +79,8 @@ trap 'terminate_build INT 130' INT
 trap 'terminate_build TERM 143' TERM
 
 zig "$@" \
-    --cache-dir "$cache_root/local" \
-    --global-cache-dir "$cache_root/global" &
+    --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
+    --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" &
 zig_pid=$!
 if wait "$zig_pid"; then
     build_status=0

@@ -9,9 +9,13 @@ welcome.
 ```sh
 git clone https://github.com/mienetic/glacier-engine.git
 cd glacier-engine
-zig build test -Doptimize=ReleaseSafe -Dmetal=false
-python3 -m unittest discover -s bench/tests
+tools/verify.sh
 ```
+
+The default quick profile uses no model or provider credentials and reports
+every gate as `PASS`, `FAIL`, or `SKIP` with a reason. Run
+`tools/verify.sh full` before submitting changes that need the broad local
+ReleaseSafe and Python suites.
 
 Then choose a bounded item from [Contributor projects](PROJECTS.md), open a
 **Claim a contributor slice** issue, and tell us what command will prove it is
@@ -73,6 +77,9 @@ Choose the narrowest row that fully covers your change.
 Common commands:
 
 ```sh
+tools/verify.sh
+tools/verify.sh full
+
 zig build test -Doptimize=Debug -Dmetal=false
 zig build test -Doptimize=ReleaseSafe -Dmetal=false
 zig build test -Doptimize=ReleaseFast -Dmetal=false
@@ -82,6 +89,11 @@ zig build test -Doptimize=ReleaseSafe -Dmetal=false -Dsanitize-thread=true
 zig build test-compile -Dtarget=x86_64-linux-gnu -Dmetal=false -Doptimize=ReleaseSafe
 zig build test-compile -Dtarget=aarch64-linux-gnu -Dmetal=false -Doptimize=ReleaseSafe
 ```
+
+The one-command profiles use private temporary Zig caches, a temporary install
+prefix, `-j2`, and repository fixtures only. The quick profile intentionally
+marks broad native, Python, Rust, sanitizer, and cross-target work as skipped;
+it is a contributor smoke gate, not evidence that those matrices passed.
 
 Record an unsupported ThreadSanitizer environment as **not run**, not passed.
 

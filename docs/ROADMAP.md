@@ -194,7 +194,11 @@ evidence. The plane and model-family sequence is specified in the
   chains, missing/foreign predecessor and semantic-drift rejection, and an
   independent composed Python oracle for all three binary layers.
 - [x] Bounded contributor project catalog and issue template.
-- [ ] One-command local verification wrapper with clear skipped-gate reporting.
+- [x] One-command quick/full local verification wrapper with deterministic
+  pass/fail/skip summaries, explicit skipped-gate reasons, bootstrap-safe
+  temporary Zig caches, temporary install products, bounded parallelism, no
+  model downloads, and fake-tool regression coverage for cleanup and exit
+  behavior.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
 - [ ] Small redistributable fixtures covering the supported loader surface.
 - [ ] First tagged experimental release with checksums and migration notes.

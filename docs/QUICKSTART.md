@@ -23,9 +23,14 @@ python3 --version
 ```sh
 git clone https://github.com/mienetic/glacier-engine.git
 cd glacier-engine
+tools/verify.sh
+
 zig build -Doptimize=ReleaseSafe -Dmetal=false
 ./zig-out/bin/glacier --version
 ```
+
+The verifier's default quick profile runs bounded, model-free contributor
+checks and prints an explicit reason for every skipped broad or platform gate.
 
 On macOS, Metal is enabled by default. Keep `-Dmetal=false` while learning the
 portable core; remove it when working on the accelerator backend.
@@ -52,10 +57,17 @@ tools/zig-with-ephemeral-cache.sh build contract-interop-test \
   -Doptimize=ReleaseSafe -Dmetal=false -j2
 ```
 
-It creates private temporary local/global caches, rejects caller-supplied cache
-paths, reports their final size, and removes the validated temporary directory
-on exit. It does not remove `zig-out/`, downloaded models, Python environments,
-or any user-wide cache.
+It exports private temporary local/global cache paths before Zig compiles the
+build runner, also supplies the paths explicitly to the build, rejects
+caller-supplied cache paths, reports their final size, and removes the validated
+temporary directory on exit. It does not remove `zig-out/`, downloaded models,
+Python environments, or any user-wide cache.
+
+`tools/verify.sh` applies the same isolation to all of its Zig gates and places
+their install prefix and captured logs in one temporary verification workspace.
+The quick profile uses `-j2`, repository-owned fixtures, and no network or model
+download. Its `full` profile adds broader local suites but retains the same
+cleanup boundary.
 
 `SIGKILL`, power loss, or a host crash cannot run shell cleanup; in that case,
 inspect the printed temporary parent for one leftover
@@ -332,10 +344,14 @@ zig build provider-context-adapter-demo -Doptimize=ReleaseSafe -Dmetal=false
 ## 6. Run the verification suites
 
 ```sh
-zig build test -Doptimize=Debug -Dmetal=false
-zig build test -Doptimize=ReleaseSafe -Dmetal=false
-python3 -m unittest discover -s bench/tests
+tools/verify.sh
+tools/verify.sh full
 ```
+
+The first command is the bounded quick contributor gate. The second adds the
+native ReleaseSafe suite, full Python discovery, and the Rust interop gate when
+the host and optional `rustc` support it. Both commands distinguish skipped
+work from passing work in their final summaries.
 
 The producer-transition fixture proves exact deterministic replay on the
 verifying host. It does not prove historical execution, live resource
@@ -405,10 +421,14 @@ Xcode, and device versions in a Metal-specific issue.
 ### Build cache behaves unexpectedly
 
 Run the smallest failing step through
-`tools/zig-with-ephemeral-cache.sh` first. If that succeeds, inspect the exact
-repository-local `.zig-cache` path before removing it. `zig-out` contains build
-products rather than compiler cache and normally does not need to be removed.
-Do not delete shared toolchain, model, provider, or application directories.
+`tools/zig-with-ephemeral-cache.sh` first, or use `tools/verify.sh` for the
+standard contributor gates. Neither command should populate the repository
+`.zig-cache` or the user-wide Zig cache. A force-kill, power loss, or host crash
+can leave the exact printed `glacier-zig-cache.*` or `glacier-verify.*`
+temporary directory behind; inspect that specific path before removing it.
+`zig-out` contains build products rather than compiler cache and normally does
+not need to be removed. Do not delete shared toolchain, model, provider, or
+application directories.
 
 ### A benchmark number looks surprising
 

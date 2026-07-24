@@ -366,6 +366,19 @@ Requirements:
 Compile-only core probes also exist for additional targets. They are not native
 support claims; see [Platform Portability](docs/PLATFORM_PORTABILITY.md).
 
+Run the bounded contributor check first. It uses only repository fixtures,
+keeps compiler caches and build products in a private temporary workspace, and
+does not download a model or contact a provider:
+
+```sh
+tools/verify.sh
+```
+
+Every gate is reported as `PASS`, `FAIL`, or `SKIP` with a reason. The default
+quick profile verifies formatting, public-document policy, package imports, and
+the Zig/C/C++/Python contract chain. Use `tools/verify.sh full` to add the broad
+native ReleaseSafe and Python suites plus the optional Rust gate.
+
 Build the portable CLI and run one deterministic, model-free publication demo:
 
 ```sh
@@ -394,14 +407,15 @@ Rust instructions.
 Run the broad verification suites when working across the whole repository:
 
 ```sh
-zig build test -Doptimize=ReleaseSafe -Dmetal=false
-python3 -m unittest discover -s bench/tests
+tools/verify.sh full
 ```
 
-The full suite can create a much larger compiler cache than the focused interop
-gate. Use `tools/zig-with-ephemeral-cache.sh` when incremental cache retention
-is not worth the disk space. For model conversion, generation, and the complete
-demo index, continue with the [Quickstart guide](docs/QUICKSTART.md).
+The full profile can use substantially more temporary compiler storage than the
+quick profile, but removes its validated workspace on normal exit. Use
+`tools/zig-with-ephemeral-cache.sh` for any other focused Zig step when
+incremental cache retention is not worth the disk space. For model conversion,
+generation, and the complete demo index, continue with the
+[Quickstart guide](docs/QUICKSTART.md).
 
 Zig dependency consumers can import the runtime or core module without taking
 a dependency on the CLI, demos, or benchmark executables:
