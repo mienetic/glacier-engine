@@ -4637,6 +4637,498 @@ test "reference replay spans every producer and two generations" {
     );
 }
 
+test "maximum repeated-modality replay spans two generations" {
+    const fixture_entries = 2 * registry.max_outputs_per_modality;
+    const request_epoch: u64 = 701_001;
+    const tenant = referenceIdentityV1("tenant");
+    const policy = referenceIdentityV1("metadata-policy");
+    const challenge = referenceIdentityV1("challenge");
+    const image_labels = [_][]const u8{
+        "maximum-image-0",
+        "maximum-image-1",
+        "maximum-image-2",
+        "maximum-image-3",
+        "maximum-image-4",
+        "maximum-image-5",
+        "maximum-image-6",
+        "maximum-image-7",
+    };
+    const audio_labels = [_][]const u8{
+        "maximum-audio-0",
+        "maximum-audio-1",
+        "maximum-audio-2",
+        "maximum-audio-3",
+        "maximum-audio-4",
+        "maximum-audio-5",
+        "maximum-audio-6",
+        "maximum-audio-7",
+    };
+    const video_labels = [_][]const u8{
+        "maximum-video-0",
+        "maximum-video-1",
+        "maximum-video-2",
+        "maximum-video-3",
+        "maximum-video-4",
+        "maximum-video-5",
+        "maximum-video-6",
+        "maximum-video-7",
+    };
+    const audio_inputs = [_][2]u8{
+        .{ 129, 127 },
+        .{ 130, 126 },
+        .{ 131, 125 },
+        .{ 132, 124 },
+        .{ 133, 123 },
+        .{ 134, 122 },
+        .{ 135, 121 },
+        .{ 136, 120 },
+    };
+    const video_inputs = [_][2]u8{
+        .{ 3, 7 },
+        .{ 5, 9 },
+        .{ 7, 11 },
+        .{ 9, 13 },
+        .{ 11, 15 },
+        .{ 13, 17 },
+        .{ 15, 19 },
+        .{ 17, 21 },
+    };
+
+    var images: [fixture_entries]ReferenceImageStorageV1 = undefined;
+    var audios: [fixture_entries]ReferenceAudioStorageV1 = undefined;
+    var videos: [fixture_entries]ReferenceVideoStorageV1 = undefined;
+    for (0..fixture_entries) |index| {
+        images[index] = try makeReferenceImageV1(
+            image_labels[index],
+            request_epoch,
+            tenant,
+            policy,
+            challenge,
+            @intCast(index),
+            if (index == 0)
+                null
+            else
+                images[index - 1].producer_plan.plan_sha256,
+            if (index == 0)
+                null
+            else
+                images[index - 1].producer_result.result_sha256,
+        );
+        audios[index] = try makeReferenceAudioV1(
+            audio_labels[index],
+            request_epoch,
+            tenant,
+            policy,
+            challenge,
+            audio_inputs[index],
+            if (index == 0) null else &audios[index - 1],
+        );
+        videos[index] = try makeReferenceVideoV1(
+            video_labels[index],
+            request_epoch,
+            tenant,
+            policy,
+            challenge,
+            video_inputs[index],
+            if (index == 0) null else &videos[index - 1],
+        );
+    }
+
+    var outputs1: [registry.max_entries]OutputTransitionV1 = undefined;
+    var outputs2: [registry.max_entries]OutputTransitionV1 = undefined;
+    for (0..registry.max_outputs_per_modality) |index| {
+        outputs1[index] = images[index].output();
+        outputs1[registry.max_outputs_per_modality + index] =
+            audios[index].output();
+        outputs1[2 * registry.max_outputs_per_modality + index] =
+            videos[index].output();
+
+        const successor_index =
+            registry.max_outputs_per_modality + index;
+        outputs2[index] = images[successor_index].output();
+        outputs2[registry.max_outputs_per_modality + index] =
+            audios[successor_index].output();
+        outputs2[2 * registry.max_outputs_per_modality + index] =
+            videos[successor_index].output();
+    }
+
+    const input1: BatchInputV1 = .{
+        .previous = null,
+        .generation_plan_sha256 = referenceIdentityV1("maximum-generation-plan-one"),
+        .outputs = &outputs1,
+    };
+    const scratch1_len = try requiredScratchBytesV1(input1);
+    const archive1_len = try requiredArchiveBytesV1(input1);
+    const evidence1_len = try requiredEvidenceBytesV1(outputs1.len);
+    var scratch1: [64 * 1024]u8 = undefined;
+    var archive1: [64 * 1024]u8 = undefined;
+    var evidence1: [
+        batch_header_bytes +
+            registry.max_entries * transition_receipt_bytes
+    ]u8 = undefined;
+    try std.testing.expect(scratch1_len <= scratch1.len);
+    try std.testing.expect(archive1_len <= archive1.len);
+    try std.testing.expectEqual(evidence1.len, evidence1_len);
+    const prepared1 = try encodeArchiveAndEvidenceV1(
+        input1,
+        scratch1[0..scratch1_len],
+        archive1[0..archive1_len],
+        evidence1[0..evidence1_len],
+    );
+    const decoded_registry1 = try registry.decodeArchiveV1(
+        prepared1.registry_archive.set.bytes,
+        null,
+    );
+    const decoded_evidence1 = try validateArchiveAndEvidenceV1(.{
+        .registry_archive = decoded_registry1,
+        .evidence = prepared1.evidence,
+    });
+    try std.testing.expectEqual(
+        try digestFromHexV1(
+            "b0f1b0fca6f858236593d06588bc9b8fd8ff2907eefea43be6ed1f16b9c13942",
+        ),
+        prepared1.batch.batch_sha256,
+    );
+    try std.testing.expectEqual(
+        try digestFromHexV1(
+            "132c566ebef9d879b7db1f46c096ac3ec7eabfbf3d5e107b8451810dc5987dc0",
+        ),
+        decoded_registry1.archive_sha256,
+    );
+    try expectMaximumReferenceGenerationV1(
+        decoded_registry1,
+        decoded_evidence1,
+        null,
+        null,
+    );
+
+    const previous1: PreviousGenerationV1 = .{
+        .registry_archive = decoded_registry1,
+        .evidence = prepared1.evidence,
+    };
+    const input2: BatchInputV1 = .{
+        .previous = previous1,
+        .generation_plan_sha256 = referenceIdentityV1("maximum-generation-plan-two"),
+        .outputs = &outputs2,
+    };
+    const scratch2_len = try requiredScratchBytesV1(input2);
+    const archive2_len = try requiredArchiveBytesV1(input2);
+    const evidence2_len = try requiredEvidenceBytesV1(outputs2.len);
+    var scratch2: [64 * 1024]u8 = undefined;
+    var archive2: [64 * 1024]u8 = undefined;
+    var evidence2: [
+        batch_header_bytes +
+            registry.max_entries * transition_receipt_bytes
+    ]u8 = undefined;
+    try std.testing.expect(scratch2_len <= scratch2.len);
+    try std.testing.expect(archive2_len <= archive2.len);
+    try std.testing.expectEqual(evidence2.len, evidence2_len);
+    const prepared2 = try encodeArchiveAndEvidenceV1(
+        input2,
+        scratch2[0..scratch2_len],
+        archive2[0..archive2_len],
+        evidence2[0..evidence2_len],
+    );
+    const decoded_registry2 = try registry.decodeArchiveV1(
+        prepared2.registry_archive.set.bytes,
+        decoded_registry1.previous(),
+    );
+    const decoded_evidence2 =
+        try validateSuccessorArchiveAndEvidenceV1(
+            .{
+                .registry_archive = decoded_registry2,
+                .evidence = prepared2.evidence,
+            },
+            previous1,
+        );
+    try std.testing.expectEqual(
+        try digestFromHexV1(
+            "6a881b8ab70c36aff4369f01a81a9ce0282e882f83bceeaf8f10376ac35c7fb6",
+        ),
+        prepared2.batch.batch_sha256,
+    );
+    try std.testing.expectEqual(
+        try digestFromHexV1(
+            "d37d1654a9829e7117b52cced06c723fe6c61f1403be2ce8271771304e34b2e8",
+        ),
+        decoded_registry2.archive_sha256,
+    );
+    try expectMaximumReferenceGenerationV1(
+        decoded_registry2,
+        decoded_evidence2,
+        decoded_registry1,
+        decoded_evidence1,
+    );
+    try std.testing.expectEqual(
+        prepared1.batch.batch_sha256,
+        prepared2.batch.previous_batch_sha256,
+    );
+
+    var too_many: [registry.max_entries + 1]OutputTransitionV1 =
+        undefined;
+    @memcpy(too_many[0..registry.max_entries], &outputs1);
+    too_many[registry.max_entries] = videos[3].output();
+    var five_images: [
+        registry.max_outputs_per_modality + 1
+    ]OutputTransitionV1 = undefined;
+    for (0..five_images.len) |index| {
+        five_images[index] = images[index].output();
+    }
+    @memset(scratch2[0..scratch2_len], 0xa1);
+    @memset(archive2[0..archive2_len], 0xb2);
+    @memset(evidence2[0..evidence2_len], 0xc3);
+    try std.testing.expectError(
+        Error.InvalidBatch,
+        encodeArchiveAndEvidenceV1(
+            .{
+                .previous = null,
+                .generation_plan_sha256 = input1.generation_plan_sha256,
+                .outputs = &too_many,
+            },
+            scratch2[0..scratch2_len],
+            archive2[0..archive2_len],
+            evidence2[0..evidence2_len],
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        scratch2[0..scratch2_len],
+        0xa1,
+    ));
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        archive2[0..archive2_len],
+        0xb2,
+    ));
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        evidence2[0..evidence2_len],
+        0xc3,
+    ));
+    try std.testing.expectError(
+        Error.InvalidBatch,
+        encodeArchiveAndEvidenceV1(
+            .{
+                .previous = null,
+                .generation_plan_sha256 = input1.generation_plan_sha256,
+                .outputs = &five_images,
+            },
+            scratch2[0..scratch2_len],
+            archive2[0..archive2_len],
+            evidence2[0..evidence2_len],
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        scratch2[0..scratch2_len],
+        0xa1,
+    ));
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        archive2[0..archive2_len],
+        0xb2,
+    ));
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        evidence2[0..evidence2_len],
+        0xc3,
+    ));
+}
+
+fn expectMaximumReferenceGenerationV1(
+    current_registry: registry.DecodedArchiveV1,
+    current_evidence: DecodedBatchEvidenceV1,
+    previous_registry: ?registry.DecodedArchiveV1,
+    previous_evidence: ?DecodedBatchEvidenceV1,
+) !void {
+    try std.testing.expectEqual(
+        @as(u64, registry.max_entries),
+        current_registry.manifest.entry_count,
+    );
+    try std.testing.expectEqual(
+        @as(u64, registry.max_entries),
+        current_evidence.batch.receipt_count,
+    );
+    try std.testing.expectEqual(
+        @as(u64, registry.max_outputs_per_modality),
+        current_registry.manifest.image_count,
+    );
+    try std.testing.expectEqual(
+        @as(u64, registry.max_outputs_per_modality),
+        current_registry.manifest.audio_count,
+    );
+    try std.testing.expectEqual(
+        @as(u64, registry.max_outputs_per_modality),
+        current_registry.manifest.video_count,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0x7),
+        current_registry.manifest.modality_mask,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 64),
+        current_registry.manifest.total_source_bytes,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 64),
+        current_evidence.batch.aggregate_raw_output_bytes,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 484),
+        current_registry.manifest.total_encoded_bytes,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 484),
+        current_evidence.batch.aggregate_encoded_payload_bytes,
+    );
+
+    const modalities = [_]registry.ModalityV1{
+        .image,
+        .audio,
+        .video,
+    };
+    var first_receipt = zero_digest;
+    for (modalities, 0..) |modality, modality_index| {
+        const base =
+            modality_index * registry.max_outputs_per_modality;
+        var expected_entry = zero_digest;
+        var expected_receipt = zero_digest;
+        var expected_ordinal: u64 = 0;
+        var expected_unit_start: u64 = 0;
+        var expected_timeline_start: u64 = 0;
+        if (previous_registry) |value| {
+            const terminal_entry = try value.entry(
+                base + registry.max_outputs_per_modality - 1,
+            );
+            expected_entry = terminal_entry.entry_sha256;
+            expected_ordinal = try checkedAdd(
+                terminal_entry.ordinal,
+                1,
+            );
+            expected_unit_start = terminal_entry.unit_end;
+            expected_timeline_start = terminal_entry.timeline_end;
+        }
+        if (previous_evidence) |value| {
+            const terminal_receipt = try value.receipt(
+                base + registry.max_outputs_per_modality - 1,
+            );
+            expected_receipt = terminal_receipt.receipt_sha256;
+        }
+
+        for (0..registry.max_outputs_per_modality) |offset| {
+            const index = base + offset;
+            const entry = try current_registry.entry(index);
+            const receipt = try current_evidence.receipt(index);
+            if (index == 0) first_receipt = receipt.receipt_sha256;
+            try std.testing.expectEqual(modality, entry.modality);
+            try std.testing.expectEqual(modality, receipt.modality);
+            try std.testing.expectEqual(expected_ordinal, entry.ordinal);
+            try std.testing.expectEqual(
+                expected_ordinal,
+                receipt.registry_ordinal,
+            );
+            try std.testing.expectEqual(
+                expected_unit_start,
+                entry.unit_start,
+            );
+            try std.testing.expectEqual(
+                expected_unit_start,
+                receipt.unit_start,
+            );
+            try std.testing.expectEqual(
+                expected_timeline_start,
+                entry.timeline_start,
+            );
+            try std.testing.expectEqual(
+                expected_timeline_start,
+                receipt.timeline_start,
+            );
+            try std.testing.expectEqual(
+                expected_entry,
+                entry.previous_entry_sha256,
+            );
+            try std.testing.expectEqual(
+                expected_entry,
+                receipt.registry_previous_entry_sha256,
+            );
+            try std.testing.expectEqual(
+                expected_receipt,
+                receipt.previous_transition_receipt_sha256,
+            );
+            try std.testing.expectEqual(
+                entry.entry_sha256,
+                receipt.registry_entry_sha256,
+            );
+            try std.testing.expectEqual(
+                current_registry.manifest.manifest_sha256,
+                receipt.registry_manifest_sha256,
+            );
+            try std.testing.expectEqual(
+                current_registry.archive_sha256,
+                receipt.registry_archive_sha256,
+            );
+            try std.testing.expectEqual(
+                entry.unit_count,
+                receipt.unit_count,
+            );
+            try std.testing.expectEqual(
+                entry.timeline_end,
+                receipt.timeline_end,
+            );
+            switch (modality) {
+                .image => {
+                    try std.testing.expectEqual(
+                        @as(u64, 1),
+                        receipt.producer_ordinal,
+                    );
+                    try std.testing.expectEqual(
+                        CompletionKindV1.none,
+                        receipt.completion_kind,
+                    );
+                },
+                .audio => {
+                    try std.testing.expectEqual(
+                        receipt.registry_ordinal,
+                        receipt.producer_ordinal,
+                    );
+                    try std.testing.expectEqual(
+                        CompletionKindV1.playback,
+                        receipt.completion_kind,
+                    );
+                },
+                .video => {
+                    try std.testing.expectEqual(
+                        receipt.registry_ordinal,
+                        receipt.producer_ordinal,
+                    );
+                    try std.testing.expectEqual(
+                        CompletionKindV1.display,
+                        receipt.completion_kind,
+                    );
+                },
+            }
+            expected_entry = entry.entry_sha256;
+            expected_receipt = receipt.receipt_sha256;
+            expected_ordinal = try checkedAdd(entry.ordinal, 1);
+            expected_unit_start = entry.unit_end;
+            expected_timeline_start = entry.timeline_end;
+        }
+        const expected_terminal = switch (modality) {
+            .image => current_evidence.batch.terminal_image_sha256,
+            .audio => current_evidence.batch.terminal_audio_sha256,
+            .video => current_evidence.batch.terminal_video_sha256,
+        };
+        try std.testing.expectEqual(
+            expected_receipt,
+            expected_terminal,
+        );
+    }
+    try std.testing.expectEqual(
+        first_receipt,
+        current_evidence.batch.first_receipt_sha256,
+    );
+}
+
 fn digestFromHexV1(encoded: []const u8) !Digest {
     if (encoded.len != 64) return Error.InvalidWire;
     var value: Digest = undefined;

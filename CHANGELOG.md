@@ -30,6 +30,13 @@ before the first stable release.
   and producer semantics. The read-only inspector accepts optional current and
   predecessor format sidecars, emits a separate versioned no-payload schema,
   and preserves legacy registry/transition JSON byte-for-byte.
+- Extended the retained generated-media campaign to the maximum entry count:
+  two generations each contain four image, four audio, and four video records.
+  Native Zig generation, an independent Python oracle, and the real
+  format-aware inspector agree on registry, transition, and canonical
+  PNG/WAVE/APNG evidence while preflight over-capacity failures preserve caller
+  memory. This covers the entry ceiling, not the maximum archive-byte limit or
+  native load performance.
 - Exported `glacier` and `glacier_core` Zig package modules with a retained
   dependency-consumer smoke test, allowing embedders to import the runtime
   surface without running or installing project CLI/demo/benchmark tools.

@@ -295,6 +295,16 @@ reconstruction, not historical execution, live authority, physical sink,
 external-format, or performance evidence. See
 [Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md).
 
+**Completed capacity slice:** two frozen generations now each fill the
+twelve-output ceiling with four image, four audio, and four video records.
+Native Zig generation and an independent Python oracle share exact registry and
+transition roots; the Python-composed canonical PNG/WAVE/APNG sidecars are then
+validated by the real Zig inspector at the 21,376-byte transition and
+14,400-byte format limits. The campaign covers repeated-modality and successor
+lineage plus failure-atomic thirteenth-output, fifth-entry-per-modality,
+missing-parent, and mutated-sidecar rejection. It is deterministic pressure
+conformance, not native load, latency, or soak evidence.
+
 **Next slices:** add external container timestamp normalization, a production
 image decoder adapter, richer language/punctuation or overlapping-speaker
 policy, a production image/audio/video encoder or container adapter with an

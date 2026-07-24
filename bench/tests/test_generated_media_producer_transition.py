@@ -67,6 +67,8 @@ class GeneratedMediaProducerTransitionTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.fixture = transition.reference_inputs()
         cls.batches = transition.reference_batches()
+        cls.maximum_fixture = transition.maximum_reference_inputs()
+        cls.maximum_batches = transition.maximum_reference_batches()
 
     def test_golden_roots_and_two_generation_lineage(self) -> None:
         first = self.batches["first"]
@@ -125,6 +127,141 @@ class GeneratedMediaProducerTransitionTests(unittest.TestCase):
             )["header"],
             second["header"],
         )
+
+    def test_maximum_entry_generations_are_exact_and_lineage_bound(self) -> None:
+        first = self.maximum_batches["first"]
+        second = self.maximum_batches["second"]
+        expected_roots = {
+            "first_batch": (
+                first["header"]["batch_sha256"],
+                "b0f1b0fca6f858236593d06588bc9b8fd8ff2907eefea43be6ed1f16b9c13942",
+            ),
+            "first_registry": (
+                first["registry"]["archive_sha256"],
+                "132c566ebef9d879b7db1f46c096ac3ec7eabfbf3d5e107b8451810dc5987dc0",
+            ),
+            "second_batch": (
+                second["header"]["batch_sha256"],
+                "6a881b8ab70c36aff4369f01a81a9ce0282e882f83bceeaf8f10376ac35c7fb6",
+            ),
+            "second_registry": (
+                second["registry"]["archive_sha256"],
+                "d37d1654a9829e7117b52cced06c723fe6c61f1403be2ce8271771304e34b2e8",
+            ),
+        }
+        for label, (actual, expected_hex) in expected_roots.items():
+            with self.subTest(root=label):
+                self.assertEqual(actual.hex(), expected_hex)
+
+        previous_terminals = {
+            modality: transition.ZERO for modality in registry.MODALITIES
+        }
+        for generation, batch in enumerate((first, second), start=1):
+            with self.subTest(generation=generation):
+                self.assertEqual(
+                    batch["header"]["receipt_count"],
+                    registry.MAX_ENTRIES,
+                )
+                self.assertEqual(
+                    batch["registry"]["manifest"]["entry_count"],
+                    registry.MAX_ENTRIES,
+                )
+                self.assertEqual(
+                    len(batch["evidence_bytes"]),
+                    transition.BATCH_BYTES
+                    + registry.MAX_ENTRIES * transition.TRANSITION_RECEIPT_BYTES,
+                )
+                self.assertEqual(
+                    (
+                        batch["registry"]["manifest"]["image_count"],
+                        batch["registry"]["manifest"]["audio_count"],
+                        batch["registry"]["manifest"]["video_count"],
+                    ),
+                    (4, 4, 4),
+                )
+                self.assertEqual(batch["header"]["modality_mask"], 0x7)
+                self.assertEqual(batch["header"]["total_raw_output_bytes"], 64)
+                self.assertEqual(
+                    batch["header"]["total_encoded_payload_bytes"],
+                    484,
+                )
+
+                for modality_index, modality in enumerate(registry.MODALITIES):
+                    start = modality_index * registry.MAX_ENTRIES_PER_MODALITY
+                    receipts = batch["receipts"][
+                        start : start + registry.MAX_ENTRIES_PER_MODALITY
+                    ]
+                    expected_ordinals = range(
+                        (generation - 1) * registry.MAX_ENTRIES_PER_MODALITY,
+                        generation * registry.MAX_ENTRIES_PER_MODALITY,
+                    )
+                    self.assertEqual(
+                        [receipt["modality"] for receipt in receipts],
+                        [modality] * registry.MAX_ENTRIES_PER_MODALITY,
+                    )
+                    self.assertEqual(
+                        [receipt["registry_ordinal"] for receipt in receipts],
+                        list(expected_ordinals),
+                    )
+                    predecessor = previous_terminals[modality]
+                    for receipt in receipts:
+                        self.assertEqual(
+                            receipt["previous_transition_receipt_sha256"],
+                            predecessor,
+                        )
+                        predecessor = receipt["transition_receipt_sha256"]
+                    previous_terminals[modality] = predecessor
+
+                self.assertEqual(
+                    batch["header"]["terminal_image_receipt_sha256"],
+                    batch["receipts"][3]["transition_receipt_sha256"],
+                )
+                self.assertEqual(
+                    batch["header"]["terminal_audio_receipt_sha256"],
+                    batch["receipts"][7]["transition_receipt_sha256"],
+                )
+                self.assertEqual(
+                    batch["header"]["terminal_video_receipt_sha256"],
+                    batch["receipts"][11]["transition_receipt_sha256"],
+                )
+                self.assertEqual(
+                    transition.decode_batch(
+                        batch["evidence_bytes"],
+                        batch["registry"]["archive_bytes"],
+                        None if generation == 1 else first,
+                    )["header"],
+                    batch["header"],
+                )
+
+        self.assertEqual(
+            second["header"]["previous_batch_sha256"],
+            first["header"]["batch_sha256"],
+        )
+        self.assertEqual(
+            second["registry"]["manifest"]["previous_archive_sha256"],
+            first["registry"]["archive_sha256"],
+        )
+
+    def test_maximum_entry_fixture_rejects_thirteenth_and_fifth_image(
+        self,
+    ) -> None:
+        thirteen = self.maximum_fixture["batch1"] + [self.maximum_fixture["batch2"][0]]
+        five_images = self.maximum_fixture["batch1"][
+            : registry.MAX_ENTRIES_PER_MODALITY
+        ] + [self.maximum_fixture["batch2"][0]]
+        for label, witnesses in (
+            ("thirteenth", thirteen),
+            ("fifth-image", five_images),
+        ):
+            with self.subTest(label=label):
+                with self.assertRaises(
+                    transition.GeneratedMediaProducerTransitionError
+                ):
+                    transition.verify_and_encode_batch(
+                        None,
+                        self.maximum_fixture["generation_plan1_sha256"],
+                        witnesses,
+                    )
 
     def test_every_fixed_wire_byte_is_authenticated(self) -> None:
         first_witness = self.fixture["batch1"][0]

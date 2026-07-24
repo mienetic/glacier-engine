@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from collections import Counter
 import hashlib
 import json
 import os
@@ -10,6 +11,8 @@ import tempfile
 import unittest
 
 from bench import generated_media_evidence_inspector as inspector
+from bench import generated_media_format_conformance as conformance
+from bench import generated_media_output_registry as registry
 from bench import generated_media_producer_transition as transition
 
 
@@ -58,6 +61,7 @@ class GeneratedMediaEvidenceInspectorTests(unittest.TestCase):
             )
         cls.batches = transition.reference_batches()
         cls.format_batches = inspector.reference_format_batches()
+        cls.maximum_format_batches = inspector.maximum_reference_format_batches()
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -247,6 +251,173 @@ class GeneratedMediaEvidenceInspectorTests(unittest.TestCase):
                         for entry in decoded["entries"]
                     )
                 )
+
+    def test_maximum_format_generations_match_exact_renderer_and_lineage(
+        self,
+    ) -> None:
+        first = self.maximum_format_batches["first"]
+        second = self.maximum_format_batches["second"]
+        expected_format_roots = {
+            "first": (
+                "246b5eae74deb33d4f75a65cf38ac88813cb1988680a736190d7972737e2316c",
+                "46592d049e06e9cfa5ea8dc99f205d278e0c167521c043beae602dccadd4d35f",
+            ),
+            "second": (
+                "a813d4900ce97731e05a744655f8f0249a841ca687e5443b443afa26903eb937",
+                "af16bc86c276c4f011b445ec37dac247ad3b6e8eddeaf929e930066551eb1666",
+            ),
+        }
+        zero = "0" * 64
+        previous_transition = {
+            "image": zero,
+            "audio": zero,
+            "video": zero,
+        }
+        previous_registry = dict(previous_transition)
+        previous_format = {
+            registry.IMAGE_MODALITY: conformance.ZERO,
+            registry.AUDIO_MODALITY: conformance.ZERO,
+            registry.VIDEO_MODALITY: conformance.ZERO,
+        }
+        expected_ordinals = {
+            "first": range(0, registry.MAX_ENTRIES_PER_MODALITY),
+            "second": range(
+                registry.MAX_ENTRIES_PER_MODALITY,
+                2 * registry.MAX_ENTRIES_PER_MODALITY,
+            ),
+        }
+        for label, batch, predecessor in (
+            ("first", first, None),
+            ("second", second, first),
+        ):
+            with self.subTest(label=label):
+                result = self._invoke_format_batch(
+                    batch,
+                    predecessor=predecessor,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, b"")
+                expected = inspector.render_expected(
+                    batch,
+                    batch["format_evidence_bytes"],
+                    (
+                        None
+                        if predecessor is None
+                        else predecessor["format_evidence_bytes"]
+                    ),
+                )
+                self.assertEqual(result.stdout, expected)
+                document = inspector.parse_rendered(result.stdout)
+                self.assertEqual(document["receipt_count"], registry.MAX_ENTRIES)
+                self.assertEqual(
+                    Counter(entry["modality"] for entry in document["entries"]),
+                    Counter({"image": 4, "audio": 4, "video": 4}),
+                )
+                self.assertEqual(
+                    document["evidence_bytes"],
+                    inspector.MAX_EVIDENCE_BYTES,
+                )
+                self.assertEqual(
+                    document["format_evidence_bytes"],
+                    inspector.MAX_FORMAT_EVIDENCE_BYTES,
+                )
+                self.assertEqual(
+                    document["registry_archive_bytes"],
+                    len(batch["registry"]["archive_bytes"]),
+                )
+                self.assertLessEqual(
+                    document["registry_archive_bytes"],
+                    inspector.MAX_ARCHIVE_BYTES,
+                )
+                if predecessor is None:
+                    self.assertEqual(document["previous_batch_sha256"], zero)
+                    self.assertEqual(
+                        document["previous_format_batch_sha256"],
+                        zero,
+                    )
+                else:
+                    self.assertEqual(
+                        document["previous_batch_sha256"],
+                        predecessor["header"]["batch_sha256"].hex(),
+                    )
+                    previous_decoded = conformance.decode_format_evidence(
+                        predecessor["format_evidence_bytes"]
+                    )
+                    self.assertEqual(
+                        document["previous_format_batch_sha256"],
+                        previous_decoded["batch"]["batch_sha256"].hex(),
+                    )
+
+                for modality_name in ("image", "audio", "video"):
+                    entries = [
+                        entry
+                        for entry in document["entries"]
+                        if entry["modality"] == modality_name
+                    ]
+                    self.assertEqual(
+                        [entry["registry_ordinal"] for entry in entries],
+                        list(expected_ordinals[label]),
+                    )
+                    for entry in entries:
+                        self.assertEqual(
+                            entry["previous_transition_receipt_sha256"],
+                            previous_transition[modality_name],
+                        )
+                        self.assertEqual(
+                            entry["registry_previous_entry_sha256"],
+                            previous_registry[modality_name],
+                        )
+                        previous_transition[modality_name] = entry[
+                            "transition_receipt_sha256"
+                        ]
+                        previous_registry[modality_name] = entry[
+                            "registry_entry_sha256"
+                        ]
+
+                decoded_format = conformance.decode_format_evidence(
+                    batch["format_evidence_bytes"]
+                )
+                self.assertEqual(
+                    decoded_format["batch"]["batch_sha256"].hex(),
+                    expected_format_roots[label][0],
+                )
+                self.assertEqual(
+                    hashlib.sha256(batch["format_evidence_bytes"]).hexdigest(),
+                    expected_format_roots[label][1],
+                )
+                self.assertEqual(
+                    decoded_format["batch"]["record_count"],
+                    registry.MAX_ENTRIES,
+                )
+                for record in decoded_format["records"]:
+                    modality = record["modality"]
+                    self.assertEqual(
+                        record["previous_format_record_sha256"],
+                        previous_format[modality],
+                    )
+                    previous_format[modality] = record["record_sha256"]
+
+    def test_maximum_format_missing_predecessor_and_mutation_reject(
+        self,
+    ) -> None:
+        first = self.maximum_format_batches["first"]
+        second = self.maximum_format_batches["second"]
+        self.assertRejected(self._invoke_format_batch(second))
+
+        mutated = bytearray(second["format_evidence_bytes"])
+        mutated[
+            conformance.FORMAT_BATCH_HEADER_BYTES + conformance.FORMAT_RECORD_BYTES // 2
+        ] ^= 1
+        self.assertRejected(
+            self._invoke(
+                second["registry"]["archive_bytes"],
+                second["evidence_bytes"],
+                format_evidence=bytes(mutated),
+                previous_archive=first["registry"]["archive_bytes"],
+                previous_evidence=first["evidence_bytes"],
+                previous_format_evidence=first["format_evidence_bytes"],
+            )
+        )
 
     def test_format_output_is_deterministic_and_contains_no_payload(self) -> None:
         batch = self.format_batches["first"]

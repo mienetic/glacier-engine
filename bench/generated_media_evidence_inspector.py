@@ -10,7 +10,7 @@ import copy
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from bench import generated_media_external_format as external
 from bench import generated_media_format_conformance as conformance
@@ -334,7 +334,27 @@ def render_expected(
 def reference_format_batches() -> Record:
     """Build a deterministic two-generation three-profile inspector chain."""
 
-    fixture = _canonical_profile_reference_inputs()
+    return _reference_format_batches(
+        _canonical_profile_reference_inputs(),
+        "",
+    )
+
+
+def maximum_reference_format_batches() -> Record:
+    """Build the two-generation 12-entry three-profile inspector chain."""
+
+    return _reference_format_batches(
+        _canonical_profile_reference_inputs(
+            transition.maximum_reference_inputs,
+        ),
+        "maximum-",
+    )
+
+
+def _reference_format_batches(
+    fixture: Record,
+    label_prefix: str,
+) -> Record:
     witnesses_one = copy.deepcopy(fixture["batch1"])
     witnesses_two = copy.deepcopy(fixture["batch2"])
     for generation, witnesses in enumerate(
@@ -344,7 +364,9 @@ def reference_format_batches() -> Record:
         for index, witness in enumerate(witnesses):
             _install_canonical_delivery(
                 witness,
-                f"generation-{generation}-entry-{index}".encode("ascii"),
+                (f"{label_prefix}generation-{generation}-entry-{index}").encode(
+                    "ascii"
+                ),
             )
     first = transition.verify_and_encode_batch(
         None,
@@ -378,7 +400,9 @@ def reference_format_batches() -> Record:
     }
 
 
-def _canonical_profile_reference_inputs() -> Record:
+def _canonical_profile_reference_inputs(
+    fixture_builder: Callable[[], Record] = transition.reference_inputs,
+) -> Record:
     """Retain exact APNG V1 delays across the producer successor fixture."""
 
     original = video_producer.make_manifest
@@ -391,7 +415,7 @@ def _canonical_profile_reference_inputs() -> Record:
 
     video_producer.make_manifest = fixed_timing_manifest
     try:
-        return transition.reference_inputs()
+        return fixture_builder()
     finally:
         video_producer.make_manifest = original
 

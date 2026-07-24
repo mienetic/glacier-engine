@@ -331,6 +331,16 @@ the complete sidecar and registry pair, checks two-generation predecessor
 lineage, and rejects retained wrapper, witness, transition, image-ordinal,
 completion, registry-binding, and paired-lineage substitutions.
 
+The retained capacity-pressure campaign separately fills both generations to
+the exact ceiling: four image, four audio, and four video outputs, or twelve
+entries per generation and twenty-four across the chain. Zig and the
+independent Python oracle share frozen registry and transition roots, verify
+per-modality ordinals `0..3` then `4..7`, and preserve each modality's exact
+receipt and registry predecessor. A thirteenth output or fifth output for one
+modality rejects before callbacks or destination mutation. This is deterministic
+boundary conformance, not native throughput, latency, memory, energy, or soak
+evidence.
+
 ## Failure matrix
 
 | Boundary | Rejected examples |

@@ -3529,10 +3529,99 @@ def reference_inputs() -> Record:
     }
 
 
+def maximum_reference_inputs() -> Record:
+    """Build two deterministic generations at the 12-output batch ceiling."""
+
+    request_epoch = 701_001
+    tenant = _identity(b"tenant")
+    policy = _identity(b"metadata-policy")
+    challenge = _identity(b"challenge")
+    image_batches: tuple[list[Record], list[Record]] = ([], [])
+    audio_batches: tuple[list[Record], list[Record]] = ([], [])
+    video_batches: tuple[list[Record], list[Record]] = ([], [])
+
+    previous_image_plan: bytes | None = None
+    previous_image_result: bytes | None = None
+    previous_audio_model: Record | None = None
+    previous_audio_state: Record | None = None
+    previous_video_model: Record | None = None
+    previous_video_state: Record | None = None
+    for ordinal in range(2 * registry.MAX_ENTRIES_PER_MODALITY):
+        generation_index = ordinal // registry.MAX_ENTRIES_PER_MODALITY
+
+        image_witness = _image_output_fixture(
+            label=f"maximum-image-{ordinal}".encode("ascii"),
+            request_epoch=request_epoch,
+            tenant_scope_sha256=tenant,
+            metadata_policy_sha256=policy,
+            challenge_sha256=challenge,
+            seed_offset=ordinal,
+            previous_producer_plan_sha256=previous_image_plan,
+            previous_producer_result_sha256=previous_image_result,
+        )
+        image_plan = image.decode_plan(image_witness["producer"]["plan_wire"])
+        image_result = image.decode_result(image_witness["producer"]["result_wire"])
+        previous_image_plan = image_plan["plan_sha256"]
+        previous_image_result = image_result["result_sha256"]
+        image_batches[generation_index].append(image_witness)
+
+        audio_witness, previous_audio_model, previous_audio_state = (
+            _audio_output_fixture(
+                label=f"maximum-audio-{ordinal}".encode("ascii"),
+                request_epoch=request_epoch,
+                tenant_scope_sha256=tenant,
+                metadata_policy_sha256=policy,
+                challenge_sha256=challenge,
+                model_input=bytes((129 + ordinal, 127 - ordinal)),
+                previous_model=previous_audio_model,
+                state_before=previous_audio_state,
+            )
+        )
+        audio_batches[generation_index].append(audio_witness)
+
+        video_witness, previous_video_model, previous_video_state = (
+            _video_output_fixture(
+                label=f"maximum-video-{ordinal}".encode("ascii"),
+                request_epoch=request_epoch,
+                tenant_scope_sha256=tenant,
+                metadata_policy_sha256=policy,
+                challenge_sha256=challenge,
+                model_input=bytes((3 + 2 * ordinal, 7 + 2 * ordinal)),
+                previous_model=previous_video_model,
+                state_before=previous_video_state,
+            )
+        )
+        video_batches[generation_index].append(video_witness)
+
+    return {
+        "generation_plan1_sha256": _identity(b"maximum-generation-plan-one"),
+        "generation_plan2_sha256": _identity(b"maximum-generation-plan-two"),
+        "batch1": image_batches[0] + audio_batches[0] + video_batches[0],
+        "batch2": image_batches[1] + audio_batches[1] + video_batches[1],
+    }
+
+
 def reference_batches() -> Record:
     """Return the deterministic two-generation execution evidence chain."""
 
     fixture = reference_inputs()
+    first = verify_and_encode_batch(
+        None,
+        fixture["generation_plan1_sha256"],
+        fixture["batch1"],
+    )
+    second = verify_and_encode_batch(
+        first,
+        fixture["generation_plan2_sha256"],
+        fixture["batch2"],
+    )
+    return {"first": first, "second": second}
+
+
+def maximum_reference_batches() -> Record:
+    """Return the deterministic two-generation maximum-entry evidence chain."""
+
+    fixture = maximum_reference_inputs()
     first = verify_and_encode_batch(
         None,
         fixture["generation_plan1_sha256"],

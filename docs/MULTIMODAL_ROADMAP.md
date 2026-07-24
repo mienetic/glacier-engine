@@ -646,7 +646,8 @@ Early contributions can proceed without a large model:
   detection and richer transcript result forms over the completed post-restore
   cache ownership path; the first fixed predecessor-bound video-segment result
   deterministic merge timeline, and exact audio/video result link are complete;
-- add maximum-entry and repeated-modality format-sidecar fixtures while
+- extend the completed two-generation maximum-entry, repeated-modality
+  registry-transition-format campaign with new versioned profiles while
   preserving frozen V1 roots and bounded mutation coverage;
 - extend format-aware inspection with privacy-safe export/retention policy
   without rendering payload bytes;

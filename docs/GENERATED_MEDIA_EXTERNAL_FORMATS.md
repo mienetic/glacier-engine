@@ -149,6 +149,15 @@ profile-set, record-table, batch, and whole-evidence roots; every record and
 batch byte mutation; every batch truncation and insertion; canonical ordering,
 aggregates, terminals, zero padding, and successor lineage.
 
+A second composed campaign fills both generations to twelve records: four PNG,
+four WAVE, and four APNG deliveries. The independent oracle produces the full
+21,376-byte transition and 14,400-byte format sidecars, while the native Zig
+inspector validates the registry-transition-format triple, exact renderer,
+per-modality `0..3` then `4..7` ordinals, and all three predecessor chains.
+Missing predecessor input and a mutated maximum-size sidecar fail with no
+semantic stdout. This capacity boundary is deterministic conformance rather
+than a measured performance or soak result.
+
 The sidecar embeds the producer plan or manifest, not the complete
 playback/display observation, acknowledgement-plan, or acknowledgement-result
 wires. Their exact roots and completion state remain bound through the paired
@@ -261,9 +270,9 @@ own native campaigns.
 
 ## Contributor-ready next slices
 
-1. **Broaden the independent stress envelope.** Add maximum-entry and multiple
-   records-per-modality vectors while preserving the frozen V1 roots and
-   bounded mutation strategy.
+1. **Normalize external video timelines.** Define a new bounded ABI for exact
+   timescale, DTS/PTS, composition offset, edit-list, variable-frame-rate, and
+   gap semantics without treating container parsing as playback evidence.
 2. **Retain native portability evidence.** Run the format target and inspector
    campaign on Linux and Windows, record the exact toolchain/machine envelope,
    and keep compile-only claims separate from runtime results.
