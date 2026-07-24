@@ -157,20 +157,24 @@ pub const KVCache = struct {
         const instance_id = try reserveCacheInstance();
         const keys = try allocator.alloc([]f32, num_layers);
         errdefer allocator.free(keys);
+        var initialized_keys: usize = 0;
+        errdefer {
+            for (keys[0..initialized_keys]) |key| allocator.free(key);
+        }
         const values = try allocator.alloc([]f32, num_layers);
         errdefer allocator.free(values);
-
-        for (keys, 0..) |*k, i| {
-            k.* = try allocator.alloc(f32, ledger.row_elements);
-            errdefer {
-                for (keys[0..i]) |kk| allocator.free(kk);
-            }
+        var initialized_values: usize = 0;
+        errdefer {
+            for (values[0..initialized_values]) |value| allocator.free(value);
         }
-        for (values, 0..) |*v, i| {
+
+        for (keys) |*k| {
+            k.* = try allocator.alloc(f32, ledger.row_elements);
+            initialized_keys += 1;
+        }
+        for (values) |*v| {
             v.* = try allocator.alloc(f32, ledger.row_elements);
-            errdefer {
-                for (values[0..i]) |vv| allocator.free(vv);
-            }
+            initialized_values += 1;
         }
 
         return .{
@@ -482,6 +486,19 @@ pub const KVCache = struct {
 // ---------------------------------------------------------------------------
 
 const testing = std.testing;
+
+fn kvCacheAllocationProbe(allocator: std.mem.Allocator) !void {
+    var cache = try KVCache.init(allocator, 3, 4, 5);
+    defer cache.deinit();
+}
+
+test "KVCache init releases every partial allocation on failure" {
+    try testing.checkAllAllocationFailures(
+        testing.allocator,
+        kvCacheAllocationProbe,
+        .{},
+    );
+}
 
 test "KVCache init/deinit round-trip" {
     var cache = try KVCache.init(testing.allocator, 4, 16, 32);
