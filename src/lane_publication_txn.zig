@@ -172,9 +172,11 @@ pub const TranscriptSnapshotV1 = struct {
     transcript_sha256: Digest,
 };
 
-/// Address-stable single-request coordinator. Initialize immediately after
-/// admission, before another Scheduler event. Every selected service for this
-/// request must then publish through this Session. Finish with `cancel`,
+/// Address-stable single-request coordinator. `init` must run immediately
+/// after admission and before another Scheduler event; `initAdopting` consumes
+/// a sealed Scheduler barrier instead. Do not move or copy the coordinator
+/// during either initialization or after success. Every selected service for
+/// this request must then publish through this Session. Finish with `cancel`,
 /// `retire`, or `close`; those methods own the atomic Scheduler/Bank terminal
 /// transition, so callers must not separately cancel or retire the bound lane.
 pub const Session = struct {
@@ -229,6 +231,55 @@ pub const Session = struct {
                 admission.event.resource_receipt,
                 initial_state,
             ),
+        };
+    }
+
+    /// Finish a Scheduler-owned publication adoption after every fallible
+    /// coordinator input has been validated. The complete address-stable
+    /// Session is installed before the Scheduler commit binds that exact
+    /// address; commit is the final fallible operation. A rejected commit
+    /// restores the zero Session so the still-live adoption authority can be
+    /// cancelled by its owner.
+    pub fn initAdopting(
+        self: *Session,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+        adoption: lane.PublicationAdoptionV1,
+        execution_abi: u64,
+        initial_state: StateCommitmentV1,
+    ) (Error || lane.Error)!void {
+        if (self.initialized) return Error.InvalidState;
+        const admission = adoption.admission;
+        const request_epoch = adoption.publication_request_epoch;
+        if (request_epoch == 0 or execution_abi == 0 or
+            scheduler.bank != bank or
+            adoption.publication_session_id != @intFromPtr(self) or
+            adoption.publication_service_policy != .every_service or
+            admission.event.spec.claim.queue_slots != width or
+            initial_state.execution_abi != execution_abi or
+            initial_state.output_length != 0 or
+            initial_state.sampling_calls != 0 or
+            !stateCommitmentValidV1(initial_state))
+            return Error.InvalidConfiguration;
+
+        self.* = .{
+            .scheduler = scheduler,
+            .bank = bank,
+            .admission = admission,
+            .request_epoch = request_epoch,
+            .execution_abi = execution_abi,
+            .initialized = true,
+            .state = initial_state,
+            .transcript_sha256 = initialTranscriptSha256(
+                execution_abi,
+                request_epoch,
+                admission.event.resource_receipt,
+                initial_state,
+            ),
+        };
+        scheduler.commitPublicationAdoption(adoption) catch |err| {
+            self.* = .{};
+            return err;
         };
     }
 
@@ -1362,6 +1413,62 @@ test "Lane publication pointer-free evidence and Session stay bounded" {
     try testing.expect(@sizeOf(CommitReceiptV1) <= 2560);
     try testing.expect(!containsPointer(ProposalV1));
     try testing.expect(!containsPointer(CommitReceiptV1));
+}
+
+test "Lane publication adopting init resets after stale commit" {
+    var fixture: TestFixture = .{};
+    try fixture.init(1);
+    _ = try fixture.scheduler.cancel(fixture.admission.handle);
+
+    var session: Session = .{};
+    const decision = try fixture.scheduler.admitForPublicationAdoption(
+        .{
+            .tenant_key = 11,
+            .request_key = 22,
+            .request_generation = 2,
+            .resource_owner_key = 33,
+            .weight = 1,
+            .work_quanta = 1,
+            .claim = .{
+                .kv_bytes = 4096,
+                .output_journal_bytes = 1024,
+                .queue_slots = 1,
+            },
+        },
+        41,
+        @intFromPtr(&session),
+    );
+    const adoption = switch (decision) {
+        .adopted => |value| value,
+        .rejected => return error.TestUnexpectedResult,
+    };
+
+    var stale = adoption;
+    stale.publication_request_epoch += 1;
+    stale.adoption_sha256 = lane.publicationAdoptionSha256(stale);
+    try testing.expectError(
+        lane.Error.StaleAdoptionLease,
+        session.initAdopting(
+            &fixture.scheduler,
+            &fixture.bank,
+            stale,
+            test_execution_abi,
+            initialTestState(),
+        ),
+    );
+    try testing.expect(!session.initialized);
+
+    const cancellation =
+        try fixture.scheduler.cancelPublicationAdoption(adoption);
+    try testing.expectEqual(lane.EventKind.cancel, cancellation.kind);
+    const snapshot = try fixture.scheduler.snapshot();
+    try testing.expectEqual(@as(u32, 0), snapshot.active);
+    try testing.expect(snapshot.used.isZero());
+    try testing.expectError(
+        lane.Error.StaleAdoptionLease,
+        fixture.scheduler.cancelPublicationAdoption(adoption),
+    );
+    _ = try fixture.scheduler.close();
 }
 
 test "Lane publication models first-token KV and forced-token RNG honestly" {

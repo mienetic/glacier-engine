@@ -21,6 +21,7 @@ pub const service_intent_abi: u64 = 0x474c_5749_0000_0001;
 pub const service_commit_ticket_abi: u64 = 0x474c_5743_0000_0001;
 pub const service_finalizer_abi: u64 = 0x474c_5746_0000_0001;
 pub const service_finalizer_v2_abi: u64 = 0x474c_5746_0000_0002;
+pub const publication_adoption_abi: u64 = 0x474c_5741_0000_0001;
 pub const Digest = [32]u8;
 pub const zero_digest: Digest = [_]u8{0} ** 32;
 
@@ -30,6 +31,8 @@ const service_permit_domain = "glacier-lane-weave-qos-service-permit-v1\x00";
 const service_intent_domain = "glacier-lane-weave-qos-service-intent-v1\x00";
 const service_commit_ticket_domain =
     "glacier-lane-weave-qos-service-commit-ticket-v1\x00";
+const publication_adoption_domain =
+    "glacier-lane-weave-qos-publication-adoption-v1\x00";
 const receipt_domain = "glacier-lane-weave-qos-resource-receipt-v1\x00";
 
 pub const Error = error{
@@ -42,8 +45,10 @@ pub const Error = error{
     ServiceOverflow,
     NoRunnableRequest,
     ServiceInFlight,
+    AdoptionInFlight,
     StaleServicePermit,
     StaleServiceCommitTicket,
+    StaleAdoptionLease,
     StaleHandle,
     InvalidTransition,
     BankDrift,
@@ -311,6 +316,32 @@ pub const AdmissionDecision = union(enum) {
     rejected: EventV1,
 };
 
+/// Single-use process-local authority over one admission created by
+/// `admitForPublicationAdoption`. The value may be copied, but commit/cancel
+/// uses are first-winner-only and every losing or later copy is stale.
+///
+/// The lease and its global Scheduler barrier are operational state. They do
+/// not enter Event-v1, the semantic state digest, or `SnapshotV1`.
+pub const PublicationAdoptionV1 = struct {
+    abi_version: u64 = publication_adoption_abi,
+    scheduler_epoch: u64 = 0,
+    coordinator_id: u64 = 0,
+    coordinator_address: u64 = 0,
+    adoption_generation: u64 = 0,
+    publication_request_epoch: u64 = 0,
+    publication_session_id: usize = 0,
+    publication_service_policy: PublicationServicePolicy = .none,
+    admission: Admission,
+    adoption_sha256: Digest = zero_digest,
+};
+
+/// Atomic admission outcome for a publication coordinator that must
+/// materialize private state while every Scheduler mutator is fenced.
+pub const PublicationAdoptionDecision = union(enum) {
+    adopted: PublicationAdoptionV1,
+    rejected: EventV1,
+};
+
 /// Read-only logical scheduler snapshot.
 pub const SnapshotV1 = struct {
     abi_version: u64 = abi,
@@ -337,6 +368,10 @@ const Selection = struct {
 const PendingService = struct {
     permit: ServicePermitV1,
     commit_ticket: ?ServiceCommitTicketV1 = null,
+};
+
+const PendingPublicationAdoption = struct {
+    adoption: PublicationAdoptionV1,
 };
 
 const ServiceCommitContext = struct {
@@ -412,6 +447,8 @@ pub const Scheduler = struct {
     next_service_permit_generation: u64 = 1,
     next_service_commit_generation: u64 = 1,
     pending_service: ?PendingService = null,
+    next_publication_adoption_generation: u64 = 1,
+    pending_publication_adoption: ?PendingPublicationAdoption = null,
     cursor: u32 = 0,
     level: u16 = 1,
     maximum_service_gap: u64,
@@ -487,15 +524,25 @@ pub const Scheduler = struct {
     }
 
     /// Validate policy and deadline feasibility, then reserve and commit the
-    /// exact request claim. Expected rejection still emits a chained event.
+    /// exact request claim. Expected rejection emits a chained event whenever
+    /// sequence slack remains beyond accepted lanes' reserved lifecycle debt.
     pub fn admit(self: *Scheduler, spec: RequestSpec) Error!AdmissionDecision {
         self.mutex.lock();
         defer self.mutex.unlock();
+        return self.admitLocked(spec, false);
+    }
+
+    fn admitLocked(
+        self: *Scheduler,
+        spec: RequestSpec,
+        reserve_publication_adoption: bool,
+    ) Error!AdmissionDecision {
         try self.requireOpen();
+        try self.requireNoAdoption();
         try self.requireNoService();
         try self.validateBank();
         try self.validateSpec(spec);
-        try self.preflightEvent();
+        try self.preflightAdmissionDecisionEvent();
 
         const before_state = self.stateSha256();
         const before_counts = self.counts();
@@ -577,6 +624,15 @@ pub const Scheduler = struct {
             .feasible => {},
         }
 
+        // Acceptance must leave enough Event-v1 sequence space to service
+        // every live lane to completion and emit each lane's terminal event.
+        // Rejections consume only unreserved slack and were handled above.
+        try self.preflightAcceptedLifecycle(spec.work_quanta);
+        if (reserve_publication_adoption and
+            (self.next_publication_adoption_generation == 0 or
+                self.next_publication_adoption_generation ==
+                    std.math.maxInt(u64)))
+            return Error.GenerationOverflow;
         if (self.next_slot_generation == 0 or
             self.next_slot_generation == std.math.maxInt(u64))
             return Error.GenerationOverflow;
@@ -630,6 +686,102 @@ pub const Scheduler = struct {
         return .{ .admitted = .{ .handle = handle, .event = event } };
     }
 
+    /// Admit one request and install its publication-adoption barrier before
+    /// releasing the Scheduler mutex. The accepted ResourceBank charge
+    /// therefore precedes private materialization without reopening the
+    /// admission-to-adoption race. Rejections retain ordinary Event-v1
+    /// behavior and do not install a barrier when unreserved sequence capacity
+    /// remains; otherwise admission fails with `SequenceOverflow`.
+    ///
+    /// An adopted value must be consumed exactly once through
+    /// `commitPublicationAdoption` or `cancelPublicationAdoption`.
+    pub fn admitForPublicationAdoption(
+        self: *Scheduler,
+        spec: RequestSpec,
+        request_epoch: u64,
+        session_id: usize,
+    ) Error!PublicationAdoptionDecision {
+        if (request_epoch == 0 or session_id == 0)
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoAdoption();
+        try self.requireNoService();
+        const decision = try self.admitLocked(spec, true);
+        return switch (decision) {
+            .rejected => |event| .{ .rejected = event },
+            .admitted => |admission| blk: {
+                var adoption: PublicationAdoptionV1 = .{
+                    .scheduler_epoch = self.config.scheduler_epoch,
+                    .coordinator_id = self.service_coordinator_id,
+                    .coordinator_address = @intCast(@intFromPtr(self)),
+                    .adoption_generation = self.next_publication_adoption_generation,
+                    .publication_request_epoch = request_epoch,
+                    .publication_session_id = session_id,
+                    .publication_service_policy = .every_service,
+                    .admission = admission,
+                };
+                adoption.adoption_sha256 =
+                    publicationAdoptionSha256(adoption);
+                self.next_publication_adoption_generation += 1;
+                self.pending_publication_adoption =
+                    .{ .adoption = adoption };
+                break :blk .{ .adopted = adoption };
+            },
+        };
+    }
+
+    /// Atomically convert one live adoption barrier into the exact
+    /// every-service publication binding sealed into its authority. All
+    /// publication coordinator state must already be address-stable and ready
+    /// before this call; no fallible caller initialization may follow it.
+    pub fn commitPublicationAdoption(
+        self: *Scheduler,
+        adoption: PublicationAdoptionV1,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoService();
+        try self.validateBank();
+        _ = try self.validatePendingPublicationAdoption(adoption);
+        const index = try self.validatePublicationAdmission(
+            adoption.admission,
+        );
+        try self.bindPublicationSlot(
+            index,
+            adoption.publication_request_epoch,
+            adoption.publication_session_id,
+            adoption.publication_service_policy,
+        );
+        self.pending_publication_adoption = null;
+    }
+
+    /// Consume one live adoption authority by cancelling its exact admission.
+    /// The cancellation Event-v1 and ResourceBank release are the same
+    /// semantic transition as ordinary cancellation; only the invisible
+    /// barrier consumption is new.
+    pub fn cancelPublicationAdoption(
+        self: *Scheduler,
+        adoption: PublicationAdoptionV1,
+    ) Error!EventV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoService();
+        try self.validateBank();
+        _ = try self.validatePendingPublicationAdoption(adoption);
+        _ = try self.validatePublicationAdmission(adoption.admission);
+        const event = try self.finishHandleLocked(
+            adoption.admission.handle,
+            .cancel,
+            .active,
+        );
+        self.pending_publication_adoption = null;
+        return event;
+    }
+
     /// Bind every service of the exact just-admitted request to an
     /// address-stable publication coordinator. This retains the original
     /// three-argument source API; protected services require a V2 finalizer.
@@ -680,56 +832,16 @@ pub const Scheduler = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.requireOpen();
+        try self.requireNoAdoption();
         try self.requireNoService();
         try self.validateBank();
-
-        const event = admission.event;
-        if (event.abi_version != event_abi or
-            event.kind != .admission_accepted or
-            event.rejection_reason != .none or
-            event.scheduler_epoch != self.config.scheduler_epoch or
-            event.event_sequence == std.math.maxInt(u64) or
-            event.event_sequence + 1 != self.next_event_sequence or
-            !std.mem.eql(u8, &event.event_sha256, &eventSha256(event)) or
-            !std.mem.eql(u8, &event.event_sha256, &self.chain_head_sha256) or
-            !std.mem.eql(u8, &event.state_after_sha256, &self.stateSha256()) or
-            event.logical_tick_after != self.logical_tick or
-            event.cursor_after != self.cursor or event.level_after != self.level or
-            !std.meta.eql(admission.handle, event.handle))
-            return Error.InvalidTransition;
-
-        const index = self.validateHandle(admission.handle, .active) catch
-            return Error.StaleHandle;
-        const slot = &self.slots[index];
-        const lane_counts = self.counts();
-        if (slotPublicationBound(slot.*) or
-            !std.meta.eql(event.spec, slot.spec) or
-            !std.meta.eql(event.resource_receipt, slot.receipt) or
-            !std.mem.eql(
-                u8,
-                &event.resource_receipt_sha256,
-                &slot.receipt_sha256,
-            ) or event.remaining_before != 0 or
-            event.remaining_after != slot.remaining_quanta or
-            event.remaining_after != slot.spec.work_quanta or
-            event.active_after != lane_counts.active or
-            event.finished_after != lane_counts.finished or
-            !std.meta.eql(event.bank_used_after, self.used))
-            return Error.InvalidTransition;
-
-        self.bank.bindPublicationSession(
-            slot.receipt,
+        const index = try self.validatePublicationAdmission(admission);
+        try self.bindPublicationSlot(
+            index,
             request_epoch,
             session_id,
-        ) catch |err| switch (err) {
-            error.InvalidConfiguration => return Error.InvalidConfiguration,
-            error.StaleReservation => return Error.StaleHandle,
-            error.InvalidTransition => return Error.InvalidTransition,
-            else => return self.poisonBank(),
-        };
-        slot.publication_request_epoch = request_epoch;
-        slot.publication_session_id = session_id;
-        slot.publication_service_policy = service_policy;
+            service_policy,
+        );
     }
 
     /// Freeze the next deterministic service selection without advancing the
@@ -741,6 +853,7 @@ pub const Scheduler = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.requireOpen();
+        try self.requireNoAdoption();
         try self.requireNoService();
         try self.validateBank();
         try self.preflightEvent();
@@ -805,6 +918,7 @@ pub const Scheduler = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.requireOpen();
+        try self.requireNoAdoption();
         try self.requireNoService();
         try self.validateBank();
         try self.preflightEvent();
@@ -883,6 +997,7 @@ pub const Scheduler = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.requireOpen();
+        try self.requireNoAdoption();
         const pending = try self.validatePendingService(permit);
         if (pending.commit_ticket != null) return Error.ServiceInFlight;
         const context = try self.validateServiceCommitLocked(permit);
@@ -901,6 +1016,7 @@ pub const Scheduler = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.requireOpen();
+        try self.requireNoAdoption();
         const pending = try self.validatePendingService(permit);
         if (pending.commit_ticket != null) return Error.ServiceInFlight;
         if (self.next_service_commit_generation == 0 or
@@ -937,6 +1053,7 @@ pub const Scheduler = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.requireOpen();
+        try self.requireNoAdoption();
         const pending = try self.validateServiceCommitTicket(ticket);
         const context = try self.validateServiceCommitLocked(pending.permit);
         if (serviceRequiresBoundFinalizerV2(self.slots[context.index]))
@@ -964,6 +1081,7 @@ pub const Scheduler = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.requireOpen();
+        try self.requireNoAdoption();
         const pending = try self.validateServiceCommitTicket(ticket);
         const context = try self.validateServiceCommitLocked(pending.permit);
         const slot = self.slots[context.index];
@@ -993,6 +1111,7 @@ pub const Scheduler = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.requireOpen();
+        try self.requireNoAdoption();
         const pending = try self.validateServiceCommitTicket(ticket);
         try self.validateBank();
         try self.validateServiceBeforeState(pending.permit);
@@ -1009,6 +1128,7 @@ pub const Scheduler = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.requireOpen();
+        try self.requireNoAdoption();
         const pending = try self.validatePendingService(permit);
         if (pending.commit_ticket != null) return Error.ServiceInFlight;
         try self.validateBank();
@@ -1104,6 +1224,7 @@ pub const Scheduler = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.requireOpen();
+        try self.requireNoAdoption();
         try self.requireNoService();
         try self.validateBank();
         try self.preflightEvent();
@@ -1131,6 +1252,16 @@ pub const Scheduler = struct {
     }
 
     fn finishHandle(
+        self: *Scheduler,
+        handle: Handle,
+        kind: EventKind,
+        required_state: SlotState,
+    ) Error!EventV1 {
+        try self.requireNoAdoption();
+        return self.finishHandleLocked(handle, kind, required_state);
+    }
+
+    fn finishHandleLocked(
         self: *Scheduler,
         handle: Handle,
         kind: EventKind,
@@ -1194,6 +1325,7 @@ pub const Scheduler = struct {
         if (request_epoch == 0 or session_id == 0)
             return Error.InvalidConfiguration;
         try self.requireOpen();
+        try self.requireNoAdoption();
         try self.requireNoService();
         try self.validateBank();
         try self.preflightEvent();
@@ -1368,6 +1500,104 @@ pub const Scheduler = struct {
             slot.spec.request_generation != handle.request_generation)
             return Error.StaleHandle;
         return index;
+    }
+
+    fn validatePublicationAdmission(
+        self: *Scheduler,
+        admission: Admission,
+    ) Error!usize {
+        const event = admission.event;
+        if (event.abi_version != event_abi or
+            event.kind != .admission_accepted or
+            event.rejection_reason != .none or
+            event.scheduler_epoch != self.config.scheduler_epoch or
+            event.event_sequence == std.math.maxInt(u64) or
+            event.event_sequence + 1 != self.next_event_sequence or
+            !std.mem.eql(u8, &event.event_sha256, &eventSha256(event)) or
+            !std.mem.eql(u8, &event.event_sha256, &self.chain_head_sha256) or
+            !std.mem.eql(u8, &event.state_after_sha256, &self.stateSha256()) or
+            event.logical_tick_after != self.logical_tick or
+            event.cursor_after != self.cursor or
+            event.level_after != self.level or
+            !std.meta.eql(admission.handle, event.handle))
+            return Error.InvalidTransition;
+
+        const index = self.validateHandle(admission.handle, .active) catch
+            return Error.StaleHandle;
+        const slot = self.slots[index];
+        const lane_counts = self.counts();
+        if (slotPublicationBound(slot) or
+            !std.meta.eql(event.spec, slot.spec) or
+            !std.meta.eql(event.resource_receipt, slot.receipt) or
+            !std.mem.eql(
+                u8,
+                &event.resource_receipt_sha256,
+                &slot.receipt_sha256,
+            ) or
+            event.remaining_before != 0 or
+            event.remaining_after != slot.remaining_quanta or
+            event.remaining_after != slot.spec.work_quanta or
+            event.active_after != lane_counts.active or
+            event.finished_after != lane_counts.finished or
+            !std.meta.eql(event.bank_used_after, self.used))
+            return Error.InvalidTransition;
+        return index;
+    }
+
+    fn bindPublicationSlot(
+        self: *Scheduler,
+        index: usize,
+        request_epoch: u64,
+        session_id: usize,
+        service_policy: PublicationServicePolicy,
+    ) Error!void {
+        if (request_epoch == 0 or session_id == 0 or
+            service_policy == .none)
+            return Error.InvalidConfiguration;
+        const slot = &self.slots[index];
+        self.bank.bindPublicationSession(
+            slot.receipt,
+            request_epoch,
+            session_id,
+        ) catch |err| switch (err) {
+            error.InvalidConfiguration => return Error.InvalidConfiguration,
+            error.StaleReservation => return Error.StaleHandle,
+            error.InvalidTransition => return Error.InvalidTransition,
+            else => return self.poisonBank(),
+        };
+        slot.publication_request_epoch = request_epoch;
+        slot.publication_session_id = session_id;
+        slot.publication_service_policy = service_policy;
+    }
+
+    fn validatePendingPublicationAdoption(
+        self: *Scheduler,
+        adoption: PublicationAdoptionV1,
+    ) Error!PendingPublicationAdoption {
+        const pending = self.pending_publication_adoption orelse
+            return Error.StaleAdoptionLease;
+        if (!std.mem.eql(
+            u8,
+            &pending.adoption.adoption_sha256,
+            &publicationAdoptionSha256(pending.adoption),
+        )) return self.poisonInvariant();
+        if (adoption.abi_version != publication_adoption_abi or
+            adoption.scheduler_epoch != self.config.scheduler_epoch or
+            adoption.coordinator_id != self.service_coordinator_id or
+            adoption.coordinator_address !=
+                @as(u64, @intCast(@intFromPtr(self))) or
+            adoption.adoption_generation == 0 or
+            adoption.publication_request_epoch == 0 or
+            adoption.publication_session_id == 0 or
+            adoption.publication_service_policy != .every_service or
+            !std.mem.eql(
+                u8,
+                &adoption.adoption_sha256,
+                &publicationAdoptionSha256(adoption),
+            ) or
+            !std.meta.eql(adoption, pending.adoption))
+            return Error.StaleAdoptionLease;
+        return pending;
     }
 
     fn validatePendingService(
@@ -1621,12 +1851,84 @@ pub const Scheduler = struct {
         if (self.closed) return Error.SchedulerClosed;
     }
 
+    fn requireNoAdoption(self: *const Scheduler) Error!void {
+        if (self.pending_publication_adoption != null)
+            return Error.AdoptionInFlight;
+    }
+
     fn requireNoService(self: *const Scheduler) Error!void {
         if (self.pending_service != null) return Error.ServiceInFlight;
     }
 
+    fn lifecycleEventsRemaining(self: *const Scheduler) Error!u64 {
+        var required: u64 = 0;
+        for (self.slots) |slot| {
+            const slot_required = switch (slot.state) {
+                .free => 0,
+                .active => std.math.add(
+                    u64,
+                    slot.remaining_quanta,
+                    1,
+                ) catch return Error.SequenceOverflow,
+                .finished => 1,
+            };
+            required = std.math.add(
+                u64,
+                required,
+                slot_required,
+            ) catch return Error.SequenceOverflow;
+        }
+        return required;
+    }
+
+    fn availableEventSequences(self: *const Scheduler) u64 {
+        return std.math.maxInt(u64) - self.next_event_sequence;
+    }
+
+    /// Preflight an event that advances one already-admitted lifecycle. The
+    /// derived debt is semantic slot state, so no separate reservation field
+    /// or snapshot/wire change is required.
     fn preflightEvent(self: *const Scheduler) Error!void {
-        if (self.next_event_sequence == std.math.maxInt(u64))
+        const available = self.availableEventSequences();
+        const lifecycle = try self.lifecycleEventsRemaining();
+        if (available == 0 or available < lifecycle)
+            return Error.SequenceOverflow;
+    }
+
+    /// Admission rejection is not part of any accepted lane's lifecycle and
+    /// may consume only sequence slack beyond the exact drain debt.
+    fn preflightAdmissionDecisionEvent(
+        self: *const Scheduler,
+    ) Error!void {
+        const available = self.availableEventSequences();
+        const lifecycle = try self.lifecycleEventsRemaining();
+        if (available <= lifecycle) return Error.SequenceOverflow;
+    }
+
+    /// One accepted admission consumes its own event, then owes every service
+    /// quantum and one terminal cancel/retire event. Existing live lanes retain
+    /// their independently derived debt.
+    fn preflightAcceptedLifecycle(
+        self: *const Scheduler,
+        work_quanta: u64,
+    ) Error!void {
+        const candidate_lifecycle = std.math.add(
+            u64,
+            work_quanta,
+            1,
+        ) catch return Error.SequenceOverflow;
+        var required = try self.lifecycleEventsRemaining();
+        required = std.math.add(
+            u64,
+            required,
+            candidate_lifecycle,
+        ) catch return Error.SequenceOverflow;
+        required = std.math.add(
+            u64,
+            required,
+            1,
+        ) catch return Error.SequenceOverflow;
+        if (self.availableEventSequences() < required)
             return Error.SequenceOverflow;
     }
 
@@ -2417,6 +2719,33 @@ pub fn servicePermitSha256(permit: ServicePermitV1) Digest {
     return result;
 }
 
+/// Recompute one sealed, process-local publication-adoption authority. The
+/// exact accepted event and publication target are both bound so commit cannot
+/// substitute another receipt, epoch, coordinator address, or service policy.
+pub fn publicationAdoptionSha256(
+    adoption: PublicationAdoptionV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(publication_adoption_domain);
+    hashU64(&hash, adoption.abi_version);
+    hashU64(&hash, adoption.scheduler_epoch);
+    hashU64(&hash, adoption.coordinator_id);
+    hashU64(&hash, adoption.coordinator_address);
+    hashU64(&hash, adoption.adoption_generation);
+    hashU64(&hash, adoption.publication_request_epoch);
+    hashU64(&hash, @intCast(adoption.publication_session_id));
+    hashU8(&hash, @intFromEnum(adoption.publication_service_policy));
+    hashHandle(&hash, adoption.admission.handle);
+    hashU64(&hash, adoption.admission.event.event_sequence);
+    hash.update(&adoption.admission.event.event_sha256);
+    const canonical_event_sha256 = eventSha256(adoption.admission.event);
+    hash.update(&canonical_event_sha256);
+    hash.update(&adoption.admission.event.resource_receipt_sha256);
+    var result: Digest = undefined;
+    hash.final(&result);
+    return result;
+}
+
 /// Recompute the portable, idempotent logical-service intent digest.
 pub fn serviceIntentSha256(intent: ServiceIntentV1) Digest {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
@@ -2804,6 +3133,15 @@ fn expectAdmitted(decision: AdmissionDecision) !Admission {
     };
 }
 
+fn expectPublicationAdoption(
+    decision: PublicationAdoptionDecision,
+) !PublicationAdoptionV1 {
+    return switch (decision) {
+        .adopted => |value| value,
+        .rejected => error.TestUnexpectedResult,
+    };
+}
+
 const BoundFinalizerCapture = struct {
     calls: usize = 0,
     event: ?EventV1 = null,
@@ -3011,6 +3349,531 @@ test "LaneWeave stale handles cannot cancel a reused slot" {
         fixture.scheduler.cancel(first.handle),
     );
     _ = try fixture.scheduler.cancel(second.handle);
+    _ = try fixture.scheduler.close();
+}
+
+test "LaneWeave publication adoption is snapshot invisible and cancel compatible" {
+    var legacy: TestFixture = .{};
+    var adopted: TestFixture = .{};
+    try legacy.init(1, 1);
+    try adopted.init(1, 1);
+    var publication_coordinator: u8 = 0;
+    const session_id = @intFromPtr(&publication_coordinator);
+    const spec = testSpec(1, 1, 2, 0);
+
+    const legacy_admission = try expectAdmitted(
+        try legacy.scheduler.admit(spec),
+    );
+    const adoption = try expectPublicationAdoption(
+        try adopted.scheduler.admitForPublicationAdoption(
+            spec,
+            77,
+            session_id,
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        legacy_admission,
+        adoption.admission,
+    );
+    const adoption_snapshot = try adopted.scheduler.snapshot();
+    try std.testing.expectEqualDeep(
+        try legacy.scheduler.snapshot(),
+        adoption_snapshot,
+    );
+    try std.testing.expectEqualDeep(
+        try legacy.bank.snapshot(),
+        try adopted.bank.snapshot(),
+    );
+
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.admit(testSpec(2, 1, 1, 0)),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.admitForPublicationAdoption(
+            testSpec(2, 1, 1, 0),
+            78,
+            session_id,
+        ),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.bindPublicationSession(
+            adoption.admission,
+            77,
+            session_id,
+        ),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.prepareService(),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.serveOne(),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.commitService(.{}),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.armServiceCommit(.{}),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.abortService(.{}),
+    );
+    var finalizer_capture: BoundFinalizerCapture = .{};
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.commitArmedService(
+            .{},
+            finalizer_capture.interfaceV1(),
+        ),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.commitArmedServiceV2(
+            .{},
+            finalizer_capture.interface(77, session_id),
+        ),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.abortArmedService(.{}),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.cancel(adoption.admission.handle),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.retire(adoption.admission.handle),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.cancelBoundPublication(
+            adoption.admission.handle,
+            77,
+            session_id,
+            0,
+        ),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.retireBoundPublication(
+            adoption.admission.handle,
+            77,
+            session_id,
+            0,
+        ),
+    );
+    try std.testing.expectError(
+        Error.AdoptionInFlight,
+        adopted.scheduler.close(),
+    );
+    try std.testing.expectEqualDeep(
+        adoption_snapshot,
+        try adopted.scheduler.snapshot(),
+    );
+
+    var forged = adoption;
+    forged.publication_request_epoch += 1;
+    forged.adoption_sha256 = publicationAdoptionSha256(forged);
+    try std.testing.expectError(
+        Error.StaleAdoptionLease,
+        adopted.scheduler.cancelPublicationAdoption(forged),
+    );
+    try std.testing.expectEqualDeep(
+        adoption_snapshot,
+        try adopted.scheduler.snapshot(),
+    );
+
+    const legacy_cancel = try legacy.scheduler.cancel(
+        legacy_admission.handle,
+    );
+    const adopted_cancel = try adopted.scheduler.cancelPublicationAdoption(
+        adoption,
+    );
+    try std.testing.expectEqualDeep(legacy_cancel, adopted_cancel);
+    try std.testing.expectError(
+        Error.StaleAdoptionLease,
+        adopted.scheduler.cancelPublicationAdoption(adoption),
+    );
+    try std.testing.expectError(
+        Error.StaleAdoptionLease,
+        adopted.scheduler.commitPublicationAdoption(adoption),
+    );
+    try std.testing.expect((try adopted.bank.snapshot()).used.isZero());
+
+    const legacy_close = try legacy.scheduler.close();
+    const adopted_close = try adopted.scheduler.close();
+    try std.testing.expectEqualDeep(legacy_close, adopted_close);
+
+    var verifier_slots: [1]Slot = undefined;
+    var verifier_projection: [1]ProjectionSlot = undefined;
+    var verifier = try Verifier.init(
+        .{
+            .slots = &verifier_slots,
+            .projection = &verifier_projection,
+        },
+        adopted.scheduler.config,
+        adopted.scheduler.bank_epoch,
+        adopted.scheduler.limits,
+    );
+    try verifier.apply(adoption.admission.event);
+    try verifier.apply(adopted_cancel);
+    try verifier.apply(adopted_close);
+    _ = try verifier.finish(adopted_close.event_sha256);
+}
+
+test "LaneWeave publication adoption commits the sealed binding once" {
+    var legacy: TestFixture = .{};
+    var adopted: TestFixture = .{};
+    try legacy.init(1, 1);
+    try adopted.init(1, 1);
+    var publication_coordinator: u8 = 0;
+    const session_id = @intFromPtr(&publication_coordinator);
+    const spec = testSpec(1, 1, 2, 0);
+    const legacy_admission = try expectAdmitted(
+        try legacy.scheduler.admit(spec),
+    );
+    const adoption = try expectPublicationAdoption(
+        try adopted.scheduler.admitForPublicationAdoption(
+            spec,
+            91,
+            session_id,
+        ),
+    );
+    try legacy.scheduler.bindPublicationSession(
+        legacy_admission,
+        91,
+        session_id,
+    );
+    try adopted.scheduler.commitPublicationAdoption(adoption);
+
+    try std.testing.expectEqualDeep(
+        try legacy.scheduler.snapshot(),
+        try adopted.scheduler.snapshot(),
+    );
+    try std.testing.expectEqualDeep(
+        try legacy.bank.snapshot(),
+        try adopted.bank.snapshot(),
+    );
+    try adopted.bank.validatePublicationSession(
+        adoption.admission.event.resource_receipt,
+        91,
+        session_id,
+        0,
+    );
+    const index: usize = @intCast(adoption.admission.handle.slot_index);
+    try std.testing.expectEqual(
+        PublicationServicePolicy.every_service,
+        adopted.lane_slots[index].publication_service_policy,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 91),
+        adopted.lane_slots[index].publication_request_epoch,
+    );
+    try std.testing.expectEqual(
+        session_id,
+        adopted.lane_slots[index].publication_session_id,
+    );
+    try std.testing.expectError(
+        Error.StaleAdoptionLease,
+        adopted.scheduler.commitPublicationAdoption(adoption),
+    );
+    try std.testing.expectError(
+        Error.StaleAdoptionLease,
+        adopted.scheduler.cancelPublicationAdoption(adoption),
+    );
+
+    const legacy_cancel = try legacy.scheduler.cancelBoundPublication(
+        legacy_admission.handle,
+        91,
+        session_id,
+        0,
+    );
+    const adopted_cancel = try adopted.scheduler.cancelBoundPublication(
+        adoption.admission.handle,
+        91,
+        session_id,
+        0,
+    );
+    try std.testing.expectEqualDeep(legacy_cancel, adopted_cancel);
+    try std.testing.expectEqualDeep(
+        try legacy.scheduler.close(),
+        try adopted.scheduler.close(),
+    );
+}
+
+test "LaneWeave rejected publication adoption installs no barrier" {
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    const admitted = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 1, 0)),
+    );
+    var publication_coordinator: u8 = 0;
+    const decision = try fixture.scheduler.admitForPublicationAdoption(
+        testSpec(2, 1, 1, 0),
+        93,
+        @intFromPtr(&publication_coordinator),
+    );
+    const rejection = switch (decision) {
+        .adopted => return error.TestUnexpectedResult,
+        .rejected => |event| event,
+    };
+    try std.testing.expectEqual(
+        RejectionReason.no_slot,
+        rejection.rejection_reason,
+    );
+    const permit = try fixture.scheduler.prepareService();
+    try fixture.scheduler.abortService(permit);
+    _ = try fixture.scheduler.cancel(admitted.handle);
+    _ = try fixture.scheduler.close();
+}
+
+test "LaneWeave publication adoption reserves its full Event-v1 lifecycle" {
+    const maximum = std.math.maxInt(u64);
+    const work_quanta: u64 = 2;
+
+    var exact: TestFixture = .{};
+    try exact.init(2, 1);
+    exact.scheduler.next_event_sequence = maximum - (work_quanta + 2);
+    var publication_coordinator: u8 = 0;
+    const session_id = @intFromPtr(&publication_coordinator);
+    const adoption = try expectPublicationAdoption(
+        try exact.scheduler.admitForPublicationAdoption(
+            testSpec(1, 1, work_quanta, 0),
+            94,
+            session_id,
+        ),
+    );
+    try exact.scheduler.commitPublicationAdoption(adoption);
+
+    // No unrelated admission or rejection may consume the exact lifecycle
+    // debt after the adoption barrier converts to a publication binding.
+    try std.testing.expectError(
+        Error.SequenceOverflow,
+        exact.scheduler.admit(testSpec(2, 1, 1, 0)),
+    );
+
+    var capture: BoundFinalizerCapture = .{};
+    for (0..work_quanta) |_| {
+        const permit = try exact.scheduler.prepareService();
+        const armed = try exact.scheduler.armServiceCommit(permit);
+        _ = try exact.scheduler.commitArmedServiceV2(
+            armed.ticket,
+            capture.interface(94, session_id),
+        );
+    }
+    _ = try exact.scheduler.retireBoundPublication(
+        adoption.admission.handle,
+        94,
+        session_id,
+        0,
+    );
+    try std.testing.expectEqual(
+        maximum,
+        (try exact.scheduler.snapshot()).next_event_sequence,
+    );
+    try std.testing.expect((try exact.bank.snapshot()).used.isZero());
+
+    var short: TestFixture = .{};
+    try short.init(1, 1);
+    short.scheduler.next_event_sequence = maximum - (work_quanta + 1);
+    const short_before = try short.scheduler.snapshot();
+    const short_bank_before = try short.bank.snapshot();
+    const short_generation =
+        short.scheduler.next_publication_adoption_generation;
+    try std.testing.expectError(
+        Error.SequenceOverflow,
+        short.scheduler.admitForPublicationAdoption(
+            testSpec(1, 1, work_quanta, 0),
+            95,
+            session_id,
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        short_before,
+        try short.scheduler.snapshot(),
+    );
+    try std.testing.expectEqualDeep(
+        short_bank_before,
+        try short.bank.snapshot(),
+    );
+    try std.testing.expectEqual(
+        short_generation,
+        short.scheduler.next_publication_adoption_generation,
+    );
+    try std.testing.expect(short.scheduler.pending_publication_adoption == null);
+}
+
+test "LaneWeave rejection uses only slack beyond live lifecycle debt" {
+    const maximum = std.math.maxInt(u64);
+    var publication_coordinator: u8 = 0;
+    const session_id = @intFromPtr(&publication_coordinator);
+
+    var one_slack: TestFixture = .{};
+    try one_slack.init(1, 1);
+    const first = try expectAdmitted(
+        try one_slack.scheduler.admit(testSpec(1, 1, 1, 0)),
+    );
+    // The active lane owes one service plus one terminal event. One additional
+    // sequence remains available for an ordinary no-slot rejection.
+    one_slack.scheduler.next_event_sequence = maximum - 3;
+    one_slack.scheduler.next_publication_adoption_generation = maximum;
+    const decision = try one_slack.scheduler.admitForPublicationAdoption(
+        testSpec(2, 1, 1, 0),
+        96,
+        session_id,
+    );
+    const rejection = switch (decision) {
+        .adopted => return error.TestUnexpectedResult,
+        .rejected => |event| event,
+    };
+    try std.testing.expectEqual(
+        RejectionReason.no_slot,
+        rejection.rejection_reason,
+    );
+    _ = try one_slack.scheduler.serveOne();
+    _ = try one_slack.scheduler.retire(first.handle);
+    try std.testing.expectEqual(
+        maximum,
+        (try one_slack.scheduler.snapshot()).next_event_sequence,
+    );
+    try std.testing.expect((try one_slack.bank.snapshot()).used.isZero());
+
+    var no_slack: TestFixture = .{};
+    try no_slack.init(1, 1);
+    const reserved = try expectAdmitted(
+        try no_slack.scheduler.admit(testSpec(1, 1, 1, 0)),
+    );
+    no_slack.scheduler.next_event_sequence = maximum - 2;
+    const before = try no_slack.scheduler.snapshot();
+    try std.testing.expectError(
+        Error.SequenceOverflow,
+        no_slack.scheduler.admitForPublicationAdoption(
+            testSpec(2, 1, 1, 0),
+            97,
+            session_id,
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        before,
+        try no_slack.scheduler.snapshot(),
+    );
+    _ = try no_slack.scheduler.serveOne();
+    _ = try no_slack.scheduler.retire(reserved.handle);
+    try std.testing.expectEqual(
+        maximum,
+        (try no_slack.scheduler.snapshot()).next_event_sequence,
+    );
+    try std.testing.expect((try no_slack.bank.snapshot()).used.isZero());
+}
+
+test "LaneWeave copied publication adoption commit and cancel linearize" {
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    var publication_coordinator: u8 = 0;
+    const session_id = @intFromPtr(&publication_coordinator);
+    const adoption = try expectPublicationAdoption(
+        try fixture.scheduler.admitForPublicationAdoption(
+            testSpec(1, 1, 2, 0),
+            92,
+            session_id,
+        ),
+    );
+    var start = std.atomic.Value(bool).init(false);
+
+    const Committer = struct {
+        scheduler: *Scheduler,
+        start: *std.atomic.Value(bool),
+        adoption: PublicationAdoptionV1,
+        succeeded: bool = false,
+        operation_error: ?Error = null,
+
+        fn run(self: *@This()) void {
+            while (!self.start.load(.acquire)) std.atomic.spinLoopHint();
+            self.scheduler.commitPublicationAdoption(
+                self.adoption,
+            ) catch |err| {
+                self.operation_error = err;
+                return;
+            };
+            self.succeeded = true;
+        }
+    };
+    const Canceller = struct {
+        scheduler: *Scheduler,
+        start: *std.atomic.Value(bool),
+        adoption: PublicationAdoptionV1,
+        event: ?EventV1 = null,
+        operation_error: ?Error = null,
+
+        fn run(self: *@This()) void {
+            while (!self.start.load(.acquire)) std.atomic.spinLoopHint();
+            self.event = self.scheduler.cancelPublicationAdoption(
+                self.adoption,
+            ) catch |err| {
+                self.operation_error = err;
+                return;
+            };
+        }
+    };
+
+    var committer: Committer = .{
+        .scheduler = &fixture.scheduler,
+        .start = &start,
+        .adoption = adoption,
+    };
+    var canceller: Canceller = .{
+        .scheduler = &fixture.scheduler,
+        .start = &start,
+        .adoption = adoption,
+    };
+    const commit_thread = try std.Thread.spawn(
+        .{},
+        Committer.run,
+        .{&committer},
+    );
+    const cancel_thread = std.Thread.spawn(
+        .{},
+        Canceller.run,
+        .{&canceller},
+    ) catch |err| {
+        start.store(true, .release);
+        commit_thread.join();
+        return err;
+    };
+    start.store(true, .release);
+    commit_thread.join();
+    cancel_thread.join();
+
+    const cancelled = canceller.event != null;
+    try std.testing.expect(committer.succeeded != cancelled);
+    if (committer.succeeded) {
+        try std.testing.expectEqual(
+            Error.StaleAdoptionLease,
+            canceller.operation_error.?,
+        );
+        _ = try fixture.scheduler.cancelBoundPublication(
+            adoption.admission.handle,
+            92,
+            session_id,
+            0,
+        );
+    } else {
+        try std.testing.expectEqual(
+            Error.StaleAdoptionLease,
+            committer.operation_error.?,
+        );
+        try std.testing.expect(cancelled);
+    }
+    try std.testing.expect((try fixture.bank.snapshot()).used.isZero());
+    try std.testing.expect(!(try fixture.scheduler.snapshot()).poisoned);
     _ = try fixture.scheduler.close();
 }
 

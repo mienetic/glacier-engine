@@ -75,7 +75,9 @@ const ActiveAttempt = struct {
     downstream_ack: publication.PrepareAckV1 = .{},
 };
 
-/// Address-stable adapter. Do not move or copy after successful `init`.
+/// Address-stable adapter. Do not move or copy after successful `init` or
+/// while `initAdopting` is in progress; both paths permanently bind the inner
+/// publication coordinator's address on success.
 pub const Session = struct {
     mutex: std.Thread.Mutex = .{},
     inner: publication.Session = .{},
@@ -135,6 +137,55 @@ pub const Session = struct {
             return err;
         };
         self.initialized = true;
+    }
+
+    /// Initialize from one sealed Scheduler adoption authority. Concrete
+    /// bindings and their initial commitments are fully installed before the
+    /// inner coordinator performs the final fallible Scheduler commit.
+    pub fn initAdopting(
+        self: *Session,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+        adoption: lane.PublicationAdoptionV1,
+        bindings: BindingsV1,
+    ) (Error || publication.Error || lane.Error)!void {
+        if (self.initialized) return Error.InvalidState;
+        try validateBindings(adoption.admission, bindings);
+
+        const physical_kv_sha256 = logicalKvPrefixSha256(
+            bindings.cache,
+            bindings.cache.len,
+        );
+        const initial_state = publication.makeStateCommitmentV1(
+            abi,
+            @intCast(bindings.cache.len),
+            physical_kv_sha256,
+            rng_state_abi,
+            rngStateSha256(bindings.rng_state.*),
+            0,
+            0,
+            initialOutputStateSha256(),
+        );
+
+        self.* = .{
+            .scheduler = scheduler,
+            .bank = bank,
+            .admission = adoption.admission,
+            .request_epoch = adoption.publication_request_epoch,
+            .bindings = bindings,
+            .physical_kv_sha256 = physical_kv_sha256,
+            .initialized = true,
+        };
+        self.inner.initAdopting(
+            scheduler,
+            bank,
+            adoption,
+            abi,
+            initial_state,
+        ) catch |err| {
+            self.* = .{};
+            return err;
+        };
     }
 
     /// Cancel an active bound request and return its atomic Event-v1 terminal
