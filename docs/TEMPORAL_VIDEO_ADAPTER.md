@@ -81,6 +81,14 @@ one typed result sequence, and scrubs the candidate. Abort or candidate drift
 publishes nothing and scrubs provisional bytes. Closing model and cache
 sessions returns logical ownership to zero.
 
+The additive scheduled path adopts the exact `LaneWeave` admission receipt
+without reserving a second claim. Selected-frame gathering and all fallible
+candidate/result checks complete before the final service commit; visible
+embedding bytes and typed publication state advance only through the bounded
+V2 finalizer. Retirement then closes and releases the scheduled receipt
+atomically, while the cache retains its separately accounted ownership until
+its own close.
+
 ## Fail-closed cases
 
 Retained tests reject:
@@ -93,6 +101,10 @@ Retained tests reject:
 - unsupported schema, dimensions, or capabilities;
 - output beyond the declared absolute bound; and
 - candidate mutation between prepare and commit.
+
+The scheduled fixture also verifies unchanged Bank accounting during receipt
+adoption, zero visibility before final service, exact scheduler receipt fields
+inside the committed result, and zero model/cache ownership after retirement.
 
 ## Claim boundary
 

@@ -18,6 +18,12 @@ claim boundary.
 Passing a conformance demo does not establish throughput, physical memory,
 energy, or production reliability.
 
+The staged multi-request runner, CPU/GPU observer, native report, and
+soak/disruption contracts are defined in the
+[Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md). Accelerator results must keep
+host, device, synchronization, placement, residency, fallback, power, and
+thermal observations distinct.
+
 ## Current conformance surfaces
 
 | Command | Contract exercised |
@@ -47,10 +53,10 @@ energy, or production reliability.
 | `zig build media-stream-continuation-demo -Dmetal=false` | Three portable 2,048-byte checkpoints, fresh-Bank charge-before-materialization output restore, exact next-chunk publication, and final zero state |
 | `zig build media-stream-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, synced image/audio/video checkpoints and retained outputs, three resumed chunks, zero duplicates, and explicit non-atomic-set disclosure |
 | `zig build media-stream-checkpoint-set-demo -Dmetal=false` | Six-object materialized image/audio/video generations, canonical retained-output, processor-state, and cache-payload bundles, seven `SIGKILL` boundaries, restore-before-visible cache ownership, fresh-process generation three, idempotent recovery, and final zero ownership |
-| `zig test src/core/vision_encoder_adapter.zig -OReleaseSafe` | Canonical model artifact/plan/result records, explicit support negotiation, a live-cache exact-integer vision projection, candidate drift rejection, transactional typed embedding publication, and final zero ownership |
-| `zig test src/core/audio_window_adapter.zig -OReleaseSafe` | Live signed feature windows, exact sample/window/hop source mapping, shared stateless adapter publication, abort/drift rejection, and final zero ownership |
+| `zig test src/core/vision_encoder_adapter.zig -OReleaseSafe` | Canonical model artifact/plan/result records, explicit support negotiation, a live-cache exact-integer vision projection, scheduler-receipt adoption, final-service typed publication, candidate drift rejection, and final zero ownership |
+| `zig test src/core/audio_window_adapter.zig -OReleaseSafe` | Live signed feature windows, exact sample/window/hop source mapping, scheduler-receipt adoption, final-service stateless publication, abort/drift rejection, and final zero ownership |
 | `zig test src/core/audio_transcript_adapter.zig -OReleaseSafe` | Canonical overlap and transcript wires, context-only versus publishable sample ranges, live cache ownership, predecessor/candidate substitution rejection, transactional text visibility, and final zero ownership |
-| `zig test src/core/temporal_video_adapter.zig -OReleaseSafe` | Live temporal cache, canonical strided-frame selection, keyframe/eviction lineage, charged-and-scrubbed gather scratch, exact target-time mapping, candidate drift rejection, and final zero ownership |
+| `zig test src/core/temporal_video_adapter.zig -OReleaseSafe` | Live temporal cache, canonical strided-frame selection, keyframe/eviction lineage, charged-and-scrubbed gather scratch, exact target-time mapping, scheduler-receipt adoption, final-service publication, candidate drift rejection, and final zero ownership |
 | `zig test src/core/video_segment_adapter.zig -OReleaseSafe` | Canonical 512-byte video segments, exact frame/time bounds, live selection/cache lineage, predecessor binding, mutation rejection, transactional visibility, and final zero ownership |
 | `zig test src/core/video_segment_timeline.zig -OReleaseSafe` | Canonical 384-byte timeline/merge wires, same-event overlap coalescing, gap/event separation, raw/decision lineage, mutation and candidate-drift rejection, and final zero ownership |
 | `zig test src/core/audio_video_result_link.zig -OReleaseSafe` | Canonical 320-byte state and 576-byte cross-modal result wires, publish-only audio mapping, exact time conversion, positive-overlap relations, dual-modality lineage, mutation/drift rejection, and final zero ownership |

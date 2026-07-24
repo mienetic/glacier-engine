@@ -10,6 +10,7 @@ const processor_cache = @import("media_processor_cache.zig");
 const model = @import("model_contract.zig");
 const stateless = @import("stateless_model_adapter.zig");
 const resource_bank = @import("resource_bank.zig");
+const qos = @import("lane_weave_qos.zig");
 
 pub const Digest = [32]u8;
 pub const reference_adapter_abi: u64 = 0x4741_5745_0000_0001;
@@ -35,6 +36,8 @@ pub const Error = stateless.Error || processor.Error ||
 
 pub const AdapterDescriptorV1 = stateless.AdapterDescriptorV1;
 pub const AdapterV1 = stateless.AdapterV1;
+pub const ArmedScheduledResultV1 =
+    stateless.ArmedScheduledResultV1;
 pub const Phase = stateless.Phase;
 
 pub const Session = struct {
@@ -53,6 +56,27 @@ pub const Session = struct {
         try self.inner.initV1(
             bank,
             owner_key,
+            publication_state,
+            manifest,
+            plan,
+            adapter,
+            &audio_support,
+        );
+    }
+
+    pub fn initScheduledV1(
+        self: *Session,
+        scheduler: *qos.Scheduler,
+        admission: qos.Admission,
+        publication_state: *model.PublicationStateV1,
+        manifest: model.ArtifactManifestV1,
+        plan: model.ExecutionPlanV1,
+        adapter: AdapterV1,
+    ) Error!void {
+        try validateAudioAdapterV1(adapter, manifest, plan);
+        try self.inner.initScheduledV1(
+            scheduler,
+            admission,
             publication_state,
             manifest,
             plan,
@@ -98,12 +122,27 @@ pub const Session = struct {
         return self.inner.commitV1();
     }
 
+    pub fn armServiceV1(
+        self: *Session,
+        intent: qos.ServiceIntentV1,
+    ) Error!ArmedScheduledResultV1 {
+        return self.inner.armServiceV1(intent);
+    }
+
     pub fn abortV1(self: *Session) Error!void {
         return self.inner.abortV1();
     }
 
     pub fn closeAndRelease(self: *Session) Error!void {
         return self.inner.closeAndRelease();
+    }
+
+    pub fn cancelScheduledV1(self: *Session) Error!qos.EventV1 {
+        return self.inner.cancelScheduledV1();
+    }
+
+    pub fn retireScheduledV1(self: *Session) Error!qos.EventV1 {
+        return self.inner.retireScheduledV1();
     }
 };
 
@@ -657,6 +696,181 @@ test "audio adapter publishes exact window embeddings and releases" {
     try session.closeAndRelease();
     try cache_session.closeAndRelease();
     try std.testing.expect((try bank.snapshotV3()).used.isZero());
+}
+
+test "audio adapter adopts scheduled receipt and publishes on final quantum" {
+    var fixture = try TestFixture.init();
+    try fixture.rebind();
+
+    var cache_storage: TestRuntime = .{};
+    var cache_bank = try resource_bank.Bank.initWithLeaseTreeStorage(
+        &cache_storage.slots,
+        &cache_storage.roots,
+        &cache_storage.nodes,
+        .{},
+        fixture.cache_bundle.restore_bank_epoch,
+    );
+    var cache_session: processor_cache.RestoreSession = .{};
+    try cache_session.prepareV1(
+        &cache_bank,
+        fixture.cache_bundle,
+        fixture.cache_bundle.bundle_sha256,
+    );
+    try cache_session.commitMaterializedV1(.{
+        &fixture.image_cache,
+        &fixture.audio_features,
+        &fixture.video_cache,
+    });
+
+    var model_slots = [_]resource_bank.Slot{.{}};
+    var model_bank = try resource_bank.Bank.init(
+        &model_slots,
+        .{},
+        0x4101,
+    );
+    var lane_slots = [_]qos.Slot{.{}};
+    var projection = [_]qos.ProjectionSlot{.{}};
+    var scheduler = try qos.Scheduler.init(
+        &model_bank,
+        .{
+            .slots = &lane_slots,
+            .projection = &projection,
+        },
+        .{
+            .scheduler_epoch = 0x4102,
+            .challenge = model.sha256("scheduled audio challenge"),
+            .max_weight = 1,
+            .max_projection_quanta = 8,
+            .max_projection_operations = 64,
+        },
+    );
+    const decision = try scheduler.admit(.{
+        .tenant_key = 0x4103,
+        .request_key = 0x4104,
+        .request_generation = 1,
+        .resource_owner_key = 0x4105,
+        .weight = 1,
+        .work_quanta = 1,
+        .deadline_tick = 8,
+        .claim = fixture.plan.claim,
+    });
+    const admission = switch (decision) {
+        .admitted => |value| value,
+        .rejected => return error.TestUnexpectedResult,
+    };
+    const before_adoption = try model_bank.snapshot();
+
+    const descriptor = try makeAdapterDescriptorV1(
+        fixture.manifest,
+        model.sha256("scheduled reference audio projection v1"),
+    );
+    var context: u8 = 1;
+    const adapter: AdapterV1 = .{
+        .context = &context,
+        .descriptor = descriptor,
+        .execute_fn = referenceExecuteV1,
+        .validate_candidate_fn = validateCandidateV1,
+    };
+    var session: Session = .{};
+    try session.initScheduledV1(
+        &scheduler,
+        admission,
+        &fixture.publication_state,
+        fixture.manifest,
+        fixture.plan,
+        adapter,
+    );
+    try std.testing.expectEqualDeep(
+        before_adoption,
+        try model_bank.snapshot(),
+    );
+
+    const permit = try scheduler.prepareService();
+    try std.testing.expectEqual(@as(u64, 1), permit.remaining_before);
+    var candidate: [16]u8 = undefined;
+    var output: [16]u8 = undefined;
+    const prepared = try session.prepareV1(
+        &fixture.processor_bundle,
+        &fixture.cache_bundle,
+        &cache_session,
+        &fixture.weights,
+        &fixture.audio_features,
+        &candidate,
+        &output,
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &output, 0));
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        fixture.publication_state.visible_results,
+    );
+    try std.testing.expectEqual(
+        admission.event.resource_receipt.bank_epoch,
+        prepared.resource_bank_epoch,
+    );
+    try std.testing.expectEqual(
+        admission.event.resource_receipt.slot_index,
+        prepared.resource_slot_index,
+    );
+    try std.testing.expectEqual(
+        admission.event.resource_receipt.generation,
+        prepared.resource_generation,
+    );
+    try std.testing.expectEqual(
+        admission.event.resource_receipt.owner_key,
+        prepared.resource_owner_key,
+    );
+    try std.testing.expectEqualDeep(
+        admission.event.resource_receipt.claim,
+        prepared.claim,
+    );
+    try std.testing.expectEqual(
+        admission.event.resource_receipt.integrity,
+        prepared.resource_integrity,
+    );
+
+    const armed_service = try scheduler.armServiceCommit(permit);
+    var armed_model = try session.armServiceV1(armed_service.intent);
+    const event = try scheduler.commitArmedServiceV2(
+        armed_service.ticket,
+        armed_model.finalizer(),
+    );
+    try std.testing.expect(qos.eventMatchesServiceIntentV1(
+        event,
+        armed_service.intent,
+    ));
+    try std.testing.expectEqual(prepared, try armed_model.resultV1());
+    try std.testing.expectEqual(@as(u64, 0), event.remaining_after);
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        fixture.publication_state.visible_results,
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &candidate, 0));
+    const expected = [_]i32{ 500, 500, 500, 1500 };
+    for (expected, 0..) |value, index| {
+        const offset = index * @sizeOf(i32);
+        try std.testing.expectEqual(
+            value,
+            std.mem.readInt(
+                i32,
+                output[offset .. offset + @sizeOf(i32)][0..@sizeOf(i32)],
+                .little,
+            ),
+        );
+    }
+
+    const retired = try session.retireScheduledV1();
+    try std.testing.expectEqual(qos.EventKind.retire, retired.kind);
+    _ = try scheduler.close();
+    const model_final = try model_bank.snapshot();
+    try std.testing.expect(model_final.used.isZero());
+    try std.testing.expectEqual(@as(usize, 0), model_final.committed_receipts);
+    try std.testing.expectEqual(@as(u64, 1), model_final.successful_commits);
+    try std.testing.expectEqual(@as(u64, 1), model_final.releases);
+
+    try cache_session.closeAndRelease();
+    const cache_final = try cache_bank.snapshotV3();
+    try std.testing.expect(cache_final.used.isZero());
+    try std.testing.expectEqual(@as(u64, 0), cache_final.live_allocations);
 }
 
 test "audio adapter abort and candidate drift preserve publication" {

@@ -182,14 +182,15 @@ replace native execution evidence on each operating system.
 
 ## Next contributor slices
 
-The load track can now grow without mixing conformance and performance claims:
+The complete sequencing and native report contract live in the
+[Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md). The load track can grow
+without mixing conformance and performance claims:
 
 1. add generated bounded scenarios and shrinkable failure cases;
 2. add a separately versioned closed-loop mode with explicit completion-driven
    arrivals;
-3. connect the scheduler-owned receipt lifecycle to typed model, provider, and
-   tool adapters; the bounded image/audio/video media-runtime transaction is
-   now complete;
+3. drive the completed scheduled vision/audio/temporal-video lifecycle through
+   a mixed typed-adapter profile, then add provider and tool profiles;
 4. add family-aware batching, safe preemption, and multi-tenant campaigns;
 5. build native per-OS runners that retain CPU, memory, power, thermal, backend,
    and machine-condition envelopes; and

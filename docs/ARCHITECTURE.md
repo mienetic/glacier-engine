@@ -687,16 +687,18 @@ targets remain gated until their named native adapters and evidence pass.
   charge-before-visibility restore, and exact release.
 - [Typed model-family contracts and vision adapter](MODEL_FAMILY_ADAPTER.md):
   canonical artifact/plan/result records, explicit support negotiation, and a
-  cache-bound transactional embedding fixture.
+  cache-bound transactional embedding fixture with scheduler-owned
+  final-service publication.
 - [Typed audio-window encoder adapter](AUDIO_WINDOW_ADAPTER.md): signed feature
-  windows, sample/window/hop source mapping, shared stateless publication, and
-  exact cancellation/release.
+  windows, sample/window/hop source mapping, shared scheduled stateless
+  publication, and exact cancellation/release.
 - [Overlap-safe audio transcript adapter](AUDIO_TRANSCRIPT_ADAPTER.md):
   canonical context/new-sample ownership, predecessor-bound transcript
   segments, and transactional publication.
 - [Typed temporal-video encoder adapter](TEMPORAL_VIDEO_ADAPTER.md): canonical
   strided-frame selection, keyframe/eviction lineage, charged gather scratch,
-  exact target-time mapping, and transactional embedding publication.
+  exact target-time mapping, and scheduler-owned transactional embedding
+  publication.
 - [Typed video-segment adapter](VIDEO_SEGMENT_ADAPTER.md): fixed source/time
   bounds, event/confidence fields, processor/cache/selection lineage,
   predecessor chaining, and transactional typed publication.

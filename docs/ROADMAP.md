@@ -26,10 +26,10 @@ evidence. The plane and model-family sequence is specified in the
 | --- | --- | --- | --- |
 | Exact admission | Integrated | ResourceBank receipts, capacity rejection, release, snapshots | Physical telemetry adapters and long-running pressure campaigns |
 | Hierarchical ownership | Integrated | LeaseTree child scopes, fresh-Bank reacquisition, paged-KV remap, two-process handoff, and seven-phase checkpoint root-switch recovery | Production-model continuation and durable lifecycle metadata |
-| Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay, a bounded mixed-media pressure campaign, and exact scheduler-receipt handoff to final-quantum media transactions | Family-aware batching, preemption, placement, typed model-adapter workloads, and broader multi-tenant integration |
+| Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay, a bounded mixed-media pressure campaign, exact scheduler-receipt handoff to final-quantum media transactions, and scheduler-owned typed vision/audio/video result publication | Family-aware batching, preemption, placement, mixed typed-adapter workload profiles, and broader multi-tenant integration |
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
-| AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, scheduler-coupled image/audio/video media transactions, restart-safe generated-media output verticals, and exported Zig package modules | More family adapters, stable API policy, product-specific build profiles, physical resource integration, distribution, and generated compatibility matrix |
+| AI runtime | Mixed prototype/integrated planes | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, scheduler-coupled media transactions and typed perception results, restart-safe generated-media output verticals, and exported Zig package modules | More family adapters, stable API policy, product-specific build profiles, physical resource integration, distribution, and generated compatibility matrix |
 | Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, and validated bounded lossless delivery profiles for retained image/audio/video shapes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, production generative-media adapters and broader formats, additional replay profiles, agents/retrieval, and specialized families |
 | Multimodal execution | Model-free runtime, scheduler-coupled final-quantum transactions, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, deterministic source-model/materializer replay, and vision/audio/video fixtures integrated; bounded canonical PNG/WAVE/APNG profiles and their additive format sidecar integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, a canonical typed-admission construction path, transition and format-evidence sidecars, strict lossless emit-and-accept modules, real two-generation PNG/WAVE/APNG registry-transition-format fixtures, an independent composed Python oracle, and optional format-aware read-only inspection without changing earlier V1 wires | Production encoder/container adapters and broader profiles, additional model/materializer profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, and physical playback/display and quality evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
@@ -37,7 +37,7 @@ evidence. The plane and model-family sequence is specified in the
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, full build and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Named core/CPU/durable/device/host-tool build profiles; native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; mobile lifecycle gates; and a reduced edge profile |
 | Benchmark evidence | Prototype | Paired harnesses, machine envelope, independent verification | More complete CPU/energy telemetry and reproducible machines |
-| Load and resilience evidence | Prototype | A portable versioned explicit-open-loop mixed-media scenario/result contract retains exact overload, fairness, timeout, cancellation, logical-resource, and zero-orphan evidence with Zig/Python replay; an additive sidecar executes completed image/audio/video media transactions under the same receipts and atomically binds final service to publication | Generated workloads; a separate closed-loop mode; typed model/provider/tool adapters; native p50/p95/p99, physical-resource, recovery, and soak campaigns |
+| Runtime Workload Lab | W0/W1 integrated | A portable versioned explicit-open-loop mixed-media contract retains exact overload, fairness, timeout, cancellation, logical-resource, replay, and zero-orphan evidence; an additive sidecar executes completed image/audio/video transactions under the same receipts and atomically binds final service to publication | Generated and closed-loop scenarios, typed model/provider/tool profiles, native CPU/GPU reports and physical observers, bounded soak/disruption, and multi-OS replication |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
 ## P0 — Open-source usability
@@ -247,17 +247,24 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   transaction on completed requests only, adopting the scheduler receipt
   without double admission and retaining a separate exact Zig/Python execution
   sidecar with atomic final service and zero-orphan close.
+- [x] Let the retained typed vision, audio-window, and temporal-video adapters
+  adopt the exact scheduler receipt, preflight every fallible result check,
+  expose output only through the final V2 service commit, and retire with zero
+  model/cache ownership while preserving all existing V1 wires.
 - [ ] Add generated bounded workloads and a separately versioned closed-loop
   mode with completion-driven arrivals; do not infer native timing from either
   deterministic conformance mode.
 - [ ] Retain native per-OS mixed-family load and bounded soak campaigns with
-  machine, power, thermal, backend, fault-schedule, memory-growth, recovery,
-  and zero-orphan evidence.
+  CPU/GPU identity and placement, host/device timing, memory residency, power,
+  thermal, backend, fault-schedule, memory-growth, recovery, and zero-orphan
+  evidence.
 
 See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md) for the implemented
 V1 contract, exact reference campaign, claim boundary, and contributor slices.
 See [Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md) for the additive
 single-receipt image/audio/video execution and publication evidence.
+See [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md) for the W0–W8 workload,
+native-observation, resilience, and platform-replication sequence.
 See [Platform Portability](PLATFORM_PORTABILITY.md) for the evidence matrix,
 adapter architecture, G0–G7 promotion gates, and staged target sequence.
 
@@ -445,14 +452,19 @@ for unsupported inputs, and reproducible generation instructions.
 
 ### Multimodal execution
 
-Status: **integrated model-free runtime vertical plus typed vision, audio, and
-temporal-video fixtures; production-model execution gated**.
+Status: **integrated model-free runtime vertical plus scheduler-coupled typed
+vision, audio, and temporal-video fixtures; production-model execution
+gated**.
 Shared identity, rational timeline/events, sealed plans, bounded canonical
 RGB/PCM/intra-frame decode, three deterministic transforms, exact
 `ResourceBank` admission, candidate revalidation, atomic logical publication,
 abort/retry, fixed receipts, and exact release now work as one lifecycle. The
-same lifecycle now adopts scheduler-owned receipts and executes one completed
+media lifecycle now adopts scheduler-owned receipts and executes one completed
 image, audio, and video transaction atomically with its final service quantum.
+The stateless model lifecycle separately adopts the same receipt for retained
+vision, audio-window, and temporal-video adapters, preflights every fallible
+result check, publishes the exact typed output through a bounded V2 finalizer,
+and cancels or retires with one failure-atomic terminal release.
 Three strict generated-output delivery modules now emit and accept bounded
 canonical PNG, PCM/WAVE, and APNG profiles. They do not provide general external
 format decoding, production encoder/container integration, quality evidence, or
@@ -551,14 +563,19 @@ The implementation sequence is:
     registry-transition-format fixtures. The sidecar binds profile, payload,
     producer semantics, registry entry, transition receipt, and predecessor
     format identity without changing either existing V1 wire. The read-only
-    inspector optionally validates and renders this exact triple; and
+    inspector optionally validates and renders this exact triple;
 15. deterministic scheduled-media execution is complete for the retained
     pressure scenario: one completed audio, video, and image request adopts its
     existing scheduler receipt, publishes only through the final armed service
     commit, and emits a separate cross-language evidence sidecar. Cancel,
     timeout, and rejection publish no media and all accepted receipts close
-    exactly once; and
-16. production encoder/container adapters and broader format profiles,
+    exactly once;
+16. scheduler-coupled typed perception is complete for the retained vision,
+    audio-window, and temporal-video adapters: each adopts rather than
+    re-reserves the receipt, exposes no output before final service, binds the
+    exact typed result to that receipt, and returns model/cache ownership to
+    zero; and
+17. production encoder/container adapters and broader format profiles,
     additional model/materializer profiles,
     retained native Linux filesystem campaigns, separately scoped initial
     power-loss durability, authorized physical playback/display, and quality

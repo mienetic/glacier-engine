@@ -197,10 +197,15 @@ independent Python model agree on the canonical result. An additive sidecar now
 adopts the accepted scheduler receipts and runs the completed audio, video, and
 image fixture transforms/publications only on their final service quanta.
 Cancelled, timed-out, and rejected work produces no media execution, and all
-accepted receipts close exactly once. This executes bounded fixture media
-rules, not production models, external codecs, playback, display, or native
-timing. See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md) and
-[Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md).
+accepted receipts close exactly once. The retained typed vision, audio-window,
+and temporal-video adapters now adopt that same scheduler-owned receipt,
+preflight the result and candidate before arming, publish through the final V2
+service commit, and return model plus cache ownership to zero. This executes
+bounded fixture media and exact-integer adapter rules, not production models,
+external codecs, playback, display, or native timing. See
+[Deterministic Workload Pressure](WORKLOAD_PRESSURE.md),
+[Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md), and
+[Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md).
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -664,9 +669,9 @@ Early contributions can proceed without a large model:
   registry-transition-format campaign with new versioned profiles while
   preserving frozen V1 roots and bounded mutation coverage;
 - extend the deterministic workload-pressure campaign with generated bounded
-  schedules or one typed family model-adapter lifecycle; the real bounded
-  media-runtime lifecycle is complete while exact replay remains separate from
-  native measurements;
+  schedules or a mixed typed-adapter workload profile; the shared scheduled
+  vision/audio/temporal-video lifecycle and real bounded media lifecycle are
+  complete while exact replay remains separate from native measurements;
 - extend format-aware inspection with privacy-safe export/retention policy
   without rendering payload bytes;
 - add a new strict profile under a new encoding ABI instead of silently

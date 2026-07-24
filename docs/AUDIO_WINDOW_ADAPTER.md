@@ -63,7 +63,8 @@ slice:
 
 1. match the manifest, plan, adapter descriptor, support record, dimensions,
    numerical policy, and capability mask;
-2. reserve the exact `ResourceBank` claim and bind one publication session;
+2. reserve the exact `ResourceBank` claim for a direct session, or adopt and
+   bind the exact receipt from one current scheduler admission;
 3. execute into private caller-owned candidate storage;
 4. run the family candidate validator;
 5. bind output, source mapping, adapter, resource receipt, and predecessor into
@@ -75,6 +76,13 @@ slice:
 This shared layer does not validate modality semantics itself. Image, audio,
 video, and future tensor adapters must construct their own binding proof before
 calling it.
+
+In scheduled mode, the adapter still performs its audio/cache validation before
+entering the shared layer. The result then remains provisional until a final
+service intent is armed. The V2 finalizer advances scheduler service, typed
+publication state, visible embedding bytes, and the resource publication
+sequence together. Cancellation before publication and retirement after
+publication each use the scheduler-bound atomic terminal path.
 
 ## Fail-closed cases
 
@@ -90,6 +98,11 @@ The retained tests reject:
 
 Abort leaves output zero, preserves the publication predecessor and visible
 count, and allows one clean retry.
+
+The scheduled fixture additionally proves that receipt adoption does not
+change Bank usage or successful-admission counters, visible output stays zero
+before final service, the result contains the exact scheduler receipt identity,
+and model plus cache ownership returns to zero after retirement.
 
 ## Claim boundary
 

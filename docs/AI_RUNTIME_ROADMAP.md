@@ -154,9 +154,12 @@ exact capacity/resource rejection, fairness, timeout, cancellation, delay,
 high-water, and zero-orphan evidence. An additive sidecar now executes the
 completed audio, video, and image media transactions on their final service
 quanta and binds exact outputs/publication receipts without changing the
-workload wires. Family-aware batch formation, preemption, multi-device
-placement, generated workloads, closed-loop mode, and typed model-adapter
-workloads remain planned.
+workload wires. The shared stateless lifecycle now also lets the retained
+vision, audio-window, and temporal-video adapters adopt that scheduler receipt,
+preflight their typed result, publish through the final V2 service commit, and
+retire atomically without a second admission. A mixed typed-adapter workload
+profile, family-aware batch formation, preemption, multi-device placement,
+generated workloads, and closed-loop mode remain planned.
 
 Promotion gate: retained mixed-family pressure campaigns meet declared
 fairness, deadline, logical-resource, cancellation, and zero-orphan invariants;
@@ -389,7 +392,9 @@ mode, baseline conditions, verifier, retained artifacts, and nonclaims.
 #### Workload, stress, and soak campaigns
 
 Load evidence is a required runtime feature, not a single marketing number.
-The track has three deliberately separate levels:
+The complete W0–W8 sequence and report contract are defined in the
+[Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md). The track has three
+deliberately separate evidence levels:
 
 1. **Deterministic pressure — first slice implemented.** V1 replays one bounded
    model-free explicit arrival schedule to verify admission, weighted fairness,
@@ -406,7 +411,9 @@ The track has three deliberately separate levels:
 2. **Native workload** runs declared model-family mixes against a real CPU,
    accelerator, or provider adapter and records completed/rejected/cancelled
    work, throughput, p50/p95/p99 latency, queue delay, memory high-water,
-   utilization, energy when available, and output-quality policy.
+   CPU and device utilization, host/device memory separately, accelerator
+   submit/device/synchronization timing, fallback status, power/thermal/energy
+   when available, and output-quality policy.
 3. **Soak and disruption** runs a bounded long-duration campaign with a fixed
    fault schedule for process restart, adapter loss, storage pressure, and
    cancellation storms, then proves recovery, bounded growth, and zero leaked
@@ -534,9 +541,10 @@ evidence.
   batch mapping is complete for vision, audio, and selected video frames, while
   normalization and tie policies remain;
 - integrate `ResourceBank`, `LaneWeave`, cancellation, and provider routing;
-  scheduler receipt handoff and cancellation are integrated for the retained
-  bounded media runtime, while typed stateless family adapters and provider
-  routing remain.
+  scheduler receipt handoff, final-service typed publication, cancellation,
+  and retirement are integrated for the retained bounded media runtime and
+  vision/audio/temporal-video stateless adapters, while mixed-family workload
+  profiles and provider routing remain.
 
 Exit gate: text generation and one stateless encoder share the runtime planes
 while retaining different state and publication semantics.

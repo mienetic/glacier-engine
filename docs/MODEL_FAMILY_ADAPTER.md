@@ -97,6 +97,16 @@ bytes. `abortV1` scrubs both buffers and leaves the visible-result count and
 predecessor unchanged. Closing both model and cache sessions returns all
 logical ownership to zero.
 
+The additive scheduled path preserves those V1 records and direct-session
+methods. `initScheduledV1` adopts the exact receipt from a current `LaneWeave`
+admission instead of reserving again. Non-final service quanta remain ordinary
+scheduler transitions. On the final quantum, `armServiceV1` completes every
+fallible Bank, candidate, digest, and publication-state check before exposing a
+bounded in-memory V2 finalizer. The scheduler then advances final service and
+typed result visibility together. Scheduled cancellation publishes nothing;
+retirement closes the publication fence and releases the receipt in one
+failure-atomic transition.
+
 ## What this proves
 
 The retained tests prove:
@@ -106,6 +116,9 @@ The retained tests prove:
 - cache bytes cannot substitute for a foreign processor/cache lineage;
 - candidate mutation between prepare and commit cannot become visible;
 - cancellation does not advance publication state;
+- vision, audio-window, and temporal-video sessions adopt one scheduler receipt
+  without a second reservation or commit;
+- typed output remains invisible until the final V2 service commit;
 - output bytes are bound to source mapping, adapter, resource receipt, and
   predecessor; and
 - model and cache ownership return to exact zero.

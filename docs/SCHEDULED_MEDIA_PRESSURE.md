@@ -163,9 +163,12 @@ It does not yet perform:
 
 ## Contributor follow-ups
 
-The next bounded extensions can proceed independently:
+The shared workload and native-measurement sequence is tracked in the
+[Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md). The next bounded extensions
+can proceed independently:
 
-1. connect the scheduler-owned receipt mode to one typed model-family adapter;
+1. drive the completed scheduled vision/audio/temporal-video adapter lifecycle
+   through one mixed typed workload profile;
 2. add generated workloads without changing Evidence V1 semantics;
 3. add a separately versioned closed-loop arrival contract;
 4. add family-aware batching and safe preemption points;

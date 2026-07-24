@@ -350,7 +350,9 @@ two fake families that have different state/output semantics.
 
 **Current slice:** vision, audio, and temporal-video stateless vector families
 run under zero ambient capabilities, fixed buffers, and deterministic rejection
-tests. All three now use the shared family-neutral stateless lifecycle.
+tests. All three use the shared family-neutral stateless lifecycle and can
+adopt one scheduler-owned receipt, preflight their exact result, publish only
+through the final V2 service commit, then cancel or retire with atomic release.
 
 **Completed slice:** a family-neutral stateful lifecycle now pins model/state
 publication roots and commits replacement state with its typed result. Its
@@ -396,8 +398,8 @@ Small independent follow-up slices include:
 - add one new media or non-media profile without weakening exact replay;
 - specify a separately versioned closed-loop mode;
 - build a read-only scenario/result inspector that exposes no authority;
-- connect one typed family model-adapter lifecycle to the completed
-  scheduler-owned receipt accounting; or
+- drive the completed scheduled vision/audio/temporal-video lifecycle through
+  one mixed typed-adapter workload profile; or
 - add one native platform observer with explicit present/missing/denied states.
 
 **Done when:** the slice fixes all bounds and summary rules before execution,
