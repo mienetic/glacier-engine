@@ -342,6 +342,14 @@ claim without treating process RSS as proof of ownership.
 weighted service, deadline projection, cancellation, and replayable events.
 Prepared permits are single-purpose and fenced against stale address reuse.
 
+The scheduler derives outstanding Event-v1 capacity from its bounded slots
+rather than storing another counter. Accepted work reserves capacity for its
+admission event, every declared service event, and one terminal event.
+Unrelated semantic events may consume only the remaining slack. Near sequence
+exhaustion, an admission that policy would otherwise reject can therefore
+return `SequenceOverflow` without emitting a rejection event when no slack
+remains. This invariant adds no ABI, snapshot, or scheduler-state field.
+
 ### Token publication
 
 A token transaction stages every AI-visible mutation:
@@ -368,6 +376,24 @@ across service permits. Its canonical boundary snapshot groups the verified
 in-process publication state with that plan and image identity; it is not a
 durable continuation payload or historical attestation, and its plan is not
 yet the common Model Contract execution plan.
+
+The preferred `SessionV1.start` path owns admission and adoption as one sealed
+control-plane transaction. It derives the claim and service count from the text
+plan, commits the `ResourceBank` charge before materialization, and installs a
+scheduler-wide adoption barrier before allocation or prefill begins. The ready
+session commits that single-use authority into its every-service publication
+binding; failure emits the ordinary accepted-then-cancelled scheduler history
+and releases the exact receipt. If cancellation returns a transient cleanup
+error, the Session reports `RecoveryRequired` and retains the exact, single-use
+cancellation authority for retry after that condition is resolved. This path
+does not diagnose or repair Scheduler or Bank state. Competing logical mutators
+fail with `AdoptionInFlight` until commit or cleanup, eliminating
+shared-scheduler interposition without inventing a new semantic event.
+
+This barrier serializes logical progress during session startup. It is a
+correctness primitive, not an asynchronous activation design. The older
+`SessionV1.init` path remains an exclusive compatibility boundary for callers
+that already hold an admission.
 
 ### Continuation capsule
 

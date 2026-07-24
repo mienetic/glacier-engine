@@ -572,13 +572,39 @@ The retained fixture is synthetic and download-free. It does not establish a
 production-model result, tokenizer wire identity, durable checkpoint payload,
 fresh-process resume, native Linux execution, or a performance result. Early
 EOS is deliberately disabled in this slice so the admission's fixed service
-count remains exact. Admission followed by session initialization is an
-exclusive scheduler boundary in R1a; an atomic combined admit-and-adopt
-operation for shared schedulers remains future work. The Zig API remains
-experimental. See the
+count remains exact. The compatibility `init` path retains its exclusive
+admission-to-initialization boundary. The Zig API remains experimental. See the
 [prepared text session lifecycle](PREPARED_TEXT_SESSION.md) and the retained
 test named `compact multi-page INT4 generation matches eager generation` in
 [`tests/model_forward.zig`](../tests/model_forward.zig).
+
+#### R1b — Atomic prepared-session start
+
+Status: **integrated experimental control-plane slice**. The preferred
+`SessionV1.start` path now:
+
+- constructs the scheduler claim and fixed work quanta directly from the
+  validated prepared-text plan;
+- atomically admits the request and installs a sealed, single-use
+  publication-adoption barrier before releasing the scheduler mutex;
+- commits the exact `ResourceBank` charge before allocating session resources
+  or running prefill;
+- commits the ready, address-stable every-service publication binding, or
+  consumes an accepted adoption through a normal cancellation event and exact
+  resource release; a transient cleanup error reports `RecoveryRequired` and
+  retains the exact, single-use cancellation authority for retry after that
+  condition is resolved, without diagnosing or repairing Scheduler or Bank
+  state;
+- prevents the admission-to-adoption race on a shared scheduler: competing
+  logical mutators fail with `AdoptionInFlight` until start commits or cancels.
+
+This slice favors lifecycle correctness over startup concurrency. Allocation
+and prefill occur while the scheduler-wide logical barrier is live, so other
+work on that scheduler does not progress during start. Non-blocking staged
+activation remains future work. R1b also does not bind the text session to the
+common Model Contract execution plan or add tokenizer identity, durable
+checkpoint payloads, fresh-process resume, a production fixture, native Linux
+evidence, or performance evidence.
 
 Exit gate: one declared artifact and numerical mode completes plan → execute →
 publish → checkpoint → fresh-process resume with exact ownership and output
