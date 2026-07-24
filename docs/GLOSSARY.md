@@ -310,7 +310,15 @@ completion receipt; audio/video structurally require a completed flag and
 nonzero opaque completion root. The entry binds canonical modality/ordinal
 position, logical units and timeline, raw and encoded output identities,
 encoder, format, opaque state/completion roots, and predecessor continuity; it
-does not decode typed producer wires.
+does not decode typed producer wires. The separate producer-admission gateway
+validates those retained records and exact raw output bytes before registry
+construction.
+
+**Generated-media producer admission** — A bounded pre-publication gateway
+that decodes the retained image, audio, or video producer wire set; verifies
+exact raw output bytes and strict typed state/result/completion predecessor
+continuity; derives the shared registry envelope and successor coordinates; and
+feeds the unchanged generated-media output registry.
 
 **Generated-media output-registry manifest** — A fixed 544-byte record binding
 one bounded ordered entry table and its exact concatenated encoded-payload pack

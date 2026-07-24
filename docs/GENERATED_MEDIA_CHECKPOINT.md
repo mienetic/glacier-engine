@@ -21,8 +21,10 @@ without changing the checkpoint's raw-output semantics.
 The later
 [Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md)
 uses an independent ABI to compose multiple structurally described outputs and
-payloads without changing this V1 checkpoint or selector wire. Typed producer
-records must be validated before their opaque roots enter the registry.
+payloads without changing this V1 checkpoint or selector wire. The
+[Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md)
+gateway now validates the retained typed producer records and exact raw output
+bytes before their derived fields enter that unchanged registry.
 
 ## Portable records
 
@@ -124,8 +126,9 @@ while one fixed manifest and exact concatenated payload pack produce exactly
 three archive extension objects under the existing outer selector. The
 registry structurally requires image entries with no completion receipt and
 audio/video entries with a completed flag plus nonzero opaque completion root.
-It does not decode this checkpoint's typed producer records; that validation is
-an adapter precondition.
+The registry itself does not decode this checkpoint's typed producer records;
+the separate producer-admission gateway now enforces that pre-publication
+validation.
 
 The next production-facing slices are:
 

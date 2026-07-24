@@ -93,6 +93,34 @@ pub const GeneratedMediaMemberV1 = struct {
     member_sha256: Digest,
 };
 
+/// Typed producer fields projected for a shared output registry.
+///
+/// Unlike `GeneratedMediaMemberV1`, this projection does not assert the
+/// synchronized one-member-per-modality checkpoint generation mapping.
+pub const GeneratedMediaProducerProjectionV1 = struct {
+    request_epoch: u64,
+    modality: u64,
+    ordinal: u64,
+    unit_start: u64,
+    unit_count: u64,
+    unit_end: u64,
+    timeline_start: u64,
+    timeline_end: u64,
+    byte_count: u64,
+    completion_required: u64,
+    completed: u64,
+    artifact_sha256: Digest,
+    provenance_sha256: Digest,
+    result_sha256: Digest,
+    output_sha256: Digest,
+    media_object_sha256: Digest,
+    state_after_sha256: Digest,
+    completion_sha256: Digest,
+    tenant_scope_sha256: Digest,
+    metadata_policy_sha256: Digest,
+    challenge_sha256: Digest,
+};
+
 pub const GeneratedMediaCheckpointV1 = struct {
     request_epoch: u64,
     generation: u64,
@@ -164,11 +192,11 @@ pub const ReferenceFixtureV1 = struct {
     selector2: GeneratedMediaSelectorV1,
 };
 
-pub fn imageMemberV1(
+pub fn imageProducerProjectionV1(
     plan: image.GeneratedImagePlanV1,
     provenance: image.GeneratedImageProvenanceV1,
     result: image.GeneratedImageResultV1,
-) Error!GeneratedMediaMemberV1 {
+) Error!GeneratedMediaProducerProjectionV1 {
     image.validateGeneratedImagePlanV1(plan) catch
         return Error.InvalidBinding;
     image.validateGeneratedImageProvenanceV1(provenance) catch
@@ -182,21 +210,70 @@ pub fn imageMemberV1(
         result.image_index != plan.image_index or
         provenance.image_index != plan.image_index or
         result.source_step != plan.source_step or
+        provenance.source_step != plan.source_step or
         result.width != plan.width or result.height != plan.height or
         result.channels != plan.channels or
         result.row_stride != plan.row_stride or
         result.pixel_bytes != plan.pixel_bytes or
+        provenance.width != plan.width or
+        provenance.height != plan.height or
+        provenance.channels != plan.channels or
+        provenance.pixel_bytes != plan.pixel_bytes or
         result.publication_sequence != plan.publication_sequence or
         result.visible_images_before != plan.visible_images_before or
         result.visible_images_after != plan.visible_images_after or
         result.logical_units != plan.logical_units or
         result.decoder_abi != plan.decoder_abi or
+        provenance.decoder_abi != plan.decoder_abi or
+        provenance.color_model != plan.color_model or
+        provenance.transfer_function != plan.transfer_function or
+        provenance.alpha_mode != plan.alpha_mode or
         !digestEqual(result.plan_sha256, plan.plan_sha256) or
         !digestEqual(
             result.provenance_sha256,
             provenance.provenance_sha256,
         ) or
         !digestEqual(provenance.plan_sha256, plan.plan_sha256) or
+        !digestEqual(
+            provenance.artifact_sha256,
+            plan.artifact_sha256,
+        ) or
+        !digestEqual(
+            provenance.terminal_result_sha256,
+            plan.terminal_result_sha256,
+        ) or
+        !digestEqual(
+            provenance.terminal_plan_sha256,
+            plan.terminal_plan_sha256,
+        ) or
+        !digestEqual(
+            provenance.terminal_output_sha256,
+            plan.terminal_output_sha256,
+        ) or
+        !digestEqual(
+            provenance.terminal_state_publication_sha256,
+            plan.terminal_state_publication_sha256,
+        ) or
+        !digestEqual(
+            provenance.stateful_checkpoint_sha256,
+            plan.stateful_checkpoint_sha256,
+        ) or
+        !digestEqual(
+            provenance.decoder_payload_sha256,
+            plan.decoder_payload_sha256,
+        ) or
+        !digestEqual(
+            provenance.decoder_implementation_sha256,
+            plan.decoder_implementation_sha256,
+        ) or
+        !digestEqual(
+            provenance.media_object_sha256,
+            plan.media_object_sha256,
+        ) or
+        !digestEqual(
+            provenance.source_provenance_sha256,
+            plan.source_provenance_sha256,
+        ) or
         !digestEqual(result.artifact_sha256, plan.artifact_sha256) or
         !digestEqual(
             result.terminal_result_sha256,
@@ -240,9 +317,8 @@ pub fn imageMemberV1(
             plan.challenge_sha256,
         ))
         return Error.InvalidBinding;
-    var member: GeneratedMediaMemberV1 = .{
+    return .{
         .request_epoch = result.request_epoch,
-        .source_generation = result.generation,
         .modality = image_modality,
         .ordinal = result.image_index,
         .unit_start = result.visible_images_before,
@@ -263,20 +339,35 @@ pub fn imageMemberV1(
         .tenant_scope_sha256 = plan.tenant_scope_sha256,
         .metadata_policy_sha256 = plan.metadata_policy_sha256,
         .challenge_sha256 = plan.challenge_sha256,
-        .member_sha256 = [_]u8{0} ** 32,
     };
+}
+
+pub fn imageMemberV1(
+    plan: image.GeneratedImagePlanV1,
+    provenance: image.GeneratedImageProvenanceV1,
+    result: image.GeneratedImageResultV1,
+) Error!GeneratedMediaMemberV1 {
+    const projection = try imageProducerProjectionV1(
+        plan,
+        provenance,
+        result,
+    );
+    var member = memberFromProjectionV1(
+        projection,
+        result.generation,
+    );
     member.member_sha256 = memberRootV1(member);
     try validateMemberV1(member);
     return member;
 }
 
-pub fn audioMemberV1(
+pub fn audioProducerProjectionV1(
     state: audio.GeneratedAudioStateV1,
     plan: audio.GeneratedAudioPlanV1,
     provenance: audio.GeneratedAudioProvenanceV1,
     result: audio.GeneratedAudioResultV1,
     acknowledgement: audio.PlaybackAckResultV1,
-) Error!GeneratedMediaMemberV1 {
+) Error!GeneratedMediaProducerProjectionV1 {
     audio.validateStateV1(state) catch return Error.InvalidBinding;
     audio.validateProvenanceBindingV1(plan, provenance) catch
         return Error.InvalidBinding;
@@ -379,7 +470,7 @@ pub fn audioMemberV1(
         ) or
         !digestEqual(
             acknowledgement.previous_publication_result_sha256,
-            result.result_sha256,
+            result.previous_publication_result_sha256,
         ) or
         !digestEqual(
             acknowledgement.output_sha256,
@@ -398,9 +489,13 @@ pub fn audioMemberV1(
             acknowledgement.result_sha256,
         ))
         return Error.InvalidBinding;
-    var member: GeneratedMediaMemberV1 = .{
+    validateAudioCompletionProjectionV1(
+        state,
+        result,
+        acknowledgement,
+    ) catch return Error.InvalidBinding;
+    return .{
         .request_epoch = result.request_epoch,
-        .source_generation = result.generation,
         .modality = audio_modality,
         .ordinal = result.chunk_index,
         .unit_start = result.start_frame,
@@ -421,20 +516,39 @@ pub fn audioMemberV1(
         .tenant_scope_sha256 = state.tenant_scope_sha256,
         .metadata_policy_sha256 = state.metadata_policy_sha256,
         .challenge_sha256 = state.challenge_sha256,
-        .member_sha256 = [_]u8{0} ** 32,
     };
+}
+
+pub fn audioMemberV1(
+    state: audio.GeneratedAudioStateV1,
+    plan: audio.GeneratedAudioPlanV1,
+    provenance: audio.GeneratedAudioProvenanceV1,
+    result: audio.GeneratedAudioResultV1,
+    acknowledgement: audio.PlaybackAckResultV1,
+) Error!GeneratedMediaMemberV1 {
+    const projection = try audioProducerProjectionV1(
+        state,
+        plan,
+        provenance,
+        result,
+        acknowledgement,
+    );
+    var member = memberFromProjectionV1(
+        projection,
+        result.generation,
+    );
     member.member_sha256 = memberRootV1(member);
     try validateMemberV1(member);
     return member;
 }
 
-pub fn videoMemberV1(
+pub fn videoProducerProjectionV1(
     state: video.GeneratedVideoStateV1,
     manifest: video.GeneratedVideoManifestV1,
     provenance: video.GeneratedVideoProvenanceV1,
     result: video.GeneratedVideoResultV1,
     acknowledgement: video.DisplayAckResultV1,
-) Error!GeneratedMediaMemberV1 {
+) Error!GeneratedMediaProducerProjectionV1 {
     video.validateStateV1(state) catch return Error.InvalidBinding;
     video.validateResultBindingV1(
         manifest,
@@ -512,9 +626,13 @@ pub fn videoMemberV1(
             acknowledgement.result_sha256,
         ))
         return Error.InvalidBinding;
-    var member: GeneratedMediaMemberV1 = .{
+    validateVideoCompletionProjectionV1(
+        state,
+        result,
+        acknowledgement,
+    ) catch return Error.InvalidBinding;
+    return .{
         .request_epoch = result.request_epoch,
-        .source_generation = result.generation,
         .modality = video_modality,
         .ordinal = result.segment_index,
         .unit_start = result.first_frame_ordinal,
@@ -535,11 +653,265 @@ pub fn videoMemberV1(
         .tenant_scope_sha256 = state.tenant_scope_sha256,
         .metadata_policy_sha256 = state.metadata_policy_sha256,
         .challenge_sha256 = state.challenge_sha256,
-        .member_sha256 = [_]u8{0} ** 32,
     };
+}
+
+pub fn videoMemberV1(
+    state: video.GeneratedVideoStateV1,
+    manifest: video.GeneratedVideoManifestV1,
+    provenance: video.GeneratedVideoProvenanceV1,
+    result: video.GeneratedVideoResultV1,
+    acknowledgement: video.DisplayAckResultV1,
+) Error!GeneratedMediaMemberV1 {
+    const projection = try videoProducerProjectionV1(
+        state,
+        manifest,
+        provenance,
+        result,
+        acknowledgement,
+    );
+    var member = memberFromProjectionV1(
+        projection,
+        result.generation,
+    );
     member.member_sha256 = memberRootV1(member);
     try validateMemberV1(member);
     return member;
+}
+
+fn validateAudioCompletionProjectionV1(
+    state: audio.GeneratedAudioStateV1,
+    result: audio.GeneratedAudioResultV1,
+    acknowledgement: audio.PlaybackAckResultV1,
+) !void {
+    if (state.sample_rate != result.sample_rate or
+        state.channels != result.channels or
+        state.bytes_per_sample != result.bytes_per_sample or
+        state.next_chunk_index != result.visible_chunks_after or
+        state.next_start_frame != result.visible_frames_after)
+        return Error.InvalidBinding;
+
+    var before = state;
+    before.generation = std.math.sub(
+        u64,
+        result.generation,
+        1,
+    ) catch return Error.InvalidBinding;
+    before.next_chunk_index = result.chunk_index;
+    before.next_start_frame = result.start_frame;
+    before.visible_chunks = result.visible_chunks_before;
+    before.visible_frames = result.visible_frames_before;
+    before.acknowledged_chunks =
+        result.visible_chunks_before;
+    before.acknowledged_frames =
+        result.visible_frames_before;
+    before.playback_sequence = result.chunk_index;
+    before.pending = 0;
+    before.pending_chunk_index = 0;
+    before.pending_start_frame = 0;
+    before.pending_frame_count = 0;
+    before.previous_publication_result_sha256 =
+        result.previous_publication_result_sha256;
+    before.previous_ack_result_sha256 =
+        acknowledgement.previous_ack_result_sha256;
+    before.pending_publication_result_sha256 =
+        [_]u8{0} ** 32;
+    before.pending_output_sha256 = [_]u8{0} ** 32;
+    before.state_sha256 = [_]u8{0} ** 32;
+    before.state_sha256 = audio.stateRootV1(before);
+    audio.validateStateV1(before) catch
+        return Error.InvalidBinding;
+    if (!digestEqual(
+        before.state_sha256,
+        result.state_before_sha256,
+    )) return Error.InvalidBinding;
+
+    var pending = state;
+    pending.generation = result.generation;
+    pending.acknowledged_chunks =
+        result.visible_chunks_before;
+    pending.acknowledged_frames =
+        result.visible_frames_before;
+    pending.playback_sequence = result.chunk_index;
+    pending.pending = 1;
+    pending.pending_chunk_index = result.chunk_index;
+    pending.pending_start_frame = result.start_frame;
+    pending.pending_frame_count = result.frame_count;
+    pending.previous_publication_result_sha256 =
+        result.previous_publication_result_sha256;
+    pending.previous_ack_result_sha256 =
+        acknowledgement.previous_ack_result_sha256;
+    pending.pending_publication_result_sha256 =
+        result.result_sha256;
+    pending.pending_output_sha256 = result.output_sha256;
+    pending.state_sha256 = [_]u8{0} ** 32;
+    pending.state_sha256 = audio.stateRootV1(pending);
+    audio.validateStateV1(pending) catch
+        return Error.InvalidBinding;
+
+    const observation = audio.makePlaybackObservationV1(
+        pending,
+        acknowledgement.sink_implementation_sha256,
+        acknowledgement.sink_instance_sha256,
+    ) catch return Error.InvalidBinding;
+    const plan = audio.makePlaybackAckPlanV1(
+        pending,
+        result,
+        observation,
+    ) catch return Error.InvalidBinding;
+    var expected_state = pending;
+    const expected_acknowledgement =
+        audio.acknowledgePlaybackV1(
+            &expected_state,
+            result,
+            observation,
+            plan,
+        ) catch return Error.InvalidBinding;
+    if (!std.meta.eql(
+        expected_acknowledgement,
+        acknowledgement,
+    ) or !std.meta.eql(expected_state, state))
+        return Error.InvalidBinding;
+}
+
+fn validateVideoCompletionProjectionV1(
+    state: video.GeneratedVideoStateV1,
+    result: video.GeneratedVideoResultV1,
+    acknowledgement: video.DisplayAckResultV1,
+) !void {
+    if (state.width != result.width or
+        state.height != result.height or
+        state.channels != result.channels or
+        state.bytes_per_channel != result.bytes_per_channel or
+        state.next_segment_index != result.visible_segments_after or
+        state.next_frame_ordinal != result.visible_frames_after or
+        state.next_start_tick != result.visible_end_tick_after)
+        return Error.InvalidBinding;
+
+    var before = state;
+    before.generation = std.math.sub(
+        u64,
+        result.generation,
+        1,
+    ) catch return Error.InvalidBinding;
+    before.next_segment_index = result.segment_index;
+    before.next_frame_ordinal = result.first_frame_ordinal;
+    before.next_start_tick = result.start_tick;
+    before.visible_segments =
+        result.visible_segments_before;
+    before.visible_frames = result.visible_frames_before;
+    before.visible_end_tick =
+        result.visible_end_tick_before;
+    before.displayed_segments =
+        result.visible_segments_before;
+    before.displayed_frames =
+        result.visible_frames_before;
+    before.displayed_end_tick =
+        result.visible_end_tick_before;
+    before.display_sequence = result.segment_index;
+    before.pending = 0;
+    before.pending_segment_index = 0;
+    before.pending_first_frame = 0;
+    before.pending_frame_count = 0;
+    before.pending_start_tick = 0;
+    before.pending_end_tick = 0;
+    before.previous_publication_result_sha256 =
+        result.previous_publication_result_sha256;
+    before.previous_ack_result_sha256 =
+        acknowledgement.previous_ack_result_sha256;
+    before.pending_publication_result_sha256 =
+        [_]u8{0} ** 32;
+    before.pending_output_sha256 = [_]u8{0} ** 32;
+    before.state_sha256 = [_]u8{0} ** 32;
+    before.state_sha256 = video.stateRootV1(before);
+    video.validateStateV1(before) catch
+        return Error.InvalidBinding;
+    if (!digestEqual(
+        before.state_sha256,
+        result.state_before_sha256,
+    )) return Error.InvalidBinding;
+
+    var pending = state;
+    pending.generation = result.generation;
+    pending.displayed_segments =
+        result.visible_segments_before;
+    pending.displayed_frames = result.visible_frames_before;
+    pending.displayed_end_tick =
+        result.visible_end_tick_before;
+    pending.display_sequence = result.segment_index;
+    pending.pending = 1;
+    pending.pending_segment_index = result.segment_index;
+    pending.pending_first_frame =
+        result.first_frame_ordinal;
+    pending.pending_frame_count = result.frame_count;
+    pending.pending_start_tick = result.start_tick;
+    pending.pending_end_tick = result.end_tick;
+    pending.previous_publication_result_sha256 =
+        result.result_sha256;
+    pending.previous_ack_result_sha256 =
+        acknowledgement.previous_ack_result_sha256;
+    pending.pending_publication_result_sha256 =
+        result.result_sha256;
+    pending.pending_output_sha256 = result.output_sha256;
+    pending.state_sha256 = [_]u8{0} ** 32;
+    pending.state_sha256 = video.stateRootV1(pending);
+    video.validateStateV1(pending) catch
+        return Error.InvalidBinding;
+
+    const observation = video.makeDisplayObservationV1(
+        pending,
+        acknowledgement.sink_implementation_sha256,
+        acknowledgement.sink_instance_sha256,
+    ) catch return Error.InvalidBinding;
+    const plan = video.makeDisplayAckPlanV1(
+        pending,
+        result,
+        observation,
+    ) catch return Error.InvalidBinding;
+    var expected_state = pending;
+    const expected_acknowledgement =
+        video.acknowledgeDisplayV1(
+            &expected_state,
+            result,
+            observation,
+            plan,
+        ) catch return Error.InvalidBinding;
+    if (!std.meta.eql(
+        expected_acknowledgement,
+        acknowledgement,
+    ) or !std.meta.eql(expected_state, state))
+        return Error.InvalidBinding;
+}
+
+fn memberFromProjectionV1(
+    projection: GeneratedMediaProducerProjectionV1,
+    source_generation: u64,
+) GeneratedMediaMemberV1 {
+    return .{
+        .request_epoch = projection.request_epoch,
+        .source_generation = source_generation,
+        .modality = projection.modality,
+        .ordinal = projection.ordinal,
+        .unit_start = projection.unit_start,
+        .unit_count = projection.unit_count,
+        .unit_end = projection.unit_end,
+        .timeline_start = projection.timeline_start,
+        .timeline_end = projection.timeline_end,
+        .byte_count = projection.byte_count,
+        .completion_required = projection.completion_required,
+        .completed = projection.completed,
+        .artifact_sha256 = projection.artifact_sha256,
+        .provenance_sha256 = projection.provenance_sha256,
+        .result_sha256 = projection.result_sha256,
+        .output_sha256 = projection.output_sha256,
+        .media_object_sha256 = projection.media_object_sha256,
+        .state_after_sha256 = projection.state_after_sha256,
+        .completion_sha256 = projection.completion_sha256,
+        .tenant_scope_sha256 = projection.tenant_scope_sha256,
+        .metadata_policy_sha256 = projection.metadata_policy_sha256,
+        .challenge_sha256 = projection.challenge_sha256,
+        .member_sha256 = [_]u8{0} ** 32,
+    };
 }
 
 pub fn validateMemberV1(member: GeneratedMediaMemberV1) Error!void {
@@ -1485,12 +1857,65 @@ test "typed image audio and video completions compose only when exact" {
         image_inputs.provenance,
         image_inputs.result,
     );
+    var foreign_image_provenance = image_inputs.provenance;
+    foreign_image_provenance.source_step += 1;
+    foreign_image_provenance.provenance_sha256 =
+        image.generatedImageProvenanceRootV1(
+            foreign_image_provenance,
+        );
+    try image.validateGeneratedImageProvenanceV1(
+        foreign_image_provenance,
+    );
+    var foreign_image_result = image_inputs.result;
+    foreign_image_result.provenance_sha256 =
+        foreign_image_provenance.provenance_sha256;
+    foreign_image_result.result_sha256 =
+        image.generatedImageResultRootV1(foreign_image_result);
+    try image.validateGeneratedImageResultV1(foreign_image_result);
+    try std.testing.expectError(
+        Error.InvalidBinding,
+        imageMemberV1(
+            image_inputs.plan,
+            foreign_image_provenance,
+            foreign_image_result,
+        ),
+    );
     const audio_member = try audioMemberV1(
         audio_inputs.state,
         audio_inputs.plan,
         audio_inputs.provenance,
         audio_inputs.result,
         audio_inputs.acknowledgement,
+    );
+    try std.testing.expect(isZero(
+        audio_inputs.acknowledgement.previous_publication_result_sha256,
+    ));
+    try std.testing.expect(isZero(
+        audio_inputs.acknowledgement.previous_ack_result_sha256,
+    ));
+    const successor_audio_inputs =
+        try makeTestAudioSuccessorInputsV1(audio_inputs);
+    const successor_audio_member = try audioMemberV1(
+        successor_audio_inputs.state,
+        successor_audio_inputs.plan,
+        successor_audio_inputs.provenance,
+        successor_audio_inputs.result,
+        successor_audio_inputs.acknowledgement,
+    );
+    try std.testing.expectEqual(@as(u64, 1), successor_audio_member.ordinal);
+    try std.testing.expectEqualSlices(
+        u8,
+        &audio_inputs.result.result_sha256,
+        &successor_audio_inputs
+            .acknowledgement
+            .previous_publication_result_sha256,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &audio_inputs.acknowledgement.result_sha256,
+        &successor_audio_inputs
+            .acknowledgement
+            .previous_ack_result_sha256,
     );
     const video_member = try videoMemberV1(
         video_inputs.state,
@@ -1522,6 +1947,22 @@ test "typed image audio and video completions compose only when exact" {
             audio_inputs.provenance,
             audio_inputs.result,
             foreign_ack,
+        ),
+    );
+    var old_semantics_ack = audio_inputs.acknowledgement;
+    old_semantics_ack.previous_publication_result_sha256 =
+        audio_inputs.result.result_sha256;
+    old_semantics_ack.result_sha256 =
+        audio.ackResultRootV1(old_semantics_ack);
+    try audio.validatePlaybackAckResultV1(old_semantics_ack);
+    try std.testing.expectError(
+        Error.InvalidBinding,
+        audioMemberV1(
+            audio_inputs.state,
+            audio_inputs.plan,
+            audio_inputs.provenance,
+            audio_inputs.result,
+            old_semantics_ack,
         ),
     );
     var pending_state = video_inputs.state;
@@ -1707,44 +2148,59 @@ fn makeTestAudioInputsV1(
     challenge: Digest,
 ) !AudioInputs {
     const artifact = model.sha256("typed audio artifact");
-    var plan: audio.GeneratedAudioPlanV1 = .{
-        .request_epoch = 70_001,
-        .generation = 1,
-        .chunk_index = 0,
-        .start_frame = 0,
-        .frame_count = 2,
-        .sample_rate = 16_000,
-        .channels = 1,
-        .bytes_per_sample = 2,
-        .source_output_bytes = 2,
-        .pcm_bytes = 4,
-        .maximum_output_bytes = 4,
-        .publication_sequence = 0,
-        .visible_chunks_before = 0,
-        .visible_chunks_after = 1,
-        .visible_frames_before = 0,
-        .visible_frames_after = 2,
-        .logical_units = 2,
-        .required_capabilities = 0,
-        .renderer_abi = 1,
-        .artifact_sha256 = artifact,
-        .source_result_sha256 = model.sha256("typed audio source result"),
-        .source_output_sha256 = model.sha256("typed audio source output"),
-        .renderer_payload_sha256 = model.sha256("typed audio renderer payload"),
-        .renderer_implementation_sha256 = model.sha256("typed audio renderer"),
-        .tenant_scope_sha256 = scope,
-        .metadata_policy_sha256 = policy,
-        .challenge_sha256 = challenge,
-        .previous_publication_result_sha256 = [_]u8{0} ** 32,
-        .media_object_sha256 = model.sha256("typed audio media object"),
-        .state_before_sha256 = model.sha256("typed audio state before"),
-        .plan_sha256 = [_]u8{0} ** 32,
-    };
-    plan.plan_sha256 = audio.planRootV1(plan);
-    try audio.validatePlanV1(plan);
+    const source_state = try audio.makeInitialStateV1(
+        70_001,
+        16_000,
+        1,
+        artifact,
+        scope,
+        policy,
+        challenge,
+    );
+    return makeTestAudioInputsFromStateV1(
+        source_state,
+        model.sha256("typed audio source result"),
+        model.sha256("typed audio source output"),
+        model.sha256("typed audio output"),
+        model.sha256("typed audio resource receipt"),
+    );
+}
+
+fn makeTestAudioSuccessorInputsV1(
+    previous: AudioInputs,
+) !AudioInputs {
+    return makeTestAudioInputsFromStateV1(
+        previous.state,
+        model.sha256("typed successor audio source result"),
+        model.sha256("typed successor audio source output"),
+        model.sha256("typed successor audio output"),
+        model.sha256("typed successor audio resource receipt"),
+    );
+}
+
+fn makeTestAudioInputsFromStateV1(
+    source_state: audio.GeneratedAudioStateV1,
+    source_result_sha256: Digest,
+    source_output_sha256: Digest,
+    output_sha256: Digest,
+    resource_receipt_sha256: Digest,
+) !AudioInputs {
+    const plan = try audio.makePlanV1(
+        source_state,
+        2,
+        2,
+        4,
+        0,
+        1,
+        source_result_sha256,
+        source_output_sha256,
+        model.sha256("typed audio renderer payload"),
+        model.sha256("typed audio renderer"),
+        model.sha256("typed audio media object"),
+    );
     const provenance = try audio.makeProvenanceV1(
         plan,
-        model.sha256("typed audio output"),
+        output_sha256,
     );
     var result: audio.GeneratedAudioResultV1 = .{
         .request_epoch = plan.request_epoch,
@@ -1765,80 +2221,51 @@ fn makeTestAudioInputsV1(
         .visible_frames_after = plan.visible_frames_after,
         .plan_sha256 = plan.plan_sha256,
         .provenance_sha256 = provenance.provenance_sha256,
-        .artifact_sha256 = artifact,
+        .artifact_sha256 = plan.artifact_sha256,
         .source_result_sha256 = plan.source_result_sha256,
         .source_output_sha256 = plan.source_output_sha256,
         .media_object_sha256 = plan.media_object_sha256,
         .output_sha256 = provenance.output_sha256,
-        .resource_receipt_sha256 = model.sha256("typed audio resource receipt"),
+        .resource_receipt_sha256 = resource_receipt_sha256,
         .state_before_sha256 = plan.state_before_sha256,
         .previous_publication_result_sha256 = plan.previous_publication_result_sha256,
         .renderer_implementation_sha256 = plan.renderer_implementation_sha256,
-        .challenge_sha256 = challenge,
+        .challenge_sha256 = plan.challenge_sha256,
         .result_sha256 = [_]u8{0} ** 32,
     };
     result.result_sha256 = audio.resultRootV1(result);
     try audio.validateResultV1(result);
-    var acknowledgement: audio.PlaybackAckResultV1 = .{
-        .request_epoch = result.request_epoch,
-        .generation = 2,
-        .playback_sequence = 0,
-        .chunk_index = result.chunk_index,
-        .start_frame = result.start_frame,
-        .frame_count = result.frame_count,
-        .end_frame = result.end_frame,
-        .consumed_frames = result.frame_count,
-        .sample_rate = result.sample_rate,
-        .channels = result.channels,
-        .bytes_per_sample = result.bytes_per_sample,
-        .acknowledged_chunks_before = 0,
-        .acknowledged_chunks_after = 1,
-        .acknowledged_frames_before = 0,
-        .acknowledged_frames_after = 2,
-        .plan_sha256 = model.sha256("typed audio ack plan"),
-        .state_before_sha256 = model.sha256("typed audio ack state before"),
-        .publication_result_sha256 = result.result_sha256,
-        .output_sha256 = result.output_sha256,
-        .sink_implementation_sha256 = model.sha256("typed audio sink implementation"),
-        .sink_instance_sha256 = model.sha256("typed audio sink instance"),
-        .observation_sha256 = model.sha256("typed audio observation"),
-        .previous_publication_result_sha256 = result.result_sha256,
-        .previous_ack_result_sha256 = [_]u8{0} ** 32,
-        .challenge_sha256 = challenge,
-        .result_sha256 = [_]u8{0} ** 32,
-    };
-    acknowledgement.result_sha256 =
-        audio.ackResultRootV1(acknowledgement);
-    try audio.validatePlaybackAckResultV1(acknowledgement);
-    var state: audio.GeneratedAudioStateV1 = .{
-        .request_epoch = result.request_epoch,
-        .generation = acknowledgement.generation,
-        .sample_rate = result.sample_rate,
-        .channels = result.channels,
-        .bytes_per_sample = result.bytes_per_sample,
-        .next_chunk_index = 1,
-        .next_start_frame = 2,
-        .visible_chunks = 1,
-        .visible_frames = 2,
-        .acknowledged_chunks = 1,
-        .acknowledged_frames = 2,
-        .playback_sequence = 1,
-        .pending = 0,
-        .pending_chunk_index = 0,
-        .pending_start_frame = 0,
-        .pending_frame_count = 0,
-        .artifact_sha256 = artifact,
-        .tenant_scope_sha256 = scope,
-        .metadata_policy_sha256 = policy,
-        .previous_publication_result_sha256 = result.result_sha256,
-        .previous_ack_result_sha256 = acknowledgement.result_sha256,
-        .pending_publication_result_sha256 = [_]u8{0} ** 32,
-        .pending_output_sha256 = [_]u8{0} ** 32,
-        .challenge_sha256 = challenge,
-        .state_sha256 = [_]u8{0} ** 32,
-    };
+    var state = source_state;
+    state.generation = plan.generation;
+    state.next_chunk_index = plan.visible_chunks_after;
+    state.next_start_frame = plan.visible_frames_after;
+    state.visible_chunks = plan.visible_chunks_after;
+    state.visible_frames = plan.visible_frames_after;
+    state.pending = 1;
+    state.pending_chunk_index = plan.chunk_index;
+    state.pending_start_frame = plan.start_frame;
+    state.pending_frame_count = plan.frame_count;
+    state.pending_publication_result_sha256 = result.result_sha256;
+    state.pending_output_sha256 = result.output_sha256;
+    state.state_sha256 = [_]u8{0} ** 32;
     state.state_sha256 = audio.stateRootV1(state);
     try audio.validateStateV1(state);
+    const observation = try audio.makePlaybackObservationV1(
+        state,
+        model.sha256("typed audio sink implementation"),
+        model.sha256("typed audio sink instance"),
+    );
+    const ack_plan = try audio.makePlaybackAckPlanV1(
+        state,
+        result,
+        observation,
+    );
+    const acknowledgement = try audio.acknowledgePlaybackV1(
+        &state,
+        result,
+        observation,
+        ack_plan,
+    );
     return .{
         .state = state,
         .plan = plan,
@@ -1927,73 +2354,46 @@ fn makeTestVideoInputsV1(
         provenance,
         result,
     );
-    var acknowledgement: video.DisplayAckResultV1 = .{
-        .request_epoch = result.request_epoch,
-        .generation = 2,
-        .display_sequence = 0,
-        .segment_index = result.segment_index,
-        .first_frame_ordinal = result.first_frame_ordinal,
-        .frame_count = result.frame_count,
-        .end_frame_ordinal = result.end_frame_ordinal,
-        .start_tick = result.start_tick,
-        .end_tick = result.end_tick,
-        .consumed_frames = result.frame_count,
-        .displayed_segments_before = 0,
-        .displayed_segments_after = 1,
-        .displayed_frames_before = 0,
-        .displayed_frames_after = 2,
-        .displayed_end_tick_before = 0,
-        .displayed_end_tick_after = 5,
-        .plan_sha256 = model.sha256("typed video ack plan"),
-        .observation_sha256 = model.sha256("typed video observation"),
-        .state_before_sha256 = model.sha256("typed video ack state before"),
-        .publication_result_sha256 = result.result_sha256,
-        .output_sha256 = result.output_sha256,
-        .sink_implementation_sha256 = model.sha256("typed video sink implementation"),
-        .sink_instance_sha256 = model.sha256("typed video sink instance"),
-        .challenge_sha256 = challenge,
-        .previous_publication_result_sha256 = result.result_sha256,
-        .previous_ack_result_sha256 = [_]u8{0} ** 32,
-        .result_sha256 = [_]u8{0} ** 32,
-    };
-    acknowledgement.result_sha256 =
-        video.ackResultRootV1(acknowledgement);
-    try video.validateDisplayAckResultV1(acknowledgement);
-    var state: video.GeneratedVideoStateV1 = .{
-        .request_epoch = result.request_epoch,
-        .generation = acknowledgement.generation,
-        .width = result.width,
-        .height = result.height,
-        .channels = result.channels,
-        .bytes_per_channel = result.bytes_per_channel,
-        .next_segment_index = 1,
-        .next_frame_ordinal = 2,
-        .next_start_tick = 5,
-        .visible_segments = 1,
-        .visible_frames = 2,
-        .visible_end_tick = 5,
-        .displayed_segments = 1,
-        .displayed_frames = 2,
-        .displayed_end_tick = 5,
-        .display_sequence = 1,
-        .pending = 0,
-        .pending_segment_index = 0,
-        .pending_first_frame = 0,
-        .pending_frame_count = 0,
-        .pending_start_tick = 0,
-        .pending_end_tick = 0,
-        .artifact_sha256 = artifact,
-        .tenant_scope_sha256 = scope,
-        .metadata_policy_sha256 = policy,
-        .previous_publication_result_sha256 = result.result_sha256,
-        .previous_ack_result_sha256 = acknowledgement.result_sha256,
-        .pending_publication_result_sha256 = [_]u8{0} ** 32,
-        .pending_output_sha256 = [_]u8{0} ** 32,
-        .challenge_sha256 = challenge,
-        .state_sha256 = [_]u8{0} ** 32,
-    };
+    var state = source_state;
+    state.generation = manifest.generation;
+    state.next_segment_index = manifest.visible_segments_after;
+    state.next_frame_ordinal = manifest.visible_frames_after;
+    state.next_start_tick = manifest.end_tick;
+    state.visible_segments = manifest.visible_segments_after;
+    state.visible_frames = manifest.visible_frames_after;
+    state.visible_end_tick = manifest.end_tick;
+    state.pending = 1;
+    state.pending_segment_index = manifest.segment_index;
+    state.pending_first_frame = manifest.first_frame_ordinal;
+    state.pending_frame_count = manifest.frame_count;
+    state.pending_start_tick = manifest.start_tick;
+    state.pending_end_tick = manifest.end_tick;
+    state.previous_publication_result_sha256 =
+        result.result_sha256;
+    state.pending_publication_result_sha256 =
+        result.result_sha256;
+    state.pending_output_sha256 = result.output_sha256;
+    state.state_sha256 = [_]u8{0} ** 32;
     state.state_sha256 = video.stateRootV1(state);
     try video.validateStateV1(state);
+    const observation = try video.makeDisplayObservationV1(
+        state,
+        model.sha256("typed video sink implementation"),
+        model.sha256("typed video sink instance"),
+    );
+    const acknowledgement_plan =
+        try video.makeDisplayAckPlanV1(
+            state,
+            result,
+            observation,
+        );
+    const acknowledgement =
+        try video.acknowledgeDisplayV1(
+            &state,
+            result,
+            observation,
+            acknowledgement_plan,
+        );
     return .{
         .state = state,
         .manifest = manifest,

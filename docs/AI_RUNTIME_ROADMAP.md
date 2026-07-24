@@ -15,6 +15,11 @@ Unsupported artifacts, operations, numerical modes, and capabilities must
 reject explicitly. A generic adapter interface never turns an untested family
 into supported functionality.
 
+Operating-system support follows the same rule: canonical runtime contracts
+stay portable while filesystem, virtual memory, process control, telemetry,
+and accelerators enter through explicit capabilities. The current evidence and
+promotion sequence live in [Platform Portability](PLATFORM_PORTABILITY.md).
+
 ## North star
 
 One request should be able to move between a local CPU, an admitted accelerator,
@@ -232,7 +237,10 @@ without model execution. An independent bounded registry ABI now orders one to
 four outputs per present modality, up to twelve, and binds exact
 ordinal/unit/timeline/predecessor continuity, opaque state/completion roots, and
 exact payload bytes in three extension objects under the same selector. Typed
-producer validation remains an adapter precondition. Production
+producer admission now closes that precondition: a separate gateway decodes
+the retained typed image, audio, and video record sets, verifies exact raw media
+bytes, derives their common request envelope and strict state/result/completion
+predecessors, and constructs the unchanged registry generation. Production
 encoder/container adapters, external-format conformance, native Linux
 filesystem campaigns, physical playback/display evidence, and power-loss
 durability remain gated.
@@ -277,7 +285,8 @@ Current state: **integrated for tokens, model-free media, bounded typed
 perception fixtures, generated-image publication, generated audio/video
 publication with application acknowledgement, and atomic three-modality
 generated-output selection plus exact encoded-payload archive composition and
-bounded multi-output registry continuity**. Media transactions compose
+bounded multi-output registry continuity with canonical producer admission**.
+Media transactions compose
 exact resource admission, transformed output, timeline advancement,
 transcript/video-segment visibility, deterministic merge decisions, cross-modal
 result links, terminal-latent image/provenance visibility, and ordered PCM
@@ -292,8 +301,11 @@ selector. An independent registry ABI extends the retained shape to one through
 four output entries per present modality, no more than twelve, using ordered
 fixed entries and exact concatenated payload bytes in three archive objects
 under the same selector. Registry completion/state roots remain opaque; typed
-producer acknowledgement/state validation is a separate adapter precondition.
-Generic tensor/action envelopes, partial-stream policy, production
+producer acknowledgement/state validation now occurs in the separate
+pre-publication gateway, which also checks exact raw bytes and derives rather
+than trusts the common envelope, registry generation/sequence, and
+predecessors. Generic tensor/action envelopes, partial-stream policy, stronger
+producer execution-transition reconstruction, production
 encoder/container adapters, external-format conformance, and physical
 playback/display evidence remain planned.
 
@@ -537,6 +549,16 @@ stay within admitted memory/time bounds, and resume or cancel at declared units.
   unit/timeline/predecessor continuity, and two model-free `2/3/2` then `2/2/3`
   image/audio/video generations in exactly three archive objects under the
   existing selector;
+- admit canonical typed producers before registry construction; complete for
+  the retained image plan/provenance/result set, audio quiescent
+  state/plan/provenance/result/playback-acknowledgement set, and video
+  quiescent state/manifest/provenance/result/display-acknowledgement set plus
+  exact raw output bytes. The gateway derives the common envelope, registry
+  generation and publication sequence, and strict
+  state/result/completion predecessors while leaving the selected three-object
+  registry unchanged;
+- reconstruct stronger producer execution transitions from typed pre-state,
+  plan/result, observation, acknowledgement plan/result, and exact post-state;
 - add production image decoder/encoder and audio/video renderer/codec/container
   adapters with external-format conformance;
 - add authorized physical playback/display and quality evidence;
@@ -551,10 +573,12 @@ duplicate visible output; audio and video additionally gate their successors
 on exact application acknowledgement. Shared generated-output checkpoint
 composition, exact encoded-payload archive composition, and bounded
 multi-image/chunk/segment registry continuity are complete for two model-free
-generations. The R4 production exit gate still requires production
-encoder/container adapters, typed producer admission, external-format
-conformance, retained platform and power-loss evidence, and
-quality/performance evidence under declared artifacts.
+generations. Canonical typed producer admission now verifies the retained
+record sets and exact raw outputs before constructing that registry. The R4
+production exit gate still requires complete execution-transition evidence,
+production encoder/container adapters, external-format conformance, retained
+platform and power-loss evidence, and quality/performance evidence under
+declared artifacts.
 
 ### R5 — Agents, retrieval, and specialized families
 

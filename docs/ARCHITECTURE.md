@@ -2,7 +2,9 @@
 
 Glacier Engine separates AI computation from the authority to consume resources
 and publish state. Computation may be speculative; externally visible state is
-not.
+not. The resulting system is a full AI Runtime architecture spanning artifacts,
+execution, resources, scheduling, continuation, media, providers, publication,
+evidence, policy, and distribution rather than a model-inference loop alone.
 
 ## Component map
 
@@ -16,7 +18,7 @@ not.
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
-| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay`, `GeneratedMediaCheckpoint`, `GeneratedMediaPayloadArchive` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, publish typed outputs only after family validation, and atomically select one complete generated image/audio/video generation with its exact encoded payloads |
+| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay`, `GeneratedMediaCheckpoint`, `GeneratedMediaPayloadArchive`, `GeneratedMediaOutputRegistry`, `GeneratedMediaProducerAdmission` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, validate typed generated outputs and exact raw bytes before shared registry construction, and publish only through explicit family and atomic visibility boundaries |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -263,6 +265,17 @@ ordered entry table, exact payload pack, generation plan, scope, policy,
 challenge, generation, and complete preceding archive bytes. These three
 extension objects reuse the generic checkpoint-file selector as their only
 filesystem visibility authority.
+
+`GeneratedMediaProducerAdmission` is the pre-publication gateway in front of
+that registry. It decodes the existing fixed image plan/provenance/result,
+audio quiescent-state/plan/provenance/result/playback-acknowledgement, and video
+quiescent-state/manifest/provenance/result/display-acknowledgement wires. Exact
+raw pixel, PCM, or frame bytes must match the typed result. The gateway derives
+one common request/scope/policy/challenge envelope, converts the one-based image
+index to a zero-based registry ordinal, reconstructs registry
+generation/publication sequence, and requires exact typed
+state/result/completion predecessor continuity. It then constructs the
+unchanged three-object registry; it creates no fourth object or selector.
 
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
@@ -593,6 +606,11 @@ Metal through a small Objective-C bridge. Cross-target test compilation covers
 x86_64 and AArch64 Linux. Execution, numerical, and physical-resource validation
 still require real machines for each promoted platform.
 
+The full capability split, current compile evidence, OS-adapter boundaries, and
+promotion gates are maintained in
+[Platform Portability](PLATFORM_PORTABILITY.md). Windows, mobile, and edge
+targets remain gated until their named native adapters and evidence pass.
+
 ## Where to go deeper
 
 - [Design](DESIGN.md): invariants and extension rules.
@@ -697,6 +715,10 @@ still require real machines for each promoted platform.
   multi-chunk audio, and multi-segment video ordering, structural completion
   fields, opaque state/completion roots, exact encoded payloads, and
   previous-or-successor recovery.
+- [Canonical generated-media producer admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md):
+  exact typed image/audio/video record decoding, raw-output verification,
+  common-envelope and predecessor derivation, and construction of the
+  unchanged output registry before publication.
 - [Exact speech annotation publication](SPEECH_ANNOTATION_PUBLICATION.md):
   canonical word/sample/speaker mapping, abort-safe publication, and annotation
   state continuation across a real process restart.

@@ -29,6 +29,11 @@ zig build -Doptimize=ReleaseSafe -Dmetal=false
 On macOS, Metal is enabled by default. Keep `-Dmetal=false` while learning the
 portable core; remove it when working on the accelerator backend.
 
+The complete host build is currently scoped to macOS and Linux. Compile-only
+core probes for other targets are evidence-development tools, not support
+claims. See [Platform Portability](PLATFORM_PORTABILITY.md) before adding an OS,
+mobile, or edge adapter.
+
 Running `./zig-out/bin/glacier` without arguments executes a tiny synthetic
 paging smoke test.
 
@@ -214,6 +219,12 @@ zig test src/core/generated_media_output_registry.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_generated_media_output_registry
 zig build generated-media-output-registry-restart-demo \
   -Doptimize=ReleaseSafe -Dmetal=false
+
+# Decode canonical generated-image/audio/video producer records, verify exact
+# raw pixels/PCM/frame bytes and typed predecessors, and build the unchanged
+# three-object registry through the pre-publication gateway
+zig test src/core/generated_media_producer_admission.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_generated_media_producer_admission
 
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false

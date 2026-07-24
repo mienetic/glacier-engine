@@ -122,10 +122,12 @@ two audio entries with multiple image/video entries and exact encoded payloads
 while preserving unit, timeline, and predecessor continuity and binding opaque
 state/completion roots. Registry admission structurally requires
 `completion_required`, `completed`, and a nonzero completion root; it does not
-decode these playback acknowledgement/state wires. Typed producer validation,
-production renderer/codec/container integration, external-format conformance,
-partial-buffer policy where a product explicitly needs it, and physical
-playback adapters remain outside this registry slice.
+decode these playback acknowledgement/state wires. The separate
+[Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md)
+gateway now validates those retained records and exact raw PCM before registry
+construction. Production renderer/codec/container integration,
+external-format conformance, partial-buffer policy where a product explicitly
+needs it, and physical playback adapters remain outside this registry slice.
 
 The sibling ordered raw-video path is specified in
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md).

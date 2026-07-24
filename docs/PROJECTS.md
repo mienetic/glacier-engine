@@ -29,6 +29,16 @@ missing telemetry into a false measurement.
 
 **Done when:** present, missing, denied, and malformed inputs have tests.
 
+### Add one cross-target core probe
+
+Choose one target from the
+[Platform Portability](PLATFORM_PORTABILITY.md) matrix and add a documented,
+source-only `core-contract` compile probe. Keep host tools, process-death
+workers, and device backends outside the probe.
+
+**Done when:** the command is reproducible, its target and Zig version are
+recorded, and the result is labeled compile evidence rather than native support.
+
 ### Build a glossary link check
 
 Find unexplained project-specific terms in public documentation and link them to
@@ -59,6 +69,17 @@ Run the crash/recovery harness on another supported filesystem and document whic
 sync and advisory-lock guarantees are observable.
 
 **First slice:** add environment capture and one non-destructive smoke case.
+
+### Extract one platform capability seam
+
+Move one direct OS dependency—virtual memory, durable file operations, process
+control, monotonic time, or telemetry—behind a narrow interface from
+[Platform Portability](PLATFORM_PORTABILITY.md). Preserve the existing host
+behavior and supply a deterministic test double; this task does not need to
+implement another OS adapter.
+
+**First slice:** propose the interface and migrate one call site with unchanged
+golden fixtures and a focused test.
 
 ### LaneWeave trace visualizer
 
@@ -236,18 +257,30 @@ opaque completion root. Exact ordinal, unit, timeline, and predecessor
 continuity plus bound opaque state, completion, encoder, format, and payload
 roots reject mixed-lineage and stale-root substitutions. A fully rehashed
 alternative has a new archive identity and still requires typed producer
-authorization; acknowledgement/state validation remains an adapter
-precondition. See the
+authorization. See the
 [Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md).
+
+**Completed slice:** a canonical pre-publication gateway now decodes the
+existing generated-image plan/provenance/result records, generated-audio
+quiescent state/plan/provenance/result/playback acknowledgement, and
+generated-video quiescent state/manifest/provenance/result/display
+acknowledgement. It verifies exact raw pixels, PCM, or frame bytes; derives the
+common request envelope, zero-based registry positions, registry
+generation/sequence, and strict state/result/completion predecessors; and
+constructs the unchanged three-object registry. The independent Python model
+checks the same mapping. See
+[Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md).
 
 **Next slices:** add external container timestamp normalization, a production
 image decoder adapter, richer language/punctuation or overlapping-speaker
 policy, a production image/audio/video encoder or container adapter with an
-external-format fixture, a typed producer adapter that validates existing
-acknowledgement/state wires before registry admission, a native Linux
-checkpoint campaign, a separately scoped initial power-loss durability design,
-a verified registry inspector, or authorized device/quality evidence. Each is
-independently contributor-sized and must preserve the fixed core contracts.
+external-format fixture, complete producer execution-transition
+reconstruction, a native Linux checkpoint campaign, a separately scoped
+initial power-loss durability design, a verified registry inspector, or
+authorized device/quality evidence. Model-family contracts, backend placement,
+streaming/batching, observability, and runtime policy are parallel contributor
+lanes rather than dependencies on media-format work. Each slice must preserve
+the fixed core contracts.
 
 ### AI runtime family registry
 

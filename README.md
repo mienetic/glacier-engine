@@ -6,10 +6,11 @@
 
 <p align="center"><strong>A proof-carrying runtime for local and provider-backed AI execution.</strong></p>
 
-Glacier Engine is an experimental AI systems project written in Zig. It treats
-resource admission, scheduling, KV ownership, token publication, provider usage,
-and cost as explicit state transitions that can be rejected, replayed, and
-verified.
+Glacier Engine is an experimental full AI Runtime project written in Zig. It
+treats artifact identity, resource admission, placement, scheduling, execution,
+continuation, token and media publication, provider usage, and cost as explicit
+state transitions that can be rejected, replayed, and verified. Model inference
+is one runtime plane, not the boundary of the project.
 
 The project is early enough for contributors to shape its public APIs and mature
 enough to offer tested building blocks, credential-free demos, portable evidence
@@ -150,9 +151,14 @@ formats, and independent verifiers.
   one to four output entries per present modality, up to twelve total, into
   ordered fixed entries plus their exact encoded bytes. Image entries require
   no completion receipt; audio/video entries require a completed flag and
-  nonzero opaque completion root. Typed producer validation remains a
-  precondition while one existing selector exposes only a complete previous or
-  successor three-object archive.
+  nonzero completion root. One existing selector exposes only a complete
+  previous or successor three-object archive.
+- **Canonical generated-media producer admission.** A pre-publication gateway
+  decodes the existing typed image, audio, and video records, verifies exact
+  raw pixels/PCM/frame bytes, derives the common request envelope and strict
+  state/result/completion predecessors, replays canonical audio/video
+  application acknowledgements, and derives registry entry and predecessor
+  roots for an unchanged registry generation.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -224,6 +230,9 @@ enough:
   cancellation-safe output, and independently verifiable provenance;
 - restartable media pipelines that need typed generated results and their exact
   encoded image/audio/video deliverables to advance together;
+- model-family and backend experiments that need one runtime contract across
+  artifacts, resources, scheduling, state, streaming, publication, and
+  evidence; and
 - reproducible runtime, kernel, format, and verification research.
 
 The provider context fixtures demonstrate a logical count change from 440 to
@@ -298,14 +307,19 @@ media object
 See [Architecture](docs/ARCHITECTURE.md) for the component map and
 [Glacier AI Runtime Roadmap](docs/AI_RUNTIME_ROADMAP.md) for the full runtime
 planes, model-family adapter map, promotion gates, and contributor sequence.
+The [Platform Portability](docs/PLATFORM_PORTABILITY.md) ledger separates
+compile evidence from native, recovery, accelerator, and packaging support.
 
 ## Quick start
 
 Requirements:
 
 - Zig 0.15.0 or newer;
-- macOS or Linux;
+- macOS or Linux for the current complete host build;
 - Python 3 for the independent evidence tests.
+
+Compile-only core probes also exist for additional targets. They are not native
+support claims; see [Platform Portability](docs/PLATFORM_PORTABILITY.md).
 
 Build the portable CLI and run deterministic model-free demos:
 
@@ -341,6 +355,8 @@ zig build generated-video-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build generated-media-checkpoint-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build generated-media-payload-archive-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build generated-media-output-registry-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
+zig test src/core/generated_media_producer_admission.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_generated_media_producer_admission
 zig build speech-annotation-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
@@ -361,12 +377,13 @@ model conversion, generation, and every demo command, continue with the
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
 | AI runtime | CPU execution, optional Metal backend, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes | More family adapters, stable API, distribution and retained compatibility matrix |
-| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, and bounded multi-output image/audio/video registry continuity | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
+| Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, and canonical typed producer admission | Generic embeddings/reranking/classification, stronger execution-transition proof, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, and a bounded multi-output registry with exact payload continuity | Add production encoder/container adapters and external-format conformance, richer language/punctuation and overlapping-speaker policy, native Linux and power-loss campaigns, and authorized physical playback/display and quality evidence |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, and typed producer/raw-output admission into that unchanged registry | Add complete execution-transition reconstruction, production encoder/container adapters and external-format conformance, richer language/punctuation and overlapping-speaker policy, native Linux and power-loss campaigns, and authorized physical playback/display and quality evidence |
+| Platforms | Native macOS development-host evidence plus compile-only core probes for Linux x86_64/AArch64, Android AArch64, and iOS AArch64 | Split OS authority from the portable core; add native Linux/Windows adapters and gates, then mobile and reduced edge profiles |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -375,8 +392,9 @@ Detailed status, acceptance gates, and contributor-sized work items live in the
 ## Choose a contribution
 
 You do not need AI kernel experience to contribute. Useful work includes Zig,
-Python, Metal, Linux portability, property tests, fault injection, documentation,
-format tooling, visualizers, examples, and reproducibility.
+Python, device backends, Linux/Windows/mobile portability, property tests, fault
+injection, documentation, format tooling, visualizers, examples, and
+reproducibility.
 
 Good starting points:
 
@@ -396,6 +414,7 @@ valuable as new features.
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Glacier AI Runtime roadmap](docs/AI_RUNTIME_ROADMAP.md)
+- [Platform portability](docs/PLATFORM_PORTABILITY.md)
 - [Contributor projects](docs/PROJECTS.md)
 - [Benchmark and evidence guide](docs/BENCHMARKS.md)
 - [Evidence policy](docs/EVIDENCE_POLICY.md)
@@ -422,6 +441,7 @@ valuable as new features.
 - [Atomic generated-media checkpoints](docs/GENERATED_MEDIA_CHECKPOINT.md)
 - [Generated-media encoded payload archive](docs/GENERATED_MEDIA_PAYLOAD_ARCHIVE.md)
 - [Bounded generated-media output registry](docs/GENERATED_MEDIA_OUTPUT_REGISTRY.md)
+- [Canonical generated-media producer admission](docs/GENERATED_MEDIA_PRODUCER_ADMISSION.md)
 - [Exact speech annotation publication](docs/SPEECH_ANNOTATION_PUBLICATION.md)
 - [Stateful model adapter and latent-step fixture](docs/STATEFUL_MODEL_ADAPTER.md)
 - [Stateful model continuation](docs/STATEFUL_MODEL_CONTINUATION.md)

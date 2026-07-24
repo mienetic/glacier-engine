@@ -21,6 +21,27 @@ before the first stable release.
 
 ### Added
 
+- Canonical generated-media producer admission: a bounded pre-publication
+  gateway decodes the existing generated-image plan/provenance/result wires,
+  generated-audio quiescent state/plan/provenance/result/playback-
+  acknowledgement wires, and generated-video quiescent
+  state/manifest/provenance/result/display-acknowledgement wires. It verifies
+  exact raw pixels, PCM, or frame payload bytes; derives the common
+  request/scope/policy/challenge envelope, registry generation and publication
+  sequence, and strict state/result/completion predecessors; reconstructs exact
+  audio/video pre-state, pending, observation, acknowledgement-plan,
+  acknowledgement, and final-state transitions; and feeds the unchanged
+  three-object output registry. An independent Python model verifies the same
+  structural admission contract, including same-batch multi-output lineage.
+  This gateway adds no selector or durability claim and does not attest
+  producer execution, authorization, encoding correctness, or physical sink
+  behavior.
+- Platform portability ledger: an evidence matrix now separates source
+  compilation, native CPU execution, filesystem recovery, accelerator
+  validation, and packaging support. It records current compile-only
+  Linux/Android/iOS observations, Windows/WASI blockers, explicit OS-adapter
+  boundaries, and staged G0–G7 promotion gates without promoting untested
+  targets.
 - Bounded generated-media output registry: an independent canonical ABI packs
   one to four output entries per present image/audio/video modality, up to
   twelve total, as fixed 544-byte entries in `(modality, ordinal)` order, one
@@ -28,8 +49,11 @@ before the first stable release.
   three archive extension objects. Exact ordinal/unit/timeline/predecessor
   continuity, exact raw/encoded/encoder/format/state/completion roots, and the
   complete preceding archive are verified without changing existing V1 wires.
-  Completion fields are structurally enforced and roots are opaque; typed
-  producer acknowledgement/state validation remains an adapter precondition.
+  Completion fields are structurally enforced and roots remain opaque at the
+  registry boundary; the new producer-admission gateway validates the retained
+  typed records, exact raw outputs, reconstructed audio/video acknowledgement
+  transitions, and strict predecessor continuity before constructing registry
+  inputs.
   The retained generations contain `2/3/2` then `2/2/3` image/audio/video
   outputs; an independent Python oracle and seven-phase `SIGKILL` campaign
   select the previous generation five times and successor twice, reject mixed

@@ -1,7 +1,8 @@
 # Bounded Generated-Media Output Registry
 
-Status: **integrated model-free multi-output archive and process-death recovery
-path; typed producer admission adapters, production encoder/container adapters,
+Status: **integrated model-free multi-output archive, optional canonical typed
+producer-admission construction path, and structural process-death recovery
+path; stronger producer execution-transition proof, production encoder/container adapters,
 external-format conformance, native Linux execution evidence, power-loss
 durability, physical playback/display evidence, and quality claims remain
 gated**.
@@ -17,6 +18,13 @@ generation becomes visible.
 This is an independent ABI. The fixed generated-media member, checkpoint,
 payload-manifest, and eight-object payload-archive V1 records remain
 byte-for-byte unchanged and independently decodable.
+
+The public registry remains a structural ABI. Callers with canonical typed
+producer records can use the
+[Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md)
+gateway to validate the existing typed wires and exact raw output bytes while
+constructing a compatible registry. The gateway does not change the registry
+ABI or add another selected object.
 
 ## Bounded shape
 
@@ -67,8 +75,9 @@ Each entry enforces one modality-specific structural completion shape:
 All three also require a nonzero post-publication state root. These roots are
 opaque identities at the registry boundary. The registry does not decode the
 earlier typed image result, audio playback acknowledgement, video display
-acknowledgement, or modality state wires. A producer adapter must validate
-those records before presenting their roots to the registry.
+acknowledgement, or modality state wires. The separate producer-admission
+gateway provides the typed-validation path that derives these roots before
+presenting them to the registry.
 
 Every admitted entry binds its exact:
 
@@ -116,8 +125,8 @@ A contradictory manifest, noncanonical entry order, stale-root payload
 substitution, mixed lineage, or split predecessor metadata is not admissible
 under the archive identity being verified. A fully rehashed alternative is a
 different canonical archive identity; the registry does not authorize its
-semantics. A typed producer/admission adapter must decide whether that new
-identity is allowed. Requiring the exact previous archive bytes keeps
+semantics. Typed admission establishes structural lineage, not authorization
+for that new identity. Requiring the exact previous archive bytes keeps
 predecessor identity, decoded content, and canonical serialization in one
 verifiable object.
 
@@ -160,12 +169,14 @@ distributions, exact payload recovery, seven process-death phases,
 previous-or-successor selection, zero mixed generations, and idempotent
 convergence.
 
-These fixtures execute no model and use bounded reference encodings rather than
-production image, audio, or video formats. They do not decode or independently
-prove the earlier typed producer acknowledgements or quiescent modality states.
-They also do not establish codec or container compatibility, native Linux
-execution, storage-device power-loss durability, physical playback/display,
-media quality, latency, throughput, memory, energy, or production readiness.
+These registry fixtures execute no model and use bounded reference encodings
+rather than production image, audio, or video formats. Typed producer wires and
+exact raw bytes are covered by the separate admission gateway and its
+independent Python test, not by this registry-only fixture. Neither suite proves
+that a model, renderer, sink, or encoder ran. They also do not establish
+authorization, codec or container compatibility, native Linux execution,
+storage-device power-loss durability, physical playback/display, media quality,
+latency, throughput, memory, energy, or production readiness.
 
 ## Runtime uses
 
@@ -186,9 +197,8 @@ The registry is a foundation for:
 
 Useful follow-on work is intentionally separable:
 
-1. add typed producer adapters that decode existing image result, audio
-   acknowledgement/state, and video acknowledgement/state wires before
-   registry admission;
+1. reconstruct complete producer execution transitions from pre-state, plans,
+   results, observations, acknowledgement plans/results, and exact post-state;
 2. adapt one production image encoder behind explicit format, numerical, and
    capability policies, with a redistributable fixture;
 3. adapt one audio or video codec/container and independently verify its
@@ -203,6 +213,7 @@ Useful follow-on work is intentionally separable:
    named artifacts and platforms.
 
 See [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
+[Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md),
 [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md),
 [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md),
 [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),

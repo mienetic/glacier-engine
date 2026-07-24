@@ -956,6 +956,16 @@ fn makeEntryV1(
     return entry;
 }
 
+/// Derives the canonical entry identity for an already validated output
+/// mapping. Registry encoding still validates ordering and predecessor
+/// continuity for the complete batch.
+pub fn deriveEntryV1(
+    input: OutputInputV1,
+    payload_offset: u64,
+) Error!GeneratedMediaOutputEntryV1 {
+    return makeEntryV1(input, payload_offset);
+}
+
 fn validateOutputInputV1(input: OutputInputV1) Error!void {
     if (input.unit_count == 0 or
         input.timeline_end <= input.timeline_start or

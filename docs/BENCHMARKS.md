@@ -71,6 +71,7 @@ energy, or production reliability.
 | `zig build generated-media-payload-archive-restart-demo -Dmetal=false` | Exact image/audio/video encoded payloads, one outer selector, seven process deaths, five previous and two successor selections, zero mixed generations, and idempotent recovery |
 | `zig test src/core/generated_media_output_registry.zig -OReleaseSafe` | Independent registry ABI, fixed 544-byte manifest and entries, canonical bounded multi-output ordering, exact ordinal/unit/timeline/payload/predecessor binding, structural completion fields, mutation plus stale-root/mixed-lineage substitution rejection, and independent golden roots |
 | `zig build generated-media-output-registry-restart-demo -Dmetal=false` | `2/3/2` then `2/2/3` image/audio/video outputs in exact three-object archives, one existing selector, seven process deaths, five previous and two successor selections, zero mixed generations, exact payload recovery, and idempotent convergence |
+| `zig test src/core/generated_media_producer_admission.zig -OReleaseSafe` | Canonical typed image/audio/video record decoding, exact raw pixel/PCM/frame-byte checks, common-envelope derivation, one-based image-position normalization, strict state/result/completion predecessor continuity, and construction of the unchanged registry contract mirrored by an independent Python test |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -195,6 +196,20 @@ converges idempotently. This is model-free conformance evidence, not production
 encoder/container compatibility, native Linux execution, storage-device
 power-loss durability, physical playback/display, media quality, latency,
 throughput, memory, or energy evidence.
+
+The generated-media producer-admission fixture exercises the pre-publication
+gateway in front of that registry. It decodes a 2,080-byte fixed image record
+set, a 2,624-byte fixed audio record set, or a 3,072-byte fixed video record
+set, verifies the exact caller-supplied raw media bytes, reconstructs the common
+request/scope/policy/challenge envelope, and derives registry generation,
+publication sequence, ordinal, state, result, completion, and previous-entry
+lineage. The independent Python model reconstructs the same mapping before
+calling its registry oracle. The gateway has no selector or filesystem
+authority; it feeds the already restart-verified unchanged three-object
+registry. This proves structural typed admission and exact raw-to-registry
+mapping. It does not prove model or renderer execution, encoder/codec
+correctness, authorization, physical playback/display, native Linux or
+power-loss behavior, media quality, latency, throughput, memory, or energy.
 
 The speech-annotation fixture maps `ice` and `berg` onto exact adjacent sample
 ranges and two opaque speaker identities. Its fresh target validates the

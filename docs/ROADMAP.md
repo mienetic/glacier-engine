@@ -30,11 +30,12 @@ evidence. The plane and model-family sequence is specified in the
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, integrated perception transactions, and restart-safe generated-image/audio/video output verticals | More family adapters, stable API, physical resource integration, distribution, and generated compatibility matrix |
-| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, and bounded multi-output registry continuity across distinct processes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, production generative-media adapters and formats, agents/retrieval, and specialized families |
-| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, and one three-object registry archive for ordered multi-output payloads | Production encoder/container adapters, external-format conformance, richer language/punctuation and overlapping-speaker policy, retained Linux and power-loss campaigns, and physical playback/display and quality evidence |
+| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, and canonical typed producer admission; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, stronger execution-transition proof, richer multimodal fusion, production generative-media adapters and formats, agents/retrieval, and specialized families |
+| Multimodal execution | Model-free runtime, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, and vision/audio/video fixtures integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, and a canonical typed-admission construction path into the unchanged three-object registry | Complete producer execution-transition reconstruction, production encoder/container adapters, external-format conformance, richer language/punctuation and overlapping-speaker policy, retained Linux and power-loss campaigns, and physical playback/display and quality evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
+| Platform portability | macOS development host plus compile candidates | Portable wires/state machines, CPU fallbacks, and Linux x86_64/AArch64 plus Android/iOS AArch64 core compile probes | OS capability split, native Linux/Windows adapters and recovery, mobile lifecycle gates, and a reduced edge profile |
 | Benchmark evidence | Prototype | Paired harnesses, machine envelope, independent verification | More complete CPU/energy telemetry and reproducible machines |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
@@ -160,8 +161,14 @@ evidence. The plane and model-family sequence is specified in the
   `(modality, ordinal)` entries plus exact encoded payloads in exactly three
   archive objects; ordinal/unit/timeline/predecessor continuity, exact
   previous-archive binding, opaque completion-root binding, independent
-  verification, and seven-phase previous-or-successor recovery. Typed producer
-  validation remains an adapter precondition.
+  verification, and seven-phase previous-or-successor recovery.
+- [x] Canonical generated-media producer-admission gateway decoding the exact
+  image `736/640/704`, audio `448/576/512/576/512`, and video
+  `512/736/640/672/512`-byte typed wire sets; verifying exact raw media bytes,
+  common request/scope/policy/challenge, and strict
+  state/result/completion predecessors; deriving registry generation,
+  publication sequence, and entry lineage; and feeding the unchanged
+  three-object registry with independent Python verification.
 - [x] Bounded contributor project catalog and issue template.
 - [ ] One-command local verification wrapper with clear skipped-gate reporting.
 - [ ] Read-only evidence inspector for provider and token transaction fixtures.
@@ -175,6 +182,30 @@ evidence. The plane and model-family sequence is specified in the
 - [ ] Add installation packages after cross-platform release artifacts are proven.
 - [ ] Add automated repository checks only when they are stable, fast, and useful
   to contributors locally as well as remotely.
+
+### Platform portability
+
+Goal: keep one canonical AI Runtime core while moving filesystem, mapping,
+process, clock, telemetry, and accelerator authority into explicit adapters.
+
+- [x] Define compile, native CPU, recovery, accelerator, resource, and packaging
+  evidence levels without treating cross-compilation as support.
+- [x] Record compile-only core probes for Linux x86_64/AArch64, Android AArch64,
+  and iOS AArch64, plus the current Windows and WASI blockers.
+- [ ] Split `core-contract`, CPU runtime, durable runtime, device runtime, CLI,
+  mobile library, reduced edge profile, and host-only tools in the build graph.
+- [ ] Replace direct POSIX mapping and durable-file calls with bounded
+  virtual-memory and recovery adapters.
+- [ ] Retain native Linux x86_64/AArch64 CPU and filesystem-recovery campaigns.
+- [ ] Add Win32 file, mapping, process, clock, and recovery adapters before
+  declaring Windows support.
+- [ ] Add Android/iOS library packaging, lifecycle, storage, memory-pressure,
+  and native-device correctness gates.
+- [ ] Define explicit single-threaded/no-durable-filesystem edge capabilities
+  and checked 32-bit `u64`-to-`usize` boundaries.
+
+See [Platform Portability](PLATFORM_PORTABILITY.md) for the evidence matrix,
+adapter architecture, G0–G7 promotion gates, and staged target sequence.
 
 ## P1 — Verifiable AI state
 
@@ -440,9 +471,14 @@ The implementation sequence is:
     independent ABI with one to four outputs per present modality, at most
     twelve, fixed 544-byte entries, exact structural and encoded lineage, opaque
     state/completion roots, complete preceding archive bytes, and one
-    three-object archive selected atomically; typed producer validation remains
-    an adapter precondition; and
-12. production encoder/container adapters and external-format conformance,
+    three-object archive selected atomically;
+12. canonical typed producer admission is complete before that registry:
+    fixed image, audio, and video record sets plus exact raw output bytes derive
+    the shared envelope, zero-based registry position, state/result/completion
+    predecessors, registry generation/sequence, and entry chain without adding
+    an archive object or selector; and
+13. stronger execution-transition reconstruction, production
+    encoder/container adapters and external-format conformance,
     retained native Linux filesystem campaigns, separately scoped initial
     power-loss durability, authorized physical playback/display, and quality
     evidence follow.

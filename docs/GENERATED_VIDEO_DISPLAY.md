@@ -122,10 +122,13 @@ three video entries with multiple image/audio entries and exact encoded
 payloads while preserving frame, timeline, and predecessor continuity and
 binding opaque state/completion roots. Registry admission structurally
 requires `completion_required`, `completed`, and a nonzero completion root; it
-does not decode these display acknowledgement/state wires. Typed producer
-validation, production image/audio/video encoder/container adapters,
-external-format conformance, native Linux and separately scoped power-loss
-campaigns, and authorized physical playback/display evidence remain. See
+does not decode these display acknowledgement/state wires. The separate
+[Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md)
+gateway now validates those retained records and exact raw frames before
+registry construction. Production image/audio/video encoder/container
+adapters, external-format conformance, native Linux and separately scoped
+power-loss campaigns, and authorized physical playback/display evidence
+remain. See
 [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and the
 [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
 then the

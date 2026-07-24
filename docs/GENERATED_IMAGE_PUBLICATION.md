@@ -143,10 +143,12 @@ visible through one atomic selector. Exact encoded payload archive composition
 is also integrated for one image/audio/video output per V1 generation. A
 separate bounded registry ABI now composes two image entries with multiple
 audio/video entries carrying structurally required opaque completion roots and
-their exact payloads in each retained generation. The registry does not decode
-the typed producer wires. Production decoder/encoder adapters,
-external-format conformance, multi-image generation quality, and device
-evidence remain gated.
+their exact payloads in each retained generation. The registry itself does not
+decode the typed producer wires; the separate
+[Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md)
+gateway now validates them and the exact raw output bytes before registry
+construction. Production decoder/encoder adapters, external-format
+conformance, multi-image generation quality, and device evidence remain gated.
 
 See [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md),
 [Shared Media Contract](MEDIA_CONTRACT.md),
