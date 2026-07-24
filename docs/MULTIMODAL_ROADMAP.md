@@ -9,13 +9,16 @@ exact application display acknowledgement, atomic generated-output checkpoint
 selection, exact eight-object generated-media payload archive composition,
 bounded multi-output registry continuity, canonical typed producer/raw-output
 admission, host-verified deterministic source-model/materializer transition
-replay with a separate registry-bound evidence sidecar, two-process
-continuation, crash-atomic checkpoint sets, and a post-restore
+replay with a separate registry-bound evidence sidecar, validated bounded
+lossless PNG/WAVE/APNG delivery profiles, an additive format-evidence sidecar
+prototype, an experimental read-only transition-evidence inspector,
+two-process continuation, crash-atomic checkpoint sets, and a post-restore
 generation-three successor;
 bounded processor/cache state and payloads integrated as fifth and sixth
 durable archive objects with fresh-Bank restore; production-model execution,
 production encoder/container adapters, physical playback/display evidence,
-power-loss campaigns, external formats, and quality evidence remain gated**.
+power-loss campaigns, general external formats, and quality evidence remain
+gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -156,6 +159,33 @@ the full publication, observation, acknowledgement-plan, acknowledgement, and
 final-state transitions. This proves reconstruction on the verifying host, not
 historical execution, live resource authority, physical playback/display,
 external codec/container correctness, or performance.
+
+Three strict allocation-free delivery modules now emit and accept bounded
+lossless external bytes. PNG V1 covers bounded 8-bit non-interlaced
+gray/gray-alpha/RGB/RGBA with explicit linear or sRGB transfer. WAVE V1 covers
+bounded interleaved mono/stereo PCM s16le. APNG V1 covers exactly two
+full-canvas gray8 frames with exact reduced delays. Each accepts only the
+byte-exact subset it emits. These are validated bounded profiles, not general
+decoders, production codecs/containers, quality measurements, or
+playback/display evidence.
+
+An additive format-evidence sidecar prototype binds the selected profile,
+encoded payload, producer plan or manifest, registry entry, transition receipt,
+and per-modality predecessor format record while leaving the existing registry
+and producer-transition V1 wires unchanged. Its canonical emitter/validator and
+mutation tests plus a real two-generation PNG fixture through the actual
+registry and producer-transition validators exist. Exact successor,
+missing/foreign predecessor, and failure-atomic output paths are covered. An
+independent Python oracle decodes canonical producer plan/manifest wires, binds
+their roots and media semantics, and covers all three profiles plus the
+complete sidecar wire/root/lineage rules. Full-pair WAVE/APNG registry
+integration remains before promotion.
+
+An experimental read-only inspector separately validates the registry archive
+and producer-transition sidecar. Successor inspection requires the exact
+predecessor archive and transition sidecar. Deterministic JSON is emitted only
+after full validation and contains no encoded payload bytes. The inspector does
+not yet accept or render the prototype format sidecar.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -370,9 +400,13 @@ First slices:
     retained reference profile: exact source-model and decoder replay, a fresh
     one-shot local image transaction, and a separate zero-based collection
     ordinal derived from validated registry lineage rather than caller
-    authority; and
-15. production decoder/encoder integration, additional replay profiles, and
-    external-format conformance.
+    authority;
+15. ~~bounded canonical lossless PNG delivery;~~ complete as a strict
+    emit-and-accept profile for 8-bit gray/gray-alpha/RGB/RGBA, explicit linear
+    or sRGB transfer, filter 0, stored DEFLATE blocks, one IDAT, no extra chunks,
+    dimensions from 1 through 8192, and raw bytes at most 16 MiB; and
+16. production decoder/encoder integration, additional replay profiles, and
+    broader external-format conformance.
 
 Promotion gate: every accepted pixel maps to an exact source region and
 preprocessing plan; orientation/color drift, decompression bombs, foreign
@@ -434,10 +468,15 @@ First slices:
     retained source-model and PCM-renderer profile, including publication,
     observation, acknowledgement-plan, acknowledgement, and exact final
     quiescent-state replay in a registry-bound evidence sidecar;
-15. production renderer/codec/container adapters, additional replay profiles,
-    external-format conformance,
-    and authorized physical playback evidence; and
-16. microphone/network adapters outside the authority-free core.
+15. ~~bounded canonical PCM/WAVE delivery;~~ complete as a strict
+    emit-and-accept RIFF/WAVE PCM format-1 profile for one or two interleaved
+    s16le channels, sample rates from 1 through 768 kHz, 1 through 4096 frames,
+    one fixed 44-byte header, and no ancillary chunks, padding, trailing bytes,
+    or RF64;
+16. production renderer/codec/container adapters, additional replay profiles,
+    broader external-format conformance, and authorized physical playback
+    evidence; and
+17. microphone/network adapters outside the authority-free core.
 
 Promotion gate: no sample is silently dropped, duplicated, reordered, mixed, or
 resampled; streaming restart resumes at an exact sample/timeline boundary; input
@@ -498,9 +537,15 @@ First slices:
 16. ~~host-verified deterministic producer transitions;~~ complete for the
     retained source-model and frame-renderer profile, including publication,
     observation, acknowledgement-plan, acknowledgement, and exact final
-    quiescent-state replay in a registry-bound evidence sidecar; and
-17. production renderer/codec/container integration, additional replay
-    profiles, and external-container conformance.
+    quiescent-state replay in a registry-bound evidence sidecar;
+17. ~~bounded canonical APNG delivery;~~ complete as a strict emit-and-accept
+    profile for exactly two full-canvas gray8 frames, linear transfer, one play,
+    dispose-none/source blend, exact reduced `u16` delays, one IDAT plus one
+    fdAT, and dimensions from 1 through 4096. The aggregate guard is 256 MiB,
+    while this exact two-frame gray8 shape makes 32 MiB the reachable maximum;
+    and
+18. production renderer/codec/container integration, additional replay
+    profiles, and broader external-container conformance.
 
 Promotion gate: frame selection and temporal ordering replay exactly; explicit
 VFR, stateful restart, and generated-segment restart fixtures are integrated,
@@ -544,12 +589,22 @@ audio, and video fixtures:
    collection ordinal, complete audio/video acknowledgement transitions, fixed
    per-output receipts, and a separate paired evidence sidecar bound to the
    unchanged registry archive;
-8. add production encoder/container adapters, additional model/materializer
-   profiles, and external-format conformance;
-9. retain native Linux and separately scoped initial-publication/power-loss
-   campaigns; and
-10. add quality, performance, and authorized device
-   evidence.
+8. ~~add bounded canonical delivery profiles;~~ complete for strict PNG,
+   PCM/WAVE, and APNG emit-and-accept modules. A separate format-evidence
+   sidecar prototype binds their exact semantics to the registry and transition
+   records without changing either V1 wire. An experimental read-only inspector
+   validates and renders the registry plus transition evidence, but not yet the
+   format sidecar;
+9. ~~retain exact successor format evidence and an independent oracle;~~
+   complete for a real two-generation PNG registry-transition pair, exact
+   missing/foreign predecessor rejection, failure-atomic output, and an
+   independent all-profile producer-semantic/wire/root/mutation oracle;
+10. add equivalent full-pair WAVE/APNG registry-transition fixtures, then add
+   production encoder/container adapters, additional model/materializer
+   profiles, and broader format profiles;
+11. retain native Linux/Windows execution and separately scoped
+   initial-publication/power-loss campaigns; and
+12. add quality, performance, and authorized device evidence.
 
 See [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and the
 [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
@@ -558,7 +613,9 @@ then the
 and
 [Canonical Generated-Media Producer Admission](GENERATED_MEDIA_PRODUCER_ADMISSION.md),
 followed by
-[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md).
+[Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md)
+and
+[Generated-Media External-Format Profiles and Evidence](GENERATED_MEDIA_EXTERNAL_FORMATS.md).
 
 ## Provider efficiency
 
@@ -589,6 +646,16 @@ Early contributions can proceed without a large model:
   detection and richer transcript result forms over the completed post-restore
   cache ownership path; the first fixed predecessor-bound video-segment result
   deterministic merge timeline, and exact audio/video result link are complete;
+- add full-pair WAVE/APNG registry, transition, and format-sidecar fixtures that
+  reuse the completed independent oracle and cover missing/foreign predecessor
+  rejection;
+- extend the read-only inspector with an optional format-sidecar input only
+  after that sidecar is independently verified, without rendering payload
+  bytes;
+- add a new strict profile under a new encoding ABI instead of silently
+  widening V1;
+- run native Linux and Windows format/inspector campaigns and retain the
+  platform envelope;
 - privacy-safe evidence renderers; and
 - platform capability probes that report present/missing/denied explicitly.
 

@@ -126,6 +126,10 @@ pub const generate = @import("generate.zig");
 pub const decode_lane4 = @import("decode_lane4.zig");
 pub const sampling = @import("sampling.zig");
 pub const tokenizer = @import("tokenizer.zig");
+pub const media_png_apng_v1 = @import("media/png_apng_v1.zig");
+pub const media_wave_pcm_v1 = @import("media/wave_pcm_v1.zig");
+pub const generated_media_format_conformance =
+    @import("media/generated_media_format_conformance.zig");
 pub const config = @import("config.zig");
 
 test {

@@ -39,6 +39,7 @@ surface.
 | Linux / x86_64 | Full musl artifact cross-build passes in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
 | Linux / AArch64 | Full musl artifact cross-build passes in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
+| FreeBSD / x86_64 | Full artifact, `test-compile`, and generated-media conformance cross-build gates pass in `ReleaseSafe` | Not established by cross-compilation | No retained native FreeBSD filesystem campaign | No retained FreeBSD accelerator backend | Cross-build candidate; not native-supported |
 | Android / AArch64 | Core source-compilation probe passed | No device or emulator execution evidence | No Android lifecycle/storage recovery campaign | No Android accelerator backend | Research target; not supported |
 | iOS / AArch64 | Core source-compilation probe passed | No device execution or application-lifecycle evidence | No iOS protection-class/background recovery campaign | No iOS backend has been verified; the macOS Metal bridge is not iOS evidence | Research target; not supported |
 | WASI / wasm32 | Core source-compilation currently fails | Not established | Durable local recovery is outside the current contract | None | Unsupported; requires a reduced edge profile |
@@ -66,6 +67,8 @@ zig build -Dtarget=x86_64-linux-musl -Dmetal=false -Doptimize=ReleaseSafe
 zig build -Dtarget=aarch64-linux-musl -Dmetal=false -Doptimize=ReleaseSafe
 zig build -Dtarget=x86_64-windows-gnu -Dmetal=false -Doptimize=ReleaseSafe
 zig build test-compile -Dtarget=x86_64-windows-gnu -Dmetal=false -Doptimize=ReleaseSafe
+zig build -Dtarget=x86_64-freebsd -Dmetal=false -Doptimize=ReleaseSafe
+zig build test-compile -Dtarget=x86_64-freebsd -Dmetal=false -Doptimize=ReleaseSafe
 ```
 
 The Windows gate became possible after introducing one shared read-only
@@ -79,7 +82,7 @@ assumes threads, 64-bit atomics, libc `fsync`, and a 64-bit `usize` in several
 fixture paths.
 
 These results prove only the named compile/link observations. They do not
-promote Linux, Windows, Android, or iOS to native support.
+promote Linux, Windows, FreeBSD, Android, or iOS to native support.
 
 ## Existing portability seams and blockers
 

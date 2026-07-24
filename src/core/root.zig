@@ -1,8 +1,10 @@
 //! Glacier core — hardware-independent inference kernel.
 //!
-//! Everything in this tree must build and test on any platform with no
-//! GPU dependency. Hardware access goes through the `pager.Backend`
-//! interface, implemented per-backend in `src/backends/`.
+//! Everything in this tree must keep hardware-independent boundaries and avoid
+//! a required GPU dependency. Named target support is promoted only through
+//! the retained compile and native gates in `docs/PLATFORM_PORTABILITY.md`.
+//! Hardware access goes through the `pager.Backend` interface, implemented
+//! per backend in `src/backends/`.
 
 pub const precision = @import("precision.zig");
 pub const pager = @import("pager.zig");

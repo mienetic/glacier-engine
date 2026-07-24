@@ -29,10 +29,11 @@ zig build -Doptimize=ReleaseSafe -Dmetal=false
 On macOS, Metal is enabled by default. Keep `-Dmetal=false` while learning the
 portable core; remove it when working on the accelerator backend.
 
-Native host execution is currently scoped to macOS and Linux. The complete
-declared artifact set also cross-builds for Windows x86_64 GNU, but that is a
-compile/link gate rather than native Windows support. Compile-only mobile core
-probes are evidence-development tools, not support claims. See
+Retained native host execution is currently scoped to the macOS development
+host. The complete declared artifact set cross-builds for Linux x86_64/AArch64
+musl, Windows x86_64 GNU, and FreeBSD x86_64, but those are compile/link gates
+rather than native support. Compile-only mobile core probes are
+evidence-development tools, not support claims. See
 [Platform Portability](PLATFORM_PORTABILITY.md) before adding an OS, mobile, or
 edge adapter.
 

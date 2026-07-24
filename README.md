@@ -168,6 +168,28 @@ formats, and independent verifiers.
   one-shot local image transaction. Replay on the verifying host is not proof
   of historical execution, live resource authority, physical playback/display,
   external codec/container conformance, or performance.
+- **Bounded lossless delivery profiles.** Strict emit-and-accept modules cover
+  canonical PNG for bounded 8-bit gray/gray-alpha/RGB/RGBA images, canonical
+  PCM s16le WAVE for bounded mono/stereo audio, and canonical two-frame gray8
+  APNG. Golden vectors, mutation rejection, native macOS execution, and
+  module-level Linux/Windows/FreeBSD cross-compilation are retained. These are
+  narrow profiles, not general codec, container, quality, or playback support.
+- **Additive format evidence prototype.** A separate sidecar can bind those
+  strict profiles, exact payloads, producer plan or manifest, registry entries,
+  transition receipts, and predecessor format records without changing the
+  existing registry or producer-transition V1 wires. Its emitter/validator and
+  canonical mutation tests plus a real two-generation PNG registry-transition
+  fixture are implemented, including exact successor, missing/foreign
+  predecessor, and failure-atomic output checks. An independent Python oracle
+  decodes the canonical producer wires, binds their roots and media semantics,
+  and covers all three profiles, frozen sidecar roots, every-byte mutation,
+  truncation, insertion, ordering, aggregates, padding, and successor lineage.
+  Full-pair WAVE/APNG registry integration remains before promotion.
+- **Read-only generated-media inspection.** An experimental CLI validates a
+  registry archive and its producer-transition evidence, requires the exact
+  predecessor pair for a successor, and emits deterministic field-ordered JSON
+  only after validation. It renders identities and bounds, never payload bytes,
+  and has no callback or filesystem-write path.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -324,7 +346,8 @@ compile evidence from native, recovery, accelerator, and packaging support.
 Requirements:
 
 - Zig 0.15.0 or newer;
-- macOS or Linux for the current complete host build;
+- macOS for the retained native development-host workflow; Linux, Windows, and
+  FreeBSD currently have cross-build evidence only;
 - Python 3 for the independent evidence tests.
 
 Compile-only core probes also exist for additional targets. They are not native
@@ -366,6 +389,10 @@ zig build generated-media-payload-archive-restart-demo -Doptimize=ReleaseSafe -D
 zig build generated-media-output-registry-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig test src/core/generated_media_producer_admission.zig -OReleaseSafe
 python3 -m unittest bench.tests.test_generated_media_producer_admission
+zig build media-external-format-test -Doptimize=ReleaseSafe -Dmetal=false
+python3 -m unittest bench.tests.test_generated_media_external_format
+python3 -m unittest bench.tests.test_generated_media_format_conformance
+python3 -m unittest bench.tests.test_generated_media_evidence_inspector
 zig build speech-annotation-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
@@ -390,9 +417,9 @@ model conversion, generation, and every demo command, continue with the
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
-| Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join | Human-readable inspection tooling |
-| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, typed producer/raw-output admission, and host replay of exact deterministic source-model/materializer transitions with a separately bound evidence sidecar | Add production encoder/container adapters and external-format conformance, richer language/punctuation and overlapping-speaker policy, native Linux and power-loss campaigns, additional model/materializer profiles, and authorized physical playback/display and quality evidence |
-| Platforms | Native macOS development-host evidence; full cross-build gates for Linux x86_64/AArch64 musl and Windows x86_64 GNU; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64 | Run native Linux/Windows CPU, mapping, and recovery campaigns; finish Windows durable-file, clock, telemetry, and packaging adapters; then add mobile and reduced edge profiles |
+| Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join, and an experimental read-only generated-media transition inspector | Provider/token inspectors, format-sidecar rendering after full-pair WAVE/APNG promotion, export, and retention policy |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, typed producer/raw-output admission, host replay of exact deterministic source-model/materializer transitions, validated bounded PNG/WAVE/APNG profiles, and a prototype additive format-conformance sidecar with a real two-generation PNG fixture and independent Python oracle | Add full-pair WAVE/APNG registry-sidecar integration, production encoder/container adapters and broader profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, additional model/materializer profiles, and authorized physical playback/display and quality evidence |
+| Platforms | Native macOS development-host evidence; full cross-build gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64 | Run native Linux/Windows/FreeBSD CPU, mapping, and recovery campaigns; finish Windows durable-file, clock, telemetry, and packaging adapters; then add mobile and reduced edge profiles |
 | Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -452,6 +479,7 @@ valuable as new features.
 - [Bounded generated-media output registry](docs/GENERATED_MEDIA_OUTPUT_REGISTRY.md)
 - [Canonical generated-media producer admission](docs/GENERATED_MEDIA_PRODUCER_ADMISSION.md)
 - [Host-verified generated-media producer transitions](docs/GENERATED_MEDIA_PRODUCER_TRANSITION.md)
+- [Generated-media external-format profiles and evidence](docs/GENERATED_MEDIA_EXTERNAL_FORMATS.md)
 - [Exact speech annotation publication](docs/SPEECH_ANNOTATION_PUBLICATION.md)
 - [Stateful model adapter and latent-step fixture](docs/STATEFUL_MODEL_ADAPTER.md)
 - [Stateful model continuation](docs/STATEFUL_MODEL_CONTINUATION.md)

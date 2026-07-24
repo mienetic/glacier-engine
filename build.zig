@@ -213,6 +213,36 @@ pub fn build(b: *std.Build) void {
     if (int4_neon) |lib| engine_tests.linkLibrary(lib);
     const run_engine_tests = b.addRunArtifact(engine_tests);
 
+    // Allocation-free canonical PNG/WAVE/APNG delivery profiles plus the
+    // additive generated-media conformance sidecar.
+    const media_external_format_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/media/generated_media_format_conformance.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    media_external_format_tests.root_module.addImport("core", core_mod);
+    const run_media_external_format_tests =
+        b.addRunArtifact(media_external_format_tests);
+    const media_external_format_test_step = b.step(
+        "media-external-format-test",
+        "Run canonical PNG/WAVE/APNG and format-evidence tests",
+    );
+    media_external_format_test_step.dependOn(
+        &run_media_external_format_tests.step,
+    );
+    const media_external_format_test_compile_step = b.step(
+        "media-external-format-test-compile",
+        "Compile canonical media-format tests without running them",
+    );
+    media_external_format_test_compile_step.dependOn(
+        &media_external_format_tests.step,
+    );
+
     // Focused correctness suite for progressive 1+1+2 INT4 decode.  The
     // scalar oracle remains portable; AArch64 additionally links the NEON
     // archive for direct SIMD-versus-oracle property tests.
@@ -471,6 +501,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_core_tests.step);
     test_step.dependOn(&run_engine_tests.step);
+    test_step.dependOn(&run_media_external_format_tests.step);
     test_step.dependOn(&run_progressive_int4_tests.step);
     test_step.dependOn(&run_integration_tests.step);
     test_step.dependOn(&run_pager_tests.step);
@@ -489,6 +520,7 @@ pub fn build(b: *std.Build) void {
     const test_compile_step = b.step("test-compile", "Compile all tests without running them");
     test_compile_step.dependOn(&core_tests.step);
     test_compile_step.dependOn(&engine_tests.step);
+    test_compile_step.dependOn(&media_external_format_tests.step);
     test_compile_step.dependOn(&progressive_int4_tests.step);
     test_compile_step.dependOn(&integration_tests.step);
     test_compile_step.dependOn(&pager_tests.step);
@@ -1710,6 +1742,44 @@ pub fn build(b: *std.Build) void {
     );
     test_compile_step.dependOn(
         &generated_media_output_registry_worker_exe.step,
+    );
+
+    // Experimental read-only renderer for a generated-media registry archive
+    // and its transition-evidence sidecar. Successors require the exact
+    // predecessor pair; the tool emits deterministic JSON only after all
+    // structural and lineage validation succeeds.
+    const generated_media_evidence_inspector_exe =
+        b.addExecutable(.{
+            .name = "glacier-generated-media-evidence-inspector",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/generated_media_evidence_inspector.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    generated_media_evidence_inspector_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    const run_generated_media_evidence_inspector =
+        b.addRunArtifact(
+            generated_media_evidence_inspector_exe,
+        );
+    if (b.args) |args|
+        run_generated_media_evidence_inspector.addArgs(args);
+    const generated_media_evidence_inspector_step =
+        b.step(
+            "generated-media-evidence-inspector",
+            "Validate and render a generated-media registry/evidence pair",
+        );
+    generated_media_evidence_inspector_step.dependOn(
+        &run_generated_media_evidence_inspector.step,
+    );
+    test_compile_step.dependOn(
+        &generated_media_evidence_inspector_exe.step,
     );
 
     // A stateful transcript process commits one exact sample range and syncs a
