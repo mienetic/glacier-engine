@@ -21,6 +21,17 @@ before the first stable release.
 
 ### Added
 
+- Added the first non-Zig library boundary: an experimental, allocation-free C
+  ABI verifies a complete canonical Model Contract V1
+  artifact-plan-result chain and fails closed with a zero result root whenever
+  the caller supplies a non-null output buffer. The focused build installs a
+  C header with C++ guards plus distinctly named shared and static libraries,
+  retains Zig, source/staged C, C++ linkage, and standard-library Python
+  `ctypes` tests, and includes a named dependency-free Rust gate over the same
+  tiny fixtures. A POSIX helper runs focused Zig commands with validated
+  ephemeral local/global caches and removes them on normal exit. This verifier
+  does not yet expose model loading, sessions, inference, callbacks, or a
+  stable SDK.
 - Connected the deterministic mixed-media workload to real bounded media
   execution without changing its frozen scenario or result wires. Accepted
   work now adopts the scheduler-owned `ResourceBank` receipt directly; the

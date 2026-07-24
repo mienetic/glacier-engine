@@ -360,69 +360,48 @@ Requirements:
 - Zig 0.15.0 or newer;
 - macOS for the retained native development-host workflow; Linux, Windows, and
   FreeBSD currently have cross-build evidence only;
-- Python 3 for the independent evidence tests.
+- Python 3 for the independent evidence tests;
+- Rust is optional and needed only for `contract-rust-test`.
 
 Compile-only core probes also exist for additional targets. They are not native
 support claims; see [Platform Portability](docs/PLATFORM_PORTABILITY.md).
 
-Build the portable CLI and run deterministic model-free demos:
+Build the portable CLI and run one deterministic, model-free publication demo:
 
 ```sh
 zig build -Doptimize=ReleaseSafe -Dmetal=false
 ./zig-out/bin/glacier --version
 
 zig build lane-publication-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-capsule-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-resolver-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-bundle-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-store-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-collection-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-sweep-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-sweep-commit-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-sweep-record-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-sweep-file-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-payload-file-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build continuation-checkpoint-file-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build media-contract-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build media-decode-fixture-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build media-transform-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build media-runtime-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build media-runtime-lease-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build media-stream-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build media-stream-continuation-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build media-stream-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build media-stream-checkpoint-set-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build generated-image-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build generated-audio-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build generated-video-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build generated-media-checkpoint-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build generated-media-payload-archive-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build generated-media-output-registry-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig test src/core/generated_media_producer_admission.zig -OReleaseSafe
-python3 -m unittest bench.tests.test_generated_media_producer_admission
-zig build media-external-format-test -Doptimize=ReleaseSafe -Dmetal=false
-python3 -m unittest bench.tests.test_generated_media_external_format
-python3 -m unittest bench.tests.test_generated_media_format_conformance
-python3 -m unittest bench.tests.test_generated_media_evidence_inspector
-zig test src/core/workload_pressure.zig -OReleaseSafe
-python3 -m unittest bench.tests.test_workload_pressure
-zig test src/core/scheduled_media_pressure.zig -OReleaseSafe
-python3 -m unittest bench.tests.test_scheduled_media_pressure
-zig build speech-annotation-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
-zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
-Run the main verification suites:
+Build the experimental C contract library and verify the same canonical chain
+from Zig, C, and Python without retaining a compiler cache:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build contract-c \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+python3 examples/interop/python_verify.py
+
+tools/zig-with-ephemeral-cache.sh build contract-interop-test \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+```
+
+The C ABI is a narrow verifier, not a stable inference SDK. See
+[Language interop](docs/LANGUAGE_INTEROP.md) for C, Python, and dependency-free
+Rust instructions.
+
+Run the broad verification suites when working across the whole repository:
 
 ```sh
 zig build test -Doptimize=ReleaseSafe -Dmetal=false
 python3 -m unittest discover -s bench/tests
 ```
 
-The first build may take a few minutes. Subsequent builds use Zig's cache. For
-model conversion, generation, and every demo command, continue with the
-[Quickstart guide](docs/QUICKSTART.md).
+The full suite can create a much larger compiler cache than the focused interop
+gate. Use `tools/zig-with-ephemeral-cache.sh` when incremental cache retention
+is not worth the disk space. For model conversion, generation, and the complete
+demo index, continue with the [Quickstart guide](docs/QUICKSTART.md).
 
 Zig dependency consumers can import the runtime or core module without taking
 a dependency on the CLI, demos, or benchmark executables:
@@ -444,7 +423,8 @@ hardware-independent surface without those native backend dependencies.
 
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
-| AI runtime | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes | More family adapters, stable API, distribution and retained compatibility matrix |
+| AI runtime | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes, and an experimental allocation-free C verifier for complete Model Contract V1 chains | More family adapters, stable API, distribution and retained compatibility matrix |
+| Language interop | Installed experimental C header plus shared/static contract libraries; source and staged-install C consumers; C++ linkage check; standard-library Python `ctypes`; dependency-free Rust `extern "C"` gate | Retained symbol/layout gates, native multi-OS consumers, stability policy, packages, then model/session execution bindings |
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures with scheduler-owned final-result publication, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, and exact deterministic producer-transition replay for retained reference profiles | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission, deterministic weighted QoS, one bounded mixed-media pressure campaign with exact replay, final-quantum image/audio/video media transactions, and typed vision/audio/video result publication under the scheduler-owned receipt | Family-aware batching, preemption, multi-device placement, mixed typed-adapter workloads, and broader multi-tenant campaigns |
@@ -480,6 +460,7 @@ valuable as new features.
 ## Documentation
 
 - [Quickstart](docs/QUICKSTART.md)
+- [Language interop](docs/LANGUAGE_INTEROP.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Glacier AI Runtime roadmap](docs/AI_RUNTIME_ROADMAP.md)

@@ -29,7 +29,7 @@ evidence. The plane and model-family sequence is specified in the
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay, a bounded mixed-media pressure campaign, exact scheduler-receipt handoff to final-quantum media transactions, and scheduler-owned typed vision/audio/video result publication | Family-aware batching, preemption, placement, mixed typed-adapter workload profiles, and broader multi-tenant integration |
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
-| AI runtime | Mixed prototype/integrated planes | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, scheduler-coupled media transactions and typed perception results, restart-safe generated-media output verticals, and exported Zig package modules | More family adapters, stable API policy, product-specific build profiles, physical resource integration, distribution, and generated compatibility matrix |
+| AI runtime | Mixed prototype/integrated planes | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, scheduler-coupled media transactions and typed perception results, restart-safe generated-media output verticals, exported Zig package modules, and an experimental C verifier for complete Model Contract V1 chains | More family adapters, stable API policy, product-specific build profiles, physical resource integration, distribution, and generated compatibility matrix |
 | Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, and validated bounded lossless delivery profiles for retained image/audio/video shapes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, production generative-media adapters and broader formats, additional replay profiles, agents/retrieval, and specialized families |
 | Multimodal execution | Model-free runtime, scheduler-coupled final-quantum transactions, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, deterministic source-model/materializer replay, and vision/audio/video fixtures integrated; bounded canonical PNG/WAVE/APNG profiles and their additive format sidecar integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, a canonical typed-admission construction path, transition and format-evidence sidecars, strict lossless emit-and-accept modules, real two-generation PNG/WAVE/APNG registry-transition-format fixtures, an independent composed Python oracle, and optional format-aware read-only inspection without changing earlier V1 wires | Production encoder/container adapters and broader profiles, additional model/materializer profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, and physical playback/display and quality evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
@@ -201,8 +201,15 @@ evidence. The plane and model-family sequence is specified in the
 
 ### Stable project surface
 
+- [x] Establish a narrow experimental C boundary for allocation-free Model
+  Contract V1 chain verification, with installed shared/static libraries,
+  a public C/C++ header, source and staged-install C consumers,
+  standard-library Python `ctypes`, and a named dependency-free Rust gate.
 - [ ] Separate internal research APIs from the supported library boundary.
 - [ ] Publish an API stability and deprecation policy.
+- [ ] Retain an exported-symbol/layout allowlist, native multi-OS consumers,
+  packaging metadata, and migration fixtures before promoting the experimental
+  C boundary.
 - [ ] Add installation packages after cross-platform release artifacts are proven.
 - [ ] Add automated repository checks only when they are stable, fast, and useful
   to contributors locally as well as remotely.
@@ -222,6 +229,13 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   fixture seams.
 - [x] Export the first consumer-facing `glacier` and `glacier_core` package
   modules and retain a native/cross-target import smoke gate.
+- [x] Add a core-only experimental C contract library with distinct shared and
+  static products, an installed header, focused compile/test steps, and
+  cache-safe C/Python/Rust examples.
+- [x] Add one reproducible focused C contract library/consumer compile-link
+  step and record a dated local observation for Linux x86_64/AArch64 musl,
+  Windows x86_64 GNU, and FreeBSD x86_64 without relabeling those cross-builds
+  as native support.
 - [x] Centralize compile-time adapter availability for read-only mapping,
   POSIX durable files, forced-termination fixtures, and Metal without treating
   source selection as native verification or platform support.

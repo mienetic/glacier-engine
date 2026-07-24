@@ -66,6 +66,56 @@ pub fn build(b: *std.Build) void {
     engine_mod.addImport("core", core_mod);
     engine_mod.addImport("config", config_mod);
 
+    // --- Experimental language interop --------------------------------------
+    // Keep the first non-Zig boundary narrow: it verifies the already
+    // versioned, pointer-free Model Contract V1 wires and imports only the
+    // hardware-independent core. The static artifact has a distinct name so
+    // its Windows .lib cannot collide with the shared library's import .lib.
+    const contract_shared_mod = b.createModule(.{
+        .root_source_file = b.path("src/ffi/model_contract_c.zig"),
+        .target = target,
+        .optimize = optimize,
+        .sanitize_thread = sanitize_thread,
+    });
+    contract_shared_mod.addImport("glacier_core", core_mod);
+    const contract_shared = b.addLibrary(.{
+        .name = "glacier_contract",
+        .linkage = .dynamic,
+        .root_module = contract_shared_mod,
+    });
+    contract_shared.installHeader(
+        b.path("include/glacier/model_contract.h"),
+        "glacier/model_contract.h",
+    );
+
+    const contract_static_mod = b.createModule(.{
+        .root_source_file = b.path("src/ffi/model_contract_c.zig"),
+        .target = target,
+        .optimize = optimize,
+        .sanitize_thread = sanitize_thread,
+    });
+    contract_static_mod.addImport("glacier_core", core_mod);
+    const contract_static = b.addLibrary(.{
+        .name = "glacier_contract_static",
+        .linkage = .static,
+        .root_module = contract_static_mod,
+    });
+
+    const install_contract_shared = b.addInstallArtifact(
+        contract_shared,
+        .{},
+    );
+    const install_contract_static = b.addInstallArtifact(
+        contract_static,
+        .{},
+    );
+    const contract_install_step = b.step(
+        "contract-c",
+        "Install the experimental C contract libraries and header",
+    );
+    contract_install_step.dependOn(&install_contract_shared.step);
+    contract_install_step.dependOn(&install_contract_static.step);
+
     // --- Metal linking (macOS only) ------------------------------------------
     // When enabled we compile shim.m to a static archive, link it plus
     // Metal/Foundation frameworks into every exe and test target, and expose
@@ -242,6 +292,263 @@ pub fn build(b: *std.Build) void {
         "Verify the exported glacier and glacier_core package modules",
     );
     package_module_test_step.dependOn(&run_package_module_tests.step);
+
+    // Verify the experimental C boundary in three independent ways: the Zig
+    // implementation tests its fail-closed status behavior, a C11 consumer
+    // compiles against the installed-shape header and static library, and a
+    // standard-library-only Python process loads the shared library.
+    const contract_c_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/ffi/model_contract_c.zig"),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    contract_c_tests.root_module.addImport("glacier_core", core_mod);
+    const run_contract_c_tests = b.addRunArtifact(contract_c_tests);
+
+    const contract_c_consumer = b.addExecutable(.{
+        .name = "glacier-contract-c-consumer",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    contract_c_consumer.root_module.addCSourceFile(.{
+        .file = b.path("tests/model_contract_c_consumer.c"),
+        .flags = &.{
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-DGLACIER_MODEL_CONTRACT_STATIC=1",
+        },
+    });
+    contract_c_consumer.root_module.addIncludePath(b.path("include"));
+    contract_c_consumer.linkLibrary(contract_static);
+    contract_c_consumer.linkLibC();
+    const run_contract_c_consumer = b.addRunArtifact(contract_c_consumer);
+    run_contract_c_consumer.addFileArg(
+        b.path("examples/interop/fixtures/artifact_manifest_v1.hex"),
+    );
+    run_contract_c_consumer.addFileArg(
+        b.path("examples/interop/fixtures/execution_plan_v1.hex"),
+    );
+    run_contract_c_consumer.addFileArg(
+        b.path("examples/interop/fixtures/result_envelope_v1.hex"),
+    );
+
+    // Compile the same consumer against the shared artifact without the
+    // static-header define. This retains the Windows dllimport/import-library
+    // path even though foreign-target executables are compile-only evidence.
+    const contract_c_shared_consumer = b.addExecutable(.{
+        .name = "glacier-contract-c-shared-consumer",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    contract_c_shared_consumer.root_module.addCSourceFile(.{
+        .file = b.path("tests/model_contract_c_consumer.c"),
+        .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" },
+    });
+    contract_c_shared_consumer.root_module.addIncludePath(b.path("include"));
+    contract_c_shared_consumer.linkLibrary(contract_shared);
+    contract_c_shared_consumer.linkLibC();
+
+    const contract_cpp_consumer = b.addExecutable(.{
+        .name = "glacier-contract-cpp-consumer",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    contract_cpp_consumer.root_module.addCSourceFile(.{
+        .file = b.path("tests/model_contract_cpp_consumer.cpp"),
+        .flags = &.{
+            "-std=c++17",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-fno-exceptions",
+            "-fno-rtti",
+            "-DGLACIER_MODEL_CONTRACT_STATIC=1",
+        },
+    });
+    contract_cpp_consumer.root_module.addIncludePath(b.path("include"));
+    contract_cpp_consumer.linkLibrary(contract_static);
+    contract_cpp_consumer.linkLibC();
+    const run_contract_cpp_consumer =
+        b.addRunArtifact(contract_cpp_consumer);
+
+    // This second C executable consumes the staged install tree rather than
+    // source headers or a direct build-graph library. It catches install-path,
+    // stale-header, archive-name, and permission regressions in the focused
+    // native gate.
+    const contract_installed_c_consumer = b.addExecutable(.{
+        .name = "glacier-contract-installed-c-consumer",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    contract_installed_c_consumer.root_module.addCSourceFile(.{
+        .file = b.path("tests/model_contract_c_consumer.c"),
+        .flags = &.{
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-DGLACIER_MODEL_CONTRACT_STATIC=1",
+        },
+    });
+    contract_installed_c_consumer.root_module.addIncludePath(.{
+        .cwd_relative = b.h_dir,
+    });
+    contract_installed_c_consumer.root_module.addObjectFile(.{
+        .cwd_relative = b.getInstallPath(
+            .lib,
+            install_contract_static.dest_sub_path,
+        ),
+    });
+    contract_installed_c_consumer.linkLibC();
+    contract_installed_c_consumer.step.dependOn(
+        &install_contract_shared.step,
+    );
+    contract_installed_c_consumer.step.dependOn(
+        &install_contract_static.step,
+    );
+    const run_contract_installed_c_consumer =
+        b.addRunArtifact(contract_installed_c_consumer);
+    run_contract_installed_c_consumer.addFileArg(
+        b.path("examples/interop/fixtures/artifact_manifest_v1.hex"),
+    );
+    run_contract_installed_c_consumer.addFileArg(
+        b.path("examples/interop/fixtures/execution_plan_v1.hex"),
+    );
+    run_contract_installed_c_consumer.addFileArg(
+        b.path("examples/interop/fixtures/result_envelope_v1.hex"),
+    );
+
+    const contract_c_test_step = b.step(
+        "contract-c-test",
+        "Run focused Zig and installed C/C++ contract ABI tests",
+    );
+    contract_c_test_step.dependOn(&run_contract_c_tests.step);
+    contract_c_test_step.dependOn(&run_contract_c_consumer.step);
+    contract_c_test_step.dependOn(&run_contract_cpp_consumer.step);
+    contract_c_test_step.dependOn(
+        &run_contract_installed_c_consumer.step,
+    );
+
+    const contract_c_compile_step = b.step(
+        "contract-c-compile",
+        "Compile the contract libraries and C/C++ consumers without running",
+    );
+    contract_c_compile_step.dependOn(&contract_shared.step);
+    contract_c_compile_step.dependOn(&contract_static.step);
+    contract_c_compile_step.dependOn(&contract_c_tests.step);
+    contract_c_compile_step.dependOn(&contract_c_consumer.step);
+    contract_c_compile_step.dependOn(&contract_c_shared_consumer.step);
+    contract_c_compile_step.dependOn(&contract_cpp_consumer.step);
+
+    const run_contract_fixture_oracle = b.addSystemCommand(&.{
+        "python3",
+        "-m",
+        "unittest",
+        "bench.tests.test_model_contract_interop",
+    });
+    run_contract_fixture_oracle.setCwd(b.path("."));
+    run_contract_fixture_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+
+    const run_contract_python = b.addSystemCommand(&.{"python3"});
+    run_contract_python.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_contract_python.addFileArg(
+        b.path("examples/interop/python_verify.py"),
+    );
+    run_contract_python.addArg("--library");
+    run_contract_python.addArtifactArg(contract_shared);
+    run_contract_python.addArg("--fixtures");
+    run_contract_python.addDirectoryArg(
+        b.path("examples/interop/fixtures"),
+    );
+    const contract_python_test_step = b.step(
+        "contract-python-test",
+        "Verify the shared contract library through Python ctypes",
+    );
+    contract_python_test_step.dependOn(&run_contract_fixture_oracle.step);
+    contract_python_test_step.dependOn(&run_contract_python.step);
+
+    const contract_rust_test_step = b.step(
+        "contract-rust-test",
+        "Compile and run the dependency-free Rust contract consumer",
+    );
+    if (target.result.cpu.arch == builtin.cpu.arch and
+        target.result.os.tag == builtin.os.tag and
+        target.result.abi == builtin.abi and
+        (builtin.os.tag == .macos or
+            builtin.os.tag == .linux or
+            builtin.os.tag == .freebsd))
+    {
+        const compile_contract_rust = b.addSystemCommand(&.{"rustc"});
+        compile_contract_rust.addFileArg(
+            b.path("examples/interop/rust_verify.rs"),
+        );
+        compile_contract_rust.addArg("-L");
+        compile_contract_rust.addArg(
+            b.fmt("native={s}", .{b.lib_dir}),
+        );
+        compile_contract_rust.addArg("-C");
+        compile_contract_rust.addArg(
+            b.fmt("link-arg=-Wl,-rpath,{s}", .{b.lib_dir}),
+        );
+        compile_contract_rust.addArg("-o");
+        const contract_rust_exe =
+            compile_contract_rust.addOutputFileArg(
+                "glacier-contract-rust",
+            );
+        compile_contract_rust.step.dependOn(
+            &install_contract_shared.step,
+        );
+
+        const run_contract_rust = b.addSystemCommand(&.{"env"});
+        run_contract_rust.addFileArg(contract_rust_exe);
+        run_contract_rust.addArg("--fixtures");
+        run_contract_rust.addDirectoryArg(
+            b.path("examples/interop/fixtures"),
+        );
+        contract_rust_test_step.dependOn(&run_contract_rust.step);
+    } else {
+        const rust_target_failure = b.addFail(
+            "contract-rust-test requires a native macOS, Linux, or FreeBSD " ++
+                "target and a rustc executable on PATH",
+        );
+        contract_rust_test_step.dependOn(&rust_target_failure.step);
+    }
+
+    const contract_interop_test_step = b.step(
+        "contract-interop-test",
+        "Run the focused Zig, C/C++, and Python contract interop tests",
+    );
+    contract_interop_test_step.dependOn(&run_contract_c_tests.step);
+    contract_interop_test_step.dependOn(&run_contract_c_consumer.step);
+    contract_interop_test_step.dependOn(&run_contract_cpp_consumer.step);
+    contract_interop_test_step.dependOn(
+        &run_contract_installed_c_consumer.step,
+    );
+    contract_interop_test_step.dependOn(&run_contract_fixture_oracle.step);
+    contract_interop_test_step.dependOn(&run_contract_python.step);
 
     // Allocation-free canonical PNG/WAVE/APNG delivery profiles plus the
     // additive generated-media conformance sidecar.
@@ -544,6 +851,9 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lane4_token_txn_event_adapter_tests.step);
     test_step.dependOn(&run_metal_tests.step);
     test_step.dependOn(&run_paged_lease_runner_tests.step);
+    test_step.dependOn(&run_contract_c_tests.step);
+    test_step.dependOn(&run_contract_c_consumer.step);
+    test_step.dependOn(&run_contract_cpp_consumer.step);
 
     // Cross targets often cannot execute on the build host. This step compiles
     // every test root without spawning it, providing an honest portability
@@ -564,6 +874,10 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&lane4_token_txn_event_adapter_tests.step);
     test_compile_step.dependOn(&metal_tests.step);
     test_compile_step.dependOn(&paged_lease_runner_tests.step);
+    test_compile_step.dependOn(&contract_c_tests.step);
+    test_compile_step.dependOn(&contract_c_consumer.step);
+    test_compile_step.dependOn(&contract_c_shared_consumer.step);
+    test_compile_step.dependOn(&contract_cpp_consumer.step);
 
     // Model-free deterministic QoS conformance demo. Native tests execute it,
     // cross-target gates compile it, and it is never installed as a production

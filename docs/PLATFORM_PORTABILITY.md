@@ -73,6 +73,26 @@ zig build -Dtarget=x86_64-freebsd -Dmetal=false -Doptimize=ReleaseSafe
 zig build test-compile -Dtarget=x86_64-freebsd -Dmetal=false -Doptimize=ReleaseSafe
 ```
 
+The focused experimental C contract libraries, Zig ABI tests, and independent
+C11 consumer also compiled and linked for the four full cross-build targets:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build contract-c-compile \
+  -Dtarget=x86_64-linux-musl -Dmetal=false -Doptimize=ReleaseSafe -j2
+tools/zig-with-ephemeral-cache.sh build contract-c-compile \
+  -Dtarget=aarch64-linux-musl -Dmetal=false -Doptimize=ReleaseSafe -j2
+tools/zig-with-ephemeral-cache.sh build contract-c-compile \
+  -Dtarget=x86_64-windows-gnu -Dmetal=false -Doptimize=ReleaseSafe -j2
+tools/zig-with-ephemeral-cache.sh build contract-c-compile \
+  -Dtarget=x86_64-freebsd -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
+Each focused cache was removed after the command; final sizes were about
+89–121 MiB in this observation. These are compile/link observations. The
+resulting foreign binaries were not executed on the macOS host. This is a dated
+local observation with reproducible commands, not retained multi-host or native
+evidence.
+
 The Windows gate became possible after introducing one shared read-only
 POSIX/Windows model-file mapping, compile-time rejection for unsupported
 POSIX-only durable adapters, canonical `u32` process-ID normalization, and
@@ -240,8 +260,14 @@ numerical and lifecycle evidence.
 
 The package now exports `glacier` and `glacier_core`, with a retained consumer
 smoke test in native and cross-target compile gates. This is the first
-library-consumption seam; the default project install graph is not yet split
-into the products below.
+Zig-consumption seam. A separate core-only experimental product now installs
+`glacier/model_contract.h`, `glacier_contract` as a shared library, and
+`glacier_contract_static` as a non-colliding static library. Its focused gate
+links source and staged-install C consumers, compiles the C++ linkage path, and
+loads the shared library through Python; a separate named Rust gate uses the
+same C ABI without dependencies. This does not make the wider runtime API
+stable or promote a cross-compiled target to native support. The default
+project install graph is not yet split into all products below.
 
 The build should expose independent products:
 

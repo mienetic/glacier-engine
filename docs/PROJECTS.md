@@ -54,6 +54,17 @@ wire fixture without dumping payload text.
 
 **Done when:** output is stable, bounded, and tested against malformed lengths.
 
+### Add one contract-binding failure example
+
+Use the experimental C contract ABI from a language with a built-in or
+dependency-free C foreign-function interface. Start with the retained tiny
+fixtures, substitute one individually valid foreign wire, and show that the
+call returns `BINDING_MISMATCH` with a zero output root.
+
+**Done when:** the valid chain passes, the foreign chain fails closed, no model
+or package download is required, and the example links from
+[Language interop](LANGUAGE_INTEROP.md).
+
 ## Intermediate projects
 
 ### Provider evidence viewer

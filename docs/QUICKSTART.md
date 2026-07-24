@@ -7,6 +7,7 @@ without downloading a model or supplying provider credentials.
 
 - Zig 0.15.0 or newer;
 - Python 3.10 or newer;
+- Rust with `rustc` on `PATH` only for the optional Rust interop gate;
 - Git;
 - Xcode command-line tools on macOS when using the Metal backend.
 
@@ -40,7 +41,87 @@ edge adapter.
 Running `./zig-out/bin/glacier` without arguments executes a tiny synthetic
 paging smoke test.
 
-## 3. Run model-free architecture demos
+## 3. Keep build caches bounded
+
+Zig's normal cache makes repeated builds faster, but target matrices and
+different optimization modes can accumulate substantial data. For a focused
+one-off build on a POSIX shell, use the repository wrapper:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build contract-interop-test \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+```
+
+It creates private temporary local/global caches, rejects caller-supplied cache
+paths, reports their final size, and removes the validated temporary directory
+on exit. It does not remove `zig-out/`, downloaded models, Python environments,
+or any user-wide cache.
+
+`SIGKILL`, power loss, or a host crash cannot run shell cleanup; in that case,
+inspect the printed temporary parent for one leftover
+`glacier-zig-cache.*` directory.
+
+These resources are different and should be budgeted separately:
+
+| Resource | Lifetime | What controls it |
+| --- | --- | --- |
+| Zig compiler cache | build-time | normal incremental cache or the temporary wrapper |
+| `zig-out/` artifacts | until removed by the contributor | selected build products |
+| mapped models and weight mirrors | runtime/process or application policy | loader and backend configuration |
+| request KV, activations, and output state | request/session lifetime | model geometry, prompt plus output context, and admission |
+| device residency and OS page cache | backend/OS lifetime | device and operating-system policy |
+
+Prefer focused named steps and `-j2` while exploring. A compile-only target
+matrix is not needed for a first contribution.
+
+## 4. Call Glacier from C, Python, or Rust
+
+Build and install the experimental Model Contract V1 verifier:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build contract-c \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+```
+
+The wrapper is POSIX-only. In native Windows PowerShell or Command Prompt, run:
+
+```text
+zig build contract-c -Doptimize=ReleaseSafe -Dmetal=false -j2
+```
+
+Then call the shared library from Python using only the standard library:
+
+```sh
+python3 examples/interop/python_verify.py
+```
+
+Or compile the dependency-free Rust example on macOS:
+
+```sh
+rustc examples/interop/rust_verify.rs \
+  -L native=zig-out/lib \
+  -o /tmp/glacier-contract-rust
+DYLD_LIBRARY_PATH=zig-out/lib /tmp/glacier-contract-rust
+```
+
+With `rustc` on `PATH`, the retained native Rust example also has a named gate:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build contract-rust-test \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+```
+
+Linux uses `LD_LIBRARY_PATH`; Windows places `zig-out/bin` on `PATH`. C
+consumers include `glacier/model_contract.h` and link `glacier_contract` or the
+separately named `glacier_contract_static` archive. Windows static consumers
+must define `GLACIER_MODEL_CONTRACT_STATIC=1` before including the header.
+
+The current C boundary verifies a complete artifact-plan-result chain without
+allocation or model loading. It is explicitly experimental and is not yet a
+model execution/session API. See [Language interop](LANGUAGE_INTEROP.md) for
+the status codes, exact guarantees, platform commands, and nonclaims.
+
+## 5. Run model-free architecture demos
 
 Each demo is deterministic, credential-free, and included in `zig build test`.
 
@@ -248,7 +329,7 @@ zig build provider-context-reconciliation-demo -Doptimize=ReleaseSafe -Dmetal=fa
 zig build provider-context-adapter-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
-## 4. Run the verification suites
+## 6. Run the verification suites
 
 ```sh
 zig build test -Doptimize=Debug -Dmetal=false
@@ -274,7 +355,7 @@ zig build test-compile -Dtarget=aarch64-linux-gnu -Dmetal=false -Doptimize=Relea
 ThreadSanitizer support depends on the host Zig/Clang toolchain. If the toolchain
 cannot run it, record that limitation rather than reporting it as passed.
 
-## 5. Try the CLI with a fixture
+## 7. Try the CLI with a fixture
 
 Generate a small synthetic Safetensors file and convert it to the draft Glacier
 model format:
@@ -295,7 +376,7 @@ For an INT4 fixture:
 The synthetic fixture exercises parsing and conversion. It is not a useful
 language model and does not establish generation quality.
 
-## 6. Prepare a native runtime image
+## 8. Prepare a native runtime image
 
 The `.glacier` file is the portable draft source format. `.glrt` is a derived,
 execution-layout-bound runtime image:
@@ -307,7 +388,7 @@ execution-layout-bound runtime image:
 
 Read [Native runtime image](RUNTIME_IMAGE.md) before changing its ABI.
 
-## 7. Make a first contribution
+## 9. Make a first contribution
 
 Pick one item from [Contributor projects](PROJECTS.md). Add or update a rejection
 test before changing the contract, run the smallest relevant suite, and open a
@@ -323,8 +404,11 @@ Xcode, and device versions in a Metal-specific issue.
 
 ### Build cache behaves unexpectedly
 
-Remove only the repository-local `.zig-cache` and `zig-out` directories, then
-rebuild. Do not delete shared toolchain or model directories.
+Run the smallest failing step through
+`tools/zig-with-ephemeral-cache.sh` first. If that succeeds, inspect the exact
+repository-local `.zig-cache` path before removing it. `zig-out` contains build
+products rather than compiler cache and normally does not need to be removed.
+Do not delete shared toolchain, model, provider, or application directories.
 
 ### A benchmark number looks surprising
 

@@ -442,7 +442,10 @@ Responsibilities:
 
 Current state: **idea to prototype**, depending on component. Core contracts
 already use scoped grants, but a public extension ABI, worker protocol, stable
-SDK, installer, and compatibility policy do not yet exist.
+SDK, installer, and compatibility policy do not yet exist. A first
+core-only, experimental C ABI can now verify one complete Model Contract V1
+artifact-plan-result chain from C, Python, or Rust without exposing runtime
+struct layouts; it is a compatibility seed, not the stable SDK.
 
 Promotion gate: an extension receives only declared operations and bounds;
 revocation and process failure preserve accounting; version mismatch fails
@@ -724,6 +727,8 @@ without direct access to unrelated tenant, runtime, storage, or network state.
 - authenticated multi-process/worker control plane;
 - placement, model caching, backpressure, and drain/upgrade protocols;
 - packaging, stable API/ABI policy, migration tooling, and support matrix;
+- promote the experimental contract verifier only after retained
+  symbol/layout, native consumer, packaging, and migration gates;
 - retained long-running correctness, pressure, crash, energy, and cost campaigns.
 
 Exit gate: a published support matrix, reproducible packages, compatibility
@@ -764,6 +769,7 @@ Contributors can work on the runtime without downloading a large model:
 - one deterministic processor or transform;
 - one fake backend/provider/tool adapter;
 - one independent verifier or mutation campaign;
+- one experimental C ABI consumer or golden failure case in another language;
 - one platform capability probe;
 - one deterministic workload scenario, summary oracle, or native campaign
   adapter;
