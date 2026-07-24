@@ -360,6 +360,15 @@ Paged variants add cache instance, logical page, ownership generation, and
 before/after page-map roots. The LeaseTree-backed variant also binds allocation,
 retirement, and request-wide publication authority.
 
+The experimental `prepared_text_session.SessionV1` is the first text execution
+path to use the contiguous transaction directly. It seals one mapped `.glrt`
+image and pre-tokenized prompt into an exact request plan, adopts the existing
+`LaneWeave` receipt, and keeps serial greedy KV, RNG, and output state alive
+across service permits. Its canonical boundary snapshot groups the verified
+in-process publication state with that plan and image identity; it is not a
+durable continuation payload or historical attestation, and its plan is not
+yet the common Model Contract execution plan.
+
 ### Continuation capsule
 
 `ContinuationCapsule v1` is a 608-byte pointer-free manifest created after a

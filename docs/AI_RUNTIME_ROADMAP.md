@@ -80,10 +80,12 @@ Responsibilities:
 - bounded parsing before allocation or device upload;
 - provenance, license metadata, tenant scope, and compatibility declarations.
 
-Current state: **prototype**. Glacier validates source and prepared `.glrt`
-layouts for the current text-generation path and has typed continuation roots.
-A universal `ArtifactManifest`, adapter/processor composition, and generated
-compatibility registry remain planned.
+Current state: **prototype with the R0 contract registry integrated**. Glacier
+validates source and prepared `.glrt` layouts for the current text-generation
+path, has typed continuation roots, and exposes canonical `ArtifactManifest`
+wires plus a generated retained-reference compatibility registry. The text
+loader does not yet bind its mapped artifact to that common manifest.
+Adapter/processor composition remains planned.
 
 Promotion gate: each advertised artifact combination has a redistributable
 fixture, exact bounds, independent parsing evidence, and a named rejection for
@@ -102,8 +104,11 @@ Responsibilities:
 - no silent architecture, precision, device, or preprocessing fallback.
 
 Current state: **prototype**. `DecodePlan`, CPU/optional Metal paths, INT4
-experiments, sealed media decode plans, and deterministic media transform plans
-exist. The common model-operation ABI and backend capability negotiation do not.
+experiments, sealed media decode plans, deterministic media transform plans,
+and the canonical Model Contract V1 execution-plan ABI exist. Retained family
+adapters and an experimental C boundary verify that common ABI, but the current
+text execution path does not consume it. Backend capability negotiation remains
+planned.
 
 Promotion gate: the plan fully predicts memory and output ceilings, the backend
 confirms exact capability identity, and unsupported combinations fail before
@@ -538,6 +543,42 @@ execution. The active delivery milestone is R1.
 - run uninterrupted/resumed production-fixture comparison;
 - retain macOS and native Linux evidence;
 - stabilize the smallest local library API.
+
+#### R1a — Prepared text session
+
+Status: **integrated experimental slice**. The first retained text-session
+vertical now:
+
+- seals the exact prepared `.glrt` identity, including source and ABI
+  fingerprints, mapped container length, and full container digest;
+- derives a prompt/options-bound plan with the exact request claim for one
+  serial, greedy, fixed-length run;
+- keeps prefill/decode KV, sampler RNG, sampling count, and output ownership in
+  one persistent in-process session;
+- adopts the already committed `LaneWeave` admission receipt instead of
+  admitting the same request a second time;
+- commits the first service permit with RNG/output state and each later permit
+  with exactly one preceding-token KV row, RNG state, output token, and
+  transcript evidence as one transaction;
+- produces exactly the same retained token sequence as the configured legacy
+  numerical oracle, exposes a verified boundary snapshot, and returns the
+  admitted resources to zero after retirement.
+
+The common contract vocabulary also accepts a prehashed artifact digest and a
+typed `token_ids` output kind. These are R1 foundations; the prepared-text plan
+does not yet consume the common Model Contract execution plan.
+
+The retained fixture is synthetic and download-free. It does not establish a
+production-model result, tokenizer wire identity, durable checkpoint payload,
+fresh-process resume, native Linux execution, or a performance result. Early
+EOS is deliberately disabled in this slice so the admission's fixed service
+count remains exact. Admission followed by session initialization is an
+exclusive scheduler boundary in R1a; an atomic combined admit-and-adopt
+operation for shared schedulers remains future work. The Zig API remains
+experimental. See the
+[prepared text session lifecycle](PREPARED_TEXT_SESSION.md) and the retained
+test named `compact multi-page INT4 generation matches eager generation` in
+[`tests/model_forward.zig`](../tests/model_forward.zig).
 
 Exit gate: one declared artifact and numerical mode completes plan → execute →
 publish → checkpoint → fresh-process resume with exact ownership and output
