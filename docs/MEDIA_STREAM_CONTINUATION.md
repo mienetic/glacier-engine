@@ -137,5 +137,7 @@ fresh process. External container normalization, production-model integration,
 and production generated-video integration remain. Separate generative paths
 now publish one bounded image with exact provenance, ordered raw PCM with
 application acknowledgement, and ordered raw video manifests with application
-display acknowledgement; composing those results into this durable checkpoint
-set is a later slice.
+display acknowledgement. A separate generated-output checkpoint now selects
+the complete image/audio/video result generation atomically; binding encoded
+payload archives into the broader object fabric remains a later slice. See
+[Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md).

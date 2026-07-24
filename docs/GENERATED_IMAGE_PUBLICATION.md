@@ -131,12 +131,15 @@ The next image-generation slices are:
 
 Generated audio and video now reuse these principles in their own bounded
 publication contracts with timeline continuity, cancellation, and application
-playback/display acknowledgement. Shared manifest/checkpoint composition and
-production adapters remain.
+playback/display acknowledgement. Shared checkpoint composition is integrated:
+one typed image completion plus acknowledged audio/video outputs now become
+visible through one atomic selector. Production adapters, durable encoded
+payload archives, and multi-output continuity remain.
 
 See [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md),
 [Shared Media Contract](MEDIA_CONTRACT.md),
 [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
+[Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

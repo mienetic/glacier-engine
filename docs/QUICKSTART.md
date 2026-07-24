@@ -192,6 +192,13 @@ python3 -m unittest bench.tests.test_generated_video_display
 zig build generated-video-live-restart-demo \
   -Doptimize=ReleaseSafe -Dmetal=false
 
+# Compose one completed image plus acknowledged audio/video behind one atomic
+# selector, then recover exact previous/successor generations across four deaths
+zig test src/core/generated_media_checkpoint.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_generated_media_checkpoint
+zig build generated-media-checkpoint-restart-demo \
+  -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

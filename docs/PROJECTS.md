@@ -207,11 +207,20 @@ successor, publishes the next manifest, rejects duplicate acknowledgement, and
 releases ownership to zero. See
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md).
 
+**Completed slice:** fixed generated-media member, checkpoint, and selector
+records now compose one typed image completion, one acknowledged PCM chunk, and
+one acknowledged raw-video segment. Exact totals, modality continuity,
+scope/policy/challenge, result/output/state/completion roots, and predecessor
+lineage reject mixed or replayed generations. Zig/Python share golden roots,
+and four real process-death boundaries recover only the complete previous or
+successor set. See
+[Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md).
+
 **Next slices:** add external container timestamp normalization, a production
 image decoder adapter, richer language/punctuation or overlapping-speaker
-policy, a production audio/video renderer or codec, shared generated-media
-manifest/checkpoint composition, or multi-segment video continuity. Each is
-independently contributor-sized and must preserve the fixed core contracts.
+policy, a production audio/video renderer or codec, durable encoded payload
+archives, multi-output continuity, or a native Linux checkpoint campaign. Each
+is independently contributor-sized and must preserve the fixed core contracts.
 
 ### AI runtime family registry
 
@@ -259,8 +268,8 @@ releases all ownership. See
 
 **Next slice:** add a generic non-media encoder using the converged stateless
 lifecycle, adapt a production renderer to the bounded generated-audio
-transaction, or compose the generated image/audio/video manifests behind one
-crash-atomic checkpoint while preserving the existing publication contracts.
+transaction, or bind durable encoded image/audio/video payloads into the
+existing atomic generated-output checkpoint.
 
 ### ResourceBank property tests
 

@@ -5,11 +5,13 @@ vision/audio/temporal-video fixtures, stateful transcript and explicit-VFR
 video-model restart, bounded streaming, generated-image publication after
 terminal-latent restart, generated-PCM publication with exact application
 acknowledgement across process restart, ordered generated-video manifests with
-exact application display acknowledgement, two-process continuation,
-crash-atomic checkpoint sets, and a post-restore generation-three successor; bounded
-processor/cache state and payloads integrated as fifth and sixth durable
-archive objects with fresh-Bank restore; production-model execution, physical
-playback/display evidence, and external formats remain gated**.
+exact application display acknowledgement, atomic generated-output checkpoint
+selection, two-process continuation, crash-atomic checkpoint sets, and a
+post-restore generation-three successor; bounded processor/cache state and
+payloads integrated as fifth and sixth durable archive objects with fresh-Bank
+restore; production-model execution, encoded payload archives, physical
+playback/display evidence, power-loss campaigns, and external formats remain
+gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -105,6 +107,15 @@ before admission, rejects partial display without state change, acknowledges
 the segment, aborts one private successor, publishes the next exact segment,
 and returns ownership to zero. This is application acknowledgement; physical
 display remains outside the authority-free core.
+A shared generated-output layer now normalizes the completed image and the
+acknowledged audio/video outputs into three fixed members. One canonical
+checkpoint binds exact totals, modality positions, results, outputs, states,
+completions, tenant scope, policy, challenge, and predecessor. An atomic
+selector exposes only the complete previous or successor generation. The
+independent Python oracle rejects every wire mutation, and a four-boundary
+native `SIGKILL` campaign reports no mixed-generation recovery. Actual encoded
+payload archives, production adapters, device evidence, and power-loss behavior
+remain separate gates.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -301,7 +312,10 @@ First slices:
    for one bounded raw gray8 image decoded from the exact post-restart terminal
    latent, with fixed plan/provenance/result wires, atomic abort/retry
    visibility, and independent mutation-complete verification;
-10. multi-image/chunk manifests, production decoder integration, and
+10. ~~shared generated-output checkpoint membership;~~ complete as the image
+    member of one atomic image/audio/video checkpoint with exact plan,
+    provenance, result, output, state, scope, policy, and challenge binding;
+11. multi-image/chunk manifests, production decoder integration, and
     crash-atomic external-format composition.
 
 Promotion gate: every accepted pixel maps to an exact source region and
@@ -348,9 +362,11 @@ First slices:
    successor, exact application observations survive a process restart,
    partial/duplicate acknowledgements fail closed, and cancellation preserves
    visibility;
-10. production renderer/codec adapters, shared generated-media manifests, and
-    authorized physical playback evidence; and
-11. microphone/network adapters outside the authority-free core.
+10. ~~shared generated-output checkpoint membership;~~ complete only after
+    exact playback acknowledgement and a quiescent post-acknowledgement state;
+11. production renderer/codec adapters, durable multi-chunk payload archives,
+    and authorized physical playback evidence; and
+12. microphone/network adapters outside the authority-free core.
 
 Promotion gate: no sample is silently dropped, duplicated, reordered, mixed, or
 resampled; streaming restart resumes at an exact sample/timeline boundary; input
@@ -395,13 +411,36 @@ First slices:
     complete for two bounded two-frame raw gray8 segments: exact per-frame
     roots/durations, one-segment backpressure, application display
     acknowledgement, cancellation-safe visibility, independent verification,
-    and a real process restart.
+    and a real process restart;
+12. ~~shared generated-output checkpoint membership;~~ complete only after
+    exact display acknowledgement and a quiescent post-acknowledgement state;
+13. multi-segment continuity, production renderer/codec integration, and
+    crash-atomic encoded payload archives.
 
 Promotion gate: frame selection and temporal ordering replay exactly; explicit
 VFR, stateful restart, and generated-segment restart fixtures are integrated,
 while external-container seek, corrupt-frame, missing-audio, multi-segment
 continuity, physical display, and production campaigns must still preserve
 resource accounting and never publish a segment twice.
+
+## Generated output composition
+
+The shared output checkpoint is integrated for the retained model-free image,
+audio, and video fixtures:
+
+1. ~~normalize one typed completion per modality;~~ complete with fixed
+   480-byte members;
+2. ~~bind exactly three members into one lineage-bound generation;~~ complete
+   with a fixed 800-byte checkpoint;
+3. ~~select the complete generation atomically;~~ complete with a fixed
+   352-byte selector and four native process-death boundaries;
+4. bind exact encoded payload archives, not only their typed roots;
+5. extend continuity to multiple images, audio chunks, and video segments;
+6. retain native Linux and separately scoped power-loss campaigns; and
+7. add production adapter, quality, performance, and authorized device
+   evidence.
+
+See [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md).
 
 ## Provider efficiency
 

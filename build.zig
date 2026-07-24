@@ -1528,6 +1528,64 @@ pub fn build(b: *std.Build) void {
         &generated_video_live_restart_worker_exe.step,
     );
 
+    // Three typed generated-media completions are sealed behind one selector.
+    // Four source/promoter/recovery campaigns kill the promoter after selector
+    // write, sync, rename, and directory sync; recovery accepts only the
+    // complete previous or complete successor image/audio/video generation.
+    const generated_media_checkpoint_restart_worker_exe =
+        b.addExecutable(.{
+            .name = "glacier-generated-media-checkpoint-restart-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/generated_media_checkpoint_restart_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    generated_media_checkpoint_restart_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    generated_media_checkpoint_restart_worker_exe.linkLibC();
+    const generated_media_checkpoint_restart_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-generated-media-checkpoint-restart-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/generated_media_checkpoint_restart.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    const run_generated_media_checkpoint_restart_demo =
+        b.addRunArtifact(
+            generated_media_checkpoint_restart_demo_exe,
+        );
+    run_generated_media_checkpoint_restart_demo.addArtifactArg(
+        generated_media_checkpoint_restart_worker_exe,
+    );
+    const generated_media_checkpoint_restart_demo_step =
+        b.step(
+            "generated-media-checkpoint-restart-demo",
+            "Recover exact generated image/audio/video checkpoints",
+        );
+    generated_media_checkpoint_restart_demo_step.dependOn(
+        &run_generated_media_checkpoint_restart_demo.step,
+    );
+    test_step.dependOn(
+        &run_generated_media_checkpoint_restart_demo.step,
+    );
+    test_compile_step.dependOn(
+        &generated_media_checkpoint_restart_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &generated_media_checkpoint_restart_worker_exe.step,
+    );
+
     // A stateful transcript process commits one exact sample range and syncs a
     // composed checkpoint. A distinct target process charges and materializes
     // retained state, publishes the next transcript, and advances its

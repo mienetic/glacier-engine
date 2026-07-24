@@ -21,6 +21,13 @@ before the first stable release.
 
 ### Added
 
+- Atomic generated-media checkpoints: fixed 480-byte typed member, 800-byte
+  checkpoint, and 352-byte selector records compose one generated image, one
+  acknowledged PCM chunk, and one acknowledged raw-video segment without
+  mixed-generation visibility. Exact scope, policy, challenge, result, output,
+  state, completion, totals, and predecessor bindings are independently
+  verified in Python; a four-boundary `SIGKILL` campaign recovers only the
+  complete previous or successor generation.
 - Generated-video manifest publication and display acknowledgement: canonical
   state, two-frame manifest, provenance, publication result, observation,
   acknowledgement plan, and acknowledgement result records bind exact raw

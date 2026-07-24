@@ -65,6 +65,8 @@ energy, or production reliability.
 | `zig build generated-audio-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, pending-state validation before admission, publication blocked before acknowledgement, partial acknowledgement rejection, one cancellation-safe successor retry, two exact PCM chunks, zero duplicates, and final zero ownership |
 | `zig test src/core/generated_video_display.zig -OReleaseSafe` | Seven canonical generated-video/display wires, two ordered frame roots and durations, exact media/resource/sink lineage, one-segment backpressure, mutation and partial/duplicate rejection, abort/drift preservation, atomic publication, and final zero ownership |
 | `zig build generated-video-live-restart-demo -Dmetal=false` | Distinct source/target PIDs, all retained records and frame roots validated before admission, publication blocked before acknowledgement, partial display rejection, one cancellation-safe successor retry, two exact raw-video segments, zero duplicates, and final zero ownership |
+| `zig test src/core/generated_media_checkpoint.zig -OReleaseSafe` | Canonical typed member/checkpoint/selector wires, exact image/audio/video completion binding, aggregate totals and continuity, mutation/substitution rejection, and independent golden roots |
+| `zig build generated-media-checkpoint-restart-demo -Dmetal=false` | Two immutable generated-output generations, four selector durability deaths, two previous and two successor recoveries, complete three-member validation in fresh processes, and zero mixed-generation observations |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -146,6 +148,15 @@ semantics. It does not measure generative-video quality, temporal coherence,
 production renderer/codec compatibility, latency, throughput, memory, energy,
 compositor or device behavior, physical display, or crash-atomic multi-file
 publication.
+
+The generated-media checkpoint fixture composes one typed image result, one
+fully acknowledged PCM result, and one fully acknowledged raw-video result into
+one checkpoint generation. A fixed selector is promoted across write, file-sync,
+rename, and directory-sync process-death boundaries; fresh recovery accepts
+only the complete previous or successor set. This proves canonical composition,
+selector ordering, and process-death recovery. It does not prove encoded payload
+durability, production model compatibility, power-loss behavior, physical
+playback/display, or quality and performance.
 
 The speech-annotation fixture maps `ice` and `berg` onto exact adjacent sample
 ranges and two opaque speaker identities. Its fresh target validates the

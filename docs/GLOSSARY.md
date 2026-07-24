@@ -278,6 +278,21 @@ sink implementation and instance. It advances logical display backpressure
 only after exact binding; it is not proof that a physical display presented a
 frame.
 
+**Generated-media member** — A fixed normalized completion record for one
+generated image, acknowledged audio chunk, or acknowledged video segment. It
+binds typed result/output/state lineage, exact units and bytes, media identity,
+scope, policy, challenge, and any required completion receipt.
+
+**Generated-media checkpoint** — A fixed record containing exactly one image,
+one audio, and one video member under the same request generation, scope,
+policy, and challenge. It binds exact per-modality/aggregate totals,
+continuation positions, result/output/state/completion roots, and its
+predecessor so a mixed or replayed set cannot become valid by rehashing it.
+
+**Generated-media selector** — The single atomic visibility record for one
+complete generated-media checkpoint. It binds all three member roots, fixed wire
+sizes, predecessor checkpoint/selector lineage, and the selected generation.
+
 **Model family** — A typed semantic class such as autoregressive generation,
 vision understanding, audio understanding, diffusion, retrieval, or agent
 policy. A family ID is vocabulary only; a matching support record and adapter

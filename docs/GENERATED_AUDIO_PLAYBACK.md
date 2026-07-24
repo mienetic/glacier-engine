@@ -113,10 +113,14 @@ device emitted sound, that a user heard it, or that the sink behaved honestly.
 Production device evidence requires a separately authorized adapter and its own
 capability, failure, timing, privacy, and calibration policy.
 
-Next work is production renderer/codec integration, multi-chunk manifests,
-crash-atomic output/checkpoint composition, partial-buffer policy where a
-product explicitly needs it, and physical playback adapters outside the
+Shared image/audio/video checkpoint selection is now integrated for fully
+acknowledged audio: a pending or partially acknowledged chunk cannot enter the
+checkpoint. Next work is production renderer/codec integration, durable
+multi-chunk encoded payload archives, partial-buffer policy where a product
+explicitly needs it, and physical playback adapters outside the
 authority-free core.
 
 The sibling ordered raw-video path is specified in
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md).
+The shared visibility boundary is specified in
+[Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md).

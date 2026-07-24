@@ -16,7 +16,7 @@ not.
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
-| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, and publish typed embeddings, restartable transcripts/VFR video segments, exact word/speaker annotations, timeline decisions, cross-modal links, retained state/result transitions, terminal-latent generated images, acknowledgement-gated PCM chunks, or acknowledgement-gated raw-video manifests only after family validation |
+| Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay`, `GeneratedMediaCheckpoint` | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, publish typed outputs only after family validation, and atomically select one complete generated image/audio/video generation |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
@@ -651,6 +651,13 @@ still require real machines for each promoted platform.
   bounded PCM rendering, one-outstanding-buffer backpressure, exact
   application acknowledgement, abort-safe visibility, and continuation across
   a real process restart.
+- [Generated-video manifest and display acknowledgement](GENERATED_VIDEO_DISPLAY.md):
+  ordered raw-frame publication, one-outstanding-segment backpressure, exact
+  application acknowledgement, abort-safe visibility, and continuation across
+  a real process restart.
+- [Atomic generated-media checkpoints](GENERATED_MEDIA_CHECKPOINT.md): typed
+  image/audio/video member admission, one lineage-bound checkpoint, and atomic
+  previous-or-successor selection across four process-death boundaries.
 - [Exact speech annotation publication](SPEECH_ANNOTATION_PUBLICATION.md):
   canonical word/sample/speaker mapping, abort-safe publication, and annotation
   state continuation across a real process restart.

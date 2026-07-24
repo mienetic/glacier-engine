@@ -135,5 +135,7 @@ The next media-runtime sequence is:
    [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
    plus two acknowledgement-gated raw video segments through
    [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
-   while shared durable output composition remains; and
+   with typed shared output selection complete through
+   [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md), while
+   durable encoded payload composition remains; and
 6. external codec adapters outside the authority-free core.

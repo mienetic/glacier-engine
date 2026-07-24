@@ -125,16 +125,19 @@ production weights.
 
 With stateful audio/video continuation, exact word/speaker annotation, bounded
 generated-image publication, acknowledgement-gated generated PCM, and ordered
-generated-video manifest publication integrated, the next multimodal runtime
-slices are external media format adapters, richer language/punctuation and
-overlapping-speaker policy, production generative-media adapters, shared
-manifest/checkpoint composition, and multi-segment continuity. Physical
-playback and display evidence remain separate promotion tracks.
+generated-video manifest publication integrated, shared image/audio/video
+generated-output checkpoint selection is also complete. The next multimodal
+runtime slices are external media format adapters, richer
+language/punctuation and overlapping-speaker policy, production
+generative-media adapters, durable encoded payload archives, and multi-segment
+continuity. Physical playback and display evidence remain separate promotion
+tracks.
 
 See [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md),
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md),
 [Exact Audio/Video Result Link](AUDIO_VIDEO_RESULT_LINK.md),
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md),
 [Exact Speech Annotation Publication](SPEECH_ANNOTATION_PUBLICATION.md),
-[Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md), and
+[Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md),
+[Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

@@ -112,7 +112,9 @@ logical display watermark exactly once. It does **not** prove that a physical
 display showed a frame, that a compositor presented it, that a user saw it, or
 that the sink behaved honestly.
 
-Next work is a shared generated-media manifest/checkpoint composition layer,
-production image/audio/video adapters, external encoded output, multi-segment
-video continuity, and separately authorized physical playback/display
-evidence.
+Shared image/audio/video checkpoint selection is now integrated for fully
+acknowledged video: a pending or partially displayed segment cannot enter the
+checkpoint. Next work is production image/audio/video adapters, durable
+external encoded payload archives, multi-segment video continuity, and
+separately authorized physical playback/display evidence. See
+[Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md).
