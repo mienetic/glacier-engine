@@ -169,6 +169,54 @@ const TokenPublicationContext = struct {
     }
 };
 
+const PreparedTextSink = struct {
+    prepare_calls: usize = 0,
+    commit_calls: usize = 0,
+    abort_calls: usize = 0,
+    receipts: [8]engine.lane_publication_txn.CommitReceiptV1 = undefined,
+
+    fn interface(self: *PreparedTextSink) engine.lane_publication_txn.SinkV1 {
+        return .{
+            .context = self,
+            .prepare = prepare,
+            .commit = commit,
+            .abort = abort,
+        };
+    }
+
+    fn prepare(
+        raw: *anyopaque,
+        proposal: *const engine.lane_publication_txn.ProposalV1,
+        ack: *engine.lane_publication_txn.PrepareAckV1,
+    ) engine.lane_publication_txn.SinkPrepareError!void {
+        const self: *PreparedTextSink = @ptrCast(@alignCast(raw));
+        self.prepare_calls += 1;
+        ack.* = .{
+            .proposal_sha256 = engine.lane_publication_txn.proposalSha256(proposal.*),
+            .sink_epoch = 0x5458_5453,
+            .reservation_id = self.prepare_calls,
+        };
+    }
+
+    fn commit(
+        raw: *anyopaque,
+        receipt: *const engine.lane_publication_txn.CommitReceiptV1,
+    ) void {
+        const self: *PreparedTextSink = @ptrCast(@alignCast(raw));
+        self.receipts[self.commit_calls] = receipt.*;
+        self.commit_calls += 1;
+    }
+
+    fn abort(
+        raw: *anyopaque,
+        _: *const engine.lane_publication_txn.ProposalV1,
+        _: *const engine.lane_publication_txn.PrepareAckV1,
+    ) void {
+        const self: *PreparedTextSink = @ptrCast(@alignCast(raw));
+        self.abort_calls += 1;
+    }
+};
+
 const TestEligibilityProvider = struct {
     calls: usize = 0,
     fail_step: ?usize = null,
@@ -424,7 +472,6 @@ test "end-to-end: convert → load → multi-layer forward → logits" {
     defer testing.allocator.free(st_path);
     const glacier_path = try pathInTmp(&tmp, "model.glacier");
     defer testing.allocator.free(glacier_path);
-
     try writeTinyModelSafetensors(st_path);
 
     // Convert to .glacier with INT4 quantization on the projectable tensors.
@@ -489,7 +536,6 @@ test "perplexity computation runs end-to-end on fixture model" {
     defer testing.allocator.free(st_path);
     const glacier_path = try pathInTmp(&tmp, "model.glacier");
     defer testing.allocator.free(glacier_path);
-
     try writeTinyModelSafetensors(st_path);
     _ = try engine.converter.convertSafetensors(
         testing.allocator,
@@ -606,6 +652,11 @@ test "compact multi-page INT4 generation matches eager generation" {
     defer testing.allocator.free(st_path);
     const glacier_path = try pathInTmp(&tmp, "model.glacier");
     defer testing.allocator.free(glacier_path);
+    const prepared_session_path = try pathInTmp(
+        &tmp,
+        "model-session.glrt",
+    );
+    defer testing.allocator.free(prepared_session_path);
 
     try writeTinyModelSafetensors(st_path);
     _ = try engine.converter.convertSafetensors(
@@ -659,6 +710,261 @@ test "compact multi-page INT4 generation matches eager generation" {
     });
     defer testing.allocator.free(compact_tokens);
     try testing.expectEqualSlices(u32, eager_tokens, compact_tokens);
+
+    // The persistent prepared-image slice adopts one already committed
+    // LaneWeave receipt and publishes the actual KV row, RNG state, and output
+    // token as one transaction per service permit.
+    try engine.loader.writePrepared(
+        testing.allocator,
+        &compact,
+        prepared_session_path,
+        compact.source_fingerprint,
+    );
+    var prepared_session_model = try engine.loader.loadPreparedWithOptions(
+        testing.allocator,
+        prepared_session_path,
+        .{ .expected_source_fingerprint = compact.source_fingerprint },
+    );
+    defer prepared_session_model.deinit();
+    const session_options: engine.prepared_text_session.OptionsV1 = .{
+        .max_new_tokens = 4,
+    };
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidConfiguration,
+        engine.prepared_text_session.makePlanV1(
+            prepared_session_model,
+            &prompt,
+            .{ .max_new_tokens = 4, .eos_token = 1 },
+        ),
+    );
+    const session_oracle = try engine.generate.generate(
+        testing.allocator,
+        prepared_session_model,
+        &prompt,
+        session_options.generateOptions(),
+    );
+    defer testing.allocator.free(session_oracle);
+    const session_plan = try engine.prepared_text_session.makePlanV1(
+        prepared_session_model,
+        &prompt,
+        session_options,
+    );
+    try testing.expectEqual(
+        @as(u64, session_options.max_new_tokens * @sizeOf(u32)),
+        session_plan.claim.output_journal_bytes,
+    );
+    var failed_bank_slots: [1]engine.resource_bank.Slot = undefined;
+    var failed_lane_slots: [1]engine.lane_weave_qos.Slot = undefined;
+    var failed_projection: [1]engine.lane_weave_qos.ProjectionSlot = undefined;
+    var failed_bank = try engine.resource_bank.Bank.init(
+        &failed_bank_slots,
+        .{},
+        0x5458_4642,
+    );
+    var failed_scheduler = try engine.lane_weave_qos.Scheduler.init(
+        &failed_bank,
+        .{
+            .slots = &failed_lane_slots,
+            .projection = &failed_projection,
+        },
+        .{
+            .scheduler_epoch = 0x5458_4653,
+            .challenge = [_]u8{0x6b} ** 32,
+            .max_weight = 1,
+        },
+    );
+    const failed_decision = try failed_scheduler.admit(.{
+        .tenant_key = 61,
+        .request_key = 62,
+        .request_generation = 1,
+        .resource_owner_key = 63,
+        .weight = 1,
+        .work_quanta = session_options.max_new_tokens,
+        .claim = session_plan.claim,
+    });
+    const failed_admission = switch (failed_decision) {
+        .admitted => |value| value,
+        .rejected => return error.TestUnexpectedResult,
+    };
+    var failed_allocator = std.testing.FailingAllocator.init(
+        testing.allocator,
+        .{ .fail_index = 0 },
+    );
+    var failed_session: engine.prepared_text_session.SessionV1 = .{};
+    try testing.expectError(
+        engine.generate.GenerateError.OutOfMemory,
+        failed_session.init(
+            failed_allocator.allocator(),
+            &prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            &failed_scheduler,
+            &failed_bank,
+            failed_admission,
+            0x5458_4645,
+        ),
+    );
+    try testing.expect(failed_allocator.has_induced_failure);
+    try testing.expect((try failed_bank.snapshot()).used.isZero());
+    var stale_session: engine.prepared_text_session.SessionV1 = .{};
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidAdmission,
+        stale_session.init(
+            testing.allocator,
+            &prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            &failed_scheduler,
+            &failed_bank,
+            failed_admission,
+            0x5458_4646,
+        ),
+    );
+    try testing.expect((try failed_bank.snapshot()).used.isZero());
+    _ = try failed_scheduler.close();
+
+    var session_bank_slots: [1]engine.resource_bank.Slot = undefined;
+    var session_lane_slots: [1]engine.lane_weave_qos.Slot = undefined;
+    var session_projection: [1]engine.lane_weave_qos.ProjectionSlot = undefined;
+    var session_bank = try engine.resource_bank.Bank.init(
+        &session_bank_slots,
+        .{},
+        0x5458_424b,
+    );
+    var session_scheduler = try engine.lane_weave_qos.Scheduler.init(
+        &session_bank,
+        .{
+            .slots = &session_lane_slots,
+            .projection = &session_projection,
+        },
+        .{
+            .scheduler_epoch = 0x5458_5343,
+            .challenge = [_]u8{0x7a} ** 32,
+            .max_weight = 1,
+        },
+    );
+    const session_decision = try session_scheduler.admit(.{
+        .tenant_key = 71,
+        .request_key = 72,
+        .request_generation = 1,
+        .resource_owner_key = 73,
+        .weight = 1,
+        .work_quanta = session_options.max_new_tokens,
+        .claim = session_plan.claim,
+    });
+    const session_admission = switch (session_decision) {
+        .admitted => |value| value,
+        .rejected => return error.TestUnexpectedResult,
+    };
+    var prepared_session: engine.prepared_text_session.SessionV1 = .{};
+    try prepared_session.init(
+        testing.allocator,
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        &session_scheduler,
+        &session_bank,
+        session_admission,
+        0x5458_4550,
+    );
+    defer prepared_session.deinit();
+    var session_sink: PreparedTextSink = .{};
+    const rejected_permit = try session_scheduler.prepareService();
+    prepared_session.sampling_calls = std.math.maxInt(u64);
+    const forced_failure = prepared_session.step(
+        rejected_permit,
+        session_sink.interface(),
+    );
+    prepared_session.sampling_calls = 0;
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        forced_failure,
+    );
+    try testing.expectEqual(@as(usize, 0), session_sink.prepare_calls);
+    try testing.expectEqual(@as(usize, 0), session_sink.commit_calls);
+    while (!prepared_session.isFinished()) {
+        _ = try prepared_session.step(
+            try session_scheduler.prepareService(),
+            session_sink.interface(),
+        );
+    }
+    try testing.expectEqualSlices(
+        u32,
+        session_oracle,
+        prepared_session.outputTokens(),
+    );
+    try testing.expectEqual(
+        session_oracle.len,
+        session_sink.commit_calls,
+    );
+    try testing.expectEqual(@as(usize, 0), session_sink.abort_calls);
+    for (
+        session_sink.receipts[0..session_sink.commit_calls],
+        0..,
+    ) |receipt, output_index| {
+        const transition = receipt.proposal.transition;
+        const expected_kv_positions = prompt.len + output_index;
+        try testing.expectEqual(
+            @as(u64, @intCast(expected_kv_positions)),
+            transition.after.kv_position,
+        );
+        try testing.expectEqual(
+            @as(u64, @intCast(output_index + 1)),
+            transition.after.sampling_calls,
+        );
+        try testing.expectEqual(
+            @as(u64, @intCast(output_index + 1)),
+            transition.after.output_length,
+        );
+        try testing.expectEqual(
+            session_oracle[output_index],
+            transition.token_id,
+        );
+        try testing.expectEqual(
+            output_index + 1 == session_oracle.len,
+            transition.terminal,
+        );
+        try testing.expectEqual(
+            output_index == 0,
+            std.mem.eql(
+                u8,
+                &transition.kv_row_sha256,
+                &engine.lane_publication_txn.zero_digest,
+            ),
+        );
+        try testing.expectEqualSlices(
+            u8,
+            &transition.before.rng_state_sha256,
+            &transition.after.rng_state_sha256,
+        );
+    }
+    const session_checkpoint = try prepared_session.snapshotVerified();
+    try testing.expectEqual(
+        session_plan.plan_sha256,
+        session_checkpoint.plan_sha256,
+    );
+    try testing.expect(
+        engine.prepared_text_session.boundarySnapshotValidV1(
+            session_checkpoint,
+        ),
+    );
+    var substituted_boundary = session_checkpoint;
+    substituted_boundary.plan_sha256[0] ^= 1;
+    try testing.expect(
+        !engine.prepared_text_session.boundarySnapshotValidV1(
+            substituted_boundary,
+        ),
+    );
+    try testing.expectEqual(
+        session_oracle.len,
+        session_checkpoint.publication.state.output_length,
+    );
+    _ = try prepared_session.retire();
+    try testing.expect((try session_bank.snapshot()).used.isZero());
+    _ = try session_scheduler.close();
 
     // ResourceBank admission is an execution contract, not a numerical path:
     // an unlimited committed receipt must preserve the exact token stream and

@@ -788,7 +788,7 @@ const RopeTable = struct {
     positions: usize,
     half_dim: usize,
 
-    fn init(allocator: std.mem.Allocator, positions: usize, head_dim: usize, theta: f32) !RopeTable {
+    pub fn init(allocator: std.mem.Allocator, positions: usize, head_dim: usize, theta: f32) !RopeTable {
         const half_dim = head_dim / 2;
         const count = std.math.mul(usize, positions, half_dim) catch return error.OutOfMemory;
         const cos = try allocator.alloc(f32, count);
@@ -807,12 +807,12 @@ const RopeTable = struct {
         return .{ .allocator = allocator, .cos = cos, .sin = sin, .positions = positions, .half_dim = half_dim };
     }
 
-    fn deinit(self: *RopeTable) void {
+    pub fn deinit(self: *RopeTable) void {
         self.allocator.free(self.cos);
         self.allocator.free(self.sin);
     }
 
-    fn apply(self: *const RopeTable, row: []f32, pos: usize, num_heads: usize, head_dim: usize) void {
+    pub fn apply(self: *const RopeTable, row: []f32, pos: usize, num_heads: usize, head_dim: usize) void {
         if (pos >= self.positions or head_dim / 2 != self.half_dim) return;
         const factors = pos * self.half_dim;
         for (0..num_heads) |head| {
@@ -1533,6 +1533,8 @@ fn forwardLayerCached(
     pair_nibble_phase: PairNibblePhase,
     int4_activation: Int4Activation,
     rope_table: *const RopeTable,
+    allow_qkv_spawn: bool,
+    row_txn_mark: ?kv.RowTxnMark,
 ) GenerateError!void {
     const dim = cfg.dim;
     const hidden = cfg.hidden_dim;
@@ -1574,7 +1576,8 @@ fn forwardLayerCached(
     const down = decode_buffers.DecodeBuffers.view(bufs.down, &s_down, dim);
     var pair_down_producer: ?int4_executor.PairNibbleSiluQ8Projection = null;
     var handoff_done = false;
-    if (mlp_representation == .separate and
+    if (row_txn_mark == null and
+        mlp_representation == .separate and
         parallel_attention_min_context != null)
     {
         if (packed_executor) |executor| {
@@ -1685,7 +1688,7 @@ fn forwardLayerCached(
         if (!qkv_done) {
             if (projection_worker) |worker| {
                 worker.start(.{ .run = kv_runner, .args = @ptrCast(&kv_args) });
-            } else {
+            } else if (allow_qkv_spawn) {
                 kv_thread = std.Thread.spawn(.{}, KVArgs.run, .{&kv_args}) catch null;
             }
             const q_result = projectLinear(pool, h_norm, weights.wq_int4, weights.wq, weights.wq_f16, weights.bq, q_row, dim, dim, int4_activation);
@@ -1707,7 +1710,20 @@ fn forwardLayerCached(
         const filled = cache.len;
 
         rope_table.apply(@constCast(k_row.asF32Unsafe()), cur_pos, cfg.num_kv_heads, head_dim);
-        _ = cache.appendRow(cache_layer_idx, k_row.asF32Unsafe(), v_row.asF32Unsafe()) catch return GenerateError.CacheFull;
+        if (row_txn_mark) |mark| {
+            _ = cache.appendRowTxn(
+                mark,
+                cache_layer_idx,
+                k_row.asF32Unsafe(),
+                v_row.asF32Unsafe(),
+            ) catch return GenerateError.CacheFull;
+        } else {
+            _ = cache.appendRow(
+                cache_layer_idx,
+                k_row.asF32Unsafe(),
+                v_row.asF32Unsafe(),
+            ) catch return GenerateError.CacheFull;
+        }
 
         var k_shape: [2]usize = .{ filled + 1, kv_dim };
         var v_shape: [2]usize = .{ filled + 1, kv_dim };
@@ -4557,6 +4573,74 @@ fn deriveRequestResourcePlan(
     };
 }
 
+/// Narrow kernel surface for the serial prepared-text session. It prevents the
+/// session API from depending on the broader executor, worker, and sealed-plan
+/// internals of `forwardLayerCached`.
+pub const PreparedTextRopeTableV1 = RopeTable;
+pub const PreparedTextPhaseV1 = enum {
+    prefill,
+    decode,
+};
+
+pub fn loadPreparedTextEmbeddingV1(
+    model: loader.LoadedModel,
+    token: u32,
+    out: []f32,
+) GenerateError!void {
+    return loadEmbeddingRow(model, token, out);
+}
+
+pub fn projectPreparedTextHeadV1(
+    model: loader.LoadedModel,
+    hidden: Tensor,
+    logits: Tensor,
+) GenerateError!void {
+    return projectLmHead(model, hidden, logits, null, null, .q8);
+}
+
+pub fn forwardPreparedTextLayerSerialV1(
+    cfg: forward.LayerConfig,
+    weights: forward.LayerWeights,
+    x_row: Tensor,
+    cache: *kv.KVCache,
+    layer_index: usize,
+    position: usize,
+    buffers: *decode_buffers.LayerBuffers,
+    next_h: Tensor,
+    rope_table: *const PreparedTextRopeTableV1,
+    phase: PreparedTextPhaseV1,
+    mark: ?kv.RowTxnMark,
+) GenerateError!void {
+    return forwardLayerCached(
+        cfg,
+        weights,
+        x_row,
+        cache,
+        layer_index,
+        position,
+        buffers,
+        next_h,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        .checked,
+        null,
+        null,
+        .separate,
+        null,
+        if (phase == .prefill) .prefill else .decode,
+        .q8,
+        rope_table,
+        false,
+        mark,
+    );
+}
+
 /// Derive the exact ResourceBank claim that `generate` will commit for this
 /// model, prompt, and option set. The function is allocation-free, performs
 /// the same strict admission checks as execution, invokes no callbacks, and
@@ -5026,6 +5110,8 @@ pub fn generate(
                     .prefill,
                     options.int4_activation,
                     &rope_table,
+                    true,
+                    null,
                 );
                 @memcpy(x_row.asF32Unsafe(), layer_buffers.next_h);
             }
@@ -5346,6 +5432,8 @@ pub fn generate(
                 .decode,
                 options.int4_activation,
                 &rope_table,
+                true,
+                null,
             );
             @memcpy(x_row.asF32Unsafe(), layer_buffers.next_h);
         }

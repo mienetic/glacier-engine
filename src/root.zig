@@ -130,6 +130,7 @@ pub const int4_weights = @import("int4_weights.zig");
 pub const int4_executor = @import("int4_executor.zig");
 pub const progressive_int4 = @import("progressive_int4.zig");
 pub const generate = @import("generate.zig");
+pub const prepared_text_session = @import("prepared_text_session.zig");
 pub const decode_lane4 = @import("decode_lane4.zig");
 pub const sampling = @import("sampling.zig");
 pub const tokenizer = @import("tokenizer.zig");
