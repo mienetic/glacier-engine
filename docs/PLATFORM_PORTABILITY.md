@@ -36,8 +36,8 @@ surface.
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
 | macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures exist | Optional Metal path exists; promotion still requires per-device retained gates | Development host, not a broad platform certification |
-| Linux / x86_64 | Full musl artifact cross-build passes in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
-| Linux / AArch64 | Full musl artifact cross-build passes in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
+| Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
+| Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
 | FreeBSD / x86_64 | Full artifact, `test-compile`, and generated-media conformance cross-build gates pass in `ReleaseSafe` | Not established by cross-compilation | No retained native FreeBSD filesystem campaign | No retained FreeBSD accelerator backend | Cross-build candidate; not native-supported |
 | Android / AArch64 | Core source-compilation probe passed | No device or emulator execution evidence | No Android lifecycle/storage recovery campaign | No Android accelerator backend | Research target; not supported |
@@ -64,7 +64,9 @@ The full declared artifact set also cross-built for:
 
 ```sh
 zig build -Dtarget=x86_64-linux-musl -Dmetal=false -Doptimize=ReleaseSafe
+zig build test-compile -Dtarget=x86_64-linux-musl -Dmetal=false -Doptimize=ReleaseSafe
 zig build -Dtarget=aarch64-linux-musl -Dmetal=false -Doptimize=ReleaseSafe
+zig build test-compile -Dtarget=aarch64-linux-musl -Dmetal=false -Doptimize=ReleaseSafe
 zig build -Dtarget=x86_64-windows-gnu -Dmetal=false -Doptimize=ReleaseSafe
 zig build test-compile -Dtarget=x86_64-windows-gnu -Dmetal=false -Doptimize=ReleaseSafe
 zig build -Dtarget=x86_64-freebsd -Dmetal=false -Doptimize=ReleaseSafe
@@ -88,6 +90,12 @@ promote Linux, Windows, FreeBSD, Android, or iOS to native support.
 
 Useful seams already exist:
 
+- public `glacier` and `glacier_core` Zig package modules let dependency
+  consumers import runtime code without running or installing host CLI, demo,
+  or benchmark products;
+- a compile-time adapter inventory reports read-only mapping, POSIX durable
+  files, hard-termination fixture, and Metal source availability separately
+  from native verification or support;
 - `src/core/` contains canonical state, admission, scheduling, media, provider,
   and recovery logic that is largely independent of an accelerator;
 - Metal enablement is a build-time option and is rejected for non-macOS
@@ -109,8 +117,10 @@ The main blockers are boundary violations rather than language choice:
 - some telemetry and benchmark harnesses assume macOS commands, timers, and
   resource fields;
 - Metal discovery, compilation, and linking are coupled to macOS tooling;
-- the complete build graph includes host-oriented demos and restart workers,
-  so a portable library cannot yet be built independently of them;
+- the default install graph still includes host-oriented CLI and benchmark
+  products even though dependency consumers can import the exported modules
+  independently; named core, CPU, durable, mobile, and host-tool product
+  profiles are still missing;
 - the current core test aggregation includes threaded and filesystem tests,
   which prevents a reduced single-threaded edge target from compiling;
 - 32-bit targets expose unchecked conversions from canonical `u64` lengths and
@@ -154,6 +164,13 @@ The portable core should own:
 The portable core must not import operating-system APIs. A target-specific
 adapter supplies capabilities at initialization, and admission rejects a
 requested feature when its capability is absent.
+
+The first compile-time inventory is
+`core.platform_capabilities.current_adapter_availability_v1`. Its booleans mean
+only that a source adapter is selected for the compile target. They never mean
+native-verified, recovery-verified, accelerator-verified, or supported. This
+distinction prevents a successful Windows mapping compile or POSIX API match
+from becoming a platform-support claim.
 
 ### Filesystem and recovery adapter
 
@@ -221,6 +238,11 @@ numerical and lifecycle evidence.
 
 ## Build graph separation
 
+The package now exports `glacier` and `glacier_core`, with a retained consumer
+smoke test in native and cross-target compile gates. This is the first
+library-consumption seam; the default project install graph is not yet split
+into the products below.
+
 The build should expose independent products:
 
 1. `core-contract`: portable formats and deterministic state-machine tests;
@@ -287,6 +309,12 @@ Every promoted target must retain artifacts for the relevant gates.
 - monotonic timing and physical metrics come from the named adapter;
 - idle state, power mode, thermal state, affinity, and competing load are
   captured where available;
+- versioned open-loop arrival-rate and closed-loop concurrency campaigns report
+  completed, rejected, cancelled, and timed-out work separately, with exact
+  throughput, p50/p95/p99 queue and completion latency, fairness, memory
+  high-water, and bounded-growth results;
+- soak and disruption campaigns retain the duration, seed, fault schedule,
+  recovery result, and zero-orphan ownership check;
 - missing physical metrics are marked unavailable, never synthesized from
   logical counters.
 
@@ -301,7 +329,12 @@ Every promoted target must retain artifacts for the relevant gates.
 
 ### Stage 1 — make the boundary explicit
 
-- introduce a platform capability manifest;
+- ~~introduce a compile-time platform adapter-availability manifest;~~ complete
+  for read-only mapping, POSIX durable files, hard-termination fixtures, and
+  the Metal source adapter; runtime discovery and verification status remain
+  separate future records;
+- ~~export dependency-consumable runtime/core modules;~~ complete as `glacier`
+  and `glacier_core` with a retained consumer smoke gate;
 - split pure core tests from filesystem, process, thread, and device tests;
 - wrap virtual memory and durable storage behind narrow interfaces;
 - move telemetry and process-death injection out of canonical runtime modules;

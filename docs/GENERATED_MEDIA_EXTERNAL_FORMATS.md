@@ -6,18 +6,17 @@ Status is deliberately split into three claims:
   strict canonical PNG, PCM/WAVE, and APNG subsets. They have native macOS
   tests, frozen independent vectors, mutation rejection, and module-level
   Linux/Windows/FreeBSD cross-compilation.
-- **Prototype format-conformance sidecar:** the canonical emitter/validator and
-  mutation tests are implemented and wired into the build. A real
-  two-generation PNG fixture passes through the registry and
-  producer-transition validators with exact successor, missing/foreign
-  predecessor, and failure-atomic output checks. An independent Python oracle
-  decodes the canonical producer plan/manifest wires, binds their roots and
-  media semantics, and covers all three profiles plus the complete
-  wire/root/lineage rules. Full-pair WAVE/APNG registry integration remains
-  before promotion.
+- **Integrated bounded format-conformance sidecar:** canonical two-generation
+  PNG, WAVE, and APNG fixtures pass through the registry,
+  producer-transition, and format validators with exact successor,
+  missing/foreign predecessor, semantic-drift, and failure-atomic output
+  checks. The audio and video fixtures use the real playback/display
+  acknowledgement state machines. An independent Python oracle validates all
+  three binary layers and producer semantics without executing Zig.
 - **Experimental read-only inspector:** a CLI validates a generated-media
-  registry archive and producer-transition sidecar and renders deterministic
-  JSON. It does not yet consume the format-conformance sidecar.
+  registry archive and producer-transition sidecar, optionally validates the
+  current and predecessor format sidecars, and renders deterministic JSON
+  without payload bytes.
 
 These claims do not imply general codec/container support, lossy compression,
 compression quality, media quality, historical execution, native execution on
@@ -30,7 +29,7 @@ every cross-compiled OS, physical playback/display, or production readiness.
 | Output registry archive | Exact ordered entries and encoded payload bytes for one generation | Typed producer correctness or external-format semantics |
 | Producer-transition sidecar | Deterministic reconstruction of the retained typed producer/materializer transition | Historical execution, live authority, or external-format correctness |
 | Format-conformance sidecar | Exact payload/profile semantics joined to the registry entry, transition receipt, and producer plan or manifest | General format acceptance, device behavior, quality, or performance |
-| Read-only inspector | Human-readable identities, lineage, sizes, and entry metadata after registry/transition validation | Payload export, format-sidecar validation, callbacks, or mutation authority |
+| Read-only inspector | Human-readable identities, lineage, sizes, entry metadata, and optional format-profile/root fields after exact triple validation | Payload export, callbacks, or mutation authority |
 
 Keeping the layers additive preserves the existing registry and
 producer-transition V1 wires. A verifier can reject a format sidecar without
@@ -113,6 +112,13 @@ Each record binds:
 - the format-contract and producer-transition receipt identities; and
 - the preceding format record for the same modality.
 
+The validator additionally decodes the embedded producer wire and cross-binds
+request/generation/producer order, state generations, model and materializer
+identity, output identity and size, exact audio/video ranges and timelines, and
+the required playback/display completion sequence to the transition receipt.
+For stateful images it also binds the model step, model plan, and state
+publication claimed by the image plan.
+
 The batch binds the registry generation and publication sequence, request
 epoch, generation plan, tenant scope, metadata policy, challenge, transition
 batch, registry manifest/archive, ordered record table, profile set, preceding
@@ -122,33 +128,32 @@ Generation one requires zero predecessor format roots. A successor requires the
 exact preceding registry archive, producer-transition sidecar, and format
 sidecar; substituting another valid generation is not accepted.
 
-The implementation currently has canonical record/batch encoding, structural
-and mutation tests, strict payload/profile validation, and exact predecessor
-validation. Its retained first-generation PNG fixture is constructed through
-the actual registry archive and producer-transition validators. A successor
-fixture continues that exact chain and covers missing/foreign predecessor
-rejection plus failure-atomic destination handling. The fixture also asserts
-that the plain encoded-payload SHA-256 is distinct from the registry's
-domain-separated payload root rather than treating the two identities as
-interchangeable.
+The implementation has canonical record/batch encoding, structural and
+mutation tests, strict payload/profile validation, and exact predecessor
+validation. Retained two-generation PNG, WAVE, and APNG fixtures are
+constructed through the actual registry archive and producer-transition
+validators. WAVE and APNG construct publication, observation,
+acknowledgement-plan, acknowledgement-result, and final-state chains through
+the typed producer APIs. Every profile covers missing/foreign predecessor
+rejection, semantic drift, and failure-atomic destination handling. The
+fixtures also assert that plain encoded-payload SHA-256 is distinct from the
+registry's domain-separated payload root.
 
 The independent Python oracle implements the exact 576/1,152-byte wires without
-importing Zig. It independently decodes the canonical image plan, audio plan,
-and video manifest, verifies each embedded footer/root, and cross-checks
-geometry, sample rate, timing, and frame hashes against the parsed PNG/WAVE/APNG
-payload. Its retained three-profile batch also covers frozen contract, profile
-set, record-table, batch, and whole-evidence roots; every record and batch byte
-mutation; every batch truncation and insertion; canonical ordering, aggregates,
-terminals, and zero padding; intra-batch modality chains; and successor lineage.
-It does not independently decode the complete registry archive or
-producer-transition sidecar; the Zig pair validator and retained PNG fixture
-establish that outer binding.
+importing Zig. It decodes the registry archive, producer-transition sidecar,
+canonical image plan, audio plan, video manifest, and format sidecar, verifies
+their roots, and cross-checks producer state, identity, ranges, geometry,
+sample rate, timing, and frame hashes against parsed PNG/WAVE/APNG payloads.
+Its retained two-generation all-profile chain also covers frozen contract,
+profile-set, record-table, batch, and whole-evidence roots; every record and
+batch byte mutation; every batch truncation and insertion; canonical ordering,
+aggregates, terminals, zero padding, and successor lineage.
 
-Promotion to **integrated** still requires:
-
-1. equivalent real two-generation WAVE and APNG registry-transition fixtures;
-   and
-2. their missing/foreign predecessor and failure-atomic rejection paths.
+The sidecar embeds the producer plan or manifest, not the complete
+playback/display observation, acknowledgement-plan, or acknowledgement-result
+wires. Their exact roots and completion state remain bound through the paired
+transition receipt and registry entry; replaying those acknowledgement wires
+independently still requires retaining the producer-transition evidence.
 
 ## Read-only producer-transition inspector
 
@@ -172,15 +177,31 @@ zig build generated-media-evidence-inspector \
   --previous-evidence path/to/previous.transition-evidence
 ```
 
+Add exact format-sidecar validation to genesis inspection:
+
+```sh
+zig build generated-media-evidence-inspector \
+  -Doptimize=ReleaseSafe -Dmetal=false -- \
+  --archive path/to/current.registry \
+  --evidence path/to/current.transition-evidence \
+  --format-evidence path/to/current.format-evidence
+```
+
+For a successor, add both `--format-evidence` and
+`--previous-format-evidence` alongside the preceding registry/transition
+pair. A format predecessor without a current format sidecar, a missing
+successor predecessor, or an extra genesis predecessor rejects.
+
 The inspector:
 
 - accepts regular read-only files only;
-- caps each registry archive at 16 MiB and each transition sidecar at 21,376
-  bytes;
+- caps each registry archive at 16 MiB, each transition sidecar at 21,376
+  bytes, and each optional format sidecar at 14,400 bytes;
 - rejects a predecessor pair for genesis and requires both predecessor files
   for a successor;
-- validates exact file lengths, registry structure, transition receipts, and
-  predecessor lineage before initializing semantic stdout;
+- validates exact file lengths, registry structure, transition receipts,
+  optional format profiles and producer semantics, and predecessor lineage
+  before initializing semantic stdout;
 - emits one compact, field-ordered JSON document with generation, lineage,
   roots, aggregate sizes, and per-entry metadata;
 - never renders encoded payload bytes; and
@@ -190,9 +211,10 @@ Invalid input exits nonzero and emits no semantic stdout. The JSON output is an
 inspection result, not new authority and not a substitute for retaining the
 verified binary artifacts.
 
-The current inspector validates the registry plus producer-transition sidecar,
-not the prototype format-conformance sidecar. Extending it with an optional
-format input is a separate contributor slice after the sidecar promotion gate.
+Legacy registry/transition-only output remains the original byte-stable schema.
+Format mode uses a separate schema and adds only profile names, format-record
+and contract roots, plain encoded-payload hashes, and current/predecessor format
+batch roots.
 
 ## Verification
 
@@ -239,21 +261,16 @@ own native campaigns.
 
 ## Contributor-ready next slices
 
-1. **Complete the retained sidecar fixture.** Add real two-generation WAVE and
-   APNG registry/transition pairs with the same exact successor,
-   missing/foreign predecessor, and failure-atomic output coverage as PNG.
-   Acceptance:
-   `zig build media-external-format-test -Doptimize=ReleaseSafe -Dmetal=false`.
-2. **Broaden the independent stress envelope.** Add maximum-entry and multiple
+1. **Broaden the independent stress envelope.** Add maximum-entry and multiple
    records-per-modality vectors while preserving the frozen V1 roots and
    bounded mutation strategy.
-3. **Extend the inspector without widening authority.** Add optional current
-   and predecessor format-sidecar arguments, validate them before stdout, and
-   render only profile identities, bounds, and roots—never payload bytes.
-4. **Retain native portability evidence.** Run the format target and inspector
+2. **Retain native portability evidence.** Run the format target and inspector
    campaign on Linux and Windows, record the exact toolchain/machine envelope,
    and keep compile-only claims separate from runtime results.
-5. **Add profiles by version, not ambiguity.** A new channel shape, WAVE layout,
+3. **Add production adapters.** Join one redistributable production
+   decoder/renderer and encoder/container path to these bounded contracts while
+   retaining separate quality, performance, and device-authority evidence.
+4. **Add profiles by version, not ambiguity.** A new channel shape, WAVE layout,
    animation shape, compression mode, or chunk policy needs a new explicit
    encoding ABI, golden vectors, ceilings, independent parser coverage, and
    rejection tests. V1 must not silently broaden.

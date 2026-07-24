@@ -174,22 +174,22 @@ formats, and independent verifiers.
   APNG. Golden vectors, mutation rejection, native macOS execution, and
   module-level Linux/Windows/FreeBSD cross-compilation are retained. These are
   narrow profiles, not general codec, container, quality, or playback support.
-- **Additive format evidence prototype.** A separate sidecar can bind those
+- **Integrated bounded format evidence.** A separate sidecar binds those
   strict profiles, exact payloads, producer plan or manifest, registry entries,
   transition receipts, and predecessor format records without changing the
-  existing registry or producer-transition V1 wires. Its emitter/validator and
-  canonical mutation tests plus a real two-generation PNG registry-transition
-  fixture are implemented, including exact successor, missing/foreign
-  predecessor, and failure-atomic output checks. An independent Python oracle
-  decodes the canonical producer wires, binds their roots and media semantics,
-  and covers all three profiles, frozen sidecar roots, every-byte mutation,
-  truncation, insertion, ordering, aggregates, padding, and successor lineage.
-  Full-pair WAVE/APNG registry integration remains before promotion.
+  existing registry or producer-transition V1 wires. Real two-generation PNG,
+  WAVE, and APNG registry-transition fixtures cover exact successor,
+  missing/foreign predecessor, semantic drift, and failure-atomic output;
+  audio/video fixtures use the typed playback/display acknowledgement chains.
+  An independent Python oracle validates all three binary layers and producer
+  semantics, including frozen sidecar roots, every-byte mutation, truncation,
+  insertion, ordering, aggregates, padding, and successor lineage.
 - **Read-only generated-media inspection.** An experimental CLI validates a
   registry archive and its producer-transition evidence, requires the exact
-  predecessor pair for a successor, and emits deterministic field-ordered JSON
-  only after validation. It renders identities and bounds, never payload bytes,
-  and has no callback or filesystem-write path.
+  predecessor pair for a successor, optionally validates current/predecessor
+  format sidecars, and emits deterministic field-ordered JSON only after exact
+  pair or triple validation. It renders identities and roots, never payload
+  bytes, and has no callback or filesystem-write path.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
@@ -408,6 +408,22 @@ The first build may take a few minutes. Subsequent builds use Zig's cache. For
 model conversion, generation, and every demo command, continue with the
 [Quickstart guide](docs/QUICKSTART.md).
 
+Zig dependency consumers can import the runtime or core module without taking
+a dependency on the CLI, demos, or benchmark executables:
+
+```zig
+const glacier_dep = b.dependency("glacier_engine", .{
+    .target = target,
+    .optimize = optimize,
+});
+app.root_module.addImport("glacier", glacier_dep.module("glacier"));
+// Or use glacier_dep.module("glacier_core") for the core surface.
+```
+
+The `glacier` module propagates its target-specific libc, AArch64 INT4, and
+optional macOS Metal link requirements. The `glacier_core` module retains the
+hardware-independent surface without those native backend dependencies.
+
 ## Current feature map
 
 | Area | Available today | Next public milestone |
@@ -417,10 +433,11 @@ model conversion, generation, and every demo command, continue with the
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
-| Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join, and an experimental read-only generated-media transition inspector | Provider/token inspectors, format-sidecar rendering after full-pair WAVE/APNG promotion, export, and retention policy |
-| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, typed producer/raw-output admission, host replay of exact deterministic source-model/materializer transitions, validated bounded PNG/WAVE/APNG profiles, and a prototype additive format-conformance sidecar with a real two-generation PNG fixture and independent Python oracle | Add full-pair WAVE/APNG registry-sidecar integration, production encoder/container adapters and broader profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, additional model/materializer profiles, and authorized physical playback/display and quality evidence |
-| Platforms | Native macOS development-host evidence; full cross-build gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64 | Run native Linux/Windows/FreeBSD CPU, mapping, and recovery campaigns; finish Windows durable-file, clock, telemetry, and packaging adapters; then add mobile and reduced edge profiles |
-| Tooling | Zig build, deterministic demos, benchmark harnesses | Installer, stable library surface, simpler fixture workflow |
+| Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join, and an experimental read-only generated-media inspector with exact optional format-sidecar validation | Provider/token inspectors, maximum-entry media evidence, export, and retention policy |
+| Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, typed producer/raw-output admission, host replay of exact deterministic source-model/materializer transitions, validated bounded PNG/WAVE/APNG profiles, and an integrated additive format-conformance sidecar with real two-generation fixtures and an independent composed oracle | Production encoder/container adapters and broader profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, additional model/materializer profiles, and authorized physical playback/display and quality evidence |
+| Platforms | Native macOS development-host evidence; full build and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64; exported package modules; compile-time adapter-availability inventory; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64 | Split named core/CPU/durable/device/host-tool profiles; run native Linux/Windows/FreeBSD CPU, mapping, and recovery campaigns; finish Windows durable-file, clock, telemetry, and packaging adapters; then add mobile and reduced edge profiles |
+| Load and resilience | Deterministic admission, scheduling, cancellation, ownership, restart, and pressure primitives exist as separate retained fixtures | Versioned mixed-family open/closed-loop harness, independent summaries, native p50/p95/p99 and memory/fairness evidence, then bounded soak and disruption campaigns |
+| Tooling | Zig build, exported `glacier`/`glacier_core` package modules, deterministic demos, benchmark harnesses | Product-specific build profiles, installer, stable library API, and simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
 [roadmap](docs/ROADMAP.md).

@@ -7,7 +7,7 @@
 //! only the exact previous or successor selector.
 
 const std = @import("std");
-const builtin = @import("builtin");
+const platform_capabilities = @import("platform_capabilities.zig");
 const capsule = @import("continuation_capsule.zig");
 const sweep_file = @import("continuation_object_sweep_file.zig");
 const sweep_record = @import("continuation_object_sweep_record.zig");
@@ -185,7 +185,8 @@ pub const LeaseV1 = struct {
         lock_storage: []u8,
         active_storage: []u8,
     ) !LeaseV1 {
-        if (comptime !platformSupported())
+        if (comptime !platform_capabilities
+            .current_adapter_availability_v1.posix_durable_file_adapter)
             return Error.UnsupportedPlatform;
         if (storage_epoch == 0 or isZero(challenge_sha256) or
             initial_set.bytes.len > max_set_bytes or
@@ -260,7 +261,8 @@ pub const LeaseV1 = struct {
         lock_storage: []u8,
         active_storage: []u8,
     ) !LeaseV1 {
-        if (comptime !platformSupported())
+        if (comptime !platform_capabilities
+            .current_adapter_availability_v1.posix_durable_file_adapter)
             return Error.UnsupportedPlatform;
         if (storage_epoch == 0 or isZero(challenge_sha256) or
             active_storage.len < max_set_bytes)
@@ -604,7 +606,8 @@ pub fn publishObservedV1(
     prepared: PreparedPublicationV1,
     observer: ?ObserverV1,
 ) !ApplyReceiptV1 {
-    if (comptime !platformSupported())
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
         return Error.UnsupportedPlatform;
     if (lease.state != .ready) return Error.InvalidState;
     const validated = try validatePublicationForLeaseV1(lease, prepared);
@@ -659,7 +662,8 @@ pub fn recoverV1(
     lease: *LeaseV1,
     prepared: PreparedPublicationV1,
 ) !ApplyReceiptV1 {
-    if (comptime !platformSupported())
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
         return Error.UnsupportedPlatform;
     if (lease.state != .ready) return Error.InvalidState;
     const target = try validatePreparedPublicationV1(prepared);
@@ -1089,7 +1093,8 @@ fn openSafeFileV1(
     name: []const u8,
     kind: OpenKind,
 ) !std.fs.File {
-    if (comptime !platformSupported())
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
         return Error.UnsupportedPlatform;
     if (!@hasField(std.posix.O, "CLOEXEC") or
         !@hasField(std.posix.O, "NOFOLLOW"))
@@ -1175,22 +1180,6 @@ fn slicesOverlap(a: []const u8, b: []const u8) bool {
     const a_end = std.math.add(usize, a_start, a.len) catch return true;
     const b_end = std.math.add(usize, b_start, b.len) catch return true;
     return a_start < b_end and b_start < a_end;
-}
-
-fn platformSupported() bool {
-    return switch (builtin.os.tag) {
-        .linux,
-        .macos,
-        .ios,
-        .freebsd,
-        .netbsd,
-        .dragonfly,
-        .openbsd,
-        .solaris,
-        .illumos,
-        => true,
-        else => false,
-    };
 }
 
 test "checkpoint set and selector are canonical and mutation complete" {
@@ -1294,7 +1283,9 @@ test "checkpoint set and selector are canonical and mutation complete" {
 }
 
 test "checkpoint selector promotion recovers exact previous or successor" {
-    if (comptime !platformSupported()) return error.SkipZigTest;
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
     const testing = std.testing;
     var temporary = testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -1368,7 +1359,9 @@ test "checkpoint selector promotion recovers exact previous or successor" {
 }
 
 test "checkpoint recovery repairs only the prepared inactive successor" {
-    if (comptime !platformSupported()) return error.SkipZigTest;
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
     const testing = std.testing;
     var temporary = testing.tmpDir(.{});
     defer temporary.cleanup();

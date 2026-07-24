@@ -248,20 +248,22 @@ one-shot image publication and complete audio/video acknowledgement
 transitions, then emits fixed per-output receipts in a separate sidecar bound
 to the exact unchanged registry archive. Strict allocation-free delivery
 modules now emit and accept bounded canonical PNG, PCM/WAVE, and APNG profiles.
-An additive format-evidence sidecar prototype binds those payloads to their
-producer plan or manifest, registry entry, transition receipt, format contract,
-and predecessor format lineage without changing the existing V1 wires. The
-leaf profiles have native macOS test evidence and module-level
-Linux/Windows/FreeBSD cross-compilation. A real two-generation PNG fixture now
-passes through the registry and producer-transition validators with exact
-successor, missing/foreign predecessor, and failure-atomic output checks. An
-independent Python oracle decodes the canonical producer plan/manifest wires,
-binds their roots and media semantics, and covers all three profiles plus the
-complete sidecar wire/root/lineage rules. The composed format target
-cross-compiles for x86_64 Linux musl, Windows GNU, and FreeBSD. Full-pair
-WAVE/APNG registry integration, production encoder/container adapters, broader
-profiles, native Linux/Windows execution, physical playback/display evidence,
-quality evidence, and power-loss durability remain gated.
+  An integrated bounded format-evidence sidecar binds those payloads to their
+  producer plan or manifest, registry entry, transition receipt, format contract,
+  and predecessor format lineage without changing the existing V1 wires. The
+  leaf profiles have native macOS test evidence and module-level
+  Linux/Windows/FreeBSD cross-compilation. Real two-generation PNG, WAVE, and
+  APNG fixtures pass through the registry, producer-transition, and format
+  validators with exact successor, missing/foreign predecessor,
+  semantic-drift, and failure-atomic output checks. Audio and video use the
+  typed playback/display acknowledgement chains. An independent Python oracle
+  validates all three binary layers and producer semantics, and the read-only
+  inspector optionally validates the exact current/predecessor format pair
+  before rendering a versioned no-payload JSON document. The composed format
+  target cross-compiles for x86_64 Linux musl, Windows GNU, and FreeBSD.
+  Production encoder/container adapters, broader profiles, native
+  Linux/Windows execution, physical playback/display evidence, quality
+  evidence, and power-loss durability remain gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -326,10 +328,11 @@ than trusts the common envelope, registry generation/sequence, and
 predecessors. A higher-assurance sibling replays the exact deterministic
 source-model and materializer callbacks, reconstructs image or complete
 audio/video completion transitions, and binds fixed receipts in a separate
-evidence sidecar to that unchanged registry. A prototype additive format
-sidecar can then bind strict canonical PNG/WAVE/APNG payloads to those receipts
-and typed producer semantics without rewriting the registry or transition
-wire. Generic tensor/action envelopes, partial-stream policy, production
+  evidence sidecar to that unchanged registry. An integrated bounded additive
+  format sidecar binds strict canonical PNG/WAVE/APNG payloads to those receipts
+  and typed producer semantics across real two-generation fixtures without
+  rewriting the registry or transition wire. Generic tensor/action envelopes,
+  partial-stream policy, production
 encoder/container adapters, broader format profiles, additional replay
 profiles, native platform execution, and physical playback/display evidence
 remain planned.
@@ -348,6 +351,8 @@ Responsibilities:
 
 - portable wires, canonical roots, event chains, independent verifiers, and
   mutation-complete fixtures;
+- versioned workload scenarios with fixed seeds, arrival schedules, family
+  mixes, concurrency, duration, warmup, and resource ceilings;
 - latency, throughput, memory, energy, utilization, quality, and cost reported
   under a captured machine/provider envelope;
 - trace correlation without storing raw private inputs in core records;
@@ -357,13 +362,37 @@ Responsibilities:
 Current state: **integrated evidence building blocks**, **prototype inspection
 tooling**. The experimental generated-media inspector validates a registry
 archive plus its producer-transition evidence, requires the exact predecessor
-pair for successors, and emits deterministic JSON only after validation. It
-does not render payload bytes or receive callback, filesystem-write, or
-resource authority. Format-sidecar inspection remains a contributor task after
-full-pair WAVE/APNG registry-transition coverage is retained.
+pair for successors, and can optionally validate current/predecessor format
+sidecars through the composed oracle. It emits deterministic versioned JSON
+only after validation and does not render payload bytes or receive callback,
+filesystem-write, or resource authority.
 
 Promotion gate: every promoted claim names the workload, platform, numerical
 mode, baseline conditions, verifier, retained artifacts, and nonclaims.
+
+#### Workload, stress, and soak campaigns
+
+Load evidence is a required runtime feature, not a single marketing number.
+The planned harness has three deliberately separate modes:
+
+1. **Deterministic pressure** replays a model-free arrival schedule to verify
+   admission, weighted fairness, batching, deadlines, cancellation,
+   backpressure, exact accounting, and zero orphaned ownership on every target.
+2. **Native workload** runs declared model-family mixes against a real CPU,
+   accelerator, or provider adapter and records completed/rejected/cancelled
+   work, throughput, p50/p95/p99 latency, queue delay, memory high-water,
+   utilization, energy when available, and output-quality policy.
+3. **Soak and disruption** runs a bounded long-duration campaign with a fixed
+   fault schedule for process restart, adapter loss, storage pressure, and
+   cancellation storms, then proves recovery, bounded growth, and zero leaked
+   ownership.
+
+Open-loop arrival-rate campaigns and closed-loop concurrency campaigns must
+remain distinct. Results retain exact scenario identity, warmup and measurement
+windows, machine/OS/backend/power/thermal envelopes, raw observations, summary
+algorithm identity, and independent validation. Cross-compilation alone never
+counts as load evidence, and a campaign on one OS or device never promotes
+another.
 
 ### 10. Capability, extension, and distribution plane
 
@@ -414,10 +443,10 @@ expand the base adapter's capabilities.
 | Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision, audio, and temporal-video embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, fresh-process stateful transcript continuation, and restartable exact word-timing/speaker publication integrated; production model gated | Add language/punctuation, overlapping-speaker policy, and crash-atomic checkpoint composition | No sample loss/duplication, exact streaming restart, annotation lineage, calibrated production quality |
-| Speech and audio generation | TTS, codec/audio token generation | Bounded exact-integer PCM publication, cancellation-safe retry, one-buffer backpressure, application acknowledgement, distinct-process restart, shared generated-output checkpoint composition, multi-chunk registry continuity with exact encoded payloads, host-verified retained source-model/renderer replay with separate registry-bound evidence, a validated bounded PCM s16le WAVE profile, and independent format-sidecar oracle coverage; full-pair WAVE registry integration remains; production model/device paths gated | Add the full WAVE registry-transition pair, then a production renderer/codec adapter, broader profiles, and additional replay profiles | Quality evidence, production container conformance, explicit device authority, physical playback evidence |
+| Speech and audio generation | TTS, codec/audio token generation | Bounded exact-integer PCM publication, cancellation-safe retry, one-buffer backpressure, application acknowledgement, distinct-process restart, shared generated-output checkpoint composition, multi-chunk registry continuity with exact encoded payloads, host-verified retained source-model/renderer replay with separate registry-bound evidence, a validated bounded PCM s16le WAVE profile, and a real two-generation registry-transition-format chain with independent oracle coverage; production model/device paths gated | Add a production renderer/codec adapter, broader profiles, and additional replay profiles | Quality evidence, production container conformance, explicit device authority, physical playback evidence |
 | Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder, explicit VFR windows, fresh-process stateful segment continuation, canonical merge timeline, and exact audio/transcript-video result-link continuation integrated; production model gated | Add external container timestamp normalization and production backend conformance | Stateful continuation, explicit discontinuity evidence, production quality evidence |
-| Image generation | diffusion/flow step, decode latent, publish image | Exact retained-state continuation plus bounded terminal-latent decode, cancellation-safe atomic image/provenance/result publication, distinct-process proof, shared generated-output checkpoint composition, multi-image registry continuity with exact encoded payloads, host-verified retained source-model/decoder replay with independent one-shot image state and derived collection order, a validated bounded canonical PNG profile, a real two-generation PNG format-sidecar fixture, and independent oracle coverage; sidecar remains prototype across modalities; production model gated | Add a production decoder/encoder adapter, broader profiles, and additional replay profiles | Multi-step continuation, general external-format conformance, and quality/performance evidence |
-| Video generation | temporal latent steps, frame/segment publication | Ordered two-frame raw manifest publication, cancellation-safe retry, one-segment backpressure, application display acknowledgement, distinct-process restart, shared generated-output checkpoint composition, multi-segment registry continuity with exact encoded payloads, host-verified retained source-model/renderer plus complete acknowledgement replay, a validated bounded two-frame gray8 APNG profile, and independent format-sidecar oracle coverage; full-pair APNG registry integration remains; production model/device paths gated | Add the full APNG registry-transition pair, then production adapters, broader profiles, and additional replay profiles | Production model quality, general external-container conformance, explicit display authority |
+| Image generation | diffusion/flow step, decode latent, publish image | Exact retained-state continuation plus bounded terminal-latent decode, cancellation-safe atomic image/provenance/result publication, distinct-process proof, shared generated-output checkpoint composition, multi-image registry continuity with exact encoded payloads, host-verified retained source-model/decoder replay with independent one-shot image state and derived collection order, a validated bounded canonical PNG profile, a real two-generation registry-transition-format chain, and independent oracle coverage; production model gated | Add a production decoder/encoder adapter, broader profiles, and additional replay profiles | Multi-step continuation, general external-format conformance, and quality/performance evidence |
+| Video generation | temporal latent steps, frame/segment publication | Ordered two-frame raw manifest publication, cancellation-safe retry, one-segment backpressure, application display acknowledgement, distinct-process restart, shared generated-output checkpoint composition, multi-segment registry continuity with exact encoded payloads, host-verified retained source-model/renderer plus complete acknowledgement replay, a validated bounded two-frame gray8 APNG profile, and a real two-generation registry-transition-format chain with independent oracle coverage; production model/device paths gated | Add production adapters, broader profiles, and additional replay profiles | Production model quality, general external-container conformance, explicit display authority |
 | Audio/music generation | acoustic or token steps, waveform decode | Shared bounded exact-integer waveform-output transaction, multi-chunk registry continuity, and a retained deterministic producer-transition replay profile integrated; music models gated | Add a legal production artifact, additional replay profile, or production renderer/codec fixture | Timeline continuity, chunk lineage, rights/provenance policy, calibrated quality |
 | Multimodal fusion | cross-attention, joint embedding, interleaved generation | Idea; shared identities exist | Image+text or audio+text synthetic fusion fixture | Each modality retains source/state identity through one output transaction |
 | Tool-use and agent policy | choose action, arguments, observation, continue | Idea; scheduler/provider primitives exist | Fake tool with bounded schema and no ambient I/O | Separate action authorization, idempotency, result identity, cancellation |
@@ -600,17 +629,15 @@ stay within admitted memory/time bounds, and resume or cancel at declared units.
   archive;
 - emit and accept bounded canonical lossless delivery profiles; complete for
   PNG with bounded 8-bit gray/gray-alpha/RGB/RGBA, PCM s16le mono/stereo WAVE,
-  and two-frame full-canvas gray8 APNG. A prototype additive conformance
-  sidecar binds these payloads to the unchanged registry and transition
-  evidence. An experimental read-only inspector validates and renders the
-  registry plus transition evidence without payload or write authority;
-- retain a full two-generation PNG format-sidecar fixture with exact successor,
-  missing/foreign predecessor, and failure-atomic output checks; complete. An
-  independent Python oracle now decodes and binds all canonical producer wires
-  and covers all profiles, every sidecar byte, truncation/insertion, ordering,
-  aggregates, padding, and successor lineage;
-- add equivalent full-pair WAVE/APNG registry-transition fixtures, then add
-  production image decoder/encoder and audio/video
+  and two-frame full-canvas gray8 APNG. Their additive conformance sidecar is
+  integrated through real two-generation registry-transition-format fixtures
+  for every profile. An experimental read-only inspector optionally validates
+  and renders exact triple roots without payload or write authority;
+- retain exact successor, missing/foreign predecessor, semantic-drift, and
+  failure-atomic output checks for all three profiles; complete. An independent
+  Python oracle decodes and binds the registry, transition, format sidecar, and
+  canonical producer wires across both generations;
+- add production image decoder/encoder and audio/video
   renderer/codec/container adapters, broader profiles, and additional replay
   profiles;
 - add authorized physical playback/display and quality evidence;
@@ -629,11 +656,10 @@ generations. Canonical typed producer admission now verifies the retained
 record sets and exact raw outputs before constructing that registry.
 Host-verified transition evidence now additionally replays the exact retained
 source-model and materializer profiles and binds the resulting receipts to that
-unchanged registry. Strict bounded PNG/WAVE/APNG leaf profiles are validated;
-their additive format sidecar has a real two-generation PNG
-registry-transition fixture and an independent all-profile
-producer-semantic/wire/root oracle, but remains a prototype until full-pair
-WAVE/APNG integration lands. The R4 production exit gate still requires
+unchanged registry. Strict bounded PNG/WAVE/APNG leaf profiles and their
+additive sidecar are integrated through real two-generation
+registry-transition-format fixtures, exact producer-semantic binding, and an
+independent composed oracle. The R4 production exit gate still requires
 production encoder/container adapters, broader profiles and replay coverage,
 native platform and power-loss evidence, and quality/performance evidence under
 declared artifacts.
@@ -701,6 +727,8 @@ Contributors can work on the runtime without downloading a large model:
 - one fake backend/provider/tool adapter;
 - one independent verifier or mutation campaign;
 - one platform capability probe;
+- one deterministic workload scenario, summary oracle, or native campaign
+  adapter;
 - one read-only evidence inspector or validated renderer extension;
 - one compatibility-matrix row backed by a retained command.
 

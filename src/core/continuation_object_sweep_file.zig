@@ -12,7 +12,7 @@
 //! detect a transient or same-length in-place overwrite by an untrusted writer.
 
 const std = @import("std");
-const builtin = @import("builtin");
+const platform_capabilities = @import("platform_capabilities.zig");
 const capsule = @import("continuation_capsule.zig");
 const bundle = @import("continuation_bundle.zig");
 const object_store = @import("continuation_object_store.zig");
@@ -374,7 +374,8 @@ pub const FileLeaseV1 = struct {
         options: AcquireOptionsV1,
         stream_storage: []u8,
     ) !FileLeaseV1 {
-        if (comptime !platformSupported())
+        if (comptime !platform_capabilities
+            .current_adapter_availability_v1.posix_durable_file_adapter)
             return Error.UnsupportedPlatform;
         try validateAcquire(name, options);
         const generation = try reserveLeaseGeneration();
@@ -441,7 +442,8 @@ pub const FileLeaseV1 = struct {
         options: AcquireOptionsV1,
         stream_storage: []u8,
     ) !FileLeaseV1 {
-        if (comptime !platformSupported())
+        if (comptime !platform_capabilities
+            .current_adapter_availability_v1.posix_durable_file_adapter)
             return Error.UnsupportedPlatform;
         try validateAcquire(name, options);
         const generation = try reserveLeaseGeneration();
@@ -513,7 +515,8 @@ pub const FileLeaseV1 = struct {
     pub fn appendCapability(
         self: *FileLeaseV1,
     ) Error!sweep_writer.AppendCapabilityV1 {
-        if (comptime !platformSupported())
+        if (comptime !platform_capabilities
+            .current_adapter_availability_v1.posix_durable_file_adapter)
             return Error.UnsupportedPlatform;
         if (self.state != .ready or
             self.expected_phase != .body_write or
@@ -545,7 +548,8 @@ pub const FileLeaseV1 = struct {
         self: *FileLeaseV1,
         anchor: record.RecoveryAnchorV1,
     ) Error!sweep_writer.RepairCapabilityV1 {
-        if (comptime !platformSupported())
+        if (comptime !platform_capabilities
+            .current_adapter_availability_v1.posix_durable_file_adapter)
             return Error.UnsupportedPlatform;
         if (self.state != .ready or
             self.expected_phase != .body_write or
@@ -848,7 +852,9 @@ fn openLockedFile(
     kind: OpenKind,
     lock_nonblocking: bool,
 ) !std.fs.File {
-    if (comptime !platformSupported()) return Error.UnsupportedPlatform;
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
     if (!@hasField(std.posix.O, "CLOEXEC") or
         !@hasField(std.posix.O, "NOFOLLOW"))
         return Error.UnsupportedPlatform;
@@ -982,24 +988,10 @@ fn reserveLeaseGeneration() Error!u64 {
 }
 
 fn syncDirectory(directory: std.fs.Dir) !void {
-    if (!platformSupported()) return Error.UnsupportedPlatform;
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
     try std.posix.fsync(directory.fd);
-}
-
-fn platformSupported() bool {
-    return switch (builtin.os.tag) {
-        .linux,
-        .macos,
-        .ios,
-        .freebsd,
-        .netbsd,
-        .dragonfly,
-        .openbsd,
-        .solaris,
-        .illumos,
-        => true,
-        else => false,
-    };
 }
 
 fn testDigest(byte: u8) Digest {
@@ -1112,7 +1104,9 @@ fn testAnchor() record.RecoveryAnchorV1 {
 }
 
 test "directory lease creates locks appends and reopens exact records" {
-    if (comptime !platformSupported()) return error.SkipZigTest;
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
     const fixture = try testRecords();
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -1187,7 +1181,9 @@ test "directory lease creates locks appends and reopens exact records" {
 }
 
 test "directory lease rejects unsafe names symlinks hard links and permissions" {
-    if (comptime !platformSupported()) return error.SkipZigTest;
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     var storage: [record.encoded_bytes]u8 = undefined;
@@ -1284,7 +1280,9 @@ const InjectObserver = struct {
 };
 
 test "every real file append phase poisons and reopens from exact evidence" {
-    if (comptime !platformSupported()) return error.SkipZigTest;
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
     const fixture = try testRecords();
     for ([_]sweep_writer.IoPhaseV1{
         .body_write,
@@ -1357,7 +1355,9 @@ test "every real file append phase poisons and reopens from exact evidence" {
 }
 
 test "real incomplete tail repair is explicit durable and requires reacquire" {
-    if (comptime !platformSupported()) return error.SkipZigTest;
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
     const fixture = try testRecords();
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -1429,7 +1429,9 @@ test "real incomplete tail repair is explicit durable and requires reacquire" {
 }
 
 test "namespace replacement poisons before append reaches replacement file" {
-    if (comptime !platformSupported()) return error.SkipZigTest;
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
     const fixture = try testRecords();
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();

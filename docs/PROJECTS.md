@@ -88,6 +88,19 @@ The visualizer must consume verified events and label unverified input.
 
 **First slice:** emit deterministic JSON suitable for a future UI.
 
+### Portable workload campaign foundation
+
+Define the first bounded, versioned model-free workload scenario for mixed
+runtime families. Keep open-loop arrival rate separate from closed-loop
+concurrency, use explicit logical ticks and seeds, and record completed,
+rejected, cancelled, and timed-out work without reading an ambient clock.
+
+**First slice:** one deterministic pressure scenario plus an independent
+summary oracle for queue delay, weighted fairness, resource high-water, and
+zero orphaned ownership. Native timing, percentile, energy, and soak adapters
+remain later slices described in the
+[AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md#workload-stress-and-soak-campaigns).
+
 ### Model fixture expansion
 
 Add a tiny, redistributable fixture covering one loader or tensor-layout branch.

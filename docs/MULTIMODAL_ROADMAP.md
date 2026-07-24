@@ -10,8 +10,9 @@ selection, exact eight-object generated-media payload archive composition,
 bounded multi-output registry continuity, canonical typed producer/raw-output
 admission, host-verified deterministic source-model/materializer transition
 replay with a separate registry-bound evidence sidecar, validated bounded
-lossless PNG/WAVE/APNG delivery profiles, an additive format-evidence sidecar
-prototype, an experimental read-only transition-evidence inspector,
+lossless PNG/WAVE/APNG delivery profiles, an integrated additive
+format-evidence sidecar with real two-generation fixtures for every profile,
+an experimental read-only inspector with optional exact format validation,
 two-process continuation, crash-atomic checkpoint sets, and a post-restore
 generation-three successor;
 bounded processor/cache state and payloads integrated as fifth and sixth
@@ -169,23 +170,23 @@ byte-exact subset it emits. These are validated bounded profiles, not general
 decoders, production codecs/containers, quality measurements, or
 playback/display evidence.
 
-An additive format-evidence sidecar prototype binds the selected profile,
+An integrated bounded format-evidence sidecar binds the selected profile,
 encoded payload, producer plan or manifest, registry entry, transition receipt,
 and per-modality predecessor format record while leaving the existing registry
-and producer-transition V1 wires unchanged. Its canonical emitter/validator and
-mutation tests plus a real two-generation PNG fixture through the actual
-registry and producer-transition validators exist. Exact successor,
-missing/foreign predecessor, and failure-atomic output paths are covered. An
-independent Python oracle decodes canonical producer plan/manifest wires, binds
-their roots and media semantics, and covers all three profiles plus the
-complete sidecar wire/root/lineage rules. Full-pair WAVE/APNG registry
-integration remains before promotion.
+and producer-transition V1 wires unchanged. Canonical two-generation PNG,
+WAVE, and APNG fixtures pass through the actual registry,
+producer-transition, and format validators. Audio/video fixtures construct the
+typed playback/display acknowledgement chain. Exact successor,
+missing/foreign predecessor, semantic-drift, and failure-atomic output paths
+are covered. An independent Python oracle decodes all three binary layers and
+canonical producer wires, binds their state, identity, ranges, and media
+semantics, and covers the complete sidecar wire/root/lineage rules.
 
-An experimental read-only inspector separately validates the registry archive
-and producer-transition sidecar. Successor inspection requires the exact
-predecessor archive and transition sidecar. Deterministic JSON is emitted only
-after full validation and contains no encoded payload bytes. The inspector does
-not yet accept or render the prototype format sidecar.
+An experimental read-only inspector validates the registry archive and
+producer-transition sidecar and can optionally validate the exact current and
+predecessor format sidecars. Successor inspection requires the exact
+predecessor pair or triple. Deterministic versioned JSON is emitted only after
+full validation and contains no encoded payload bytes.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -590,17 +591,16 @@ audio, and video fixtures:
    per-output receipts, and a separate paired evidence sidecar bound to the
    unchanged registry archive;
 8. ~~add bounded canonical delivery profiles;~~ complete for strict PNG,
-   PCM/WAVE, and APNG emit-and-accept modules. A separate format-evidence
-   sidecar prototype binds their exact semantics to the registry and transition
-   records without changing either V1 wire. An experimental read-only inspector
-   validates and renders the registry plus transition evidence, but not yet the
-   format sidecar;
+   PCM/WAVE, and APNG emit-and-accept modules plus an additive format-evidence
+   sidecar that binds their exact semantics to registry and transition records
+   without changing either V1 wire;
 9. ~~retain exact successor format evidence and an independent oracle;~~
-   complete for a real two-generation PNG registry-transition pair, exact
-   missing/foreign predecessor rejection, failure-atomic output, and an
-   independent all-profile producer-semantic/wire/root/mutation oracle;
-10. add equivalent full-pair WAVE/APNG registry-transition fixtures, then add
-   production encoder/container adapters, additional model/materializer
+   complete through real two-generation PNG/WAVE/APNG
+   registry-transition-format pairs, typed playback/display acknowledgement
+   chains, exact missing/foreign predecessor and semantic-drift rejection,
+   failure-atomic output, an independent composed oracle, and optional
+   format-aware read-only inspection;
+10. add production encoder/container adapters, additional model/materializer
    profiles, and broader format profiles;
 11. retain native Linux/Windows execution and separately scoped
    initial-publication/power-loss campaigns; and
@@ -646,12 +646,10 @@ Early contributions can proceed without a large model:
   detection and richer transcript result forms over the completed post-restore
   cache ownership path; the first fixed predecessor-bound video-segment result
   deterministic merge timeline, and exact audio/video result link are complete;
-- add full-pair WAVE/APNG registry, transition, and format-sidecar fixtures that
-  reuse the completed independent oracle and cover missing/foreign predecessor
-  rejection;
-- extend the read-only inspector with an optional format-sidecar input only
-  after that sidecar is independently verified, without rendering payload
-  bytes;
+- add maximum-entry and repeated-modality format-sidecar fixtures while
+  preserving frozen V1 roots and bounded mutation coverage;
+- extend format-aware inspection with privacy-safe export/retention policy
+  without rendering payload bytes;
 - add a new strict profile under a new encoding ABI instead of silently
   widening V1;
 - run native Linux and Windows format/inspector campaigns and retain the

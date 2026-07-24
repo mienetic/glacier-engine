@@ -31,9 +31,15 @@ class GeneratedMediaEvidenceInspectorTests(unittest.TestCase):
                 "-OReleaseSafe",
                 "--dep",
                 "core",
+                "--dep",
+                "format_evidence",
                 "-Mroot=bench/generated_media_evidence_inspector.zig",
                 "-OReleaseSafe",
                 "-Mcore=src/core/root.zig",
+                "-OReleaseSafe",
+                "--dep",
+                "core",
+                "-Mformat_evidence=src/media/generated_media_format_conformance.zig",
                 f"-femit-bin={cls.executable}",
                 "--cache-dir",
                 str(workspace / "cache"),
@@ -51,6 +57,7 @@ class GeneratedMediaEvidenceInspectorTests(unittest.TestCase):
                 + compile_result.stderr.decode("utf-8", "replace")
             )
         cls.batches = transition.reference_batches()
+        cls.format_batches = inspector.reference_format_batches()
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -61,8 +68,10 @@ class GeneratedMediaEvidenceInspectorTests(unittest.TestCase):
         archive: bytes,
         evidence: bytes,
         *,
+        format_evidence: bytes | None = None,
         previous_archive: bytes | None = None,
         previous_evidence: bytes | None = None,
+        previous_format_evidence: bytes | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
         with tempfile.TemporaryDirectory(
             prefix="case-",
@@ -80,6 +89,10 @@ class GeneratedMediaEvidenceInspectorTests(unittest.TestCase):
                 "--evidence",
                 str(evidence_path),
             ]
+            if format_evidence is not None:
+                format_path = case / "current.format-evidence"
+                format_path.write_bytes(format_evidence)
+                command.extend(("--format-evidence", str(format_path)))
             if previous_archive is not None:
                 previous_archive_path = case / "previous.registry"
                 previous_archive_path.write_bytes(previous_archive)
@@ -88,6 +101,15 @@ class GeneratedMediaEvidenceInspectorTests(unittest.TestCase):
                 previous_evidence_path = case / "previous.evidence"
                 previous_evidence_path.write_bytes(previous_evidence)
                 command.extend(("--previous-evidence", str(previous_evidence_path)))
+            if previous_format_evidence is not None:
+                previous_format_path = case / "previous.format-evidence"
+                previous_format_path.write_bytes(previous_format_evidence)
+                command.extend(
+                    (
+                        "--previous-format-evidence",
+                        str(previous_format_path),
+                    )
+                )
             before = {
                 path.name: path.read_bytes()
                 for path in case.iterdir()
@@ -127,6 +149,29 @@ class GeneratedMediaEvidenceInspectorTests(unittest.TestCase):
             ),
         )
 
+    def _invoke_format_batch(
+        self,
+        batch: transition.Record,
+        *,
+        predecessor: transition.Record | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return self._invoke(
+            batch["registry"]["archive_bytes"],
+            batch["evidence_bytes"],
+            format_evidence=batch["format_evidence_bytes"],
+            previous_archive=(
+                None
+                if predecessor is None
+                else predecessor["registry"]["archive_bytes"]
+            ),
+            previous_evidence=(
+                None if predecessor is None else predecessor["evidence_bytes"]
+            ),
+            previous_format_evidence=(
+                None if predecessor is None else predecessor["format_evidence_bytes"]
+            ),
+        )
+
     def assertRejected(
         self,
         result: subprocess.CompletedProcess[bytes],
@@ -160,6 +205,160 @@ class GeneratedMediaEvidenceInspectorTests(unittest.TestCase):
                     inspector.parse_rendered(result.stdout),
                     inspector.expected_document(batch),
                 )
+
+    def test_format_generations_match_independent_renderer(self) -> None:
+        first = self.format_batches["first"]
+        second = self.format_batches["second"]
+        cases = (
+            ("first", first, None),
+            ("second", second, first),
+        )
+        for label, batch, predecessor in cases:
+            with self.subTest(label=label):
+                result = self._invoke_format_batch(
+                    batch,
+                    predecessor=predecessor,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, b"")
+                expected = inspector.render_expected(
+                    batch,
+                    batch["format_evidence_bytes"],
+                    (
+                        None
+                        if predecessor is None
+                        else predecessor["format_evidence_bytes"]
+                    ),
+                )
+                self.assertEqual(result.stdout, expected)
+                decoded = inspector.parse_rendered(result.stdout)
+                self.assertEqual(
+                    {entry["delivery_profile"] for entry in decoded["entries"]},
+                    {
+                        "png",
+                        "wave-pcm-s16le",
+                        "apng-two-frame-gray8",
+                    },
+                )
+                self.assertTrue(
+                    all(
+                        entry["plain_encoded_payload_sha256"]
+                        == entry["encoded_payload_sha256"]
+                        for entry in decoded["entries"]
+                    )
+                )
+
+    def test_format_output_is_deterministic_and_contains_no_payload(self) -> None:
+        batch = self.format_batches["first"]
+        first = self._invoke_format_batch(batch)
+        second = self._invoke_format_batch(batch)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(first.stdout, second.stdout)
+        self.assertNotIn(b"\x89PNG\r\n\x1a\n", first.stdout)
+        self.assertNotIn(b"RIFF", first.stdout)
+        self.assertNotIn(b"IDAT", first.stdout)
+
+    def test_format_mutation_truncation_and_extension_reject(self) -> None:
+        first = self.format_batches["first"]
+        archive = first["registry"]["archive_bytes"]
+        evidence = first["evidence_bytes"]
+        format_bytes = first["format_evidence_bytes"]
+        mutated = bytearray(format_bytes)
+        mutated[-1] ^= 1
+        for label, candidate in (
+            ("mutation", bytes(mutated)),
+            ("truncation", format_bytes[:-1]),
+            ("extension", format_bytes + b"\x00"),
+        ):
+            with self.subTest(label=label):
+                self.assertRejected(
+                    self._invoke(
+                        archive,
+                        evidence,
+                        format_evidence=candidate,
+                    )
+                )
+
+    def test_format_missing_foreign_and_extra_predecessors_reject(self) -> None:
+        first = self.format_batches["first"]
+        second = self.format_batches["second"]
+        self.assertRejected(
+            self._invoke(
+                second["registry"]["archive_bytes"],
+                second["evidence_bytes"],
+                format_evidence=second["format_evidence_bytes"],
+                previous_archive=first["registry"]["archive_bytes"],
+                previous_evidence=first["evidence_bytes"],
+            )
+        )
+        self.assertRejected(
+            self._invoke(
+                second["registry"]["archive_bytes"],
+                second["evidence_bytes"],
+                format_evidence=second["format_evidence_bytes"],
+                previous_archive=first["registry"]["archive_bytes"],
+                previous_evidence=first["evidence_bytes"],
+                previous_format_evidence=second["format_evidence_bytes"],
+            )
+        )
+        legacy_first = self.batches["first"]
+        self.assertRejected(
+            self._invoke(
+                second["registry"]["archive_bytes"],
+                second["evidence_bytes"],
+                format_evidence=second["format_evidence_bytes"],
+                previous_archive=legacy_first["registry"]["archive_bytes"],
+                previous_evidence=first["evidence_bytes"],
+                previous_format_evidence=first["format_evidence_bytes"],
+            )
+        )
+        self.assertRejected(
+            self._invoke(
+                second["registry"]["archive_bytes"],
+                second["evidence_bytes"],
+                format_evidence=second["format_evidence_bytes"],
+                previous_archive=first["registry"]["archive_bytes"],
+                previous_evidence=legacy_first["evidence_bytes"],
+                previous_format_evidence=first["format_evidence_bytes"],
+            )
+        )
+        self.assertRejected(
+            self._invoke(
+                first["registry"]["archive_bytes"],
+                first["evidence_bytes"],
+                format_evidence=first["format_evidence_bytes"],
+                previous_format_evidence=first["format_evidence_bytes"],
+            )
+        )
+        self.assertRejected(
+            self._invoke(
+                first["registry"]["archive_bytes"],
+                first["evidence_bytes"],
+                format_evidence=first["format_evidence_bytes"],
+                previous_archive=first["registry"]["archive_bytes"],
+                previous_evidence=first["evidence_bytes"],
+                previous_format_evidence=first["format_evidence_bytes"],
+            )
+        )
+        self.assertRejected(
+            self._invoke(
+                first["registry"]["archive_bytes"],
+                first["evidence_bytes"],
+                previous_format_evidence=first["format_evidence_bytes"],
+            )
+        )
+
+    def test_format_foreign_current_pair_rejects(self) -> None:
+        first = self.format_batches["first"]
+        second = self.format_batches["second"]
+        self.assertRejected(
+            self._invoke(
+                first["registry"]["archive_bytes"],
+                first["evidence_bytes"],
+                format_evidence=second["format_evidence_bytes"],
+            )
+        )
 
     def test_output_is_deterministic(self) -> None:
         first = self._invoke_batch(self.batches["first"])
@@ -237,11 +436,19 @@ class GeneratedMediaEvidenceInspectorTests(unittest.TestCase):
         first = self.batches["first"]
         over_archive = b"\x00" * (inspector.MAX_ARCHIVE_BYTES + 1)
         over_evidence = b"\x00" * (inspector.MAX_EVIDENCE_BYTES + 1)
+        over_format = b"\x00" * (inspector.MAX_FORMAT_EVIDENCE_BYTES + 1)
         self.assertRejected(self._invoke(over_archive, first["evidence_bytes"]))
         self.assertRejected(
             self._invoke(
                 first["registry"]["archive_bytes"],
                 over_evidence,
+            )
+        )
+        self.assertRejected(
+            self._invoke(
+                first["registry"]["archive_bytes"],
+                first["evidence_bytes"],
+                format_evidence=over_format,
             )
         )
 
@@ -295,6 +502,24 @@ class GeneratedMediaEvidenceInspectorTests(unittest.TestCase):
         )
         with self.assertRaises(inspector.GeneratedMediaEvidenceInspectorError):
             inspector.parse_rendered(duplicate)
+
+        format_batch = self.format_batches["first"]
+        rendered_format = inspector.render_expected(
+            format_batch,
+            format_batch["format_evidence_bytes"],
+        )
+        wrong_profile = json.loads(rendered_format)
+        wrong_profile["entries"][0]["delivery_profile"] = "wave-pcm-s16le"
+        with self.assertRaises(inspector.GeneratedMediaEvidenceInspectorError):
+            inspector.parse_rendered(
+                (
+                    json.dumps(
+                        wrong_profile,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                ).encode("ascii")
+            )
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ const audio = core.generated_audio_playback;
 const video = core.generated_video_display;
 const registry = core.generated_media_output_registry;
 const transition = core.generated_media_producer_transition;
+const resource_bank = core.resource_bank;
 
 pub const Digest = [32]u8;
 pub const abi: u64 = 1;
@@ -797,6 +798,7 @@ pub fn encodeConformantArchiveAndEvidenceV1(
             receipt,
             entry,
             payload,
+            profile_binding,
         );
         const start = std.math.mul(
             usize,
@@ -926,6 +928,39 @@ const ProfileBindingV1 = struct {
     producer_root: Digest,
     raw_bytes: u64,
     raw_sha256: Digest,
+    request_epoch: u64,
+    producer_generation: u64,
+    producer_ordinal: u64,
+    producer_publication_sequence: u64,
+    completion_sequence: u64,
+    producer_state_generation_before: u64,
+    producer_state_generation_after_publication: u64,
+    producer_state_generation_after_completion: u64,
+    model_kind: transition.ModelKindV1,
+    completion_kind: transition.CompletionKindV1,
+    has_exact_ranges: bool,
+    unit_start: u64,
+    unit_count: u64,
+    timeline_start: u64,
+    timeline_end: u64,
+    artifact_sha256: Digest,
+    tenant_scope_sha256: Digest,
+    metadata_policy_sha256: Digest,
+    challenge_sha256: Digest,
+    media_object_sha256: Digest,
+    materializer_implementation_sha256: Digest,
+    materializer_payload_sha256: Digest,
+    required_capabilities: u64,
+    model_result_sha256: Digest,
+    model_output_sha256: Digest,
+    model_output_bytes: u64,
+    has_stateful_model_binding: bool,
+    model_step_before: u64,
+    model_step_after: u64,
+    model_plan_sha256: Digest,
+    model_state_publication_after_sha256: Digest,
+    has_state_before: bool,
+    state_before_sha256: Digest,
 };
 
 fn validateProfileBindingV1(
@@ -959,10 +994,48 @@ fn validateProfileBindingV1(
                 } or
                 inspection.raw_bytes != plan.pixel_bytes)
                 return Error.InvalidBinding;
+            const model_step_before = std.math.sub(
+                u64,
+                plan.source_step,
+                1,
+            ) catch return Error.InvalidBinding;
             return .{
                 .producer_root = plan.plan_sha256,
                 .raw_bytes = inspection.raw_bytes,
                 .raw_sha256 = inspection.raw_sha256,
+                .request_epoch = plan.request_epoch,
+                .producer_generation = plan.generation,
+                .producer_ordinal = plan.image_index,
+                .producer_publication_sequence = plan.publication_sequence,
+                .completion_sequence = 0,
+                .producer_state_generation_before = plan.visible_images_before,
+                .producer_state_generation_after_publication = plan.visible_images_after,
+                .producer_state_generation_after_completion = plan.visible_images_after,
+                .model_kind = .stateful,
+                .completion_kind = .none,
+                .has_exact_ranges = false,
+                .unit_start = 0,
+                .unit_count = 0,
+                .timeline_start = 0,
+                .timeline_end = 0,
+                .artifact_sha256 = plan.artifact_sha256,
+                .tenant_scope_sha256 = plan.tenant_scope_sha256,
+                .metadata_policy_sha256 = plan.metadata_policy_sha256,
+                .challenge_sha256 = plan.challenge_sha256,
+                .media_object_sha256 = plan.media_object_sha256,
+                .materializer_implementation_sha256 = plan.decoder_implementation_sha256,
+                .materializer_payload_sha256 = plan.decoder_payload_sha256,
+                .required_capabilities = plan.required_capabilities,
+                .model_result_sha256 = plan.terminal_result_sha256,
+                .model_output_sha256 = plan.terminal_output_sha256,
+                .model_output_bytes = plan.latent_bytes,
+                .has_stateful_model_binding = true,
+                .model_step_before = model_step_before,
+                .model_step_after = plan.source_step,
+                .model_plan_sha256 = plan.terminal_plan_sha256,
+                .model_state_publication_after_sha256 = plan.terminal_state_publication_sha256,
+                .has_state_before = false,
+                .state_before_sha256 = zero_digest,
             };
         },
         .wave_pcm_s16le => {
@@ -976,10 +1049,53 @@ fn validateProfileBindingV1(
                 inspection.frame_count != plan.frame_count or
                 inspection.raw_bytes != plan.pcm_bytes)
                 return Error.InvalidBinding;
+            const state_generation_before = std.math.sub(
+                u64,
+                plan.generation,
+                1,
+            ) catch return Error.InvalidBinding;
+            const state_generation_after_completion = std.math.add(
+                u64,
+                plan.generation,
+                1,
+            ) catch return Error.InvalidBinding;
             return .{
                 .producer_root = plan.plan_sha256,
                 .raw_bytes = inspection.raw_bytes,
                 .raw_sha256 = inspection.raw_sha256,
+                .request_epoch = plan.request_epoch,
+                .producer_generation = plan.generation,
+                .producer_ordinal = plan.chunk_index,
+                .producer_publication_sequence = plan.publication_sequence,
+                .completion_sequence = plan.chunk_index,
+                .producer_state_generation_before = state_generation_before,
+                .producer_state_generation_after_publication = plan.generation,
+                .producer_state_generation_after_completion = state_generation_after_completion,
+                .model_kind = .stateless,
+                .completion_kind = .playback,
+                .has_exact_ranges = true,
+                .unit_start = plan.start_frame,
+                .unit_count = plan.frame_count,
+                .timeline_start = plan.start_frame,
+                .timeline_end = plan.visible_frames_after,
+                .artifact_sha256 = plan.artifact_sha256,
+                .tenant_scope_sha256 = plan.tenant_scope_sha256,
+                .metadata_policy_sha256 = plan.metadata_policy_sha256,
+                .challenge_sha256 = plan.challenge_sha256,
+                .media_object_sha256 = plan.media_object_sha256,
+                .materializer_implementation_sha256 = plan.renderer_implementation_sha256,
+                .materializer_payload_sha256 = plan.renderer_payload_sha256,
+                .required_capabilities = plan.required_capabilities,
+                .model_result_sha256 = plan.source_result_sha256,
+                .model_output_sha256 = plan.source_output_sha256,
+                .model_output_bytes = plan.source_output_bytes,
+                .has_stateful_model_binding = false,
+                .model_step_before = 0,
+                .model_step_after = 0,
+                .model_plan_sha256 = zero_digest,
+                .model_state_publication_after_sha256 = zero_digest,
+                .has_state_before = true,
+                .state_before_sha256 = plan.state_before_sha256,
             };
         },
         .apng_two_frame_gray8 => {
@@ -1019,10 +1135,53 @@ fn validateProfileBindingV1(
                     manifest.second_frame_sha256,
                 ))
                 return Error.InvalidBinding;
+            const state_generation_before = std.math.sub(
+                u64,
+                manifest.generation,
+                1,
+            ) catch return Error.InvalidBinding;
+            const state_generation_after_completion = std.math.add(
+                u64,
+                manifest.generation,
+                1,
+            ) catch return Error.InvalidBinding;
             return .{
                 .producer_root = manifest.manifest_sha256,
                 .raw_bytes = inspection.raw_bytes,
                 .raw_sha256 = inspection.raw_sha256,
+                .request_epoch = manifest.request_epoch,
+                .producer_generation = manifest.generation,
+                .producer_ordinal = manifest.segment_index,
+                .producer_publication_sequence = manifest.publication_sequence,
+                .completion_sequence = manifest.segment_index,
+                .producer_state_generation_before = state_generation_before,
+                .producer_state_generation_after_publication = manifest.generation,
+                .producer_state_generation_after_completion = state_generation_after_completion,
+                .model_kind = .stateless,
+                .completion_kind = .display,
+                .has_exact_ranges = true,
+                .unit_start = manifest.first_frame_ordinal,
+                .unit_count = manifest.frame_count,
+                .timeline_start = manifest.start_tick,
+                .timeline_end = manifest.end_tick,
+                .artifact_sha256 = manifest.artifact_sha256,
+                .tenant_scope_sha256 = manifest.tenant_scope_sha256,
+                .metadata_policy_sha256 = manifest.metadata_policy_sha256,
+                .challenge_sha256 = manifest.challenge_sha256,
+                .media_object_sha256 = manifest.media_object_sha256,
+                .materializer_implementation_sha256 = manifest.renderer_implementation_sha256,
+                .materializer_payload_sha256 = manifest.renderer_payload_sha256,
+                .required_capabilities = manifest.required_capabilities,
+                .model_result_sha256 = manifest.source_result_sha256,
+                .model_output_sha256 = manifest.source_output_sha256,
+                .model_output_bytes = manifest.source_output_bytes,
+                .has_stateful_model_binding = false,
+                .model_step_before = 0,
+                .model_step_after = 0,
+                .model_plan_sha256 = zero_digest,
+                .model_state_publication_after_sha256 = zero_digest,
+                .has_state_before = true,
+                .state_before_sha256 = manifest.state_before_sha256,
             };
         },
     }
@@ -1059,11 +1218,88 @@ fn validateRecordBindingsV1(
     receipt: transition.TransitionReceiptV1,
     entry: registry.GeneratedMediaOutputEntryV1,
     payload: []const u8,
+    profile_binding: ProfileBindingV1,
 ) Error!void {
     const payload_bytes = try usizeToU64(payload.len);
     const payload_sha256 = sha256(payload);
     if (value.modality != receipt.modality or
         value.modality != entry.modality or
+        receipt.request_epoch != profile_binding.request_epoch or
+        receipt.producer_generation !=
+            profile_binding.producer_generation or
+        receipt.producer_ordinal != profile_binding.producer_ordinal or
+        receipt.producer_publication_sequence !=
+            profile_binding.producer_publication_sequence or
+        receipt.completion_sequence != profile_binding.completion_sequence or
+        receipt.producer_state_generation_before !=
+            profile_binding.producer_state_generation_before or
+        receipt.producer_state_generation_after_publication !=
+            profile_binding.producer_state_generation_after_publication or
+        receipt.producer_state_generation_after_completion !=
+            profile_binding.producer_state_generation_after_completion or
+        receipt.model_kind != profile_binding.model_kind or
+        receipt.completion_kind != profile_binding.completion_kind or
+        !digestEqual(
+            receipt.artifact_manifest_sha256,
+            profile_binding.artifact_sha256,
+        ) or
+        !digestEqual(
+            receipt.tenant_scope_sha256,
+            profile_binding.tenant_scope_sha256,
+        ) or
+        !digestEqual(
+            receipt.metadata_policy_sha256,
+            profile_binding.metadata_policy_sha256,
+        ) or
+        !digestEqual(
+            receipt.challenge_sha256,
+            profile_binding.challenge_sha256,
+        ) or
+        !digestEqual(
+            receipt.media_object_sha256,
+            profile_binding.media_object_sha256,
+        ) or
+        !digestEqual(
+            receipt.materializer_implementation_sha256,
+            profile_binding.materializer_implementation_sha256,
+        ) or
+        !digestEqual(
+            receipt.materializer_payload_sha256,
+            profile_binding.materializer_payload_sha256,
+        ) or
+        receipt.materializer_required_capabilities !=
+            profile_binding.required_capabilities or
+        !digestEqual(
+            receipt.model_result_sha256,
+            profile_binding.model_result_sha256,
+        ) or
+        !digestEqual(
+            receipt.model_output_sha256,
+            profile_binding.model_output_sha256,
+        ) or
+        receipt.model_output_bytes != profile_binding.model_output_bytes or
+        (profile_binding.has_stateful_model_binding and
+            (receipt.model_step_before != profile_binding.model_step_before or
+                receipt.model_step_after != profile_binding.model_step_after or
+                !digestEqual(
+                    receipt.model_plan_sha256,
+                    profile_binding.model_plan_sha256,
+                ) or
+                !digestEqual(
+                    receipt.model_state_publication_after_sha256,
+                    profile_binding.model_state_publication_after_sha256,
+                ))) or
+        (profile_binding.has_state_before and
+            !digestEqual(
+                receipt.producer_state_before_sha256,
+                profile_binding.state_before_sha256,
+            )) or
+        (profile_binding.has_exact_ranges and
+            (receipt.unit_start != profile_binding.unit_start or
+                receipt.unit_count != profile_binding.unit_count or
+                receipt.timeline_start !=
+                    profile_binding.timeline_start or
+                receipt.timeline_end != profile_binding.timeline_end)) or
         value.registry_ordinal != receipt.registry_ordinal or
         value.registry_ordinal != entry.ordinal or
         value.encoding_abi != entry.encoding_abi or
@@ -1220,6 +1456,7 @@ fn validateFormatBindingsV1(
             receipt,
             entry,
             payload,
+            profile_binding,
         );
     }
 }
@@ -1382,6 +1619,93 @@ fn testRecordInput(
     };
 }
 
+fn testRecordInputFromDecoded(
+    record: FormatRecordV1,
+) FormatRecordInputV1 {
+    return .{
+        .modality = record.modality,
+        .profile = record.profile,
+        .registry_ordinal = record.registry_ordinal,
+        .encoding_abi = record.encoding_abi,
+        .raw_output_bytes = record.raw_output_bytes,
+        .encoded_payload_bytes = record.encoded_payload_bytes,
+        .producer_plan_or_manifest_sha256 = record.producer_plan_or_manifest_sha256,
+        .raw_output_sha256 = record.raw_output_sha256,
+        .encoded_payload_sha256 = record.encoded_payload_sha256,
+        .registry_payload_sha256 = record.registry_payload_sha256,
+        .encoder_implementation_sha256 = record.encoder_implementation_sha256,
+        .format_contract_sha256 = record.format_contract_sha256,
+        .transition_receipt_sha256 = record.transition_receipt_sha256,
+        .registry_entry_sha256 = record.registry_entry_sha256,
+        .previous_format_record_sha256 = record.previous_format_record_sha256,
+        .producer_wire = record.producer_wire,
+    };
+}
+
+fn testExpectReceiptBindingRejected(
+    input: FormatRecordInputV1,
+    receipt: transition.TransitionReceiptV1,
+    entry: registry.GeneratedMediaOutputEntryV1,
+    payload: []const u8,
+    profile_binding: ProfileBindingV1,
+) !void {
+    try std.testing.expectError(
+        Error.InvalidBinding,
+        validateRecordBindingsV1(
+            input,
+            receipt,
+            entry,
+            payload,
+            profile_binding,
+        ),
+    );
+}
+
+fn testExpectCompletedReceiptGenerationDriftsRejected(
+    input: FormatRecordInputV1,
+    receipt: transition.TransitionReceiptV1,
+    entry: registry.GeneratedMediaOutputEntryV1,
+    payload: []const u8,
+    profile_binding: ProfileBindingV1,
+) !void {
+    var drifted = receipt;
+    drifted.completion_sequence += 1;
+    try testExpectReceiptBindingRejected(
+        input,
+        drifted,
+        entry,
+        payload,
+        profile_binding,
+    );
+    drifted = receipt;
+    drifted.producer_state_generation_before += 1;
+    try testExpectReceiptBindingRejected(
+        input,
+        drifted,
+        entry,
+        payload,
+        profile_binding,
+    );
+    drifted = receipt;
+    drifted.producer_state_generation_after_publication += 1;
+    try testExpectReceiptBindingRejected(
+        input,
+        drifted,
+        entry,
+        payload,
+        profile_binding,
+    );
+    drifted = receipt;
+    drifted.producer_state_generation_after_completion += 1;
+    try testExpectReceiptBindingRejected(
+        input,
+        drifted,
+        entry,
+        payload,
+        profile_binding,
+    );
+}
+
 fn makeTestImagePlanWire(
     storage: *[image.plan_bytes]u8,
 ) ![]const u8 {
@@ -1426,6 +1750,424 @@ fn makeTestImagePlanWire(
     };
     plan.plan_sha256 = image.generatedImagePlanRootV1(plan);
     return image.encodeGeneratedImagePlanV1(plan, storage);
+}
+
+const TestCompletedGenerationStorageV1 = struct {
+    registry_scratch: [4 * 1024]u8 = undefined,
+    registry_archive: [16 * 1024]u8 = undefined,
+    receipt_wire: [transition.transition_receipt_bytes]u8 = undefined,
+    transition_evidence: [
+        transition.batch_header_bytes +
+            transition.transition_receipt_bytes
+    ]u8 = undefined,
+    format_evidence: [
+        format_batch_header_bytes + format_record_bytes
+    ]u8 = undefined,
+};
+
+const TestCompletedGenerationSpecV1 = struct {
+    modality: registry.ModalityV1,
+    profile: DeliveryProfileV1,
+    request_epoch: u64,
+    generation_plan_sha256: Digest,
+    producer_generation: u64,
+    producer_ordinal: u64,
+    producer_publication_sequence: u64,
+    completion_sequence: u64,
+    producer_state_generation_before: u64,
+    producer_state_generation_after_publication: u64,
+    producer_state_generation_after_completion: u64,
+    unit_start: u64,
+    unit_count: u64,
+    timeline_start: u64,
+    timeline_end: u64,
+    artifact_sha256: Digest,
+    tenant_scope_sha256: Digest,
+    metadata_policy_sha256: Digest,
+    challenge_sha256: Digest,
+    model_result_sha256: Digest,
+    model_output_sha256: Digest,
+    model_output_bytes: u64,
+    producer_plan_or_manifest_sha256: Digest,
+    producer_state_before_sha256: Digest,
+    media_object_sha256: Digest,
+    materializer_payload: []const u8,
+    materializer_implementation_sha256: Digest,
+    required_capabilities: u64,
+    raw_output: []const u8,
+    provenance_sha256: Digest,
+    publication_result_sha256: Digest,
+    producer_state_after_publication_sha256: Digest,
+    completion_observation_sha256: Digest,
+    completion_plan_sha256: Digest,
+    completion_result_sha256: Digest,
+    producer_final_state_sha256: Digest,
+    encoder_implementation_sha256: Digest,
+    producer_wire: []const u8,
+    encoded_payload: []const u8,
+};
+
+const TestCompletedGenerationV1 = struct {
+    transition_generation: transition.PreviousGenerationV1,
+    format_generation: PreviousGenerationV1,
+    transition_evidence: transition.DecodedBatchEvidenceV1,
+    format_evidence: DecodedFormatEvidenceV1,
+    receipt: transition.TransitionReceiptV1,
+    entry: registry.GeneratedMediaOutputEntryV1,
+};
+
+fn testRoleDigestV1(
+    profile: DeliveryProfileV1,
+    producer_generation: u64,
+    role: []const u8,
+) Digest {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(
+        "glacier-generated-media-format-test-role-v1\x00",
+    );
+    var scalars: [16]u8 = undefined;
+    std.mem.writeInt(
+        u64,
+        scalars[0..8],
+        @intFromEnum(profile),
+        .little,
+    );
+    std.mem.writeInt(
+        u64,
+        scalars[8..16],
+        producer_generation,
+        .little,
+    );
+    hasher.update(&scalars);
+    hasher.update(role);
+    return hasher.finalResult();
+}
+
+fn testResourceReceiptV1(
+    claim: resource_bank.Claim,
+    generation: u64,
+) resource_bank.Receipt {
+    return .{
+        .bank_epoch = 1,
+        .slot_index = std.math.cast(u32, generation) orelse
+            unreachable,
+        .generation = generation,
+        .owner_key = generation + 1,
+        .claim = claim,
+        .integrity = generation + 2,
+    };
+}
+
+fn buildTestCompletedGenerationV1(
+    storage: *TestCompletedGenerationStorageV1,
+    spec: TestCompletedGenerationSpecV1,
+    predecessor: ?TestCompletedGenerationV1,
+) !TestCompletedGenerationV1 {
+    if (spec.modality == .image)
+        return Error.InvalidBinding;
+    const completion_kind: transition.CompletionKindV1 =
+        switch (spec.modality) {
+            .audio => .playback,
+            .video => .display,
+            .image => unreachable,
+        };
+    const registry_generation = if (predecessor) |value|
+        try checkedAdd(
+            value.transition_generation.registry_archive.manifest.generation,
+            1,
+        )
+    else
+        1;
+    const previous_entry_sha256 = if (predecessor) |value|
+        value.entry.entry_sha256
+    else
+        zero_digest;
+    const previous_receipt_sha256 = if (predecessor) |value|
+        value.receipt.receipt_sha256
+    else
+        zero_digest;
+    const registry_ordinal = if (predecessor) |value|
+        try checkedAdd(value.entry.ordinal, 1)
+    else
+        0;
+    const output = [_]registry.OutputInputV1{.{
+        .modality = spec.modality,
+        .ordinal = registry_ordinal,
+        .unit_start = spec.unit_start,
+        .unit_count = spec.unit_count,
+        .timeline_start = spec.timeline_start,
+        .timeline_end = spec.timeline_end,
+        .source_bytes = try usizeToU64(spec.raw_output.len),
+        .encoding_abi = encodingAbiV1(spec.profile),
+        .encoded_payload = spec.encoded_payload,
+        .artifact_sha256 = spec.artifact_sha256,
+        .provenance_sha256 = spec.provenance_sha256,
+        .result_sha256 = spec.publication_result_sha256,
+        .source_output_sha256 = sha256(spec.raw_output),
+        .media_object_sha256 = spec.media_object_sha256,
+        .state_after_sha256 = spec.producer_final_state_sha256,
+        .completion_required = true,
+        .completed = true,
+        .completion_sha256 = spec.completion_result_sha256,
+        .encoder_implementation_sha256 = spec.encoder_implementation_sha256,
+        .format_sha256 = formatContractSha256V1(spec.profile),
+        .previous_entry_sha256 = previous_entry_sha256,
+    }};
+    const registry_input: registry.RegistryInputV1 = .{
+        .previous = if (predecessor) |value|
+            value.transition_generation.registry_archive.previous()
+        else
+            null,
+        .request_epoch = spec.request_epoch,
+        .generation = registry_generation,
+        .publication_sequence = registry_generation,
+        .generation_plan_sha256 = spec.generation_plan_sha256,
+        .tenant_scope_sha256 = spec.tenant_scope_sha256,
+        .metadata_policy_sha256 = spec.metadata_policy_sha256,
+        .challenge_sha256 = spec.challenge_sha256,
+        .outputs = &output,
+    };
+    const scratch_bytes = try registry.requiredScratchBytesV1(
+        &output,
+    );
+    const prepared_registry = try registry.encodeArchiveV1(
+        registry_input,
+        storage.registry_scratch[0..scratch_bytes],
+        &storage.registry_archive,
+    );
+    const decoded_registry = try registry.decodeArchiveV1(
+        prepared_registry.set.bytes,
+        if (predecessor) |value|
+            value.transition_generation.registry_archive.previous()
+        else
+            null,
+    );
+    const entry = try decoded_registry.entry(0);
+
+    var receipt: transition.TransitionReceiptV1 = .{
+        .modality = spec.modality,
+        .model_kind = .stateless,
+        .completion_kind = completion_kind,
+        .request_epoch = spec.request_epoch,
+        .producer_generation = spec.producer_generation,
+        .producer_ordinal = spec.producer_ordinal,
+        .registry_ordinal = registry_ordinal,
+        .unit_start = spec.unit_start,
+        .unit_count = spec.unit_count,
+        .timeline_start = spec.timeline_start,
+        .timeline_end = spec.timeline_end,
+        .weights_bytes = 1,
+        .model_input_bytes = 1,
+        .model_state_before_bytes = 0,
+        .model_output_bytes = spec.model_output_bytes,
+        .model_state_after_bytes = 0,
+        .materializer_payload_bytes = try usizeToU64(spec.materializer_payload.len),
+        .raw_output_bytes = try usizeToU64(spec.raw_output.len),
+        .encoded_payload_bytes = try usizeToU64(spec.encoded_payload.len),
+        .producer_publication_sequence = spec.producer_publication_sequence,
+        .completion_sequence = spec.completion_sequence,
+        .model_required_capabilities = 0,
+        .materializer_required_capabilities = spec.required_capabilities,
+        .model_step_before = spec.producer_ordinal,
+        .model_step_after = try checkedAdd(
+            spec.producer_ordinal,
+            1,
+        ),
+        .producer_state_generation_before = spec.producer_state_generation_before,
+        .producer_state_generation_after_publication = spec.producer_state_generation_after_publication,
+        .producer_state_generation_after_completion = spec.producer_state_generation_after_completion,
+        .tenant_scope_sha256 = spec.tenant_scope_sha256,
+        .metadata_policy_sha256 = spec.metadata_policy_sha256,
+        .challenge_sha256 = spec.challenge_sha256,
+        .generation_plan_sha256 = spec.generation_plan_sha256,
+        .artifact_manifest_sha256 = spec.artifact_sha256,
+        .adapter_descriptor_sha256 = testRoleDigestV1(
+            spec.profile,
+            spec.producer_generation,
+            "adapter-descriptor",
+        ),
+        .support_set_sha256 = testRoleDigestV1(
+            spec.profile,
+            spec.producer_generation,
+            "support-set",
+        ),
+        .model_plan_sha256 = testRoleDigestV1(
+            spec.profile,
+            spec.producer_generation,
+            "model-plan",
+        ),
+        .model_publication_before_sha256 = testRoleDigestV1(
+            spec.profile,
+            spec.producer_generation,
+            "model-publication-before",
+        ),
+        .model_state_publication_before_sha256 = zero_digest,
+        .weights_sha256 = testRoleDigestV1(
+            spec.profile,
+            spec.producer_generation,
+            "weights",
+        ),
+        .model_input_sha256 = testRoleDigestV1(
+            spec.profile,
+            spec.producer_generation,
+            "model-input",
+        ),
+        .model_state_before_sha256 = zero_digest,
+        .model_output_sha256 = spec.model_output_sha256,
+        .model_state_after_sha256 = zero_digest,
+        .model_transition_or_source_mapping_sha256 = testRoleDigestV1(
+            spec.profile,
+            spec.producer_generation,
+            "model-source-mapping",
+        ),
+        .model_result_sha256 = spec.model_result_sha256,
+        .model_publication_after_sha256 = testRoleDigestV1(
+            spec.profile,
+            spec.producer_generation,
+            "model-publication-after",
+        ),
+        .model_state_publication_after_sha256 = zero_digest,
+        .producer_plan_or_manifest_sha256 = spec.producer_plan_or_manifest_sha256,
+        .producer_state_before_sha256 = spec.producer_state_before_sha256,
+        .media_object_sha256 = spec.media_object_sha256,
+        .materializer_payload_sha256 = sha256(spec.materializer_payload),
+        .materializer_implementation_sha256 = spec.materializer_implementation_sha256,
+        .materializer_execution_sha256 = zero_digest,
+        .raw_output_sha256 = sha256(spec.raw_output),
+        .provenance_sha256 = spec.provenance_sha256,
+        .producer_receipt_wire_sha256 = testRoleDigestV1(
+            spec.profile,
+            spec.producer_generation,
+            "producer-receipt-wire",
+        ),
+        .producer_resource_sha256 = testRoleDigestV1(
+            spec.profile,
+            spec.producer_generation,
+            "producer-resource",
+        ),
+        .publication_result_sha256 = spec.publication_result_sha256,
+        .producer_state_after_publication_sha256 = spec.producer_state_after_publication_sha256,
+        .completion_observation_sha256 = spec.completion_observation_sha256,
+        .completion_plan_sha256 = spec.completion_plan_sha256,
+        .completion_result_sha256 = spec.completion_result_sha256,
+        .producer_final_state_sha256 = spec.producer_final_state_sha256,
+        .encoder_implementation_sha256 = spec.encoder_implementation_sha256,
+        .format_sha256 = formatContractSha256V1(spec.profile),
+        .encoded_payload_sha256 = sha256(spec.encoded_payload),
+        .previous_transition_receipt_sha256 = previous_receipt_sha256,
+        .producer_projection_sha256 = zero_digest,
+        .registry_previous_entry_sha256 = previous_entry_sha256,
+        .registry_entry_sha256 = entry.entry_sha256,
+        .registry_manifest_sha256 = decoded_registry.manifest.manifest_sha256,
+        .registry_archive_sha256 = decoded_registry.archive_sha256,
+        .receipt_sha256 = zero_digest,
+    };
+    receipt.materializer_execution_sha256 =
+        testMaterializerExecutionRoot(receipt);
+    receipt.producer_projection_sha256 =
+        testProducerProjectionRoot(receipt);
+    const receipt_wire = try transition.encodeTransitionReceiptV1(
+        receipt,
+        &storage.receipt_wire,
+    );
+    receipt = try transition.decodeTransitionReceiptV1(receipt_wire);
+    const terminal_image = if (spec.modality == .image)
+        receipt.receipt_sha256
+    else
+        zero_digest;
+    const terminal_audio = if (spec.modality == .audio)
+        receipt.receipt_sha256
+    else
+        zero_digest;
+    const terminal_video = if (spec.modality == .video)
+        receipt.receipt_sha256
+    else
+        zero_digest;
+    const batch: transition.BatchEvidenceV1 = .{
+        .request_epoch = spec.request_epoch,
+        .registry_generation = registry_generation,
+        .publication_sequence = registry_generation,
+        .receipt_count = 1,
+        .receipt_table_bytes = receipt_wire.len,
+        .aggregate_model_input_bytes = 1,
+        .aggregate_model_output_bytes = spec.model_output_bytes,
+        .aggregate_state_transition_bytes = 0,
+        .aggregate_materializer_payload_bytes = try usizeToU64(spec.materializer_payload.len),
+        .aggregate_raw_output_bytes = try usizeToU64(spec.raw_output.len),
+        .aggregate_encoded_payload_bytes = try usizeToU64(spec.encoded_payload.len),
+        .modality_mask = modalityBit(spec.modality),
+        .generation_plan_sha256 = spec.generation_plan_sha256,
+        .tenant_scope_sha256 = spec.tenant_scope_sha256,
+        .metadata_policy_sha256 = spec.metadata_policy_sha256,
+        .challenge_sha256 = spec.challenge_sha256,
+        .receipt_table_sha256 = testTransitionTableRoot(receipt_wire),
+        .previous_batch_sha256 = if (predecessor) |value|
+            value.transition_evidence.batch.batch_sha256
+        else
+            zero_digest,
+        .registry_manifest_sha256 = decoded_registry.manifest.manifest_sha256,
+        .registry_archive_sha256 = decoded_registry.archive_sha256,
+        .first_receipt_sha256 = receipt.receipt_sha256,
+        .terminal_image_sha256 = terminal_image,
+        .terminal_audio_sha256 = terminal_audio,
+        .terminal_video_sha256 = terminal_video,
+        .batch_sha256 = zero_digest,
+    };
+    const transition_evidence =
+        try transition.encodeBatchEvidenceV1(
+            batch,
+            receipt_wire,
+            &storage.transition_evidence,
+        );
+    const transition_generation: transition.PreviousGenerationV1 = .{
+        .registry_archive = decoded_registry,
+        .evidence = transition_evidence,
+    };
+    const validated_transition = if (predecessor) |value|
+        try transition.validateSuccessorArchiveAndEvidenceV1(
+            transition_generation,
+            value.transition_generation,
+        )
+    else
+        try transition.validateArchiveAndEvidenceV1(
+            transition_generation,
+        );
+
+    const deliveries = [_]DeliveryV1{.{
+        .profile = spec.profile,
+        .producer_wire = spec.producer_wire,
+    }};
+    const previous_format = if (predecessor) |value|
+        value.format_generation
+    else
+        null;
+    const prepared_format = try encodeConformantArchiveAndEvidenceV1(
+        transition_generation,
+        previous_format,
+        &deliveries,
+        &storage.format_evidence,
+    );
+    const format_generation: PreviousGenerationV1 = .{
+        .transition_generation = transition_generation,
+        .format_evidence = prepared_format.evidence,
+    };
+    const validated_format = if (predecessor) |value|
+        try validateSuccessorArchiveTransitionAndFormatEvidenceV1(
+            format_generation,
+            value.format_generation,
+        )
+    else
+        try validateArchiveTransitionAndFormatEvidenceV1(
+            format_generation,
+        );
+    return .{
+        .transition_generation = transition_generation,
+        .format_generation = format_generation,
+        .transition_evidence = validated_transition,
+        .format_evidence = validated_format,
+        .receipt = receipt,
+        .entry = entry,
+    };
 }
 
 test "format record is canonical and failed preflight leaves destination unchanged" {
@@ -1723,6 +2465,833 @@ test "audio and video producer wires bind canonical WAVE and APNG payloads" {
     );
 }
 
+test "WAVE sidecar validates playback across two registry generations" {
+    const request_epoch: u64 = 31;
+    const artifact = testDigest("wave-full-pair-artifact");
+    const tenant = testDigest("wave-full-pair-tenant");
+    const policy = testDigest("wave-full-pair-policy");
+    const challenge = testDigest("wave-full-pair-challenge");
+    const renderer_payload = "wave-full-pair-renderer-payload";
+    const renderer_implementation =
+        testDigest("wave-full-pair-renderer");
+    const encoder_implementation =
+        testDigest("wave-full-pair-encoder");
+    const sink_implementation =
+        testDigest("wave-full-pair-sink");
+    const sink_instance = testDigest("wave-full-pair-sink-instance");
+
+    const raw_one = [_]u8{ 0x00, 0x01, 0x00, 0xff };
+    const media_one = testDigest("wave-full-pair-media-one");
+    const source_result_one =
+        testDigest("wave-full-pair-source-result-one");
+    const source_output_one =
+        testDigest("wave-full-pair-source-output-one");
+    const state_zero = try audio.makeInitialStateV1(
+        request_epoch,
+        16_000,
+        1,
+        artifact,
+        tenant,
+        policy,
+        challenge,
+    );
+    const plan_one = try audio.makePlanV1(
+        state_zero,
+        2,
+        2,
+        raw_one.len,
+        0,
+        1,
+        source_result_one,
+        source_output_one,
+        sha256(renderer_payload),
+        renderer_implementation,
+        media_one,
+    );
+    const provenance_one = try audio.makeProvenanceV1(
+        plan_one,
+        sha256(&raw_one),
+    );
+    const claim_one = try audio.claimForPlanV1(
+        plan_one,
+        renderer_payload.len,
+    );
+    const result_one = try audio.makeResultV1(
+        plan_one,
+        provenance_one,
+        testResourceReceiptV1(claim_one, plan_one.generation),
+    );
+    const pending_one = try audio.stateAfterPublicationV1(
+        state_zero,
+        plan_one,
+        result_one,
+    );
+    const observation_one = try audio.makePlaybackObservationV1(
+        pending_one,
+        sink_implementation,
+        sink_instance,
+    );
+    const acknowledgement_plan_one =
+        try audio.makePlaybackAckPlanV1(
+            pending_one,
+            result_one,
+            observation_one,
+        );
+    var final_one = pending_one;
+    const acknowledgement_result_one =
+        try audio.acknowledgePlaybackV1(
+            &final_one,
+            result_one,
+            observation_one,
+            acknowledgement_plan_one,
+        );
+    try std.testing.expectEqual(@as(u64, 1), plan_one.generation);
+    try std.testing.expectEqual(@as(u64, 0), plan_one.chunk_index);
+    try std.testing.expectEqual(@as(u64, 1), pending_one.generation);
+    try std.testing.expectEqual(@as(u64, 2), final_one.generation);
+
+    var plan_one_storage: [audio.plan_bytes]u8 = undefined;
+    const plan_one_wire = try audio.encodePlanV1(
+        plan_one,
+        &plan_one_storage,
+    );
+    var wave_one_storage: [128]u8 = undefined;
+    const wave_one = try wave_pcm.encodeWaveV1(
+        .{
+            .sample_rate = plan_one.sample_rate,
+            .channels = plan_one.channels,
+            .frame_count = plan_one.frame_count,
+        },
+        &raw_one,
+        &wave_one_storage,
+    );
+    const generation_plan_one =
+        testDigest("wave-full-pair-generation-one");
+    const spec_one: TestCompletedGenerationSpecV1 = .{
+        .modality = .audio,
+        .profile = .wave_pcm_s16le,
+        .request_epoch = request_epoch,
+        .generation_plan_sha256 = generation_plan_one,
+        .producer_generation = plan_one.generation,
+        .producer_ordinal = plan_one.chunk_index,
+        .producer_publication_sequence = plan_one.publication_sequence,
+        .completion_sequence = acknowledgement_result_one.playback_sequence,
+        .producer_state_generation_before = state_zero.generation,
+        .producer_state_generation_after_publication = pending_one.generation,
+        .producer_state_generation_after_completion = final_one.generation,
+        .unit_start = plan_one.start_frame,
+        .unit_count = plan_one.frame_count,
+        .timeline_start = plan_one.start_frame,
+        .timeline_end = plan_one.visible_frames_after,
+        .artifact_sha256 = artifact,
+        .tenant_scope_sha256 = tenant,
+        .metadata_policy_sha256 = policy,
+        .challenge_sha256 = challenge,
+        .model_result_sha256 = source_result_one,
+        .model_output_sha256 = source_output_one,
+        .model_output_bytes = plan_one.source_output_bytes,
+        .producer_plan_or_manifest_sha256 = plan_one.plan_sha256,
+        .producer_state_before_sha256 = state_zero.state_sha256,
+        .media_object_sha256 = media_one,
+        .materializer_payload = renderer_payload,
+        .materializer_implementation_sha256 = renderer_implementation,
+        .required_capabilities = plan_one.required_capabilities,
+        .raw_output = &raw_one,
+        .provenance_sha256 = provenance_one.provenance_sha256,
+        .publication_result_sha256 = result_one.result_sha256,
+        .producer_state_after_publication_sha256 = pending_one.state_sha256,
+        .completion_observation_sha256 = observation_one.observation_sha256,
+        .completion_plan_sha256 = acknowledgement_plan_one.plan_sha256,
+        .completion_result_sha256 = acknowledgement_result_one.result_sha256,
+        .producer_final_state_sha256 = final_one.state_sha256,
+        .encoder_implementation_sha256 = encoder_implementation,
+        .producer_wire = plan_one_wire,
+        .encoded_payload = wave_one,
+    };
+    var generation_one_storage: TestCompletedGenerationStorageV1 =
+        .{};
+    const generation_one = try buildTestCompletedGenerationV1(
+        &generation_one_storage,
+        spec_one,
+        null,
+    );
+    const format_record_one =
+        try generation_one.format_evidence.record(0);
+    try std.testing.expectEqual(
+        DeliveryProfileV1.wave_pcm_s16le,
+        format_record_one.profile,
+    );
+    try std.testing.expectEqual(
+        acknowledgement_result_one.result_sha256,
+        generation_one.entry.completion_sha256,
+    );
+    try std.testing.expectEqual(
+        generation_one.receipt.receipt_sha256,
+        generation_one.transition_evidence.batch
+            .terminal_audio_sha256,
+    );
+    try std.testing.expect(!digestEqual(
+        format_record_one.encoded_payload_sha256,
+        format_record_one.registry_payload_sha256,
+    ));
+    try testExpectCompletedReceiptGenerationDriftsRejected(
+        testRecordInputFromDecoded(format_record_one),
+        generation_one.receipt,
+        generation_one.entry,
+        wave_one,
+        try validateProfileBindingV1(
+            .wave_pcm_s16le,
+            plan_one_wire,
+            wave_one,
+        ),
+    );
+
+    const raw_two = [_]u8{ 0x01, 0x01, 0xff, 0xfe };
+    const media_two = testDigest("wave-full-pair-media-two");
+    const source_result_two =
+        testDigest("wave-full-pair-source-result-two");
+    const source_output_two =
+        testDigest("wave-full-pair-source-output-two");
+    const plan_two = try audio.makePlanV1(
+        final_one,
+        2,
+        2,
+        raw_two.len,
+        0,
+        1,
+        source_result_two,
+        source_output_two,
+        sha256(renderer_payload),
+        renderer_implementation,
+        media_two,
+    );
+    const provenance_two = try audio.makeProvenanceV1(
+        plan_two,
+        sha256(&raw_two),
+    );
+    const claim_two = try audio.claimForPlanV1(
+        plan_two,
+        renderer_payload.len,
+    );
+    const result_two = try audio.makeResultV1(
+        plan_two,
+        provenance_two,
+        testResourceReceiptV1(claim_two, plan_two.generation),
+    );
+    const pending_two = try audio.stateAfterPublicationV1(
+        final_one,
+        plan_two,
+        result_two,
+    );
+    const observation_two = try audio.makePlaybackObservationV1(
+        pending_two,
+        sink_implementation,
+        sink_instance,
+    );
+    const acknowledgement_plan_two =
+        try audio.makePlaybackAckPlanV1(
+            pending_two,
+            result_two,
+            observation_two,
+        );
+    var final_two = pending_two;
+    const acknowledgement_result_two =
+        try audio.acknowledgePlaybackV1(
+            &final_two,
+            result_two,
+            observation_two,
+            acknowledgement_plan_two,
+        );
+    try std.testing.expectEqual(@as(u64, 3), plan_two.generation);
+    try std.testing.expectEqual(@as(u64, 1), plan_two.chunk_index);
+    try std.testing.expectEqual(
+        acknowledgement_result_one.result_sha256,
+        acknowledgement_result_two.previous_ack_result_sha256,
+    );
+    try std.testing.expectEqual(
+        result_one.result_sha256,
+        plan_two.previous_publication_result_sha256,
+    );
+
+    var plan_two_storage: [audio.plan_bytes]u8 = undefined;
+    const plan_two_wire = try audio.encodePlanV1(
+        plan_two,
+        &plan_two_storage,
+    );
+    var wave_two_storage: [128]u8 = undefined;
+    const wave_two = try wave_pcm.encodeWaveV1(
+        .{
+            .sample_rate = plan_two.sample_rate,
+            .channels = plan_two.channels,
+            .frame_count = plan_two.frame_count,
+        },
+        &raw_two,
+        &wave_two_storage,
+    );
+    const spec_two: TestCompletedGenerationSpecV1 = .{
+        .modality = .audio,
+        .profile = .wave_pcm_s16le,
+        .request_epoch = request_epoch,
+        .generation_plan_sha256 = testDigest("wave-full-pair-generation-two"),
+        .producer_generation = plan_two.generation,
+        .producer_ordinal = plan_two.chunk_index,
+        .producer_publication_sequence = plan_two.publication_sequence,
+        .completion_sequence = acknowledgement_result_two.playback_sequence,
+        .producer_state_generation_before = final_one.generation,
+        .producer_state_generation_after_publication = pending_two.generation,
+        .producer_state_generation_after_completion = final_two.generation,
+        .unit_start = plan_two.start_frame,
+        .unit_count = plan_two.frame_count,
+        .timeline_start = plan_two.start_frame,
+        .timeline_end = plan_two.visible_frames_after,
+        .artifact_sha256 = artifact,
+        .tenant_scope_sha256 = tenant,
+        .metadata_policy_sha256 = policy,
+        .challenge_sha256 = challenge,
+        .model_result_sha256 = source_result_two,
+        .model_output_sha256 = source_output_two,
+        .model_output_bytes = plan_two.source_output_bytes,
+        .producer_plan_or_manifest_sha256 = plan_two.plan_sha256,
+        .producer_state_before_sha256 = final_one.state_sha256,
+        .media_object_sha256 = media_two,
+        .materializer_payload = renderer_payload,
+        .materializer_implementation_sha256 = renderer_implementation,
+        .required_capabilities = plan_two.required_capabilities,
+        .raw_output = &raw_two,
+        .provenance_sha256 = provenance_two.provenance_sha256,
+        .publication_result_sha256 = result_two.result_sha256,
+        .producer_state_after_publication_sha256 = pending_two.state_sha256,
+        .completion_observation_sha256 = observation_two.observation_sha256,
+        .completion_plan_sha256 = acknowledgement_plan_two.plan_sha256,
+        .completion_result_sha256 = acknowledgement_result_two.result_sha256,
+        .producer_final_state_sha256 = final_two.state_sha256,
+        .encoder_implementation_sha256 = encoder_implementation,
+        .producer_wire = plan_two_wire,
+        .encoded_payload = wave_two,
+    };
+    var generation_two_storage: TestCompletedGenerationStorageV1 =
+        .{};
+    const generation_two = try buildTestCompletedGenerationV1(
+        &generation_two_storage,
+        spec_two,
+        generation_one,
+    );
+    const format_record_two =
+        try generation_two.format_evidence.record(0);
+    try std.testing.expectEqual(
+        generation_one.transition_evidence.batch.batch_sha256,
+        generation_two.transition_evidence.batch
+            .previous_batch_sha256,
+    );
+    try std.testing.expectEqual(
+        generation_one.format_evidence.batch.batch_sha256,
+        generation_two.format_evidence.batch
+            .previous_format_batch_sha256,
+    );
+    try std.testing.expectEqual(
+        generation_one.receipt.receipt_sha256,
+        generation_two.receipt
+            .previous_transition_receipt_sha256,
+    );
+    try std.testing.expectEqual(
+        format_record_one.record_sha256,
+        format_record_two.previous_format_record_sha256,
+    );
+
+    var rejected = [_]u8{0xa7} **
+        (format_batch_header_bytes + format_record_bytes);
+    const generation_two_delivery = [_]DeliveryV1{.{
+        .profile = .wave_pcm_s16le,
+        .producer_wire = plan_two_wire,
+    }};
+    try std.testing.expectError(
+        Error.InvalidPreviousEvidence,
+        encodeConformantArchiveAndEvidenceV1(
+            generation_two.transition_generation,
+            null,
+            &generation_two_delivery,
+            &rejected,
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &rejected, 0xa7));
+
+    @memset(&rejected, 0xb8);
+    const foreign_plan_delivery = [_]DeliveryV1{.{
+        .profile = .wave_pcm_s16le,
+        .producer_wire = plan_one_wire,
+    }};
+    try std.testing.expectError(
+        Error.InvalidBinding,
+        encodeConformantArchiveAndEvidenceV1(
+            generation_two.transition_generation,
+            generation_one.format_generation,
+            &foreign_plan_delivery,
+            &rejected,
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &rejected, 0xb8));
+
+    try std.testing.expectError(
+        Error.InvalidPreviousEvidence,
+        validateSuccessorArchiveTransitionAndFormatEvidenceV1(
+            generation_two.format_generation,
+            generation_two.format_generation,
+        ),
+    );
+
+    var drift_storage: TestCompletedGenerationStorageV1 = .{};
+    @memset(&drift_storage.format_evidence, 0xc9);
+    var drifted_spec = spec_one;
+    drifted_spec.timeline_end += 1;
+    try std.testing.expectError(
+        Error.InvalidBinding,
+        buildTestCompletedGenerationV1(
+            &drift_storage,
+            drifted_spec,
+            null,
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        &drift_storage.format_evidence,
+        0xc9,
+    ));
+}
+
+test "APNG sidecar validates display across two registry generations" {
+    const request_epoch: u64 = 47;
+    const artifact = testDigest("apng-full-pair-artifact");
+    const tenant = testDigest("apng-full-pair-tenant");
+    const policy = testDigest("apng-full-pair-policy");
+    const challenge = testDigest("apng-full-pair-challenge");
+    const renderer_payload = "apng-full-pair-renderer-payload";
+    const renderer_implementation =
+        testDigest("apng-full-pair-renderer");
+    const encoder_implementation =
+        testDigest("apng-full-pair-encoder");
+    const sink_implementation =
+        testDigest("apng-full-pair-sink");
+    const sink_instance = testDigest("apng-full-pair-sink-instance");
+
+    const first_frame_one = [_]u8{3} ** 4;
+    const second_frame_one = [_]u8{7} ** 4;
+    const raw_one = first_frame_one ++ second_frame_one;
+    const media_one = testDigest("apng-full-pair-media-one");
+    const source_result_one =
+        testDigest("apng-full-pair-source-result-one");
+    const source_output_one =
+        testDigest("apng-full-pair-source-output-one");
+    const state_zero = try video.initializeStateV1(
+        request_epoch,
+        2,
+        2,
+        1,
+        artifact,
+        tenant,
+        policy,
+        challenge,
+    );
+    const manifest_one = try video.makeManifestV1(
+        state_zero,
+        2,
+        3,
+        2,
+        raw_one.len,
+        0,
+        1,
+        source_result_one,
+        source_output_one,
+        sha256(renderer_payload),
+        renderer_implementation,
+        media_one,
+        sha256(&first_frame_one),
+        sha256(&second_frame_one),
+    );
+    const provenance_one = try video.makeProvenanceV1(
+        manifest_one,
+        sha256(&raw_one),
+    );
+    const claim_one = try video.claimForManifestV1(
+        manifest_one,
+        renderer_payload.len,
+    );
+    const result_one = try video.makeResultV1(
+        manifest_one,
+        provenance_one,
+        testResourceReceiptV1(
+            claim_one,
+            manifest_one.generation,
+        ),
+    );
+    const pending_one = try video.stateAfterPublicationV1(
+        state_zero,
+        manifest_one,
+        result_one,
+    );
+    const observation_one = try video.makeDisplayObservationV1(
+        pending_one,
+        sink_implementation,
+        sink_instance,
+    );
+    const acknowledgement_plan_one =
+        try video.makeDisplayAckPlanV1(
+            pending_one,
+            result_one,
+            observation_one,
+        );
+    var final_one = pending_one;
+    const acknowledgement_result_one =
+        try video.acknowledgeDisplayV1(
+            &final_one,
+            result_one,
+            observation_one,
+            acknowledgement_plan_one,
+        );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        manifest_one.generation,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        manifest_one.segment_index,
+    );
+    try std.testing.expectEqual(@as(u64, 1), pending_one.generation);
+    try std.testing.expectEqual(@as(u64, 2), final_one.generation);
+
+    var manifest_one_storage: [video.manifest_bytes]u8 = undefined;
+    const manifest_one_wire = try video.encodeManifestV1(
+        manifest_one,
+        &manifest_one_storage,
+    );
+    var apng_one_storage: [512]u8 = undefined;
+    const apng_one = try png_apng.encodeApngV1(
+        .{
+            .width = manifest_one.width,
+            .height = manifest_one.height,
+            .time_base_numerator = manifest_one.time_base_numerator,
+            .time_base_denominator = manifest_one.time_base_denominator,
+            .first_duration_ticks = manifest_one.first_duration_ticks,
+            .second_duration_ticks = manifest_one.second_duration_ticks,
+        },
+        &raw_one,
+        &apng_one_storage,
+    );
+    const spec_one: TestCompletedGenerationSpecV1 = .{
+        .modality = .video,
+        .profile = .apng_two_frame_gray8,
+        .request_epoch = request_epoch,
+        .generation_plan_sha256 = testDigest("apng-full-pair-generation-one"),
+        .producer_generation = manifest_one.generation,
+        .producer_ordinal = manifest_one.segment_index,
+        .producer_publication_sequence = manifest_one.publication_sequence,
+        .completion_sequence = acknowledgement_result_one.display_sequence,
+        .producer_state_generation_before = state_zero.generation,
+        .producer_state_generation_after_publication = pending_one.generation,
+        .producer_state_generation_after_completion = final_one.generation,
+        .unit_start = manifest_one.first_frame_ordinal,
+        .unit_count = manifest_one.frame_count,
+        .timeline_start = manifest_one.start_tick,
+        .timeline_end = manifest_one.end_tick,
+        .artifact_sha256 = artifact,
+        .tenant_scope_sha256 = tenant,
+        .metadata_policy_sha256 = policy,
+        .challenge_sha256 = challenge,
+        .model_result_sha256 = source_result_one,
+        .model_output_sha256 = source_output_one,
+        .model_output_bytes = manifest_one.source_output_bytes,
+        .producer_plan_or_manifest_sha256 = manifest_one.manifest_sha256,
+        .producer_state_before_sha256 = state_zero.state_sha256,
+        .media_object_sha256 = media_one,
+        .materializer_payload = renderer_payload,
+        .materializer_implementation_sha256 = renderer_implementation,
+        .required_capabilities = manifest_one.required_capabilities,
+        .raw_output = &raw_one,
+        .provenance_sha256 = provenance_one.provenance_sha256,
+        .publication_result_sha256 = result_one.result_sha256,
+        .producer_state_after_publication_sha256 = pending_one.state_sha256,
+        .completion_observation_sha256 = observation_one.observation_sha256,
+        .completion_plan_sha256 = acknowledgement_plan_one.plan_sha256,
+        .completion_result_sha256 = acknowledgement_result_one.result_sha256,
+        .producer_final_state_sha256 = final_one.state_sha256,
+        .encoder_implementation_sha256 = encoder_implementation,
+        .producer_wire = manifest_one_wire,
+        .encoded_payload = apng_one,
+    };
+    var generation_one_storage: TestCompletedGenerationStorageV1 =
+        .{};
+    const generation_one = try buildTestCompletedGenerationV1(
+        &generation_one_storage,
+        spec_one,
+        null,
+    );
+    const format_record_one =
+        try generation_one.format_evidence.record(0);
+    try std.testing.expectEqual(
+        DeliveryProfileV1.apng_two_frame_gray8,
+        format_record_one.profile,
+    );
+    try std.testing.expectEqual(
+        acknowledgement_result_one.result_sha256,
+        generation_one.entry.completion_sha256,
+    );
+    try std.testing.expectEqual(
+        generation_one.receipt.receipt_sha256,
+        generation_one.transition_evidence.batch
+            .terminal_video_sha256,
+    );
+    try std.testing.expect(!digestEqual(
+        format_record_one.encoded_payload_sha256,
+        format_record_one.registry_payload_sha256,
+    ));
+    try testExpectCompletedReceiptGenerationDriftsRejected(
+        testRecordInputFromDecoded(format_record_one),
+        generation_one.receipt,
+        generation_one.entry,
+        apng_one,
+        try validateProfileBindingV1(
+            .apng_two_frame_gray8,
+            manifest_one_wire,
+            apng_one,
+        ),
+    );
+
+    const first_frame_two = [_]u8{5} ** 4;
+    const second_frame_two = [_]u8{9} ** 4;
+    const raw_two = first_frame_two ++ second_frame_two;
+    const media_two = testDigest("apng-full-pair-media-two");
+    const source_result_two =
+        testDigest("apng-full-pair-source-result-two");
+    const source_output_two =
+        testDigest("apng-full-pair-source-output-two");
+    const manifest_two = try video.makeManifestV1(
+        final_one,
+        3,
+        4,
+        2,
+        raw_two.len,
+        0,
+        1,
+        source_result_two,
+        source_output_two,
+        sha256(renderer_payload),
+        renderer_implementation,
+        media_two,
+        sha256(&first_frame_two),
+        sha256(&second_frame_two),
+    );
+    const provenance_two = try video.makeProvenanceV1(
+        manifest_two,
+        sha256(&raw_two),
+    );
+    const claim_two = try video.claimForManifestV1(
+        manifest_two,
+        renderer_payload.len,
+    );
+    const result_two = try video.makeResultV1(
+        manifest_two,
+        provenance_two,
+        testResourceReceiptV1(
+            claim_two,
+            manifest_two.generation,
+        ),
+    );
+    const pending_two = try video.stateAfterPublicationV1(
+        final_one,
+        manifest_two,
+        result_two,
+    );
+    const observation_two = try video.makeDisplayObservationV1(
+        pending_two,
+        sink_implementation,
+        sink_instance,
+    );
+    const acknowledgement_plan_two =
+        try video.makeDisplayAckPlanV1(
+            pending_two,
+            result_two,
+            observation_two,
+        );
+    var final_two = pending_two;
+    const acknowledgement_result_two =
+        try video.acknowledgeDisplayV1(
+            &final_two,
+            result_two,
+            observation_two,
+            acknowledgement_plan_two,
+        );
+    try std.testing.expectEqual(
+        @as(u64, 3),
+        manifest_two.generation,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        manifest_two.segment_index,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 5),
+        manifest_two.start_tick,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 12),
+        manifest_two.end_tick,
+    );
+    try std.testing.expectEqual(
+        acknowledgement_result_one.result_sha256,
+        acknowledgement_result_two.previous_ack_result_sha256,
+    );
+    try std.testing.expectEqual(
+        result_one.result_sha256,
+        manifest_two.previous_publication_result_sha256,
+    );
+
+    var manifest_two_storage: [video.manifest_bytes]u8 = undefined;
+    const manifest_two_wire = try video.encodeManifestV1(
+        manifest_two,
+        &manifest_two_storage,
+    );
+    var apng_two_storage: [512]u8 = undefined;
+    const apng_two = try png_apng.encodeApngV1(
+        .{
+            .width = manifest_two.width,
+            .height = manifest_two.height,
+            .time_base_numerator = manifest_two.time_base_numerator,
+            .time_base_denominator = manifest_two.time_base_denominator,
+            .first_duration_ticks = manifest_two.first_duration_ticks,
+            .second_duration_ticks = manifest_two.second_duration_ticks,
+        },
+        &raw_two,
+        &apng_two_storage,
+    );
+    const spec_two: TestCompletedGenerationSpecV1 = .{
+        .modality = .video,
+        .profile = .apng_two_frame_gray8,
+        .request_epoch = request_epoch,
+        .generation_plan_sha256 = testDigest("apng-full-pair-generation-two"),
+        .producer_generation = manifest_two.generation,
+        .producer_ordinal = manifest_two.segment_index,
+        .producer_publication_sequence = manifest_two.publication_sequence,
+        .completion_sequence = acknowledgement_result_two.display_sequence,
+        .producer_state_generation_before = final_one.generation,
+        .producer_state_generation_after_publication = pending_two.generation,
+        .producer_state_generation_after_completion = final_two.generation,
+        .unit_start = manifest_two.first_frame_ordinal,
+        .unit_count = manifest_two.frame_count,
+        .timeline_start = manifest_two.start_tick,
+        .timeline_end = manifest_two.end_tick,
+        .artifact_sha256 = artifact,
+        .tenant_scope_sha256 = tenant,
+        .metadata_policy_sha256 = policy,
+        .challenge_sha256 = challenge,
+        .model_result_sha256 = source_result_two,
+        .model_output_sha256 = source_output_two,
+        .model_output_bytes = manifest_two.source_output_bytes,
+        .producer_plan_or_manifest_sha256 = manifest_two.manifest_sha256,
+        .producer_state_before_sha256 = final_one.state_sha256,
+        .media_object_sha256 = media_two,
+        .materializer_payload = renderer_payload,
+        .materializer_implementation_sha256 = renderer_implementation,
+        .required_capabilities = manifest_two.required_capabilities,
+        .raw_output = &raw_two,
+        .provenance_sha256 = provenance_two.provenance_sha256,
+        .publication_result_sha256 = result_two.result_sha256,
+        .producer_state_after_publication_sha256 = pending_two.state_sha256,
+        .completion_observation_sha256 = observation_two.observation_sha256,
+        .completion_plan_sha256 = acknowledgement_plan_two.plan_sha256,
+        .completion_result_sha256 = acknowledgement_result_two.result_sha256,
+        .producer_final_state_sha256 = final_two.state_sha256,
+        .encoder_implementation_sha256 = encoder_implementation,
+        .producer_wire = manifest_two_wire,
+        .encoded_payload = apng_two,
+    };
+    var generation_two_storage: TestCompletedGenerationStorageV1 =
+        .{};
+    const generation_two = try buildTestCompletedGenerationV1(
+        &generation_two_storage,
+        spec_two,
+        generation_one,
+    );
+    const format_record_two =
+        try generation_two.format_evidence.record(0);
+    try std.testing.expectEqual(
+        generation_one.transition_evidence.batch.batch_sha256,
+        generation_two.transition_evidence.batch
+            .previous_batch_sha256,
+    );
+    try std.testing.expectEqual(
+        generation_one.format_evidence.batch.batch_sha256,
+        generation_two.format_evidence.batch
+            .previous_format_batch_sha256,
+    );
+    try std.testing.expectEqual(
+        generation_one.receipt.receipt_sha256,
+        generation_two.receipt
+            .previous_transition_receipt_sha256,
+    );
+    try std.testing.expectEqual(
+        format_record_one.record_sha256,
+        format_record_two.previous_format_record_sha256,
+    );
+
+    var rejected = [_]u8{0xda} **
+        (format_batch_header_bytes + format_record_bytes);
+    const generation_two_delivery = [_]DeliveryV1{.{
+        .profile = .apng_two_frame_gray8,
+        .producer_wire = manifest_two_wire,
+    }};
+    try std.testing.expectError(
+        Error.InvalidPreviousEvidence,
+        encodeConformantArchiveAndEvidenceV1(
+            generation_two.transition_generation,
+            null,
+            &generation_two_delivery,
+            &rejected,
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &rejected, 0xda));
+
+    @memset(&rejected, 0xeb);
+    const foreign_manifest_delivery = [_]DeliveryV1{.{
+        .profile = .apng_two_frame_gray8,
+        .producer_wire = manifest_one_wire,
+    }};
+    try std.testing.expectError(
+        Error.InvalidBinding,
+        encodeConformantArchiveAndEvidenceV1(
+            generation_two.transition_generation,
+            generation_one.format_generation,
+            &foreign_manifest_delivery,
+            &rejected,
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &rejected, 0xeb));
+
+    try std.testing.expectError(
+        Error.InvalidPreviousEvidence,
+        validateSuccessorArchiveTransitionAndFormatEvidenceV1(
+            generation_two.format_generation,
+            generation_two.format_generation,
+        ),
+    );
+
+    var drift_storage: TestCompletedGenerationStorageV1 = .{};
+    @memset(&drift_storage.format_evidence, 0xfc);
+    var drifted_spec = spec_one;
+    drifted_spec.timeline_end += 1;
+    try std.testing.expectError(
+        Error.InvalidBinding,
+        buildTestCompletedGenerationV1(
+            &drift_storage,
+            drifted_spec,
+            null,
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        &drift_storage.format_evidence,
+        0xfc,
+    ));
+}
+
 fn testHashU64(
     hasher: *std.crypto.hash.sha2.Sha256,
     value: u64,
@@ -1807,7 +3376,7 @@ fn testTransitionTableRoot(bytes: []const u8) Digest {
     return hasher.finalResult();
 }
 
-test "conformance sidecar validates a real registry and transition pair" {
+test "PNG sidecar validates image publication across two registry generations" {
     const one = testDigest("one");
     const raw = [_]u8{ 0x20, 0x30, 0x30, 0x20 };
     const raw_sha256 = sha256(&raw);
@@ -2088,6 +3657,84 @@ test "conformance sidecar validates a real registry and transition pair" {
         format_record.registry_payload_sha256,
         format_record.encoded_payload_sha256,
     ));
+    const format_input = testRecordInputFromDecoded(format_record);
+    const profile_binding = try validateProfileBindingV1(
+        .png,
+        plan_wire,
+        png_bytes,
+    );
+    var drifted_receipt = receipt;
+    drifted_receipt.completion_sequence += 1;
+    try testExpectReceiptBindingRejected(
+        format_input,
+        drifted_receipt,
+        entry,
+        png_bytes,
+        profile_binding,
+    );
+    drifted_receipt = receipt;
+    drifted_receipt.producer_state_generation_before += 1;
+    try testExpectReceiptBindingRejected(
+        format_input,
+        drifted_receipt,
+        entry,
+        png_bytes,
+        profile_binding,
+    );
+    drifted_receipt = receipt;
+    drifted_receipt.producer_state_generation_after_publication += 1;
+    try testExpectReceiptBindingRejected(
+        format_input,
+        drifted_receipt,
+        entry,
+        png_bytes,
+        profile_binding,
+    );
+    drifted_receipt = receipt;
+    drifted_receipt.producer_state_generation_after_completion += 1;
+    try testExpectReceiptBindingRejected(
+        format_input,
+        drifted_receipt,
+        entry,
+        png_bytes,
+        profile_binding,
+    );
+    drifted_receipt = receipt;
+    drifted_receipt.model_step_before += 1;
+    try testExpectReceiptBindingRejected(
+        format_input,
+        drifted_receipt,
+        entry,
+        png_bytes,
+        profile_binding,
+    );
+    drifted_receipt = receipt;
+    drifted_receipt.model_step_after += 1;
+    try testExpectReceiptBindingRejected(
+        format_input,
+        drifted_receipt,
+        entry,
+        png_bytes,
+        profile_binding,
+    );
+    drifted_receipt = receipt;
+    drifted_receipt.model_plan_sha256[0] ^= 1;
+    try testExpectReceiptBindingRejected(
+        format_input,
+        drifted_receipt,
+        entry,
+        png_bytes,
+        profile_binding,
+    );
+    drifted_receipt = receipt;
+    drifted_receipt.model_state_publication_after_sha256[0] ^= 1;
+    try testExpectReceiptBindingRejected(
+        format_input,
+        drifted_receipt,
+        entry,
+        png_bytes,
+        profile_binding,
+    );
 
     var rejected_destination = [_]u8{0xdc} **
         (format_batch_header_bytes + format_record_bytes);
@@ -2122,11 +3769,14 @@ test "conformance sidecar validates a real registry and transition pair" {
     const encoded_two_sha256 = sha256(png_two);
     var image_plan_two = image_plan;
     image_plan_two.generation = 2;
-    image_plan_two.image_index = 2;
+    // Each retained image producer is a one-shot local transaction. Registry
+    // ordinal continuity is global, but the producer-local plan remains image
+    // one with a fresh visibility window.
+    image_plan_two.image_index = 1;
     image_plan_two.source_step = 2;
-    image_plan_two.publication_sequence = 2;
-    image_plan_two.visible_images_before = 1;
-    image_plan_two.visible_images_after = 2;
+    image_plan_two.publication_sequence = 1;
+    image_plan_two.visible_images_before = 0;
+    image_plan_two.visible_images_after = 1;
     image_plan_two.previous_plan_sha256 = image_plan.plan_sha256;
     image_plan_two.plan_sha256 = zero_digest;
     image_plan_two.plan_sha256 =
@@ -2193,7 +3843,9 @@ test "conformance sidecar validates a real registry and transition pair" {
     receipt_two.timeline_end = 2;
     receipt_two.raw_output_bytes = raw_two.len;
     receipt_two.encoded_payload_bytes = png_two.len;
-    receipt_two.producer_publication_sequence = 2;
+    receipt_two.producer_publication_sequence = 1;
+    receipt_two.model_step_before = 1;
+    receipt_two.model_step_after = 2;
     receipt_two.generation_plan_sha256 = generation_two;
     receipt_two.producer_plan_or_manifest_sha256 =
         image_plan_two.plan_sha256;
@@ -2328,5 +3980,38 @@ test "conformance sidecar validates a real registry and transition pair" {
         u8,
         &rejected_destination,
         0xed,
+    ));
+
+    var drifted_plan = image_plan_two;
+    drifted_plan.image_index = 2;
+    drifted_plan.publication_sequence = 2;
+    drifted_plan.visible_images_before = 1;
+    drifted_plan.visible_images_after = 2;
+    drifted_plan.plan_sha256 = zero_digest;
+    drifted_plan.plan_sha256 =
+        image.generatedImagePlanRootV1(drifted_plan);
+    var drifted_plan_storage: [image.plan_bytes]u8 = undefined;
+    const drifted_plan_wire = try image.encodeGeneratedImagePlanV1(
+        drifted_plan,
+        &drifted_plan_storage,
+    );
+    const drifted_delivery = [_]DeliveryV1{.{
+        .profile = .png,
+        .producer_wire = drifted_plan_wire,
+    }};
+    @memset(&rejected_destination, 0xfe);
+    try std.testing.expectError(
+        Error.InvalidBinding,
+        encodeConformantArchiveAndEvidenceV1(
+            transition_generation_two,
+            previous_generation,
+            &drifted_delivery,
+            &rejected_destination,
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        &rejected_destination,
+        0xfe,
     ));
 }

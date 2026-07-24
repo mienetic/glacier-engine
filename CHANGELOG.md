@@ -21,6 +21,28 @@ before the first stable release.
 
 ### Added
 
+- Integrated bounded generated-media format evidence: strict canonical PNG,
+  PCM s16le WAVE, and two-frame gray8 APNG payloads now have real
+  two-generation registry/producer-transition/format chains. The WAVE and APNG
+  fixtures use the typed playback/display acknowledgement state machines; all
+  profiles retain exact predecessor, semantic-drift, and failure-atomic
+  rejection. The independent Python oracle validates all three binary layers
+  and producer semantics. The read-only inspector accepts optional current and
+  predecessor format sidecars, emits a separate versioned no-payload schema,
+  and preserves legacy registry/transition JSON byte-for-byte.
+- Exported `glacier` and `glacier_core` Zig package modules with a retained
+  dependency-consumer smoke test, allowing embedders to import the runtime
+  surface without running or installing project CLI/demo/benchmark tools.
+  The runtime module propagates its libc, AArch64 INT4, and optional macOS
+  Metal link requirements; the core module remains backend-independent.
+- Added a centralized compile-time adapter-availability inventory for
+  read-only mapping, POSIX durable files, forced-termination fixtures, and
+  Metal. Availability is deliberately distinct from native execution,
+  recovery, accelerator, and packaging evidence.
+- Defined the load and resilience evidence track: versioned deterministic
+  pressure, distinct open-loop and closed-loop native campaigns, exact
+  throughput/latency/fairness/resource summaries, and bounded soak/disruption
+  evidence without promoting cross-builds into runtime claims.
 - Host-verified generated-media producer transitions: a bounded higher-assurance
   gateway replays exact deterministic source-model and materializer callbacks
   over canonical witnesses, reconstructs image publication and complete
@@ -51,12 +73,13 @@ before the first stable release.
   behavior.
 - Platform portability ledger: an evidence matrix now separates source
   compilation, native CPU execution, filesystem recovery, accelerator
-  validation, and packaging support. Full `ReleaseSafe` artifact cross-builds
-  now cover Linux x86_64/AArch64 musl and Windows x86_64 GNU; model conversion
-  and runtime images share a bounded POSIX/Windows read-only mapping; and
-  restart fixtures use compile-time process-ID and forced-termination seams.
-  Android/iOS remain core compile probes, WASI remains blocked, and no
-  cross-build is presented as native or recovery support.
+  validation, and packaging support. Full `ReleaseSafe` build and
+  `test-compile` gates now cover Linux x86_64/AArch64 musl, Windows x86_64 GNU,
+  and FreeBSD x86_64; model conversion and runtime images share a bounded
+  POSIX/Windows read-only mapping; and restart fixtures use compile-time
+  process-ID and forced-termination seams. Android/iOS remain core compile
+  probes, WASI remains blocked, and no cross-build is presented as native or
+  recovery support.
 - Bounded generated-media output registry: an independent canonical ABI packs
   one to four output entries per present image/audio/video modality, up to
   twelve total, as fixed 544-byte entries in `(modality, ordinal)` order, one

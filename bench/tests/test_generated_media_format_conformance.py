@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import struct
 import unittest
@@ -9,6 +10,7 @@ from bench import generated_image_publication as image_producer
 from bench import generated_media_external_format as external
 from bench import generated_media_format_conformance as conformance
 from bench import generated_media_output_registry as registry
+from bench import generated_media_producer_transition as transition
 from bench import generated_video_display as video_producer
 
 
@@ -471,6 +473,143 @@ class GeneratedMediaFormatConformanceTests(unittest.TestCase):
                 encoder_implementation_sha256=_digest("encoder"),
                 transition_receipt_sha256=_digest("transition"),
                 registry_entry_sha256=_digest("entry"),
+            )
+
+    def test_producer_receipt_semantics_are_cross_bound(self) -> None:
+        fixture = transition.reference_inputs()
+        first = transition.verify_and_encode_batch(
+            None,
+            fixture["generation_plan1_sha256"],
+            fixture["batch1"],
+        )
+        second = transition.verify_and_encode_batch(
+            first,
+            fixture["generation_plan2_sha256"],
+            fixture["batch2"],
+        )
+        for batch, witnesses in (
+            (first, fixture["batch1"]),
+            (second, fixture["batch2"]),
+        ):
+            for receipt, witness in zip(batch["receipts"], witnesses):
+                modality = receipt["modality"]
+                producer_field = (
+                    "manifest_wire"
+                    if modality == conformance.VIDEO_MODALITY
+                    else "plan_wire"
+                )
+                producer = conformance.decode_producer_wire(
+                    modality,
+                    witness["producer"][producer_field],
+                )
+                conformance._validate_producer_receipt_binding(
+                    modality,
+                    producer,
+                    receipt,
+                )
+                drift_fields = [
+                    "producer_state_generation_before",
+                    "producer_state_generation_after_publication",
+                    "producer_state_generation_after_completion",
+                ]
+                if modality == conformance.IMAGE_MODALITY:
+                    drift_fields.extend(
+                        (
+                            "model_step_before",
+                            "model_step_after",
+                            "model_plan_sha256",
+                            "model_state_publication_after_sha256",
+                        )
+                    )
+                else:
+                    drift_fields.append("completion_sequence")
+                for field in drift_fields:
+                    with self.subTest(
+                        generation=batch["header"]["registry_generation"],
+                        modality=modality,
+                        field=field,
+                    ):
+                        drifted = dict(receipt)
+                        value = drifted[field]
+                        drifted[field] = (
+                            bytes((value[0] ^ 1,)) + value[1:]
+                            if type(value) is bytes
+                            else value + 1
+                        )
+                        with self.assertRaises(
+                            conformance.GeneratedMediaFormatConformanceError
+                        ):
+                            conformance._validate_producer_receipt_binding(
+                                modality,
+                                producer,
+                                drifted,
+                            )
+
+    def test_full_archive_transition_and_format_composition(self) -> None:
+        from bench import generated_media_evidence_inspector as inspector
+
+        batches = inspector.reference_format_batches()
+        first_batch = batches["first"]
+        second_batch = batches["second"]
+        first = conformance.validate_archive_transition_and_format_evidence(
+            first_batch["registry"]["archive_bytes"],
+            first_batch["evidence_bytes"],
+            first_batch["format_evidence_bytes"],
+        )
+        second = conformance.validate_archive_transition_and_format_evidence(
+            second_batch["registry"]["archive_bytes"],
+            second_batch["evidence_bytes"],
+            second_batch["format_evidence_bytes"],
+            first,
+        )
+        self.assertEqual(first["format"]["batch"]["registry_generation"], 1)
+        self.assertEqual(first["format"]["batch"]["record_count"], 4)
+        self.assertEqual(second["format"]["batch"]["registry_generation"], 2)
+        self.assertEqual(second["format"]["batch"]["record_count"], 3)
+        with self.assertRaises(conformance.GeneratedMediaFormatConformanceError):
+            conformance.validate_archive_transition_and_format_evidence(
+                second_batch["registry"]["archive_bytes"],
+                second_batch["evidence_bytes"],
+                second_batch["format_evidence_bytes"],
+            )
+        with self.assertRaises(conformance.GeneratedMediaFormatConformanceError):
+            conformance.validate_archive_transition_and_format_evidence(
+                second_batch["registry"]["archive_bytes"],
+                second_batch["evidence_bytes"],
+                second_batch["format_evidence_bytes"],
+                second,
+            )
+
+        fixture = inspector._canonical_profile_reference_inputs()
+        witnesses_two = copy.deepcopy(fixture["batch2"])
+        for index, witness in enumerate(witnesses_two):
+            inspector._install_canonical_delivery(
+                witness,
+                f"generation-2-entry-{index}".encode("ascii"),
+            )
+        foreign_format = _initial_evidence()
+        split_second_format = inspector._encode_format_evidence(
+            second_batch,
+            witnesses_two,
+            foreign_format,
+        )
+        split_previous = {
+            "registry": first["registry"],
+            "transition": first["transition"],
+            "format": conformance.decode_format_evidence(foreign_format),
+        }
+        with self.assertRaises(conformance.GeneratedMediaFormatConformanceError):
+            conformance.validate_transition_and_format_evidence(
+                second_batch,
+                split_second_format,
+                foreign_format,
+            )
+        with self.assertRaises(conformance.GeneratedMediaFormatConformanceError):
+            conformance.validate_archive_transition_and_format_evidence(
+                second_batch["registry"]["archive_bytes"],
+                second_batch["evidence_bytes"],
+                split_second_format,
+                split_previous,
             )
 
     def test_every_record_and_batch_byte_mutation_rejects(self) -> None:

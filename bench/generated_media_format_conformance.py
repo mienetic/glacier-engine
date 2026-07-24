@@ -16,6 +16,8 @@ from typing import Any
 from bench import generated_audio_playback as audio_producer
 from bench import generated_image_publication as image_producer
 from bench import generated_media_external_format as external
+from bench import generated_media_output_registry as registry
+from bench import generated_media_producer_transition as transition
 from bench import generated_video_display as video_producer
 
 
@@ -410,6 +412,117 @@ def _validate_profile_binding(
     if not valid:
         raise GeneratedMediaFormatConformanceError(
             "producer wire and delivered profile disagree"
+        )
+
+
+def _producer_receipt_claims(modality: int, producer: Record) -> Record:
+    """Derive receipt claims that are fixed by one decoded producer wire."""
+
+    common: Record = {
+        "request_epoch": producer["request_epoch"],
+        "producer_generation": producer["generation"],
+        "producer_publication_sequence": producer["publication_sequence"],
+        "artifact_manifest_sha256": producer["artifact_sha256"],
+        "tenant_scope_sha256": producer["tenant_scope_sha256"],
+        "metadata_policy_sha256": producer["metadata_policy_sha256"],
+        "challenge_sha256": producer["challenge_sha256"],
+        "media_object_sha256": producer["media_object_sha256"],
+        "materializer_required_capabilities": producer["required_capabilities"],
+    }
+    if modality == IMAGE_MODALITY:
+        source_step = _u64(producer["source_step"])
+        if source_step == 0:
+            raise GeneratedMediaFormatConformanceError("invalid stateful producer step")
+        return {
+            **common,
+            "producer_ordinal": producer["image_index"],
+            "completion_sequence": 0,
+            "producer_state_generation_before": producer["visible_images_before"],
+            "producer_state_generation_after_publication": producer[
+                "visible_images_after"
+            ],
+            "producer_state_generation_after_completion": producer[
+                "visible_images_after"
+            ],
+            "model_kind": transition.STATEFUL_MODEL,
+            "completion_kind": transition.NO_COMPLETION,
+            "materializer_implementation_sha256": producer[
+                "decoder_implementation_sha256"
+            ],
+            "materializer_payload_sha256": producer["decoder_payload_sha256"],
+            "model_result_sha256": producer["terminal_result_sha256"],
+            "model_output_sha256": producer["terminal_output_sha256"],
+            "model_output_bytes": producer["latent_bytes"],
+            "model_step_before": source_step - 1,
+            "model_step_after": source_step,
+            "model_plan_sha256": producer["terminal_plan_sha256"],
+            "model_state_publication_after_sha256": producer[
+                "terminal_state_publication_sha256"
+            ],
+        }
+    generation = _u64(producer["generation"])
+    if generation == 0 or generation == U64_MAX:
+        raise GeneratedMediaFormatConformanceError(
+            "invalid completed producer generation"
+        )
+    if modality == AUDIO_MODALITY:
+        return {
+            **common,
+            "producer_ordinal": producer["chunk_index"],
+            "completion_sequence": producer["chunk_index"],
+            "producer_state_generation_before": generation - 1,
+            "producer_state_generation_after_publication": generation,
+            "producer_state_generation_after_completion": generation + 1,
+            "model_kind": transition.STATELESS_MODEL,
+            "completion_kind": transition.PLAYBACK_COMPLETION,
+            "unit_start": producer["start_frame"],
+            "unit_count": producer["frame_count"],
+            "timeline_start": producer["start_frame"],
+            "timeline_end": producer["visible_frames_after"],
+            "materializer_implementation_sha256": producer[
+                "renderer_implementation_sha256"
+            ],
+            "materializer_payload_sha256": producer["renderer_payload_sha256"],
+            "model_result_sha256": producer["source_result_sha256"],
+            "model_output_sha256": producer["source_output_sha256"],
+            "model_output_bytes": producer["source_output_bytes"],
+            "producer_state_before_sha256": producer["state_before_sha256"],
+        }
+    if modality == VIDEO_MODALITY:
+        return {
+            **common,
+            "producer_ordinal": producer["segment_index"],
+            "completion_sequence": producer["segment_index"],
+            "producer_state_generation_before": generation - 1,
+            "producer_state_generation_after_publication": generation,
+            "producer_state_generation_after_completion": generation + 1,
+            "model_kind": transition.STATELESS_MODEL,
+            "completion_kind": transition.DISPLAY_COMPLETION,
+            "unit_start": producer["first_frame_ordinal"],
+            "unit_count": producer["frame_count"],
+            "timeline_start": producer["start_tick"],
+            "timeline_end": producer["end_tick"],
+            "materializer_implementation_sha256": producer[
+                "renderer_implementation_sha256"
+            ],
+            "materializer_payload_sha256": producer["renderer_payload_sha256"],
+            "model_result_sha256": producer["source_result_sha256"],
+            "model_output_sha256": producer["source_output_sha256"],
+            "model_output_bytes": producer["source_output_bytes"],
+            "producer_state_before_sha256": producer["state_before_sha256"],
+        }
+    raise GeneratedMediaFormatConformanceError("unsupported modality")
+
+
+def _validate_producer_receipt_binding(
+    modality: int,
+    producer: Record,
+    receipt: Record,
+) -> None:
+    expected = _producer_receipt_claims(modality, producer)
+    if any(receipt.get(field) != value for field, value in expected.items()):
+        raise GeneratedMediaFormatConformanceError(
+            "producer wire and transition receipt disagree"
         )
 
 
@@ -934,3 +1047,294 @@ def validate_successor_format_evidence(
             seen.add(modality)
         expected[modality] = record["record_sha256"]
     return current
+
+
+def _validate_format_layers(
+    transition_value: Record,
+    format_value: Record,
+) -> None:
+    header = transition_value["header"]
+    registry_value = transition_value["registry"]
+    manifest = registry_value["manifest"]
+    batch = format_value["batch"]
+    expected_batch_pairs = (
+        ("request_epoch", header["request_epoch"]),
+        ("registry_generation", header["registry_generation"]),
+        ("publication_sequence", header["publication_sequence"]),
+        ("record_count", header["receipt_count"]),
+        ("record_count", manifest["entry_count"]),
+        ("aggregate_raw_output_bytes", header["total_raw_output_bytes"]),
+        ("aggregate_raw_output_bytes", manifest["total_source_bytes"]),
+        (
+            "aggregate_encoded_payload_bytes",
+            header["total_encoded_payload_bytes"],
+        ),
+        (
+            "aggregate_encoded_payload_bytes",
+            manifest["total_encoded_bytes"],
+        ),
+        ("modality_mask", header["modality_mask"]),
+        ("modality_mask", manifest["modality_mask"]),
+        ("generation_plan_sha256", header["generation_plan_sha256"]),
+        ("generation_plan_sha256", manifest["generation_plan_sha256"]),
+        ("tenant_scope_sha256", header["tenant_scope_sha256"]),
+        ("tenant_scope_sha256", manifest["tenant_scope_sha256"]),
+        ("metadata_policy_sha256", header["metadata_policy_sha256"]),
+        ("metadata_policy_sha256", manifest["metadata_policy_sha256"]),
+        ("challenge_sha256", header["challenge_sha256"]),
+        ("challenge_sha256", manifest["challenge_sha256"]),
+        ("transition_batch_sha256", header["batch_sha256"]),
+        ("registry_manifest_sha256", manifest["manifest_sha256"]),
+        ("registry_archive_sha256", registry_value["archive_sha256"]),
+    )
+    if any(batch[field] != expected for field, expected in expected_batch_pairs):
+        raise GeneratedMediaFormatConformanceError(
+            "format batch is foreign to transition pair"
+        )
+
+    records = format_value["records"]
+    receipts = transition_value["receipts"]
+    entries = registry_value["entries"]
+    payloads = registry_value["payloads"]
+    if not (len(records) == len(receipts) == len(entries) == len(payloads)):
+        raise GeneratedMediaFormatConformanceError("format record count disagrees")
+    for record, receipt, entry, payload in zip(
+        records,
+        receipts,
+        entries,
+        payloads,
+    ):
+        producer = decode_producer_wire(
+            record["modality"],
+            record["producer_wire"],
+        )
+        inspection = _inspect_payload(record["modality"], payload)
+        _validate_profile_binding(record["modality"], producer, inspection)
+        _validate_producer_receipt_binding(
+            record["modality"],
+            producer,
+            receipt,
+        )
+        raw = _immutable_bytes(inspection["raw"], "inspected raw output")
+        encoded_sha256 = hashlib.sha256(payload).digest()
+        expected_record_pairs = (
+            ("modality", receipt["modality"]),
+            ("modality", entry["modality"]),
+            ("registry_ordinal", receipt["registry_ordinal"]),
+            ("registry_ordinal", entry["ordinal"]),
+            ("encoding_abi", entry["encoding_abi"]),
+            ("raw_output_bytes", receipt["raw_output_bytes"]),
+            ("raw_output_bytes", entry["source_bytes"]),
+            ("raw_output_bytes", len(raw)),
+            ("encoded_payload_bytes", receipt["encoded_payload_bytes"]),
+            ("encoded_payload_bytes", entry["payload_bytes"]),
+            ("encoded_payload_bytes", len(payload)),
+            (
+                "producer_plan_or_manifest_sha256",
+                receipt["producer_plan_or_manifest_sha256"],
+            ),
+            ("raw_output_sha256", receipt["raw_output_sha256"]),
+            ("raw_output_sha256", entry["source_output_sha256"]),
+            ("raw_output_sha256", hashlib.sha256(raw).digest()),
+            ("encoded_payload_sha256", receipt["encoded_payload_sha256"]),
+            ("encoded_payload_sha256", encoded_sha256),
+            ("registry_payload_sha256", entry["payload_sha256"]),
+            (
+                "encoder_implementation_sha256",
+                receipt["encoder_implementation_sha256"],
+            ),
+            (
+                "encoder_implementation_sha256",
+                entry["encoder_implementation_sha256"],
+            ),
+            ("format_contract_sha256", receipt["format_sha256"]),
+            ("format_contract_sha256", entry["format_sha256"]),
+            (
+                "transition_receipt_sha256",
+                receipt["transition_receipt_sha256"],
+            ),
+            ("registry_entry_sha256", entry["entry_sha256"]),
+        )
+        if any(record[field] != expected for field, expected in expected_record_pairs):
+            raise GeneratedMediaFormatConformanceError(
+                "format record is foreign to transition pair"
+            )
+
+
+def _canonical_transition_value(value: Record) -> Record:
+    """Rebuild a retained transition chain from its canonical wire bytes."""
+
+    chain: list[Record] = []
+    seen: set[int] = set()
+    cursor: Record | None = value
+    while cursor is not None:
+        if type(cursor) is not dict or id(cursor) in seen:
+            raise GeneratedMediaFormatConformanceError("invalid decoded transition")
+        seen.add(id(cursor))
+        chain.append(cursor)
+        try:
+            cursor = cursor["previous"]
+        except KeyError as error:
+            raise GeneratedMediaFormatConformanceError(
+                "invalid decoded transition"
+            ) from error
+
+    canonical_previous: Record | None = None
+    for retained in reversed(chain):
+        try:
+            canonical = transition.decode_batch(
+                retained["evidence_bytes"],
+                retained["registry"]["archive_bytes"],
+                canonical_previous,
+            )
+        except (
+            KeyError,
+            TypeError,
+            registry.GeneratedMediaOutputRegistryError,
+            transition.GeneratedMediaProducerTransitionError,
+        ) as error:
+            raise GeneratedMediaFormatConformanceError(
+                "invalid decoded transition"
+            ) from error
+        if canonical != retained:
+            raise GeneratedMediaFormatConformanceError(
+                "non-canonical decoded transition"
+            )
+        canonical_previous = canonical
+
+    if canonical_previous is None:
+        raise GeneratedMediaFormatConformanceError("invalid decoded transition")
+    return canonical_previous
+
+
+def validate_transition_and_format_evidence(
+    transition_value: Record,
+    format_evidence: bytes,
+    previous_format_evidence: bytes | None = None,
+) -> Record:
+    """Bind decoded transition evidence to its exact format sidecar.
+
+    The transition value is decoded again from its retained bytes before any
+    cross-layer comparison.  The returned value is the canonical decoded
+    format dictionary with ``batch``, ``records``, ``record_table``, and
+    ``encoded`` fields.
+    """
+
+    try:
+        canonical_transition = _canonical_transition_value(transition_value)
+        generation = canonical_transition["header"]["registry_generation"]
+        if generation == 1:
+            if previous_format_evidence is not None:
+                raise GeneratedMediaFormatConformanceError(
+                    "unexpected format predecessor"
+                )
+            format_value = decode_format_evidence(format_evidence)
+        else:
+            if previous_format_evidence is None:
+                raise GeneratedMediaFormatConformanceError("missing format predecessor")
+            previous_transition = canonical_transition["previous"]
+            if previous_transition is None:
+                raise GeneratedMediaFormatConformanceError(
+                    "missing transition predecessor"
+                )
+            previous_format_value = decode_format_evidence(previous_format_evidence)
+            _validate_format_layers(
+                previous_transition,
+                previous_format_value,
+            )
+            format_value = validate_successor_format_evidence(
+                format_evidence,
+                previous_format_evidence,
+            )
+        _validate_format_layers(canonical_transition, format_value)
+        return format_value
+    except GeneratedMediaFormatConformanceError:
+        raise
+    except (
+        KeyError,
+        TypeError,
+        registry.GeneratedMediaOutputRegistryError,
+        transition.GeneratedMediaProducerTransitionError,
+    ) as error:
+        raise GeneratedMediaFormatConformanceError(
+            "invalid archive, transition, or format composition"
+        ) from error
+
+
+def validate_archive_transition_and_format_evidence(
+    registry_archive: bytes,
+    transition_evidence: bytes,
+    format_evidence: bytes,
+    previous: Record | None = None,
+) -> Record:
+    """Validate one exact registry/transition/format generation.
+
+    ``previous`` is the composed dictionary returned by this function for the
+    immediately preceding generation.  The result retains canonical decoded
+    ``registry``, ``transition``, and ``format`` views for successor checking.
+    """
+
+    try:
+        if previous is None:
+            previous_transition = None
+            previous_format_evidence = None
+        else:
+            if type(previous) is not dict or set(previous) != {
+                "registry",
+                "transition",
+                "format",
+            }:
+                raise GeneratedMediaFormatConformanceError(
+                    "invalid composed predecessor"
+                )
+            previous_transition = previous["transition"]
+            previous_format = previous["format"]
+            canonical_previous_transition = _canonical_transition_value(
+                previous_transition
+            )
+            canonical_previous_format = decode_format_evidence(
+                previous_format["encoded"]
+            )
+            if (
+                canonical_previous_transition != previous_transition
+                or previous["registry"] != previous_transition["registry"]
+                or canonical_previous_format != previous_format
+            ):
+                raise GeneratedMediaFormatConformanceError(
+                    "invalid composed predecessor"
+                )
+            _validate_format_layers(
+                canonical_previous_transition,
+                canonical_previous_format,
+            )
+            previous_transition = canonical_previous_transition
+            previous_format_evidence = canonical_previous_format["encoded"]
+        decoded_transition = transition.decode_batch(
+            _immutable_bytes(
+                transition_evidence,
+                "transition evidence",
+            ),
+            _immutable_bytes(registry_archive, "registry archive"),
+            previous_transition,
+        )
+        decoded_format = validate_transition_and_format_evidence(
+            decoded_transition,
+            _immutable_bytes(format_evidence, "format evidence"),
+            previous_format_evidence,
+        )
+        return {
+            "registry": decoded_transition["registry"],
+            "transition": decoded_transition,
+            "format": decoded_format,
+        }
+    except GeneratedMediaFormatConformanceError:
+        raise
+    except (
+        KeyError,
+        TypeError,
+        registry.GeneratedMediaOutputRegistryError,
+        transition.GeneratedMediaProducerTransitionError,
+    ) as error:
+        raise GeneratedMediaFormatConformanceError(
+            "invalid archive, transition, or format composition"
+        ) from error

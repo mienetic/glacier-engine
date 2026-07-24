@@ -49,7 +49,7 @@ pub fn build(b: *std.Build) void {
         paged_lease_admission_opts.createModule();
 
     // --- Core module (no Metal dependency) -----------------------------------
-    const core_mod = b.createModule(.{
+    const core_mod = b.addModule("glacier_core", .{
         .root_source_file = b.path("src/core/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -57,7 +57,7 @@ pub fn build(b: *std.Build) void {
     });
 
     // --- Main engine module (composes core + backends) -----------------------
-    const engine_mod = b.createModule(.{
+    const engine_mod = b.addModule("glacier", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -129,6 +129,17 @@ pub fn build(b: *std.Build) void {
         lib.linkLibC();
         break :blk lib;
     };
+
+    // Native requirements belong to the exported module so dependency
+    // consumers inherit the same link graph as project-owned executables.
+    // Keep glacier_core free of these requirements.
+    engine_mod.link_libc = true;
+    if (metal_shim) |shim| {
+        engine_mod.linkLibrary(shim);
+        engine_mod.linkFramework("Metal", .{});
+        engine_mod.linkFramework("Foundation", .{});
+    }
+    if (int4_neon) |lib| engine_mod.linkLibrary(lib);
 
     // --- CLI executable ------------------------------------------------------
     const cli_telemetry_mod = b.createModule(.{
@@ -212,6 +223,25 @@ pub fn build(b: *std.Build) void {
     }
     if (int4_neon) |lib| engine_tests.linkLibrary(lib);
     const run_engine_tests = b.addRunArtifact(engine_tests);
+
+    // A dependency consumer should be able to import the public package
+    // modules without depending on the CLI, demos, or benchmark executables.
+    const package_module_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/package_module.zig"),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    package_module_tests.root_module.addImport("glacier", engine_mod);
+    package_module_tests.root_module.addImport("glacier_core", core_mod);
+    const run_package_module_tests = b.addRunArtifact(package_module_tests);
+    const package_module_test_step = b.step(
+        "package-module-test",
+        "Verify the exported glacier and glacier_core package modules",
+    );
+    package_module_test_step.dependOn(&run_package_module_tests.step);
 
     // Allocation-free canonical PNG/WAVE/APNG delivery profiles plus the
     // additive generated-media conformance sidecar.
@@ -501,6 +531,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_core_tests.step);
     test_step.dependOn(&run_engine_tests.step);
+    test_step.dependOn(&run_package_module_tests.step);
     test_step.dependOn(&run_media_external_format_tests.step);
     test_step.dependOn(&run_progressive_int4_tests.step);
     test_step.dependOn(&run_integration_tests.step);
@@ -520,6 +551,7 @@ pub fn build(b: *std.Build) void {
     const test_compile_step = b.step("test-compile", "Compile all tests without running them");
     test_compile_step.dependOn(&core_tests.step);
     test_compile_step.dependOn(&engine_tests.step);
+    test_compile_step.dependOn(&package_module_tests.step);
     test_compile_step.dependOn(&media_external_format_tests.step);
     test_compile_step.dependOn(&progressive_int4_tests.step);
     test_compile_step.dependOn(&integration_tests.step);
@@ -1763,6 +1795,23 @@ pub fn build(b: *std.Build) void {
     generated_media_evidence_inspector_exe.root_module.addImport(
         "core",
         core_mod,
+    );
+    const generated_media_format_conformance_mod =
+        b.createModule(.{
+            .root_source_file = b.path(
+                "src/media/generated_media_format_conformance.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        });
+    generated_media_format_conformance_mod.addImport(
+        "core",
+        core_mod,
+    );
+    generated_media_evidence_inspector_exe.root_module.addImport(
+        "format_evidence",
+        generated_media_format_conformance_mod,
     );
     const run_generated_media_evidence_inspector =
         b.addRunArtifact(

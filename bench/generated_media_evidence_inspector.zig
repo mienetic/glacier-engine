@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const core = @import("core");
+const format_evidence = @import("format_evidence");
 
 const checkpoint_file = core.continuation_checkpoint_file;
 const registry = core.generated_media_output_registry;
@@ -17,12 +18,16 @@ pub const max_evidence_bytes: usize =
     registry.max_entries * transition.transition_receipt_bytes;
 
 const schema = "glacier-generated-media-evidence-inspector-v1";
+const format_schema =
+    "glacier-generated-media-evidence-inspector-format-v1";
 
 const Options = struct {
     archive_path: []const u8,
     evidence_path: []const u8,
+    format_evidence_path: ?[]const u8,
     previous_archive_path: ?[]const u8,
     previous_evidence_path: ?[]const u8,
+    previous_format_evidence_path: ?[]const u8,
 };
 
 const RenderEntryV1 = struct {
@@ -39,6 +44,20 @@ const RenderDocumentV1 = struct {
     batch: transition.BatchEvidenceV1,
     entries: [registry.max_entries]RenderEntryV1,
     entry_count: usize,
+};
+
+const RenderFormatEntryV1 = struct {
+    profile: format_evidence.DeliveryProfileV1,
+    record_sha256: format_evidence.Digest,
+    contract_sha256: format_evidence.Digest,
+    encoded_payload_sha256: format_evidence.Digest,
+};
+
+const RenderFormatDocumentV1 = struct {
+    base: RenderDocumentV1,
+    format_evidence_bytes: usize,
+    batch: format_evidence.FormatBatchEvidenceV1,
+    entries: [registry.max_entries]RenderFormatEntryV1,
 };
 
 pub fn main() void {
@@ -76,6 +95,15 @@ fn run() !void {
         max_evidence_bytes,
     );
     defer allocator.free(evidence);
+    const format_bytes = if (options.format_evidence_path) |path|
+        try readBoundedFile(
+            allocator,
+            path,
+            format_evidence.max_format_evidence_bytes,
+        )
+    else
+        null;
+    defer if (format_bytes) |bytes| allocator.free(bytes);
 
     const evidence_shape =
         try transition.decodeBatchEvidenceV1(evidence);
@@ -83,13 +111,21 @@ fn run() !void {
         evidence_shape.batch.registry_generation > 1;
     const has_predecessor =
         options.previous_archive_path != null;
+    const has_format = format_bytes != null;
     if (successor and !has_predecessor)
         return error.MissingPredecessor;
     if (!successor and has_predecessor)
         return error.UnexpectedPredecessor;
+    if (successor and has_format and
+        options.previous_format_evidence_path == null)
+        return error.MissingFormatPredecessor;
+    if (!successor and
+        options.previous_format_evidence_path != null)
+        return error.UnexpectedFormatPredecessor;
 
     var current_archive: registry.DecodedArchiveV1 = undefined;
     var validated_evidence: transition.DecodedBatchEvidenceV1 = undefined;
+    var validated_format: ?format_evidence.DecodedFormatEvidenceV1 = null;
 
     if (successor) {
         const previous_archive_path =
@@ -110,6 +146,17 @@ fn run() !void {
             max_evidence_bytes,
         );
         defer allocator.free(previous_evidence);
+        const previous_format_bytes =
+            if (options.previous_format_evidence_path) |path|
+                try readBoundedFile(
+                    allocator,
+                    path,
+                    format_evidence.max_format_evidence_bytes,
+                )
+            else
+                null;
+        defer if (previous_format_bytes) |bytes|
+            allocator.free(bytes);
 
         const trusted_predecessor =
             try decodeTrustedArchiveViewV1(previous_archive);
@@ -128,6 +175,28 @@ fn run() !void {
                     .evidence = previous_evidence,
                 },
             );
+        if (format_bytes) |current_format_bytes| {
+            const predecessor_format_bytes =
+                previous_format_bytes orelse
+                return error.MissingFormatPredecessor;
+            validated_format = try format_evidence
+                .validateSuccessorArchiveTransitionAndFormatEvidenceV1(
+                .{
+                    .transition_generation = .{
+                        .registry_archive = current_archive,
+                        .evidence = evidence,
+                    },
+                    .format_evidence = current_format_bytes,
+                },
+                .{
+                    .transition_generation = .{
+                        .registry_archive = trusted_predecessor,
+                        .evidence = previous_evidence,
+                    },
+                    .format_evidence = predecessor_format_bytes,
+                },
+            );
+        }
     } else {
         current_archive = try registry.decodeArchiveV1(
             archive,
@@ -138,9 +207,19 @@ fn run() !void {
                 .registry_archive = current_archive,
                 .evidence = evidence,
             });
+        if (format_bytes) |current_format_bytes| {
+            validated_format = try format_evidence
+                .validateArchiveTransitionAndFormatEvidenceV1(.{
+                .transition_generation = .{
+                    .registry_archive = current_archive,
+                    .evidence = evidence,
+                },
+                .format_evidence = current_format_bytes,
+            });
+        }
     }
 
-    const document = try collectDocumentV1(
+    const base_document = try collectDocumentV1(
         successor,
         current_archive,
         validated_evidence,
@@ -152,15 +231,31 @@ fn run() !void {
         stdout,
         &output_buffer,
     );
-    try renderDocumentV1(&output.interface, document);
+    if (validated_format) |format_value| {
+        const document = try collectFormatDocumentV1(
+            base_document,
+            format_value,
+        );
+        try renderFormatDocumentV1(
+            &output.interface,
+            document,
+        );
+    } else {
+        try renderDocumentV1(
+            &output.interface,
+            base_document,
+        );
+    }
     try output.interface.flush();
 }
 
 fn parseOptions(arguments: []const []const u8) !Options {
     var archive_path: ?[]const u8 = null;
     var evidence_path: ?[]const u8 = null;
+    var format_evidence_path: ?[]const u8 = null;
     var previous_archive_path: ?[]const u8 = null;
     var previous_evidence_path: ?[]const u8 = null;
+    var previous_format_evidence_path: ?[]const u8 = null;
 
     var index: usize = 1;
     while (index < arguments.len) {
@@ -177,6 +272,12 @@ fn parseOptions(arguments: []const []const u8) !Options {
         } else if (std.mem.eql(
             u8,
             flag,
+            "--format-evidence",
+        )) {
+            try setOption(&format_evidence_path, value);
+        } else if (std.mem.eql(
+            u8,
+            flag,
             "--previous-archive",
         )) {
             try setOption(&previous_archive_path, value);
@@ -186,6 +287,15 @@ fn parseOptions(arguments: []const []const u8) !Options {
             "--previous-evidence",
         )) {
             try setOption(&previous_evidence_path, value);
+        } else if (std.mem.eql(
+            u8,
+            flag,
+            "--previous-format-evidence",
+        )) {
+            try setOption(
+                &previous_format_evidence_path,
+                value,
+            );
         } else {
             return error.InvalidArguments;
         }
@@ -193,13 +303,18 @@ fn parseOptions(arguments: []const []const u8) !Options {
     if ((previous_archive_path == null) !=
         (previous_evidence_path == null))
         return error.IncompletePredecessor;
+    if (format_evidence_path == null and
+        previous_format_evidence_path != null)
+        return error.IncompleteFormatEvidence;
     return .{
         .archive_path = archive_path orelse
             return error.InvalidArguments,
         .evidence_path = evidence_path orelse
             return error.InvalidArguments,
+        .format_evidence_path = format_evidence_path,
         .previous_archive_path = previous_archive_path,
         .previous_evidence_path = previous_evidence_path,
+        .previous_format_evidence_path = previous_format_evidence_path,
     };
 }
 
@@ -317,9 +432,113 @@ fn collectDocumentV1(
     return document;
 }
 
+fn collectFormatDocumentV1(
+    base: RenderDocumentV1,
+    evidence: format_evidence.DecodedFormatEvidenceV1,
+) !RenderFormatDocumentV1 {
+    const count = std.math.cast(
+        usize,
+        evidence.batch.record_count,
+    ) orelse return error.InvalidFormatEntryCount;
+    if (count != base.entry_count)
+        return error.InvalidFormatEntryCount;
+    var document: RenderFormatDocumentV1 = .{
+        .base = base,
+        .format_evidence_bytes = evidence.encoded.len,
+        .batch = evidence.batch,
+        .entries = undefined,
+    };
+    for (0..count) |index| {
+        const record = try evidence.record(index);
+        document.entries[index] = .{
+            .profile = record.profile,
+            .record_sha256 = record.record_sha256,
+            .contract_sha256 = record.format_contract_sha256,
+            .encoded_payload_sha256 = record.encoded_payload_sha256,
+        };
+    }
+    return document;
+}
+
 fn renderDocumentV1(
     writer: *std.Io.Writer,
     document: RenderDocumentV1,
+) !void {
+    try renderDocumentPrefixV1(
+        writer,
+        document,
+        schema,
+    );
+    try writer.writeAll(",\"entries\":[");
+    for (document.entries[0..document.entry_count], 0..) |
+        entry,
+        index,
+    | {
+        if (index != 0) try writer.writeByte(',');
+        try renderEntryV1(writer, index, entry);
+    }
+    try writer.writeAll("]}\n");
+}
+
+fn renderFormatDocumentV1(
+    writer: *std.Io.Writer,
+    document: RenderFormatDocumentV1,
+) !void {
+    try renderDocumentPrefixV1(
+        writer,
+        document.base,
+        format_schema,
+    );
+    try writer.print(
+        ",\"format_evidence_bytes\":{d}",
+        .{document.format_evidence_bytes},
+    );
+    try writeDigestField(
+        writer,
+        "format_batch_sha256",
+        document.batch.batch_sha256,
+    );
+    try writeDigestField(
+        writer,
+        "previous_format_batch_sha256",
+        document.batch.previous_format_batch_sha256,
+    );
+    try writer.writeAll(",\"entries\":[");
+    for (
+        document.base.entries[0..document.base.entry_count],
+        document.entries[0..document.base.entry_count],
+        0..,
+    ) |entry, format_entry, index| {
+        if (index != 0) try writer.writeByte(',');
+        try renderEntryPrefixV1(writer, index, entry);
+        try writer.print(
+            ",\"delivery_profile\":\"{s}\"",
+            .{profileName(format_entry.profile)},
+        );
+        try writeDigestField(
+            writer,
+            "format_record_sha256",
+            format_entry.record_sha256,
+        );
+        try writeDigestField(
+            writer,
+            "format_contract_sha256",
+            format_entry.contract_sha256,
+        );
+        try writeDigestField(
+            writer,
+            "plain_encoded_payload_sha256",
+            format_entry.encoded_payload_sha256,
+        );
+        try writer.writeByte('}');
+    }
+    try writer.writeAll("]}\n");
+}
+
+fn renderDocumentPrefixV1(
+    writer: *std.Io.Writer,
+    document: RenderDocumentV1,
+    schema_name: []const u8,
 ) !void {
     const batch = document.batch;
     try writer.print(
@@ -332,7 +551,7 @@ fn renderDocumentV1(
             "\"registry_archive_bytes\":{d}," ++
             "\"evidence_bytes\":{d}",
         .{
-            schema,
+            schema_name,
             if (document.successor) "successor" else "genesis",
             batch.request_epoch,
             batch.registry_generation,
@@ -389,18 +608,18 @@ fn renderDocumentV1(
         "batch_sha256",
         batch.batch_sha256,
     );
-    try writer.writeAll(",\"entries\":[");
-    for (document.entries[0..document.entry_count], 0..) |
-        entry,
-        index,
-    | {
-        if (index != 0) try writer.writeByte(',');
-        try renderEntryV1(writer, index, entry);
-    }
-    try writer.writeAll("]}\n");
 }
 
 fn renderEntryV1(
+    writer: *std.Io.Writer,
+    index: usize,
+    entry: RenderEntryV1,
+) !void {
+    try renderEntryPrefixV1(writer, index, entry);
+    try writer.writeByte('}');
+}
+
+fn renderEntryPrefixV1(
     writer: *std.Io.Writer,
     index: usize,
     entry: RenderEntryV1,
@@ -552,7 +771,6 @@ fn renderEntryV1(
     }) |field| {
         try writeDigestField(writer, field[0], field[1]);
     }
-    try writer.writeByte('}');
 }
 
 fn writeDigestField(
@@ -588,5 +806,15 @@ fn completionKindName(
         .none => "none",
         .playback => "playback",
         .display => "display",
+    };
+}
+
+fn profileName(
+    value: format_evidence.DeliveryProfileV1,
+) []const u8 {
+    return switch (value) {
+        .png => "png",
+        .wave_pcm_s16le => "wave-pcm-s16le",
+        .apng_two_frame_gray8 => "apng-two-frame-gray8",
     };
 }
