@@ -1,8 +1,9 @@
 # Generated-Media Encoded Payload Archive
 
 Status: **integrated model-free archive and process-death recovery path;
-production encoders/containers, arbitrary multi-output continuity, retained
-native Linux campaigns, and power-loss durability remain gated**.
+bounded multi-output continuity is integrated under a separate ABI; production
+encoders/containers, retained native Linux campaigns, and power-loss durability
+remain gated**.
 
 Glacier can now package one generated image, one acknowledged generated-audio
 chunk, and one acknowledged generated-video segment together with their exact
@@ -14,6 +15,12 @@ This closes the model-free encoded-byte composition slice. It does not execute a
 model, run a production encoder, interpret an external container, grant device
 or filesystem authority to the portable core, or prove physical playback,
 display, quality, performance, or power-loss behavior.
+
+The downstream
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md)
+extends the retained generation to multiple images, audio chunks, and video
+segments under an independent ABI. This V1 manifest, checkpoint, members, and
+eight-object archive remain byte-for-byte unchanged.
 
 ## One eight-object generation
 
@@ -135,7 +142,8 @@ This layer is useful as a foundation for:
   implementation, format identity, and resulting bytes must remain distinct;
 - provider or edge handoff evidence that needs one bounded generated-output
   identity without embedding model weights or private prompts; and
-- future multi-image, multi-chunk audio, and multi-segment video publication.
+- multi-output adapters that need a stable V1 single-output fixture beside the
+  independent bounded registry ABI.
 
 The retained fixture proves the archive contract, not production readiness for
 those applications.
@@ -146,17 +154,15 @@ Contributor-sized follow-on work includes:
 
 1. production image encoder and audio/video codec/container adapters behind
    explicit capability and numerical policies;
-2. a modality/output registry that extends the fixed three-output fixture to
-   bounded arbitrary multi-output generations;
-3. multi-image, multi-chunk audio, and multi-segment video lineage and
-   backpressure;
-4. retained process-death campaigns on native Linux filesystems;
-5. a separately designed initial-publication and power-loss durability
+2. external-format conformance fixtures for those adapters;
+3. retained process-death campaigns on native Linux filesystems;
+4. a separately designed initial-publication and power-loss durability
    protocol; and
-6. quality, latency, throughput, memory, energy, and storage evidence under
+5. quality, latency, throughput, memory, energy, and storage evidence under
    named artifacts and platforms.
 
 See [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md),
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md),
 [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md),
 [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),

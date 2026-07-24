@@ -304,6 +304,25 @@ members, and three exact encoded payloads. The generic checkpoint-file selector
 is its sole filesystem visibility authority; the retained proof covers
 previous-or-successor recovery after process death, not device power loss.
 
+**Generated-media output-registry entry** — A fixed 544-byte independent-ABI
+record for one image, audio, or video output. Image structurally requires no
+completion receipt; audio/video structurally require a completed flag and
+nonzero opaque completion root. The entry binds canonical modality/ordinal
+position, logical units and timeline, raw and encoded output identities,
+encoder, format, opaque state/completion roots, and predecessor continuity; it
+does not decode typed producer wires.
+
+**Generated-media output-registry manifest** — A fixed 544-byte record binding
+one bounded ordered entry table and its exact concatenated encoded-payload pack
+to counts, lengths, generation plan, scope, policy, challenge, and the complete
+preceding registry archive.
+
+**Generated-media output registry** — An independent canonical ABI containing
+one to four outputs per present modality, up to twelve total, in exactly three
+archive extension objects: manifest, fixed-entry table, and exact payload pack.
+It reuses the existing generic checkpoint-file selector and leaves all earlier
+V1 generated-media wires unchanged.
+
 **Model family** — A typed semantic class such as autoregressive generation,
 vision understanding, audio understanding, diffusion, retrieval, or agent
 policy. A family ID is vocabulary only; a matching support record and adapter

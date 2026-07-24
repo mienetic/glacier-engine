@@ -123,7 +123,11 @@ The next image-generation slices are:
 1. a production decoder adapter with explicit numerical and device policy;
 2. multi-step scheduler continuation and cancellation at declared latent
    boundaries;
-3. multi-image and chunk-manifest publication under retained ownership;
+3. ~~bounded multi-image registry archive continuity;~~ complete for two image
+   entries per retained generation with no completion requirement, a completed
+   flag, zero completion root, and exact ordinal, unit, opaque state,
+   raw/encoded, encoder/format, and predecessor binding under an independent
+   ABI;
 4. external image format encoding outside the authority-free core;
 5. ~~model-free atomic composition of one exact encoded image with its typed
    member and shared generated-media checkpoint;~~ complete in the canonical
@@ -136,9 +140,13 @@ publication contracts with timeline continuity, cancellation, and application
 playback/display acknowledgement. Shared checkpoint composition is integrated:
 one typed image completion plus acknowledged audio/video outputs now become
 visible through one atomic selector. Exact encoded payload archive composition
-is also integrated for one image/audio/video output per generation. Production
-decoder/encoder adapters, external-format conformance, and multi-output
-continuity remain.
+is also integrated for one image/audio/video output per V1 generation. A
+separate bounded registry ABI now composes two image entries with multiple
+audio/video entries carrying structurally required opaque completion roots and
+their exact payloads in each retained generation. The registry does not decode
+the typed producer wires. Production decoder/encoder adapters,
+external-format conformance, multi-image generation quality, and device
+evidence remain gated.
 
 See [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md),
 [Shared Media Contract](MEDIA_CONTRACT.md),
@@ -146,5 +154,6 @@ See [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md),
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
 [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md),
 [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

@@ -1,9 +1,9 @@
 # Atomic Generated-Media Checkpoints
 
 Status: **integrated model-free composition path; exact encoded-payload archive
-composition is integrated downstream, while production adapters,
-multi-output continuity, device evidence, and power-loss campaigns remain
-gated**.
+composition and bounded multi-output registry continuity are integrated
+downstream, while production adapters, external formats, device evidence, and
+power-loss campaigns remain gated**.
 
 Glacier can seal one completed generated image, one acknowledged generated-audio
 chunk, and one acknowledged generated-video segment behind a single atomic
@@ -18,6 +18,11 @@ The downstream
 [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md)
 binds this checkpoint, its members, and exact encoded image/audio/video bytes
 without changing the checkpoint's raw-output semantics.
+The later
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md)
+uses an independent ABI to compose multiple structurally described outputs and
+payloads without changing this V1 checkpoint or selector wire. Typed producer
+records must be validated before their opaque roots enter the registry.
 
 ## Portable records
 
@@ -113,12 +118,20 @@ keeps raw-output, encoded-payload, encoder-implementation, and format identities
 separate, verifies two-generation lineage independently in Python, and accepts
 only the exact previous or successor archive across seven process-death phases.
 
+The next composition slice is also complete under an independent ABI: fixed
+544-byte entries order one to four outputs per present modality, up to twelve,
+while one fixed manifest and exact concatenated payload pack produce exactly
+three archive extension objects under the existing outer selector. The
+registry structurally requires image entries with no completion receipt and
+audio/video entries with a completed flag plus nonzero opaque completion root.
+It does not decode this checkpoint's typed producer records; that validation is
+an adapter precondition.
+
 The next production-facing slices are:
 
 1. adapt production decoders, encoders, renderers, codecs, containers, and
    model outputs without weakening the typed admission boundary;
-2. add bounded arbitrary multi-image, multi-chunk audio, and multi-segment
-   video continuity;
+2. add external-format conformance fixtures for those production adapters;
 3. retain native Linux filesystem campaigns and separately scoped
    initial-publication and power-loss evidence;
 4. add authorized physical playback/display evidence outside the
@@ -130,5 +143,6 @@ See [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md),
 [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md),
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
 [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and
 [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).

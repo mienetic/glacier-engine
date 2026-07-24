@@ -21,6 +21,19 @@ before the first stable release.
 
 ### Added
 
+- Bounded generated-media output registry: an independent canonical ABI packs
+  one to four output entries per present image/audio/video modality, up to
+  twelve total, as fixed 544-byte entries in `(modality, ordinal)` order, one
+  fixed 544-byte manifest, and exact concatenated encoded payloads in exactly
+  three archive extension objects. Exact ordinal/unit/timeline/predecessor
+  continuity, exact raw/encoded/encoder/format/state/completion roots, and the
+  complete preceding archive are verified without changing existing V1 wires.
+  Completion fields are structurally enforced and roots are opaque; typed
+  producer acknowledgement/state validation remains an adapter precondition.
+  The retained generations contain `2/3/2` then `2/2/3` image/audio/video
+  outputs; an independent Python oracle and seven-phase `SIGKILL` campaign
+  select the previous generation five times and successor twice, reject mixed
+  generations, and converge through the existing outer filesystem selector.
 - Generated-media encoded payload archives: one canonical eight-object
   generation binds an 864-byte manifest, the shared checkpoint, three typed
   members, and exact encoded image/audio/video bytes while keeping raw-output,

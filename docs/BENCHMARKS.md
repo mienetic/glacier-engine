@@ -69,6 +69,8 @@ energy, or production reliability.
 | `zig build generated-media-checkpoint-restart-demo -Dmetal=false` | Two immutable generated-output generations, four selector durability deaths, two previous and two successor recoveries, complete three-member validation in fresh processes, and zero mixed-generation observations |
 | `zig test src/core/generated_media_payload_archive.zig -OReleaseSafe` | Canonical 864-byte payload manifest, eight-object archive, exact raw/encoded/encoder/format binding, two-generation lineage, mutation/substitution rejection, and independent golden roots |
 | `zig build generated-media-payload-archive-restart-demo -Dmetal=false` | Exact image/audio/video encoded payloads, one outer selector, seven process deaths, five previous and two successor selections, zero mixed generations, and idempotent recovery |
+| `zig test src/core/generated_media_output_registry.zig -OReleaseSafe` | Independent registry ABI, fixed 544-byte manifest and entries, canonical bounded multi-output ordering, exact ordinal/unit/timeline/payload/predecessor binding, structural completion fields, mutation plus stale-root/mixed-lineage substitution rejection, and independent golden roots |
+| `zig build generated-media-output-registry-restart-demo -Dmetal=false` | `2/3/2` then `2/2/3` image/audio/video outputs in exact three-object archives, one existing selector, seven process deaths, five previous and two successor selections, zero mixed generations, exact payload recovery, and idempotent convergence |
 | `zig build provider-gateway-demo -Dmetal=false` | Request coalescing, reservation, settlement, fixed-point cost, and journal append |
 | `zig build provider-transport-demo -Dmetal=false` | Credential-free chunk and terminal-usage transport replay |
 | `zig build provider-cancel-demo -Dmetal=false` | Consumer withdrawal and active transport cancellation |
@@ -174,6 +176,25 @@ rather than production containers, executes no model or encoder, and does not
 establish native Linux behavior, storage-device power-loss durability, initial
 archive power-loss durability, codec compatibility, quality, latency,
 throughput, memory, energy, or physical playback/display.
+
+The generated-media output-registry fixture extends that fixed shape through an
+independent ABI; the older V1 wires remain unchanged. One fixed 544-byte
+manifest, an ordered table of fixed 544-byte entries, and one exact
+concatenated payload pack form exactly three archive extension objects.
+Generation one contains `2/3/2` image/audio/video entries; generation two
+contains `2/2/3`. Image entries carry the no-completion-required shape, while
+audio/video entries structurally require a nonzero opaque completion root.
+Validation reconstructs ordinal, unit, timeline, and predecessor continuity;
+checks the modality-specific structural completion fields; binds the opaque
+state/completion, raw-output, encoded-payload, encoder, and format roots; and
+requires the exact previous archive bytes. It does not decode the earlier typed
+producer acknowledgement/state wires. The independent Python oracle checks the
+same registry contract. Seven native publisher deaths expose only a complete
+previous archive five times or successor archive twice before recovery
+converges idempotently. This is model-free conformance evidence, not production
+encoder/container compatibility, native Linux execution, storage-device
+power-loss durability, physical playback/display, media quality, latency,
+throughput, memory, or energy evidence.
 
 The speech-annotation fixture maps `ice` and `berg` onto exact adjacent sample
 ranges and two opaque speaker identities. Its fresh target validates the

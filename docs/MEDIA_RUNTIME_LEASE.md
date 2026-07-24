@@ -138,6 +138,8 @@ The next media-runtime sequence is:
    with typed shared output selection complete through
    [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and one
    exact encoded payload per modality composed through the
-   [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md);
-   arbitrary multi-output continuity remains; and
+   [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
+   with bounded multi-output continuity now complete through the
+   [Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md);
+   and
 6. external codec adapters outside the authority-free core.

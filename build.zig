@@ -1649,6 +1649,69 @@ pub fn build(b: *std.Build) void {
         &generated_media_payload_archive_worker_exe.step,
     );
 
+    // One canonical registry archive selects every ordered image, audio, and
+    // video output in a generation. Seven process-death campaigns cover the
+    // archive and selector publication phases; recovery observes only the
+    // exact predecessor or successor registry.
+    const generated_media_output_registry_worker_exe =
+        b.addExecutable(.{
+            .name = "glacier-generated-media-output-registry-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/generated_media_output_registry_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    generated_media_output_registry_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    generated_media_output_registry_worker_exe.linkLibC();
+    const generated_media_output_registry_demo_exe =
+        b.addExecutable(.{
+            .name = "glacier-generated-media-output-registry-demo",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/generated_media_output_registry_restart_demo.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    generated_media_output_registry_demo_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    generated_media_output_registry_demo_exe.linkLibC();
+    const run_generated_media_output_registry_demo =
+        b.addRunArtifact(
+            generated_media_output_registry_demo_exe,
+        );
+    run_generated_media_output_registry_demo.addArtifactArg(
+        generated_media_output_registry_worker_exe,
+    );
+    const generated_media_output_registry_demo_step =
+        b.step(
+            "generated-media-output-registry-restart-demo",
+            "Recover exact ordered image/audio/video output registries",
+        );
+    generated_media_output_registry_demo_step.dependOn(
+        &run_generated_media_output_registry_demo.step,
+    );
+    test_step.dependOn(
+        &run_generated_media_output_registry_demo.step,
+    );
+    test_compile_step.dependOn(
+        &generated_media_output_registry_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &generated_media_output_registry_worker_exe.step,
+    );
+
     // A stateful transcript process commits one exact sample range and syncs a
     // composed checkpoint. A distinct target process charges and materializes
     // retained state, publishes the next transcript, and advances its

@@ -1,8 +1,9 @@
 # Generated Video Manifest and Display Acknowledgement
 
-Status: **integrated model-free conformance path; production video models,
-external codecs/containers, physical display evidence, and crash-atomic
-multi-file composition remain gated**.
+Status: **integrated model-free conformance path with bounded downstream
+multi-segment registry continuity; production video models, external
+codecs/containers, physical display evidence, and crash-atomic publication of
+source records remain gated**.
 
 Glacier can publish an ordered bounded raw-video segment, carry its outstanding
 display receipt across a real process restart, and require exact application
@@ -116,9 +117,16 @@ Shared image/audio/video checkpoint selection is now integrated for fully
 acknowledged video: a pending or partially displayed segment cannot enter the
 checkpoint. One exact encoded video payload now also composes with its typed
 member, the image/audio members, and the shared checkpoint in the canonical
-eight-object payload archive. Next work is production image/audio/video
-encoder/container adapters, multi-segment video continuity, native Linux and
-separately scoped power-loss campaigns, and authorized physical
-playback/display evidence. See
+eight-object payload archive. A separate registry ABI now composes two then
+three video entries with multiple image/audio entries and exact encoded
+payloads while preserving frame, timeline, and predecessor continuity and
+binding opaque state/completion roots. Registry admission structurally
+requires `completion_required`, `completed`, and a nonzero completion root; it
+does not decode these display acknowledgement/state wires. Typed producer
+validation, production image/audio/video encoder/container adapters,
+external-format conformance, native Linux and separately scoped power-loss
+campaigns, and authorized physical playback/display evidence remain. See
 [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and the
-[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md).
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
+then the
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md).

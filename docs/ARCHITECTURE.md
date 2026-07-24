@@ -251,15 +251,28 @@ publisher deaths select only the exact predecessor five times or successor
 twice before idempotent recovery; the independent Python oracle verifies the
 same archive without model execution.
 
+`GeneratedMediaOutputRegistry` is an independent ABI layered beside those
+unchanged V1 wires. It orders one to four output entries per present
+modality, up to twelve, as fixed 544-byte entries plus an exact concatenated
+payload pack. Entry admission preserves a modality-specific structural
+completion shape: image requires no completion receipt, while audio and video
+require a completed flag and nonzero completion root. State and completion
+roots are opaque here; typed producer acknowledgement/state validation is a
+precondition rather than a registry claim. One 544-byte manifest binds the
+ordered entry table, exact payload pack, generation plan, scope, policy,
+challenge, generation, and complete preceding archive bytes. These three
+extension objects reuse the generic checkpoint-file selector as their only
+filesystem visibility authority.
+
 The reference path supports only retained RGB8, PCM s16le, and intra-frame
 gray8 fixtures plus image crop/nearest/tile, weighted audio mix/exact
-decimation, and keyframe selection. Its encoded payload archive contains
-bounded identity envelopes, not production containers. It has no external
-codec, encoder,
-network, camera, microphone, model, or accelerator authority. The atomic-set
-workers have explicit filesystem authority but do not emulate device power
-loss or establish native Linux behavior. External formats, measured accelerator
-residency, and production-model integrations remain future layers. See
+decimation, and keyframe selection. Its encoded payload archive and output
+registry contain bounded identity envelopes, not production containers. It has
+no external codec, encoder, network, camera, microphone, model, or accelerator
+authority. The atomic-set workers have explicit filesystem authority but do not
+emulate device power loss or establish native Linux behavior. External formats,
+measured accelerator residency, physical playback/display, quality evidence,
+and production-model integrations remain future layers. See
 [Media Runtime Transaction](MEDIA_RUNTIME_TXN.md) and
 [Hierarchical Media Buffer Ownership](MEDIA_RUNTIME_LEASE.md), then
 [Bounded Media Stream Runtime](MEDIA_STREAM_RUNTIME.md) and
@@ -272,7 +285,9 @@ The generative output chain continues with
 [Generated Audio Publication and Playback Acknowledgement](GENERATED_AUDIO_PLAYBACK.md)
 and [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md),
 then [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and the
-[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md).
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
+followed by the
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md).
 
 ### ResourceBank
 
@@ -677,6 +692,11 @@ still require real machines for each promoted platform.
   one canonical manifest/checkpoint/member/payload generation, explicit
   raw/encoded/encoder/format identities, one outer selector, and idempotent
   previous-or-successor recovery across seven process-death phases.
+- [Bounded generated-media output registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md):
+  an independent three-object archive ABI for canonical multi-image,
+  multi-chunk audio, and multi-segment video ordering, structural completion
+  fields, opaque state/completion roots, exact encoded payloads, and
+  previous-or-successor recovery.
 - [Exact speech annotation publication](SPEECH_ANNOTATION_PUBLICATION.md):
   canonical word/sample/speaker mapping, abort-safe publication, and annotation
   state continuation across a real process restart.

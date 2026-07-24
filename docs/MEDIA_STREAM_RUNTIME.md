@@ -134,4 +134,5 @@ The first continuation layer is complete in
    [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and exact
    encoded payload composition complete through the
    [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md);
-   arbitrary multi-output continuity remains.
+   bounded multi-output continuity is complete through the
+   [Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md).

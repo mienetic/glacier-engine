@@ -207,6 +207,14 @@ python3 -m unittest bench.tests.test_generated_media_payload_archive
 zig build generated-media-payload-archive-restart-demo \
   -Doptimize=ReleaseSafe -Dmetal=false
 
+# Extend the fixed V1 archive through an independent bounded registry ABI:
+# verify canonical multi-image/chunk/segment order, exact payloads, and complete
+# previous/successor three-object recovery across seven process-death phases
+zig test src/core/generated_media_output_registry.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_generated_media_output_registry
+zig build generated-media-output-registry-restart-demo \
+  -Doptimize=ReleaseSafe -Dmetal=false
+
 # Provider request, settlement, cost, and durable journal evidence
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-transport-demo -Doptimize=ReleaseSafe -Dmetal=false

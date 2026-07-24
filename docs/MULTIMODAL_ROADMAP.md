@@ -7,12 +7,12 @@ terminal-latent restart, generated-PCM publication with exact application
 acknowledgement across process restart, ordered generated-video manifests with
 exact application display acknowledgement, atomic generated-output checkpoint
 selection, exact eight-object generated-media payload archive composition,
-two-process continuation, crash-atomic checkpoint sets, and a post-restore
-generation-three successor; bounded processor/cache state and payloads
-integrated as fifth and sixth durable archive objects with fresh-Bank restore;
-production-model execution, production encoder/container adapters, arbitrary
-multi-output continuity, physical playback/display evidence, power-loss
-campaigns, and external formats remain gated**.
+bounded multi-output registry continuity, two-process continuation,
+crash-atomic checkpoint sets, and a post-restore generation-three successor;
+bounded processor/cache state and payloads integrated as fifth and sixth
+durable archive objects with fresh-Bank restore; production-model execution,
+production encoder/container adapters, physical playback/display evidence,
+power-loss campaigns, external formats, and quality evidence remain gated**.
 
 Glacier will expand from token-oriented execution into image, audio, and video
 work only after a restarted request can reacquire exact resource ownership and
@@ -122,8 +122,18 @@ encoded payload, encoder implementation, and format identities remain
 separate. One outer filesystem selector exposes generation one after five of
 the seven publication-phase deaths and generation two after the final two,
 then recovery converges idempotently. Production encoder/container adapters,
-arbitrary multi-output continuity, native Linux campaigns, device evidence, and
-power-loss behavior remain separate gates.
+native Linux campaigns, device evidence, and power-loss behavior remain
+separate gates.
+A separate bounded output-registry ABI now continues multiple outputs per
+modality without changing the fixed V1 checkpoint or payload-archive wires.
+Each generation orders one to four output entries per present modality, up to
+twelve total, by `(modality, ordinal)`. A fixed manifest, fixed-entry
+pack, and exact encoded-payload pack form exactly three archive extension
+objects under the existing selector. The retained generations advance
+image/audio/video counts from `2/3/2` to `2/2/3` while validating exact
+ordinal, unit, timeline, and predecessor continuity plus opaque state and
+completion-root binding. The registry does not decode the earlier typed
+producer wires; that validation remains an adapter precondition.
 
 The goal is one typed media substrate rather than three unrelated pipelines.
 Every modality must preserve the same Glacier properties:
@@ -326,8 +336,12 @@ First slices:
 11. ~~exact encoded-payload archive membership;~~ complete as one of three
     payload objects in the canonical eight-object generation, with explicit
     raw output, encoder, format, and encoded-byte identity; and
-12. multi-image/chunk manifests, production decoder/encoder integration, and
-    external-format conformance.
+12. ~~bounded multi-image registry continuity;~~ complete for two images in
+    each retained registry generation, including exact ordinal, raw/encoded,
+    encoder, format, opaque state, zero completion, and predecessor roots; the
+    registry requires `completed` without a completion receipt but does not
+    decode the typed producer wire; and
+13. production decoder/encoder integration and external-format conformance.
 
 Promotion gate: every accepted pixel maps to an exact source region and
 preprocessing plan; orientation/color drift, decompression bombs, foreign
@@ -377,9 +391,14 @@ First slices:
     exact playback acknowledgement and a quiescent post-acknowledgement state;
 11. ~~exact encoded-payload archive membership;~~ complete for one
     acknowledged chunk in the canonical eight-object generation;
-12. production renderer/codec/container adapters, multi-chunk continuity, and
-    authorized physical playback evidence; and
-13. microphone/network adapters outside the authority-free core.
+12. ~~bounded multi-chunk registry continuity;~~ complete for three then two
+    audio entries with exact unit/timeline, raw/encoded, encoder, format, opaque
+    state/completion, and predecessor roots; completed plus nonzero completion
+    evidence is structurally required, while typed acknowledgement/state
+    validation remains a producer-adapter precondition;
+13. production renderer/codec/container adapters, external-format conformance,
+    and authorized physical playback evidence; and
+14. microphone/network adapters outside the authority-free core.
 
 Promotion gate: no sample is silently dropped, duplicated, reordered, mixed, or
 resampled; streaming restart resumes at an exact sample/timeline boundary; input
@@ -429,14 +448,21 @@ First slices:
     exact display acknowledgement and a quiescent post-acknowledgement state;
 13. ~~exact encoded-payload archive membership;~~ complete for one
     acknowledged segment in the canonical eight-object generation; and
-14. multi-segment continuity, production renderer/codec/container integration,
-    and external-container conformance.
+14. ~~bounded multi-segment registry continuity;~~ complete for two then three
+    video entries with exact frame/timeline, raw/encoded, encoder, format,
+    opaque state/completion, and predecessor roots; completed plus nonzero
+    completion evidence is structurally required, while typed
+    acknowledgement/state validation remains a producer-adapter precondition;
+    and
+15. production renderer/codec/container integration and external-container
+    conformance.
 
 Promotion gate: frame selection and temporal ordering replay exactly; explicit
 VFR, stateful restart, and generated-segment restart fixtures are integrated,
-while external-container seek, corrupt-frame, missing-audio, multi-segment
-continuity, physical display, and production campaigns must still preserve
-resource accounting and never publish a segment twice.
+while external-container seek, corrupt-frame, missing-audio, production
+multi-segment execution beyond bounded registry composition, physical display,
+and production campaigns must still preserve resource accounting and never
+publish a segment twice.
 
 ## Generated output composition
 
@@ -455,8 +481,13 @@ audio, and video fixtures:
    lineage, an independent Python oracle, one outer selector, and seven
    process-death phases selecting the exact previous generation five times and
    successor twice before idempotent recovery;
-5. extend continuity through a bounded modality/output registry to multiple
-   images, audio chunks, and video segments;
+5. ~~extend continuity through a bounded modality/output registry to multiple
+   images, audio chunks, and video segments;~~ complete under an independent
+   ABI with fixed 544-byte entries in canonical `(modality, ordinal)` order,
+   one to four outputs per present modality, at most twelve, one 544-byte
+   manifest, structural completion fields, opaque state/completion roots, exact
+   concatenated payload bytes, exact preceding archive bytes, and exactly three
+   extension objects under the existing selector;
 6. add production encoder/container adapters and external-format conformance;
 7. retain native Linux and separately scoped initial-publication/power-loss
    campaigns; and
@@ -464,7 +495,9 @@ audio, and video fixtures:
    evidence.
 
 See [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md) and the
-[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md).
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
+then the
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md).
 
 ## Provider efficiency
 

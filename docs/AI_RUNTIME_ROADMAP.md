@@ -228,9 +228,14 @@ policy, challenge, archive-parent, and manifest-predecessor identities remain
 separate. One outer filesystem selector recovers the exact previous generation
 after five publication-phase process deaths and the exact successor after two,
 then converges idempotently. An independent Python oracle verifies the archive
-without model execution. Production encoder/container adapters, arbitrary
-multi-output continuity, native Linux filesystem campaigns, physical
-playback/display evidence, and power-loss durability remain gated.
+without model execution. An independent bounded registry ABI now orders one to
+four outputs per present modality, up to twelve, and binds exact
+ordinal/unit/timeline/predecessor continuity, opaque state/completion roots, and
+exact payload bytes in three extension objects under the same selector. Typed
+producer validation remains an adapter precondition. Production
+encoder/container adapters, external-format conformance, native Linux
+filesystem campaigns, physical playback/display evidence, and power-loss
+durability remain gated.
 
 Promotion gate: accepted model inputs and visible outputs map to exact source or
 generation plans, with bounded geometry/time, cancellation, continuation, and
@@ -271,8 +276,8 @@ Responsibilities:
 Current state: **integrated for tokens, model-free media, bounded typed
 perception fixtures, generated-image publication, generated audio/video
 publication with application acknowledgement, and atomic three-modality
-generated-output selection plus exact encoded-payload archive
-composition**. Media transactions compose
+generated-output selection plus exact encoded-payload archive composition and
+bounded multi-output registry continuity**. Media transactions compose
 exact resource admission, transformed output, timeline advancement,
 transcript/video-segment visibility, deterministic merge decisions, cross-modal
 result links, terminal-latent image/provenance visibility, and ordered PCM
@@ -283,8 +288,13 @@ successors. One fixed checkpoint then cross-binds the image, audio, and video
 results, outputs, post-publication states, completions, totals, and predecessor
 behind one atomic selector. A downstream eight-object archive now binds that
 typed generation to three exact encoded payloads behind one outer filesystem
-selector. Generic tensor/action envelopes, partial-stream policy, production
-encoder/container adapters, arbitrary multi-output continuity, and physical
+selector. An independent registry ABI extends the retained shape to one through
+four output entries per present modality, no more than twelve, using ordered
+fixed entries and exact concatenated payload bytes in three archive objects
+under the same selector. Registry completion/state roots remain opaque; typed
+producer acknowledgement/state validation is a separate adapter precondition.
+Generic tensor/action envelopes, partial-stream policy, production
+encoder/container adapters, external-format conformance, and physical
 playback/display evidence remain planned.
 
 Promotion gate: every output family has a named atomic unit, rollback behavior,
@@ -358,11 +368,11 @@ expand the base adapter's capabilities.
 | Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision, audio, and temporal-video embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, fresh-process stateful transcript continuation, and restartable exact word-timing/speaker publication integrated; production model gated | Add language/punctuation, overlapping-speaker policy, and crash-atomic checkpoint composition | No sample loss/duplication, exact streaming restart, annotation lineage, calibrated production quality |
-| Speech and audio generation | TTS, codec/audio token generation | Bounded exact-integer PCM publication, cancellation-safe retry, one-buffer backpressure, application acknowledgement, distinct-process restart, shared generated-output checkpoint composition, and one exact encoded payload in the shared archive integrated; production model/device paths gated | Add a production renderer/codec adapter and multi-chunk continuity | Quality evidence, production container conformance, explicit device authority, physical playback evidence |
+| Speech and audio generation | TTS, codec/audio token generation | Bounded exact-integer PCM publication, cancellation-safe retry, one-buffer backpressure, application acknowledgement, distinct-process restart, shared generated-output checkpoint composition, and multi-chunk registry continuity with exact encoded payloads integrated; production model/device paths gated | Add a production renderer/codec adapter and external-format conformance | Quality evidence, production container conformance, explicit device authority, physical playback evidence |
 | Video understanding | frame/segment encode, search, summarize | Exact-integer strided-frame encoder, explicit VFR windows, fresh-process stateful segment continuation, canonical merge timeline, and exact audio/transcript-video result-link continuation integrated; production model gated | Add external container timestamp normalization and production backend conformance | Stateful continuation, explicit discontinuity evidence, production quality evidence |
-| Image generation | diffusion/flow step, decode latent, publish image | Exact retained-state continuation plus bounded terminal-latent decode, cancellation-safe atomic image/provenance/result publication, distinct-process proof, shared generated-output checkpoint composition, and one exact encoded payload in the shared archive integrated; production model gated | Add a production decoder/encoder adapter and multi-image continuity | Multi-step continuation, external format conformance, and quality/performance evidence |
-| Video generation | temporal latent steps, frame/segment publication | Ordered two-frame raw manifest publication, cancellation-safe retry, one-segment backpressure, application display acknowledgement, distinct-process restart, shared generated-output checkpoint composition, and one exact encoded payload in the shared archive integrated; production model/device paths gated | Add production adapters and multi-segment encoded continuity | Production model quality, external container conformance, explicit display authority |
-| Audio/music generation | acoustic or token steps, waveform decode | Shared bounded exact-integer waveform-output transaction integrated; music models gated | Add a legal production artifact or a richer multi-chunk manifest fixture | Timeline continuity, chunk lineage, rights/provenance policy, calibrated quality |
+| Image generation | diffusion/flow step, decode latent, publish image | Exact retained-state continuation plus bounded terminal-latent decode, cancellation-safe atomic image/provenance/result publication, distinct-process proof, shared generated-output checkpoint composition, and multi-image registry continuity with exact encoded payloads integrated; production model gated | Add a production decoder/encoder adapter and external-format conformance | Multi-step continuation, external format conformance, and quality/performance evidence |
+| Video generation | temporal latent steps, frame/segment publication | Ordered two-frame raw manifest publication, cancellation-safe retry, one-segment backpressure, application display acknowledgement, distinct-process restart, shared generated-output checkpoint composition, and multi-segment registry continuity with exact encoded payloads integrated; production model/device paths gated | Add production adapters and external-container conformance | Production model quality, external container conformance, explicit display authority |
+| Audio/music generation | acoustic or token steps, waveform decode | Shared bounded exact-integer waveform-output transaction and multi-chunk registry continuity integrated; music models gated | Add a legal production artifact or production renderer/codec fixture | Timeline continuity, chunk lineage, rights/provenance policy, calibrated quality |
 | Multimodal fusion | cross-attention, joint embedding, interleaved generation | Idea; shared identities exist | Image+text or audio+text synthetic fusion fixture | Each modality retains source/state identity through one output transaction |
 | Tool-use and agent policy | choose action, arguments, observation, continue | Idea; scheduler/provider primitives exist | Fake tool with bounded schema and no ambient I/O | Separate action authorization, idempotency, result identity, cancellation |
 | Retrieval and recommendation | embed, search, rerank, recommend | Idea | In-memory fixed corpus and exact top-k tie policy | Index/version identity, tenant filtering, deterministic tie/evidence policy |
@@ -520,11 +530,16 @@ stay within admitted memory/time bounds, and resume or cancel at declared units.
   selector, an independent Python oracle, and seven process-death phases
   selecting the previous generation five times and successor twice before
   idempotent convergence;
-- add production image decoder/encoder adapters, multi-image manifests, and
-  external format conformance;
-- add production audio/video renderers/codecs, multi-chunk audio and
-  multi-segment video continuity, and authorized physical playback/display
-  evidence;
+- extend that fixed archive through an independent bounded output-registry ABI;
+  complete for one to four outputs per present modality, at most twelve,
+  canonical `(modality, ordinal)` entries, exact concatenated encoded payloads,
+  structural completion fields, opaque state/completion roots, exact
+  unit/timeline/predecessor continuity, and two model-free `2/3/2` then `2/2/3`
+  image/audio/video generations in exactly three archive objects under the
+  existing selector;
+- add production image decoder/encoder and audio/video renderer/codec/container
+  adapters with external-format conformance;
+- add authorized physical playback/display and quality evidence;
 - retain native Linux filesystem campaigns and design separately scoped initial
   publication and power-loss durability evidence;
 - add cross-modal cache/state identity and fusion fixtures;
@@ -534,11 +549,12 @@ Current gate progress: deterministic generated-image, generated-audio, and
 generated-video fixtures survive cancellation and process restart without
 duplicate visible output; audio and video additionally gate their successors
 on exact application acknowledgement. Shared generated-output checkpoint
-composition and exact encoded-payload archive composition are complete for two
-model-free generations. The R4 production exit gate still requires production
-encoder/container adapters, arbitrary multi-output continuity, retained
-platform and power-loss evidence, and quality/performance evidence under
-declared artifacts.
+composition, exact encoded-payload archive composition, and bounded
+multi-image/chunk/segment registry continuity are complete for two model-free
+generations. The R4 production exit gate still requires production
+encoder/container adapters, typed producer admission, external-format
+conformance, retained platform and power-loss evidence, and
+quality/performance evidence under declared artifacts.
 
 ### R5 — Agents, retrieval, and specialized families
 

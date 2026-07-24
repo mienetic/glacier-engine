@@ -226,12 +226,28 @@ the complete previous generation five times or successor twice through one
 outer selector, then converge idempotently. See the
 [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md).
 
+**Completed slice:** an independent generated-media output-registry ABI now
+packs one to four output entries per present modality, at most twelve, as
+canonical fixed entries plus exact encoded payloads. The retained generations
+advance from `2/3/2` to `2/2/3` image/audio/video outputs in exactly three
+extension objects under the existing selector. Image entries structurally
+require no completion receipt; audio/video require a completed flag and nonzero
+opaque completion root. Exact ordinal, unit, timeline, and predecessor
+continuity plus bound opaque state, completion, encoder, format, and payload
+roots reject mixed-lineage and stale-root substitutions. A fully rehashed
+alternative has a new archive identity and still requires typed producer
+authorization; acknowledgement/state validation remains an adapter
+precondition. See the
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md).
+
 **Next slices:** add external container timestamp normalization, a production
 image decoder adapter, richer language/punctuation or overlapping-speaker
-policy, a production image/audio/video encoder or container adapter, bounded
-arbitrary multi-output continuity, a native Linux checkpoint campaign, or a
-separately scoped initial power-loss durability design. Each is independently
-contributor-sized and must preserve the fixed core contracts.
+policy, a production image/audio/video encoder or container adapter with an
+external-format fixture, a typed producer adapter that validates existing
+acknowledgement/state wires before registry admission, a native Linux
+checkpoint campaign, a separately scoped initial power-loss durability design,
+a verified registry inspector, or authorized device/quality evidence. Each is
+independently contributor-sized and must preserve the fixed core contracts.
 
 ### AI runtime family registry
 
@@ -279,9 +295,8 @@ releases all ownership. See
 
 **Next slice:** add a generic non-media encoder using the converged stateless
 lifecycle, adapt a production renderer/codec to the bounded generated-audio
-transaction and exact payload archive, or extend the fixed three-payload
-archive through a bounded modality/output registry without weakening its
-lineage checks.
+transaction and output registry, or build a read-only registry inspector that
+labels unverified bytes before rendering entries.
 
 ### ResourceBank property tests
 

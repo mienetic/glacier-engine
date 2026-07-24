@@ -1,8 +1,8 @@
 # Generated Audio Publication and Playback Acknowledgement
 
-Status: **integrated model-free conformance path; production synthesizers,
-device playback, external codecs, and crash-atomic multi-file composition
-remain gated**.
+Status: **integrated model-free conformance path with bounded downstream
+multi-chunk registry continuity; production synthesizers, device playback,
+external codecs, and crash-atomic publication of source records remain gated**.
 
 Glacier can publish bounded generated PCM chunks, carry an outstanding chunk
 across a real process restart, and require an exact application acknowledgement
@@ -117,14 +117,21 @@ Shared image/audio/video checkpoint selection is now integrated for fully
 acknowledged audio: a pending or partially acknowledged chunk cannot enter the
 checkpoint. One exact encoded audio payload now also composes with its typed
 member, the image/video members, and the shared checkpoint in the canonical
-eight-object payload archive. Next work is production renderer/codec/container
-integration, multi-chunk continuity, partial-buffer policy where a product
-explicitly needs it, and physical playback adapters outside the authority-free
-core.
+eight-object payload archive. A separate registry ABI now composes three then
+two audio entries with multiple image/video entries and exact encoded payloads
+while preserving unit, timeline, and predecessor continuity and binding opaque
+state/completion roots. Registry admission structurally requires
+`completion_required`, `completed`, and a nonzero completion root; it does not
+decode these playback acknowledgement/state wires. Typed producer validation,
+production renderer/codec/container integration, external-format conformance,
+partial-buffer policy where a product explicitly needs it, and physical
+playback adapters remain outside this registry slice.
 
 The sibling ordered raw-video path is specified in
 [Generated Video Manifest and Display Acknowledgement](GENERATED_VIDEO_DISPLAY.md).
 The shared visibility boundary is specified in
 [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md), followed by
 the
-[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md).
+[Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
+then the
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md).

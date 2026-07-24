@@ -129,11 +129,12 @@ generated-video manifest publication integrated, shared image/audio/video
 generated-output checkpoint selection is also complete. The next multimodal
 runtime slices are external media format adapters, richer
 language/punctuation and overlapping-speaker policy, production
-generative-media encoder/container adapters, arbitrary multi-output
-continuity, and retained native Linux/power-loss campaigns. Exact model-free
-encoded payload archive composition is complete for one image/audio/video
-output generation. Physical playback and display evidence remain separate
-promotion tracks.
+generative-media encoder/container adapters, and retained native
+Linux/power-loss campaigns. Exact model-free encoded payload archive
+composition is complete for one image/audio/video output generation, and
+bounded multi-output image/audio/video registry continuity is complete under an
+independent ABI. Physical playback, display, external-format, and quality
+evidence remain separate promotion tracks.
 
 See [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md),
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md),
@@ -143,4 +144,5 @@ See [Typed Video-Segment Adapter](VIDEO_SEGMENT_ADAPTER.md),
 [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md),
 [Atomic Generated-Media Checkpoints](GENERATED_MEDIA_CHECKPOINT.md),
 [Generated-Media Encoded Payload Archive](GENERATED_MEDIA_PAYLOAD_ARCHIVE.md),
+[Bounded Generated-Media Output Registry](GENERATED_MEDIA_OUTPUT_REGISTRY.md),
 and [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md).
