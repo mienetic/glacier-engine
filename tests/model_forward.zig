@@ -217,6 +217,110 @@ const PreparedTextSink = struct {
     }
 };
 
+fn expectPreparedStartEvent(
+    event: engine.lane_weave_qos.EventV1,
+    plan: engine.prepared_text_session.PlanV1,
+) !void {
+    try testing.expectEqual(
+        engine.lane_weave_qos.EventKind.admission_accepted,
+        event.kind,
+    );
+    try testing.expectEqualDeep(plan.claim, event.spec.claim);
+    try testing.expectEqual(plan.max_new_tokens, event.spec.work_quanta);
+    try testing.expectEqualDeep(
+        plan.claim,
+        event.resource_receipt.claim,
+    );
+    try testing.expectEqual(@as(u64, 1), event.spec.claim.queue_slots);
+    try testing.expectEqual(
+        plan.max_new_tokens,
+        event.remaining_after,
+    );
+}
+
+const StartRecoveryFaultAllocator = struct {
+    scheduler: *engine.lane_weave_qos.Scheduler,
+    backing: std.mem.Allocator,
+    triggered: bool = false,
+
+    fn allocator(self: *@This()) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
+        };
+    }
+
+    fn alloc(
+        raw: *anyopaque,
+        len: usize,
+        alignment: std.mem.Alignment,
+        return_address: usize,
+    ) ?[*]u8 {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        if (!self.triggered) {
+            self.triggered = true;
+            self.scheduler.closed = true;
+            return null;
+        }
+        return self.backing.rawAlloc(
+            len,
+            alignment,
+            return_address,
+        );
+    }
+
+    fn resize(
+        raw: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        new_len: usize,
+        return_address: usize,
+    ) bool {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        return self.backing.rawResize(
+            memory,
+            alignment,
+            new_len,
+            return_address,
+        );
+    }
+
+    fn remap(
+        raw: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        new_len: usize,
+        return_address: usize,
+    ) ?[*]u8 {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        return self.backing.rawRemap(
+            memory,
+            alignment,
+            new_len,
+            return_address,
+        );
+    }
+
+    fn free(
+        raw: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        return_address: usize,
+    ) void {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        self.backing.rawFree(
+            memory,
+            alignment,
+            return_address,
+        );
+    }
+};
+
 const TestEligibilityProvider = struct {
     calls: usize = 0,
     fail_step: ?usize = null,
@@ -773,61 +877,364 @@ test "compact multi-page INT4 generation matches eager generation" {
             .max_weight = 1,
         },
     );
-    const failed_decision = try failed_scheduler.admit(.{
+    const failed_scheduling: engine.prepared_text_session.SchedulingV1 = .{
         .tenant_key = 61,
         .request_key = 62,
         .request_generation = 1,
         .resource_owner_key = 63,
         .weight = 1,
-        .work_quanta = session_options.max_new_tokens,
-        .claim = session_plan.claim,
-    });
-    const failed_admission = switch (failed_decision) {
-        .admitted => |value| value,
-        .rejected => return error.TestUnexpectedResult,
     };
-    var failed_allocator = std.testing.FailingAllocator.init(
-        testing.allocator,
-        .{ .fail_index = 0 },
-    );
     var failed_session: engine.prepared_text_session.SessionV1 = .{};
-    try testing.expectError(
-        engine.generate.GenerateError.OutOfMemory,
-        failed_session.init(
+    var resource_sweep_completed = false;
+    const maximum_resource_fail_index: usize = 64;
+    var resource_fail_index: usize = 0;
+    while (resource_fail_index < maximum_resource_fail_index) : (resource_fail_index += 1) {
+        var failed_allocator = std.testing.FailingAllocator.init(
+            testing.allocator,
+            .{ .fail_index = resource_fail_index },
+        );
+        var sweep_scheduling = failed_scheduling;
+        sweep_scheduling.request_generation =
+            @intCast(resource_fail_index + 1);
+        const scheduler_before = try failed_scheduler.snapshot();
+        const bank_before = try failed_bank.snapshot();
+        var iteration_started = false;
+        const start_result = failed_session.start(
             failed_allocator.allocator(),
             &prepared_session_model,
             &prompt,
             session_options,
             session_plan,
+            sweep_scheduling,
             &failed_scheduler,
             &failed_bank,
-            failed_admission,
-            0x5458_4645,
+            0x5458_4645 + resource_fail_index,
+        );
+        if (start_result) |decision| {
+            try testing.expect(!failed_allocator.has_induced_failure);
+            switch (decision) {
+                .started => |event| try expectPreparedStartEvent(
+                    event,
+                    session_plan,
+                ),
+                .rejected => return error.TestUnexpectedResult,
+            }
+            // Exercise the safety path itself: no explicit cancel or retire
+            // occurs before deinit closes the live binding and frees state.
+            failed_session.deinit();
+            iteration_started = true;
+        } else |err| {
+            if (err != error.OutOfMemory) return err;
+            try testing.expect(failed_allocator.has_induced_failure);
+        }
+
+        try testing.expect(!failed_session.resources_initialized);
+        try testing.expect(!failed_session.publication_bound);
+        const scheduler_after = try failed_scheduler.snapshot();
+        const bank_after = try failed_bank.snapshot();
+        try testing.expect(bank_after.used.isZero());
+        try testing.expectEqual(@as(usize, 0), bank_after.committed_receipts);
+        try testing.expectEqual(@as(usize, 0), scheduler_after.active);
+        try testing.expectEqual(@as(usize, 0), scheduler_after.finished);
+        try testing.expectEqual(
+            scheduler_before.next_event_sequence + 2,
+            scheduler_after.next_event_sequence,
+        );
+        try testing.expectEqual(
+            bank_before.successful_commits + 1,
+            bank_after.successful_commits,
+        );
+        try testing.expectEqual(
+            bank_before.releases + 1,
+            bank_after.releases,
+        );
+        if (iteration_started) {
+            resource_sweep_completed = true;
+            break;
+        }
+    }
+    try testing.expect(resource_sweep_completed);
+
+    // A scheduler rejection happens before any private runtime allocation.
+    // The FailingAllocator therefore remains untouched and no adoption
+    // barrier survives the rejected decision.
+    const blocker_decision = try failed_scheduler.admit(.{
+        .tenant_key = 64,
+        .request_key = 65,
+        .request_generation = 1,
+        .resource_owner_key = 66,
+        .weight = 1,
+        .work_quanta = session_plan.max_new_tokens,
+        .claim = session_plan.claim,
+    });
+    const blocker = switch (blocker_decision) {
+        .admitted => |value| value,
+        .rejected => return error.TestUnexpectedResult,
+    };
+    var rejected_allocator = std.testing.FailingAllocator.init(
+        testing.allocator,
+        .{ .fail_index = 0 },
+    );
+    var rejected_session: engine.prepared_text_session.SessionV1 = .{};
+    const rejected_start = try rejected_session.start(
+        rejected_allocator.allocator(),
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        .{
+            .tenant_key = 67,
+            .request_key = 68,
+            .request_generation = 1,
+            .resource_owner_key = 69,
+            .weight = 1,
+        },
+        &failed_scheduler,
+        &failed_bank,
+        0x5458_4646,
+    );
+    switch (rejected_start) {
+        .started => return error.TestUnexpectedResult,
+        .rejected => |event| try testing.expectEqual(
+            engine.lane_weave_qos.RejectionReason.no_slot,
+            event.rejection_reason,
+        ),
+    }
+    try testing.expect(!rejected_allocator.has_induced_failure);
+    try testing.expect(!rejected_session.resources_initialized);
+    _ = try failed_scheduler.cancel(blocker.handle);
+
+    // Invalid prompt tokens are rejected while constructing the exact claim,
+    // before admission, allocation, or an event-chain transition can occur.
+    const invalid_prompt = [_]u32{
+        @intCast(prepared_session_model.config.vocab_size),
+    };
+    const invalid_scheduler_before = try failed_scheduler.snapshot();
+    const invalid_bank_before = try failed_bank.snapshot();
+    try testing.expectError(
+        engine.generate.GenerateError.ShapeMismatch,
+        engine.prepared_text_session.makePlanV1(
+            prepared_session_model,
+            &invalid_prompt,
+            session_options,
         ),
     );
-    try testing.expect(failed_allocator.has_induced_failure);
+    try testing.expect(!rejected_session.resources_initialized);
+    try testing.expect(!rejected_session.publication_bound);
+    try testing.expectEqualDeep(
+        invalid_scheduler_before,
+        try failed_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        invalid_bank_before,
+        try failed_bank.snapshot(),
+    );
+
+    // The accepted-to-cancel OOM rollback clears the barrier and leaves the
+    // same Session and Scheduler reusable for one successful atomic start.
+    const retry_start = try failed_session.start(
+        testing.allocator,
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        .{
+            .tenant_key = 61,
+            .request_key = 62,
+            .request_generation = 2,
+            .resource_owner_key = 63,
+            .weight = 1,
+        },
+        &failed_scheduler,
+        &failed_bank,
+        0x5458_4648,
+    );
+    switch (retry_start) {
+        .started => |event| try expectPreparedStartEvent(
+            event,
+            session_plan,
+        ),
+        .rejected => return error.TestUnexpectedResult,
+    }
+    _ = try failed_session.cancel();
+    failed_session.deinit();
     try testing.expect((try failed_bank.snapshot()).used.isZero());
-    var stale_session: engine.prepared_text_session.SessionV1 = .{};
+
+    // Retain one runtime check for the R1a compatibility path: an externally
+    // admitted request remains the chain head until init binds it, then the
+    // prepared Session owns cancellation and local resource teardown.
+    const compatibility_decision = try failed_scheduler.admit(.{
+        .tenant_key = 74,
+        .request_key = 75,
+        .request_generation = 1,
+        .resource_owner_key = 76,
+        .weight = 1,
+        .work_quanta = session_plan.max_new_tokens,
+        .claim = session_plan.claim,
+    });
+    const compatibility_admission = switch (compatibility_decision) {
+        .admitted => |value| value,
+        .rejected => return error.TestUnexpectedResult,
+    };
+    var compatibility_session: engine.prepared_text_session.SessionV1 = .{};
+    try compatibility_session.init(
+        testing.allocator,
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        &failed_scheduler,
+        &failed_bank,
+        compatibility_admission,
+        0x5458_4649,
+    );
+    _ = try compatibility_session.cancel();
+    compatibility_session.deinit();
+    try testing.expect((try failed_bank.snapshot()).used.isZero());
+
+    // Inject a transient Scheduler control-state fault from the first private
+    // allocation, after admission has installed its adoption barrier. The
+    // failed rollback must retain the exact single-use authority so the
+    // caller can repair the external fault and retry cancellation once.
+    const recovery_scheduler_before = try failed_scheduler.snapshot();
+    const recovery_bank_before = try failed_bank.snapshot();
+    var recovery_session: engine.prepared_text_session.SessionV1 = .{};
+    var recovery_allocator: StartRecoveryFaultAllocator = .{
+        .scheduler = &failed_scheduler,
+        .backing = testing.allocator,
+    };
     try testing.expectError(
-        engine.prepared_text_session.Error.InvalidAdmission,
-        stale_session.init(
-            testing.allocator,
+        engine.prepared_text_session.Error.RecoveryRequired,
+        recovery_session.start(
+            recovery_allocator.allocator(),
             &prepared_session_model,
             &prompt,
             session_options,
             session_plan,
+            .{
+                .tenant_key = 77,
+                .request_key = 78,
+                .request_generation = 1,
+                .resource_owner_key = 79,
+                .weight = 1,
+            },
             &failed_scheduler,
             &failed_bank,
-            failed_admission,
-            0x5458_4646,
+            0x5458_4650,
         ),
     );
-    try testing.expect((try failed_bank.snapshot()).used.isZero());
+    try testing.expect(recovery_allocator.triggered);
+    try testing.expect(!recovery_session.resources_initialized);
+    try testing.expect(!recovery_session.publication_bound);
+    const retained_adoption =
+        recovery_session.recovery_adoption orelse
+        return error.TestUnexpectedResult;
+    try expectPreparedStartEvent(
+        retained_adoption.admission.event,
+        session_plan,
+    );
+    try testing.expectEqual(
+        recovery_scheduler_before.next_event_sequence,
+        retained_adoption.admission.event.event_sequence,
+    );
+    try testing.expectEqualDeep(
+        recovery_scheduler_before.chain_head_sha256,
+        retained_adoption.admission.event.previous_sha256,
+    );
+
+    const recovery_scheduler_pending = try failed_scheduler.snapshot();
+    const recovery_bank_pending = try failed_bank.snapshot();
+    try testing.expect(recovery_scheduler_pending.closed);
+    try testing.expectEqual(@as(u32, 1), recovery_scheduler_pending.active);
+    try testing.expectEqualDeep(
+        session_plan.claim,
+        recovery_bank_pending.used,
+    );
+    try testing.expectEqual(
+        recovery_bank_before.committed_receipts + 1,
+        recovery_bank_pending.committed_receipts,
+    );
+    try testing.expectEqual(
+        recovery_bank_before.successful_commits + 1,
+        recovery_bank_pending.successful_commits,
+    );
+    try testing.expectEqual(
+        recovery_bank_before.releases,
+        recovery_bank_pending.releases,
+    );
+
+    // This direct field reset repairs only the test-injected fault; it is not
+    // a public recovery API. The retained adoption remains the sole authority
+    // for the accepted request.
+    failed_scheduler.closed = false;
+    const recovery_cancel =
+        try recovery_session.recoverStartAdoption();
+    try testing.expectEqual(
+        engine.lane_weave_qos.EventKind.cancel,
+        recovery_cancel.kind,
+    );
+    try testing.expectEqualDeep(
+        retained_adoption.admission.handle,
+        recovery_cancel.handle,
+    );
+    try testing.expectEqualDeep(
+        retained_adoption.admission.event.spec,
+        recovery_cancel.spec,
+    );
+    try testing.expectEqualDeep(
+        retained_adoption.admission.event.resource_receipt,
+        recovery_cancel.resource_receipt,
+    );
+    try testing.expectEqualDeep(
+        retained_adoption.admission.event.resource_receipt_sha256,
+        recovery_cancel.resource_receipt_sha256,
+    );
+    try testing.expectEqualDeep(
+        retained_adoption.admission.event.event_sha256,
+        recovery_cancel.previous_sha256,
+    );
+    try testing.expectEqual(
+        retained_adoption.admission.event.event_sequence + 1,
+        recovery_cancel.event_sequence,
+    );
+
+    const recovery_scheduler_after = try failed_scheduler.snapshot();
+    const recovery_bank_after = try failed_bank.snapshot();
+    try testing.expect(!recovery_scheduler_after.closed);
+    try testing.expectEqual(@as(u32, 0), recovery_scheduler_after.active);
+    try testing.expect(recovery_bank_after.used.isZero());
+    try testing.expectEqual(
+        recovery_bank_before.committed_receipts,
+        recovery_bank_after.committed_receipts,
+    );
+    try testing.expectEqual(
+        recovery_bank_before.successful_commits + 1,
+        recovery_bank_after.successful_commits,
+    );
+    try testing.expectEqual(
+        recovery_bank_before.releases + 1,
+        recovery_bank_after.releases,
+    );
+    try testing.expect(recovery_session.recovery_adoption == null);
+
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        recovery_session.recoverStartAdoption(),
+    );
+    recovery_session.deinit();
+    try testing.expectEqualDeep(
+        recovery_scheduler_after,
+        try failed_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        recovery_bank_after,
+        try failed_bank.snapshot(),
+    );
     _ = try failed_scheduler.close();
 
-    var session_bank_slots: [1]engine.resource_bank.Slot = undefined;
-    var session_lane_slots: [1]engine.lane_weave_qos.Slot = undefined;
-    var session_projection: [1]engine.lane_weave_qos.ProjectionSlot = undefined;
+    var session_bank_slots: [2]engine.resource_bank.Slot = undefined;
+    var session_lane_slots: [2]engine.lane_weave_qos.Slot = undefined;
+    var session_projection: [2]engine.lane_weave_qos.ProjectionSlot = undefined;
     var session_bank = try engine.resource_bank.Bank.init(
         &session_bank_slots,
         .{},
@@ -845,31 +1252,49 @@ test "compact multi-page INT4 generation matches eager generation" {
             .max_weight = 1,
         },
     );
-    const session_decision = try session_scheduler.admit(.{
-        .tenant_key = 71,
-        .request_key = 72,
-        .request_generation = 1,
-        .resource_owner_key = 73,
-        .weight = 1,
-        .work_quanta = session_options.max_new_tokens,
-        .claim = session_plan.claim,
-    });
-    const session_admission = switch (session_decision) {
-        .admitted => |value| value,
-        .rejected => return error.TestUnexpectedResult,
-    };
     var prepared_session: engine.prepared_text_session.SessionV1 = .{};
-    try prepared_session.init(
+    const session_start = try prepared_session.start(
         testing.allocator,
         &prepared_session_model,
         &prompt,
         session_options,
         session_plan,
+        .{
+            .tenant_key = 71,
+            .request_key = 72,
+            .request_generation = 1,
+            .resource_owner_key = 73,
+            .weight = 1,
+        },
         &session_scheduler,
         &session_bank,
-        session_admission,
         0x5458_4550,
     );
+    switch (session_start) {
+        .started => |event| try expectPreparedStartEvent(
+            event,
+            session_plan,
+        ),
+        .rejected => return error.TestUnexpectedResult,
+    }
+
+    // An unrelated accepted and cancelled request may advance the shared
+    // event chain immediately after start. The prepared Session is already
+    // bound and no longer depends on its admission remaining the chain head.
+    const interleaved_decision = try session_scheduler.admit(.{
+        .tenant_key = 81,
+        .request_key = 82,
+        .request_generation = 1,
+        .resource_owner_key = 83,
+        .weight = 1,
+        .work_quanta = 1,
+        .claim = .{ .queue_slots = 1 },
+    });
+    const interleaved = switch (interleaved_decision) {
+        .admitted => |value| value,
+        .rejected => return error.TestUnexpectedResult,
+    };
+    _ = try session_scheduler.cancel(interleaved.handle);
     defer prepared_session.deinit();
     var session_sink: PreparedTextSink = .{};
     const rejected_permit = try session_scheduler.prepareService();
@@ -963,7 +1388,10 @@ test "compact multi-page INT4 generation matches eager generation" {
         session_checkpoint.publication.state.output_length,
     );
     _ = try prepared_session.retire();
-    try testing.expect((try session_bank.snapshot()).used.isZero());
+    const final_session_bank = try session_bank.snapshot();
+    try testing.expect(final_session_bank.used.isZero());
+    try testing.expectEqual(@as(u64, 2), final_session_bank.successful_commits);
+    try testing.expectEqual(@as(u64, 2), final_session_bank.releases);
     _ = try session_scheduler.close();
 
     // ResourceBank admission is an execution contract, not a numerical path:

@@ -63,6 +63,38 @@ pub const OptionsV1 = struct {
     }
 };
 
+/// Caller-owned scheduling identity and QoS inputs. `SessionV1.start` derives
+/// the exact work count and every resource dimension from its verified plan,
+/// so callers cannot substitute execution ownership at admission.
+pub const SchedulingV1 = struct {
+    tenant_key: u64,
+    request_key: u64,
+    request_generation: u64,
+    resource_owner_key: u64,
+    weight: u16,
+    deadline_tick: u64 = 0,
+
+    fn requestSpec(self: SchedulingV1, plan: PlanV1) lane.RequestSpec {
+        return .{
+            .tenant_key = self.tenant_key,
+            .request_key = self.request_key,
+            .request_generation = self.request_generation,
+            .resource_owner_key = self.resource_owner_key,
+            .weight = self.weight,
+            .work_quanta = plan.max_new_tokens,
+            .deadline_tick = self.deadline_tick,
+            .claim = plan.claim,
+        };
+    }
+};
+
+/// `started` means the Session owns the accepted admission and its exact
+/// publication binding. A rejection leaves the Session uninitialized.
+pub const StartDecisionV1 = union(enum) {
+    started: lane.EventV1,
+    rejected: lane.EventV1,
+};
+
 pub const PlanV1 = struct {
     abi_version: u64 = plan_abi,
     image_identity: runtime_image.ImageIdentityV1,
@@ -354,7 +386,9 @@ const Resources = struct {
 };
 
 /// Address-stable persistent session. Place it at its final address before
-/// calling `init`; the concrete publication adapter binds its field addresses.
+/// calling `start` or `init`; the concrete publication adapter binds its field
+/// addresses. Do not move, copy, or concurrently access it until the active
+/// lifecycle, including any start-adoption recovery, has ended.
 pub const SessionV1 = struct {
     model: *const loader.LoadedModel = undefined,
     scheduler: *lane.Scheduler = undefined,
@@ -368,6 +402,126 @@ pub const SessionV1 = struct {
     resources_initialized: bool = false,
     publication_bound: bool = false,
     finished: bool = false,
+    recovery_adoption: ?lane.PublicationAdoptionV1 = null,
+
+    /// Atomically admit and adopt one exact plan. The Scheduler installs a
+    /// global adoption barrier before any charged runtime allocation, so no
+    /// competing Scheduler transition can split admission from publication
+    /// binding. Initialization failure normally consumes the authority through
+    /// an accepted-to-cancel transition and releases the full claim. If that
+    /// cleanup itself returns an error, the Session retains the exact authority
+    /// and reports `RecoveryRequired`.
+    ///
+    /// The barrier deliberately remains active during allocation and prefill;
+    /// other callers of the same Scheduler receive `AdoptionInFlight` until
+    /// this method commits or cancels the adoption.
+    pub fn start(
+        self: *SessionV1,
+        allocator: std.mem.Allocator,
+        model: *const loader.LoadedModel,
+        prompt: []const u32,
+        options: OptionsV1,
+        plan: PlanV1,
+        scheduling: SchedulingV1,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+        request_epoch: u64,
+    ) !StartDecisionV1 {
+        if (self.resources_initialized or self.publication_bound or
+            self.recovery_adoption != null)
+            return Error.InvalidState;
+        const expected = try makePlanV1(model.*, prompt, options);
+        if (!std.meta.eql(expected, plan))
+            return Error.InvalidPlan;
+        if (scheduler.bank != bank)
+            return Error.InvalidAdmission;
+        const max_kv_positions = std.math.add(
+            usize,
+            prompt.len,
+            options.max_new_tokens - 1,
+        ) catch return generate.GenerateError.ContextTooLong;
+
+        const decision = try scheduler.admitForPublicationAdoption(
+            scheduling.requestSpec(plan),
+            request_epoch,
+            @intFromPtr(&self.publication_session.inner),
+        );
+        const adoption = switch (decision) {
+            .rejected => |event| return .{ .rejected = event },
+            .adopted => |value| value,
+        };
+
+        self.initializeAdopting(
+            allocator,
+            model,
+            prompt,
+            options,
+            plan,
+            scheduler,
+            bank,
+            adoption,
+            max_kv_positions,
+        ) catch |err| {
+            _ = scheduler.cancelPublicationAdoption(adoption) catch {
+                self.* = .{
+                    .scheduler = scheduler,
+                    .recovery_adoption = adoption,
+                };
+                return Error.RecoveryRequired;
+            };
+            return err;
+        };
+        return .{ .started = adoption.admission.event };
+    }
+
+    fn initializeAdopting(
+        self: *SessionV1,
+        allocator: std.mem.Allocator,
+        model: *const loader.LoadedModel,
+        prompt: []const u32,
+        options: OptionsV1,
+        plan: PlanV1,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+        adoption: lane.PublicationAdoptionV1,
+        max_kv_positions: usize,
+    ) !void {
+        const resources = try Resources.init(
+            allocator,
+            model.*,
+            max_kv_positions,
+            options.max_new_tokens,
+        );
+        const initial_prng = std.Random.DefaultPrng.init(options.seed);
+        self.* = .{
+            .model = model,
+            .scheduler = scheduler,
+            .plan = plan,
+            .options = options,
+            .resources = resources,
+            .rng_state = initial_prng.s,
+            .resources_initialized = true,
+            .publication_bound = true,
+        };
+        errdefer {
+            self.resources.deinit();
+            self.* = .{};
+        }
+
+        try self.prefill(prompt);
+        try self.publication_session.initAdopting(
+            scheduler,
+            bank,
+            adoption,
+            .{
+                .cache = &self.resources.cache,
+                .rng_state = &self.rng_state,
+                .sampling_calls = &self.sampling_calls,
+                .output = self.resources.output,
+                .output_len = &self.output_len,
+            },
+        );
+    }
 
     /// Adopt the exact just-admitted request. From `Scheduler.admit` through
     /// this call's return, the caller must not make another public call on the
@@ -387,7 +541,8 @@ pub const SessionV1 = struct {
         admission: lane.Admission,
         request_epoch: u64,
     ) !void {
-        if (self.resources_initialized or self.publication_bound)
+        if (self.resources_initialized or self.publication_bound or
+            self.recovery_adoption != null)
             return Error.InvalidState;
         const expected = try makePlanV1(model.*, prompt, options);
         if (!std.meta.eql(expected, plan))
@@ -451,7 +606,25 @@ pub const SessionV1 = struct {
         admission_adopted = false;
     }
 
+    /// Retry the exact accepted-to-cancel cleanup retained after `start`
+    /// reports `RecoveryRequired`. This method does not diagnose or repair the
+    /// condition that prevented the original cancellation.
+    pub fn recoverStartAdoption(self: *SessionV1) !lane.EventV1 {
+        const adoption = self.recovery_adoption orelse
+            return Error.InvalidState;
+        if (self.resources_initialized or self.publication_bound)
+            return Error.InvalidState;
+        const event = try self.scheduler.cancelPublicationAdoption(adoption);
+        self.* = .{};
+        return event;
+    }
+
     pub fn deinit(self: *SessionV1) void {
+        if (self.recovery_adoption != null) {
+            _ = self.recoverStartAdoption() catch
+                @panic("prepared text adoption recovery failed");
+            return;
+        }
         if (!self.resources_initialized) return;
         if (self.publication_bound) {
             self.publication_session.close() catch
