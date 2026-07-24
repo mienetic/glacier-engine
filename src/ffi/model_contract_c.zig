@@ -7,6 +7,7 @@
 const std = @import("std");
 const core = @import("glacier_core");
 const contract = core.model_contract;
+const support = core.runtime_support_registry;
 
 pub const contract_c_abi_v1: u64 = 1;
 
@@ -18,12 +19,51 @@ pub const Status = enum(u32) {
     invalid_plan = 4,
     invalid_result = 5,
     binding_mismatch = 6,
+    out_of_range = 7,
+    invalid_query = 8,
 };
 
 const zero_digest: contract.Digest = [_]u8{0} ** 32;
 
+pub const ModelSupportProfileV1 = extern struct {
+    profile_abi: u64,
+    lifecycle: u64,
+    evidence: u64,
+    family: u64,
+    operation: u64,
+    input_kind: u64,
+    output_kind: u64,
+    numerical_policy: u64,
+    max_batch_items: u64,
+    max_input_features: u64,
+    max_output_dimensions: u64,
+    allowed_capabilities: u64,
+};
+
+pub const ModelSupportQueryV1 = extern struct {
+    family: u64,
+    operation: u64,
+    input_kind: u64,
+    output_kind: u64,
+    numerical_policy: u64,
+    batch_items: u64,
+    input_features: u64,
+    output_dimensions: u64,
+    required_capabilities: u64,
+};
+
+pub const ModelSupportResultV1 = extern struct {
+    compatible: u64,
+    unsupported_reason: u64,
+    matching_profile_mask: u64,
+};
+
 export fn glacier_contract_abi_v1() callconv(.c) u64 {
     return contract_c_abi_v1;
+}
+
+export fn glacier_model_support_registry_abi_v1() callconv(.c) u64 {
+    return support.registry_abi;
 }
 
 export fn glacier_model_contract_verify_v1(
@@ -49,6 +89,106 @@ export fn glacier_model_contract_verify_v1(
     );
     result_root.* = verified_root;
     return statusCode(status);
+}
+
+export fn glacier_model_support_profile_count_v1() callconv(.c) u64 {
+    return support.profiles.len;
+}
+
+export fn glacier_model_support_profile_get_v1(
+    index: u64,
+    out_profile: ?*ModelSupportProfileV1,
+    out_profile_size: usize,
+) callconv(.c) u32 {
+    const output = out_profile orelse return statusCode(.null_argument);
+    if (out_profile_size != @sizeOf(ModelSupportProfileV1))
+        return statusCode(.invalid_size);
+    output.* = std.mem.zeroes(ModelSupportProfileV1);
+    if (index >= support.profiles.len)
+        return statusCode(.out_of_range);
+
+    const profile = support.profiles[@intCast(index)];
+    output.* = .{
+        .profile_abi = profile.profile_abi,
+        .lifecycle = @intFromEnum(profile.lifecycle),
+        .evidence = @intFromEnum(profile.evidence),
+        .family = @intFromEnum(profile.support.family),
+        .operation = @intFromEnum(profile.support.operation),
+        .input_kind = @intFromEnum(profile.support.input_kind),
+        .output_kind = @intFromEnum(profile.support.output_kind),
+        .numerical_policy = @intFromEnum(
+            profile.support.numerical_policy,
+        ),
+        .max_batch_items = profile.support.max_batch_items,
+        .max_input_features = profile.support.max_input_features,
+        .max_output_dimensions = profile.support.max_output_dimensions,
+        .allowed_capabilities = profile.support.allowed_capabilities,
+    };
+    return statusCode(.ok);
+}
+
+export fn glacier_model_support_query_v1(
+    query: ?*const ModelSupportQueryV1,
+    query_size: usize,
+    out_result: ?*ModelSupportResultV1,
+    out_result_size: usize,
+) callconv(.c) u32 {
+    const output = out_result orelse return statusCode(.null_argument);
+    if (out_result_size != @sizeOf(ModelSupportResultV1))
+        return statusCode(.invalid_size);
+
+    const query_pointer = query orelse {
+        output.* = std.mem.zeroes(ModelSupportResultV1);
+        return statusCode(.null_argument);
+    };
+    if (query_size != @sizeOf(ModelSupportQueryV1)) {
+        output.* = std.mem.zeroes(ModelSupportResultV1);
+        return statusCode(.invalid_size);
+    }
+    const raw_query = query_pointer.*;
+    output.* = std.mem.zeroes(ModelSupportResultV1);
+
+    const family = std.meta.intToEnum(
+        contract.ModelFamilyIdV1,
+        raw_query.family,
+    ) catch return statusCode(.invalid_query);
+    const operation = std.meta.intToEnum(
+        contract.OperationIdV1,
+        raw_query.operation,
+    ) catch return statusCode(.invalid_query);
+    const input_kind = std.meta.intToEnum(
+        contract.InputKindV1,
+        raw_query.input_kind,
+    ) catch return statusCode(.invalid_query);
+    const output_kind = std.meta.intToEnum(
+        contract.OutputKindV1,
+        raw_query.output_kind,
+    ) catch return statusCode(.invalid_query);
+    const numerical_policy = std.meta.intToEnum(
+        contract.NumericalPolicyV1,
+        raw_query.numerical_policy,
+    ) catch return statusCode(.invalid_query);
+
+    const result = support.querySupportV1(.{
+        .family = family,
+        .operation = operation,
+        .input_kind = input_kind,
+        .output_kind = output_kind,
+        .numerical_policy = numerical_policy,
+        .batch_items = raw_query.batch_items,
+        .input_features = raw_query.input_features,
+        .output_dimensions = raw_query.output_dimensions,
+        .required_capabilities = raw_query.required_capabilities,
+    });
+    output.* = .{
+        .compatible = @intFromBool(result.matching_profile_mask != 0),
+        .unsupported_reason = if (result.deepest_unsupported_reason) |reason|
+            @intFromEnum(reason)
+        else
+            0,
+        .matching_profile_mask = result.matching_profile_mask,
+    };
+    return statusCode(.ok);
 }
 
 fn verifyModelContractV1(
@@ -138,6 +278,223 @@ fn planBindsResult(
         digestEqual(result.cache_payload_sha256, plan.cache_payload_sha256) and
         digestEqual(result.ownership_sha256, plan.ownership_sha256) and
         digestEqual(result.challenge_sha256, plan.challenge_sha256);
+}
+
+test "C model support profiles use fixed layouts and fail closed" {
+    try std.testing.expectEqual(@as(usize, 96), @sizeOf(ModelSupportProfileV1));
+    try std.testing.expectEqual(@as(usize, 72), @sizeOf(ModelSupportQueryV1));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(ModelSupportResultV1));
+    try std.testing.expectEqual(
+        support.registry_abi,
+        glacier_model_support_registry_abi_v1(),
+    );
+    try std.testing.expectEqual(
+        @as(u64, support.profiles.len),
+        glacier_model_support_profile_count_v1(),
+    );
+
+    var profile = std.mem.zeroes(ModelSupportProfileV1);
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_profile_get_v1(
+            0,
+            &profile,
+            @sizeOf(ModelSupportProfileV1),
+        ),
+    );
+    try std.testing.expectEqual(
+        support.profiles[0].profile_abi,
+        profile.profile_abi,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(support.LifecycleV1.stateless)),
+        profile.lifecycle,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.ModelFamilyIdV1.vision_understanding)),
+        profile.family,
+    );
+
+    profile.profile_abi = 1;
+    try std.testing.expectEqual(
+        statusCode(.out_of_range),
+        glacier_model_support_profile_get_v1(
+            support.profiles.len,
+            &profile,
+            @sizeOf(ModelSupportProfileV1),
+        ),
+    );
+    try std.testing.expect(std.meta.eql(
+        std.mem.zeroes(ModelSupportProfileV1),
+        profile,
+    ));
+    try std.testing.expectEqual(
+        statusCode(.null_argument),
+        glacier_model_support_profile_get_v1(
+            0,
+            null,
+            @sizeOf(ModelSupportProfileV1),
+        ),
+    );
+    try std.testing.expectEqual(
+        statusCode(.invalid_size),
+        glacier_model_support_profile_get_v1(
+            0,
+            &profile,
+            @sizeOf(ModelSupportProfileV1) - 1,
+        ),
+    );
+}
+
+test "C model support query returns every compatible profile bit" {
+    const transcript_mask =
+        (@as(u64, 1) << @intFromEnum(
+            support.ProfileIndexV1.audio_transcript,
+        )) |
+        (@as(u64, 1) << @intFromEnum(
+            support.ProfileIndexV1.stateful_transcript,
+        ));
+    const raw_query: ModelSupportQueryV1 = .{
+        .family = @intFromEnum(contract.ModelFamilyIdV1.audio_understanding),
+        .operation = @intFromEnum(contract.OperationIdV1.transcribe),
+        .input_kind = @intFromEnum(contract.InputKindV1.audio_feature_i16),
+        .output_kind = @intFromEnum(contract.OutputKindV1.transcript),
+        .numerical_policy = @intFromEnum(
+            contract.NumericalPolicyV1.exact_integer,
+        ),
+        .batch_items = 1,
+        .input_features = 4,
+        .output_dimensions = 64,
+        .required_capabilities = 0,
+    };
+    var result = std.mem.zeroes(ModelSupportResultV1);
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_query_v1(
+            &raw_query,
+            @sizeOf(ModelSupportQueryV1),
+            &result,
+            @sizeOf(ModelSupportResultV1),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 1), result.compatible);
+    try std.testing.expectEqual(@as(u64, 0), result.unsupported_reason);
+    try std.testing.expectEqual(transcript_mask, result.matching_profile_mask);
+
+    var alias_storage: [@sizeOf(ModelSupportQueryV1)]u8 align(@alignOf(ModelSupportQueryV1)) = undefined;
+    const alias_query: *ModelSupportQueryV1 = @ptrCast(&alias_storage);
+    const alias_result: *ModelSupportResultV1 = @ptrCast(&alias_storage);
+    alias_query.* = raw_query;
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_query_v1(
+            alias_query,
+            @sizeOf(ModelSupportQueryV1),
+            alias_result,
+            @sizeOf(ModelSupportResultV1),
+        ),
+    );
+    try std.testing.expectEqual(transcript_mask, alias_result.matching_profile_mask);
+
+    var broad_query = raw_query;
+    broad_query.input_features = 4_096;
+    broad_query.output_dimensions = 384;
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_query_v1(
+            &broad_query,
+            @sizeOf(ModelSupportQueryV1),
+            &result,
+            @sizeOf(ModelSupportResultV1),
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1) << @intFromEnum(
+            support.ProfileIndexV1.audio_transcript,
+        ),
+        result.matching_profile_mask,
+    );
+}
+
+test "C model support query distinguishes invalid and unsupported input" {
+    var raw_query: ModelSupportQueryV1 = .{
+        .family = @intFromEnum(contract.ModelFamilyIdV1.audio_understanding),
+        .operation = @intFromEnum(contract.OperationIdV1.transcribe),
+        .input_kind = @intFromEnum(contract.InputKindV1.audio_feature_i16),
+        .output_kind = @intFromEnum(contract.OutputKindV1.transcript),
+        .numerical_policy = @intFromEnum(
+            contract.NumericalPolicyV1.exact_integer,
+        ),
+        .batch_items = 1,
+        .input_features = 4,
+        .output_dimensions = 64,
+        .required_capabilities = 1,
+    };
+    var result = std.mem.zeroes(ModelSupportResultV1);
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_query_v1(
+            &raw_query,
+            @sizeOf(ModelSupportQueryV1),
+            &result,
+            @sizeOf(ModelSupportResultV1),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 0), result.compatible);
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.UnsupportedReasonV1.capabilities)),
+        result.unsupported_reason,
+    );
+
+    raw_query.required_capabilities = 0;
+    raw_query.output_dimensions = 0;
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_query_v1(
+            &raw_query,
+            @sizeOf(ModelSupportQueryV1),
+            &result,
+            @sizeOf(ModelSupportResultV1),
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.UnsupportedReasonV1.dimensions)),
+        result.unsupported_reason,
+    );
+
+    raw_query.family = std.math.maxInt(u64);
+    result.compatible = 1;
+    try std.testing.expectEqual(
+        statusCode(.invalid_query),
+        glacier_model_support_query_v1(
+            &raw_query,
+            @sizeOf(ModelSupportQueryV1),
+            &result,
+            @sizeOf(ModelSupportResultV1),
+        ),
+    );
+    try std.testing.expect(std.meta.eql(
+        std.mem.zeroes(ModelSupportResultV1),
+        result,
+    ));
+    try std.testing.expectEqual(
+        statusCode(.null_argument),
+        glacier_model_support_query_v1(
+            null,
+            @sizeOf(ModelSupportQueryV1),
+            &result,
+            @sizeOf(ModelSupportResultV1),
+        ),
+    );
+    try std.testing.expectEqual(
+        statusCode(.invalid_size),
+        glacier_model_support_query_v1(
+            &raw_query,
+            @sizeOf(ModelSupportQueryV1),
+            &result,
+            @sizeOf(ModelSupportResultV1) - 1,
+        ),
+    );
 }
 
 const Fixture = struct {

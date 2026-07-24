@@ -99,6 +99,11 @@ formats, and independent verifiers.
   compute into provisional storage, reject candidate drift, and publish
   source- and ownership-bound embedding transactions. Video selection gathers
   strided frames through explicitly charged scratch and scrubs it on return.
+- **Inspectable reference compatibility.** A deterministic read-only command
+  renders eight append-only exact-integer fixture profiles as versioned JSON.
+  The experimental C, standard-library Python, and dependency-free Rust paths
+  can enumerate the same fixed records and query every matching profile bit
+  without loading a model or probing the host.
 - **Overlap-safe transcripts.** A canonical audio plan separates prefix context
   from newly publishable samples, binds both to live processor-cache ownership,
   and commits a fixed transcript segment without turning repeated context into
@@ -400,9 +405,19 @@ tools/zig-with-ephemeral-cache.sh build contract-interop-test \
   -Doptimize=ReleaseSafe -Dmetal=false -j2
 ```
 
-The C ABI is a narrow verifier, not a stable inference SDK. See
+Inspect the retained reference compatibility registry as deterministic JSON:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build runtime-support-inspector \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+```
+
+The C ABI is a narrow verifier and support-query surface, not a stable
+inference SDK. See
 [Language interop](docs/LANGUAGE_INTEROP.md) for C, Python, and dependency-free
-Rust instructions.
+Rust instructions, and
+[Runtime Support Registry and Inspector](docs/RUNTIME_SUPPORT_INSPECTOR.md) for
+query semantics, fixture authoring, and explicit nonclaims.
 
 Run the broad verification suites when working across the whole repository:
 
@@ -437,8 +452,8 @@ hardware-independent surface without those native backend dependencies.
 
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
-| AI runtime | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes, and an experimental allocation-free C verifier for complete Model Contract V1 chains | More family adapters, stable API, distribution and retained compatibility matrix |
-| Language interop | Installed experimental C header plus shared/static contract libraries; source and staged-install C consumers; C++ linkage check; standard-library Python `ctypes`; dependency-free Rust `extern "C"` gate | Retained symbol/layout gates, native multi-OS consumers, stability policy, packages, then model/session execution bindings |
+| AI runtime | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic eight-profile retained-reference compatibility inspector | Bind the text loader, prepared image, resources, schedule, KV, sampler, publication, checkpoint, and evidence paths behind one common plan |
+| Language interop | Installed experimental C header plus shared/static contract libraries; source and staged-install C consumers; C++ linkage check; standard-library Python `ctypes`; dependency-free Rust `extern "C"` gate; fixed profile enumeration and support-mask queries | Retained symbol/layout gates, native multi-OS consumers, stability policy, packages, then model/session execution bindings |
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures with scheduler-owned final-result publication, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, and exact deterministic producer-transition replay for retained reference profiles | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission, deterministic weighted QoS, one bounded mixed-media pressure campaign with exact replay, final-quantum image/audio/video media transactions, and typed vision/audio/video result publication under the scheduler-owned receipt | Family-aware batching, preemption, multi-device placement, mixed typed-adapter workloads, and broader multi-tenant campaigns |
@@ -475,6 +490,7 @@ valuable as new features.
 
 - [Quickstart](docs/QUICKSTART.md)
 - [Language interop](docs/LANGUAGE_INTEROP.md)
+- [Runtime support registry and inspector](docs/RUNTIME_SUPPORT_INSPECTOR.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Glacier AI Runtime roadmap](docs/AI_RUNTIME_ROADMAP.md)

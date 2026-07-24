@@ -10,6 +10,11 @@ test "package exports runtime and core modules independently of host tools" {
     );
     try std.testing.expect(@hasDecl(glacier, "platform_capabilities"));
     try std.testing.expect(@hasDecl(glacier_core, "ResourceBank"));
+    try std.testing.expect(@hasDecl(glacier_core, "RuntimeSupportRegistry"));
+    try std.testing.expectEqual(
+        @as(usize, 8),
+        glacier_core.RuntimeSupportRegistry.profiles.len,
+    );
     try std.testing.expect(glacier.ResourceBank == glacier_core.ResourceBank);
 }
 

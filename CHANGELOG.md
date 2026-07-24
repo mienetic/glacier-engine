@@ -21,6 +21,18 @@ before the first stable release.
 
 ### Added
 
+- Added a compile-time runtime support registry and deterministic read-only JSON
+  inspector for eight append-only, retained exact-integer reference profiles:
+  vision/audio/video encoders, stateless and stateful transcript/video-segment
+  shapes, and a stateful latent step. The experimental allocation-free C
+  boundary can enumerate
+  fixed-width profile records and query every matching bit; the
+  standard-library Python and dependency-free Rust consumers exercise the same
+  calls. Compile-time coverage, query/rejection tests, C/C++ layout checks, and
+  focused inspector/interop gates keep the registry tied to the adapter support
+  constants. This is a fixture compatibility view, not model or checkpoint
+  execution, loading/container/tokenizer support, CPU/GPU or current-host
+  detection, native OS support, or quality/performance/memory/energy evidence.
 - Added the first non-Zig library boundary: an experimental, allocation-free C
   ABI verifies a complete canonical Model Contract V1
   artifact-plan-result chain and fails closed with a zero result root whenever

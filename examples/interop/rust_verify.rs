@@ -32,10 +32,104 @@ const INVALID_ARTIFACT: u32 = 3;
 const INVALID_PLAN: u32 = 4;
 const INVALID_RESULT: u32 = 5;
 const BINDING_MISMATCH: u32 = 6;
+const OUT_OF_RANGE: u32 = 7;
+const INVALID_QUERY: u32 = 8;
+
+const SUPPORT_REGISTRY_ABI_V1: u64 = 0x4752_5352_0000_0001;
+const SUPPORT_PROFILE_COUNT_V1: u64 = 8;
+const SUPPORT_PROFILE_VISION_ENCODER: u64 = 0x4756_454e_0000_0001;
+const SUPPORT_LIFECYCLE_STATELESS: u64 = 1;
+const SUPPORT_EVIDENCE_RETAINED_REFERENCE_FIXTURE: u64 = 1;
+const MODEL_FAMILY_VISION_UNDERSTANDING: u64 = 3;
+const MODEL_FAMILY_AUDIO_UNDERSTANDING: u64 = 4;
+const MODEL_OPERATION_ENCODE: u64 = 3;
+const MODEL_OPERATION_TRANSCRIBE: u64 = 6;
+const MODEL_INPUT_IMAGE_FEATURE_U8: u64 = 3;
+const MODEL_INPUT_AUDIO_FEATURE_I16: u64 = 4;
+const MODEL_OUTPUT_EMBEDDING_I32: u64 = 2;
+const MODEL_OUTPUT_TRANSCRIPT: u64 = 5;
+const NUMERICAL_EXACT_INTEGER: u64 = 1;
+const SUPPORT_UNSUPPORTED_NONE: u64 = 0;
+const SUPPORT_UNSUPPORTED_CAPABILITIES: u64 = 7;
+const SUPPORT_MASK_AUDIO_TRANSCRIPT: u64 = 1 << 2;
+const SUPPORT_MASK_STATEFUL_TRANSCRIPT: u64 = 1 << 3;
+const SUPPORT_MASK_TRANSCRIPT: u64 =
+    SUPPORT_MASK_AUDIO_TRANSCRIPT | SUPPORT_MASK_STATEFUL_TRANSCRIPT;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(C)]
+struct ModelSupportProfileV1 {
+    profile_abi: u64,
+    lifecycle: u64,
+    evidence: u64,
+    family: u64,
+    operation: u64,
+    input_kind: u64,
+    output_kind: u64,
+    numerical_policy: u64,
+    max_batch_items: u64,
+    max_input_features: u64,
+    max_output_dimensions: u64,
+    allowed_capabilities: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(C)]
+struct ModelSupportQueryV1 {
+    family: u64,
+    operation: u64,
+    input_kind: u64,
+    output_kind: u64,
+    numerical_policy: u64,
+    batch_items: u64,
+    input_features: u64,
+    output_dimensions: u64,
+    required_capabilities: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(C)]
+struct ModelSupportResultV1 {
+    compatible: u64,
+    unsupported_reason: u64,
+    matching_profile_mask: u64,
+}
+
+const _: [(); 96] = [(); std::mem::size_of::<ModelSupportProfileV1>()];
+const _: [(); 72] = [(); std::mem::size_of::<ModelSupportQueryV1>()];
+const _: [(); 24] = [(); std::mem::size_of::<ModelSupportResultV1>()];
+
+const FIRST_SUPPORT_PROFILE_V1: ModelSupportProfileV1 = ModelSupportProfileV1 {
+    profile_abi: SUPPORT_PROFILE_VISION_ENCODER,
+    lifecycle: SUPPORT_LIFECYCLE_STATELESS,
+    evidence: SUPPORT_EVIDENCE_RETAINED_REFERENCE_FIXTURE,
+    family: MODEL_FAMILY_VISION_UNDERSTANDING,
+    operation: MODEL_OPERATION_ENCODE,
+    input_kind: MODEL_INPUT_IMAGE_FEATURE_U8,
+    output_kind: MODEL_OUTPUT_EMBEDDING_I32,
+    numerical_policy: NUMERICAL_EXACT_INTEGER,
+    max_batch_items: 64,
+    max_input_features: 65_536,
+    max_output_dimensions: 16_384,
+    allowed_capabilities: 0,
+};
 
 #[link(name = "glacier_contract")]
 extern "C" {
     fn glacier_contract_abi_v1() -> u64;
+    fn glacier_model_support_registry_abi_v1() -> u64;
+    fn glacier_model_support_profile_count_v1() -> u64;
+    fn glacier_model_support_profile_get_v1(
+        index: u64,
+        out_profile: *mut ModelSupportProfileV1,
+        out_profile_size: usize,
+    ) -> u32;
+    fn glacier_model_support_query_v1(
+        query: *const ModelSupportQueryV1,
+        query_size: usize,
+        out_result: *mut ModelSupportResultV1,
+        out_result_size: usize,
+    ) -> u32;
     fn glacier_model_contract_verify_v1(
         artifact: *const u8,
         artifact_len: usize,
@@ -56,6 +150,8 @@ fn status_name(status: u32) -> &'static str {
         INVALID_PLAN => "INVALID_PLAN",
         INVALID_RESULT => "INVALID_RESULT",
         BINDING_MISMATCH => "BINDING_MISMATCH",
+        OUT_OF_RANGE => "OUT_OF_RANGE",
+        INVALID_QUERY => "INVALID_QUERY",
         _ => "UNKNOWN",
     }
 }
@@ -167,6 +263,113 @@ fn run(fixture_dir: &Path) -> Result<(), String> {
         return Err("binding returned a root different from the canonical wire".to_owned());
     }
 
+    let registry_abi = unsafe { glacier_model_support_registry_abi_v1() };
+    if registry_abi != SUPPORT_REGISTRY_ABI_V1 {
+        return Err(format!(
+            "unsupported model-support registry ABI: expected \
+             0x{SUPPORT_REGISTRY_ABI_V1:016x}, received 0x{registry_abi:016x}"
+        ));
+    }
+    let profile_count = unsafe { glacier_model_support_profile_count_v1() };
+    if profile_count != SUPPORT_PROFILE_COUNT_V1 {
+        return Err(format!(
+            "unexpected model-support profile count: expected \
+             {SUPPORT_PROFILE_COUNT_V1}, received {profile_count}"
+        ));
+    }
+
+    let mut profiles = Vec::with_capacity(profile_count as usize);
+    for index in 0..profile_count {
+        let mut profile = ModelSupportProfileV1::default();
+        let status = unsafe {
+            glacier_model_support_profile_get_v1(
+                index,
+                &mut profile,
+                std::mem::size_of::<ModelSupportProfileV1>(),
+            )
+        };
+        if status != OK {
+            return Err(format!(
+                "support profile {index} failed: {} ({status})",
+                status_name(status)
+            ));
+        }
+        if profiles
+            .iter()
+            .any(|seen: &ModelSupportProfileV1| seen.profile_abi == profile.profile_abi)
+        {
+            return Err("model-support profile ABI values are not unique".to_owned());
+        }
+        profiles.push(profile);
+    }
+    if profiles.first() != Some(&FIRST_SUPPORT_PROFILE_V1) {
+        return Err("first model-support profile does not match V1".to_owned());
+    }
+
+    let mut transcript_query = ModelSupportQueryV1 {
+        family: MODEL_FAMILY_AUDIO_UNDERSTANDING,
+        operation: MODEL_OPERATION_TRANSCRIBE,
+        input_kind: MODEL_INPUT_AUDIO_FEATURE_I16,
+        output_kind: MODEL_OUTPUT_TRANSCRIPT,
+        numerical_policy: NUMERICAL_EXACT_INTEGER,
+        batch_items: 1,
+        input_features: 1,
+        output_dimensions: 1,
+        required_capabilities: 0,
+    };
+    let mut transcript_result = ModelSupportResultV1::default();
+    let status = unsafe {
+        glacier_model_support_query_v1(
+            &transcript_query,
+            std::mem::size_of::<ModelSupportQueryV1>(),
+            &mut transcript_result,
+            std::mem::size_of::<ModelSupportResultV1>(),
+        )
+    };
+    if status != OK {
+        return Err(format!(
+            "transcript support query failed: {} ({status})",
+            status_name(status)
+        ));
+    }
+    if transcript_result
+        != (ModelSupportResultV1 {
+            compatible: 1,
+            unsupported_reason: SUPPORT_UNSUPPORTED_NONE,
+            matching_profile_mask: SUPPORT_MASK_TRANSCRIPT,
+        })
+    {
+        return Err("transcript support query did not match both V1 profiles".to_owned());
+    }
+
+    transcript_query.required_capabilities = 1;
+    let mut unsupported_result = ModelSupportResultV1::default();
+    let status = unsafe {
+        glacier_model_support_query_v1(
+            &transcript_query,
+            std::mem::size_of::<ModelSupportQueryV1>(),
+            &mut unsupported_result,
+            std::mem::size_of::<ModelSupportResultV1>(),
+        )
+    };
+    if status != OK {
+        return Err(format!(
+            "unsupported capability query failed: {} ({status})",
+            status_name(status)
+        ));
+    }
+    if unsupported_result
+        != (ModelSupportResultV1 {
+            compatible: 0,
+            unsupported_reason: SUPPORT_UNSUPPORTED_CAPABILITIES,
+            matching_profile_mask: 0,
+        })
+    {
+        return Err(
+            "unsupported capability query did not return the explicit V1 reason".to_owned(),
+        );
+    }
+
     println!("Glacier contract C ABI (experimental)");
     println!("abi=0x{abi:016x}");
     print!("result_root=");
@@ -174,6 +377,10 @@ fn run(fixture_dir: &Path) -> Result<(), String> {
         print!("{byte:02x}");
     }
     println!();
+    println!(
+        "profile_count={profile_count} transcript_mask=0x{:016x}",
+        transcript_result.matching_profile_mask
+    );
     Ok(())
 }
 

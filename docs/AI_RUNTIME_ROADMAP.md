@@ -444,8 +444,9 @@ Current state: **idea to prototype**, depending on component. Core contracts
 already use scoped grants, but a public extension ABI, worker protocol, stable
 SDK, installer, and compatibility policy do not yet exist. A first
 core-only, experimental C ABI can now verify one complete Model Contract V1
-artifact-plan-result chain from C, Python, or Rust without exposing runtime
-struct layouts; it is a compatibility seed, not the stable SDK.
+artifact-plan-result chain, enumerate eight retained-reference profiles, and
+query matching support-mask bits from C, Python, or Rust without exposing
+runtime struct layouts; it is a compatibility seed, not the stable SDK.
 
 Promotion gate: an extension receives only declared operations and bounds;
 revocation and process failure preserve accounting; version mismatch fails
@@ -500,26 +501,35 @@ it does not require changing the meaning of existing families.
 
 ## Delivery sequence
 
-### R0 — Runtime vocabulary and registry
+### R0 — Runtime vocabulary and registry — complete
 
-- define `ModelFamilyId`, `OperationId`, typed input/output kinds, numerical
+- [x] Define `ModelFamilyId`, `OperationId`, typed input/output kinds, numerical
   policies, capability vocabulary, and explicit unsupported results; complete
   as a fixed prototype with a bounded support-record query;
-- specify `ArtifactManifest`, `ModelExecutionPlan`, and family adapter lifecycle;
+- [x] Specify `ArtifactManifest`, `ModelExecutionPlan`, and family adapter
+  lifecycle;
   canonical artifact/plan/result wires and the first
   prepare/validate/publish lifecycle are complete;
-- generate a compatibility matrix from retained tests;
-- add a read-only runtime inspector and fixture authoring guide.
+- [x] Generate a compatibility matrix from retained tests;
+- [x] Add a read-only runtime inspector and
+  [fixture-authoring guide](RUNTIME_SUPPORT_INSPECTOR.md).
 
 Exit gate: two structurally different family fixtures use the shared contracts
 without family-specific fields leaking into the common wire.
 
-Current progress: vision u8 patches, audio i16 feature windows, and strided
-video u8 frames now share the artifact/plan/result records while retaining
-distinct source mappings. Video additionally proves charged gather scratch,
-keyframe/eviction lineage, and exact target-time mapping. A generated
-compatibility matrix and read-only inspector remain before the exit gate is
-complete.
+Exit evidence: vision u8 patches, audio i16 feature windows, strided video u8
+frames, transcript/segment outputs, and a stateful latent step share the common
+contract vocabulary while retaining distinct adapter behavior. Eight
+append-only exact-integer profiles are derived directly from retained adapter
+support constants. Compile-time coverage checks, bounded query/rejection tests,
+fixed-width C consumers, standard-library Python, dependency-free Rust, and a
+deterministic versioned JSON inspector retain the matrix.
+
+R0 completion is scoped to these reference contracts. The inspector does not
+load or execute a production model/checkpoint, parse a
+loader/container/tokenizer, probe CPU/GPU or the current host, establish native
+OS support, or measure quality/performance/memory/energy. Registration is not
+execution. The active delivery milestone is R1.
 
 ### R1 — Text path becomes the first complete runtime vertical
 

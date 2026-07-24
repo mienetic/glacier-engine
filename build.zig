@@ -293,6 +293,86 @@ pub fn build(b: *std.Build) void {
     );
     package_module_test_step.dependOn(&run_package_module_tests.step);
 
+    // Deterministic compatibility registry inspector. It reports only the
+    // retained reference fixtures compiled into glacier_core and deliberately
+    // does not probe host backends or claim production-model support.
+    const runtime_support_inspector_exe = b.addExecutable(.{
+        .name = "glacier-runtime-support-inspector",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/cli/runtime_support_inspector.zig",
+            ),
+            .target = target,
+            .optimize = cli_control_optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    runtime_support_inspector_exe.root_module.addImport(
+        "glacier_core",
+        core_mod,
+    );
+    const run_runtime_support_inspector =
+        b.addRunArtifact(runtime_support_inspector_exe);
+    if (b.args) |args| run_runtime_support_inspector.addArgs(args);
+    const runtime_support_inspector_run_step = b.step(
+        "runtime-support-inspector",
+        "Print the deterministic retained-fixture compatibility registry",
+    );
+    runtime_support_inspector_run_step.dependOn(
+        &run_runtime_support_inspector.step,
+    );
+
+    const runtime_support_inspector_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/cli/runtime_support_inspector.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    runtime_support_inspector_tests.root_module.addImport(
+        "glacier_core",
+        core_mod,
+    );
+    const run_runtime_support_inspector_tests =
+        b.addRunArtifact(runtime_support_inspector_tests);
+    const runtime_support_inspector_test_step = b.step(
+        "runtime-support-inspector-test",
+        "Run focused runtime support registry and inspector tests",
+    );
+    runtime_support_inspector_test_step.dependOn(
+        &run_runtime_support_inspector_tests.step,
+    );
+    const runtime_support_inspector_compile_step = b.step(
+        "runtime-support-inspector-compile",
+        "Compile the runtime support registry inspector without running it",
+    );
+    runtime_support_inspector_compile_step.dependOn(
+        &runtime_support_inspector_exe.step,
+    );
+    runtime_support_inspector_compile_step.dependOn(
+        &runtime_support_inspector_tests.step,
+    );
+    const run_runtime_support_inspector_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_runtime_support_inspector_oracle.setCwd(b.path("."));
+    run_runtime_support_inspector_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_runtime_support_inspector_oracle.addFileArg(
+        b.path("bench/runtime_support_registry.py"),
+    );
+    run_runtime_support_inspector_oracle.addArg("--inspector");
+    run_runtime_support_inspector_oracle.addArtifactArg(
+        runtime_support_inspector_exe,
+    );
+    runtime_support_inspector_test_step.dependOn(
+        &run_runtime_support_inspector_oracle.step,
+    );
+
     // Verify the experimental C boundary in three independent ways: the Zig
     // implementation tests its fail-closed status behavior, a C11 consumer
     // compiles against the installed-shape header and static library, and a
@@ -456,6 +536,9 @@ pub fn build(b: *std.Build) void {
     contract_c_compile_step.dependOn(&contract_c_consumer.step);
     contract_c_compile_step.dependOn(&contract_c_shared_consumer.step);
     contract_c_compile_step.dependOn(&contract_cpp_consumer.step);
+    contract_c_compile_step.dependOn(
+        runtime_support_inspector_compile_step,
+    );
 
     const run_contract_fixture_oracle = b.addSystemCommand(&.{
         "python3",
@@ -549,6 +632,9 @@ pub fn build(b: *std.Build) void {
     );
     contract_interop_test_step.dependOn(&run_contract_fixture_oracle.step);
     contract_interop_test_step.dependOn(&run_contract_python.step);
+    contract_interop_test_step.dependOn(
+        &run_runtime_support_inspector_oracle.step,
+    );
 
     // Allocation-free canonical PNG/WAVE/APNG delivery profiles plus the
     // additive generated-media conformance sidecar.
@@ -839,6 +925,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_core_tests.step);
     test_step.dependOn(&run_engine_tests.step);
     test_step.dependOn(&run_package_module_tests.step);
+    test_step.dependOn(&run_runtime_support_inspector_tests.step);
     test_step.dependOn(&run_media_external_format_tests.step);
     test_step.dependOn(&run_progressive_int4_tests.step);
     test_step.dependOn(&run_integration_tests.step);
@@ -862,6 +949,7 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&core_tests.step);
     test_compile_step.dependOn(&engine_tests.step);
     test_compile_step.dependOn(&package_module_tests.step);
+    test_compile_step.dependOn(&runtime_support_inspector_tests.step);
     test_compile_step.dependOn(&media_external_format_tests.step);
     test_compile_step.dependOn(&progressive_int4_tests.step);
     test_compile_step.dependOn(&integration_tests.step);

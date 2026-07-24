@@ -337,9 +337,18 @@ typed input/output kind, numerical policy, or explicit unsupported result.
 IDs plus bounded support records and malformed/unknown fixtures distinguish
 vocabulary from executable support.
 
-**Next slice:** generate a read-only compatibility renderer from retained
-support records. It must not claim that registering a family makes it
-executable.
+**Completed R0 slice:** eight append-only exact-integer reference profiles now
+derive directly from retained adapter support constants. A deterministic
+read-only JSON inspector, fixed-width C enumeration/query surface,
+standard-library Python and dependency-free Rust consumers, and focused
+mask/rejection tests expose the matrix without probing a host or granting
+execution authority. See
+[Runtime Support Registry and Inspector](RUNTIME_SUPPORT_INSPECTOR.md).
+
+**Next slice:** append one tiny, legally redistributable profile by following
+the fixture-authoring guide, including maximum-bound and first-rejected-value
+tests. Do not reorder an existing index or describe registration as production,
+platform, backend, quality, or performance support.
 
 ### Stateless encoder result envelope
 

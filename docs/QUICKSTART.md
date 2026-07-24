@@ -86,7 +86,33 @@ These resources are different and should be budgeted separately:
 Prefer focused named steps and `-j2` while exploring. A compile-only target
 matrix is not needed for a first contribution.
 
-## 4. Call Glacier from C, Python, or Rust
+## 4. Inspect and query the retained runtime profiles
+
+Print the deterministic eight-profile compatibility registry without loading a
+model or probing the machine:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build runtime-support-inspector \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+```
+
+Without the POSIX cache wrapper, the equivalent command is:
+
+```sh
+zig build runtime-support-inspector -Doptimize=ReleaseSafe -Dmetal=false
+```
+
+The command emits one newline-terminated JSON object. Its rows describe only
+the retained exact-integer adapter fixtures compiled into the core. They do not
+describe a production model or checkpoint, loader/container/tokenizer
+coverage, CPU/GPU availability, the current host, native OS support, or
+quality/performance/memory/energy results. Registration is not execution.
+
+Read [Runtime Support Registry and Inspector](RUNTIME_SUPPORT_INSPECTOR.md) for
+the JSON fields, append-only indices, mask and rejection semantics, and the
+fixture-authoring checklist.
+
+## 5. Call Glacier from C, Python, or Rust
 
 Build and install the experimental Model Contract V1 verifier:
 
@@ -128,12 +154,14 @@ consumers include `glacier/model_contract.h` and link `glacier_contract` or the
 separately named `glacier_contract_static` archive. Windows static consumers
 must define `GLACIER_MODEL_CONTRACT_STATIC=1` before including the header.
 
-The current C boundary verifies a complete artifact-plan-result chain without
-allocation or model loading. It is explicitly experimental and is not yet a
-model execution/session API. See [Language interop](LANGUAGE_INTEROP.md) for
-the status codes, exact guarantees, platform commands, and nonclaims.
+The examples verify a complete artifact-plan-result chain, enumerate the
+retained profile count, and run a typed support-mask query. The C boundary does
+this without allocation or model loading. It is explicitly experimental and is
+not yet a model execution/session API. See
+[Language interop](LANGUAGE_INTEROP.md) for the status codes, exact guarantees,
+platform commands, and nonclaims.
 
-## 5. Run model-free architecture demos
+## 6. Run model-free architecture demos
 
 Each demo is deterministic, credential-free, and included in `zig build test`.
 
@@ -341,7 +369,7 @@ zig build provider-context-reconciliation-demo -Doptimize=ReleaseSafe -Dmetal=fa
 zig build provider-context-adapter-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
 
-## 6. Run the verification suites
+## 7. Run the verification suites
 
 ```sh
 tools/verify.sh
@@ -371,7 +399,7 @@ zig build test-compile -Dtarget=aarch64-linux-gnu -Dmetal=false -Doptimize=Relea
 ThreadSanitizer support depends on the host Zig/Clang toolchain. If the toolchain
 cannot run it, record that limitation rather than reporting it as passed.
 
-## 7. Try the CLI with a fixture
+## 8. Try the CLI with a fixture
 
 Generate a small synthetic Safetensors file and convert it to the draft Glacier
 model format:
@@ -392,7 +420,7 @@ For an INT4 fixture:
 The synthetic fixture exercises parsing and conversion. It is not a useful
 language model and does not establish generation quality.
 
-## 8. Prepare a native runtime image
+## 9. Prepare a native runtime image
 
 The `.glacier` file is the portable draft source format. `.glrt` is a derived,
 execution-layout-bound runtime image:
@@ -404,7 +432,7 @@ execution-layout-bound runtime image:
 
 Read [Native runtime image](RUNTIME_IMAGE.md) before changing its ABI.
 
-## 9. Make a first contribution
+## 10. Make a first contribution
 
 Pick one item from [Contributor projects](PROJECTS.md). Add or update a rejection
 test before changing the contract, run the smallest relevant suite, and open a

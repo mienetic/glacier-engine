@@ -1,14 +1,16 @@
 # Language interop
 
 Glacier's first non-Zig library boundary is an **experimental, allocation-free
-C ABI** for Model Contract V1 verification. C can call it directly, while
-Python, Rust, and other languages can use their normal C foreign-function
-interface.
+C ABI** for Model Contract V1 verification and retained-reference support
+queries. C can call it directly, while Python, Rust, and other languages can
+use their normal C foreign-function interface.
 
-This first slice is deliberately narrow. It verifies a canonical artifact
-manifest, execution plan, and result envelope as one bound chain. It does not
-load model weights, run inference, create a session, invoke a backend, or make
-the wider runtime API stable.
+This slice is deliberately narrow. It verifies a canonical artifact manifest,
+execution plan, and result envelope as one bound chain. It also enumerates
+eight append-only exact-integer fixture profiles and answers typed
+shape-and-capability queries over those records. It does not load model
+weights, run inference, create a session, invoke a backend, inspect the current
+host, or make the wider runtime API stable. Registration is not execution.
 
 ## Build without retaining a large Zig cache
 
@@ -52,10 +54,11 @@ path; the ephemeral-cache helper is POSIX-only.
 
 ## Verify the boundary
 
-The focused gate compiles the libraries, runs Zig fail-closed tests, links
-independent C11 consumers against both the build graph and staged install tree,
-checks the C++ header/link path, regenerates the fixtures with the independent
-Python oracle, and loads the shared library from a fresh Python process:
+The focused gate compiles the libraries, runs Zig fail-closed and support-query
+tests, links independent C11 consumers against both the build graph and staged
+install tree, checks the C++ header/layout/link path, regenerates the fixtures
+with the independent Python oracle, and loads the shared library from a fresh
+Python process:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build contract-interop-test \
@@ -83,7 +86,9 @@ python3 examples/interop/python_verify.py \
 ```
 
 Use `.so` on Linux or `.dll` on Windows. A successful run prints the
-experimental ABI number and the authenticated result root.
+experimental ABI number, authenticated result root, retained profile count,
+and matching support mask. The final summary is
+`profile_count=8 transcript_mask=0x000000000000000c`.
 
 ## Rust quick start
 
@@ -111,7 +116,8 @@ tools/zig-with-ephemeral-cache.sh build contract-rust-test \
 
 ## C surface
 
-The installed header exports exactly two functions:
+The installed header exports the contract verifier plus four support-registry
+operations:
 
 ```c
 uint64_t glacier_contract_abi_v1(void);
@@ -124,9 +130,24 @@ uint32_t glacier_model_contract_verify_v1(
     const uint8_t *result_wire,
     size_t result_wire_size,
     uint8_t out_result_root[32]);
+
+uint64_t glacier_model_support_registry_abi_v1(void);
+
+uint64_t glacier_model_support_profile_count_v1(void);
+
+uint32_t glacier_model_support_profile_get_v1(
+    uint64_t index,
+    glacier_model_support_profile_v1_t *out_profile,
+    size_t out_profile_size);
+
+uint32_t glacier_model_support_query_v1(
+    const glacier_model_support_query_v1_t *query,
+    size_t query_size,
+    glacier_model_support_result_v1_t *out_result,
+    size_t out_result_size);
 ```
 
-The verifier:
+The contract verifier:
 
 - accepts only the exact 320-byte artifact, 768-byte plan, and 768-byte result
   V1 encodings;
@@ -141,6 +162,36 @@ The verifier:
 Validation finishes before the output write, so the output may point to the
 final 32 bytes of the result wire for a zero-copy root check.
 
+### Support enumeration and queries
+
+`glacier_model_support_registry_abi_v1` returns the registry identifier also
+rendered in JSON. `glacier_model_support_profile_count_v1` returns eight. The
+getter copies one fixed-width record into caller-owned storage; an out-of-range
+index returns `OUT_OF_RANGE`. Indices are immutable mask positions in Registry
+V1, so callers must preserve every returned bit instead of assuming there can
+be only one match.
+
+The query compares family, operation, input kind, output kind, and numerical
+policy exactly; requires nonzero dimensions within the profile maxima; and
+requires every requested capability bit to be allowed. It scans all profiles
+and returns:
+
+- `compatible = 1`, reason `NONE`, and every matching bit when at least one
+  profile fits;
+- `compatible = 0`, a zero mask, and the deepest unsupported comparison reason
+  for a well-formed request that fits no profile; or
+- ABI status `INVALID_QUERY` for an unknown numeric enum value.
+
+A well-formed unsupported query is not an ABI failure: the function returns
+`OK` and reports the reason in the output. For exact structure-size, mask, and
+reason semantics, see
+[Runtime Support Registry and Inspector](RUNTIME_SUPPORT_INSPECTOR.md).
+
+Both output-writing support functions require the exact V1 structure size,
+allocate no memory, retain no input pointer, and zero a correctly sized output
+before any later validation failure. The C, Python, and Rust consumers exercise
+enumeration and a multi-match transcript query over the same library.
+
 Status values are fixed unsigned integers:
 
 | Value | Meaning |
@@ -152,6 +203,8 @@ Status values are fixed unsigned integers:
 | `4` | invalid plan |
 | `5` | invalid result |
 | `6` | individually valid wires do not bind to one chain |
+| `7` | support profile index is out of range |
+| `8` | support query contains an unknown enum value |
 
 See
 [`include/glacier/model_contract.h`](../include/glacier/model_contract.h) for
@@ -161,12 +214,31 @@ a complete C consumer. Windows consumers linking
 `glacier_contract_static.lib` must define
 `GLACIER_MODEL_CONTRACT_STATIC=1` before including the header.
 
+## Deterministic read-only inspector
+
+The core registry also has a model-free JSON renderer:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build runtime-support-inspector \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+```
+
+It prints the same eight profiles in stable index order, including names and
+numeric IDs, their profile ABIs, lifecycle, evidence class, bounds, and allowed
+capability masks. It accepts no semantic arguments and explicitly reports
+`production_model_support: false` and `host_backend_probed: false`.
+
 ## Stability and next steps
 
 The header defines `GLACIER_MODEL_CONTRACT_EXPERIMENTAL`. ABI V1 describes this
-small verifier surface only; it is not a promise that the wider runtime is
-stable. Before promotion, Glacier still needs an API/deprecation policy,
-retained symbol and layout checks, native consumer evidence on each claimed OS,
+small verifier and support-query surface only; it is not a promise that the
+wider runtime is stable. The registry covers retained exact-integer reference
+fixtures only. It makes no production model/checkpoint,
+loader/container/tokenizer, CPU/GPU/current-host, native OS,
+quality/performance/memory/energy, or execution claim.
+
+Before promotion, Glacier still needs an API/deprecation policy, retained
+symbol and layout checks, native consumer evidence on each claimed OS,
 packaging metadata, and migration fixtures.
 
 Model/session handles, token streaming, callbacks, asynchronous execution,

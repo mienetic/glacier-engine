@@ -65,6 +65,8 @@ pub const media_processor_state =
 pub const media_processor_cache =
     @import("media_processor_cache.zig");
 pub const model_contract = @import("model_contract.zig");
+pub const runtime_support_registry =
+    @import("runtime_support_registry.zig");
 pub const stateless_model_adapter =
     @import("stateless_model_adapter.zig");
 pub const stateful_model_adapter =
@@ -170,6 +172,7 @@ pub const MediaStreamCheckpointSet =
 pub const MediaProcessorState = media_processor_state;
 pub const MediaProcessorCache = media_processor_cache;
 pub const ModelContract = model_contract;
+pub const RuntimeSupportRegistry = runtime_support_registry;
 pub const StatelessModelAdapter = stateless_model_adapter;
 pub const StatefulModelAdapter = stateful_model_adapter;
 pub const StatefulModelContinuation =
