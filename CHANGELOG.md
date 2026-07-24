@@ -21,6 +21,16 @@ before the first stable release.
 
 ### Added
 
+- Added the first portable deterministic workload-pressure contract. One
+  versioned explicit-open-loop image/audio/video scenario now drives the real
+  `LaneWeave` scheduler, `ResourceBank`, and scheduler verifier through capacity
+  and logical-resource rejection, exact weighted fairness, deadline completion,
+  timeout, cancellation, drain, and zero-orphan close. Canonical scenario and
+  result wires include recomputable record and aggregate roots, nearest-rank
+  logical-step summaries, exact Zig replay, independent Python replay, frozen
+  cross-language roots, and mutation/substitution rejection. This is bounded
+  logical conformance, not native throughput, latency, physical-memory, energy,
+  batching, or soak evidence.
 - Integrated bounded generated-media format evidence: strict canonical PNG,
   PCM s16le WAVE, and two-frame gray8 APNG payloads now have real
   two-generation registry/producer-transition/format chains. The WAVE and APNG

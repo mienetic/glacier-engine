@@ -366,6 +366,33 @@ transaction and output registry, add a redistributable deterministic
 producer-transition profile, or build a read-only paired evidence/registry
 inspector that labels unverified bytes before rendering entries.
 
+### Portable workload-pressure campaign
+
+**Completed foundation:** one bounded explicit-open-loop scenario now drives
+the real scheduler, resource bank, and scheduler verifier across fixed
+image/audio/video profiles. Versioned scenario/result wires retain exact
+capacity and resource rejection, `1:2:4` fairness, deadline completion, timeout,
+cancellation, logical delay percentiles and high-water marks, and final
+zero-orphan ownership. Zig exact replay and an independent Python scheduler and
+accounting model agree on every record and frozen root. See
+[Deterministic Workload Pressure](WORKLOAD_PRESSURE.md).
+
+This is deterministic conformance, not a throughput, wall-clock latency,
+physical-memory, energy, or soak result.
+
+Small independent follow-up slices include:
+
+- generate bounded valid scenarios and minimize a failing seed;
+- add one new media or non-media profile without weakening exact replay;
+- specify a separately versioned closed-loop mode;
+- build a read-only scenario/result inspector that exposes no authority;
+- connect one real family-adapter lifecycle to the same receipt accounting; or
+- add one native platform observer with explicit present/missing/denied states.
+
+**Done when:** the slice fixes all bounds and summary rules before execution,
+retains malformed and semantic-substitution rejection, keeps logical and
+physical metrics distinct, and adds an independent verification path.
+
 ### ResourceBank property tests
 
 Generate bounded sequences of admit, subdivide, publish, retire, cancel, and

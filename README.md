@@ -28,6 +28,10 @@ formats, and independent verifiers.
   ownership and release part of the execution contract.
 - **Deterministic multi-request scheduling.** `LaneWeave` provides bounded,
   weighted service with replayable decisions and fail-closed permits.
+- **Portable workload-pressure evidence.** A versioned mixed image/audio/video
+  scenario drives real admission, weighted service, overload rejection,
+  timeout, cancellation, and final release; Zig exact replay and an independent
+  Python verifier agree on every outcome, trace, summary, and root.
 - **Paged KV ownership.** Physical page identity, generations, references, and
   publication fences are bound into token receipts.
 - **Generation-remapped KV restore.** Canonical committed-row images rebuild a
@@ -396,6 +400,8 @@ zig build media-external-format-test -Doptimize=ReleaseSafe -Dmetal=false
 python3 -m unittest bench.tests.test_generated_media_external_format
 python3 -m unittest bench.tests.test_generated_media_format_conformance
 python3 -m unittest bench.tests.test_generated_media_evidence_inspector
+zig test src/core/workload_pressure.zig -OReleaseSafe
+python3 -m unittest bench.tests.test_workload_pressure
 zig build speech-annotation-live-restart-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build provider-gateway-demo -Doptimize=ReleaseSafe -Dmetal=false
 ```
@@ -434,12 +440,12 @@ hardware-independent surface without those native backend dependencies.
 | AI runtime | CPU execution, optional Metal backend, prepared `.glrt` images, typed family/operation contracts, exact admission/scheduling/publication, continuation, provider and media planes | More family adapters, stable API, distribution and retained compatibility matrix |
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, and exact deterministic producer-transition replay for retained reference profiles | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, two-process resume, and a seven-phase atomic checkpoint root switch | Production-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
-| Scheduling | Exact admission and deterministic weighted QoS | Multi-tenant pressure and cancellation campaigns |
+| Scheduling | Exact admission, deterministic weighted QoS, and one bounded mixed-media pressure campaign with exact replay | Family-aware batching, preemption, multi-device placement, and broader multi-tenant campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, compact provider evidence join, and an experimental read-only generated-media inspector with exact optional format-sidecar validation, including a two-generation 12-entry-per-generation capacity campaign | Provider/token inspectors, privacy-safe export and retention policy, and native multi-OS evidence |
 | Multimodal | Shared identity/timeline, bounded decode/transforms, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, typed perception results, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, typed producer/raw-output admission, host replay of exact deterministic source-model/materializer transitions, validated bounded PNG/WAVE/APNG profiles, and an integrated additive format-conformance sidecar with a maximum-entry repeated-modality composed oracle | External video-timeline normalization, production encoder/container adapters and broader profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, additional model/materializer profiles, and authorized physical playback/display and quality evidence |
 | Platforms | Native macOS development-host evidence; full build and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64; exported package modules; compile-time adapter-availability inventory; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64 | Split named core/CPU/durable/device/host-tool profiles; run native Linux/Windows/FreeBSD CPU, mapping, and recovery campaigns; finish Windows durable-file, clock, telemetry, and packaging adapters; then add mobile and reduced edge profiles |
-| Load and resilience | Deterministic admission, scheduling, cancellation, ownership, restart, and pressure primitives exist as separate retained fixtures | Versioned mixed-family open/closed-loop harness, independent summaries, native p50/p95/p99 and memory/fairness evidence, then bounded soak and disruption campaigns |
+| Load and resilience | Prototype: one portable versioned explicit-open-loop scenario/result contract covers mixed-media overload, fairness, timeout, cancellation, logical resource high-water marks, and zero-orphan close with Zig/Python replay | Generated scenarios, a separate closed-loop mode, real adapter workloads, native p50/p95/p99 and physical-resource evidence, then bounded soak and disruption campaigns |
 | Tooling | Zig build, exported `glacier`/`glacier_core` package modules, deterministic demos, benchmark harnesses | Product-specific build profiles, installer, stable library API, and simpler fixture workflow |
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
@@ -473,6 +479,7 @@ valuable as new features.
 - [Platform portability](docs/PLATFORM_PORTABILITY.md)
 - [Contributor projects](docs/PROJECTS.md)
 - [Benchmark and evidence guide](docs/BENCHMARKS.md)
+- [Deterministic workload pressure](docs/WORKLOAD_PRESSURE.md)
 - [Evidence policy](docs/EVIDENCE_POLICY.md)
 - [Model format](docs/FORMAT_SPEC.md)
 - [Native runtime image](docs/RUNTIME_IMAGE.md)

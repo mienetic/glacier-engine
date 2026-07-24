@@ -26,7 +26,7 @@ evidence. The plane and model-family sequence is specified in the
 | --- | --- | --- | --- |
 | Exact admission | Integrated | ResourceBank receipts, capacity rejection, release, snapshots | Physical telemetry adapters and long-running pressure campaigns |
 | Hierarchical ownership | Integrated | LeaseTree child scopes, fresh-Bank reacquisition, paged-KV remap, two-process handoff, and seven-phase checkpoint root-switch recovery | Production-model continuation and durable lifecycle metadata |
-| Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay | Multi-tenant workload integration |
+| Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay, and a bounded mixed-media pressure campaign | Family-aware batching, preemption, placement, and broader multi-tenant integration |
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes | CPU execution, optional Metal, prepared `.glrt` images, admission, scheduling, token publication, continuation, provider control plane, canonical model-family contracts, shared stateless/stateful lifecycles, integrated perception transactions, restart-safe generated-image/audio/video output verticals, and exported Zig package modules | More family adapters, stable API policy, product-specific build profiles, physical resource integration, distribution, and generated compatibility matrix |
@@ -37,7 +37,7 @@ evidence. The plane and model-family sequence is specified in the
 | Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, full build and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Named core/CPU/durable/device/host-tool build profiles; native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; mobile lifecycle gates; and a reduced edge profile |
 | Benchmark evidence | Prototype | Paired harnesses, machine envelope, independent verification | More complete CPU/energy telemetry and reproducible machines |
-| Load and resilience evidence | Planned | Deterministic scheduling, cancellation, ownership, restart, and pressure primitives exist separately | Versioned mixed-family pressure harness; open/closed-loop summaries; native p50/p95/p99, memory, fairness, cancellation, recovery, and soak campaigns |
+| Load and resilience evidence | Prototype | A portable versioned explicit-open-loop mixed-media scenario/result contract retains exact overload, fairness, timeout, cancellation, logical-resource, and zero-orphan evidence with Zig/Python replay | Generated workloads; a separate closed-loop mode; real family adapters; native p50/p95/p99, physical-resource, recovery, and soak campaigns |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
 ## P0 — Open-source usability
@@ -239,14 +239,19 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   and native-device correctness gates.
 - [ ] Define explicit single-threaded/no-durable-filesystem edge capabilities
   and checked 32-bit `u64`-to-`usize` boundaries.
-- [ ] Add a portable versioned workload-scenario and result format with fixed
-  arrivals/seeds, open-loop and closed-loop modes, exact percentile rules,
-  queue/fairness/accounting summaries, resource ceilings, and an independent
-  verifier.
+- [x] Add the first portable versioned explicit-open-loop workload-scenario and
+  result format with fixed arrivals/seed, nearest-rank logical-step
+  percentiles, queue/fairness/accounting summaries, exact resource ceilings,
+  full replay, and an independent verifier.
+- [ ] Add generated bounded workloads and a separately versioned closed-loop
+  mode with completion-driven arrivals; do not infer native timing from either
+  deterministic conformance mode.
 - [ ] Retain native per-OS mixed-family load and bounded soak campaigns with
   machine, power, thermal, backend, fault-schedule, memory-growth, recovery,
   and zero-orphan evidence.
 
+See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md) for the implemented
+V1 contract, exact reference campaign, claim boundary, and contributor slices.
 See [Platform Portability](PLATFORM_PORTABILITY.md) for the evidence matrix,
 adapter architecture, G0–G7 promotion gates, and staged target sequence.
 

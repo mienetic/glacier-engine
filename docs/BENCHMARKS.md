@@ -23,6 +23,7 @@ energy, or production reliability.
 | Command | Contract exercised |
 | --- | --- |
 | `zig build lane-weave-demo -Dmetal=false` | Exact admission, deterministic weighted service, rejection, cancellation, final release |
+| `zig test src/core/workload_pressure.zig -OReleaseSafe` plus `python3 -m unittest bench.tests.test_workload_pressure` | Versioned mixed-media explicit-open-loop pressure, capacity/resource rejection, exact `1:2:4` fairness, timeout, cancellation, logical delay/high-water summaries, zero-orphan close, exact replay, and independent cross-language roots |
 | `zig build lane-publication-demo -Dmetal=false` | One-token prepare/commit/abort with KV, RNG, sampler, output, schedule, and resource roots |
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
 | `zig build continuation-capsule-demo -Dmetal=false` | Fixed-size committed-checkpoint manifest, typed external object binding, and substitution rejection |

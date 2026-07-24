@@ -145,11 +145,17 @@ Responsibilities:
 - replayable scheduling decisions without relying on wall-clock ordering.
 
 Current state: **integrated control-plane prototype**. `LaneWeave` supplies
-deterministic weighted service and cancellation. Family-aware batch formation,
-preemption, and multi-device placement remain planned.
+deterministic weighted service and cancellation. The first versioned
+explicit-open-loop pressure fixture now composes real `LaneWeave`,
+`ResourceBank`, and verifier state across image/audio/video profiles and retains
+exact capacity/resource rejection, fairness, timeout, cancellation, delay,
+high-water, and zero-orphan evidence. Family-aware batch formation, preemption,
+multi-device placement, generated workloads, and closed-loop mode remain
+planned.
 
-Promotion gate: retained mixed-family pressure campaigns meet declared fairness,
-deadline, memory, cancellation, and zero-orphan invariants.
+Promotion gate: retained mixed-family pressure campaigns meet declared
+fairness, deadline, logical-resource, cancellation, and zero-orphan invariants;
+native campaigns separately validate physical memory and timing.
 
 ### 5. State and continuation plane
 
@@ -360,12 +366,15 @@ Responsibilities:
 - claim boundaries generated beside benchmark results.
 
 Current state: **integrated evidence building blocks**, **prototype inspection
-tooling**. The experimental generated-media inspector validates a registry
-archive plus its producer-transition evidence, requires the exact predecessor
-pair for successors, and can optionally validate current/predecessor format
-sidecars through the composed oracle. It emits deterministic versioned JSON
-only after validation and does not render payload bytes or receive callback,
-filesystem-write, or resource authority.
+and workload tooling**. The experimental generated-media inspector validates a
+registry archive plus its producer-transition evidence, requires the exact
+predecessor pair for successors, and can optionally validate
+current/predecessor format sidecars through the composed oracle. The first
+portable workload-pressure contract drives a bounded mixed-media
+explicit-open-loop scenario through the real scheduler and resource bank, with
+exact Zig replay and an independent Python oracle. Both surfaces emit
+deterministic versioned evidence only after validation and grant no payload,
+filesystem-write, device, or live resource authority.
 
 Promotion gate: every promoted claim names the workload, platform, numerical
 mode, baseline conditions, verifier, retained artifacts, and nonclaims.
@@ -373,11 +382,16 @@ mode, baseline conditions, verifier, retained artifacts, and nonclaims.
 #### Workload, stress, and soak campaigns
 
 Load evidence is a required runtime feature, not a single marketing number.
-The planned harness has three deliberately separate modes:
+The track has three deliberately separate levels:
 
-1. **Deterministic pressure** replays a model-free arrival schedule to verify
-   admission, weighted fairness, batching, deadlines, cancellation,
-   backpressure, exact accounting, and zero orphaned ownership on every target.
+1. **Deterministic pressure — first slice implemented.** V1 replays one bounded
+   model-free explicit arrival schedule to verify admission, weighted fairness,
+   deadline completion, timeout, cancellation, overload rejection, exact
+   logical accounting, and zero orphaned ownership. Its canonical
+   scenario/result wires, nearest-rank logical-step summaries, exact replay,
+   and independent Python verifier are documented in
+   [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md). Generated scenarios,
+   batching, real backpressure, and a separate closed-loop mode remain planned.
 2. **Native workload** runs declared model-family mixes against a real CPU,
    accelerator, or provider adapter and records completed/rejected/cancelled
    work, throughput, p50/p95/p99 latency, queue delay, memory high-water,
@@ -387,12 +401,13 @@ The planned harness has three deliberately separate modes:
    cancellation storms, then proves recovery, bounded growth, and zero leaked
    ownership.
 
-Open-loop arrival-rate campaigns and closed-loop concurrency campaigns must
-remain distinct. Results retain exact scenario identity, warmup and measurement
-windows, machine/OS/backend/power/thermal envelopes, raw observations, summary
-algorithm identity, and independent validation. Cross-compilation alone never
-counts as load evidence, and a campaign on one OS or device never promotes
-another.
+Native open-loop arrival-rate campaigns and closed-loop concurrency campaigns
+must remain distinct from each other and from deterministic logical-step
+conformance. Native results retain exact scenario identity, warmup and
+measurement windows, machine/OS/backend/power/thermal envelopes, raw
+observations, summary algorithm identity, and independent validation.
+Cross-compilation alone never counts as native load evidence, and a campaign on
+one OS or device never promotes another.
 
 ### 10. Capability, extension, and distribution plane
 
