@@ -565,8 +565,9 @@ vertical now:
   admitted resources to zero after retirement.
 
 The common contract vocabulary also accepts a prehashed artifact digest and a
-typed `token_ids` output kind. These are R1 foundations; the prepared-text plan
-does not yet consume the common Model Contract execution plan.
+typed `token_ids` output kind. These are R1 foundations; R1a's local
+prepared-text plan does not consume the common Model Contract execution plan
+without the R1c bridge below.
 
 The retained fixture is synthetic and download-free. It does not establish a
 production-model result, tokenizer wire identity, durable checkpoint payload,
@@ -601,14 +602,61 @@ Status: **integrated experimental control-plane slice**. The preferred
 This slice favors lifecycle correctness over startup concurrency. Allocation
 and prefill occur while the scheduler-wide logical barrier is live, so other
 work on that scheduler does not progress during start. Non-blocking staged
-activation remains future work. R1b also does not bind the text session to the
+activation remains future work. R1b alone does not bind the text session to the
 common Model Contract execution plan or add tokenizer identity, durable
 checkpoint payloads, fresh-process resume, a production fixture, native Linux
 evidence, or performance evidence.
 
-Exit gate: one declared artifact and numerical mode completes plan → execute →
-publish → checkpoint → fresh-process resume with exact ownership and output
-evidence.
+#### R1c — Common-plan prepared text bridge
+
+Status: **integrated experimental identity and evidence slice**. The preferred
+`SessionV2` path now:
+
+- cross-binds the existing prepared-text `PlanV1` to a Common Model Contract
+  autoregressive `generate_sequence` artifact and `implementation_defined`
+  execution profile;
+- declares the mapped `.glrt` as shared read-only residency:
+  `ExecutionPlanV1.claim` records total logical resources, including the
+  container, while `ExecutionResidencyBindingV1.request_claim` records the exact
+  claim charged to this request;
+- reconstructs and validates the artifact, execution, residency, and local
+  plan against an independently retained `BoundPlanInputV1` before scheduler
+  admission, then preserves the R1b charge-before-materialize and rollback
+  transaction;
+- installs all common roots before publication adoption can commit; and
+- emits `BoundarySnapshotV2`, which binds the V1 boundary to the bound-plan,
+  artifact, execution-plan, and residency-binding roots. Consumers with the
+  expected bound plan and canonical local plan can verify that contextual join
+  and the complete prepared-image identity with
+  `boundarySnapshotValidForBoundPlanV2`.
+
+The artifact manifest in this slice is deliberately a request-profile identity:
+prompt and output dimensions change its root. It is not a stable package
+identity, although its weight digest remains the exact mapped `.glrt` container
+digest. Shared logical residency does not prove physical RSS, deduplication, or
+page residency. Token-domain, token-domain-configuration, and artifact-license
+roots are caller assertions whose bytes are not inspected or attested.
+
+R1c covers only request profiles whose local activation claim satisfies the
+Common Execution Plan's exact token-input byte lower bound. Some
+long-prompt/minimal-model profiles accepted by `SessionV1` can therefore fail
+`makeBoundPlanV1` before admission. Extending the bridge to those shapes
+requires a later ownership and accounting decision; R1c does not claim complete
+V1 shape coverage.
+
+R1c does not execute a raw-text tokenizer, emit a Common Model Contract
+`ResultEnvelopeV1`, add a prepared-session checkpoint or fresh-process resume,
+or establish production-model, native-platform, quality, or performance
+evidence. It also does not establish strict cross-platform numerical
+equivalence. `BoundPlanV1`, `ExecutionResidencyBindingV1`, and the bridge remain
+an experimental Zig/direct API: there is no fixed bound-plan wire, C validator,
+independent golden oracle, or `.generate_sequence` `SupportRecordV1`.
+Cross-language ABI and support-registry parity, plus non-blocking staged
+activation, remain future work.
+
+Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
+completes plan → execute → publish → checkpoint → fresh-process resume with
+exact ownership and output evidence.
 
 ### R2 — Stateless tensor families
 

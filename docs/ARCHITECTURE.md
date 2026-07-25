@@ -370,25 +370,71 @@ retirement, and request-wide publication authority.
 
 The experimental `prepared_text_session.SessionV1` is the first text execution
 path to use the contiguous transaction directly. It seals one mapped `.glrt`
-image and pre-tokenized prompt into an exact request plan, adopts the existing
-`LaneWeave` receipt, and keeps serial greedy KV, RNG, and output state alive
-across service permits. Its canonical boundary snapshot groups the verified
-in-process publication state with that plan and image identity; it is not a
-durable continuation payload or historical attestation, and its plan is not
-yet the common Model Contract execution plan.
+image and pre-tokenized prompt into an exact local request plan, adopts the
+existing `LaneWeave` receipt, and keeps serial greedy KV, RNG, and output state
+alive across service permits.
 
-The preferred `SessionV1.start` path owns admission and adoption as one sealed
+R1c layers `SessionV2` and `BoundPlanV1` around that unchanged numerical and
+publication lifecycle. The binding joins the local plan to a Common Model
+Contract autoregressive `generate_sequence` artifact and
+`implementation_defined` execution profile, then installs all roots before
+admission. `SessionV2.start` reconstructs and compares the artifact, execution
+plan, residency projection, and local plan against an independently retained
+`BoundPlanInputV1` before delegating to the atomic R1b start path. This keeps a
+coherently re-rooted caller-asserted identity from authorizing itself.
+
+The execution plan describes total logical resources. For the mapped `.glrt`,
+`ExecutionResidencyBindingV1` declares `shared_read_only`, records the complete
+container as resident weight bytes, and projects the total to the exact local
+claim charged by `ResourceBank` for this request. This is logical accounting,
+not evidence of physical RSS, page residency, deduplication, or ownership of
+the shared mapping.
+
+The Common Model Contract artifact manifest is intentionally specific to the
+request profile: prompt and output dimensions affect its root, while the
+weight digest remains the exact `.glrt` container digest. It is not a stable
+package identity. Token-domain, token-domain-configuration, and
+artifact-license roots are opaque caller assertions; the bridge binds but does
+not inspect or attest their bytes.
+
+The bridge currently accepts only profiles whose local activation claim covers
+the Common Execution Plan's exact `u32` prompt-input bytes. A
+long-prompt/minimal-model profile can remain valid for `SessionV1` yet fail
+R1c binding before admission. Resolving that remaining ownership and accounting
+boundary is future work.
+
+After publication begins, `BoundarySnapshotV2` groups the verified V1
+in-process boundary with the bound-plan, artifact, execution-plan, and
+residency-binding roots. `boundarySnapshotValidV2` verifies self-canonical root
+composition, while `boundarySnapshotValidForBoundPlanV2` contextually joins the
+snapshot to the expected bound plan, canonical local plan, and complete
+prepared-image identity, including source and ABI fingerprints. It remains
+neither a durable continuation payload nor a historical attestation. R1c does
+not
+execute a raw-text tokenizer, publish a Common Model Contract
+`ResultEnvelopeV1`, restore a prepared session in a fresh process, or establish
+production-model, strict cross-platform numerical, native-platform, or
+performance evidence.
+
+The bound-plan and residency bridge is currently an experimental Zig/direct
+API. It has no fixed `BoundPlanV1` wire, C validator, independent golden oracle,
+or retained `.generate_sequence` `SupportRecordV1`; cross-language ABI and
+support-registry parity are future work.
+
+The underlying `SessionV1.start` path owns admission and adoption as one sealed
 control-plane transaction. It derives the claim and service count from the text
 plan, commits the `ResourceBank` charge before materialization, and installs a
-scheduler-wide adoption barrier before allocation or prefill begins. The ready
-session commits that single-use authority into its every-service publication
-binding; failure emits the ordinary accepted-then-cancelled scheduler history
-and releases the exact receipt. If cancellation returns a transient cleanup
-error, the Session reports `RecoveryRequired` and retains the exact, single-use
-cancellation authority for retry after that condition is resolved. This path
-does not diagnose or repair Scheduler or Bank state. Competing logical mutators
-fail with `AdoptionInFlight` until commit or cleanup, eliminating
-shared-scheduler interposition without inventing a new semantic event.
+scheduler-wide adoption barrier before allocation or prefill begins.
+`SessionV2` preserves this transaction after its common binding is validated.
+The ready session commits the single-use authority into its every-service
+publication binding; failure emits the ordinary accepted-then-cancelled
+scheduler history and releases the exact receipt. If cancellation returns a
+transient cleanup error, the Session reports `RecoveryRequired` and retains the
+exact, single-use cancellation authority for retry after that condition is
+resolved. This path does not diagnose or repair Scheduler or Bank state.
+Competing logical mutators fail with `AdoptionInFlight` until commit or cleanup,
+eliminating shared-scheduler interposition without inventing a new semantic
+event.
 
 This barrier serializes logical progress during session startup. It is a
 correctness primitive, not an asynchronous activation design. The older
