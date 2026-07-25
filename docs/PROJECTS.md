@@ -414,6 +414,17 @@ local minimum in both implementations without changing any W0/W1 reference
 wire or golden. See
 [Generated Workload Corpus](GENERATED_WORKLOAD_CORPUS.md).
 
+**Completed deterministic closed-loop slice:** one separately versioned,
+finite-source controller drives repeated admissions and terminal turnover
+toward a declared logical in-flight target. The exact
+`admit_due → apply_actions → service_retire → seal_step` order makes every
+rejection, cancellation, timeout, and completion eligible for at most one FIFO
+successor on the next logical step. Canonical plan/result wires bind lineage,
+phase-aware trace, target and credit high-water marks, finite-budget drain, and
+zero ownership. Zig and an independent direct Python replay agree without
+converting the plan into a precomputed open-loop schedule. See
+[Deterministic Closed-Loop Workload](DETERMINISTIC_CLOSED_LOOP.md).
+
 This is deterministic conformance, not a throughput, wall-clock latency,
 physical-memory, energy, or soak result.
 
@@ -421,8 +432,9 @@ Small independent follow-up slices include:
 
 - add one retained seed, exact failure signature, or independent
   generator/shrinker check while preserving every prior case root;
+- add one retained W3 plan, phase/lineage mutation, or independent decoder
+  while preserving every existing V1 root;
 - add one new media or non-media profile without weakening exact replay;
-- specify a separately versioned deterministic closed-loop mode;
 - build a read-only scenario/result inspector that exposes no authority;
 - drive the completed scheduled vision/audio/temporal-video lifecycle through
   one mixed typed-adapter workload profile; or

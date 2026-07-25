@@ -9,17 +9,33 @@ test "package exports runtime and core modules independently of host tools" {
         @hasDecl(glacier, "generated_media_format_conformance"),
     );
     try std.testing.expect(@hasDecl(glacier, "platform_capabilities"));
+    try std.testing.expect(@hasDecl(glacier, "workload_closed_loop"));
+    try std.testing.expect(@hasDecl(glacier, "WorkloadClosedLoop"));
     try std.testing.expect(@hasDecl(glacier, "prepared_text_successor"));
     try std.testing.expect(
         @hasDecl(glacier, "prepared_text_restore_admission"),
     );
     try std.testing.expect(@hasDecl(glacier_core, "ResourceBank"));
+    try std.testing.expect(
+        @hasDecl(glacier_core, "workload_closed_loop"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "WorkloadClosedLoop"),
+    );
     try std.testing.expect(@hasDecl(glacier_core, "RuntimeSupportRegistry"));
     try std.testing.expectEqual(
         @as(usize, 8),
         glacier_core.RuntimeSupportRegistry.profiles.len,
     );
     try std.testing.expect(glacier.ResourceBank == glacier_core.ResourceBank);
+    try std.testing.expect(
+        glacier.workload_closed_loop ==
+            glacier_core.workload_closed_loop,
+    );
+    try std.testing.expect(
+        glacier.WorkloadClosedLoop ==
+            glacier_core.WorkloadClosedLoop,
+    );
 }
 
 test "runtime module propagates native link requirements" {

@@ -25,6 +25,17 @@ before the first stable release.
 
 ### Added
 
+- Added a separately versioned deterministic closed-loop workload contract.
+  A finite candidate source maintains a declared logical in-flight target
+  through exact `admit_due`, `apply_actions`, `service_retire`, and
+  `seal_step` phases. Terminal outcomes create trace-ordered FIFO credits for
+  the next logical step; canonical plan/result wires bind lineage, target and
+  resource high-water marks, rejection causes, finite-source drain, and final
+  zero ownership. A direct independent Python state machine and retained
+  canonical report reproduce the Zig evidence while preserving every earlier
+  workload ABI and golden. This is logical conformance, not native
+  concurrency, throughput, physical CPU/GPU use, memory, power, or soak
+  evidence.
 - Added process-local prepared-text restored activation. A fresh target receipt
   remains the sole aggregate charge while a queue-free receipt-funded
   `LeaseTree` records allocator ownership; checkpoint KV/output/RNG state is

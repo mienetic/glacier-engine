@@ -164,6 +164,22 @@ defect or a claim of global minimality.
 See [Generated Workload Corpus](GENERATED_WORKLOAD_CORPUS.md) for the generator
 ABI, retained artifact, shrink contract, acceptance commands, and nonclaims.
 
+## Deterministic closed-loop conformance
+
+W3 is a separate finite-source contract rather than a new
+`WorkloadPressure V1` mode. Its candidates have no precomputed absolute
+arrival schedule. A declared logical in-flight target submits the initial
+prefix; rejections, cancellations, timeouts, and completed retirement create
+FIFO credits admitted on the next driver step. Phase-aware trace and lineage
+records prove the predecessor, trigger, successor order, target bound, bounded
+drain, and final zero ownership.
+
+The direct Zig runner and independent Python oracle retain separate canonical
+plan/result wires and reproduce the same state machine without changing any
+W0/W1/W2 ABI or golden. W3 remains model-free and does not run the W1 media
+transaction, typed adapters, asynchronous workers, or native timing. See
+[Deterministic Closed-Loop Workload](DETERMINISTIC_CLOSED_LOOP.md).
+
 ## Run the retained campaign
 
 ```sh
@@ -174,6 +190,9 @@ python3 -m unittest bench.tests.test_scheduled_media_pressure
 tools/zig-with-ephemeral-cache.sh build workload-scenario-corpus-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 python3 -m unittest bench.tests.test_workload_scenario_corpus
+tools/zig-with-ephemeral-cache.sh build workload-closed-loop-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+python3 -m unittest bench.tests.test_workload_closed_loop
 ```
 
 The module is exported through both package surfaces as
@@ -185,15 +204,19 @@ additive executor is exported as
 `glacier_core.ScheduledMediaPressure`. The generated corpus is exported as
 `glacier.workload_scenario_corpus` / `glacier.WorkloadScenarioCorpus` and
 `glacier_core.workload_scenario_corpus` /
-`glacier_core.WorkloadScenarioCorpus`.
+`glacier_core.WorkloadScenarioCorpus`. The W3 contract is exported separately
+as `glacier.workload_closed_loop` / `glacier.WorkloadClosedLoop` and
+`glacier_core.workload_closed_loop` / `glacier_core.WorkloadClosedLoop`.
 
 ## Claim boundary
 
 The base V1 reference campaign proves deterministic contract behavior for one
 bounded logical workload. The generated corpus repeats those unchanged
-contracts over its retained 32-case matrix. The additive media campaign also
-proves deterministic fixture decode, transform, mapping verification,
-transactional publication, and terminal release. These layers do not measure:
+contracts over its retained 32-case matrix. W3 separately proves bounded
+terminal-driven logical turnover for its retained finite-source plan. The
+additive media campaign also proves deterministic fixture decode, transform,
+mapping verification, transactional publication, and terminal release. These
+layers do not measure:
 
 - native throughput, requests per second, first-output latency, or tail latency;
 - process RSS, allocator behavior, device memory, energy, or thermals;
@@ -211,14 +234,12 @@ The complete sequencing and native report contract live in the
 [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md). The load track can grow
 without mixing conformance and performance claims:
 
-1. add a separately versioned deterministic closed-loop mode with explicit
-   completion-driven arrivals;
-2. drive the completed scheduled vision/audio/temporal-video lifecycle through
+1. drive the completed scheduled vision/audio/temporal-video lifecycle through
    a mixed typed-adapter profile, then add provider and tool profiles;
-3. add family-aware batching, safe preemption, and multi-tenant campaigns;
-4. build native per-OS runners that retain CPU, memory, power, thermal, backend,
+2. add family-aware batching, safe preemption, and multi-tenant campaigns;
+3. build native per-OS runners that retain CPU, memory, power, thermal, backend,
    and machine-condition envelopes; and
-5. add bounded soak and scheduled disruption campaigns with recovery and
+4. add bounded soak and scheduled disruption campaigns with recovery and
    zero-orphan gates.
 
 Native timing evidence belongs under the paired campaign rules in

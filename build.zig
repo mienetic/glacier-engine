@@ -1142,6 +1142,92 @@ pub fn build(b: *std.Build) void {
         workload_scenario_corpus_compile_step,
     );
 
+    // Direct four-phase W3 target maintenance. This is a stateful
+    // candidate-source driver, not a materialized W0 open-loop scenario.
+    // Native evidence is compared with an independent Python state machine
+    // and a retained canonical fixture.
+    const workload_closed_loop_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/workload_closed_loop.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_workload_closed_loop_tests = b.addRunArtifact(
+        workload_closed_loop_tests,
+    );
+    const workload_closed_loop_exe = b.addExecutable(.{
+        .name = "glacier-workload-closed-loop",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/workload_closed_loop.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    workload_closed_loop_exe.root_module.addImport("core", core_mod);
+    const run_workload_closed_loop = b.addRunArtifact(
+        workload_closed_loop_exe,
+    );
+    const workload_closed_loop_demo_step = b.step(
+        "workload-closed-loop-demo",
+        "Print the canonical deterministic closed-loop report",
+    );
+    workload_closed_loop_demo_step.dependOn(
+        &run_workload_closed_loop.step,
+    );
+
+    const run_workload_closed_loop_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_workload_closed_loop_oracle.setCwd(b.path("."));
+    run_workload_closed_loop_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_workload_closed_loop_oracle.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_workload_closed_loop_oracle.addFileArg(
+        b.path("bench/workload_closed_loop.py"),
+    );
+    run_workload_closed_loop_oracle.addArg("--runner");
+    run_workload_closed_loop_oracle.addArtifactArg(
+        workload_closed_loop_exe,
+    );
+    run_workload_closed_loop_oracle.addArg("--fixture");
+    run_workload_closed_loop_oracle.addFileArg(
+        b.path("bench/results/workload-closed-loop-v1.json"),
+    );
+
+    const workload_closed_loop_test_step = b.step(
+        "workload-closed-loop-test",
+        "Run deterministic closed-loop tests and independent replay",
+    );
+    workload_closed_loop_test_step.dependOn(
+        &run_workload_closed_loop_tests.step,
+    );
+    workload_closed_loop_test_step.dependOn(
+        &run_workload_closed_loop_oracle.step,
+    );
+    const workload_closed_loop_compile_step = b.step(
+        "workload-closed-loop-compile",
+        "Compile the deterministic closed-loop tests and runner",
+    );
+    workload_closed_loop_compile_step.dependOn(
+        &workload_closed_loop_tests.step,
+    );
+    workload_closed_loop_compile_step.dependOn(
+        &workload_closed_loop_exe.step,
+    );
+    test_step.dependOn(workload_closed_loop_test_step);
+    test_compile_step.dependOn(workload_closed_loop_compile_step);
+
     // Model-free deterministic QoS conformance demo. Native tests execute it,
     // cross-target gates compile it, and it is never installed as a production
     // or benchmark binary.

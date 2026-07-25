@@ -221,7 +221,8 @@ Small independent contributions can:
 - run one generated scenario through an additional typed workload driver
   without changing W0 or W1 evidence.
 
-The next workload mode is W3 deterministic closed-loop conformance. It requires
-a separately versioned contract whose replacements are driven by terminal
-outcomes and a declared in-flight target. It is not an extension of the
-WorkloadPressure V1 open-loop mode and is not implemented by this corpus.
+W3 deterministic closed-loop conformance is implemented as a separate
+finite-source contract whose replacements are driven by terminal outcomes and
+a declared logical in-flight target. It does not extend this generator or the
+WorkloadPressure V1 open-loop mode, and it changes no W0/W1/W2 root. See
+[Deterministic Closed-Loop Workload](DETERMINISTIC_CLOSED_LOOP.md).

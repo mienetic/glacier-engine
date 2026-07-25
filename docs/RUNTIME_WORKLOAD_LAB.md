@@ -11,12 +11,12 @@ It separates four kinds of evidence:
 3. CPU, GPU/accelerator, machine-state, and physical-resource observation; and
 4. bounded soak and disruption recovery.
 
-The deterministic open-loop, generated deterministic open-loop, and
-scheduler-coupled media layers are integrated. Closed-loop arrivals, broader
-typed workloads, native multi-request reports, and soak campaigns remain staged
-work. A logical driver step is never reported as a millisecond, and a logical
-resource claim is never reported as RSS, device residency, energy, or
-temperature.
+The deterministic open-loop, generated deterministic open-loop,
+scheduler-coupled media, and finite-source deterministic closed-loop layers are
+integrated. Broader typed workloads, native multi-request reports, and soak
+campaigns remain staged work. A logical driver step is never reported as a
+millisecond, and a logical resource claim is never reported as RSS, device
+residency, energy, or temperature.
 
 ## Why this belongs in the runtime
 
@@ -54,9 +54,10 @@ The modes remain separately versioned because they answer different questions.
   fixed seed and can retain exact-signature synthetic or regression shrink
   fixtures. The first retained fixture is synthetic. This mode still uses
   logical time.
-- **Deterministic closed-loop** is a planned separately versioned conformance
-  mode whose terminal outcomes drive bounded replacement work toward a declared
-  in-flight target. It still uses logical time.
+- **Deterministic closed-loop** is a separately versioned finite-source
+  conformance mode. Terminal outcomes create FIFO successor credits admitted
+  at the next logical step toward a declared in-flight target. It still uses
+  logical time and creates no native concurrency.
 - **Native open-loop** schedules arrivals against a monotonic clock at a
   declared rate. It exposes queueing and overload behavior.
 - **Native closed-loop** maintains a declared in-flight population and submits
@@ -82,9 +83,12 @@ Results from different modes are not merged into one headline number.
   same cases through unchanged W0 replay and W1 media execution. A synthetic
   exact-signature fixture proves deterministic local-minimum shrinking without
   changing either earlier evidence ABI or its reference goldens.
-- [ ] **W3 — Deterministic closed-loop contract.** Add a separately versioned
-  mode whose arrivals are driven by terminal work and a declared in-flight
-  target.
+- [x] **W3 — Deterministic closed-loop contract.** A separately versioned,
+  caller-storage-backed finite-source controller executes
+  `admit_due → apply_actions → service_retire → seal_step`; terminal-trace
+  order drives FIFO next-step successors under a declared in-flight target.
+  Canonical plan/result wires, lineage, direct Zig/Python replay, mutation
+  rejection, preserved earlier goldens, and final zero ownership are retained.
 - [ ] **W4 — Typed workload adapters.** Drive declared model, media, provider,
   and tool lifecycles through the existing workload-driver seam. Each profile
   names its execution unit, claim, cancellation or preemption boundary,
@@ -243,7 +247,8 @@ Independent contributions can add:
 
 1. one retained generated seed, exact failure signature, or independent
    generator/shrinker check;
-2. the separately versioned deterministic closed-loop contract;
+2. one retained deterministic closed-loop plan, phase/lineage mutation, or
+   independent decoder while preserving every existing V1 root;
 3. one typed workload-driver profile;
 4. a family-neutral observer interface and one native OS implementation;
 5. a bounded Metal observer slice for device identity, host submit/sync timing,

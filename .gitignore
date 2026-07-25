@@ -35,6 +35,7 @@ bench-results/
 bench/results/*
 !bench/results/README.md
 !bench/results/workload-scenario-corpus-v1.json
+!bench/results/workload-closed-loop-v1.json
 
 # Python
 __pycache__/

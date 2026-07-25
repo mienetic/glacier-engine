@@ -220,8 +220,9 @@ wave.
 **LaneWeave** — Glacier's deterministic admission and weighted service scheduler.
 
 **Logical driver step** — One ordered iteration of a deterministic workload
-driver. It processes the arrivals and terminal actions declared for that step,
-then permits at most one scheduler service quantum. It is not elapsed time.
+driver. Open-loop V1 processes fixed arrivals and actions before at most one
+service quantum. Closed-loop W3 processes `admit_due`, `apply_actions`,
+`service_retire`, and `seal_step` in that order. It is not elapsed time.
 
 **Deterministic open-loop workload** — A portable conformance workload whose
 arrivals are fixed at absolute logical driver steps before replay begins.
@@ -243,9 +244,11 @@ signature. Its fixed point is locally minimal under the declared reductions,
 not necessarily the globally smallest scenario.
 
 **Deterministic closed-loop workload** — A separately versioned logical
-conformance mode in which terminal outcomes trigger bounded replacement work
-to maintain a declared in-flight target. It is distinct from both generated
-open-loop scenarios and native closed-loop concurrency measurement.
+conformance mode in which each terminal outcome can create one FIFO successor
+credit for the next logical step under a finite candidate budget and declared
+in-flight target. The target is an admitted nonterminal population bound, not
+thread or kernel concurrency. This mode is distinct from both generated
+open-loop scenarios and native closed-loop measurement.
 
 **LeaseTree** — A hierarchy that gives one ResourceBank receipt exact child
 ownership and publication scopes. Additive trees charge child allocations in

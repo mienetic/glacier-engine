@@ -36,6 +36,8 @@ The repository's strongest checked-in evidence is deterministic conformance:
 - contiguous and paged token publication;
 - LeaseTree-backed KV ownership and retirement;
 - deterministic LaneWeave scheduling and replay;
+- retained W0/W1 open-loop workload evidence, the W2 generated corpus, and
+  separately versioned W3 finite-source closed-loop replay;
 - prepared runtime-image integrity;
 - provider gateway, transport, settlement, cost, and journal replay;
 - lossless context mapping and token reconciliation;
@@ -43,6 +45,24 @@ The repository's strongest checked-in evidence is deterministic conformance:
 
 These checkpoints establish contract behavior. They do not establish a broad
 throughput or resource advantage.
+
+## Retained logical fixtures
+
+`workload-closed-loop-v1.json` is the canonical
+`glacier.workload-closed-loop/v1` report, not a performance result. Its plan
+and result ABIs are `0x4757434c50000001` and `0x4757434c52000001`; their wire
+footer domains are `glacier-workload-closed-loop-plan-wire-v1\x00` and
+`glacier-workload-closed-loop-result-wire-v1\x00`. The retained result root is
+`1086ce5e2ac75090acb0e40efd92792bb51238192923ecb1a9a71f3b4f250f41`,
+and the complete report SHA-256 is
+`28c426b56bd422e22320eb856e28263585615d319cb8516f873962c0c380f02a`.
+Verify the native runner, independent Python state machine, canonical wires,
+and retained bytes together:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build workload-closed-loop-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
 
 ## Adding a result
 

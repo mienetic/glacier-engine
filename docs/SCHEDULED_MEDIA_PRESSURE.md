@@ -175,7 +175,8 @@ can proceed independently:
 
 1. drive the completed scheduled vision/audio/temporal-video adapter lifecycle
    through one mixed typed workload profile;
-2. add a separately versioned deterministic closed-loop arrival contract;
+2. run this media sidecar under the separately versioned W3 closed-loop
+   controller without changing either existing evidence ABI;
 3. add family-aware batching and safe preemption points;
 4. schedule strict external PNG/WAVE/APNG ingestion under explicit byte and
    geometry ceilings;

@@ -14,6 +14,7 @@ pub const resource_bank = core.resource_bank;
 pub const platform_capabilities = core.platform_capabilities;
 pub const lane_weave_qos = core.lane_weave_qos;
 pub const workload_pressure = core.workload_pressure;
+pub const workload_closed_loop = core.workload_closed_loop;
 pub const scheduled_media_pressure =
     core.scheduled_media_pressure;
 pub const workload_scenario_corpus =
@@ -57,6 +58,7 @@ pub const ResourceBank = core.ResourceBank;
 pub const PlatformCapabilities = core.PlatformCapabilities;
 pub const LaneWeaveQoS = core.LaneWeaveQoS;
 pub const WorkloadPressure = core.WorkloadPressure;
+pub const WorkloadClosedLoop = core.WorkloadClosedLoop;
 pub const ScheduledMediaPressure = core.ScheduledMediaPressure;
 pub const WorkloadScenarioCorpus = core.WorkloadScenarioCorpus;
 pub const ProviderTokenGateway = core.ProviderTokenGateway;

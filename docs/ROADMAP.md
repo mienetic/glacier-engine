@@ -26,7 +26,7 @@ evidence. The plane and model-family sequence is specified in the
 | --- | --- | --- | --- |
 | Exact admission | Integrated | ResourceBank receipts, capacity rejection, release, snapshots | Physical telemetry adapters and long-running pressure campaigns |
 | Hierarchical ownership | Integrated | LeaseTree child scopes, fresh-Bank reacquisition, paged-KV remap, two-process handoff, seven-phase checkpoint root-switch recovery, and lease-backed single-consumer prepared-text source/target grants | Production-model continuation, acknowledged target progress, and durable lifecycle metadata |
-| Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay, a bounded mixed-media pressure campaign, exact scheduler-receipt handoff to final-quantum media transactions, and scheduler-owned typed vision/audio/video result publication | Family-aware batching, preemption, placement, mixed typed-adapter workload profiles, and broader multi-tenant integration |
+| Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay, bounded open-loop and finite-source closed-loop pressure campaigns, exact scheduler-receipt handoff to final-quantum media transactions, and scheduler-owned typed vision/audio/video result publication | Family-aware batching, preemption, placement, mixed typed-adapter workload profiles, and broader multi-tenant integration |
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, two-process resume, and a three-generation prepared-text source-live/source-exited/terminal authority chain | Production model/tokenizer state, generation-one source recovery, acknowledged target progress, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes; R0 registry complete and R1a/R1b/R1c/R1d/R1e/R1f/R1g/R1h-a/R1h-b plus the durable handoff slice integrated experimentally | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, an exact-identity serial greedy prepared-text session with plan-derived atomic start, Common Model Contract request-profile binding, total-versus-request claim projection for shared read-only artifact residency, fixed-length terminal results, canonical non-terminal state, same-process rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, and a five-object canonical restart archive with exact source exit, exclusive POSIX lease, one-shot target activation, fresh-process resume, generation-three terminal selection, and terminal-semantic oracle comparison; plus admission, scheduling, continuation, provider, media, package, C verifier, and retained-reference inspector surfaces | Recover source death before generation-two publication; add an idempotent durable result sink and acknowledged progress generation for target-crash replay; complete request-shape accounting, raw-text tokenizer identity, variable-length results, non-blocking startup, stable APIs, production fixtures, native multi-OS validation, GPU/device continuation, physical resource integration, and distribution |
@@ -37,7 +37,7 @@ evidence. The plane and model-family sequence is specified in the
 | Durable provider evidence | Integrated; outer inspection prototype | Crash-recoverable journal, compact evidence join, and a deterministic read-only inspector for outer framing/checksum and self-asserted fields | Optional caller-supplied nested-composition inspection, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, full build and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Named core/CPU/durable/device/host-tool build profiles; native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; mobile lifecycle gates; and a reduced edge profile |
 | Benchmark evidence | Prototype | Paired harnesses, machine envelope, independent verification | More complete CPU/energy telemetry and reproducible machines |
-| Runtime Workload Lab | W0/W1/W2 integrated | A portable versioned explicit-open-loop mixed-media contract retains exact overload, fairness, timeout, cancellation, logical-resource, replay, and zero-orphan evidence; an additive sidecar executes completed image/audio/video transactions under the same receipts and atomically binds final service to publication; a coordinate-addressed generator and independent oracle retain 32 bounded W0/W1 cases plus a synthetic exact-signature local-minimum shrink fixture | Separately versioned deterministic closed-loop scenarios, typed model/provider/tool profiles, native CPU/GPU reports and physical observers, bounded soak/disruption, and multi-OS replication |
+| Runtime Workload Lab | W0–W3 integrated | A portable versioned explicit-open-loop mixed-media contract retains exact overload, fairness, timeout, cancellation, logical-resource, replay, and zero-orphan evidence; an additive sidecar executes completed image/audio/video transactions under the same receipts and atomically binds final service to publication; a coordinate-addressed generator and independent oracle retain 32 bounded W0/W1 cases plus a synthetic exact-signature local-minimum shrink fixture; and a separate finite-source closed-loop contract retains FIFO next-step replacement, lineage, target bounds, replay, and zero ownership | Typed model/provider/tool profiles, native CPU/GPU reports and physical observers, bounded soak/disruption, and multi-OS replication |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
 ## P0 — Open-source usability
@@ -286,9 +286,11 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   eight scenario classes per seed, coordinate-addressed SHA-256 decisions, unchanged W0/W1
   evidence ABIs and reference goldens, independent Python generation and
   verification, plus a synthetic exact-signature local-minimum shrink fixture.
-- [ ] Add a separately versioned deterministic closed-loop mode with
-  completion-driven arrivals and a declared in-flight target; do not infer
-  native timing from either deterministic conformance mode.
+- [x] Add a separately versioned finite-source deterministic closed-loop
+  contract with a declared in-flight target, exact four-phase step order,
+  terminal-trace-ordered FIFO credits admitted on the next logical step,
+  canonical lineage/result wires, direct Zig/Python replay, and zero-orphan
+  close while preserving every W0/W1/W2 ABI and retained root.
 - [ ] Retain native per-OS mixed-family load and bounded soak campaigns with
   CPU/GPU identity and placement, host/device timing, memory residency, power,
   thermal, backend, fault-schedule, memory-growth, recovery, and zero-orphan
@@ -300,6 +302,9 @@ See [Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md) for the additive
 single-receipt image/audio/video execution and publication evidence.
 See [Generated Workload Corpus](GENERATED_WORKLOAD_CORPUS.md) for the W2
 generator ABI, retained 32-case matrix, shrinking contract, and nonclaims.
+See [Deterministic Closed-Loop Workload](DETERMINISTIC_CLOSED_LOOP.md) for the
+W3 finite-source controller, phase order, lineage evidence, retained fixture,
+and logical-only claim boundary.
 See [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md) for the W0–W8 workload,
 native-observation, resilience, and platform-replication sequence.
 See [Platform Portability](PLATFORM_PORTABILITY.md) for the evidence matrix,

@@ -162,11 +162,14 @@ quanta and binds exact outputs/publication receipts without changing the
 workload wires. The shared stateless lifecycle now also lets the retained
 vision, audio-window, and temporal-video adapters adopt that scheduler receipt,
 preflight their typed result, publish through the final V2 service commit, and
-retire atomically without a second admission. A mixed typed-adapter workload
-profile, family-aware batch formation, preemption, multi-device placement,
-and closed-loop mode remain planned. A separate coordinate-addressed generator now
-retains 32 bounded W0/W1 cases from four seeds, with independent Python
-generation and verification plus deterministic exact-signature shrinking.
+retire atomically without a second admission. A separate coordinate-addressed
+generator retains 32 bounded W0/W1 cases from four seeds, with independent
+Python generation and verification plus deterministic exact-signature
+shrinking. W3 now adds a separately versioned, finite-source deterministic
+closed-loop controller with FIFO next-step replacement, exact lineage,
+independent replay, and final zero ownership. A mixed typed-adapter workload
+profile, family-aware batch formation, preemption, and multi-device placement
+remain planned.
 
 Promotion gate: retained mixed-family pressure campaigns meet declared
 fairness, deadline, logical-resource, cancellation, and zero-orphan invariants;
@@ -421,7 +424,7 @@ The complete W0–W8 sequence and report contract are defined in the
 deliberately separate campaign classes; replicated execution is a higher
 evidence level applied to retained native campaigns:
 
-1. **Deterministic pressure — W0 through W2 implemented.** V1 replays one bounded
+1. **Deterministic pressure — W0 through W3 implemented.** V1 replays one bounded
    model-free explicit arrival schedule to verify admission, weighted fairness,
    deadline completion, timeout, cancellation, overload rejection, exact
    logical accounting, and zero orphaned ownership. Its canonical
@@ -430,11 +433,15 @@ evidence level applied to retained native campaigns:
    [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md). A separate sidecar
    now proves final-quantum image/audio/video fixture execution, atomic
    publication, single-receipt ownership, and terminal absence for rejected,
-   cancelled, and timed-out work. W2 adds a coordinate-addressed 32-case generated
-   deterministic open-loop corpus, independent Python reproduction, and a
+   cancelled, and timed-out work. W2 adds a coordinate-addressed 32-case
+   generated deterministic open-loop corpus, independent Python reproduction, and a
    synthetic exact-signature local-minimum shrink fixture while preserving the
-   earlier wires and reference roots. Batching, typed model-adapter execution,
-   real backpressure, and a separate deterministic closed-loop mode remain
+   earlier wires and reference roots. W3 adds an independent finite-source
+   plan/result ABI: terminal outcomes create trace-ordered FIFO credits,
+   successors arrive only on the next logical step, lineage and target bounds
+   replay exactly, and ownership reaches zero. It does not execute W1 media,
+   models, providers, tools, asynchronous workers, or native concurrency.
+   Batching, typed model-adapter execution, and real backpressure remain
    planned.
 2. **Native workload** runs declared model-family mixes against a real CPU,
    accelerator, or provider adapter and records completed/rejected/cancelled
@@ -1190,8 +1197,9 @@ Contributors can work on the runtime without downloading a large model:
 - one independent verifier or mutation campaign;
 - one experimental C ABI consumer or golden failure case in another language;
 - one platform capability probe;
-- one retained generated-workload seed, exact shrink signature, summary oracle,
-  or native campaign adapter;
+- one retained generated-workload seed, exact shrink signature, deterministic
+  closed-loop plan or lineage mutation, summary oracle, or native campaign
+  adapter;
 - one prepared-text source-exit journal state or acknowledged sink-progress
   generation with explicit crash boundaries;
 - one native POSIX recovery campaign or bounded Win32 durable-file adapter
