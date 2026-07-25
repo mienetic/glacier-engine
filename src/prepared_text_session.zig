@@ -27,6 +27,9 @@ pub const plan_abi: u64 = 0x474c_5450_0000_0001;
 pub const session_abi: u64 = 0x474c_5453_0000_0001;
 pub const bound_plan_abi: u64 = 0x474c_5443_0000_0001;
 pub const session_v2_abi: u64 = 0x474c_5453_0000_0002;
+pub const session_v3_abi: u64 = 0x474c_5453_0000_0003;
+pub const terminal_result_evidence_abi: u64 =
+    0x474c_5452_0000_0001;
 pub const prepared_artifact_profile_abi: u64 =
     0x474c_5441_0000_0001;
 
@@ -49,6 +52,14 @@ const bound_plan_domain =
     "glacier-prepared-text-bound-plan-v1\x00";
 const boundary_v2_domain =
     "glacier-prepared-text-boundary-v2\x00";
+const terminal_output_domain =
+    "glacier-prepared-text-terminal-output-v1\x00";
+const terminal_source_mapping_domain =
+    "glacier-prepared-text-terminal-source-mapping-v1\x00";
+const terminal_adapter_domain =
+    "glacier-prepared-text-terminal-adapter-v1\x00";
+const terminal_result_evidence_domain =
+    "glacier-prepared-text-terminal-result-evidence-v1\x00";
 
 pub const Error = error{
     PreparedImageRequired,
@@ -175,6 +186,19 @@ pub const BoundarySnapshotV2 = struct {
     execution_plan_sha256: [32]u8,
     residency_binding_sha256: [32]u8,
     boundary_sha256: [32]u8,
+};
+
+/// Direct terminal evidence for the preferred R1d session. The contained
+/// ResultEnvelope remains the canonical portable wire; this grouping is an
+/// experimental in-process join to the exact V2 boundary and publication
+/// state after one terminal result commit.
+pub const TerminalResultEvidenceV1 = struct {
+    abi_version: u64 = terminal_result_evidence_abi,
+    boundary: BoundarySnapshotV2,
+    result: model_contract.ResultEnvelopeV1,
+    publication_state_after: model_contract.PublicationStateV1,
+    publication_state_after_sha256: [32]u8,
+    evidence_sha256: [32]u8,
 };
 
 fn hashU32(hash: *std.crypto.hash.sha2.Sha256, value: u32) void {
@@ -491,6 +515,8 @@ pub fn boundarySnapshotValidForBoundPlanV2(
             bound_plan.residency.request_claim,
             local_plan.claim,
         ) and
+        @as(u64, local_plan.eos_token) >
+            bound_plan.execution.maximum_absolute_output and
         std.mem.eql(
             u8,
             &snapshot.base.image_identity.container_sha256,
@@ -509,6 +535,274 @@ pub fn boundarySnapshotValidForBoundPlanV2(
         ) and
         snapshot.base.publication.request_epoch ==
             bound_plan.execution.request_epoch;
+}
+
+/// Canonical terminal token-sequence root. Token ids are hashed as explicit
+/// little-endian u32 values and remain bound to the exact execution and token
+/// domain rather than to host memory representation.
+pub fn terminalOutputRootV1(
+    bound_plan: BoundPlanV1,
+    output_tokens: []const u32,
+) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(terminal_output_domain);
+    hash.update(&bound_plan.execution.plan_sha256);
+    hash.update(&bound_plan.token_domain_sha256);
+    hash.update(&bound_plan.token_domain_config_sha256);
+    hashU64(&hash, @intCast(output_tokens.len));
+    for (output_tokens) |token| hashU32(&hash, token);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+/// Bind each terminal token sequence to the exact contiguous-publication
+/// transcript and V2 boundary that made it visible.
+pub fn terminalSourceMappingRootV1(
+    bound_plan: BoundPlanV1,
+    boundary: BoundarySnapshotV2,
+    output_sha256: [32]u8,
+    output_tokens: u64,
+) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(terminal_source_mapping_domain);
+    hash.update(&bound_plan.bound_plan_sha256);
+    hash.update(&boundary.boundary_sha256);
+    hash.update(&boundary.base.publication.transcript_sha256);
+    hash.update(&output_sha256);
+    hashU64(&hash, output_tokens);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+/// Experimental implementation identity for the retained serial prepared-text
+/// adapter. This is not a stable package or tokenizer identity.
+pub fn terminalAdapterRootV1(
+    bound_plan: BoundPlanV1,
+    local_plan: PlanV1,
+) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(terminal_adapter_domain);
+    hashU64(&hash, session_v3_abi);
+    hashU64(&hash, prepared_artifact_profile_abi);
+    hashU64(&hash, @intFromEnum(bound_plan.execution.family));
+    hashU64(&hash, @intFromEnum(bound_plan.execution.operation));
+    hashU64(&hash, @intFromEnum(bound_plan.execution.input_kind));
+    hashU64(&hash, @intFromEnum(bound_plan.execution.output_kind));
+    hashU64(
+        &hash,
+        @intFromEnum(bound_plan.execution.numerical_policy),
+    );
+    hash.update(&bound_plan.artifact.metadata_sha256);
+    hash.update(&local_plan.image_identity.source_fingerprint);
+    hash.update(&local_plan.image_identity.abi_fingerprint);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+pub fn terminalResultEvidenceRootV1(
+    evidence: TerminalResultEvidenceV1,
+) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(terminal_result_evidence_domain);
+    hashU64(&hash, evidence.abi_version);
+    hash.update(&evidence.boundary.boundary_sha256);
+    hash.update(&evidence.result.result_sha256);
+    hash.update(&evidence.publication_state_after_sha256);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+/// Contextual verification for the direct R1d evidence grouping. The caller
+/// supplies the expected bound/local plans and the exact token payload whose
+/// canonical digest is carried by the portable ResultEnvelope. Receipt fields
+/// are structurally checked from the envelope itself; consumers retaining an
+/// independent receipt should additionally use
+/// `terminalResultEvidenceValidForReceiptV1`.
+pub fn terminalResultEvidenceValidV1(
+    evidence: TerminalResultEvidenceV1,
+    bound_plan: BoundPlanV1,
+    local_plan: PlanV1,
+    output_tokens: []const u32,
+) bool {
+    if (evidence.abi_version != terminal_result_evidence_abi or
+        !boundarySnapshotValidForBoundPlanV2(
+            evidence.boundary,
+            bound_plan,
+            local_plan,
+        ) or
+        @as(u64, @intCast(output_tokens.len)) !=
+            local_plan.max_new_tokens or
+        evidence.boundary.base.publication.next_sequence !=
+            local_plan.max_new_tokens or
+        evidence.boundary.base.publication.state.output_length !=
+            local_plan.max_new_tokens or
+        !evidence.boundary.base.publication.terminal)
+        return false;
+    for (output_tokens) |token| {
+        if (@as(u64, token) >
+            bound_plan.execution.maximum_absolute_output)
+            return false;
+    }
+    model_contract.validateExecutionResidencyResultV1(
+        bound_plan.execution,
+        bound_plan.residency,
+        evidence.result,
+    ) catch return false;
+
+    const output_sha256 = terminalOutputRootV1(
+        bound_plan,
+        output_tokens,
+    );
+    const source_mapping_sha256 = terminalSourceMappingRootV1(
+        bound_plan,
+        evidence.boundary,
+        output_sha256,
+        @intCast(output_tokens.len),
+    );
+    const adapter_sha256 = terminalAdapterRootV1(
+        bound_plan,
+        local_plan,
+    );
+    if (!std.mem.eql(
+        u8,
+        &evidence.result.output_sha256,
+        &output_sha256,
+    ) or
+        !std.mem.eql(
+            u8,
+            &evidence.result.source_mapping_sha256,
+            &source_mapping_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &evidence.result.adapter_sha256,
+            &adapter_sha256,
+        ))
+        return false;
+
+    const initial_state = model_contract.initializePublicationStateV1(
+        bound_plan.execution.request_epoch,
+        bound_plan.artifact.artifact_sha256,
+    ) catch return false;
+    const receipt_slot_index = std.math.cast(
+        u32,
+        evidence.result.resource_slot_index,
+    ) orelse return false;
+    const receipt: resource_bank.Receipt = .{
+        .bank_epoch = evidence.result.resource_bank_epoch,
+        .slot_index = receipt_slot_index,
+        .generation = evidence.result.resource_generation,
+        .owner_key = evidence.result.resource_owner_key,
+        .claim = evidence.result.claim,
+        .integrity = evidence.result.resource_integrity,
+    };
+    model_contract.validateResidencyResultEnvelopeV1(
+        initial_state,
+        bound_plan.execution,
+        bound_plan.residency,
+        receipt,
+        evidence.result,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    ) catch return false;
+    const initial_root = model_contract.publicationStateRootV1(
+        initial_state,
+    ) catch return false;
+    const state_after_root = model_contract.publicationStateRootV1(
+        evidence.publication_state_after,
+    ) catch return false;
+    const expected_next_sequence = std.math.add(
+        u64,
+        bound_plan.execution.publication_next_sequence,
+        1,
+    ) catch return false;
+    if (!std.mem.eql(
+        u8,
+        &evidence.result.publication_state_before_sha256,
+        &initial_root,
+    ) or
+        evidence.publication_state_after.request_epoch !=
+            bound_plan.execution.request_epoch or
+        evidence.publication_state_after.next_sequence !=
+            expected_next_sequence or
+        evidence.publication_state_after.visible_results != 1 or
+        !std.mem.eql(
+            u8,
+            &evidence.publication_state_after.artifact_sha256,
+            &bound_plan.artifact.artifact_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &evidence.publication_state_after.previous_result_sha256,
+            &evidence.result.result_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &evidence.publication_state_after_sha256,
+            &state_after_root,
+        ))
+        return false;
+
+    const expected_evidence = terminalResultEvidenceRootV1(evidence);
+    return std.mem.eql(
+        u8,
+        &evidence.evidence_sha256,
+        &expected_evidence,
+    );
+}
+
+/// Bind otherwise self-contained terminal evidence to one independently
+/// retained Receipt. This proves exact receipt-field equality and structural
+/// integrity, but only the live Bank check inside `SessionV3.sealTerminalResult`
+/// proves that the receipt is still committed to that publication session.
+pub fn terminalResultEvidenceValidForReceiptV1(
+    evidence: TerminalResultEvidenceV1,
+    bound_plan: BoundPlanV1,
+    local_plan: PlanV1,
+    output_tokens: []const u32,
+    expected_receipt: resource_bank.Receipt,
+) bool {
+    if (!terminalResultEvidenceValidV1(
+        evidence,
+        bound_plan,
+        local_plan,
+        output_tokens,
+    ))
+        return false;
+    const initial_state = model_contract.initializePublicationStateV1(
+        bound_plan.execution.request_epoch,
+        bound_plan.artifact.artifact_sha256,
+    ) catch return false;
+    const output_sha256 = terminalOutputRootV1(
+        bound_plan,
+        output_tokens,
+    );
+    const source_mapping_sha256 = terminalSourceMappingRootV1(
+        bound_plan,
+        evidence.boundary,
+        output_sha256,
+        @intCast(output_tokens.len),
+    );
+    const adapter_sha256 = terminalAdapterRootV1(
+        bound_plan,
+        local_plan,
+    );
+    model_contract.validateResidencyResultEnvelopeV1(
+        initial_state,
+        bound_plan.execution,
+        bound_plan.residency,
+        expected_receipt,
+        evidence.result,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    ) catch return false;
+    return true;
 }
 
 fn isZeroDigest(digest: [32]u8) bool {
@@ -1522,6 +1816,258 @@ pub const SessionV2 = struct {
     pub fn cancel(self: *SessionV2) !lane.EventV1 {
         if (!self.contract_bound) return Error.InvalidState;
         return self.inner.cancel();
+    }
+};
+
+/// Preferred R1d session. V3 preserves the complete V2 execution lifecycle and
+/// adds one terminal, residency-aware Common Model Contract ResultEnvelope.
+///
+/// The Model Contract publication state is a separate result domain from the
+/// per-token contiguous transcript: token transactions advance the V2
+/// boundary, then at most one explicit terminal seal can commit sequence
+/// 0 -> 1 before explicit retirement releases the request-charged receipt.
+/// `deinit` remains an abandonment cleanup path and may close without evidence.
+pub const SessionV3 = struct {
+    inner: SessionV2 = .{},
+    result_publication_state: model_contract.PublicationStateV1 = undefined,
+    terminal_result_evidence: TerminalResultEvidenceV1 = undefined,
+    result_receipt: resource_bank.Receipt = undefined,
+    result_state_initialized: bool = false,
+    result_receipt_live: bool = false,
+    terminal_result_sealed: bool = false,
+
+    pub fn start(
+        self: *SessionV3,
+        allocator: std.mem.Allocator,
+        model: *const loader.LoadedModel,
+        prompt: []const u32,
+        options: OptionsV1,
+        local_plan: PlanV1,
+        bound_input: BoundPlanInputV1,
+        bound_plan: BoundPlanV1,
+        scheduling: SchedulingV1,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+    ) !StartDecisionV1 {
+        if (self.result_state_initialized or
+            self.terminal_result_sealed or
+            self.inner.contract_bound)
+            return Error.InvalidState;
+        // ResultEnvelopeV1 carries the plan's exact fixed output shape. Keep
+        // V3 total by rejecting an in-vocabulary EOS policy that could finish
+        // with fewer tokens than that declared shape. A variable-length or
+        // early-EOS result profile remains future work.
+        if (@as(u64, options.eos_token) <
+            @as(u64, @intCast(model.config.vocab_size)))
+            return Error.InvalidConfiguration;
+        try validateBoundPlanV1(bound_plan);
+        const initial_state =
+            model_contract.initializePublicationStateV1(
+                bound_plan.execution.request_epoch,
+                bound_plan.artifact.artifact_sha256,
+            ) catch return Error.InvalidBoundPlan;
+
+        // Install the terminal-result state before the nested V2 session can
+        // commit publication adoption at its final address.
+        self.result_publication_state = initial_state;
+        self.result_state_initialized = true;
+        const decision = self.inner.start(
+            allocator,
+            model,
+            prompt,
+            options,
+            local_plan,
+            bound_input,
+            bound_plan,
+            scheduling,
+            scheduler,
+            bank,
+        ) catch |err| {
+            if (err != Error.RecoveryRequired) self.* = .{};
+            return err;
+        };
+        switch (decision) {
+            .started => |event| {
+                const nested_receipt = self.inner.inner
+                    .publication_session.admission.event.resource_receipt;
+                if (!std.meta.eql(
+                    event.resource_receipt,
+                    nested_receipt,
+                ))
+                    @panic("prepared result receipt drift after start");
+                self.result_receipt = event.resource_receipt;
+                self.result_receipt_live = true;
+                return decision;
+            },
+            .rejected => {
+                self.* = .{};
+                return decision;
+            },
+        }
+    }
+
+    pub fn recoverStartAdoption(self: *SessionV3) !lane.EventV1 {
+        if (!self.result_state_initialized)
+            return Error.InvalidState;
+        const event = try self.inner.recoverStartAdoption();
+        self.* = .{};
+        return event;
+    }
+
+    pub fn deinit(self: *SessionV3) void {
+        self.inner.deinit();
+        self.* = .{};
+    }
+
+    pub fn step(
+        self: *SessionV3,
+        permit: lane.ServicePermitV1,
+        downstream: publication.SinkV1,
+    ) !publication.CommitReceiptV1 {
+        if (!self.result_state_initialized or
+            self.terminal_result_sealed)
+            return Error.InvalidState;
+        return self.inner.step(permit, downstream);
+    }
+
+    pub fn outputTokens(self: *const SessionV3) []const u32 {
+        if (!self.result_state_initialized) return &.{};
+        return self.inner.outputTokens();
+    }
+
+    pub fn isFinished(self: *const SessionV3) bool {
+        return self.result_state_initialized and
+            self.inner.isFinished();
+    }
+
+    pub fn snapshotVerified(self: *SessionV3) !BoundarySnapshotV2 {
+        if (!self.result_state_initialized)
+            return Error.InvalidState;
+        return self.inner.snapshotVerified();
+    }
+
+    /// Seal the only Common Model Contract result while the exact charged
+    /// receipt is still live. All fallible verification and state transition
+    /// work happens on local copies before the Session becomes result-visible.
+    pub fn sealTerminalResult(
+        self: *SessionV3,
+    ) !TerminalResultEvidenceV1 {
+        if (!self.result_state_initialized or
+            !self.result_receipt_live or
+            !self.inner.isFinished() or
+            self.terminal_result_sealed)
+            return Error.InvalidState;
+
+        const boundary = try self.inner.snapshotVerified();
+        const output = self.inner.outputTokens();
+        const local_plan = self.inner.inner.plan;
+        const bound_plan = self.inner.bound_plan;
+        if (@as(u64, @intCast(output.len)) !=
+            bound_plan.execution.output_dimensions)
+            return Error.InvalidState;
+
+        const output_sha256 = terminalOutputRootV1(
+            bound_plan,
+            output,
+        );
+        const source_mapping_sha256 =
+            terminalSourceMappingRootV1(
+                bound_plan,
+                boundary,
+                output_sha256,
+                @intCast(output.len),
+            );
+        const adapter_sha256 = terminalAdapterRootV1(
+            bound_plan,
+            local_plan,
+        );
+        const publication_session =
+            &self.inner.inner.publication_session;
+        const nested_receipt =
+            publication_session.admission.event.resource_receipt;
+        if (!std.meta.eql(nested_receipt, self.result_receipt))
+            return Error.InvalidState;
+        const receipt = self.result_receipt;
+        publication_session.bank.validatePublicationSession(
+            receipt,
+            bound_plan.execution.request_epoch,
+            @intFromPtr(&publication_session.inner),
+            boundary.base.publication.next_sequence,
+        ) catch return Error.InvalidState;
+        const result =
+            try model_contract.prepareResidencyResultEnvelopeV1(
+                self.result_publication_state,
+                bound_plan.execution,
+                bound_plan.residency,
+                receipt,
+                output_sha256,
+                source_mapping_sha256,
+                adapter_sha256,
+            );
+        try model_contract.validateResidencyResultEnvelopeV1(
+            self.result_publication_state,
+            bound_plan.execution,
+            bound_plan.residency,
+            receipt,
+            result,
+            output_sha256,
+            source_mapping_sha256,
+            adapter_sha256,
+        );
+
+        var state_after = self.result_publication_state;
+        try model_contract.commitResultV1(&state_after, result);
+        const state_after_sha256 =
+            try model_contract.publicationStateRootV1(state_after);
+        var evidence: TerminalResultEvidenceV1 = .{
+            .boundary = boundary,
+            .result = result,
+            .publication_state_after = state_after,
+            .publication_state_after_sha256 = state_after_sha256,
+            .evidence_sha256 = [_]u8{0} ** 32,
+        };
+        evidence.evidence_sha256 =
+            terminalResultEvidenceRootV1(evidence);
+        if (!terminalResultEvidenceValidForReceiptV1(
+            evidence,
+            bound_plan,
+            local_plan,
+            output,
+            receipt,
+        ))
+            return Error.InvalidState;
+
+        self.result_publication_state = state_after;
+        self.terminal_result_evidence = evidence;
+        self.terminal_result_sealed = true;
+        return evidence;
+    }
+
+    pub fn terminalResult(
+        self: *const SessionV3,
+    ) ?TerminalResultEvidenceV1 {
+        if (!self.terminal_result_sealed) return null;
+        return self.terminal_result_evidence;
+    }
+
+    pub fn retire(self: *SessionV3) !lane.EventV1 {
+        if (!self.result_state_initialized or
+            !self.result_receipt_live or
+            !self.terminal_result_sealed)
+            return Error.InvalidState;
+        const event = try self.inner.retire();
+        self.result_receipt_live = false;
+        return event;
+    }
+
+    pub fn cancel(self: *SessionV3) !lane.EventV1 {
+        if (!self.result_state_initialized or
+            !self.result_receipt_live or
+            self.terminal_result_sealed)
+            return Error.InvalidState;
+        const event = try self.inner.cancel();
+        self.result_receipt_live = false;
+        return event;
     }
 };
 

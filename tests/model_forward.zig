@@ -258,6 +258,87 @@ fn expectBoundPlanRequestAccounting(
     );
 }
 
+fn makeTerminalResultEvidenceForTest(
+    state_before: engine.core.model_contract.PublicationStateV1,
+    bound_plan: engine.prepared_text_session.BoundPlanV1,
+    local_plan: engine.prepared_text_session.PlanV1,
+    boundary: engine.prepared_text_session.BoundarySnapshotV2,
+    receipt: engine.resource_bank.Receipt,
+    output_tokens: []const u32,
+) !engine.prepared_text_session.TerminalResultEvidenceV1 {
+    const contract = engine.core.model_contract;
+    const output_sha256 =
+        engine.prepared_text_session.terminalOutputRootV1(
+            bound_plan,
+            output_tokens,
+        );
+    const source_mapping_sha256 =
+        engine.prepared_text_session.terminalSourceMappingRootV1(
+            bound_plan,
+            boundary,
+            output_sha256,
+            @intCast(output_tokens.len),
+        );
+    const adapter_sha256 =
+        engine.prepared_text_session.terminalAdapterRootV1(
+            bound_plan,
+            local_plan,
+        );
+    const result = try contract.prepareResidencyResultEnvelopeV1(
+        state_before,
+        bound_plan.execution,
+        bound_plan.residency,
+        receipt,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    );
+    var state_after = state_before;
+    try contract.commitResultV1(&state_after, result);
+    var evidence: engine.prepared_text_session.TerminalResultEvidenceV1 = .{
+        .boundary = boundary,
+        .result = result,
+        .publication_state_after = state_after,
+        .publication_state_after_sha256 = try contract.publicationStateRootV1(state_after),
+        .evidence_sha256 = [_]u8{0} ** 32,
+    };
+    evidence.evidence_sha256 =
+        engine.prepared_text_session.terminalResultEvidenceRootV1(
+            evidence,
+        );
+    return evidence;
+}
+
+fn canonicalizeTerminalResultForTest(
+    value: engine.core.model_contract.ResultEnvelopeV1,
+) !engine.core.model_contract.ResultEnvelopeV1 {
+    const contract = engine.core.model_contract;
+    var canonical = value;
+    canonical.result_sha256 = [_]u8{0} ** 32;
+    var encoded: [contract.result_envelope_bytes]u8 = undefined;
+    try contract.encodeResultEnvelopeV1(canonical, &encoded);
+    return contract.decodeResultEnvelopeV1(&encoded);
+}
+
+fn replaceTerminalEvidenceResultForTest(
+    original: engine.prepared_text_session.TerminalResultEvidenceV1,
+    result: engine.core.model_contract.ResultEnvelopeV1,
+) !engine.prepared_text_session.TerminalResultEvidenceV1 {
+    var evidence = original;
+    evidence.result = result;
+    evidence.publication_state_after.previous_result_sha256 =
+        result.result_sha256;
+    evidence.publication_state_after_sha256 =
+        try engine.core.model_contract.publicationStateRootV1(
+            evidence.publication_state_after,
+        );
+    evidence.evidence_sha256 =
+        engine.prepared_text_session.terminalResultEvidenceRootV1(
+            evidence,
+        );
+    return evidence;
+}
+
 fn makeRelationallyMismatchedBoundPlan(
     original: engine.prepared_text_session.BoundPlanV1,
 ) !engine.prepared_text_session.BoundPlanV1 {
@@ -793,6 +874,77 @@ test "perplexity computation runs end-to-end on fixture model" {
     );
     try testing.expectEqual(@as(usize, 2), llama_compatible.num_predictions);
     try testing.expect(std.math.isFinite(llama_compatible.perplexity));
+}
+
+test "prepared terminal roots match the independent Python golden" {
+    var bound_plan: engine.prepared_text_session.BoundPlanV1 = undefined;
+    var boundary: engine.prepared_text_session.BoundarySnapshotV2 = undefined;
+    var evidence: engine.prepared_text_session.TerminalResultEvidenceV1 = undefined;
+    evidence.abi_version =
+        engine.prepared_text_session.terminal_result_evidence_abi;
+    for (0..32) |index| {
+        bound_plan.execution.plan_sha256[index] = @intCast(index);
+        bound_plan.token_domain_sha256[index] =
+            @intCast(32 + index);
+        bound_plan.token_domain_config_sha256[index] =
+            @intCast(64 + index);
+        bound_plan.bound_plan_sha256[index] =
+            @intCast(96 + index);
+        boundary.boundary_sha256[index] =
+            @intCast(128 + index);
+        boundary.base.publication.transcript_sha256[index] =
+            @intCast(160 + index);
+        evidence.boundary.boundary_sha256[index] =
+            @intCast(128 + index);
+        evidence.result.result_sha256[index] =
+            @intCast(192 + index);
+        evidence.publication_state_after_sha256[index] =
+            @intCast(224 + index);
+    }
+    var tokens: [257]u32 = undefined;
+    for (0..253) |index| tokens[index] = @intCast(index);
+    tokens[253] = 0x0102_0304;
+    tokens[254] = 0x0000_0100;
+    tokens[255] = 0x8000_0000;
+    tokens[256] = 0xffff_ffff;
+
+    const output_root =
+        engine.prepared_text_session.terminalOutputRootV1(
+            bound_plan,
+            &tokens,
+        );
+    const source_mapping_root =
+        engine.prepared_text_session.terminalSourceMappingRootV1(
+            bound_plan,
+            boundary,
+            output_root,
+            tokens.len,
+        );
+    const evidence_root =
+        engine.prepared_text_session.terminalResultEvidenceRootV1(
+            evidence,
+        );
+    var expected_output: [32]u8 = undefined;
+    var expected_mapping: [32]u8 = undefined;
+    var expected_evidence: [32]u8 = undefined;
+    _ = try std.fmt.hexToBytes(
+        &expected_output,
+        "8a2d3d7a69447459d11cac98415e4b59" ++
+            "4f145199584fe66ed567d450c5b70b78",
+    );
+    _ = try std.fmt.hexToBytes(
+        &expected_mapping,
+        "3a58b88d176caec8c43833ddf8701f6b" ++
+            "83e44bd1dc3dcf06b0a2a8b434efeddc",
+    );
+    _ = try std.fmt.hexToBytes(
+        &expected_evidence,
+        "d4b5a780bb8cfb3364738f6ae24a17e4" ++
+            "cbae1a0c4de81b0b6096728d5d1f027a",
+    );
+    try testing.expectEqual(expected_output, output_root);
+    try testing.expectEqual(expected_mapping, source_mapping_root);
+    try testing.expectEqual(expected_evidence, evidence_root);
 }
 
 test "multi-page tensors load and forward correctly" {
@@ -1580,8 +1732,8 @@ test "compact multi-page INT4 generation matches eager generation" {
     );
     _ = try foreign_scheduler.close();
 
-    // A valid V2 binding that fails its first private allocation must consume
-    // the accepted adoption through cancellation and clear the wrapper.
+    // A valid V3 binding that fails its first private allocation must consume
+    // the accepted adoption through cancellation and clear both wrappers.
     const oom_scheduling: engine.prepared_text_session.SchedulingV1 = .{
         .tenant_key = 91,
         .request_key = 92,
@@ -1607,7 +1759,7 @@ test "compact multi-page INT4 generation matches eager generation" {
         testing.allocator,
         .{ .fail_index = 0 },
     );
-    var oom_session: engine.prepared_text_session.SessionV2 = .{};
+    var oom_session: engine.prepared_text_session.SessionV3 = .{};
     try testing.expectError(
         error.OutOfMemory,
         oom_session.start(
@@ -1624,10 +1776,15 @@ test "compact multi-page INT4 generation matches eager generation" {
         ),
     );
     try testing.expect(oom_allocator.has_induced_failure);
-    try testing.expect(!oom_session.contract_bound);
-    try testing.expect(!oom_session.inner.resources_initialized);
-    try testing.expect(!oom_session.inner.publication_bound);
-    try testing.expect(oom_session.inner.recovery_adoption == null);
+    try testing.expect(!oom_session.result_state_initialized);
+    try testing.expect(!oom_session.result_receipt_live);
+    try testing.expect(!oom_session.terminal_result_sealed);
+    try testing.expect(!oom_session.inner.contract_bound);
+    try testing.expect(!oom_session.inner.inner.resources_initialized);
+    try testing.expect(!oom_session.inner.inner.publication_bound);
+    try testing.expect(
+        oom_session.inner.inner.recovery_adoption == null,
+    );
     const oom_scheduler_after = try session_scheduler.snapshot();
     const oom_bank_after = try session_bank.snapshot();
     try testing.expectEqual(
@@ -1648,8 +1805,9 @@ test "compact multi-page INT4 generation matches eager generation" {
         oom_bank_after.releases,
     );
 
-    // If cancellation itself is temporarily unavailable, V2 retains both the
-    // exact bound plan and V1 adoption authority until explicit recovery.
+    // If cancellation itself is temporarily unavailable, V3 retains the
+    // terminal state, exact bound plan, and V1 adoption authority until
+    // explicit recovery.
     const recovery_v2_scheduling: engine.prepared_text_session.SchedulingV1 = .{
         .tenant_key = 94,
         .request_key = 95,
@@ -1676,7 +1834,7 @@ test "compact multi-page INT4 generation matches eager generation" {
         .scheduler = &session_scheduler,
         .backing = testing.allocator,
     };
-    var recovery_v2_session: engine.prepared_text_session.SessionV2 = .{};
+    var recovery_v2_session: engine.prepared_text_session.SessionV3 = .{};
     try testing.expectError(
         engine.prepared_text_session.Error.RecoveryRequired,
         recovery_v2_session.start(
@@ -1693,18 +1851,23 @@ test "compact multi-page INT4 generation matches eager generation" {
         ),
     );
     try testing.expect(recovery_v2_allocator.triggered);
-    try testing.expect(recovery_v2_session.contract_bound);
+    try testing.expect(recovery_v2_session.result_state_initialized);
+    try testing.expect(!recovery_v2_session.result_receipt_live);
+    try testing.expect(!recovery_v2_session.terminal_result_sealed);
+    try testing.expect(recovery_v2_session.inner.contract_bound);
     try testing.expectEqualDeep(
         recovery_v2_bound_plan,
-        recovery_v2_session.bound_plan,
+        recovery_v2_session.inner.bound_plan,
     );
     try testing.expect(
-        recovery_v2_session.inner.recovery_adoption != null,
+        recovery_v2_session.inner.inner.recovery_adoption != null,
     );
     try testing.expect(
-        !recovery_v2_session.inner.resources_initialized,
+        !recovery_v2_session.inner.inner.resources_initialized,
     );
-    try testing.expect(!recovery_v2_session.inner.publication_bound);
+    try testing.expect(
+        !recovery_v2_session.inner.inner.publication_bound,
+    );
     const recovery_v2_scheduler_pending =
         try session_scheduler.snapshot();
     const recovery_v2_bank_pending = try session_bank.snapshot();
@@ -1733,9 +1896,10 @@ test "compact multi-page INT4 generation matches eager generation" {
         engine.lane_weave_qos.EventKind.cancel,
         recovery_v2_cancel.kind,
     );
-    try testing.expect(!recovery_v2_session.contract_bound);
+    try testing.expect(!recovery_v2_session.result_state_initialized);
+    try testing.expect(!recovery_v2_session.inner.contract_bound);
     try testing.expect(
-        recovery_v2_session.inner.recovery_adoption == null,
+        recovery_v2_session.inner.inner.recovery_adoption == null,
     );
     const recovery_v2_scheduler_after =
         try session_scheduler.snapshot();
@@ -1805,7 +1969,7 @@ test "compact multi-page INT4 generation matches eager generation" {
     );
 
     const cancel_v2_bank_before = try session_bank.snapshot();
-    var cancel_v2_session: engine.prepared_text_session.SessionV2 = .{};
+    var cancel_v2_session: engine.prepared_text_session.SessionV3 = .{};
     const cancel_v2_start = try cancel_v2_session.start(
         testing.allocator,
         &prepared_session_model,
@@ -1825,11 +1989,14 @@ test "compact multi-page INT4 generation matches eager generation" {
         ),
         .rejected => return error.TestUnexpectedResult,
     }
+    try testing.expect(cancel_v2_session.result_receipt_live);
+    try testing.expect(cancel_v2_session.terminalResult() == null);
     const cancel_v2_event = try cancel_v2_session.cancel();
     try testing.expectEqual(
         engine.lane_weave_qos.EventKind.cancel,
         cancel_v2_event.kind,
     );
+    try testing.expect(!cancel_v2_session.result_receipt_live);
     cancel_v2_session.deinit();
     const cancel_v2_bank_after = try session_bank.snapshot();
     try testing.expect(cancel_v2_bank_after.used.isZero());
@@ -1842,7 +2009,7 @@ test "compact multi-page INT4 generation matches eager generation" {
         cancel_v2_bank_after.releases,
     );
 
-    var prepared_session: engine.prepared_text_session.SessionV2 = .{};
+    var prepared_session: engine.prepared_text_session.SessionV3 = .{};
     const session_start = try prepared_session.start(
         testing.allocator,
         &prepared_session_model,
@@ -1886,16 +2053,36 @@ test "compact multi-page INT4 generation matches eager generation" {
         .admitted => |value| value,
         .rejected => return error.TestUnexpectedResult,
     };
+    try testing.expect(prepared_session.result_receipt_live);
     _ = try session_scheduler.cancel(interleaved.handle);
     defer prepared_session.deinit();
+
+    // Terminal evidence cannot be sealed before the exact token transcript is
+    // complete, and the rejection is observationally side-effect free.
+    const early_seal_scheduler_before = try session_scheduler.snapshot();
+    const early_seal_bank_before = try session_bank.snapshot();
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.sealTerminalResult(),
+    );
+    try testing.expect(prepared_session.terminalResult() == null);
+    try testing.expectEqualDeep(
+        early_seal_scheduler_before,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        early_seal_bank_before,
+        try session_bank.snapshot(),
+    );
+
     var session_sink: PreparedTextSink = .{};
     const rejected_permit = try session_scheduler.prepareService();
-    prepared_session.inner.sampling_calls = std.math.maxInt(u64);
+    prepared_session.inner.inner.sampling_calls = std.math.maxInt(u64);
     const forced_failure = prepared_session.step(
         rejected_permit,
         session_sink.interface(),
     );
-    prepared_session.inner.sampling_calls = 0;
+    prepared_session.inner.inner.sampling_calls = 0;
     try testing.expectError(
         engine.prepared_text_session.Error.InvalidState,
         forced_failure,
@@ -2059,7 +2246,488 @@ test "compact multi-page INT4 generation matches eager generation" {
         session_oracle.len,
         session_checkpoint.base.publication.state.output_length,
     );
-    _ = try prepared_session.retire();
+
+    // The charged receipt must remain live until one terminal Model Contract
+    // result has been sealed. A premature retire cannot mutate Scheduler or
+    // ResourceBank state.
+    const pre_seal_scheduler = try session_scheduler.snapshot();
+    const pre_seal_bank = try session_bank.snapshot();
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.retire(),
+    );
+    try testing.expectEqualDeep(
+        pre_seal_scheduler,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        pre_seal_bank,
+        try session_bank.snapshot(),
+    );
+
+    const result_contract = engine.core.model_contract;
+    const live_receipt = prepared_session.result_receipt;
+    try testing.expectEqualDeep(
+        live_receipt,
+        prepared_session.inner.inner
+            .publication_session.admission.event.resource_receipt,
+    );
+    const result_state_before =
+        try result_contract.initializePublicationStateV1(
+            bound_plan.execution.request_epoch,
+            bound_plan.artifact.artifact_sha256,
+        );
+    const result_state_before_sha256 =
+        try result_contract.publicationStateRootV1(
+            result_state_before,
+        );
+
+    // A structurally valid Receipt from another Bank has no authority over
+    // this live publication session. Rejection precedes result-state mutation.
+    var foreign_result_slots =
+        [_]engine.resource_bank.Slot{.{}} ** 1;
+    var foreign_result_bank = try engine.resource_bank.Bank.init(
+        &foreign_result_slots,
+        .{},
+        0x5458_5253,
+    );
+    const foreign_result_receipt = try foreign_result_bank.commit(
+        try foreign_result_bank.reserve(
+            0x5458_5254,
+            live_receipt.claim,
+        ),
+    );
+    defer foreign_result_bank.release(
+        foreign_result_receipt,
+    ) catch @panic("foreign result receipt cleanup failed");
+    try testing.expect(
+        engine.resource_bank.receiptIntegrityValidV1(
+            foreign_result_receipt,
+        ),
+    );
+    prepared_session.inner.inner.publication_session.admission
+        .event.resource_receipt = foreign_result_receipt;
+    const foreign_receipt_seal =
+        prepared_session.sealTerminalResult();
+    prepared_session.inner.inner.publication_session.admission
+        .event.resource_receipt = live_receipt;
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        foreign_receipt_seal,
+    );
+    try testing.expect(!prepared_session.terminal_result_sealed);
+    try testing.expect(prepared_session.terminalResult() == null);
+    try testing.expectEqualDeep(
+        result_state_before,
+        prepared_session.result_publication_state,
+    );
+    try testing.expectEqualDeep(
+        pre_seal_scheduler,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        pre_seal_bank,
+        try session_bank.snapshot(),
+    );
+
+    const terminal_evidence =
+        try prepared_session.sealTerminalResult();
+    const terminal_result = terminal_evidence.result;
+    try testing.expectEqualDeep(
+        terminal_evidence,
+        prepared_session.terminalResult() orelse
+            return error.TestUnexpectedResult,
+    );
+    try testing.expect(
+        engine.prepared_text_session.terminalResultEvidenceValidV1(
+            terminal_evidence,
+            bound_plan,
+            session_plan,
+            session_oracle,
+        ),
+    );
+    try testing.expect(
+        engine.prepared_text_session
+            .terminalResultEvidenceValidForReceiptV1(
+            terminal_evidence,
+            bound_plan,
+            session_plan,
+            session_oracle,
+            live_receipt,
+        ),
+    );
+    try testing.expect(
+        !engine.prepared_text_session
+            .terminalResultEvidenceValidForReceiptV1(
+            terminal_evidence,
+            bound_plan,
+            session_plan,
+            session_oracle,
+            foreign_result_receipt,
+        ),
+    );
+    try testing.expectEqual(
+        result_contract.OperationIdV1.generate_sequence,
+        terminal_result.operation,
+    );
+    try testing.expectEqual(
+        result_contract.OutputKindV1.token_ids,
+        terminal_result.output_kind,
+    );
+    try testing.expectEqual(
+        result_contract.NumericalPolicyV1.implementation_defined,
+        terminal_result.numerical_policy,
+    );
+    try testing.expectEqualDeep(
+        bound_plan.residency.request_claim,
+        terminal_result.claim,
+    );
+    try testing.expect(
+        !std.meta.eql(
+            bound_plan.execution.claim,
+            terminal_result.claim,
+        ),
+    );
+    try testing.expectEqualDeep(
+        live_receipt.claim,
+        terminal_result.claim,
+    );
+    try testing.expectEqual(
+        live_receipt.bank_epoch,
+        terminal_result.resource_bank_epoch,
+    );
+    try testing.expectEqual(
+        live_receipt.slot_index,
+        terminal_result.resource_slot_index,
+    );
+    try testing.expectEqual(
+        live_receipt.generation,
+        terminal_result.resource_generation,
+    );
+    try testing.expectEqual(
+        live_receipt.owner_key,
+        terminal_result.resource_owner_key,
+    );
+    try testing.expectEqual(
+        live_receipt.integrity,
+        terminal_result.resource_integrity,
+    );
+    try testing.expectEqual(
+        @as(u64, @intCast(session_oracle.len)),
+        terminal_result.output_dimensions,
+    );
+    try testing.expectEqual(
+        try std.math.mul(
+            u64,
+            @intCast(session_oracle.len),
+            @sizeOf(u32),
+        ),
+        terminal_result.output_bytes,
+    );
+    try testing.expectEqualDeep(
+        engine.prepared_text_session.terminalOutputRootV1(
+            bound_plan,
+            session_oracle,
+        ),
+        terminal_result.output_sha256,
+    );
+    try testing.expectEqualDeep(
+        result_state_before_sha256,
+        terminal_result.publication_state_before_sha256,
+    );
+    try testing.expectEqual(@as(u64, 0), terminal_result.publication_sequence);
+    try testing.expectEqual(
+        @as(u64, 1),
+        terminal_evidence.publication_state_after.next_sequence,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        terminal_evidence.publication_state_after.visible_results,
+    );
+    try testing.expectEqualDeep(
+        terminal_result.result_sha256,
+        terminal_evidence.publication_state_after
+            .previous_result_sha256,
+    );
+    try testing.expectEqualDeep(
+        try result_contract.publicationStateRootV1(
+            terminal_evidence.publication_state_after,
+        ),
+        terminal_evidence.publication_state_after_sha256,
+    );
+    try result_contract.validateResidencyResultEnvelopeV1(
+        result_state_before,
+        bound_plan.execution,
+        bound_plan.residency,
+        live_receipt,
+        terminal_result,
+        terminal_result.output_sha256,
+        terminal_result.source_mapping_sha256,
+        terminal_result.adapter_sha256,
+    );
+
+    var terminal_result_wire: [result_contract.result_envelope_bytes]u8 = undefined;
+    try result_contract.encodeResultEnvelopeV1(
+        terminal_result,
+        &terminal_result_wire,
+    );
+    try testing.expectEqualDeep(
+        terminal_result,
+        try result_contract.decodeResultEnvelopeV1(
+            &terminal_result_wire,
+        ),
+    );
+
+    // Every contextual substitution is rejected, including changes that
+    // remain internally re-rooted at the surrounding evidence layer.
+    const mutated_output = try testing.allocator.dupe(
+        u32,
+        session_oracle,
+    );
+    defer testing.allocator.free(mutated_output);
+    mutated_output[0] ^= 1;
+    try testing.expect(
+        !engine.prepared_text_session.terminalResultEvidenceValidV1(
+            terminal_evidence,
+            bound_plan,
+            session_plan,
+            mutated_output,
+        ),
+    );
+
+    // Even a fully canonical replacement ResultEnvelope cannot authorize a
+    // token outside the execution plan's declared absolute output range.
+    try testing.expect(
+        bound_plan.execution.maximum_absolute_output <
+            std.math.maxInt(u32),
+    );
+    mutated_output[0] = @intCast(try std.math.add(
+        u64,
+        bound_plan.execution.maximum_absolute_output,
+        1,
+    ));
+    const out_of_range_evidence =
+        try makeTerminalResultEvidenceForTest(
+            result_state_before,
+            bound_plan,
+            session_plan,
+            session_checkpoint,
+            live_receipt,
+            mutated_output,
+        );
+    try result_contract.validateResidencyResultEnvelopeV1(
+        result_state_before,
+        bound_plan.execution,
+        bound_plan.residency,
+        live_receipt,
+        out_of_range_evidence.result,
+        out_of_range_evidence.result.output_sha256,
+        out_of_range_evidence.result.source_mapping_sha256,
+        out_of_range_evidence.result.adapter_sha256,
+    );
+    try testing.expect(
+        !engine.prepared_text_session.terminalResultEvidenceValidV1(
+            out_of_range_evidence,
+            bound_plan,
+            session_plan,
+            mutated_output,
+        ),
+    );
+
+    // A max-length boundary must also carry the terminal bit. Rebuilding every
+    // downstream root cannot turn a nonterminal transcript into terminal
+    // evidence.
+    var nonterminal_boundary = session_checkpoint;
+    nonterminal_boundary.base.publication.terminal = false;
+    nonterminal_boundary.base.boundary_sha256 =
+        engine.prepared_text_session.boundaryRootV1(
+            nonterminal_boundary.base,
+        );
+    nonterminal_boundary.boundary_sha256 =
+        engine.prepared_text_session.boundaryRootV2(
+            nonterminal_boundary,
+        );
+    const nonterminal_evidence =
+        try makeTerminalResultEvidenceForTest(
+            result_state_before,
+            bound_plan,
+            session_plan,
+            nonterminal_boundary,
+            live_receipt,
+            session_oracle,
+        );
+    try testing.expect(
+        engine.prepared_text_session.boundarySnapshotValidV2(
+            nonterminal_boundary,
+        ),
+    );
+    try testing.expect(
+        !engine.prepared_text_session.terminalResultEvidenceValidV1(
+            nonterminal_evidence,
+            bound_plan,
+            session_plan,
+            session_oracle,
+        ),
+    );
+
+    var foreign_result_state = result_state_before;
+    foreign_result_state.previous_result_sha256 =
+        [_]u8{0xa5} ** 32;
+    const foreign_predecessor_evidence =
+        try makeTerminalResultEvidenceForTest(
+            foreign_result_state,
+            bound_plan,
+            session_plan,
+            session_checkpoint,
+            live_receipt,
+            session_oracle,
+        );
+    try testing.expect(
+        !engine.prepared_text_session.terminalResultEvidenceValidV1(
+            foreign_predecessor_evidence,
+            bound_plan,
+            session_plan,
+            session_oracle,
+        ),
+    );
+
+    var invalid_integrity_result = terminal_result;
+    invalid_integrity_result.resource_integrity ^= 1;
+    invalid_integrity_result =
+        try canonicalizeTerminalResultForTest(
+            invalid_integrity_result,
+        );
+    try result_contract.validateResultEnvelopeV1(
+        invalid_integrity_result,
+    );
+    const invalid_integrity_evidence =
+        try replaceTerminalEvidenceResultForTest(
+            terminal_evidence,
+            invalid_integrity_result,
+        );
+    try testing.expect(
+        !engine.prepared_text_session.terminalResultEvidenceValidV1(
+            invalid_integrity_evidence,
+            bound_plan,
+            session_plan,
+            session_oracle,
+        ),
+    );
+
+    var wide_slot_result = terminal_result;
+    wide_slot_result.resource_slot_index =
+        @as(u64, std.math.maxInt(u32)) + 1;
+    wide_slot_result =
+        try canonicalizeTerminalResultForTest(wide_slot_result);
+    try result_contract.validateResultEnvelopeV1(wide_slot_result);
+    const wide_slot_evidence =
+        try replaceTerminalEvidenceResultForTest(
+            terminal_evidence,
+            wide_slot_result,
+        );
+    try testing.expect(
+        !engine.prepared_text_session.terminalResultEvidenceValidV1(
+            wide_slot_evidence,
+            bound_plan,
+            session_plan,
+            session_oracle,
+        ),
+    );
+
+    var substituted_result_evidence = terminal_evidence;
+    substituted_result_evidence.result.result_sha256[0] ^= 1;
+    substituted_result_evidence.evidence_sha256 =
+        engine.prepared_text_session.terminalResultEvidenceRootV1(
+            substituted_result_evidence,
+        );
+    try testing.expect(
+        !engine.prepared_text_session.terminalResultEvidenceValidV1(
+            substituted_result_evidence,
+            bound_plan,
+            session_plan,
+            session_oracle,
+        ),
+    );
+
+    var substituted_boundary_evidence = terminal_evidence;
+    substituted_boundary_evidence.boundary
+        .bound_plan_sha256[0] ^= 1;
+    substituted_boundary_evidence.boundary.boundary_sha256 =
+        engine.prepared_text_session.boundaryRootV2(
+            substituted_boundary_evidence.boundary,
+        );
+    substituted_boundary_evidence.evidence_sha256 =
+        engine.prepared_text_session.terminalResultEvidenceRootV1(
+            substituted_boundary_evidence,
+        );
+    try testing.expect(
+        !engine.prepared_text_session.terminalResultEvidenceValidV1(
+            substituted_boundary_evidence,
+            bound_plan,
+            session_plan,
+            session_oracle,
+        ),
+    );
+
+    var substituted_state_evidence = terminal_evidence;
+    substituted_state_evidence.publication_state_after
+        .previous_result_sha256[0] ^= 1;
+    substituted_state_evidence.publication_state_after_sha256 =
+        try result_contract.publicationStateRootV1(
+            substituted_state_evidence.publication_state_after,
+        );
+    substituted_state_evidence.evidence_sha256 =
+        engine.prepared_text_session.terminalResultEvidenceRootV1(
+            substituted_state_evidence,
+        );
+    try testing.expect(
+        !engine.prepared_text_session.terminalResultEvidenceValidV1(
+            substituted_state_evidence,
+            bound_plan,
+            session_plan,
+            session_oracle,
+        ),
+    );
+    try testing.expect(
+        !engine.prepared_text_session.terminalResultEvidenceValidV1(
+            terminal_evidence,
+            substituted_bound_plan,
+            session_plan,
+            session_oracle,
+        ),
+    );
+
+    const sealed_publication_state =
+        prepared_session.result_publication_state;
+    const sealed_evidence = prepared_session.terminal_result_evidence;
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.sealTerminalResult(),
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.cancel(),
+    );
+    try testing.expectEqualDeep(
+        sealed_publication_state,
+        prepared_session.result_publication_state,
+    );
+    try testing.expectEqualDeep(
+        sealed_evidence,
+        prepared_session.terminal_result_evidence,
+    );
+    try testing.expectEqualDeep(
+        pre_seal_bank,
+        try session_bank.snapshot(),
+    );
+    try testing.expect(prepared_session.result_receipt_live);
+
+    const retire_event = try prepared_session.retire();
+    try testing.expectEqual(
+        engine.lane_weave_qos.EventKind.retire,
+        retire_event.kind,
+    );
+    try testing.expect(!prepared_session.result_receipt_live);
     const final_session_bank = try session_bank.snapshot();
     try testing.expect(final_session_bank.used.isZero());
     try testing.expectEqual(@as(u64, 6), final_session_bank.successful_commits);
