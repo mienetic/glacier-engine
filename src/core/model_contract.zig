@@ -10,9 +10,12 @@ pub const Digest = [32]u8;
 pub const artifact_manifest_abi: u64 = 0x474d_4146_0000_0001;
 pub const execution_plan_abi: u64 = 0x474d_504c_0000_0001;
 pub const result_envelope_abi: u64 = 0x474d_5253_0000_0001;
+pub const execution_residency_binding_abi: u64 =
+    0x474d_5242_0000_0001;
 pub const artifact_manifest_bytes: usize = 320;
 pub const execution_plan_bytes: usize = 768;
 pub const result_envelope_bytes: usize = 768;
+pub const execution_residency_binding_bytes: usize = 256;
 pub const allowed_flags: u64 = 0;
 pub const no_capabilities: u64 = 0;
 
@@ -25,12 +28,19 @@ const plan_magic = [8]u8{
 const result_magic = [8]u8{
     'G', 'M', 'R', 'E', 'S', '1', 0, 0,
 };
+const execution_residency_binding_magic = [8]u8{
+    'G', 'M', 'R', 'B', 'N', 'D', '1', 0,
+};
 const artifact_body_bytes = artifact_manifest_bytes - 32;
 const plan_body_bytes = execution_plan_bytes - 32;
 const result_body_bytes = result_envelope_bytes - 32;
+const execution_residency_binding_body_bytes =
+    execution_residency_binding_bytes - 32;
 const artifact_domain = "glacier-model-artifact-manifest-v1\x00";
 const plan_domain = "glacier-model-execution-plan-v1\x00";
 const result_domain = "glacier-model-result-envelope-v1\x00";
+const execution_residency_binding_domain =
+    "glacier-model-execution-residency-binding-v1\x00";
 const publication_state_domain =
     "glacier-model-publication-state-v1\x00";
 const publication_commit_domain =
@@ -69,6 +79,7 @@ pub const OperationIdV1 = enum(u64) {
     segment = 10,
     route = 11,
     select_action = 12,
+    generate_sequence = 13,
 };
 
 pub const InputKindV1 = enum(u64) {
@@ -112,11 +123,17 @@ pub const UnsupportedReasonV1 = enum(u64) {
     capabilities = 7,
 };
 
+pub const ArtifactResidencyV1 = enum(u64) {
+    request_owned = 1,
+    shared_read_only = 2,
+};
+
 pub const Error = error{
     BufferTooSmall,
     InvalidArtifactManifest,
     InvalidExecutionPlan,
     InvalidResultEnvelope,
+    InvalidExecutionResidencyBinding,
     InvalidPublicationState,
     InvalidPublication,
     UnsupportedFamily,
@@ -203,6 +220,23 @@ pub const ExecutionPlanV1 = struct {
     input_schema_sha256: Digest,
     output_schema_sha256: Digest,
     plan_sha256: Digest,
+};
+
+/// Canonical projection from one execution plan's total claim to the
+/// request-local claim after accounting for artifact residency.
+///
+/// `request_owned` retains the plan claim unchanged and carries no separate
+/// resident byte count. `shared_read_only` records the complete read-only
+/// artifact size separately while the plan's capsule claim remains the exact
+/// sum of request-local capsule bytes and resident artifact bytes.
+pub const ExecutionResidencyBindingV1 = struct {
+    residency: ArtifactResidencyV1,
+    resident_weight_bytes: u64,
+    artifact_sha256: Digest,
+    weights_sha256: Digest,
+    plan_sha256: Digest,
+    request_claim: resource_bank.Claim,
+    binding_sha256: Digest,
 };
 
 pub const SupportRecordV1 = struct {
@@ -698,6 +732,195 @@ fn validateExecutionPlanShapeV1(
         return Error.InvalidExecutionPlan;
 }
 
+pub fn makeExecutionResidencyBindingV1(
+    plan: ExecutionPlanV1,
+    residency: ArtifactResidencyV1,
+    resident_weight_bytes: u64,
+    request_claim: resource_bank.Claim,
+) Error!ExecutionResidencyBindingV1 {
+    try requireCanonicalExecutionPlanForResidencyV1(plan);
+    var value: ExecutionResidencyBindingV1 = .{
+        .residency = residency,
+        .resident_weight_bytes = resident_weight_bytes,
+        .artifact_sha256 = plan.artifact_sha256,
+        .weights_sha256 = plan.weights_sha256,
+        .plan_sha256 = plan.plan_sha256,
+        .request_claim = request_claim,
+        .binding_sha256 = [_]u8{0} ** 32,
+    };
+    try validateExecutionResidencyProjectionV1(value, plan);
+    var encoded: [execution_residency_binding_bytes]u8 = undefined;
+    try encodeExecutionResidencyBindingV1(value, &encoded);
+    value.binding_sha256 =
+        encoded[execution_residency_binding_body_bytes..execution_residency_binding_bytes].*;
+    try validateExecutionResidencyBindingV1(value, plan);
+    return value;
+}
+
+pub fn encodeExecutionResidencyBindingV1(
+    binding: ExecutionResidencyBindingV1,
+    output: []u8,
+) Error!void {
+    if (output.len < execution_residency_binding_bytes)
+        return Error.BufferTooSmall;
+    try validateExecutionResidencyBindingShapeV1(binding);
+    const encoded = output[0..execution_residency_binding_bytes];
+    writeExecutionResidencyBindingBodyV1(binding, encoded);
+    const root = executionResidencyBindingRootV1(
+        encoded[0..execution_residency_binding_body_bytes],
+    );
+    if (!isZero(binding.binding_sha256) and
+        !std.mem.eql(u8, &root, &binding.binding_sha256))
+        return Error.InvalidExecutionResidencyBinding;
+    @memcpy(
+        encoded[execution_residency_binding_body_bytes..execution_residency_binding_bytes],
+        &root,
+    );
+    _ = try decodeExecutionResidencyBindingV1(encoded);
+}
+
+pub fn decodeExecutionResidencyBindingV1(
+    encoded: []const u8,
+) Error!ExecutionResidencyBindingV1 {
+    if (encoded.len != execution_residency_binding_bytes or
+        !std.mem.eql(
+            u8,
+            encoded[0..8],
+            &execution_residency_binding_magic,
+        ) or
+        readU64(encoded, 8) != execution_residency_binding_abi or
+        readU64(encoded, 16) != execution_residency_binding_bytes or
+        readU64(encoded, 24) != allowed_flags)
+        return Error.InvalidExecutionResidencyBinding;
+    const root = executionResidencyBindingRootV1(
+        encoded[0..execution_residency_binding_body_bytes],
+    );
+    if (!std.mem.eql(
+        u8,
+        &root,
+        encoded[execution_residency_binding_body_bytes..execution_residency_binding_bytes],
+    ))
+        return Error.InvalidExecutionResidencyBinding;
+    const binding: ExecutionResidencyBindingV1 = .{
+        .residency = std.meta.intToEnum(
+            ArtifactResidencyV1,
+            readU64(encoded, 32),
+        ) catch return Error.InvalidExecutionResidencyBinding,
+        .resident_weight_bytes = readU64(encoded, 40),
+        .artifact_sha256 = encoded[48..80].*,
+        .weights_sha256 = encoded[80..112].*,
+        .plan_sha256 = encoded[112..144].*,
+        .request_claim = readClaim(encoded, 144),
+        .binding_sha256 = root,
+    };
+    try validateExecutionResidencyBindingShapeV1(binding);
+    if (isZero(binding.binding_sha256))
+        return Error.InvalidExecutionResidencyBinding;
+    return binding;
+}
+
+pub fn validateExecutionResidencyBindingV1(
+    binding: ExecutionResidencyBindingV1,
+    plan: ExecutionPlanV1,
+) Error!void {
+    try requireCanonicalExecutionPlanForResidencyV1(plan);
+    var encoded: [execution_residency_binding_bytes]u8 = undefined;
+    encodeExecutionResidencyBindingV1(
+        binding,
+        &encoded,
+    ) catch return Error.InvalidExecutionResidencyBinding;
+    if (isZero(binding.binding_sha256))
+        return Error.InvalidExecutionResidencyBinding;
+    try validateExecutionResidencyProjectionV1(binding, plan);
+}
+
+fn requireCanonicalExecutionPlanForResidencyV1(
+    plan: ExecutionPlanV1,
+) Error!void {
+    _ = plan.claim.hostBytes() catch
+        return Error.InvalidExecutionResidencyBinding;
+    var encoded: [execution_plan_bytes]u8 = undefined;
+    encodeExecutionPlanV1(plan, &encoded) catch
+        return Error.InvalidExecutionResidencyBinding;
+}
+
+fn validateExecutionResidencyBindingShapeV1(
+    binding: ExecutionResidencyBindingV1,
+) Error!void {
+    if (isZero(binding.artifact_sha256) or
+        isZero(binding.weights_sha256) or
+        isZero(binding.plan_sha256) or
+        binding.request_claim.queue_slots == 0)
+        return Error.InvalidExecutionResidencyBinding;
+    _ = binding.request_claim.hostBytes() catch
+        return Error.InvalidExecutionResidencyBinding;
+    switch (binding.residency) {
+        .request_owned => {
+            if (binding.resident_weight_bytes != 0)
+                return Error.InvalidExecutionResidencyBinding;
+        },
+        .shared_read_only => {
+            if (binding.resident_weight_bytes == 0)
+                return Error.InvalidExecutionResidencyBinding;
+            _ = std.math.add(
+                u64,
+                binding.request_claim.capsule_bytes,
+                binding.resident_weight_bytes,
+            ) catch return Error.InvalidExecutionResidencyBinding;
+        },
+    }
+}
+
+fn validateExecutionResidencyProjectionV1(
+    binding: ExecutionResidencyBindingV1,
+    plan: ExecutionPlanV1,
+) Error!void {
+    try validateExecutionResidencyBindingShapeV1(binding);
+    var projected_claim = binding.request_claim;
+    switch (binding.residency) {
+        .request_owned => {},
+        .shared_read_only => {
+            if (binding.resident_weight_bytes != plan.weight_bytes)
+                return Error.InvalidExecutionResidencyBinding;
+            projected_claim.capsule_bytes = std.math.add(
+                u64,
+                projected_claim.capsule_bytes,
+                binding.resident_weight_bytes,
+            ) catch return Error.InvalidExecutionResidencyBinding;
+        },
+    }
+    if (!std.mem.eql(
+        u8,
+        &binding.artifact_sha256,
+        &plan.artifact_sha256,
+    ) or
+        !std.mem.eql(
+            u8,
+            &binding.weights_sha256,
+            &plan.weights_sha256,
+        ) or
+        !std.mem.eql(u8, &binding.plan_sha256, &plan.plan_sha256) or
+        !std.meta.eql(projected_claim, plan.claim))
+        return Error.InvalidExecutionResidencyBinding;
+}
+
+fn writeExecutionResidencyBindingBodyV1(
+    binding: ExecutionResidencyBindingV1,
+    encoded: []u8,
+) void {
+    @memset(encoded, 0);
+    @memcpy(encoded[0..8], &execution_residency_binding_magic);
+    writeU64(encoded, 8, execution_residency_binding_abi);
+    writeU64(encoded, 16, execution_residency_binding_bytes);
+    writeU64(encoded, 24, allowed_flags);
+    writeU64(encoded, 32, @intFromEnum(binding.residency));
+    writeU64(encoded, 40, binding.resident_weight_bytes);
+    @memcpy(encoded[48..80], &binding.artifact_sha256);
+    @memcpy(encoded[80..112], &binding.weights_sha256);
+    @memcpy(encoded[112..144], &binding.plan_sha256);
+    writeClaim(encoded, 144, binding.request_claim);
+}
+
 pub fn requireSupportV1(
     records: []const SupportRecordV1,
     plan: ExecutionPlanV1,
@@ -1018,6 +1241,12 @@ pub fn executionPlanRootV1(body: []const u8) Digest {
 
 pub fn resultEnvelopeRootV1(body: []const u8) Digest {
     return domainRootV1(result_domain, body);
+}
+
+pub fn executionResidencyBindingRootV1(
+    body: []const u8,
+) Digest {
+    return domainRootV1(execution_residency_binding_domain, body);
 }
 
 fn publicationCommitRootV1(result: ResultEnvelopeV1) Digest {
@@ -1432,4 +1661,302 @@ test "token ID contract roots match the independent oracle" {
     try std.testing.expectEqual(expected_artifact, manifest.artifact_sha256);
     try std.testing.expectEqual(expected_plan, plan.plan_sha256);
     try std.testing.expectEqual(expected_result, result.result_sha256);
+}
+
+fn executionResidencyTestPlanV1(
+    request_epoch: u64,
+    input_identity: []const u8,
+) !ExecutionPlanV1 {
+    const weights = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    const manifest = try makeArtifactManifestV1(
+        .autoregressive,
+        0x5445_5854_0000_0002,
+        .token_ids,
+        .token_ids,
+        .implementation_defined,
+        1,
+        4,
+        2,
+        @sizeOf(u32),
+        @sizeOf(u32),
+        @sizeOf(u8),
+        &weights,
+        sha256("residency fixture metadata"),
+        sha256("residency fixture license"),
+    );
+    return makeExecutionPlanV1(
+        manifest,
+        .generate_sequence,
+        .{
+            .request_epoch = request_epoch,
+            .generation = 5,
+            .batch_items = 1,
+            .publication_next_sequence = 0,
+            .maximum_absolute_output = 127,
+            .claim = .{
+                .capsule_bytes = weights.len,
+                .activation_bytes = 16,
+                .output_journal_bytes = 8,
+                .queue_slots = 1,
+            },
+            .media_object_sha256 = sha256(input_identity),
+            .processor_state_sha256 = sha256(
+                "residency processor state",
+            ),
+            .processor_bundle_sha256 = sha256(
+                "residency processor bundle",
+            ),
+            .cache_bundle_sha256 = sha256(
+                "residency cache bundle",
+            ),
+            .cache_payload_sha256 = sha256(
+                "residency cache payload",
+            ),
+            .ownership_sha256 = sha256("residency ownership"),
+            .challenge_sha256 = sha256("residency challenge"),
+            .previous_plan_sha256 = [_]u8{0} ** 32,
+            .input_schema_sha256 = sha256(
+                "residency token input schema",
+            ),
+            .output_schema_sha256 = sha256(
+                "residency token output schema",
+            ),
+            .scratch_bytes = 0,
+        },
+    );
+}
+
+test "execution residency binding is canonical and projects exact claims" {
+    try std.testing.expectEqual(
+        @as(u64, 13),
+        @intFromEnum(OperationIdV1.generate_sequence),
+    );
+    const plan = try executionResidencyTestPlanV1(
+        73,
+        "residency input",
+    );
+    var request_claim = plan.claim;
+    request_claim.capsule_bytes = 0;
+    const shared = try makeExecutionResidencyBindingV1(
+        plan,
+        .shared_read_only,
+        plan.weight_bytes,
+        request_claim,
+    );
+    try validateExecutionResidencyBindingV1(shared, plan);
+    try std.testing.expectEqual(
+        ArtifactResidencyV1.shared_read_only,
+        shared.residency,
+    );
+    try std.testing.expectEqual(
+        plan.weight_bytes,
+        shared.resident_weight_bytes,
+    );
+    try std.testing.expectEqualDeep(
+        request_claim,
+        shared.request_claim,
+    );
+    var projected_claim = request_claim;
+    projected_claim.capsule_bytes += shared.resident_weight_bytes;
+    try std.testing.expectEqualDeep(plan.claim, projected_claim);
+
+    var shared_wire: [execution_residency_binding_bytes]u8 = undefined;
+    try encodeExecutionResidencyBindingV1(shared, &shared_wire);
+    const decoded_shared =
+        try decodeExecutionResidencyBindingV1(&shared_wire);
+    try std.testing.expectEqualDeep(shared, decoded_shared);
+    try validateExecutionResidencyBindingV1(decoded_shared, plan);
+    try std.testing.expectEqual(
+        shared.binding_sha256,
+        executionResidencyBindingRootV1(
+            shared_wire[0..execution_residency_binding_body_bytes],
+        ),
+    );
+
+    const request_owned = try makeExecutionResidencyBindingV1(
+        plan,
+        .request_owned,
+        0,
+        plan.claim,
+    );
+    try validateExecutionResidencyBindingV1(request_owned, plan);
+    var request_owned_wire: [execution_residency_binding_bytes]u8 = undefined;
+    try encodeExecutionResidencyBindingV1(
+        request_owned,
+        &request_owned_wire,
+    );
+    try std.testing.expectEqualDeep(
+        request_owned,
+        try decodeExecutionResidencyBindingV1(&request_owned_wire),
+    );
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        makeExecutionResidencyBindingV1(
+            plan,
+            .request_owned,
+            1,
+            plan.claim,
+        ),
+    );
+    var mismatched_request_owned_claim = plan.claim;
+    mismatched_request_owned_claim.activation_bytes += 1;
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        makeExecutionResidencyBindingV1(
+            plan,
+            .request_owned,
+            0,
+            mismatched_request_owned_claim,
+        ),
+    );
+}
+
+test "execution residency binding rejects mutation substitution and overflow" {
+    const plan = try executionResidencyTestPlanV1(
+        73,
+        "residency input",
+    );
+    var request_claim = plan.claim;
+    request_claim.capsule_bytes = 0;
+    const binding = try makeExecutionResidencyBindingV1(
+        plan,
+        .shared_read_only,
+        plan.weight_bytes,
+        request_claim,
+    );
+    var wire: [execution_residency_binding_bytes]u8 = undefined;
+    try encodeExecutionResidencyBindingV1(binding, &wire);
+    for (&wire, 0..) |_, index| {
+        var mutated_wire = wire;
+        mutated_wire[index] ^= 1;
+        try std.testing.expectError(
+            Error.InvalidExecutionResidencyBinding,
+            decodeExecutionResidencyBindingV1(&mutated_wire),
+        );
+    }
+
+    var mutated_binding = binding;
+    mutated_binding.request_claim.activation_bytes += 1;
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        validateExecutionResidencyBindingV1(
+            mutated_binding,
+            plan,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        makeExecutionResidencyBindingV1(
+            plan,
+            .shared_read_only,
+            plan.weight_bytes - 1,
+            request_claim,
+        ),
+    );
+    var mismatched_shared_claim = request_claim;
+    mismatched_shared_claim.kv_bytes += 1;
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        makeExecutionResidencyBindingV1(
+            plan,
+            .shared_read_only,
+            plan.weight_bytes,
+            mismatched_shared_claim,
+        ),
+    );
+
+    const foreign_plan = try executionResidencyTestPlanV1(
+        74,
+        "foreign residency input",
+    );
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        validateExecutionResidencyBindingV1(binding, foreign_plan),
+    );
+    var foreign_request_claim = foreign_plan.claim;
+    foreign_request_claim.capsule_bytes = 0;
+    const foreign_binding = try makeExecutionResidencyBindingV1(
+        foreign_plan,
+        .shared_read_only,
+        foreign_plan.weight_bytes,
+        foreign_request_claim,
+    );
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        validateExecutionResidencyBindingV1(
+            foreign_binding,
+            plan,
+        ),
+    );
+
+    var aggregate_overflow_request = request_claim;
+    aggregate_overflow_request.kv_bytes = std.math.maxInt(u64);
+    _ = try std.math.add(
+        u64,
+        aggregate_overflow_request.capsule_bytes,
+        plan.weight_bytes,
+    );
+    try std.testing.expectError(
+        resource_bank.Error.ClaimOverflow,
+        aggregate_overflow_request.hostBytes(),
+    );
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        makeExecutionResidencyBindingV1(
+            plan,
+            .shared_read_only,
+            plan.weight_bytes,
+            aggregate_overflow_request,
+        ),
+    );
+
+    var near_limit_request = plan.claim;
+    near_limit_request.capsule_bytes = 1;
+    near_limit_request.kv_bytes = 0;
+    const fixed_request_host_bytes = try near_limit_request.hostBytes();
+    near_limit_request.kv_bytes =
+        std.math.maxInt(u64) - fixed_request_host_bytes - 2;
+    _ = try near_limit_request.hostBytes();
+    var aggregate_overflow_plan = plan;
+    aggregate_overflow_plan.claim = near_limit_request;
+    aggregate_overflow_plan.claim.capsule_bytes = try std.math.add(
+        u64,
+        near_limit_request.capsule_bytes,
+        plan.weight_bytes,
+    );
+    try std.testing.expectError(
+        resource_bank.Error.ClaimOverflow,
+        aggregate_overflow_plan.claim.hostBytes(),
+    );
+    aggregate_overflow_plan.plan_sha256 = [_]u8{0} ** 32;
+    var aggregate_overflow_plan_wire: [execution_plan_bytes]u8 =
+        undefined;
+    try encodeExecutionPlanV1(
+        aggregate_overflow_plan,
+        &aggregate_overflow_plan_wire,
+    );
+    aggregate_overflow_plan = try decodeExecutionPlanV1(
+        &aggregate_overflow_plan_wire,
+    );
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        makeExecutionResidencyBindingV1(
+            aggregate_overflow_plan,
+            .shared_read_only,
+            plan.weight_bytes,
+            near_limit_request,
+        ),
+    );
+
+    var overflow_claim = request_claim;
+    overflow_claim.capsule_bytes = std.math.maxInt(u64);
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        makeExecutionResidencyBindingV1(
+            plan,
+            .shared_read_only,
+            plan.weight_bytes,
+            overflow_claim,
+        ),
+    );
 }
