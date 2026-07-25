@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import struct
-from typing import Any
+from typing import Any, Sequence
 
 
 class ModelContractError(ValueError):
@@ -14,23 +14,42 @@ class ModelContractError(ValueError):
 Record = dict[str, Any]
 ZERO_DIGEST = bytes(32)
 U64_MAX = (1 << 64) - 1
+U32_MAX = (1 << 32) - 1
+RECEIPT_DOMAIN = 0x7265636569707431
 ARTIFACT_MANIFEST_ABI = 0x474D414600000001
 EXECUTION_PLAN_ABI = 0x474D504C00000001
 RESULT_ENVELOPE_ABI = 0x474D525300000001
+EXECUTION_RESIDENCY_BINDING_ABI = 0x474D524200000001
+PREPARED_TERMINAL_RESULT_EVIDENCE_ABI = 0x474C545200000001
 ARTIFACT_MANIFEST_BYTES = 320
 EXECUTION_PLAN_BYTES = 768
 RESULT_ENVELOPE_BYTES = 768
+EXECUTION_RESIDENCY_BINDING_BYTES = 256
 ARTIFACT_BODY_BYTES = ARTIFACT_MANIFEST_BYTES - 32
 PLAN_BODY_BYTES = EXECUTION_PLAN_BYTES - 32
 RESULT_BODY_BYTES = RESULT_ENVELOPE_BYTES - 32
+RESIDENCY_BODY_BYTES = EXECUTION_RESIDENCY_BINDING_BYTES - 32
 ARTIFACT_MAGIC = b"GMART1\x00\x00"
 PLAN_MAGIC = b"GMPLAN1\x00"
 RESULT_MAGIC = b"GMRES1\x00\x00"
+RESIDENCY_MAGIC = b"GMRBND1\x00"
 ARTIFACT_DOMAIN = b"glacier-model-artifact-manifest-v1\x00"
 PLAN_DOMAIN = b"glacier-model-execution-plan-v1\x00"
 RESULT_DOMAIN = b"glacier-model-result-envelope-v1\x00"
+RESIDENCY_DOMAIN = (
+    b"glacier-model-execution-residency-binding-v1\x00"
+)
 PUBLICATION_STATE_DOMAIN = b"glacier-model-publication-state-v1\x00"
 PUBLICATION_COMMIT_DOMAIN = b"glacier-model-publication-commit-v1\x00"
+PREPARED_TERMINAL_OUTPUT_DOMAIN = (
+    b"glacier-prepared-text-terminal-output-v1\x00"
+)
+PREPARED_TERMINAL_SOURCE_MAPPING_DOMAIN = (
+    b"glacier-prepared-text-terminal-source-mapping-v1\x00"
+)
+PREPARED_TERMINAL_RESULT_EVIDENCE_DOMAIN = (
+    b"glacier-prepared-text-terminal-result-evidence-v1\x00"
+)
 AUDIO_SOURCE_MAPPING_DOMAIN = (
     b"glacier-audio-window-source-mapping-v1\x00"
 )
@@ -88,6 +107,7 @@ VIDEO_UNDERSTANDING = 6
 DECODE_NEXT = 2
 ENCODE = 3
 SEGMENT = 10
+GENERATE_SEQUENCE = 13
 TOKEN_ID_INPUT = 1
 IMAGE_FEATURE_U8 = 3
 VIDEO_FEATURE_U8 = 5
@@ -95,17 +115,36 @@ EMBEDDING_I32 = 2
 VIDEO_SEGMENT = 10
 TOKEN_IDS = 11
 EXACT_INTEGER = 1
+REQUEST_OWNED = 1
+SHARED_READ_ONLY = 2
 FAMILY_IDS = frozenset(range(1, 18))
-OPERATION_IDS = frozenset(range(1, 13))
+OPERATION_IDS = frozenset(range(1, 14))
 INPUT_KIND_IDS = frozenset(range(1, 8))
 OUTPUT_KIND_IDS = frozenset(range(1, 12))
 NUMERICAL_POLICY_IDS = frozenset(range(1, 5))
+ARTIFACT_RESIDENCY_IDS = frozenset((REQUEST_OWNED, SHARED_READ_ONLY))
 
 
 def _u64(value: int) -> bytes:
     if not isinstance(value, int) or not 0 <= value <= U64_MAX:
         raise ModelContractError("u64 out of range")
     return struct.pack("<Q", value)
+
+
+def _u32(value: int) -> bytes:
+    if not isinstance(value, int) or not 0 <= value <= U32_MAX:
+        raise ModelContractError("u32 out of range")
+    return struct.pack("<I", value)
+
+
+def _mix64(value: int) -> int:
+    _u64(value)
+    value ^= value >> 30
+    value = (value * 0xBF58476D1CE4E5B9) & U64_MAX
+    value ^= value >> 27
+    value = (value * 0x94D049BB133111EB) & U64_MAX
+    value ^= value >> 31
+    return value
 
 
 def _read(encoded: bytes, offset: int) -> int:
@@ -128,6 +167,159 @@ def sha256(value: bytes) -> bytes:
 
 def _root(domain: bytes, body: bytes) -> bytes:
     return hashlib.sha256(domain + body).digest()
+
+
+def prepared_terminal_output_root_v1(
+    plan_sha256: bytes,
+    token_domain_sha256: bytes,
+    token_domain_config_sha256: bytes,
+    output_tokens: Sequence[int],
+) -> bytes:
+    """Hash SessionV3 token ids with the exact Zig V1 preimage."""
+
+    try:
+        tokens = tuple(output_tokens)
+    except TypeError:
+        raise ModelContractError("invalid terminal output tokens") from None
+    body = (
+        _digest(plan_sha256, allow_zero=True)
+        + _digest(token_domain_sha256, allow_zero=True)
+        + _digest(token_domain_config_sha256, allow_zero=True)
+        + _u64(len(tokens))
+        + b"".join(_u32(token) for token in tokens)
+    )
+    return hashlib.sha256(
+        PREPARED_TERMINAL_OUTPUT_DOMAIN + body
+    ).digest()
+
+
+def verify_prepared_terminal_output_root_v1(
+    plan_sha256: bytes,
+    token_domain_sha256: bytes,
+    token_domain_config_sha256: bytes,
+    output_tokens: Sequence[int],
+    *,
+    output_token_count: int,
+    expected_sha256: bytes,
+) -> None:
+    """Reject a count or root that does not bind the supplied token slice."""
+
+    try:
+        tokens = tuple(output_tokens)
+    except TypeError:
+        raise ModelContractError("invalid terminal output tokens") from None
+    _u64(output_token_count)
+    if output_token_count != len(tokens):
+        raise ModelContractError("terminal output count mismatch")
+    actual = prepared_terminal_output_root_v1(
+        plan_sha256,
+        token_domain_sha256,
+        token_domain_config_sha256,
+        tokens,
+    )
+    if actual != _digest(expected_sha256, allow_zero=True):
+        raise ModelContractError("terminal output root mismatch")
+
+
+def prepared_terminal_source_mapping_root_v1(
+    bound_plan_sha256: bytes,
+    boundary_sha256: bytes,
+    publication_transcript_sha256: bytes,
+    output_sha256: bytes,
+    output_token_count: int,
+) -> bytes:
+    """Bind terminal output to its bound plan and publication transcript."""
+
+    body = (
+        _digest(bound_plan_sha256, allow_zero=True)
+        + _digest(boundary_sha256, allow_zero=True)
+        + _digest(publication_transcript_sha256, allow_zero=True)
+        + _digest(output_sha256, allow_zero=True)
+        + _u64(output_token_count)
+    )
+    return hashlib.sha256(
+        PREPARED_TERMINAL_SOURCE_MAPPING_DOMAIN + body
+    ).digest()
+
+
+def prepared_terminal_result_evidence_root_v1(
+    evidence_abi_version: int,
+    boundary_sha256: bytes,
+    result_sha256: bytes,
+    publication_state_after_sha256: bytes,
+) -> bytes:
+    """Hash the direct SessionV3 terminal-evidence join in field order."""
+
+    body = (
+        _u64(evidence_abi_version)
+        + _digest(boundary_sha256, allow_zero=True)
+        + _digest(result_sha256, allow_zero=True)
+        + _digest(publication_state_after_sha256, allow_zero=True)
+    )
+    return hashlib.sha256(
+        PREPARED_TERMINAL_RESULT_EVIDENCE_DOMAIN + body
+    ).digest()
+
+
+def _claim_values(claim: Record) -> tuple[int, ...]:
+    try:
+        values = tuple(claim[field] for field in CLAIM_FIELDS)
+    except (KeyError, TypeError):
+        raise ModelContractError("invalid resource claim") from None
+    for value in values:
+        _u64(value)
+    return values
+
+
+def receipt_integrity(receipt: Record) -> int:
+    """Recompute ResourceBank Receipt-v1's structural checksum."""
+
+    try:
+        bank_epoch = receipt["bank_epoch"]
+        slot_index = receipt["slot_index"]
+        generation = receipt["generation"]
+        owner_key = receipt["owner_key"]
+        claim = receipt["claim"]
+    except (KeyError, TypeError):
+        raise ModelContractError("invalid resource receipt") from None
+    _u64(bank_epoch)
+    _u32(slot_index)
+    _u64(generation)
+    _u64(owner_key)
+    result = _mix64(RECEIPT_DOMAIN ^ bank_epoch)
+    result = _mix64(result ^ slot_index)
+    result = _mix64(result ^ generation)
+    result = _mix64(result ^ owner_key)
+    for value in _claim_values(claim):
+        result = _mix64(result ^ value)
+    return result
+
+
+def receipt_integrity_valid(receipt: Record) -> bool:
+    """Check structural replay integrity without claiming live Bank authority."""
+
+    try:
+        supplied = receipt["integrity"]
+        _u64(supplied)
+        return supplied == receipt_integrity(receipt)
+    except (KeyError, TypeError, ModelContractError):
+        return False
+
+
+def claim_host_bytes(claim: Record) -> int:
+    """Return the exact host aggregate or reject u64 overflow."""
+
+    values = _claim_values(claim)
+    total = 0
+    for value in values[:7]:
+        if value > U64_MAX - total:
+            raise ModelContractError("resource claim host-byte overflow")
+        total += value
+    return total
+
+
+def _claims_equal(left: Record, right: Record) -> bool:
+    return _claim_values(left) == _claim_values(right)
 
 
 def make_artifact(
@@ -484,6 +676,148 @@ def decode_plan(encoded: bytes) -> Record:
     return result
 
 
+def _validate_residency_shape(binding: Record) -> None:
+    try:
+        residency = binding["residency"]
+        resident_weight_bytes = binding["resident_weight_bytes"]
+        artifact_sha256 = _digest(binding["artifact_sha256"])
+        weights_sha256 = _digest(binding["weights_sha256"])
+        plan_sha256 = _digest(binding["plan_sha256"])
+        request_claim = binding["request_claim"]
+    except (KeyError, TypeError):
+        raise ModelContractError("invalid residency binding") from None
+    _u64(residency)
+    _u64(resident_weight_bytes)
+    _ = (artifact_sha256, weights_sha256, plan_sha256)
+    claim_host_bytes(request_claim)
+    if (
+        residency not in ARTIFACT_RESIDENCY_IDS
+        or request_claim["queue_slots"] == 0
+    ):
+        raise ModelContractError("invalid residency binding")
+    if residency == REQUEST_OWNED:
+        if resident_weight_bytes != 0:
+            raise ModelContractError("invalid request-owned residency")
+    else:
+        if (
+            resident_weight_bytes == 0
+            or request_claim["capsule_bytes"]
+            > U64_MAX - resident_weight_bytes
+        ):
+            raise ModelContractError("invalid shared residency")
+
+
+def _validate_residency_projection(
+    binding: Record,
+    plan: Record,
+) -> None:
+    _validate_residency_shape(binding)
+    _ = encode_plan(plan)
+    claim_host_bytes(plan["claim"])
+    projected_claim = dict(binding["request_claim"])
+    if binding["residency"] == SHARED_READ_ONLY:
+        if binding["resident_weight_bytes"] != plan["weight_bytes"]:
+            raise ModelContractError("resident weight mismatch")
+        projected_claim["capsule_bytes"] += binding[
+            "resident_weight_bytes"
+        ]
+    if (
+        binding["artifact_sha256"]
+        != plan["artifact_sha256"]
+        or binding["weights_sha256"]
+        != plan["weights_sha256"]
+        or binding["plan_sha256"] != plan["plan_sha256"]
+        or not _claims_equal(projected_claim, plan["claim"])
+    ):
+        raise ModelContractError("invalid residency projection")
+
+
+def make_residency_binding(
+    plan: Record,
+    *,
+    residency: int,
+    resident_weight_bytes: int,
+    request_claim: Record,
+) -> Record:
+    canonical_plan = decode_plan(encode_plan(plan))
+    claim_host_bytes(canonical_plan["claim"])
+    value: Record = {
+        "residency": residency,
+        "resident_weight_bytes": resident_weight_bytes,
+        "artifact_sha256": canonical_plan["artifact_sha256"],
+        "weights_sha256": canonical_plan["weights_sha256"],
+        "plan_sha256": canonical_plan["plan_sha256"],
+        "request_claim": dict(request_claim),
+        "binding_sha256": ZERO_DIGEST,
+    }
+    _validate_residency_projection(value, canonical_plan)
+    return decode_residency_binding(encode_residency_binding(value))
+
+
+def encode_residency_binding(binding: Record) -> bytes:
+    _validate_residency_shape(binding)
+    output = bytearray(EXECUTION_RESIDENCY_BINDING_BYTES)
+    output[:32] = (
+        RESIDENCY_MAGIC
+        + _u64(EXECUTION_RESIDENCY_BINDING_ABI)
+        + _u64(EXECUTION_RESIDENCY_BINDING_BYTES)
+        + _u64(0)
+    )
+    output[32:40] = _u64(binding["residency"])
+    output[40:48] = _u64(binding["resident_weight_bytes"])
+    output[48:80] = _digest(binding["artifact_sha256"])
+    output[80:112] = _digest(binding["weights_sha256"])
+    output[112:144] = _digest(binding["plan_sha256"])
+    output[144:224] = b"".join(
+        _u64(value) for value in _claim_values(binding["request_claim"])
+    )
+    root = _root(RESIDENCY_DOMAIN, bytes(output[:RESIDENCY_BODY_BYTES]))
+    supplied = binding.get("binding_sha256", ZERO_DIGEST)
+    if supplied not in (ZERO_DIGEST, root):
+        raise ModelContractError("residency binding root mismatch")
+    output[RESIDENCY_BODY_BYTES:] = root
+    return bytes(output)
+
+
+def decode_residency_binding(encoded: bytes) -> Record:
+    if (
+        not isinstance(encoded, bytes)
+        or len(encoded) != EXECUTION_RESIDENCY_BINDING_BYTES
+        or encoded[:8] != RESIDENCY_MAGIC
+        or _read(encoded, 8) != EXECUTION_RESIDENCY_BINDING_ABI
+        or _read(encoded, 16) != EXECUTION_RESIDENCY_BINDING_BYTES
+        or _read(encoded, 24) != 0
+    ):
+        raise ModelContractError("invalid residency binding wire")
+    root = _root(RESIDENCY_DOMAIN, encoded[:RESIDENCY_BODY_BYTES])
+    if encoded[RESIDENCY_BODY_BYTES:] != root:
+        raise ModelContractError("residency binding root mismatch")
+    result: Record = {
+        "residency": _read(encoded, 32),
+        "resident_weight_bytes": _read(encoded, 40),
+        "artifact_sha256": encoded[48:80],
+        "weights_sha256": encoded[80:112],
+        "plan_sha256": encoded[112:144],
+        "request_claim": {
+            field: _read(encoded, 144 + index * 8)
+            for index, field in enumerate(CLAIM_FIELDS)
+        },
+        "binding_sha256": root,
+    }
+    _validate_residency_shape(result)
+    if encode_residency_binding(result) != encoded:
+        raise ModelContractError("non-canonical residency binding")
+    return result
+
+
+def validate_residency_binding(binding: Record, plan: Record) -> None:
+    encoded = encode_residency_binding(binding)
+    canonical_binding = decode_residency_binding(encoded)
+    if binding.get("binding_sha256", ZERO_DIGEST) == ZERO_DIGEST:
+        raise ModelContractError("missing residency binding root")
+    _validate_residency_projection(canonical_binding, plan)
+
+
 def require_support(records: list[Record], plan: Record) -> None:
     stages = (
         ("family", "unsupported family"),
@@ -559,11 +893,56 @@ def make_result(
     source_mapping_sha256: bytes,
     adapter_sha256: bytes,
 ) -> Record:
+    return _make_result(
+        state,
+        plan,
+        receipt,
+        plan["claim"],
+        output_sha256=output_sha256,
+        source_mapping_sha256=source_mapping_sha256,
+        adapter_sha256=adapter_sha256,
+    )
+
+
+def make_residency_result(
+    state: Record,
+    plan: Record,
+    residency_binding: Record,
+    receipt: Record,
+    *,
+    output_sha256: bytes,
+    source_mapping_sha256: bytes,
+    adapter_sha256: bytes,
+) -> Record:
+    validate_residency_binding(residency_binding, plan)
+    if not receipt_integrity_valid(receipt):
+        raise ModelContractError("invalid resource receipt integrity")
+    return _make_result(
+        state,
+        plan,
+        receipt,
+        residency_binding["request_claim"],
+        output_sha256=output_sha256,
+        source_mapping_sha256=source_mapping_sha256,
+        adapter_sha256=adapter_sha256,
+    )
+
+
+def _make_result(
+    state: Record,
+    plan: Record,
+    receipt: Record,
+    expected_claim: Record,
+    *,
+    output_sha256: bytes,
+    source_mapping_sha256: bytes,
+    adapter_sha256: bytes,
+) -> Record:
     if (
         state["request_epoch"] != plan["request_epoch"]
         or state["next_sequence"] != plan["publication_next_sequence"]
         or state["artifact_sha256"] != plan["artifact_sha256"]
-        or receipt["claim"] != plan["claim"]
+        or receipt["claim"] != expected_claim
     ):
         raise ModelContractError("invalid publication binding")
     result: Record = {
@@ -729,6 +1108,195 @@ def decode_result(encoded: bytes) -> Record:
     if encode_result(result) != encoded:
         raise ModelContractError("non-canonical result")
     return result
+
+
+def _canonical_record(
+    value: Record,
+    encoder: Any,
+    decoder: Any,
+    root_field: str,
+    label: str,
+) -> Record:
+    canonical = decoder(encoder(value))
+    try:
+        supplied_root = value[root_field]
+    except (KeyError, TypeError):
+        raise ModelContractError(f"missing {label} root") from None
+    if supplied_root != canonical[root_field]:
+        raise ModelContractError(f"missing or stale {label} root")
+    return canonical
+
+
+def _verify_artifact_plan_relationship(
+    artifact: Record,
+    plan: Record,
+) -> None:
+    shared_fields = (
+        "family",
+        "input_kind",
+        "output_kind",
+        "numerical_policy",
+        "input_features",
+        "output_dimensions",
+        "weight_bytes",
+        "input_element_bytes",
+        "output_element_bytes",
+    )
+    if (
+        any(artifact[field] != plan[field] for field in shared_fields)
+        or plan["batch_items"] > artifact["max_batch_items"]
+        or plan["artifact_sha256"] != artifact["artifact_sha256"]
+        or plan["weights_sha256"] != artifact["weights_sha256"]
+    ):
+        raise ModelContractError("artifact/plan relationship mismatch")
+
+
+def _verify_plan_result_relationship(
+    plan: Record,
+    result: Record,
+    expected_claim: Record,
+) -> None:
+    shared_fields = (
+        "family",
+        "operation",
+        "output_kind",
+        "numerical_policy",
+        "request_epoch",
+        "generation",
+        "batch_items",
+        "output_dimensions",
+        "output_element_bytes",
+        "output_bytes",
+    )
+    shared_digests = (
+        "artifact_sha256",
+        "media_object_sha256",
+        "processor_state_sha256",
+        "cache_bundle_sha256",
+        "cache_payload_sha256",
+        "ownership_sha256",
+        "challenge_sha256",
+    )
+    if (
+        any(plan[field] != result[field] for field in shared_fields)
+        or any(plan[field] != result[field] for field in shared_digests)
+        or result["publication_sequence"]
+        != plan["publication_next_sequence"]
+        or result["plan_sha256"] != plan["plan_sha256"]
+        or not _claims_equal(result["claim"], expected_claim)
+    ):
+        raise ModelContractError("plan/result relationship mismatch")
+    expected_state_root = publication_state_root(
+        {
+            "request_epoch": result["request_epoch"],
+            "next_sequence": result["publication_sequence"],
+            "visible_results": result["publication_sequence"],
+            "artifact_sha256": result["artifact_sha256"],
+            "previous_result_sha256": result["previous_result_sha256"],
+        }
+    )
+    if (
+        result["publication_state_before_sha256"]
+        != expected_state_root
+    ):
+        raise ModelContractError("result publication state mismatch")
+
+
+def verify_relationships(
+    artifact: Record,
+    plan: Record,
+    result: Record,
+) -> None:
+    """Verify the original three-record request-owned relationship."""
+
+    canonical_artifact = _canonical_record(
+        artifact,
+        encode_artifact,
+        decode_artifact,
+        "artifact_sha256",
+        "artifact",
+    )
+    canonical_plan = _canonical_record(
+        plan,
+        encode_plan,
+        decode_plan,
+        "plan_sha256",
+        "plan",
+    )
+    canonical_result = _canonical_record(
+        result,
+        encode_result,
+        decode_result,
+        "result_sha256",
+        "result",
+    )
+    _verify_artifact_plan_relationship(
+        canonical_artifact,
+        canonical_plan,
+    )
+    _verify_plan_result_relationship(
+        canonical_plan,
+        canonical_result,
+        canonical_plan["claim"],
+    )
+
+
+def verify_residency_relationships(
+    artifact: Record,
+    plan: Record,
+    residency_binding: Record,
+    result: Record,
+) -> None:
+    """Verify artifact → plan → residency → terminal-result bindings."""
+
+    canonical_artifact = _canonical_record(
+        artifact,
+        encode_artifact,
+        decode_artifact,
+        "artifact_sha256",
+        "artifact",
+    )
+    canonical_plan = _canonical_record(
+        plan,
+        encode_plan,
+        decode_plan,
+        "plan_sha256",
+        "plan",
+    )
+    canonical_residency = _canonical_record(
+        residency_binding,
+        encode_residency_binding,
+        decode_residency_binding,
+        "binding_sha256",
+        "residency binding",
+    )
+    canonical_result = _canonical_record(
+        result,
+        encode_result,
+        decode_result,
+        "result_sha256",
+        "result",
+    )
+    _verify_artifact_plan_relationship(
+        canonical_artifact,
+        canonical_plan,
+    )
+    validate_residency_binding(canonical_residency, canonical_plan)
+    result_receipt = {
+        "bank_epoch": canonical_result["resource_bank_epoch"],
+        "slot_index": canonical_result["resource_slot_index"],
+        "generation": canonical_result["resource_generation"],
+        "owner_key": canonical_result["resource_owner_key"],
+        "claim": canonical_result["claim"],
+        "integrity": canonical_result["resource_integrity"],
+    }
+    if not receipt_integrity_valid(result_receipt):
+        raise ModelContractError("invalid resource receipt integrity")
+    _verify_plan_result_relationship(
+        canonical_plan,
+        canonical_result,
+        canonical_residency["request_claim"],
+    )
 
 
 def reference_integer_projection(

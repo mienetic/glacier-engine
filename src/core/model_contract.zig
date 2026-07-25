@@ -1005,6 +1005,71 @@ pub fn prepareResultEnvelopeV1(
         isZero(output_sha256) or isZero(source_mapping_sha256) or
         isZero(adapter_sha256))
         return Error.InvalidPublication;
+    return buildResultEnvelopeV1(
+        state,
+        plan,
+        receipt,
+        state_before,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    );
+}
+
+/// Prepare a ResultEnvelope whose charged claim follows the request-local
+/// projection recorded by an ExecutionResidencyBinding. Receipt integrity is
+/// structural; callers that require live ownership must separately validate
+/// the Receipt against its originating ResourceBank.
+pub fn prepareResidencyResultEnvelopeV1(
+    state: PublicationStateV1,
+    plan: ExecutionPlanV1,
+    binding: ExecutionResidencyBindingV1,
+    receipt: resource_bank.Receipt,
+    output_sha256: Digest,
+    source_mapping_sha256: Digest,
+    adapter_sha256: Digest,
+) Error!ResultEnvelopeV1 {
+    try validateExecutionResidencyBindingV1(binding, plan);
+    const state_before = try publicationStateRootV1(state);
+    if (state.request_epoch != plan.request_epoch or
+        state.next_sequence != plan.publication_next_sequence or
+        !std.mem.eql(u8, &state.artifact_sha256, &plan.artifact_sha256) or
+        !resource_bank.receiptIntegrityValidV1(receipt) or
+        !std.meta.eql(receipt.claim, binding.request_claim) or
+        isZero(output_sha256) or isZero(source_mapping_sha256) or
+        isZero(adapter_sha256))
+        return Error.InvalidPublication;
+    const result = try buildResultEnvelopeV1(
+        state,
+        plan,
+        receipt,
+        state_before,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    );
+    try validateResidencyResultEnvelopeV1(
+        state,
+        plan,
+        binding,
+        receipt,
+        result,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    );
+    return result;
+}
+
+fn buildResultEnvelopeV1(
+    state: PublicationStateV1,
+    plan: ExecutionPlanV1,
+    receipt: resource_bank.Receipt,
+    state_before: Digest,
+    output_sha256: Digest,
+    source_mapping_sha256: Digest,
+    adapter_sha256: Digest,
+) Error!ResultEnvelopeV1 {
     var result: ResultEnvelopeV1 = .{
         .family = plan.family,
         .operation = plan.operation,
@@ -1156,6 +1221,115 @@ pub fn validateResultEnvelopeV1(
         return Error.InvalidResultEnvelope;
 }
 
+/// Validate every field shared by the execution plan and result, together
+/// with the request-local charged claim projected by the residency binding.
+pub fn validateExecutionResidencyResultV1(
+    plan: ExecutionPlanV1,
+    binding: ExecutionResidencyBindingV1,
+    result: ResultEnvelopeV1,
+) Error!void {
+    try validateExecutionResidencyBindingV1(binding, plan);
+    try requireCanonicalResultEnvelopeV1(result);
+    if (result.family != plan.family or
+        result.operation != plan.operation or
+        result.output_kind != plan.output_kind or
+        result.numerical_policy != plan.numerical_policy or
+        result.request_epoch != plan.request_epoch or
+        result.generation != plan.generation or
+        result.publication_sequence != plan.publication_next_sequence or
+        result.batch_items != plan.batch_items or
+        result.output_dimensions != plan.output_dimensions or
+        result.output_element_bytes != plan.output_element_bytes or
+        result.output_bytes != plan.output_bytes or
+        !std.meta.eql(result.claim, binding.request_claim) or
+        !std.mem.eql(u8, &result.artifact_sha256, &plan.artifact_sha256) or
+        !std.mem.eql(u8, &result.plan_sha256, &plan.plan_sha256) or
+        !std.mem.eql(
+            u8,
+            &result.media_object_sha256,
+            &plan.media_object_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &result.processor_state_sha256,
+            &plan.processor_state_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &result.cache_bundle_sha256,
+            &plan.cache_bundle_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &result.cache_payload_sha256,
+            &plan.cache_payload_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &result.ownership_sha256,
+            &plan.ownership_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &result.challenge_sha256,
+            &plan.challenge_sha256,
+        ))
+        return Error.InvalidPublication;
+}
+
+/// Contextually validate a residency-aware ResultEnvelope without mutating
+/// publication state. The caller performs the explicit commit separately.
+pub fn validateResidencyResultEnvelopeV1(
+    state: PublicationStateV1,
+    plan: ExecutionPlanV1,
+    binding: ExecutionResidencyBindingV1,
+    receipt: resource_bank.Receipt,
+    result: ResultEnvelopeV1,
+    output_sha256: Digest,
+    source_mapping_sha256: Digest,
+    adapter_sha256: Digest,
+) Error!void {
+    try validateExecutionResidencyResultV1(plan, binding, result);
+    const state_before = try publicationStateRootV1(state);
+    if (!resource_bank.receiptIntegrityValidV1(receipt) or
+        !std.meta.eql(receipt.claim, binding.request_claim) or
+        result.resource_bank_epoch != receipt.bank_epoch or
+        result.resource_slot_index != receipt.slot_index or
+        result.resource_generation != receipt.generation or
+        result.resource_owner_key != receipt.owner_key or
+        !std.meta.eql(result.claim, receipt.claim) or
+        result.resource_integrity != receipt.integrity or
+        state.request_epoch != result.request_epoch or
+        state.next_sequence != result.publication_sequence or
+        !std.mem.eql(u8, &state.artifact_sha256, &result.artifact_sha256) or
+        !std.mem.eql(
+            u8,
+            &state.previous_result_sha256,
+            &result.previous_result_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &state_before,
+            &result.publication_state_before_sha256,
+        ) or
+        !std.mem.eql(u8, &output_sha256, &result.output_sha256) or
+        !std.mem.eql(
+            u8,
+            &source_mapping_sha256,
+            &result.source_mapping_sha256,
+        ) or
+        !std.mem.eql(u8, &adapter_sha256, &result.adapter_sha256))
+        return Error.InvalidPublication;
+}
+
+fn requireCanonicalResultEnvelopeV1(
+    result: ResultEnvelopeV1,
+) Error!void {
+    var encoded: [result_envelope_bytes]u8 = undefined;
+    encodeResultEnvelopeV1(result, &encoded) catch
+        return Error.InvalidResultEnvelope;
+}
+
 fn validateResultEnvelopeShapeV1(
     result: ResultEnvelopeV1,
 ) Error!void {
@@ -1202,7 +1376,7 @@ pub fn commitResultV1(
     state: *PublicationStateV1,
     result: ResultEnvelopeV1,
 ) Error!void {
-    try validateResultEnvelopeV1(result);
+    try requireCanonicalResultEnvelopeV1(result);
     const before = try publicationStateRootV1(state.*);
     if (state.request_epoch != result.request_epoch or
         state.next_sequence != result.publication_sequence or
@@ -1497,6 +1671,113 @@ test "typed model contracts are canonical and fail closed" {
     try std.testing.expectEqual(expected_artifact, manifest.artifact_sha256);
     try std.testing.expectEqual(expected_plan, plan.plan_sha256);
     try std.testing.expectEqual(expected_result, result.result_sha256);
+
+    // The independent Python reference extends this exact three-record fixture
+    // with a structurally valid shared-residency Receipt. Pin the same fourth
+    // wire and projected result here so parity is bidirectional.
+    var golden_request_claim = claim;
+    golden_request_claim.capsule_bytes -= @intCast(weights.len);
+    const golden_shared_binding =
+        try makeExecutionResidencyBindingV1(
+            plan,
+            .shared_read_only,
+            @intCast(weights.len),
+            golden_request_claim,
+        );
+    var golden_binding_bytes: [execution_residency_binding_bytes]u8 = undefined;
+    try encodeExecutionResidencyBindingV1(
+        golden_shared_binding,
+        &golden_binding_bytes,
+    );
+    try std.testing.expectEqual(
+        golden_shared_binding,
+        try decodeExecutionResidencyBindingV1(
+            &golden_binding_bytes,
+        ),
+    );
+    const golden_shared_receipt: resource_bank.Receipt = .{
+        .bank_epoch = 3,
+        .slot_index = 1,
+        .generation = 9,
+        .owner_key = 77,
+        .claim = golden_request_claim,
+        .integrity = 0x8c92_0168_12c6_ad3d,
+    };
+    try std.testing.expect(
+        resource_bank.receiptIntegrityValidV1(
+            golden_shared_receipt,
+        ),
+    );
+    const golden_output_sha256 = sha256(&[_]u8{
+        0x1e, 0, 0, 0,
+        0x06, 0, 0, 0,
+        0x46, 0, 0, 0,
+        0x06, 0, 0, 0,
+    });
+    const golden_mapping_sha256 = sha256("mapping");
+    const golden_adapter_sha256 = sha256("adapter");
+    var golden_shared_state = try initializePublicationStateV1(
+        plan.request_epoch,
+        plan.artifact_sha256,
+    );
+    const golden_shared_result =
+        try prepareResidencyResultEnvelopeV1(
+            golden_shared_state,
+            plan,
+            golden_shared_binding,
+            golden_shared_receipt,
+            golden_output_sha256,
+            golden_mapping_sha256,
+            golden_adapter_sha256,
+        );
+    try validateResidencyResultEnvelopeV1(
+        golden_shared_state,
+        plan,
+        golden_shared_binding,
+        golden_shared_receipt,
+        golden_shared_result,
+        golden_output_sha256,
+        golden_mapping_sha256,
+        golden_adapter_sha256,
+    );
+    var expected_binding: Digest = undefined;
+    var expected_shared_result: Digest = undefined;
+    var expected_shared_commit: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &expected_binding,
+        "86c0f91dcf7012f12619585092ab22ab" ++
+            "870985be1a92359a844551f67c1462a6",
+    );
+    _ = try std.fmt.hexToBytes(
+        &expected_shared_result,
+        "ca3c4184081d77603bc01da8458d73bd" ++
+            "ef9143ca68c8f3e3615be4802e8358fc",
+    );
+    _ = try std.fmt.hexToBytes(
+        &expected_shared_commit,
+        "fa7cf84c037d528f0af5570b3f7e7474" ++
+            "489f6686123925e75c6df4b57836cb33",
+    );
+    try std.testing.expectEqual(
+        expected_binding,
+        golden_shared_binding.binding_sha256,
+    );
+    try std.testing.expectEqual(
+        expected_shared_result,
+        golden_shared_result.result_sha256,
+    );
+    try std.testing.expectEqual(
+        expected_shared_commit,
+        golden_shared_result.publication_commit_sha256,
+    );
+    try commitResultV1(
+        &golden_shared_state,
+        golden_shared_result,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        golden_shared_state.visible_results,
+    );
 
     for (&manifest_bytes, 0..) |_, index| {
         var mutated = manifest_bytes;
@@ -1959,4 +2240,357 @@ test "execution residency binding rejects mutation substitution and overflow" {
             overflow_claim,
         ),
     );
+}
+
+test "residency result envelope charges shared receipt and commits explicitly" {
+    const plan = try executionResidencyTestPlanV1(
+        81,
+        "shared result input",
+    );
+    var request_claim = plan.claim;
+    request_claim.capsule_bytes = 0;
+    const binding = try makeExecutionResidencyBindingV1(
+        plan,
+        .shared_read_only,
+        plan.weight_bytes,
+        request_claim,
+    );
+
+    var slots: [1]resource_bank.Slot = undefined;
+    var bank = try resource_bank.Bank.init(
+        &slots,
+        .{},
+        0x5245_5349_4445_4e54,
+    );
+    const receipt = try bank.commit(
+        try bank.reserve(0x5348_4152_4544, request_claim),
+    );
+    defer bank.release(receipt) catch unreachable;
+
+    var state = try initializePublicationStateV1(
+        plan.request_epoch,
+        plan.artifact_sha256,
+    );
+    const state_before_prepare = state;
+    const output_sha256 = sha256("shared residency output");
+    const source_mapping_sha256 = sha256(
+        "shared residency source mapping",
+    );
+    const adapter_sha256 = sha256("shared residency adapter");
+    const result = try prepareResidencyResultEnvelopeV1(
+        state,
+        plan,
+        binding,
+        receipt,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    );
+
+    try std.testing.expectEqualDeep(state_before_prepare, state);
+    try std.testing.expectEqualDeep(receipt.claim, result.claim);
+    try std.testing.expectEqualDeep(binding.request_claim, result.claim);
+    try std.testing.expect(!std.meta.eql(plan.claim, result.claim));
+    var aggregate_claim = request_claim;
+    aggregate_claim.capsule_bytes = try std.math.add(
+        u64,
+        aggregate_claim.capsule_bytes,
+        binding.resident_weight_bytes,
+    );
+    try std.testing.expectEqualDeep(plan.claim, aggregate_claim);
+    try std.testing.expectEqual(
+        try plan.claim.hostBytes(),
+        try std.math.add(
+            u64,
+            try request_claim.hostBytes(),
+            binding.resident_weight_bytes,
+        ),
+    );
+
+    try validateExecutionResidencyResultV1(plan, binding, result);
+    try validateResidencyResultEnvelopeV1(
+        state,
+        plan,
+        binding,
+        receipt,
+        result,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    );
+    var encoded: [result_envelope_bytes]u8 = undefined;
+    try encodeResultEnvelopeV1(result, &encoded);
+    const decoded = try decodeResultEnvelopeV1(&encoded);
+    try std.testing.expectEqualDeep(result, decoded);
+    try validateResidencyResultEnvelopeV1(
+        state,
+        plan,
+        binding,
+        receipt,
+        decoded,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    );
+    try std.testing.expectEqual(@as(u64, 0), state.next_sequence);
+    try std.testing.expectEqual(@as(u64, 0), state.visible_results);
+
+    try commitResultV1(&state, decoded);
+    try std.testing.expectEqual(@as(u64, 1), state.next_sequence);
+    try std.testing.expectEqual(@as(u64, 1), state.visible_results);
+    try std.testing.expectEqual(
+        decoded.result_sha256,
+        state.previous_result_sha256,
+    );
+    try std.testing.expectError(
+        Error.InvalidPublication,
+        validateResidencyResultEnvelopeV1(
+            state,
+            plan,
+            binding,
+            receipt,
+            decoded,
+            output_sha256,
+            source_mapping_sha256,
+            adapter_sha256,
+        ),
+    );
+}
+
+test "residency result envelope preserves request-owned wire parity" {
+    const plan = try executionResidencyTestPlanV1(
+        82,
+        "request-owned result input",
+    );
+    const binding = try makeExecutionResidencyBindingV1(
+        plan,
+        .request_owned,
+        0,
+        plan.claim,
+    );
+    var slots: [1]resource_bank.Slot = undefined;
+    var bank = try resource_bank.Bank.init(
+        &slots,
+        .{},
+        0x5245_5155_4553_544f,
+    );
+    const receipt = try bank.commit(
+        try bank.reserve(0x4f57_4e45_4421, plan.claim),
+    );
+    defer bank.release(receipt) catch unreachable;
+    const state = try initializePublicationStateV1(
+        plan.request_epoch,
+        plan.artifact_sha256,
+    );
+    const output_sha256 = sha256("request-owned output");
+    const source_mapping_sha256 = sha256(
+        "request-owned source mapping",
+    );
+    const adapter_sha256 = sha256("request-owned adapter");
+
+    const legacy_result = try prepareResultEnvelopeV1(
+        state,
+        plan,
+        receipt,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    );
+    const residency_result = try prepareResidencyResultEnvelopeV1(
+        state,
+        plan,
+        binding,
+        receipt,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    );
+    try std.testing.expectEqualDeep(legacy_result, residency_result);
+
+    var legacy_wire: [result_envelope_bytes]u8 = undefined;
+    var residency_wire: [result_envelope_bytes]u8 = undefined;
+    try encodeResultEnvelopeV1(legacy_result, &legacy_wire);
+    try encodeResultEnvelopeV1(residency_result, &residency_wire);
+    try std.testing.expectEqualSlices(
+        u8,
+        &legacy_wire,
+        &residency_wire,
+    );
+}
+
+test "residency result envelope rejects contextual substitutions atomically" {
+    const plan = try executionResidencyTestPlanV1(
+        83,
+        "substitution result input",
+    );
+    var request_claim = plan.claim;
+    request_claim.capsule_bytes = 0;
+    const binding = try makeExecutionResidencyBindingV1(
+        plan,
+        .shared_read_only,
+        plan.weight_bytes,
+        request_claim,
+    );
+    var slots: [2]resource_bank.Slot = undefined;
+    var bank = try resource_bank.Bank.init(
+        &slots,
+        .{},
+        0x5355_4253_5449_5455,
+    );
+    const receipt = try bank.commit(
+        try bank.reserve(0x5052_494d_4152_59, request_claim),
+    );
+    defer bank.release(receipt) catch unreachable;
+    const substitute_receipt = try bank.commit(
+        try bank.reserve(0x5355_4253_5449_54, request_claim),
+    );
+    defer bank.release(substitute_receipt) catch unreachable;
+
+    const state = try initializePublicationStateV1(
+        plan.request_epoch,
+        plan.artifact_sha256,
+    );
+    const original_state = state;
+    const output_sha256 = sha256("substitution output");
+    const source_mapping_sha256 = sha256(
+        "substitution source mapping",
+    );
+    const adapter_sha256 = sha256("substitution adapter");
+    const result = try prepareResidencyResultEnvelopeV1(
+        state,
+        plan,
+        binding,
+        receipt,
+        output_sha256,
+        source_mapping_sha256,
+        adapter_sha256,
+    );
+
+    var invalid_plan = plan;
+    invalid_plan.generation += 1;
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        prepareResidencyResultEnvelopeV1(
+            state,
+            invalid_plan,
+            binding,
+            receipt,
+            output_sha256,
+            source_mapping_sha256,
+            adapter_sha256,
+        ),
+    );
+    var invalid_binding = binding;
+    invalid_binding.binding_sha256[0] ^= 1;
+    try std.testing.expectError(
+        Error.InvalidExecutionResidencyBinding,
+        prepareResidencyResultEnvelopeV1(
+            state,
+            plan,
+            invalid_binding,
+            receipt,
+            output_sha256,
+            source_mapping_sha256,
+            adapter_sha256,
+        ),
+    );
+    var invalid_receipt = receipt;
+    invalid_receipt.integrity ^= 1;
+    try std.testing.expectError(
+        Error.InvalidPublication,
+        prepareResidencyResultEnvelopeV1(
+            state,
+            plan,
+            binding,
+            invalid_receipt,
+            output_sha256,
+            source_mapping_sha256,
+            adapter_sha256,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidPublication,
+        validateResidencyResultEnvelopeV1(
+            state,
+            plan,
+            binding,
+            substitute_receipt,
+            result,
+            output_sha256,
+            source_mapping_sha256,
+            adapter_sha256,
+        ),
+    );
+
+    const substituted_result = try prepareResidencyResultEnvelopeV1(
+        state,
+        plan,
+        binding,
+        receipt,
+        sha256("substituted output"),
+        source_mapping_sha256,
+        adapter_sha256,
+    );
+    try std.testing.expectError(
+        Error.InvalidPublication,
+        validateResidencyResultEnvelopeV1(
+            state,
+            plan,
+            binding,
+            receipt,
+            substituted_result,
+            output_sha256,
+            source_mapping_sha256,
+            adapter_sha256,
+        ),
+    );
+    inline for (.{
+        .{
+            sha256("substituted expected output"),
+            source_mapping_sha256,
+            adapter_sha256,
+        },
+        .{
+            output_sha256,
+            sha256("substituted expected source mapping"),
+            adapter_sha256,
+        },
+        .{
+            output_sha256,
+            source_mapping_sha256,
+            sha256("substituted expected adapter"),
+        },
+    }) |digests| {
+        try std.testing.expectError(
+            Error.InvalidPublication,
+            validateResidencyResultEnvelopeV1(
+                state,
+                plan,
+                binding,
+                receipt,
+                result,
+                digests[0],
+                digests[1],
+                digests[2],
+            ),
+        );
+    }
+
+    var noncanonical_result = result;
+    noncanonical_result.result_sha256[0] ^= 1;
+    try std.testing.expectError(
+        Error.InvalidResultEnvelope,
+        validateExecutionResidencyResultV1(
+            plan,
+            binding,
+            noncanonical_result,
+        ),
+    );
+    var commit_state = state;
+    try std.testing.expectError(
+        Error.InvalidResultEnvelope,
+        commitResultV1(&commit_state, noncanonical_result),
+    );
+    try std.testing.expectEqualDeep(original_state, commit_state);
+    try std.testing.expectEqualDeep(original_state, state);
 }

@@ -4,7 +4,11 @@ import unittest
 from pathlib import Path
 
 from bench import model_contract as contract
-from bench.tests.test_model_contract import fixture, token_ids_fixture
+from bench.tests.test_model_contract import (
+    fixture,
+    shared_residency_fixture,
+    token_ids_fixture,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +54,29 @@ class ModelContractInteropFixtureTests(unittest.TestCase):
             result["result_sha256"].hex(),
             "e87cf08d3c42efe196db681392ce3899"
             "6276c0a31bb5b3aae28b2a3ec54ff8ad",
+        )
+
+    def test_shared_residency_roots_are_deterministic_without_new_files(
+        self,
+    ) -> None:
+        artifact, plan, residency, result, _ = (
+            shared_residency_fixture()
+        )
+        contract.verify_residency_relationships(
+            artifact,
+            plan,
+            residency,
+            result,
+        )
+        self.assertEqual(
+            residency["binding_sha256"].hex(),
+            "86c0f91dcf7012f12619585092ab22ab"
+            "870985be1a92359a844551f67c1462a6",
+        )
+        self.assertEqual(
+            result["result_sha256"].hex(),
+            "ca3c4184081d77603bc01da8458d73b"
+            "def9143ca68c8f3e3615be4802e8358fc",
         )
 
 
