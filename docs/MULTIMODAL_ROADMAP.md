@@ -668,8 +668,8 @@ Early contributions can proceed without a large model:
 - extend the completed two-generation maximum-entry, repeated-modality
   registry-transition-format campaign with new versioned profiles while
   preserving frozen V1 roots and bounded mutation coverage;
-- extend the deterministic workload-pressure campaign with generated bounded
-  schedules or a mixed typed-adapter workload profile; the shared scheduled
+- extend the completed 32-case generated deterministic workload corpus with one
+  retained seed or a mixed typed-adapter workload profile; the shared scheduled
   vision/audio/temporal-video lifecycle and real bounded media lifecycle are
   complete while exact replay remains separate from native measurements;
 - extend format-aware inspection with privacy-safe export/retention policy

@@ -66,6 +66,35 @@ def reseal(value: dict[str, object]) -> bytes:
 
 
 class ScheduledMediaPressureTests(unittest.TestCase):
+    def test_generic_api_preserves_reference_wrappers(self) -> None:
+        scenario = workload.reference_scenario()
+        evidence = pressure.build_evidence(scenario)
+        self.assertEqual(evidence, pressure.build_reference_evidence())
+        self.assertEqual(
+            pressure.validate_evidence(scenario, evidence),
+            pressure.validate_reference_evidence(evidence),
+        )
+
+    def test_generic_api_accepts_a_different_completed_item_set(self) -> None:
+        scenario = workload.reference_scenario()
+        scenario["items"] = scenario["items"][:2]
+        scenario["capacity"] = 2
+        scenario["limits"]["queue_slots"] = 2
+        scenario["items"][0]["terminal_action"] = workload.ACTION_NONE
+        scenario["items"][0]["terminal_action_step"] = workload.ABSENT_STEP
+
+        evidence = pressure.build_evidence(scenario)
+        self.assertEqual(
+            {execution["ordinal"] for execution in evidence["executions"]},
+            {0, 1},
+        )
+        self.assertEqual(evidence["summary"]["completed"], 2)
+        self.assertEqual(evidence["summary"]["execution_count"], 2)
+        self.assertEqual(
+            pressure.validate_evidence(scenario, evidence),
+            evidence,
+        )
+
     def test_reference_wire_round_trip_and_golden_roots(self) -> None:
         evidence = pressure.build_reference_evidence()
         encoded = pressure.encode_evidence(evidence)

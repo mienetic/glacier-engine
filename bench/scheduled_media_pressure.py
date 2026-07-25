@@ -111,9 +111,6 @@ SUMMARY_FIELDS = (
     "zero_orphan_ownership",
 )
 
-COMPLETED_ORDINALS = (1, 2, 6)
-
-
 def _u64(value: int) -> bytes:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ScheduledMediaPressureError("expected unsigned integer")
@@ -813,8 +810,6 @@ def _execution_artifacts(
         for outcome in result["outcomes"]
         if outcome["kind"] == workload.OUTCOME_COMPLETED
     ]
-    if tuple(completed) != COMPLETED_ORDINALS:
-        raise ScheduledMediaPressureError("unsupported completed item set")
 
     artifacts = []
     for ordinal in completed:
@@ -890,8 +885,8 @@ def _execution_artifacts(
             }
         )
     artifacts.sort(key=lambda value: value["final_trace_index"])
-    if tuple(value["ordinal"] for value in artifacts) != COMPLETED_ORDINALS:
-        raise ScheduledMediaPressureError("unexpected execution order")
+    if sorted(value["ordinal"] for value in artifacts) != sorted(completed):
+        raise ScheduledMediaPressureError("completed item execution drift")
     return artifacts
 
 
@@ -904,10 +899,9 @@ def reference_media_artifacts() -> list[Record]:
     return deepcopy(_execution_artifacts(scenario, result, receipts))
 
 
-def build_reference_evidence() -> Record:
-    """Build, seal, and decode the fixed mixed-media Evidence-v1 campaign."""
+def build_evidence(scenario: Record) -> Record:
+    """Build canonical Evidence-v1 for one valid W0 workload scenario."""
 
-    scenario = workload.reference_scenario()
     result = workload.replay_scenario(scenario)
     workload.validate_result(scenario, result)
     receipts = _reconstruct_receipts(scenario, result)
@@ -1034,12 +1028,18 @@ def build_reference_evidence() -> Record:
     return decode_evidence(encode_evidence(value))
 
 
-def validate_reference_evidence(value: Record) -> Record:
-    """Validate every field against an independent fixed-scenario replay."""
+def build_reference_evidence() -> Record:
+    """Build the retained fixed mixed-media Evidence-v1 campaign."""
+
+    return build_evidence(workload.reference_scenario())
+
+
+def validate_evidence(scenario: Record, value: Record) -> Record:
+    """Validate every field against an independent replay of ``scenario``."""
 
     try:
         actual = decode_evidence(encode_evidence(value))
-        expected = build_reference_evidence()
+        expected = build_evidence(scenario)
     except ValueError as error:
         if isinstance(error, ScheduledMediaPressureError):
             raise
@@ -1049,7 +1049,6 @@ def validate_reference_evidence(value: Record) -> Record:
             "evidence contradicts independent scheduled-media replay"
         )
 
-    scenario = workload.reference_scenario()
     result = workload.replay_scenario(scenario)
     items_by_ordinal = {item["ordinal"]: item for item in scenario["items"]}
     receipts = _reconstruct_receipts(scenario, result)
@@ -1104,3 +1103,9 @@ def validate_reference_evidence(value: Record) -> Record:
                 "execution uses a foreign resource receipt"
             )
     return actual
+
+
+def validate_reference_evidence(value: Record) -> Record:
+    """Validate every field against the retained fixed-scenario replay."""
+
+    return validate_evidence(workload.reference_scenario(), value)

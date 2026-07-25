@@ -20,6 +20,8 @@ pub const lane_weave_qos = @import("lane_weave_qos.zig");
 pub const workload_pressure = @import("workload_pressure.zig");
 pub const scheduled_media_pressure =
     @import("scheduled_media_pressure.zig");
+pub const workload_scenario_corpus =
+    @import("workload_scenario_corpus.zig");
 pub const provider_token_gateway = @import("provider_token_gateway.zig");
 pub const provider_transport_harness =
     @import("provider_transport_harness.zig");
@@ -140,6 +142,7 @@ pub const PlatformCapabilities = platform_capabilities;
 pub const LaneWeaveQoS = lane_weave_qos.Scheduler;
 pub const WorkloadPressure = workload_pressure;
 pub const ScheduledMediaPressure = scheduled_media_pressure;
+pub const WorkloadScenarioCorpus = workload_scenario_corpus;
 pub const ProviderTokenGateway = provider_token_gateway.Gateway;
 pub const ProviderTransportHarness = provider_transport_harness.Harness;
 pub const ProviderContextPack = provider_context_pack;

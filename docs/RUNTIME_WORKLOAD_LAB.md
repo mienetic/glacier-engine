@@ -11,11 +11,12 @@ It separates four kinds of evidence:
 3. CPU, GPU/accelerator, machine-state, and physical-resource observation; and
 4. bounded soak and disruption recovery.
 
-The deterministic open-loop and scheduler-coupled media layers are integrated.
-Generated scenarios, closed-loop arrivals, broader typed workloads, native
-multi-request reports, and soak campaigns remain staged work. A logical driver
-step is never reported as a millisecond, and a logical resource claim is never
-reported as RSS, device residency, energy, or temperature.
+The deterministic open-loop, generated deterministic open-loop, and
+scheduler-coupled media layers are integrated. Closed-loop arrivals, broader
+typed workloads, native multi-request reports, and soak campaigns remain staged
+work. A logical driver step is never reported as a millisecond, and a logical
+resource claim is never reported as RSS, device residency, energy, or
+temperature.
 
 ## Why this belongs in the runtime
 
@@ -50,7 +51,12 @@ The modes remain separately versioned because they answer different questions.
 - **Deterministic open-loop** replays declared arrivals at logical driver
   steps. It is the portable conformance mode.
 - **Generated deterministic open-loop** creates bounded valid scenarios from a
-  fixed seed and retains minimized failures. It still uses logical time.
+  fixed seed and can retain exact-signature synthetic or regression shrink
+  fixtures. The first retained fixture is synthetic. This mode still uses
+  logical time.
+- **Deterministic closed-loop** is a planned separately versioned conformance
+  mode whose terminal outcomes drive bounded replacement work toward a declared
+  in-flight target. It still uses logical time.
 - **Native open-loop** schedules arrivals against a monotonic clock at a
   declared rate. It exposes queueing and overload behavior.
 - **Native closed-loop** maintains a declared in-flight population and submits
@@ -70,11 +76,15 @@ Results from different modes are not merged into one headline number.
   audio, and video work adopts the scheduler-owned receipt, executes only on
   the final service quantum, publishes atomically, and closes without double
   admission.
-- [ ] **W2 — Generated scenario corpus.** Add a versioned generator ABI, fixed
-  seeds and bounds, an independent oracle, deterministic shrinking, and a
-  retained minimized failure corpus without changing W0 evidence semantics.
-- [ ] **W3 — Closed-loop contract.** Add a separately versioned mode whose
-  arrivals are driven by terminal work and a declared in-flight target.
+- [x] **W2 — Generated scenario corpus.** A versioned, coordinate-addressed SHA-256
+  generator derives 32 bounded scenarios from four retained seeds and eight
+  scenario classes. Zig and an independent Python implementation reproduce the
+  same cases through unchanged W0 replay and W1 media execution. A synthetic
+  exact-signature fixture proves deterministic local-minimum shrinking without
+  changing either earlier evidence ABI or its reference goldens.
+- [ ] **W3 — Deterministic closed-loop contract.** Add a separately versioned
+  mode whose arrivals are driven by terminal work and a declared in-flight
+  target.
 - [ ] **W4 — Typed workload adapters.** Drive declared model, media, provider,
   and tool lifecycles through the existing workload-driver seam. Each profile
   names its execution unit, claim, cancellation or preemption boundary,
@@ -231,8 +241,9 @@ One native operating system or backend never promotes another.
 
 Independent contributions can add:
 
-1. a bounded scenario generator and deterministic shrinker;
-2. the separately versioned closed-loop contract;
+1. one retained generated seed, exact failure signature, or independent
+   generator/shrinker check;
+2. the separately versioned deterministic closed-loop contract;
 3. one typed workload-driver profile;
 4. a family-neutral observer interface and one native OS implementation;
 5. a bounded Metal observer slice for device identity, host submit/sync timing,
@@ -243,5 +254,6 @@ Independent contributions can add:
 
 Each slice must retain its fixtures, failure cases, exact acceptance command,
 and nonclaims. See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md),
+[Generated Workload Corpus](GENERATED_WORKLOAD_CORPUS.md),
 [Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md), and
 [Benchmark and Evidence Guide](BENCHMARKS.md) for the existing foundations.

@@ -350,6 +350,39 @@ pub const ReferenceStorageV1 = struct {
     }
 };
 
+/// Maximum bounded storage for generated and caller-defined V1 scenarios.
+/// Keeping the private runtime bookkeeping inside this module lets callers
+/// exercise every admitted V1 shape without depending on internal slot types.
+pub const MaximumStorageV1 = struct {
+    bank_slots: [maximum_items]resource_bank.Slot =
+        [_]resource_bank.Slot{.{}} ** maximum_items,
+    scheduler_slots: [maximum_items]qos.Slot =
+        [_]qos.Slot{.{}} ** maximum_items,
+    scheduler_projection: [maximum_items]qos.ProjectionSlot =
+        [_]qos.ProjectionSlot{.{}} ** maximum_items,
+    verifier_slots: [maximum_items]qos.Slot =
+        [_]qos.Slot{.{}} ** maximum_items,
+    verifier_projection: [maximum_items]qos.ProjectionSlot =
+        [_]qos.ProjectionSlot{.{}} ** maximum_items,
+    runtime_items: [maximum_items]RuntimeItem =
+        [_]RuntimeItem{.{}} ** maximum_items,
+    outcomes: [maximum_items]OutcomeV1 = undefined,
+    trace: [maximum_trace_records]TraceRecordV1 = undefined,
+
+    pub fn interface(self: *MaximumStorageV1) StorageV1 {
+        return .{
+            .bank_slots = &self.bank_slots,
+            .scheduler_slots = &self.scheduler_slots,
+            .scheduler_projection = &self.scheduler_projection,
+            .verifier_slots = &self.verifier_slots,
+            .verifier_projection = &self.verifier_projection,
+            .runtime_items = &self.runtime_items,
+            .outcomes = &self.outcomes,
+            .trace = &self.trace,
+        };
+    }
+};
+
 comptime {
     if (media_decode_plan.plan_bytes + media_transform.transform_plan_bytes != 928)
         @compileError("reference media capsule claim changed");
@@ -399,12 +432,14 @@ pub fn videoClaimV1() resource_bank.Claim {
     };
 }
 
-fn profileForKindV1(kind: media.MediaKindV1) struct {
+pub const ProfileV1 = struct {
     family: model.ModelFamilyIdV1,
     operation: model.OperationIdV1,
     claim: resource_bank.Claim,
     sha256: Digest,
-} {
+};
+
+pub fn profileForKindV1(kind: media.MediaKindV1) ProfileV1 {
     const family: model.ModelFamilyIdV1 = switch (kind) {
         .image => .vision_understanding,
         .audio => .audio_understanding,
@@ -430,6 +465,53 @@ fn profileForKindV1(kind: media.MediaKindV1) struct {
         .operation = operation,
         .claim = claim,
         .sha256 = root,
+    };
+}
+
+pub const WorkItemIdentityV1 = struct {
+    tenant_key: u64,
+    request_key: u64,
+    request_generation: u64,
+    resource_owner_key: u64,
+};
+
+pub const WorkItemPlanV1 = struct {
+    media_kind: media.MediaKindV1,
+    arrival_step: u64,
+    weight: u16,
+    work_quanta: u64,
+    deadline_tick: u64 = 0,
+    terminal_action_step: u64 = absent_step,
+    terminal_action: TerminalActionV1 = .none,
+    fairness_member: bool = false,
+    identity: WorkItemIdentityV1,
+};
+
+/// Construct one canonical V1 item from the retained media profile. Scenario
+/// validation remains the authority for ordering, uniqueness, and bounds.
+pub fn makeWorkItemV1(
+    ordinal: u64,
+    plan: WorkItemPlanV1,
+) WorkItemV1 {
+    const profile = profileForKindV1(plan.media_kind);
+    return .{
+        .ordinal = ordinal,
+        .family = profile.family,
+        .operation = profile.operation,
+        .media_kind = plan.media_kind,
+        .profile_sha256 = profile.sha256,
+        .arrival_step = plan.arrival_step,
+        .weight = plan.weight,
+        .work_quanta = plan.work_quanta,
+        .deadline_tick = plan.deadline_tick,
+        .terminal_action_step = plan.terminal_action_step,
+        .terminal_action = plan.terminal_action,
+        .fairness_member = plan.fairness_member,
+        .tenant_key = plan.identity.tenant_key,
+        .request_key = plan.identity.request_key,
+        .request_generation = plan.identity.request_generation,
+        .resource_owner_key = plan.identity.resource_owner_key,
+        .claim = profile.claim,
     };
 }
 

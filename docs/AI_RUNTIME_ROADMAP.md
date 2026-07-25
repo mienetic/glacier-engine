@@ -164,7 +164,9 @@ vision, audio-window, and temporal-video adapters adopt that scheduler receipt,
 preflight their typed result, publish through the final V2 service commit, and
 retire atomically without a second admission. A mixed typed-adapter workload
 profile, family-aware batch formation, preemption, multi-device placement,
-generated workloads, and closed-loop mode remain planned.
+and closed-loop mode remain planned. A separate coordinate-addressed generator now
+retains 32 bounded W0/W1 cases from four seeds, with independent Python
+generation and verification plus deterministic exact-signature shrinking.
 
 Promotion gate: retained mixed-family pressure campaigns meet declared
 fairness, deadline, logical-resource, cancellation, and zero-orphan invariants;
@@ -416,9 +418,10 @@ mode, baseline conditions, verifier, retained artifacts, and nonclaims.
 Load evidence is a required runtime feature, not a single marketing number.
 The complete W0–W8 sequence and report contract are defined in the
 [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md). The track has three
-deliberately separate evidence levels:
+deliberately separate campaign classes; replicated execution is a higher
+evidence level applied to retained native campaigns:
 
-1. **Deterministic pressure — first slice implemented.** V1 replays one bounded
+1. **Deterministic pressure — W0 through W2 implemented.** V1 replays one bounded
    model-free explicit arrival schedule to verify admission, weighted fairness,
    deadline completion, timeout, cancellation, overload rejection, exact
    logical accounting, and zero orphaned ownership. Its canonical
@@ -427,9 +430,12 @@ deliberately separate evidence levels:
    [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md). A separate sidecar
    now proves final-quantum image/audio/video fixture execution, atomic
    publication, single-receipt ownership, and terminal absence for rejected,
-   cancelled, and timed-out work. Generated scenarios, batching, typed
-   model-adapter execution, real backpressure, and a separate closed-loop mode
-   remain planned.
+   cancelled, and timed-out work. W2 adds a coordinate-addressed 32-case generated
+   deterministic open-loop corpus, independent Python reproduction, and a
+   synthetic exact-signature local-minimum shrink fixture while preserving the
+   earlier wires and reference roots. Batching, typed model-adapter execution,
+   real backpressure, and a separate deterministic closed-loop mode remain
+   planned.
 2. **Native workload** runs declared model-family mixes against a real CPU,
    accelerator, or provider adapter and records completed/rejected/cancelled
    work, throughput, p50/p95/p99 latency, queue delay, memory high-water,
@@ -1184,8 +1190,8 @@ Contributors can work on the runtime without downloading a large model:
 - one independent verifier or mutation campaign;
 - one experimental C ABI consumer or golden failure case in another language;
 - one platform capability probe;
-- one deterministic workload scenario, summary oracle, or native campaign
-  adapter;
+- one retained generated-workload seed, exact shrink signature, summary oracle,
+  or native campaign adapter;
 - one prepared-text source-exit journal state or acknowledged sink-progress
   generation with explicit crash boundaries;
 - one native POSIX recovery campaign or bounded Win32 durable-file adapter

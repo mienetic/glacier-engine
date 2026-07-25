@@ -219,6 +219,34 @@ wave.
 
 **LaneWeave** — Glacier's deterministic admission and weighted service scheduler.
 
+**Logical driver step** — One ordered iteration of a deterministic workload
+driver. It processes the arrivals and terminal actions declared for that step,
+then permits at most one scheduler service quantum. It is not elapsed time.
+
+**Deterministic open-loop workload** — A portable conformance workload whose
+arrivals are fixed at absolute logical driver steps before replay begins.
+
+**Generated deterministic open-loop corpus** — A bounded set of unchanged
+open-loop scenarios derived from retained seeds by one versioned,
+coordinate-addressed decision function. It expands deterministic conformance
+coverage; it is not native load, statistical fuzzing, or proof over every seed.
+
+**Exact failure signature** — A stable, versioned identity for the precise
+failure condition that a workload shrinker must preserve. A signature may
+identify a synthetic shrinker-conformance predicate or a retained regression;
+expected overload, cancellation, timeout, and admission rejection are workload
+outcomes rather than failure signatures.
+
+**Deterministic workload shrinker** — An ordered, bounded reduction procedure
+that accepts only canonical workload candidates preserving one exact failure
+signature. Its fixed point is locally minimal under the declared reductions,
+not necessarily the globally smallest scenario.
+
+**Deterministic closed-loop workload** — A separately versioned logical
+conformance mode in which terminal outcomes trigger bounded replacement work
+to maintain a declared in-flight target. It is distinct from both generated
+open-loop scenarios and native closed-loop concurrency measurement.
+
 **LeaseTree** — A hierarchy that gives one ResourceBank receipt exact child
 ownership and publication scopes. Additive trees charge child allocations in
 addition to a control-plane parent claim; receipt-funded trees partition a

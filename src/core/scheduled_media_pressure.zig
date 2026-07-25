@@ -176,6 +176,24 @@ pub const ReferenceStorageV1 = struct {
     }
 };
 
+/// Maximum bounded storage for generated and caller-defined W1 campaigns.
+pub const MaximumStorageV1 = struct {
+    workload_storage: workload.MaximumStorageV1 = .{},
+    media_slots: [workload.maximum_items]MediaSlotV1 =
+        [_]MediaSlotV1{.{}} ** workload.maximum_items,
+    item_evidence: [workload.maximum_items]ItemEvidenceV1 = undefined,
+    execution_evidence: [workload.maximum_items]ExecutionEvidenceV1 = undefined,
+
+    pub fn interface(self: *MaximumStorageV1) StorageV1 {
+        return .{
+            .workload_storage = self.workload_storage.interface(),
+            .media_slots = &self.media_slots,
+            .item_evidence = &self.item_evidence,
+            .execution_evidence = &self.execution_evidence,
+        };
+    }
+};
+
 const DriverContextV1 = struct {
     media_slots: []MediaSlotV1,
     failure: ?Error = null,

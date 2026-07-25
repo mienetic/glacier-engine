@@ -108,19 +108,6 @@ The visualizer must consume verified events and label unverified input.
 
 **First slice:** emit deterministic JSON suitable for a future UI.
 
-### Portable workload campaign foundation
-
-Define the first bounded, versioned model-free workload scenario for mixed
-runtime families. Keep open-loop arrival rate separate from closed-loop
-concurrency, use explicit logical ticks and seeds, and record completed,
-rejected, cancelled, and timed-out work without reading an ambient clock.
-
-**First slice:** one deterministic pressure scenario plus an independent
-summary oracle for queue delay, weighted fairness, resource high-water, and
-zero orphaned ownership. Native timing, percentile, energy, and soak adapters
-remain later slices described in the
-[AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md#workload-stress-and-soak-campaigns).
-
 ### Model fixture expansion
 
 Add a tiny, redistributable fixture covering one loader or tensor-layout branch.
@@ -418,14 +405,24 @@ media publication, five accepted receipts close exactly once, and independent
 Zig/Python verification agrees on the 5,472-byte evidence wire. See
 [Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md).
 
+**Completed generated-corpus slice:** four retained seeds expand into eight
+scenario classes each through coordinate-addressed SHA-256 decisions. All 32 bounded
+open-loop scenarios run through unchanged W0 replay and W1 media execution;
+Zig and an independent Python implementation agree on the retained case
+identities. One explicitly synthetic exact-signature fixture reaches the same
+local minimum in both implementations without changing any W0/W1 reference
+wire or golden. See
+[Generated Workload Corpus](GENERATED_WORKLOAD_CORPUS.md).
+
 This is deterministic conformance, not a throughput, wall-clock latency,
 physical-memory, energy, or soak result.
 
 Small independent follow-up slices include:
 
-- generate bounded valid scenarios and minimize a failing seed;
+- add one retained seed, exact failure signature, or independent
+  generator/shrinker check while preserving every prior case root;
 - add one new media or non-media profile without weakening exact replay;
-- specify a separately versioned closed-loop mode;
+- specify a separately versioned deterministic closed-loop mode;
 - build a read-only scenario/result inspector that exposes no authority;
 - drive the completed scheduled vision/audio/temporal-video lifecycle through
   one mixed typed-adapter workload profile; or
@@ -433,7 +430,8 @@ Small independent follow-up slices include:
 
 **Done when:** the slice fixes all bounds and summary rules before execution,
 retains malformed and semantic-substitution rejection, keeps logical and
-physical metrics distinct, and adds an independent verification path.
+physical metrics distinct, preserves earlier roots unless it introduces a new
+ABI, and adds an independent verification path.
 
 ### ResourceBank property tests
 

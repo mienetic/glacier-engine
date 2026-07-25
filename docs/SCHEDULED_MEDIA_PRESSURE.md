@@ -16,6 +16,12 @@ This is portable execution conformance. It is not a wall-clock throughput,
 tail-latency, model-quality, codec-quality, physical-memory, power, or soak
 measurement.
 
+The W2 generated deterministic open-loop corpus now reuses this same Evidence
+V1 contract for 32 additional bounded scenarios. Generic Zig and Python entry
+points accept any valid retained W0 scenario, while the reference wrappers,
+wire bytes, and golden root remain unchanged. See
+[Generated Workload Corpus](GENERATED_WORKLOAD_CORPUS.md).
+
 ## Execution boundary
 
 Each accepted workload item immediately binds its scheduler-owned
@@ -169,13 +175,12 @@ can proceed independently:
 
 1. drive the completed scheduled vision/audio/temporal-video adapter lifecycle
    through one mixed typed workload profile;
-2. add generated workloads without changing Evidence V1 semantics;
-3. add a separately versioned closed-loop arrival contract;
-4. add family-aware batching and safe preemption points;
-5. schedule strict external PNG/WAVE/APNG ingestion under explicit byte and
+2. add a separately versioned deterministic closed-loop arrival contract;
+3. add family-aware batching and safe preemption points;
+4. schedule strict external PNG/WAVE/APNG ingestion under explicit byte and
    geometry ceilings;
-6. add native per-OS observers for timing, CPU, memory, power, and thermals; and
-7. add bounded soak and disruption campaigns with the same zero-orphan gate.
+5. add native per-OS observers for timing, CPU, memory, power, and thermals; and
+6. add bounded soak and disruption campaigns with the same zero-orphan gate.
 
 See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and

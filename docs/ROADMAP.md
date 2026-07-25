@@ -37,7 +37,7 @@ evidence. The plane and model-family sequence is specified in the
 | Durable provider evidence | Integrated; outer inspection prototype | Crash-recoverable journal, compact evidence join, and a deterministic read-only inspector for outer framing/checksum and self-asserted fields | Optional caller-supplied nested-composition inspection, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, full build and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Named core/CPU/durable/device/host-tool build profiles; native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; mobile lifecycle gates; and a reduced edge profile |
 | Benchmark evidence | Prototype | Paired harnesses, machine envelope, independent verification | More complete CPU/energy telemetry and reproducible machines |
-| Runtime Workload Lab | W0/W1 integrated | A portable versioned explicit-open-loop mixed-media contract retains exact overload, fairness, timeout, cancellation, logical-resource, replay, and zero-orphan evidence; an additive sidecar executes completed image/audio/video transactions under the same receipts and atomically binds final service to publication | Generated and closed-loop scenarios, typed model/provider/tool profiles, native CPU/GPU reports and physical observers, bounded soak/disruption, and multi-OS replication |
+| Runtime Workload Lab | W0/W1/W2 integrated | A portable versioned explicit-open-loop mixed-media contract retains exact overload, fairness, timeout, cancellation, logical-resource, replay, and zero-orphan evidence; an additive sidecar executes completed image/audio/video transactions under the same receipts and atomically binds final service to publication; a coordinate-addressed generator and independent oracle retain 32 bounded W0/W1 cases plus a synthetic exact-signature local-minimum shrink fixture | Separately versioned deterministic closed-loop scenarios, typed model/provider/tool profiles, native CPU/GPU reports and physical observers, bounded soak/disruption, and multi-OS replication |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
 ## P0 — Open-source usability
@@ -282,9 +282,13 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   adopt the exact scheduler receipt, preflight every fallible result check,
   expose output only through the final V2 service commit, and retire with zero
   model/cache ownership while preserving all existing V1 wires.
-- [ ] Add generated bounded workloads and a separately versioned closed-loop
-  mode with completion-driven arrivals; do not infer native timing from either
-  deterministic conformance mode.
+- [x] Add a generated deterministic open-loop corpus with four retained seeds,
+  eight scenario classes per seed, coordinate-addressed SHA-256 decisions, unchanged W0/W1
+  evidence ABIs and reference goldens, independent Python generation and
+  verification, plus a synthetic exact-signature local-minimum shrink fixture.
+- [ ] Add a separately versioned deterministic closed-loop mode with
+  completion-driven arrivals and a declared in-flight target; do not infer
+  native timing from either deterministic conformance mode.
 - [ ] Retain native per-OS mixed-family load and bounded soak campaigns with
   CPU/GPU identity and placement, host/device timing, memory residency, power,
   thermal, backend, fault-schedule, memory-growth, recovery, and zero-orphan
@@ -294,6 +298,8 @@ See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md) for the implemented
 V1 contract, exact reference campaign, claim boundary, and contributor slices.
 See [Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md) for the additive
 single-receipt image/audio/video execution and publication evidence.
+See [Generated Workload Corpus](GENERATED_WORKLOAD_CORPUS.md) for the W2
+generator ABI, retained 32-case matrix, shrinking contract, and nonclaims.
 See [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md) for the W0–W8 workload,
 native-observation, resilience, and platform-replication sequence.
 See [Platform Portability](PLATFORM_PORTABILITY.md) for the evidence matrix,

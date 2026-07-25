@@ -16,6 +16,8 @@ pub const lane_weave_qos = core.lane_weave_qos;
 pub const workload_pressure = core.workload_pressure;
 pub const scheduled_media_pressure =
     core.scheduled_media_pressure;
+pub const workload_scenario_corpus =
+    core.workload_scenario_corpus;
 pub const provider_token_gateway = core.provider_token_gateway;
 pub const provider_transport_harness = core.provider_transport_harness;
 pub const provider_context_pack = core.provider_context_pack;
@@ -56,6 +58,7 @@ pub const PlatformCapabilities = core.PlatformCapabilities;
 pub const LaneWeaveQoS = core.LaneWeaveQoS;
 pub const WorkloadPressure = core.WorkloadPressure;
 pub const ScheduledMediaPressure = core.ScheduledMediaPressure;
+pub const WorkloadScenarioCorpus = core.WorkloadScenarioCorpus;
 pub const ProviderTokenGateway = core.ProviderTokenGateway;
 pub const ProviderTransportHarness = core.ProviderTransportHarness;
 pub const ProviderContextPack = core.ProviderContextPack;

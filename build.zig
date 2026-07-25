@@ -1055,6 +1055,93 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&contract_c_shared_consumer.step);
     test_compile_step.dependOn(&contract_cpp_consumer.step);
 
+    // Stateless generated W2 scenarios exercise the unchanged W0 workload
+    // and W1 scheduled-media contracts. The focused gate compares the native
+    // canonical report with an independent Python replay and retained fixture.
+    const workload_scenario_corpus_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/workload_scenario_corpus.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_workload_scenario_corpus_tests = b.addRunArtifact(
+        workload_scenario_corpus_tests,
+    );
+    const workload_scenario_corpus_exe = b.addExecutable(.{
+        .name = "glacier-workload-scenario-corpus",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/workload_scenario_corpus.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    workload_scenario_corpus_exe.root_module.addImport("core", core_mod);
+    const run_workload_scenario_corpus = b.addRunArtifact(
+        workload_scenario_corpus_exe,
+    );
+    const workload_scenario_corpus_demo_step = b.step(
+        "workload-scenario-corpus-demo",
+        "Print the canonical retained workload corpus report",
+    );
+    workload_scenario_corpus_demo_step.dependOn(
+        &run_workload_scenario_corpus.step,
+    );
+
+    const run_workload_scenario_corpus_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_workload_scenario_corpus_oracle.setCwd(b.path("."));
+    run_workload_scenario_corpus_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_workload_scenario_corpus_oracle.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_workload_scenario_corpus_oracle.addFileArg(
+        b.path("bench/workload_scenario_corpus.py"),
+    );
+    run_workload_scenario_corpus_oracle.addArg("--runner");
+    run_workload_scenario_corpus_oracle.addArtifactArg(
+        workload_scenario_corpus_exe,
+    );
+    run_workload_scenario_corpus_oracle.addArg("--fixture");
+    run_workload_scenario_corpus_oracle.addFileArg(
+        b.path("bench/results/workload-scenario-corpus-v1.json"),
+    );
+
+    const workload_scenario_corpus_test_step = b.step(
+        "workload-scenario-corpus-test",
+        "Run generated workload corpus tests and independent replay",
+    );
+    workload_scenario_corpus_test_step.dependOn(
+        &run_workload_scenario_corpus_tests.step,
+    );
+    workload_scenario_corpus_test_step.dependOn(
+        &run_workload_scenario_corpus_oracle.step,
+    );
+    const workload_scenario_corpus_compile_step = b.step(
+        "workload-scenario-corpus-compile",
+        "Compile the generated workload corpus tests and runner",
+    );
+    workload_scenario_corpus_compile_step.dependOn(
+        &workload_scenario_corpus_tests.step,
+    );
+    workload_scenario_corpus_compile_step.dependOn(
+        &workload_scenario_corpus_exe.step,
+    );
+    test_step.dependOn(workload_scenario_corpus_test_step);
+    test_compile_step.dependOn(
+        workload_scenario_corpus_compile_step,
+    );
+
     // Model-free deterministic QoS conformance demo. Native tests execute it,
     // cross-target gates compile it, and it is never installed as a production
     // or benchmark binary.
