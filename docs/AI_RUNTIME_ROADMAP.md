@@ -762,11 +762,50 @@ invalid after success.
 
 R1f remains a same-process buffer replacement inside the original Session. It
 does not create a new Session, transfer authority, provide concurrency,
-publish durable state, or resume after process death. Fresh-process
-continuation next needs a successor plan/transcript ABI with a nonzero sequence
-base and source lineage, restored Scheduler/Bank and permit-generation
-semantics, LeaseTree-aware publication/receipt remapping, durable atomic
-selection, source exit, and exclusive target handoff.
+publish durable state, or resume after process death.
+
+#### R1g — Canonical prepared-text successor evidence
+
+Status: **integrated experimental identity and evidence slice**.
+`prepared_text_successor` and
+`SessionV3.captureSuccessorArtifactsV1` now:
+
+- reuse the existing fixed 768-byte Common Model Contract
+  `ExecutionPlanV1` and 256-byte `ExecutionResidencyBindingV1` rather than
+  serializing native `BoundPlanV1` memory;
+- derive a canonical successor generation at the exact current non-terminal
+  `0 < N < max_new_tokens` boundary, with publication base `N`, previous-plan
+  lineage, checkpoint logical-KV payload identity, and checkpoint challenge;
+- preserve the source plan's artifact, family, operation, shape, policy,
+  schema, total-resource, and other canonical bindings while recomputing the
+  plan and residency roots;
+- add one fixed 512-byte transcript segment joining the source checkpoint,
+  bound plan, execution plan, boundary, predecessor transcript, state
+  commitment, logical KV, successor records, target ownership intent, and
+  challenge;
+- commit an exact proposed target scheduler/coordinator, fresh Bank and owner,
+  LeaseTree/cache keys, successor generations, and request claim through a
+  domain-separated ownership-intent root; and
+- rederive and exact-compare the complete live source context before returning,
+  without mutating the Session, Scheduler, Bank, receipt, sequence, state, or
+  publication evidence.
+
+Canonical Zig and independent Python paths freeze the successor
+plan/residency/intent/segment roots, reject mutation across every byte, reject
+all truncated or extended segment lengths, and reject coherently re-rooted
+foreign ownership/plan substitutions against caller-retained context. See
+[Prepared Text Successor Evidence](PREPARED_TEXT_SUCCESSOR.md) for the exact
+projection, wire offsets, and acceptance gates.
+
+R1g ownership intent is pointer-free evidence, not an authority handoff or
+receipt. It does not exit the source, admit a target, acquire a live Bank
+receipt or service permit, remap a `LeaseTree`, create a runnable target
+Session, durably select a successor, resume after process death, or prove
+exactly-once continuation. R1h next adds restored Scheduler admission,
+fresh-Bank receipt and permit-generation fences, and LeaseTree-aware
+publication/receipt remapping. Durable atomic selection, source exit, exclusive
+target activation, and fresh-process uninterrupted/resumed equivalence remain
+later gates.
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with

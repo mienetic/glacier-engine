@@ -1,17 +1,22 @@
 # Prepared Text Checkpoint
 
 The prepared-text checkpoint combines an experimental R1e codec with an R1f
-same-process rebind for one exact, non-terminal `SessionV3` boundary. It
-captures the committed output prefix, RNG state, sampling count, and contiguous
-KV prefix as a canonical little-endian byte image. A verified image can be
-materialized into a fresh detached allocation or used to replace only the
-concrete state backing of the original live Session.
+same-process rebind and an R1g successor-evidence bridge for one exact,
+non-terminal `SessionV3` boundary. It captures the committed output prefix, RNG
+state, sampling count, and contiguous KV prefix as a canonical little-endian
+byte image. A verified image can be materialized into a fresh detached
+allocation, used to replace only the concrete state backing of the original
+live Session, or joined to canonical pointer-free successor records.
 
 Detached is an important boundary. The materialized payload has no Scheduler,
 ResourceBank, receipt, service permit, sink, or publication authority. It is
 not a runnable restored Session, a durable checkpoint, or fresh-process resume.
 R1f does not attach authority to that detached value; the live Session decodes
 and materializes the image internally while retaining its existing authority.
+R1g likewise creates no target authority: its target ownership intent and
+successor plan/residency/transcript records are evidence for a later
+restored-admission gate, not a receipt or runnable Session. See
+[Prepared Text Successor Evidence](PREPARED_TEXT_SUCCESSOR.md).
 
 ## What the slice proves
 
@@ -49,6 +54,11 @@ and materializes the image internally while retaining its existing authority.
   decoders, component roots, whole-wire golden, every-byte mutation rejection,
   coherent contradiction rejection, and raw `+0`, `-0`, infinity, and NaN
   payload coverage.
+- `SessionV3.captureSuccessorArtifactsV1` contextually derives a canonical
+  successor Common Model Contract plan and residency binding plus a fixed
+  transcript segment at the exact checkpoint sequence. It verifies that the
+  complete live source context is unchanged before returning and grants no
+  target authority.
 
 ## State constraints
 
@@ -196,6 +206,7 @@ state is reported as the prepared-session `InvalidState`.
 - exactly-once continuation from a nonzero sequence;
 - durable filesystem publication or crash recovery;
 - source/target exclusivity or fresh-process handoff;
+- target admission, a remapped receipt/permit, or a runnable successor Session;
 - cross-backend numerical equivalence; or
 - confidentiality and authenticated storage.
 
@@ -209,9 +220,10 @@ make duplicate or stale publication possible.
 1. ~~Add a verified retained-authority rebind at the exact current boundary,
    without changing Scheduler, Bank, receipt, sequence, or coordinator
    address.~~ Complete in R1f for the original same-process Session.
-2. Define a successor plan and transcript segment ABI with a nonzero sequence
-   base, source-boundary lineage, nonempty cache payload root, and explicit
-   ownership handoff.
+2. ~~Define a successor plan/residency and transcript segment ABI with a
+   nonzero sequence base, source-boundary lineage, nonempty cache payload root,
+   and explicit target ownership intent.~~ Complete in R1g as pointer-free
+   evidence; it deliberately does not claim an authority handoff.
 3. Add Scheduler restored-admission semantics, a ResourceBank/permit
    generation fence, and LeaseTree-aware publication/receipt remapping
    compatible with that successor segment.
@@ -220,16 +232,18 @@ make duplicate or stale publication possible.
 5. Prove source exit, target exclusivity, fresh-process continuation, no
    duplicate token, and final terminal-result equivalence.
 
-Each step is a separate contributor-sized correctness gate. The codec remains
-useful before resume as a portable inspector input, deterministic state
-snapshot, corruption detector, and cross-language conformance target.
+Each step is a separate contributor-sized correctness gate. The codec and R1g
+successor records remain useful before resume as portable inspector inputs,
+deterministic state snapshots, corruption detectors, archive building blocks,
+and cross-language conformance targets.
 
 ## Acceptance commands
 
 ```bash
-zig build test -Dmetal=false -j2
+tools/zig-with-ephemeral-cache.sh build test -Dmetal=false -j2
 python3 -m unittest bench.tests.test_prepared_text_checkpoint
+python3 -m unittest bench.tests.test_prepared_text_successor
 ```
 
-The repository wrapper `tools/zig-with-ephemeral-cache.sh` may be used for Zig
-commands when a disposable build cache is preferred.
+The repository wrapper uses disposable local and global Zig caches and removes
+them after each command.

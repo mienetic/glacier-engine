@@ -454,6 +454,13 @@ predecessor, fresh Bank epoch, and exact next frame/time boundary.
 the bound audio and video processor states, accepted only when integer mapping
 is exact and declared stream skew remains within policy.
 
+**Ownership intent** — A domain-separated, pointer-free commitment naming the
+Scheduler, coordinator, fresh Bank/owner, LeaseTree/cache keys, successor
+generations, and exact request claim proposed for a later prepared-text
+restored admission. It is evidence only: unlike a restored ownership receipt,
+it proves no reacquisition, source exit, target exclusivity, or authority to
+publish.
+
 **Restored ownership receipt** — A domain-separated commitment that replaces a
 dead source's retained-output authority with the fresh Bank epoch, receipt
 identity, owner and claims actually reacquired during restore. It also binds the
@@ -479,6 +486,12 @@ explicit logical pages, generation-fenced ownership, and a canonical root.
 
 **Prepared image** — A `.glrt` artifact whose layouts and integrity are validated
 before execution.
+
+**Prepared-text successor segment** — A fixed 512-byte transcript bridge joining
+one exact non-terminal checkpoint and source plan/boundary/transcript/state/KV
+lineage to canonical successor execution-plan/residency roots, target ownership
+intent, and checkpoint challenge at a nonzero publication base. It consumes no
+token and grants no live target authority.
 
 **Provider evidence** — Credential-free records describing request identity,
 transport events, usage settlement, cost, and durable journal state.

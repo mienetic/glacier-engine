@@ -9,6 +9,7 @@ test "package exports runtime and core modules independently of host tools" {
         @hasDecl(glacier, "generated_media_format_conformance"),
     );
     try std.testing.expect(@hasDecl(glacier, "platform_capabilities"));
+    try std.testing.expect(@hasDecl(glacier, "prepared_text_successor"));
     try std.testing.expect(@hasDecl(glacier_core, "ResourceBank"));
     try std.testing.expect(@hasDecl(glacier_core, "RuntimeSupportRegistry"));
     try std.testing.expectEqual(

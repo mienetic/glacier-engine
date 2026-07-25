@@ -433,13 +433,16 @@ release operations, then check exact zero-state recovery.
 
 **First slice:** one deterministic seed and one minimized stale-handle failure.
 
-### Prepared-session exact-boundary state rebind
+### Prepared-session successor admission
 
 The data-plane foundation is complete: a live non-terminal `SessionV3`
 captures canonical output/RNG/contiguous-KV bytes, independent Zig/Python
 verifiers reconstruct every state root, and a fresh detached allocation
 round-trips with zero slack. See
-[Prepared Text Checkpoint](PREPARED_TEXT_CHECKPOINT.md).
+[Prepared Text Checkpoint](PREPARED_TEXT_CHECKPOINT.md). The evidence-plane
+bridge is also complete: the same boundary now derives canonical successor
+plan, residency, transcript, and ownership-intent records. See
+[Prepared Text Successor Evidence](PREPARED_TEXT_SUCCESSOR.md).
 
 **Completed R1f slice:** `SessionV3.rebindCheckpointV1` privately decodes and
 materializes the exact current checkpoint, rechecks the live boundary, then
@@ -455,10 +458,23 @@ rebind, compares the complete next transition and numerical state with an
 uninterrupted reference, and sweeps every candidate-allocation failure without
 leak or live-state mutation.
 
-**Next slice:** define a successor plan/transcript segment with a nonzero
-sequence base, source-boundary lineage, nonempty cache identity, and explicit
-ownership handoff. New-Session and fresh-process continuation remain separate
-gates.
+**Completed R1g slice:** `SessionV3.captureSuccessorArtifactsV1` reuses the
+fixed Common Model Contract execution-plan and residency wires, then adds a
+512-byte transcript segment at the exact nonzero source sequence. The records
+bind source checkpoint/boundary/transcript/state lineage, logical KV identity,
+the next execution generation, and a canonical target ownership intent.
+Capture rechecks the complete live context without mutating Session,
+Scheduler, Bank, receipt, sequence, or state. Shared Zig/Python roots,
+every-byte mutation rejection, length rejection, contextual substitutions, and
+failure-atomic three-record encoding form the retained gate. The ownership
+intent is evidence only, not a receipt or authority handoff.
+
+**Next R1h slice:** consume those exact records in restored Scheduler admission,
+acquire and validate a fresh `ResourceBank` receipt with permit-generation
+fencing, and remap publication ownership through `LeaseTree` without making
+the target runnable before every authority check passes. Durable selector
+composition, source exit, exclusive target activation, and fresh-process
+continuation remain separate gates.
 
 ### Paged-KV ownership restore fixture
 

@@ -12,7 +12,9 @@ R1d layers the preferred fixed-length `SessionV3` terminal-result lifecycle
 over that bridge. R1e adds canonical non-terminal state capture and detached
 output/RNG/contiguous-KV materialization without transferring publication
 authority. R1f adds exact-current-boundary state-buffer rebind inside the
-original same-process Session while preserving that authority. These are
+original same-process Session while preserving that authority. R1g derives a
+canonical successor execution plan, residency binding, transcript segment, and
+target ownership intent without creating target authority. These are
 integrated experimental slices, not the completed R1 text runtime.
 
 ## Supported envelope
@@ -35,12 +37,13 @@ integrated experimental slices, not the completed R1 text runtime.
 | Evidence | `BoundarySnapshotV2` binds the live execution boundary; `TerminalResultEvidenceV1` joins it to the canonical output and actual charged receipt |
 | R1e checkpoint | Canonical non-terminal output/RNG/KV image with independent Zig/Python verification and detached zero-slack materialization |
 | R1f rebind | Internally verified replacement of concrete output/KV backing at the exact current boundary while all live authority remains in the original Session |
+| R1g successor evidence | Read-only canonical 768-byte execution plan, 256-byte residency binding, and 512-byte transcript segment with source lineage, logical-KV identity, and target ownership intent |
 
 `eos_token` must be outside the model vocabulary in this version. Fixed-length
 execution keeps the admitted service count identical to the number of
 publication transactions.
 
-## Preferred R1d/R1e/R1f lifecycle
+## Preferred R1d/R1e/R1f/R1g lifecycle
 
 1. Load a prepared image with `loader.loadPreparedWithOptions`.
 2. Build `prepared_text_session.OptionsV1`, then derive the canonical
@@ -87,7 +90,15 @@ publication transactions.
    needed. It revalidates the bound plan before emitting `BoundarySnapshotV2`.
    A consumer that already holds the expected `BoundPlanV1` and local `PlanV1`
    should verify the join with `boundarySnapshotValidForBoundPlanV2`.
-10. After the fixed final token, call `sealTerminalResult`. It computes the
+10. At an eligible non-terminal boundary, optionally call
+    `captureCheckpointV1`; the same exact image can be detached, rebound into
+    the original Session, or passed to `captureSuccessorArtifactsV1` with
+    independently selected target ownership intent. Successor capture derives
+    canonical plan/residency/transcript records and exact-compares the complete
+    live source context before and after the read-only operation. The result is
+    evidence for later restored admission; it creates no target receipt,
+    permit, Session, or publication authority.
+11. After the fixed final token, call `sealTerminalResult`. It computes the
     canonical little-endian `u32` output root, joins it to the V2 boundary and
     source mapping, validates the actual request-charged receipt against both
     the live Bank publication session and the residency projection, and on
@@ -95,13 +106,13 @@ publication transactions.
     zero to one. The envelope context binds the exact artifact, execution plan,
     prompt/schema roots, cache identity, ownership root, publication challenge,
     and adapter evidence.
-11. Read the sealed `TerminalResultEvidenceV1` through `terminalResult` and
+12. Read the sealed `TerminalResultEvidenceV1` through `terminalResult` and
     validate it against the independently retained bound/local plans and exact
     output tokens. If the original Receipt is retained independently, use
     `terminalResultEvidenceValidForReceiptV1` to reject substitution by a
     different structurally valid receipt. Calling `sealTerminalResult` early or
     a second time rejects without changing the retained result evidence.
-12. Call `retire` only after sealing. Before sealing, call `cancel` instead.
+13. Call `retire` only after sealing. Before sealing, call `cancel` instead.
     Cancellation is not valid after a terminal result becomes visible. Always
     call `deinit` to release the session's local allocations.
 
@@ -217,6 +228,52 @@ validated by rebind. R1f is not a concurrent Session or authority-mutation
 protocol. If a caller already holds a service permit, the Scheduler's ordinary
 pending-service fence may independently reject other logical mutators with
 `ServiceInFlight`; that fence belongs to the permit, not to rebind.
+
+## R1g canonical successor evidence
+
+At the same exact non-terminal checkpoint boundary, the original live Session
+can derive pointer-free successor evidence without replacing state or
+transferring authority:
+
+```zig
+const artifacts = try session.captureSuccessorArtifactsV1(
+    checkpoint_bytes,
+    checkpoint_challenge,
+    target_ownership_intent,
+);
+```
+
+The helper derives the checkpoint expectations and source context from the live
+Session. It joins the exact checkpoint to the current bound plan, canonical
+source execution plan and residency binding, V2 boundary, publication
+transcript, and actual retained receipt. It then produces:
+
+- a canonical 768-byte Common Model Contract successor execution plan whose
+  generation advances by one and publication base starts at the current `N`;
+- a canonical 256-byte residency projection for that successor plan; and
+- a fixed 512-byte transcript segment binding source lineage, state/logical KV,
+  successor roots, checkpoint challenge, and target ownership intent.
+
+Artifact/model/operation/shape/policy/resource bindings remain unchanged. The
+successor plan changes only its generation, publication base, previous-plan
+lineage, logical-KV cache payload, ownership-intent root, challenge, and
+recomputed plan root. `captureSuccessorArtifactsV1` derives the complete live
+context again after construction and exact-compares it with the initial
+context. Any concurrent or stale change rejects; successful capture changes no
+Session, Scheduler, Bank, receipt, sequence, transcript, result state, output,
+KV, RNG, or counter.
+
+The target record names a proposed fresh Bank/owner, scheduler/coordinator,
+LeaseTree/cache identities, successor generations, and the exact request
+claim. Its root is ownership intent only. It does not prove restored admission,
+acquire a receipt or service permit, remap publication ownership, exit the
+source, create a runnable Session, or establish target exclusivity. Calls must
+be serialized with every operation on the Session and its bound receipt.
+
+See
+[Prepared Text Successor Evidence](PREPARED_TEXT_SUCCESSOR.md) for the exact
+plan projection, segment offsets, root domains, mutation gates, and the R1h
+restored-admission boundary.
 
 `SessionV3.start` remains a correctness-first startup transaction rather than a
 non-blocking startup mechanism. Its adoption barrier deliberately prevents the
@@ -344,20 +401,26 @@ the LaneWeave publication-adoption unit tests, the retained evidence verifies:
 - shared Zig/Python artifact/plan/residency/result wire, Receipt-integrity, and
   terminal output/source/evidence root goldens with adversarial mutation
   coverage;
+- canonical successor execution-plan/residency/ownership-intent/transcript
+  roots shared with an independent Python verifier, including every-byte,
+  length, coherent foreign-context, and contextual-substitution rejection;
+- read-only successor capture with exact before/after Session, Scheduler, Bank,
+  receipt, boundary, sequence, and state preservation;
 - pending-permit rollback after an injected pre-publication failure;
 - zero used resources after retirement;
 - zero used resources after an injected initialization-allocation failure.
 
-R1f does not claim that its request-profile manifest is a stable package
+The R1g path does not claim that its request-profile manifest is a stable package
 identity or that shared logical residency proves physical RSS. It does not
 execute a raw-text tokenizer, verify the caller-asserted token-domain,
 configuration, or license bytes, publish the terminal envelope to a durable
 external sink, serialize a durable checkpoint, transfer publication authority
-to another Session, or resume the prepared session in a fresh process. Its
-checkpoint image plus same-process rebind is not authenticated/encrypted
-storage or a fresh authority-construction protocol. It also does not bridge
+to another Session, acquire a restored target receipt/permit, or resume the
+prepared session in a fresh process. Its checkpoint, same-process rebind, and
+successor evidence are not authenticated/encrypted storage or a fresh
+authority-construction protocol. It also does not bridge
 every V1-valid request shape: profiles whose local activation accounting falls
-below the common token-input byte bound remain outside R1f. `SessionV3`
+below the common token-input byte bound remain outside R1g. `SessionV3`
 requires exactly
 `max_new_tokens` outputs and does not support early EOS or a shorter terminal
 sequence; `SessionV2` remains available as the R1c boundary API. The fixture

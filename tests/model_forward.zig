@@ -2557,6 +2557,151 @@ test "compact multi-page INT4 generation matches eager generation" {
             prepared_checkpoint,
             checkpoint_expected,
         );
+
+    // R1g projects the exact checkpoint into the existing Common Model
+    // Contract plan/residency wires and one fixed successor transcript bridge.
+    // The target fields are ownership intent only: capture cannot admit a
+    // target, consume a permit, release the source, or mutate live accounting.
+    const successor_generation = try std.math.add(
+        u64,
+        bound_plan.execution.generation,
+        1,
+    );
+    const successor_target_bank_epoch = try std.math.add(
+        u64,
+        session_bank.epoch,
+        100,
+    );
+    const successor_target: engine.prepared_text_successor.TargetOwnershipV1 = .{
+        .scheduler_epoch = 90_001,
+        .coordinator_id = 90_002,
+        .bank_epoch = successor_target_bank_epoch,
+        .request_generation = successor_generation,
+        .resource_owner_key = 90_003,
+        .tree_key = 90_004,
+        .authority_key = 90_005,
+        .tenant_key = 90_006,
+        .scope_key = 90_007,
+        .cache_node_key = 90_008,
+        .cache_binding_key = 90_009,
+        .intent_generation = successor_generation,
+        .request_claim = bound_plan.residency.request_claim,
+    };
+    const successor_scheduler_before =
+        try session_scheduler.snapshot();
+    const successor_bank_before = try session_bank.snapshot();
+    const successor_boundary_before =
+        try prepared_session.snapshotVerified();
+    const successor_receipt_before = prepared_session.result_receipt;
+    const successor_artifacts =
+        try prepared_session.captureSuccessorArtifactsV1(
+            prepared_checkpoint,
+            checkpoint_challenge,
+            successor_target,
+        );
+    const repeated_successor_artifacts =
+        try prepared_session.captureSuccessorArtifactsV1(
+            prepared_checkpoint,
+            checkpoint_challenge,
+            successor_target,
+        );
+    try testing.expectEqualDeep(
+        successor_artifacts,
+        repeated_successor_artifacts,
+    );
+    try testing.expectEqual(
+        successor_generation,
+        successor_artifacts.successor_plan.generation,
+    );
+    try testing.expectEqual(
+        checkpoint_expected.publication_next_sequence,
+        successor_artifacts.successor_plan.publication_next_sequence,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &bound_plan.execution.plan_sha256,
+        &successor_artifacts.successor_plan.previous_plan_sha256,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &decoded_checkpoint.logical_kv_sha256,
+        &successor_artifacts.successor_plan.cache_payload_sha256,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &successor_artifacts.successor_plan.ownership_sha256,
+        &successor_artifacts.segment.ownership_intent_sha256,
+    );
+    try testing.expectEqual(
+        checkpoint_expected.publication_next_sequence,
+        successor_artifacts.segment.sequence_base,
+    );
+    var encoded_successor_plan: [engine.core.model_contract.execution_plan_bytes]u8 =
+        undefined;
+    var encoded_successor_residency: [
+        engine.core.model_contract
+            .execution_residency_binding_bytes
+    ]u8 = undefined;
+    var encoded_successor_segment: [
+        engine.prepared_text_successor
+            .successor_segment_bytes
+    ]u8 = undefined;
+    try engine.prepared_text_successor.encodeArtifactsV1(
+        successor_artifacts,
+        &encoded_successor_plan,
+        &encoded_successor_residency,
+        &encoded_successor_segment,
+    );
+    const successor_source: engine.prepared_text_successor.SourceContextV1 = .{
+        .bound_plan_sha256 = bound_plan.bound_plan_sha256,
+        .execution = bound_plan.execution,
+        .residency = bound_plan.residency,
+        .boundary_sha256 = checkpoint_boundary.boundary_sha256,
+        .publication = checkpoint_boundary.base.publication,
+        .receipt = successor_receipt_before,
+    };
+    const verified_successor =
+        try engine.prepared_text_successor
+            .decodeAndVerifyForCheckpointV1(
+            &encoded_successor_plan,
+            &encoded_successor_residency,
+            &encoded_successor_segment,
+            prepared_checkpoint,
+            checkpoint_expected,
+            successor_source,
+            successor_target,
+        );
+    try testing.expectEqualDeep(
+        successor_artifacts,
+        verified_successor,
+    );
+    var invalid_successor_target = successor_target;
+    invalid_successor_target.bank_epoch = session_bank.epoch;
+    try testing.expectError(
+        engine.prepared_text_successor.Error.InvalidOwnershipIntent,
+        prepared_session.captureSuccessorArtifactsV1(
+            prepared_checkpoint,
+            checkpoint_challenge,
+            invalid_successor_target,
+        ),
+    );
+    try testing.expectEqualDeep(
+        successor_scheduler_before,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        successor_bank_before,
+        try session_bank.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        successor_boundary_before,
+        try prepared_session.snapshotVerified(),
+    );
+    try testing.expectEqualDeep(
+        successor_receipt_before,
+        prepared_session.result_receipt,
+    );
+
     var detached_checkpoint =
         try engine.prepared_text_checkpoint.materializeDetachedV1(
             testing.allocator,
@@ -2976,6 +3121,14 @@ test "compact multi-page INT4 generation matches eager generation" {
             checkpoint_challenge,
         ),
     );
+    try testing.expectError(
+        engine.prepared_text_checkpoint.Error.BindingMismatch,
+        prepared_session.captureSuccessorArtifactsV1(
+            prepared_checkpoint,
+            checkpoint_challenge,
+            successor_target,
+        ),
+    );
     try testing.expectEqualDeep(
         stale_boundary_before,
         try prepared_session.snapshotVerified(),
@@ -3027,6 +3180,14 @@ test "compact multi-page INT4 generation matches eager generation" {
         prepared_session.rebindCheckpointV1(
             prepared_checkpoint,
             checkpoint_challenge,
+        ),
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.captureSuccessorArtifactsV1(
+            prepared_checkpoint,
+            checkpoint_challenge,
+            successor_target,
         ),
     );
     for (

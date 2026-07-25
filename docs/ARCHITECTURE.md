@@ -470,9 +470,35 @@ No permit or authority is created, consumed, or transferred. Old borrowed
 output/cache views become invalid after success.
 
 This retained-authority rebind is not a fresh-process restore. Moving
-continuation into a new Session still requires a successor-segment ABI,
-restored Scheduler/Bank semantics, LeaseTree-aware publication/receipt
-remapping, durable selection, source exit, and exclusive target handoff.
+continuation into a new Session still requires restored Scheduler/Bank
+semantics, LeaseTree-aware publication/receipt remapping, durable selection,
+source exit, and exclusive target activation.
+
+R1g adds `prepared_text_successor`, a pointer-free evidence plane over that
+same exact checkpoint boundary. It reuses the Common Model Contract's canonical
+768-byte `ExecutionPlanV1` and 256-byte
+`ExecutionResidencyBindingV1`, then adds one fixed 512-byte transcript segment.
+The successor plan advances the execution generation, starts publication at
+the current nonzero sequence, links the source plan, identifies the checkpoint
+logical-KV payload, and carries the checkpoint challenge. The segment
+cross-binds those records to the source checkpoint, bound plan, boundary,
+predecessor transcript, state commitment, target ownership intent, and exact
+remaining service count.
+
+`SessionV3.captureSuccessorArtifactsV1` derives the trusted source context from
+the live Session and exact-compares it again after constructing the records.
+The operation is read-only: it does not mutate state or acquire, consume, or
+transfer authority. The target ownership-intent root names proposed
+Scheduler/Bank/LeaseTree/cache identities, successor generations, and the exact
+request claim, but it is not a restored receipt, admission result, source-exit
+record, or runnable target Session. Zig and independent Python verification
+freeze the three wire records and reject every-byte mutation, length errors,
+and coherently re-rooted foreign context.
+
+R1h must turn that intent into live authority through restored Scheduler
+admission, a fresh validated Bank receipt and permit-generation fence, and
+LeaseTree-aware publication/receipt remapping. Durable selection, source exit,
+exclusive target activation, and fresh-process execution remain later gates.
 
 This lifecycle does not add early EOS, fewer-than-admitted outputs, a raw-text
 tokenizer, stable package or license byte attestation, durable prepared-session
@@ -798,6 +824,9 @@ targets remain gated until their named native adapters and evidence pass.
 - [Prepared text checkpoint](PREPARED_TEXT_CHECKPOINT.md): canonical
   non-terminal output/RNG/contiguous-KV state, detached materialization, and
   same-process exact-boundary rebind under retained authority.
+- [Prepared text successor evidence](PREPARED_TEXT_SUCCESSOR.md): canonical
+  successor execution-plan/residency projection, fixed transcript segment,
+  target ownership intent, and the restored-admission safety boundary.
 - [Continuation capsule](CONTINUATION_CAPSULE.md): checkpoint manifest ABI.
 - [Continuation object resolver](CONTINUATION_OBJECT_RESOLVER.md): scoped
   lookup and quota contract.

@@ -22,6 +22,7 @@ const runtime_image = @import("model/runtime_image.zig");
 const lane_contiguous = @import("lane_contiguous_publication.zig");
 const publication = @import("lane_publication_txn.zig");
 const prepared_checkpoint = @import("prepared_text_checkpoint.zig");
+const prepared_successor = @import("prepared_text_successor.zig");
 const kernels = @import("backends/cpu/kernels.zig");
 
 pub const plan_abi: u64 = 0x474c_5450_0000_0001;
@@ -2202,6 +2203,53 @@ pub const SessionV3 = struct {
         );
         std.debug.assert(encoded.len == bytes.len);
         return bytes;
+    }
+
+    /// Derive pointer-free successor plan, residency, and transcript-segment
+    /// evidence from the exact current checkpoint. This read-only operation
+    /// records target ownership intent but does not exit the source, admit a
+    /// target, remap a receipt, or create runnable successor authority.
+    ///
+    /// The caller must serialize the entire call with every operation on this
+    /// Session and its bound receipt authority.
+    pub fn captureSuccessorArtifactsV1(
+        self: *SessionV3,
+        encoded_checkpoint: []const u8,
+        challenge_sha256: [32]u8,
+        target: prepared_successor.TargetOwnershipV1,
+    ) !prepared_successor.ArtifactsV1 {
+        const before = try self.checkpointContextV1(
+            challenge_sha256,
+        );
+        const source: prepared_successor.SourceContextV1 = .{
+            .bound_plan_sha256 = self.inner.bound_plan.bound_plan_sha256,
+            .execution = self.inner.bound_plan.execution,
+            .residency = self.inner.bound_plan.residency,
+            .boundary_sha256 = before.boundary.boundary_sha256,
+            .publication = before.boundary.base.publication,
+            .receipt = self.result_receipt,
+        };
+        const artifacts = try prepared_successor.makeForCheckpointV1(
+            encoded_checkpoint,
+            before.expected,
+            source,
+            target,
+        );
+        const after = try self.checkpointContextV1(
+            challenge_sha256,
+        );
+        const source_after: prepared_successor.SourceContextV1 = .{
+            .bound_plan_sha256 = self.inner.bound_plan.bound_plan_sha256,
+            .execution = self.inner.bound_plan.execution,
+            .residency = self.inner.bound_plan.residency,
+            .boundary_sha256 = after.boundary.boundary_sha256,
+            .publication = after.boundary.base.publication,
+            .receipt = self.result_receipt,
+        };
+        if (!std.meta.eql(before, after) or
+            !std.meta.eql(source, source_after))
+            return Error.InvalidState;
+        return artifacts;
     }
 
     /// Replace only the concrete KV/output backing at the exact current
