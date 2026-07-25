@@ -106,6 +106,13 @@ fixture paths.
 These results prove only the named compile/link observations. They do not
 promote Linux, Windows, FreeBSD, Android, or iOS to native support.
 
+On 2026-07-26, the additive W4a `typed-workload-compile` target also passed in
+`ReleaseSafe` for `x86_64-linux-musl`, `aarch64-linux-musl`,
+`x86_64-windows-gnu`, and `x86_64-freebsd`. That focused target compiles the
+typed-perception test root and canonical report runner; no foreign binary was
+executed. It confirms portability of the new source slice, not native runtime
+support or physical CPU/GPU behavior.
+
 ## Existing portability seams and blockers
 
 Useful seams already exist:

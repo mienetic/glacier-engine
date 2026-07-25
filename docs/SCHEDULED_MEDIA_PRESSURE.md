@@ -173,8 +173,8 @@ The shared workload and native-measurement sequence is tracked in the
 [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md). The next bounded extensions
 can proceed independently:
 
-1. drive the completed scheduled vision/audio/temporal-video adapter lifecycle
-   through one mixed typed workload profile;
+1. extend the completed W4a vision/audio/temporal-video workload with a
+   provider, tool, stateful, streaming, or device-backed profile;
 2. run this media sidecar under the separately versioned W3 closed-loop
    controller without changing either existing evidence ABI;
 3. add family-aware batching and safe preemption points;
@@ -184,6 +184,7 @@ can proceed independently:
 6. add bounded soak and disruption campaigns with the same zero-orphan gate.
 
 See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md),
+[Typed Workload Conformance](TYPED_WORKLOAD_CONFORMANCE.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and
 [Benchmark and Evidence Guide](BENCHMARKS.md) for the surrounding contracts and
 promotion rules.

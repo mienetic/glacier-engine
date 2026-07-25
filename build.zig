@@ -1228,6 +1228,81 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(workload_closed_loop_test_step);
     test_compile_step.dependOn(workload_closed_loop_compile_step);
 
+    // W4a composes the generic typed-workload lifecycle with the retained
+    // exact-integer vision, audio-window, and temporal-video adapters. The
+    // native report must match an independent Python replay and retained
+    // fixture byte-for-byte; this remains logical conformance, not a native
+    // performance target.
+    const typed_workload_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/typed_perception_workload.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_typed_workload_tests = b.addRunArtifact(
+        typed_workload_tests,
+    );
+    const typed_workload_exe = b.addExecutable(.{
+        .name = "glacier-typed-perception-workload",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/typed_perception_workload.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    typed_workload_exe.root_module.addImport("core", core_mod);
+    const run_typed_workload = b.addRunArtifact(
+        typed_workload_exe,
+    );
+    const typed_workload_demo_step = b.step(
+        "typed-workload-demo",
+        "Print the canonical mixed typed-workload report",
+    );
+    typed_workload_demo_step.dependOn(&run_typed_workload.step);
+
+    const run_typed_workload_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_typed_workload_oracle.setCwd(b.path("."));
+    run_typed_workload_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_typed_workload_oracle.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_typed_workload_oracle.addFileArg(
+        b.path("bench/typed_workload_conformance.py"),
+    );
+    run_typed_workload_oracle.addArg("--runner");
+    run_typed_workload_oracle.addArtifactArg(typed_workload_exe);
+    run_typed_workload_oracle.addArg("--fixture");
+    run_typed_workload_oracle.addFileArg(
+        b.path("bench/results/typed-workload-conformance-v1.json"),
+    );
+
+    const typed_workload_test_step = b.step(
+        "typed-workload-test",
+        "Run mixed typed-workload tests and independent replay",
+    );
+    typed_workload_test_step.dependOn(&run_typed_workload_tests.step);
+    typed_workload_test_step.dependOn(&run_typed_workload_oracle.step);
+    const typed_workload_compile_step = b.step(
+        "typed-workload-compile",
+        "Compile the mixed typed-workload tests and runner",
+    );
+    typed_workload_compile_step.dependOn(&typed_workload_tests.step);
+    typed_workload_compile_step.dependOn(&typed_workload_exe.step);
+    test_step.dependOn(typed_workload_test_step);
+    test_compile_step.dependOn(typed_workload_compile_step);
+
     // Model-free deterministic QoS conformance demo. Native tests execute it,
     // cross-target gates compile it, and it is never installed as a production
     // or benchmark binary.

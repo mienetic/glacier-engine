@@ -11,6 +11,16 @@ test "package exports runtime and core modules independently of host tools" {
     try std.testing.expect(@hasDecl(glacier, "platform_capabilities"));
     try std.testing.expect(@hasDecl(glacier, "workload_closed_loop"));
     try std.testing.expect(@hasDecl(glacier, "WorkloadClosedLoop"));
+    try std.testing.expect(@hasDecl(glacier, "typed_workload_contract"));
+    try std.testing.expect(@hasDecl(glacier, "TypedWorkloadContract"));
+    try std.testing.expect(@hasDecl(glacier, "typed_workload_driver"));
+    try std.testing.expect(@hasDecl(glacier, "TypedWorkloadDriver"));
+    try std.testing.expect(
+        @hasDecl(glacier, "typed_perception_workload"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "TypedPerceptionWorkload"),
+    );
     try std.testing.expect(@hasDecl(glacier, "prepared_text_successor"));
     try std.testing.expect(
         @hasDecl(glacier, "prepared_text_restore_admission"),
@@ -21,6 +31,24 @@ test "package exports runtime and core modules independently of host tools" {
     );
     try std.testing.expect(
         @hasDecl(glacier_core, "WorkloadClosedLoop"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "typed_workload_contract"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "TypedWorkloadContract"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "typed_workload_driver"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "TypedWorkloadDriver"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "typed_perception_workload"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "TypedPerceptionWorkload"),
     );
     try std.testing.expect(@hasDecl(glacier_core, "RuntimeSupportRegistry"));
     try std.testing.expectEqual(
@@ -35,6 +63,18 @@ test "package exports runtime and core modules independently of host tools" {
     try std.testing.expect(
         glacier.WorkloadClosedLoop ==
             glacier_core.WorkloadClosedLoop,
+    );
+    try std.testing.expect(
+        glacier.TypedWorkloadContract ==
+            glacier_core.TypedWorkloadContract,
+    );
+    try std.testing.expect(
+        glacier.TypedWorkloadDriver ==
+            glacier_core.TypedWorkloadDriver,
+    );
+    try std.testing.expect(
+        glacier.TypedPerceptionWorkload ==
+            glacier_core.TypedPerceptionWorkload,
     );
 }
 

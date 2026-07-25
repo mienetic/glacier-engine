@@ -17,6 +17,7 @@ body:
         - Tests and fault injection
         - ResourceBank and LeaseTree
         - LaneWeave scheduling
+        - Typed workload adapters
         - Token and KV publication
         - Provider context and gateway
         - Provider cost and evidence

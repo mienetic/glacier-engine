@@ -167,9 +167,12 @@ generator retains 32 bounded W0/W1 cases from four seeds, with independent
 Python generation and verification plus deterministic exact-signature
 shrinking. W3 now adds a separately versioned, finite-source deterministic
 closed-loop controller with FIFO next-step replacement, exact lineage,
-independent replay, and final zero ownership. A mixed typed-adapter workload
-profile, family-aware batch formation, preemption, and multi-device placement
-remain planned.
+independent replay, and final zero ownership. W4a now adds a separate typed
+plan and family-neutral lifecycle driver that composes the retained vision,
+audio-window, and temporal-video adapters under the exact scheduler receipt,
+with completion-only publication, authoritative replay, and final zero
+model/cache ownership. Provider/tool/stateful profiles, family-aware batch
+formation, preemption, and multi-device placement remain planned.
 
 Promotion gate: retained mixed-family pressure campaigns meet declared
 fairness, deadline, logical-resource, cancellation, and zero-orphan invariants;
@@ -424,7 +427,7 @@ The complete W0–W8 sequence and report contract are defined in the
 deliberately separate campaign classes; replicated execution is a higher
 evidence level applied to retained native campaigns:
 
-1. **Deterministic pressure — W0 through W3 implemented.** V1 replays one bounded
+1. **Deterministic pressure — W0 through W4a implemented.** V1 replays one bounded
    model-free explicit arrival schedule to verify admission, weighted fairness,
    deadline completion, timeout, cancellation, overload rejection, exact
    logical accounting, and zero orphaned ownership. Its canonical
@@ -441,7 +444,12 @@ evidence level applied to retained native campaigns:
    successors arrive only on the next logical step, lineage and target bounds
    replay exactly, and ownership reaches zero. It does not execute W1 media,
    models, providers, tools, asynchronous workers, or native concurrency.
-   Batching, typed model-adapter execution, and real backpressure remain
+   W4a separately drives retained vision, audio-window, and temporal-video
+   adapters through canonical typed profiles and items. It binds admitted work
+   to the scheduler-owned receipt, executes only at final service, publishes
+   only completed typed results, independently replays the logical schedule,
+   and closes model/cache ownership to zero. Provider/tool/stateful profiles,
+   batching, preemption, device execution, and real backpressure remain
    planned.
 2. **Native workload** runs declared model-family mixes against a real CPU,
    accelerator, or provider adapter and records completed/rejected/cancelled

@@ -425,6 +425,16 @@ zero ownership. Zig and an independent direct Python replay agree without
 converting the plan into a precomputed open-loop schedule. See
 [Deterministic Closed-Loop Workload](DETERMINISTIC_CLOSED_LOOP.md).
 
+**Completed typed-workload slice:** one separate W4a plan and family-neutral
+lifecycle driver now compose the retained exact-integer vision, audio-window,
+and temporal-video adapters. Accepted work adopts the scheduler receipt;
+rejected work receives no adapter/cache authority; only final service may
+publish a typed result; cancellation, timeout, failure, and retirement close
+all model/cache ownership. Native mutation tests validate the concrete
+evidence while an independent Python implementation derives the plan wire and
+logical replay; one retained report binds both sets of roots. See
+[Typed Workload Conformance](TYPED_WORKLOAD_CONFORMANCE.md).
+
 This is deterministic conformance, not a throughput, wall-clock latency,
 physical-memory, energy, or soak result.
 
@@ -434,10 +444,11 @@ Small independent follow-up slices include:
   generator/shrinker check while preserving every prior case root;
 - add one retained W3 plan, phase/lineage mutation, or independent decoder
   while preserving every existing V1 root;
-- add one new media or non-media profile without weakening exact replay;
+- add one provider, tool, stateful, streaming, or non-media W4 profile without
+  weakening authoritative replay or receipt ownership;
 - build a read-only scenario/result inspector that exposes no authority;
-- drive the completed scheduled vision/audio/temporal-video lifecycle through
-  one mixed typed-adapter workload profile; or
+- add a bounded family-aware batch or safe-preemption profile with an explicit
+  execution unit and cancellation boundary; or
 - add one native platform observer with explicit present/missing/denied states.
 
 **Done when:** the slice fixes all bounds and summary rules before execution,

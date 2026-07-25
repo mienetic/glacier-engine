@@ -38,6 +38,7 @@ The repository's strongest checked-in evidence is deterministic conformance:
 - deterministic LaneWeave scheduling and replay;
 - retained W0/W1 open-loop workload evidence, the W2 generated corpus, and
   separately versioned W3 finite-source closed-loop replay;
+- W4a mixed typed-perception lifecycle and publication conformance;
 - prepared runtime-image integrity;
 - provider gateway, transport, settlement, cost, and journal replay;
 - lossless context mapping and token reconciliation;
@@ -61,6 +62,20 @@ and retained bytes together:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build workload-closed-loop-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
+`typed-workload-conformance-v1.json` is the canonical
+`glacier.typed-workload-conformance/v1` report, not a performance result. The
+independent Python implementation derives its 3,200-byte plan wire and logical
+driver result; native tests validate the concrete vision, audio-window, and
+temporal-video evidence roots. The complete 2,763-byte report SHA-256 is
+`603ec85abb6023abb7055c56ae778de5e30f6517ce00d75b1d7a8295f3a9444a`.
+Verify the native campaign, independent logical replay, and retained bytes
+together:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build typed-workload-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 

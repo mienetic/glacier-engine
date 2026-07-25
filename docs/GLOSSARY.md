@@ -250,6 +250,18 @@ in-flight target. The target is an admitted nonterminal population bound, not
 thread or kernel concurrency. This mode is distinct from both generated
 open-loop scenarios and native closed-loop measurement.
 
+**Typed workload profile** — A canonical declaration that binds one model,
+media, provider, or tool lifecycle to its family/operation vocabulary,
+execution unit, exact logical claim, cancellation boundary, correctness gate,
+publication authority, and immutable implementation/input roots. A profile
+describes authority and semantics; it is not a native performance result.
+
+**Authoritative workload replay** — Validation that reconstructs the canonical
+logical result from a plan in fresh caller-owned storage and compares it with
+the supplied result before accepting any concrete sidecar evidence. Structural
+hash consistency alone is insufficient because a contradictory result could be
+resealed consistently.
+
 **LeaseTree** — A hierarchy that gives one ResourceBank receipt exact child
 ownership and publication scopes. Additive trees charge child allocations in
 addition to a control-plane parent claim; receipt-funded trees partition a

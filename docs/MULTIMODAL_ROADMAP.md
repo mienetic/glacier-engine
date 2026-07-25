@@ -669,9 +669,10 @@ Early contributions can proceed without a large model:
   registry-transition-format campaign with new versioned profiles while
   preserving frozen V1 roots and bounded mutation coverage;
 - extend the completed 32-case generated deterministic workload corpus with one
-  retained seed or a mixed typed-adapter workload profile; the shared scheduled
-  vision/audio/temporal-video lifecycle and real bounded media lifecycle are
-  complete while exact replay remains separate from native measurements;
+  retained seed, or extend the completed W4a mixed typed-adapter workload with
+  a new bounded profile; the shared scheduled vision/audio/temporal-video
+  lifecycle and real bounded media lifecycle are complete while exact replay
+  remains separate from native measurements;
 - extend format-aware inspection with privacy-safe export/retention policy
   without rendering payload bytes;
 - add a new strict profile under a new encoding ABI instead of silently

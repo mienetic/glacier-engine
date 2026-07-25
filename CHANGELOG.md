@@ -25,6 +25,21 @@ before the first stable release.
 
 ### Added
 
+- Added W4a mixed typed-workload conformance as a separate, bounded ABI. A
+  generic caller-storage-backed driver now carries exact profile and item
+  contracts through deterministic admission, cancellation, timeout, final
+  service, retirement, and cleanup callbacks. The first download-free campaign
+  composes the retained exact-integer vision, audio-window, and temporal-video
+  adapters under their scheduler-owned receipts, publishes only completed
+  typed results, restores cache authority only after admission, and returns
+  model/cache ownership to zero. An independent Python implementation derives
+  the canonical plan bytes and logical result while the native mutation suite
+  validates and freezes the concrete adapter-evidence roots; the retained
+  report joins both. Authoritative native validation replays the plan and
+  rejects consistently resealed but noncanonical results. This is logical
+  conformance, not native
+  concurrency, latency, throughput, CPU/GPU, production-model, provider, tool,
+  or soak evidence.
 - Added a separately versioned deterministic closed-loop workload contract.
   A finite candidate source maintains a declared logical in-flight target
   through exact `admit_due`, `apply_actions`, `service_retire`, and

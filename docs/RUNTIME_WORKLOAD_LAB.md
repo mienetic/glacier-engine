@@ -12,11 +12,12 @@ It separates four kinds of evidence:
 4. bounded soak and disruption recovery.
 
 The deterministic open-loop, generated deterministic open-loop,
-scheduler-coupled media, and finite-source deterministic closed-loop layers are
-integrated. Broader typed workloads, native multi-request reports, and soak
-campaigns remain staged work. A logical driver step is never reported as a
-millisecond, and a logical resource claim is never reported as RSS, device
-residency, energy, or temperature.
+scheduler-coupled media, finite-source deterministic closed-loop, and first
+mixed typed-perception layers are integrated. Provider, tool, stateful,
+batched, preemptible, and device-backed typed profiles, native multi-request
+reports, and soak campaigns remain staged work. A logical driver step is never
+reported as a millisecond, and a logical resource claim is never reported as
+RSS, device residency, energy, or temperature.
 
 ## Why this belongs in the runtime
 
@@ -89,13 +90,18 @@ Results from different modes are not merged into one headline number.
   order drives FIFO next-step successors under a declared in-flight target.
   Canonical plan/result wires, lineage, direct Zig/Python replay, mutation
   rejection, preserved earlier goldens, and final zero ownership are retained.
-- [ ] **W4 — Typed workload adapters.** Drive declared model, media, provider,
-  and tool lifecycles through the existing workload-driver seam. Each profile
-  names its execution unit, claim, cancellation or preemption boundary,
-  correctness gate, and publication authority. The retained vision,
-  audio-window, and temporal-video adapters already implement the shared
-  scheduler-owned final-result lifecycle; the mixed workload-driver profile is
-  the remaining first integration slice.
+- [x] **W4a — Mixed typed-perception adapters.** A separate canonical plan
+  drives retained exact-integer vision, audio-window, and temporal-video
+  profiles through a family-neutral lifecycle driver. Five admitted requests
+  share their exact scheduler receipts with typed execution; one rejected
+  request receives no adapter/cache authority; completion, cancellation, and
+  timeout publish or scrub exactly; concrete evidence and a fresh logical
+  replay end with zero model/cache ownership. See
+  [Typed Workload Conformance](TYPED_WORKLOAD_CONFORMANCE.md).
+- [ ] **W4b — Broader typed workloads.** Add provider, tool, stateful,
+  streaming, batched, preemptible, and device-backed profiles. Each profile
+  must name its execution unit, exact claim, cancellation/preemption boundary,
+  correctness gate, and publication authority without weakening W4a.
 - [ ] **W5 — Native observation and machine comparability.** Add a
   family-neutral runner plus CPU, GPU/accelerator, memory, power, and thermal
   observers with explicit `present`, `missing`, `denied`, and `unsupported`

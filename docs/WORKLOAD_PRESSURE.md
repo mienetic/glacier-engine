@@ -234,8 +234,8 @@ The complete sequencing and native report contract live in the
 [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md). The load track can grow
 without mixing conformance and performance claims:
 
-1. drive the completed scheduled vision/audio/temporal-video lifecycle through
-   a mixed typed-adapter profile, then add provider and tool profiles;
+1. extend the completed W4a mixed vision/audio/temporal-video profile with
+   provider, tool, stateful, streaming, or device-backed profiles;
 2. add family-aware batching, safe preemption, and multi-tenant campaigns;
 3. build native per-OS runners that retain CPU, memory, power, thermal, backend,
    and machine-condition envelopes; and

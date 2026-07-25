@@ -15,6 +15,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
+| Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, and cleanup without presenting logical steps as native performance |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
@@ -894,6 +895,10 @@ targets remain gated until their named native adapters and evidence pass.
 - [Materialized multimodal processor caches](MEDIA_PROCESSOR_CACHE.md):
   canonical cache payloads, processor-state binding, fresh-Bank
   charge-before-visibility restore, and exact release.
+- [Mixed typed-workload conformance](TYPED_WORKLOAD_CONFORMANCE.md): separate
+  canonical profile/item/plan contracts, family-neutral scheduler lifecycle
+  callbacks, retained perception execution, authoritative replay, and final
+  zero model/cache ownership.
 - [Typed model-family contracts and vision adapter](MODEL_FAMILY_ADAPTER.md):
   canonical artifact/plan/result records, explicit support negotiation, and a
   cache-bound transactional embedding fixture with scheduler-owned

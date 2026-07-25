@@ -683,7 +683,8 @@ fn hashU64(hash: anytype, value: u64) void {
     hash.update(&bytes);
 }
 
-const TestFixture = struct {
+/// Download-free deterministic fixture for reference adapter composition.
+pub const ReferenceFixtureV1 = struct {
     processor_storage: [processor.processor_bundle_bytes]u8,
     cache_storage: [
         processor_cache.cache_payload_offset +
@@ -700,14 +701,14 @@ const TestFixture = struct {
     audio_cache: [8]u8,
     video_cache: [8]u8,
 
-    fn rebind(self: *TestFixture) !void {
+    pub fn rebind(self: *ReferenceFixtureV1) !void {
         self.processor_bundle =
             try processor.decodeBundleV1(&self.processor_storage);
         self.cache_bundle =
             try processor_cache.decodeBundleV1(&self.cache_storage);
     }
 
-    fn init() !TestFixture {
+    pub fn init() !ReferenceFixtureV1 {
         const image_cache = [_]u8{ 1, 2 };
         const audio_cache = [_]u8{0} ** 8;
         const video_cache = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
@@ -864,7 +865,7 @@ const TestFixture = struct {
                 request_epoch,
                 manifest.artifact_sha256,
             );
-        var value: TestFixture = undefined;
+        var value: ReferenceFixtureV1 = undefined;
         value.processor_storage = processor_storage;
         value.cache_storage = cache_storage;
         value.processor_bundle =
@@ -882,6 +883,8 @@ const TestFixture = struct {
         return value;
     }
 };
+
+const TestFixture = ReferenceFixtureV1;
 
 const TestRuntime = struct {
     slots: [8]resource_bank.Slot = [_]resource_bank.Slot{.{}} ** 8,
