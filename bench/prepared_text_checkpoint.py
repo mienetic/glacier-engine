@@ -459,7 +459,13 @@ def decode(encoded: bytes, expected: Record) -> Record:
             raise PreparedTextCheckpointError(
                 "checkpoint context mismatch"
             )
-    if challenge != _digest(expected["challenge_sha256"]):
+    try:
+        trusted_challenge = _digest(expected["challenge_sha256"])
+    except (KeyError, TypeError) as exc:
+        raise PreparedTextCheckpointError(
+            "missing trusted checkpoint challenge"
+        ) from exc
+    if challenge != trusted_challenge:
         raise PreparedTextCheckpointError("checkpoint challenge mismatch")
     _validate_scalar_state(
         request_epoch,

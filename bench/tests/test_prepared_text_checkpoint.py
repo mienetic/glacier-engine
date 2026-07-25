@@ -150,6 +150,11 @@ class PreparedTextCheckpointTests(unittest.TestCase):
         with self.assertRaises(checkpoint.PreparedTextCheckpointError):
             checkpoint.decode(encoded, foreign)
 
+        missing_challenge = dict(value)
+        del missing_challenge["challenge_sha256"]
+        with self.assertRaises(checkpoint.PreparedTextCheckpointError):
+            checkpoint.decode(encoded, missing_challenge)
+
     def test_raw_float_bits_are_preserved_not_normalized(self) -> None:
         encoded, value = fixture()
         decoded = checkpoint.decode(encoded, value)
