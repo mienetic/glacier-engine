@@ -1,8 +1,14 @@
 # Continuation Capsule v1
 
 Status: **prototype manifest ABI**. The fixed wire, full object verifier, and a
-separate tenant-scoped in-memory resolver are implemented and tested. Durable
-object storage, runtime restore, and crash-safe publication are not implemented.
+separate tenant-scoped in-memory resolver are implemented and tested. The
+capsule module itself performs no storage, runtime reconstruction, or
+publication. Separate downstream model-free prototypes now cover durable
+payload bytes, ownership reacquisition, paged-KV reconstruction,
+whole-checkpoint root switching, and fresh-process token publication for their
+fixed fixtures. They do not restore a prepared model, tokenizer, or
+`prepared_text_session`, and their evidence does not transfer those claims to
+the prepared-text path.
 
 `ContinuationCapsule` binds one committed AI checkpoint without copying its
 large model, plan, or KV objects. The manifest is an identity and verification
@@ -131,8 +137,11 @@ Run the independent verifier:
 python3 -m unittest bench.tests.test_continuation_capsule
 ```
 
-These are conformance facts, not proof of process restart, physical memory
-savings, storage deduplication, or durability.
+These capsule-demo facts are conformance evidence, not by themselves proof of
+process restart, physical memory savings, storage deduplication, or durability.
+The downstream model-free restart and checkpoint-file layers retain their own
+scoped evidence; those results do not expand this manifest module's authority
+or establish prepared-text restart.
 
 ## Authority and security boundary
 
@@ -163,15 +172,23 @@ trusting a historical receipt as live authority.
    repair authority.
 9. ~~Snapshot-bound append/repair capability and deterministic crash model.~~
    Implemented without real filesystem or deletion authority.
-10. Real atomic manifest/bundle publication and crash recovery.
+10. ~~Fixed model-free whole-checkpoint publication and crash recovery.~~
+    Implemented as an immutable archive plus atomic selector with recovery
+    across every retained publication phase. Generic durable manifest, bundle,
+    and object-lifecycle metadata remain future work.
 11. ~~Canonical resource ownership plan and fresh-Bank LeaseTree
     reacquisition.~~ Implemented as a separate model-free prototype.
-12. Paged-KV generation restore under reacquired ownership.
-13. Live restore between two transactional token publications.
+12. ~~Paged-KV generation restore under reacquired ownership.~~ Implemented for
+    canonical model-free page images and fresh cache/page generations.
+13. ~~Live restore between two transactional token publications.~~ Implemented
+    as a model-free fresh-process fixture with exact RNG, sampler, output, KV,
+    ownership, and publication position.
 14. Paired restart-latency, disk-byte, RSS, and fault-injection campaigns.
 
 Each layer must keep manifest identity separate from storage and execution
-authority.
+authority. None of the completed model-free layers claims prepared-model
+reconstruction, tokenizer restoration, or prepared-session numerical
+continuity.
 
 See [Continuation Object Resolver](CONTINUATION_OBJECT_RESOLVER.md) for the
 implemented least-authority lookup contract and its evidence boundary.
@@ -189,3 +206,13 @@ See [Continuation Object Sweep Record](CONTINUATION_OBJECT_SWEEP_RECORD.md) for
 the fixed portable commit evidence and its non-durable boundary.
 See [Continuation Object Sweep Writer](CONTINUATION_OBJECT_SWEEP_WRITER.md) for
 the scoped publication model and remaining platform boundary.
+See [Continuation Object Payload File](CONTINUATION_OBJECT_PAYLOAD_FILE.md) for
+the scoped durable payload-byte snapshot and recovery boundary.
+See [Continuation Ownership Restore](CONTINUATION_OWNERSHIP_RESTORE.md) for the
+model-free fresh-Bank ownership-reacquisition contract.
+See [Continuation Paged-KV Restore](CONTINUATION_PAGED_KV_RESTORE.md) for the
+model-free cache and page-generation reconstruction boundary.
+See [Continuation Live Restart](CONTINUATION_LIVE_RESTART.md) for the
+model-free fresh-process token-publication fixture.
+See [Continuation Checkpoint File](CONTINUATION_CHECKPOINT_FILE.md) for the
+model-free whole-checkpoint selector and process-death recovery campaign.
