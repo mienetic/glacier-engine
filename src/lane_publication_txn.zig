@@ -363,6 +363,75 @@ pub const Session = struct {
         self.funded_lease_tree = committed_tree;
     }
 
+    /// Freeze one exact non-terminal source boundary before durable ownership
+    /// selection. The Scheduler barrier rejects every logical mutator until
+    /// this Session either aborts the handoff or atomically exits.
+    pub fn beginPublicationHandoffV1(
+        self: *Session,
+        checkpoint_sha256: Digest,
+        successor_segment_sha256: Digest,
+        target_ownership_intent_sha256: Digest,
+        prepared_archive_sha256: Digest,
+        predecessor_selector_sha256: Digest,
+    ) (Error || lane.Error)!lane.PublicationHandoffV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.initialized or self.funded_lease_tree != null or
+            self.terminal or self.next_sequence == 0 or
+            self.last_resource_permit_generation == 0)
+            return Error.InvalidState;
+        const current_snapshot = self.snapshotUnlocked();
+        if (!transcriptSnapshotValidV1(current_snapshot))
+            return Error.InvalidState;
+        return self.scheduler.beginPublicationHandoffV1(
+            self.admission.handle,
+            self.request_epoch,
+            @intFromPtr(self),
+            self.next_sequence,
+            self.last_resource_permit_generation,
+            checkpoint_sha256,
+            successor_segment_sha256,
+            target_ownership_intent_sha256,
+            prepared_archive_sha256,
+            predecessor_selector_sha256,
+        );
+    }
+
+    pub fn validatePublicationHandoffV1(
+        self: *Session,
+        handoff: lane.PublicationHandoffV1,
+    ) (Error || lane.Error)!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.validateLiveHandoffV1(handoff);
+        try self.scheduler.validatePublicationHandoffV1(handoff);
+    }
+
+    pub fn abortPublicationHandoffV1(
+        self: *Session,
+        handoff: lane.PublicationHandoffV1,
+    ) (Error || lane.Error)!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.validateLiveHandoffV1(handoff);
+        try self.scheduler.abortPublicationHandoffV1(handoff);
+    }
+
+    /// Atomically close the exact source publication and invalidate this
+    /// Session after LaneWeave emits the canonical cancel Event-v1.
+    pub fn commitPublicationHandoffV1(
+        self: *Session,
+        handoff: lane.PublicationHandoffV1,
+    ) (Error || lane.Error)!lane.SourceExitCommitV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.validateLiveHandoffV1(handoff);
+        const committed =
+            try self.scheduler.commitPublicationHandoffV1(handoff);
+        self.initialized = false;
+        return committed;
+    }
+
     /// Cancel an active request and atomically close the bound publication
     /// namespace, release its Scheduler-owned receipt, and emit Event-v1.
     pub fn cancel(self: *Session) (Error || lane.Error)!lane.EventV1 {
@@ -431,16 +500,7 @@ pub const Session = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (!self.initialized) return Error.InvalidState;
-        return .{
-            .request_epoch = self.request_epoch,
-            .execution_abi = self.execution_abi,
-            .sequence_base = self.sequence_base,
-            .next_sequence = self.next_sequence,
-            .last_resource_permit_generation = self.last_resource_permit_generation,
-            .terminal = self.terminal,
-            .state = self.state,
-            .transcript_sha256 = self.transcript_sha256,
-        };
+        return self.snapshotUnlocked();
     }
 
     /// Consume `permit` exactly once. All failures after arming either restore
@@ -573,6 +633,40 @@ pub const Session = struct {
         };
         return finalizer_context.receipt orelse
             @panic("Lane publication finalizer returned without a receipt");
+    }
+
+    fn validateLiveHandoffV1(
+        self: *Session,
+        handoff: lane.PublicationHandoffV1,
+    ) Error!void {
+        if (!self.initialized or self.funded_lease_tree != null or
+            self.terminal or
+            handoff.publication_request_epoch != self.request_epoch or
+            handoff.publication_session_id != @intFromPtr(self) or
+            handoff.expected_next_sequence != self.next_sequence or
+            handoff.source_last_publication_permit_generation !=
+                self.last_resource_permit_generation or
+            !std.meta.eql(handoff.handle, self.admission.handle) or
+            !std.meta.eql(
+                handoff.source_receipt,
+                self.admission.event.resource_receipt,
+            ))
+            return Error.InvalidState;
+        if (!transcriptSnapshotValidV1(self.snapshotUnlocked()))
+            return Error.InvalidState;
+    }
+
+    fn snapshotUnlocked(self: *const Session) TranscriptSnapshotV1 {
+        return .{
+            .request_epoch = self.request_epoch,
+            .execution_abi = self.execution_abi,
+            .sequence_base = self.sequence_base,
+            .next_sequence = self.next_sequence,
+            .last_resource_permit_generation = self.last_resource_permit_generation,
+            .terminal = self.terminal,
+            .state = self.state,
+            .transcript_sha256 = self.transcript_sha256,
+        };
     }
 
     fn validateAttempt(

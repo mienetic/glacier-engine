@@ -187,12 +187,18 @@ Current state: **integrated model-free continuation plus typed stateful-model
 prototype**. Glacier has capsules, bounded object resolution/storage/lifecycle,
 paged-KV remap, sampler/output restore, two-process next-token publication,
 atomic complete checkpoint selection, and a synthetic two-step latent chain
-that restores its intermediate state in a distinct process. Production-model
-state adapters remain pending.
+that restores its intermediate state in a distinct process. The prepared-text
+slice now also carries a canonical restart manifest and checkpoint/successor
+evidence through source-live, source-exited, and terminal selector generations;
+an exclusive POSIX lease and one-shot activation grant fence the fresh target,
+and a receipt-independent terminal semantic matches a separately retired
+baseline. Production-model state adapters, GPU-resident continuation, Windows
+durable files, and native multi-OS recovery campaigns remain pending.
 
 Promotion gate: uninterrupted and resumed output satisfy one declared numerical
-mode, no output is duplicated, foreign state rejects, and all reacquired
-ownership returns to zero after release.
+mode, foreign state rejects, and all reacquired ownership returns to zero after
+release. Exactly-once external delivery additionally requires acknowledged
+durable sink progress; an in-memory no-duplicate fixture is not that claim.
 
 ### 6. Media plane
 
@@ -387,9 +393,13 @@ portable workload-pressure contract drives a bounded mixed-media
 explicit-open-loop scenario through the real scheduler and resource bank, with
 exact Zig replay and an independent Python oracle. Its additive scheduled-media
 sidecar executes the three completed image/audio/video transactions under the
-same admission receipts and binds exact publication evidence. Both surfaces
-emit deterministic versioned evidence only after validation and grant no
-payload, filesystem-write, device, or live resource authority.
+same admission receipts and binds exact publication evidence. A separate
+prepared-text restart fixture runs baseline, source, and target subprocesses,
+checks exclusive lease/grant behavior, selector generations, terminal-semantic
+equality, and zero final logical ownership. It uses a narrowly scoped POSIX
+durable-file adapter for the archive and selector while granting no general
+payload, device, or live resource authority. The inspection and evidence
+formats remain deterministic, versioned, and non-authoritative.
 
 Promotion gate: every promoted claim names the workload, platform, numerical
 mode, baseline conditions, verifier, retained artifacts, and nonclaims.
@@ -422,7 +432,10 @@ deliberately separate evidence levels:
 3. **Soak and disruption** runs a bounded long-duration campaign with a fixed
    fault schedule for process restart, adapter loss, storage pressure, and
    cancellation storms, then proves recovery, bounded growth, and zero leaked
-   ownership.
+   ownership. Prepared-text additions should cover repeated handoffs, source
+   death before generation two, target death before generation three,
+   idempotent-sink replay, selector corruption, lease contention, and recovery
+   memory growth without relabeling fail-closed unavailability as success.
 
 Native open-loop arrival-rate campaigns and closed-loop concurrency campaigns
 must remain distinct from each other and from deterministic logical-step
@@ -481,7 +494,7 @@ expand the base adapter's capabilities.
 
 | Family | Representative operations | Current state | First retained slice | Integration gate |
 | --- | --- | --- | --- | --- |
-| Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication integrated | Small legal artifact through uninterrupted and resumed output | Declared numerical equivalence, exact KV ownership, no duplicate token |
+| Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication and experimental fresh-process prepared-text handoff integrated on the POSIX durable adapter | Extend the retained synthetic baseline/source/target proof to one small legal artifact and acknowledged sink progress | Declared numerical equivalence, exact KV ownership, recoverable source exit, replay-safe external publication |
 | Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision, audio, and temporal-video embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, fresh-process stateful transcript continuation, and restartable exact word-timing/speaker publication integrated; production model gated | Add language/punctuation, overlapping-speaker policy, and crash-atomic checkpoint composition | No sample loss/duplication, exact streaming restart, annotation lineage, calibrated production quality |
@@ -809,7 +822,8 @@ Status: **integrated experimental live-authority slice**.
 `prepared_text_restore_admission` now:
 
 - consumes the exact R1g plan, residency, segment, checkpoint, retained source,
-  and target ownership intent before any target mutation;
+  target ownership intent, and the same lease-backed generation-two activation
+  grant before any target mutation;
 - requires a genuinely fresh LeaseTree-enabled Bank and an explicitly opted-in
   fresh Scheduler whose live epoch, coordinator ID, and Bank epoch match the
   target intent, while its challenge matches the successor segment;
@@ -823,12 +837,13 @@ Status: **integrated experimental live-authority slice**.
 - seeds the target Bank's publication-permit generation from the source fence,
   making its first future permit strictly greater across the fresh receipt.
 
-The live capability is process-local and single-use. Read-only validation
+The live capabilities are process-local and single-use. Read-only validation
 rechecks the pending adoption, receipt, funded tree, scope, publication
-namespace, and exact Scheduler/Bank accounting. Before activation, abort closes
-the restored publication namespace and empty tree, then cancels the adoption
-and releases the receipt; copied or replayed authority is stale after the first
-winner.
+namespace, activation-grant address/root/phase, live lease consumer claim, and
+exact Scheduler/Bank accounting. Before activation, abort closes the restored
+publication namespace and empty tree, cancels the adoption, releases the
+receipt, and returns the grant to its ready generation-two phase; copied or
+replayed authority is stale after the first winner.
 
 R1h-a intentionally allocates no request-local backing. The immutable receipt
 already charges the complete request claim, so the tree uses the explicit
@@ -842,7 +857,8 @@ Status: **integrated experimental process-local runtime slice**.
 `SessionV3.startRestoredV1` now:
 
 - revalidates the R1g checkpoint, successor records, source bound plan, target
-  ownership intent, and live R1h-a capability before allocator work;
+  ownership intent, live R1h-a capability, and the same prepared activation
+  grant before allocator work;
 - reserves one queue-free funded allocation covering every request-local byte
   class while leaving aggregate Scheduler and Bank usage equal to the
   immutable parent receipt;
@@ -851,8 +867,8 @@ Status: **integrated experimental process-local runtime slice**.
 - initializes publication ABI v2 with `sequence_base = N`, the checkpoint
   transcript and state, and source Bank permit generation `G`;
 - commits the funded allocation batch and consumes the pending Scheduler
-  adoption through one protected activation path, so service cannot observe
-  partial restored state; and
+  adoption plus one-shot activation grant through one protected activation
+  path, so service cannot observe partial restored state; and
 - closes through a no-service barrier that reclaims allocator backing and the
   funded allocation before atomically releasing the publication namespace,
   tree, receipt, and Scheduler lane.
@@ -865,14 +881,63 @@ to zero after cancellation. Lower-level tests retain fresh-session behavior
 with `sequence_base = 0` and cover funded activation/abort single-winner
 semantics.
 
-R1h-b is process-local. It does not durably select a successor, exit or revoke
-the source, prove exclusive process handoff, resume after process death, or
-compare terminal uninterrupted and resumed results. Those remain the next R1
-gates.
+R1h-b remains the process-local activation transaction. The durable handoff
+slice below supplies its selected source-exit and lease/grant authority.
+
+#### Durable prepared-text handoff
+
+Status: **integrated experimental fresh-process slice**. The composed path now:
+
+- serializes prompt tokens, options, local and bound plans, Common Model
+  Contract records, checkpoint expectations, source context/receipt evidence,
+  and target ownership into one pointer-free canonical restart manifest;
+- publishes that manifest with the checkpoint, successor execution plan,
+  successor residency binding, and successor transcript segment as one ordered
+  five-object restart archive;
+- binds a live source to the generation-one selector through an
+  address-stable source-live grant backed by the lease's sole consumer claim;
+- closes the exact source publication binding, Scheduler lane, and Bank receipt
+  through a handoff barrier before selecting generation two with the canonical
+  source-exit receipt and restart archive;
+- lets a different process open generation two under the exclusive lease and
+  create one address-stable target activation grant; duplicate grants, copies,
+  selector drift, and early lease release reject;
+- activates R1h-b at global sequence `N`, retains the grant across resumed
+  execution, and requires the exact generation-three selector before terminal
+  retirement; and
+- runs baseline, source, and target as separate subprocesses, compares the
+  target's receipt-independent terminal semantic with the completed baseline,
+  and returns both source and target logical ownership to zero.
+
+The three selected meanings are deliberately narrow:
+
+```text
+generation 1 source-live
+  → generation 2 source-exited + canonical restart archive
+  → generation 3 terminal semantic + exact predecessor lineage
+```
+
+This slice closes the evidence-only-to-runnable-target gap for its retained
+synthetic fixed-length profile, but two durability gaps remain explicit. A
+source crash before generation-two publication leaves generation one selected
+and the request fail-closed/unavailable. A target crash after external output
+but before generation three can retry generation two and replay from `N`.
+Exactly-once external effects therefore require an idempotent sink keyed by
+request/global sequence and a future acknowledged progress generation.
+
+The current durable adapter is descriptor-relative POSIX. Cross-compilation
+does not establish Win32 durable-file behavior or native OS support. GPU
+execution, device-resident checkpointing, device-loss recovery, production
+models, early EOS, native multi-OS recovery, and production workload evidence
+remain roadmap work. See
+[Durable Prepared-Text Handoff](PREPARED_TEXT_DURABLE_HANDOFF.md).
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with
-exact ownership and output evidence.
+exact ownership and output evidence on the promoted native platform, including
+recoverable source-exit and replay-safe external publication. The retained
+synthetic fresh-process proof advances this gate but does not complete its
+production artifact, sink-progress, GPU, or multi-OS requirements.
 
 ### R2 — Stateless tensor families
 
@@ -1114,6 +1179,14 @@ Contributors can work on the runtime without downloading a large model:
 - one platform capability probe;
 - one deterministic workload scenario, summary oracle, or native campaign
   adapter;
+- one prepared-text source-exit journal state or acknowledged sink-progress
+  generation with explicit crash boundaries;
+- one native POSIX recovery campaign or bounded Win32 durable-file adapter
+  slice;
+- one CPU/GPU capability, residency, placement, or device-loss evidence slice
+  that rejects unsupported fallback;
+- one repeated-handoff, lease-contention, replay, disruption, or bounded-soak
+  workload profile;
 - one read-only evidence inspector or validated renderer extension;
 - one compatibility-matrix row backed by a retained command.
 

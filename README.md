@@ -219,6 +219,13 @@ formats, and independent verifiers.
   reacquires a fresh `ResourceBank`/`LeaseTree`, charges every allocation before
   materialization, verifies exact reconstructed bytes, and only then marks the
   batch live at its restored publication sequence.
+- **Exclusive fresh-process prepared-text handoff.** A five-object canonical
+  restart archive carries checkpoint, successor, and bounded manifest context
+  without native pointers or JSON sidecars. One durable selector advances from
+  source-live to source-exited to terminal; an exclusive POSIX lease and
+  one-shot activation grant fence the restored target, while a
+  receipt-independent terminal semantic compares it with a separately retired
+  uninterrupted oracle.
 - **Tenant-scoped object resolution.** A least-authority grant admits only exact
   capsule objects under bounded scan, object, total-byte, and resolution limits.
 - **Canonical continuation bundles.** Semantic roots remain kind-specific while
@@ -457,10 +464,10 @@ hardware-independent surface without those native backend dependencies.
 
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
-| AI runtime | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial pre-tokenized text request profiles, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture with detached output/RNG/contiguous-KV materialization, same-process exact-current-boundary KV/output rebind, canonical successor plan/residency/transcript evidence, receipt-funded fresh-target ownership, charge-before-materialize restored `SessionV3` activation at sequence `N`, a first target Bank permit at source `G + 1`, and barrier-held teardown to zero, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic eight-profile retained-reference compatibility inspector | Durable successor selection, source-exit and exclusive-target proof, fresh-process prepared continuation, and uninterrupted/resumed terminal equivalence; extend ownership/accounting coverage, verify raw-text tokenizer identity, add a durable external result sink, production fixtures, and native validation |
+| AI runtime | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial pre-tokenized text request profiles, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture, same-process exact-current-boundary rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, and an experimental fresh-process handoff with a five-object restart archive, source-live/source-exited/terminal selector chain, exclusive lease, one-shot target grant, and terminal-semantic oracle comparison, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic eight-profile retained-reference compatibility inspector | Close the source-before-generation-two recovery gap; add an idempotent durable result sink and acknowledged progress generation; extend ownership/accounting coverage, verify raw-text tokenizer identity, add production fixtures, native multi-OS validation, and device execution |
 | Language interop | Installed experimental C header plus shared/static contract libraries; source and staged-install C consumers; C++ linkage check; standard-library Python `ctypes`; dependency-free Rust `extern "C"` gate; fixed profile enumeration and support-mask queries | Retained symbol/layout gates, native multi-OS consumers, stability policy, packages, then model/session execution bindings |
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures with scheduler-owned final-result publication, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, and exact deterministic producer-transition replay for retained reference profiles | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
-| State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor evidence, receipt-funded restored materialization and runnable target activation with a global publication sequence base, plus capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Durable prepared-text selection and exclusive process handoff, fresh-process uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
+| State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor evidence, receipt-funded restored activation with a global publication sequence base, and experimental durable prepared-text selection, exact source exit, exclusive fresh-process activation, three-generation terminal lineage, and semantic oracle comparison; plus capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Pre-generation-two source recovery, acknowledged target progress and idempotent external delivery, native Linux recovery, Win32 durable files, device-resident continuation, and durable lifecycle metadata |
 | Scheduling | Exact admission, deterministic weighted QoS, one bounded mixed-media pressure campaign with exact replay, final-quantum image/audio/video media transactions, and typed vision/audio/video result publication under the scheduler-owned receipt | Family-aware batching, preemption, multi-device placement, mixed typed-adapter workloads, and broader multi-tenant campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, a scheduled-media execution sidecar with exact receipt/output replay, compact provider evidence join, and an experimental read-only generated-media inspector with exact optional format-sidecar validation, including a two-generation 12-entry-per-generation capacity campaign | Provider/token inspectors, privacy-safe export and retention policy, and native multi-OS evidence |
@@ -529,18 +536,35 @@ receipt. The retained synthetic-model integration matches one restored
 next-token transition, output, logical KV, RNG, and sampling state against its
 uninterrupted reference, then returns Scheduler and Bank usage to zero.
 
+The durable handoff slice composes those process-local contracts with a
+canonical restart manifest and selector authority. The source holds generation
+one under an address-stable live grant, captures a five-object restart archive,
+commits an exact publication handoff, and selects generation two only after its
+Scheduler lane, Bank receipt, and publication binding are closed. A different
+process opens that source-exited generation under the exclusive lease, creates
+one live lease-backed activation grant at a time, restores at `N`, and retains
+the active grant until it selects generation three with the exact
+receipt-independent terminal semantic. A released non-terminal grant permits a
+deterministic retry. The retained demo runs baseline, source, and target as
+separate subprocesses, rejects a concurrent lease/grant, compares the resumed
+terminal semantic with the already-retired baseline oracle, and returns source
+and target logical ownership to zero.
+
 The path still accepts pre-tokenized input only, does not cover every V1-valid
 request shape, and does not execute or attest a raw-text tokenizer, provide
 stable package/license byte identity, publish to a durable external result
-sink, durably transfer exclusive publication authority across process exit,
-resume the prepared session in a fresh process, support early EOS or
-fewer-than-admitted outputs, provide concurrent Session mutation, or establish
-production native performance. The detached R1e payload cannot publish another
-token by itself; R1f installs it only through the original address-stable live
-Session. R1g supplies exact successor evidence, R1h-a creates a barrier-held
-target bootstrap, and R1h-b activates a process-local runnable target. The path
-still has no durable selector, source-exit proof, exclusive process handoff, or
-exactly-once fresh-process continuation. The bound-plan bridge remains an
+sink, recover a source crash before generation-two selection, suppress replay
+after a target crash before generation three, support early EOS or
+fewer-than-admitted outputs, provide concurrent Session mutation, execute the
+handoff on GPU, or establish production native performance. The durable adapter
+for this path is POSIX-only; Windows durable files remain roadmap work. An
+idempotent sink keyed by request and global sequence is required for external
+effects because a fresh target may replay from `N` while generation two remains
+selected. The detached R1e payload cannot publish another token by itself; R1f
+installs it only through the original address-stable live Session. R1g supplies
+exact successor evidence, R1h-a creates a barrier-held target bootstrap, and
+R1h-b activates it; the durable selector/lease/grant layer supplies the
+fresh-process authority composition. The bound-plan bridge remains an
 experimental Zig/direct API
 without a fixed bound-plan wire, projected C verifier, or `.generate_sequence`
 support record; cross-language ABI parity is future work.
@@ -588,6 +612,7 @@ valuable as new features.
 - [Prepared text checkpoint](docs/PREPARED_TEXT_CHECKPOINT.md)
 - [Prepared text successor evidence](docs/PREPARED_TEXT_SUCCESSOR.md)
 - [Prepared text restore admission](docs/PREPARED_TEXT_RESTORE_ADMISSION.md)
+- [Durable prepared-text handoff](docs/PREPARED_TEXT_DURABLE_HANDOFF.md)
 - [Hierarchical media buffer ownership](docs/MEDIA_RUNTIME_LEASE.md)
 - [Bounded media stream runtime](docs/MEDIA_STREAM_RUNTIME.md)
 - [Media stream continuation](docs/MEDIA_STREAM_CONTINUATION.md)

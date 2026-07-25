@@ -15,6 +15,7 @@ const sweep_record = @import("continuation_object_sweep_record.zig");
 pub const Digest = [32]u8;
 pub const set_abi: u64 = 0x4743_5345_0000_0001;
 pub const selector_abi: u64 = 0x4743_5357_0000_0001;
+pub const consumer_claim_abi: u64 = 0x4743_5343_0000_0001;
 pub const set_magic = [_]u8{ 'G', 'C', 'S', 'E', 'T', '0', '1', 0 };
 pub const selector_magic = [_]u8{ 'G', 'C', 'S', 'W', 'I', 'T', '1', 0 };
 pub const max_objects: usize = 8;
@@ -33,6 +34,8 @@ pub const active_selector_name = ".glacier-checkpoint-active-v1";
 const set_domain = "glacier-continuation-checkpoint-set-v1\x00";
 const object_domain = "glacier-continuation-checkpoint-object-v1\x00";
 const selector_domain = "glacier-continuation-checkpoint-selector-v1\x00";
+const consumer_claim_domain =
+    "glacier-continuation-checkpoint-consumer-claim-v1\x00";
 const max_generated_name_bytes: usize = 128;
 
 pub const Error = sweep_file.Error || error{
@@ -43,6 +46,8 @@ pub const Error = sweep_file.Error || error{
     InvalidObject,
     InvalidSelector,
     InvalidState,
+    ConsumerClaimInFlight,
+    StaleConsumerClaim,
     PublicationMismatch,
     UnsafeDestination,
 };
@@ -164,6 +169,19 @@ pub const LeaseStateV1 = enum(u8) {
     closed,
 };
 
+/// Process-local, address-fenced claim over one lease-selected lineage. It is
+/// deliberately not durable evidence; the OS file lease remains the
+/// cross-process exclusion authority.
+pub const ConsumerClaimV1 = struct {
+    abi_version: u64 = consumer_claim_abi,
+    lease_address: usize = 0,
+    owner_address: usize = 0,
+    claim_generation: u64 = 0,
+    selector_generation: u64 = 0,
+    selector_sha256: Digest = [_]u8{0} ** 32,
+    claim_sha256: Digest = [_]u8{0} ** 32,
+};
+
 pub const LeaseV1 = struct {
     directory: std.fs.Dir,
     lock: sweep_file.FileLeaseV1,
@@ -173,6 +191,8 @@ pub const LeaseV1 = struct {
     active_bytes: usize,
     max_set_bytes: usize,
     selector: DecodedSelectorV1,
+    next_consumer_claim_generation: u64 = 1,
+    consumer_claim: ?ConsumerClaimV1 = null,
     state: LeaseStateV1 = .ready,
 
     pub fn create(
@@ -297,8 +317,99 @@ pub const LeaseV1 = struct {
 
     pub fn close(self: *LeaseV1) void {
         if (self.state == .closed) return;
+        if (self.consumer_claim != null)
+            @panic("checkpoint lease closed with a live consumer claim");
         self.state = .closed;
         self.lock.close();
+    }
+
+    pub fn beginConsumerClaimV1(
+        self: *LeaseV1,
+        owner_address: usize,
+    ) Error!ConsumerClaimV1 {
+        if (self.state != .ready or owner_address == 0)
+            return Error.InvalidState;
+        if (self.consumer_claim != null)
+            return Error.ConsumerClaimInFlight;
+        if (self.next_consumer_claim_generation == 0 or
+            self.next_consumer_claim_generation ==
+                std.math.maxInt(u64))
+            return Error.ArithmeticOverflow;
+        var claim: ConsumerClaimV1 = .{
+            .lease_address = @intFromPtr(self),
+            .owner_address = owner_address,
+            .claim_generation = self.next_consumer_claim_generation,
+            .selector_generation = self.selector.generation,
+            .selector_sha256 = self.selector.selector_sha256,
+        };
+        claim.claim_sha256 = consumerClaimRootV1(claim);
+        self.next_consumer_claim_generation += 1;
+        self.consumer_claim = claim;
+        return claim;
+    }
+
+    pub fn validateConsumerClaimV1(
+        self: *const LeaseV1,
+        claim: ConsumerClaimV1,
+    ) Error!void {
+        if (self.state != .ready)
+            return Error.InvalidState;
+        const pending = self.consumer_claim orelse
+            return Error.StaleConsumerClaim;
+        if (!consumerClaimValidForLeaseV1(self, claim) or
+            !std.meta.eql(pending, claim) or
+            self.selector.generation !=
+                claim.selector_generation or
+            !std.mem.eql(
+                u8,
+                &self.selector.selector_sha256,
+                &claim.selector_sha256,
+            ))
+            return Error.StaleConsumerClaim;
+    }
+
+    /// Advance a retained claim after this same lease publishes the immediate
+    /// successor selector. The update is allocation-free and cannot perform
+    /// I/O; callers should treat failure after successful publication as
+    /// fail-stop corruption.
+    pub fn advanceConsumerClaimV1(
+        self: *LeaseV1,
+        claim: ConsumerClaimV1,
+    ) Error!ConsumerClaimV1 {
+        if (self.state != .ready)
+            return Error.InvalidState;
+        const pending = self.consumer_claim orelse
+            return Error.StaleConsumerClaim;
+        if (!consumerClaimValidForLeaseV1(self, claim) or
+            !std.meta.eql(pending, claim))
+            return Error.StaleConsumerClaim;
+        const next_generation = std.math.add(
+            u64,
+            claim.selector_generation,
+            1,
+        ) catch return Error.ArithmeticOverflow;
+        if (self.selector.generation != next_generation or
+            !std.mem.eql(
+                u8,
+                &self.selector.previous_selector_sha256,
+                &claim.selector_sha256,
+            ))
+            return Error.StaleConsumerClaim;
+        var advanced = claim;
+        advanced.selector_generation = self.selector.generation;
+        advanced.selector_sha256 = self.selector.selector_sha256;
+        advanced.claim_sha256 =
+            consumerClaimRootV1(advanced);
+        self.consumer_claim = advanced;
+        return advanced;
+    }
+
+    pub fn releaseConsumerClaimV1(
+        self: *LeaseV1,
+        claim: ConsumerClaimV1,
+    ) Error!void {
+        try self.validateConsumerClaimV1(claim);
+        self.consumer_claim = null;
     }
 
     pub fn stream(self: *const LeaseV1) []const u8 {
@@ -744,6 +855,46 @@ pub fn selectorRootV1(body: []const u8) Digest {
     var digest: Digest = undefined;
     hash.final(&digest);
     return digest;
+}
+
+pub fn consumerClaimRootV1(
+    claim: ConsumerClaimV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(consumer_claim_domain);
+    hashU64(&hash, claim.abi_version);
+    hashU64(
+        &hash,
+        @as(u64, @intCast(claim.lease_address)),
+    );
+    hashU64(
+        &hash,
+        @as(u64, @intCast(claim.owner_address)),
+    );
+    hashU64(&hash, claim.claim_generation);
+    hashU64(&hash, claim.selector_generation);
+    hash.update(&claim.selector_sha256);
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+fn consumerClaimValidForLeaseV1(
+    lease: *const LeaseV1,
+    claim: ConsumerClaimV1,
+) bool {
+    return claim.abi_version == consumer_claim_abi and
+        claim.lease_address == @intFromPtr(lease) and
+        claim.owner_address != 0 and
+        claim.claim_generation != 0 and
+        claim.selector_generation != 0 and
+        !isZero(claim.selector_sha256) and
+        !isZero(claim.claim_sha256) and
+        std.mem.eql(
+            u8,
+            &claim.claim_sha256,
+            &consumerClaimRootV1(claim),
+        );
 }
 
 pub fn objectRootV1(object: ObjectInputV1) Digest {

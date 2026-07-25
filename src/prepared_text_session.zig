@@ -22,6 +22,8 @@ const runtime_image = @import("model/runtime_image.zig");
 const lane_contiguous = @import("lane_contiguous_publication.zig");
 const publication = @import("lane_publication_txn.zig");
 const prepared_checkpoint = @import("prepared_text_checkpoint.zig");
+const prepared_source_lease =
+    @import("prepared_text_source_lease.zig");
 const prepared_successor = @import("prepared_text_successor.zig");
 const prepared_restore =
     @import("prepared_text_restore_admission.zig");
@@ -2029,10 +2031,13 @@ pub const SessionV3 = struct {
     result_state_initialized: bool = false,
     result_receipt_live: bool = false,
     terminal_result_sealed: bool = false,
+    source_live_grant: ?*prepared_source_lease.SourceLiveGrantV1 = null,
+    source_handoff: ?lane.PublicationHandoffV1 = null,
     restored_mode: bool = false,
     restored_phase: RestoredLifecyclePhaseV1 = .none,
     restored_scheduler: ?*lane.Scheduler = null,
     restored_bank: ?*resource_bank.Bank = null,
+    restored_activation_grant: ?*prepared_restore.SelectedSourceExitGrantV1 = null,
     restored_tree: resource_bank.LeaseTreeV1 = undefined,
     restored_scope: resource_bank.LeaseNodeV1 = undefined,
     restored_allocation: resource_bank.LeaseNodeV1 = undefined,
@@ -2066,6 +2071,7 @@ pub const SessionV3 = struct {
         source_bound_plan: BoundPlanV1,
         prepared: *prepared_restore.PreparedRestoredAdmissionV1,
         evidence: prepared_restore.EvidenceV1,
+        activation_grant: *prepared_restore.SelectedSourceExitGrantV1,
     ) !void {
         if (self.result_state_initialized or
             self.terminal_result_sealed or
@@ -2082,6 +2088,7 @@ pub const SessionV3 = struct {
         try prepared_restore.validatePreparedRestoredAdmissionV1(
             prepared,
             evidence,
+            activation_grant,
         );
         const artifacts =
             try prepared_successor.decodeAndVerifyForCheckpointV1(
@@ -2200,6 +2207,7 @@ pub const SessionV3 = struct {
         self.restored_mode = true;
         self.restored_scheduler = prepared.scheduler;
         self.restored_bank = prepared.bank;
+        self.restored_activation_grant = activation_grant;
         self.restored_tree = reservation.tree;
         self.restored_scope = prepared.scope;
         self.restored_allocation = allocation_nodes[0];
@@ -2246,6 +2254,10 @@ pub const SessionV3 = struct {
             prepared_restore.preparedRestoredAdmissionRootV1(
                 prepared.*,
             );
+        prepared_restore.consumePreparedActivationGrantV1(
+            prepared,
+            activation_grant,
+        );
     }
 
     /// Retry the only pre-activation recovery state retained by
@@ -2379,6 +2391,32 @@ pub const SessionV3 = struct {
             }
             return;
         }
+        if (self.source_handoff) |handoff| {
+            self.inner.inner.publication_session
+                .abortPublicationHandoffV1(handoff) catch
+                @panic("prepared text source handoff abort failed");
+            const source_live_grant =
+                self.source_live_grant orelse
+                @panic("prepared text source grant missing");
+            prepared_source_lease.abortSourceHandoffV1(
+                source_live_grant,
+            ) catch @panic("prepared text source grant abort failed");
+            self.source_handoff = null;
+        }
+        if (self.source_live_grant) |grant| {
+            switch (grant.phase) {
+                .ready, .bound => {
+                    prepared_source_lease.releaseSourceLiveGrantV1(
+                        grant,
+                    ) catch @panic("prepared text source grant release failed");
+                },
+                .completed => {},
+                .exit_committed => @panic("prepared text source handoff completion required"),
+                .handoff => @panic("prepared text source handoff drift"),
+                .empty => @panic("prepared text source grant empty"),
+            }
+            self.source_live_grant = null;
+        }
         self.inner.deinit();
         self.* = .{};
     }
@@ -2397,11 +2435,15 @@ pub const SessionV3 = struct {
             !self.inner.inner.resources_initialized or
             !self.inner.inner.publication_bound)
             return Error.InvalidState;
+        const terminal = self.inner.isFinished();
+        try self.validateRestoredActivationGrantV1(
+            if (terminal) .terminal_selected else .consumed,
+        );
         const publication_session =
             &self.inner.inner.publication_session;
         const snapshot = try publication_session.snapshotVerified();
         const kind: lane.EventKind =
-            if (self.inner.isFinished()) .retire else .cancel;
+            if (terminal) .retire else .cancel;
         self.restored_close =
             try self.inner.inner.scheduler
                 .beginRestoredPublicationClose(
@@ -2427,6 +2469,11 @@ pub const SessionV3 = struct {
             self.restored_phase == .live or
             self.restored_phase == .allocation_abort_required)
             return Error.InvalidState;
+        const terminal =
+            self.restored_close.kind == .retire;
+        try self.validateRestoredActivationGrantV1(
+            if (terminal) .terminal_selected else .consumed,
+        );
         const publication_session =
             &self.inner.inner.publication_session;
         const bank = publication_session.bank;
@@ -2469,11 +2516,19 @@ pub const SessionV3 = struct {
                     self.restored_phase = .tree_empty;
                 },
                 .tree_empty => {
+                    const activation_grant =
+                        self.restored_activation_grant orelse
+                        @panic("restored activation grant missing");
                     const event =
                         scheduler.commitRestoredPublicationClose(
                             self.restored_close,
                             self.restored_tree,
                         ) catch return Error.RecoveryRequired;
+                    prepared_restore
+                        .completeRestoredActivationGrantV1(
+                        activation_grant,
+                        terminal,
+                    );
                     self.* = .{};
                     return event;
                 },
@@ -2491,32 +2546,48 @@ pub const SessionV3 = struct {
         downstream: publication.SinkV1,
     ) !publication.CommitReceiptV1 {
         if (!self.result_state_initialized or
+            !self.result_receipt_live or
+            self.source_live_grant != null or
+            self.source_handoff != null or
             (self.restored_mode and
                 self.restored_phase != .live) or
             self.terminal_result_sealed)
             return Error.InvalidState;
+        if (self.restored_mode)
+            try self.validateRestoredActivationGrantV1(
+                .consumed,
+            );
         return self.inner.step(permit, downstream);
     }
 
     pub fn outputTokens(self: *const SessionV3) []const u32 {
         if (!self.result_state_initialized or
+            (self.source_live_grant != null and
+                !self.sourceLiveGrantValidV1()) or
             (self.restored_mode and
-                self.restored_phase != .live))
+                (self.restored_phase != .live or
+                    !self.restoredActivationGrantValidV1())))
             return &.{};
         return self.inner.outputTokens();
     }
 
     pub fn isFinished(self: *const SessionV3) bool {
         return self.result_state_initialized and
+            (self.source_live_grant == null or
+                self.sourceLiveGrantValidV1()) and
             (!self.restored_mode or
-                self.restored_phase == .live) and
+                (self.restored_phase == .live and
+                    self.restoredActivationGrantValidV1())) and
             self.inner.isFinished();
     }
 
     pub fn snapshotVerified(self: *SessionV3) !BoundarySnapshotV2 {
         if (!self.result_state_initialized or
+            (self.source_live_grant != null and
+                !self.sourceLiveGrantValidV1()) or
             (self.restored_mode and
-                self.restored_phase != .live))
+                (self.restored_phase != .live or
+                    !self.restoredActivationGrantValidV1())))
             return Error.InvalidState;
         return self.inner.snapshotVerified();
     }
@@ -2527,11 +2598,25 @@ pub const SessionV3 = struct {
     ) !CheckpointContextV1 {
         if (!self.result_state_initialized or
             !self.result_receipt_live or
+            self.source_handoff != null or
             (self.restored_mode and
                 self.restored_phase != .live) or
             self.terminal_result_sealed or
             self.inner.isFinished())
             return Error.InvalidState;
+        if (self.restored_mode)
+            try self.validateRestoredActivationGrantV1(
+                .consumed,
+            );
+        if (self.source_live_grant) |grant| {
+            if (!std.mem.eql(
+                u8,
+                &grant.challenge_sha256,
+                &challenge_sha256,
+            ))
+                return Error.InvalidState;
+            try self.validateSourceLiveGrantV1(.bound);
+        }
         const session = &self.inner.inner;
         if (!session.resources_initialized or
             !session.publication_bound or
@@ -2820,6 +2905,181 @@ pub const SessionV3 = struct {
         return artifacts;
     }
 
+    /// Pin the exact non-terminal source boundary to the active
+    /// generation-one selector. Once attached, token service remains frozen
+    /// until the grant is explicitly released or consumed by durable handoff.
+    pub fn attachSourceLiveGrantV1(
+        self: *SessionV3,
+        grant: *prepared_source_lease.SourceLiveGrantV1,
+    ) !void {
+        if (self.restored_mode or
+            self.source_live_grant != null or
+            self.source_handoff != null or
+            !self.result_state_initialized or
+            !self.result_receipt_live or
+            self.terminal_result_sealed or
+            self.inner.isFinished())
+            return Error.InvalidState;
+        const boundary = try self.inner.snapshotVerified();
+        if (boundary.base.publication.next_sequence == 0 or
+            boundary.base.publication.next_sequence !=
+                grant.publication_next_sequence or
+            boundary.base.publication.request_epoch !=
+                grant.request_epoch)
+            return Error.InvalidState;
+        const binding = try self.sourceBindingV1(boundary);
+        prepared_source_lease.bindSourceLiveGrantV1(
+            grant,
+            binding,
+        ) catch return Error.InvalidState;
+        self.source_live_grant = grant;
+        try self.validateSourceLiveGrantV1(.bound);
+    }
+
+    /// Abandon a selector-pinned source boundary without exiting its live
+    /// Scheduler/Bank authority. Ordinary token service may resume afterward.
+    pub fn releaseSourceLiveGrantV1(
+        self: *SessionV3,
+    ) !void {
+        const grant = self.source_live_grant orelse
+            return Error.InvalidState;
+        if (self.source_handoff != null or
+            grant.phase != .bound or
+            !self.result_receipt_live)
+            return Error.InvalidState;
+        try self.validateSourceLiveGrantV1(.bound);
+        prepared_source_lease.releaseSourceLiveGrantV1(
+            grant,
+        ) catch return Error.InvalidState;
+        self.source_live_grant = null;
+    }
+
+    /// Freeze the exact captured source boundary behind LaneWeave's
+    /// single-winner handoff barrier. The prepared archive and predecessor
+    /// selector roots are already known, so a later source-exit receipt can
+    /// bind the complete durable selection without a circular selector root.
+    pub fn beginDurableHandoffV1(
+        self: *SessionV3,
+        encoded_checkpoint: []const u8,
+        challenge_sha256: [32]u8,
+        target: prepared_successor.TargetOwnershipV1,
+        prepared_archive_sha256: [32]u8,
+        predecessor_selector_sha256: [32]u8,
+    ) !lane.PublicationHandoffV1 {
+        const source_live_grant =
+            self.source_live_grant orelse
+            return Error.InvalidState;
+        if (self.restored_mode or self.source_handoff != null or
+            !self.result_receipt_live)
+            return Error.InvalidState;
+        try self.validateSourceLiveGrantV1(.bound);
+        if (!std.mem.eql(
+            u8,
+            &predecessor_selector_sha256,
+            &source_live_grant.source_selector_sha256,
+        ) or !std.mem.eql(
+            u8,
+            &challenge_sha256,
+            &source_live_grant.challenge_sha256,
+        ))
+            return Error.InvalidState;
+        const artifacts = try self.captureSuccessorArtifactsV1(
+            encoded_checkpoint,
+            challenge_sha256,
+            target,
+        );
+        prepared_source_lease.beginSourceHandoffV1(
+            source_live_grant,
+        ) catch return Error.InvalidState;
+        errdefer prepared_source_lease.abortSourceHandoffV1(
+            source_live_grant,
+        ) catch @panic("prepared text source grant rollback failed");
+        const handoff =
+            try self.inner.inner.publication_session
+                .beginPublicationHandoffV1(
+                artifacts.segment.source_checkpoint_sha256,
+                artifacts.segment.segment_sha256,
+                artifacts.segment.ownership_intent_sha256,
+                prepared_archive_sha256,
+                predecessor_selector_sha256,
+            );
+        self.source_handoff = handoff;
+        return handoff;
+    }
+
+    pub fn validateDurableHandoffV1(
+        self: *SessionV3,
+    ) !void {
+        const handoff = self.source_handoff orelse
+            return Error.InvalidState;
+        try self.validateSourceLiveGrantV1(.handoff);
+        try self.inner.inner.publication_session
+            .validatePublicationHandoffV1(handoff);
+    }
+
+    /// Remove an uncommitted source freeze without changing publication state.
+    pub fn abortDurableHandoffV1(
+        self: *SessionV3,
+    ) !void {
+        const handoff = self.source_handoff orelse
+            return Error.InvalidState;
+        const source_live_grant =
+            self.source_live_grant orelse
+            return Error.InvalidState;
+        try self.validateSourceLiveGrantV1(.handoff);
+        try self.inner.inner.publication_session
+            .abortPublicationHandoffV1(handoff);
+        prepared_source_lease.abortSourceHandoffV1(
+            source_live_grant,
+        ) catch @panic("prepared text source grant abort failed");
+        self.source_handoff = null;
+    }
+
+    /// Atomically revoke the source receipt and return the fixed source-exit
+    /// evidence used by the durable selector. Concrete model state remains
+    /// owned by this value only until `deinit`; it has no publication authority
+    /// after this method succeeds.
+    pub fn commitDurableHandoffV1(
+        self: *SessionV3,
+    ) !lane.SourceExitCommitV1 {
+        const handoff = self.source_handoff orelse
+            return Error.InvalidState;
+        const source_live_grant =
+            self.source_live_grant orelse
+            return Error.InvalidState;
+        try self.validateSourceLiveGrantV1(.handoff);
+        const committed =
+            try self.inner.inner.publication_session
+                .commitPublicationHandoffV1(handoff);
+        self.inner.inner.publication_bound = false;
+        self.result_receipt_live = false;
+        self.source_handoff = null;
+        prepared_source_lease.markSourceExitCommittedV1(
+            source_live_grant,
+            committed.receipt.source_exit_sha256,
+        ) catch @panic("prepared text source exit grant drift");
+        return committed;
+    }
+
+    /// Release the source selector claim only after the exact generation-two
+    /// successor has become the active durable selector.
+    pub fn completeDurableHandoffV1(
+        self: *SessionV3,
+        successor: prepared_source_lease.ImmediateSuccessorV1,
+    ) !void {
+        const grant = self.source_live_grant orelse
+            return Error.InvalidState;
+        if (self.source_handoff != null or
+            self.result_receipt_live or
+            grant.phase != .exit_committed)
+            return Error.InvalidState;
+        prepared_source_lease.completeSourceHandoffV1(
+            grant,
+            successor,
+        ) catch return Error.InvalidState;
+        self.source_live_grant = null;
+    }
+
     /// Replace only the concrete KV/output backing at the exact current
     /// non-terminal boundary. The embedded publication coordinator, Scheduler,
     /// Bank, receipt, epoch, sequence, transcript, and scalar field addresses
@@ -2885,6 +3145,7 @@ pub const SessionV3 = struct {
     ) !TerminalResultEvidenceV1 {
         if (!self.result_state_initialized or
             !self.result_receipt_live or
+            self.source_live_grant != null or
             (self.restored_mode and
                 self.restored_phase != .live) or
             !self.inner.isFinished() or
@@ -2993,6 +3254,7 @@ pub const SessionV3 = struct {
         }
         if (!self.result_state_initialized or
             !self.result_receipt_live or
+            self.source_live_grant != null or
             !self.terminal_result_sealed)
             return Error.InvalidState;
         const event = try self.inner.retire();
@@ -3010,11 +3272,149 @@ pub const SessionV3 = struct {
         }
         if (!self.result_state_initialized or
             !self.result_receipt_live or
+            (self.source_live_grant != null and
+                self.source_handoff == null) or
             self.terminal_result_sealed)
             return Error.InvalidState;
         const event = try self.inner.cancel();
         self.result_receipt_live = false;
         return event;
+    }
+
+    fn sourceBindingV1(
+        self: *SessionV3,
+        boundary: BoundarySnapshotV2,
+    ) !prepared_source_lease.SourceBindingV1 {
+        const identity =
+            try self.inner.inner.scheduler.identityV1();
+        return .{
+            .source_scheduler_epoch = identity.scheduler_epoch,
+            .source_coordinator_id = identity.coordinator_id,
+            .source_bank_epoch = self.result_receipt.bank_epoch,
+            .request_sha256 = self.inner.bound_plan.execution.plan_sha256,
+            .publication_next_sequence = boundary.base.publication.next_sequence,
+            .source_last_resource_permit_generation = boundary.base.publication
+                .last_resource_permit_generation,
+            .source_receipt_sha256 = lane.resourceReceiptSha256(
+                self.result_receipt,
+            ),
+        };
+    }
+
+    fn validateSourceLiveGrantV1(
+        self: *SessionV3,
+        expected_phase: prepared_source_lease.SourceLivePhaseV1,
+    ) !void {
+        const grant = self.source_live_grant orelse
+            return Error.InvalidState;
+        prepared_source_lease.validateSourceLiveGrantV1(
+            grant,
+            expected_phase,
+        ) catch return Error.InvalidState;
+        const boundary = try self.inner.snapshotVerified();
+        const binding = try self.sourceBindingV1(boundary);
+        if (binding.source_scheduler_epoch !=
+            grant.source_scheduler_epoch or
+            binding.source_coordinator_id !=
+                grant.source_coordinator_id or
+            binding.source_bank_epoch !=
+                grant.source_bank_epoch or
+            binding.publication_next_sequence !=
+                grant.publication_next_sequence or
+            binding.source_last_resource_permit_generation !=
+                grant.source_last_resource_permit_generation or
+            !std.mem.eql(
+                u8,
+                &binding.request_sha256,
+                &grant.request_sha256,
+            ) or !std.mem.eql(
+            u8,
+            &binding.source_receipt_sha256,
+            &grant.source_receipt_sha256,
+        ) or !std.mem.eql(
+            u8,
+            &prepared_source_lease.sourceBindingRootV1(
+                binding,
+            ),
+            &grant.source_binding_sha256,
+        ))
+            return Error.InvalidState;
+    }
+
+    fn sourceLiveGrantValidV1(
+        self: *const SessionV3,
+    ) bool {
+        const grant = self.source_live_grant orelse
+            return true;
+        const expected_phase: prepared_source_lease.SourceLivePhaseV1 =
+            if (self.source_handoff == null)
+                .bound
+            else
+                .handoff;
+        prepared_source_lease.validateSourceLiveGrantV1(
+            grant,
+            expected_phase,
+        ) catch return false;
+        if (!self.result_receipt_live or
+            !self.inner.contract_bound)
+            return false;
+        const publication_session =
+            &self.inner.inner.publication_session.inner;
+        return publication_session.initialized and
+            publication_session.request_epoch ==
+                grant.request_epoch and
+            publication_session.next_sequence ==
+                grant.publication_next_sequence and
+            publication_session
+                .last_resource_permit_generation ==
+                grant.source_last_resource_permit_generation and
+            self.result_receipt.bank_epoch ==
+                grant.source_bank_epoch and
+            publication_session.admission.handle.scheduler_epoch ==
+                grant.source_scheduler_epoch and
+            std.mem.eql(
+                u8,
+                &self.inner.bound_plan.execution.plan_sha256,
+                &grant.request_sha256,
+            ) and std.mem.eql(
+            u8,
+            &lane.resourceReceiptSha256(
+                self.result_receipt,
+            ),
+            &grant.source_receipt_sha256,
+        );
+    }
+
+    fn validateRestoredActivationGrantV1(
+        self: *const SessionV3,
+        expected_phase: prepared_restore.ActivationGrantPhase,
+    ) !void {
+        if (!self.restored_mode)
+            return Error.InvalidState;
+        const grant = self.restored_activation_grant orelse
+            return Error.InvalidState;
+        prepared_restore.validateSelectedSourceExitGrantV1(
+            grant,
+            expected_phase,
+        ) catch return Error.InvalidState;
+    }
+
+    fn restoredActivationGrantValidV1(
+        self: *const SessionV3,
+    ) bool {
+        if (!self.restored_mode) return true;
+        const grant = self.restored_activation_grant orelse
+            return false;
+        const expected: prepared_restore.ActivationGrantPhase =
+            switch (grant.phase) {
+                .consumed => .consumed,
+                .terminal_selected => .terminal_selected,
+                else => return false,
+            };
+        self.validateRestoredActivationGrantV1(
+            expected,
+        ) catch return false;
+        return true;
     }
 };
 

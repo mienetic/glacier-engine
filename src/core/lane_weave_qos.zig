@@ -24,6 +24,8 @@ pub const service_finalizer_v2_abi: u64 = 0x474c_5746_0000_0002;
 pub const publication_adoption_abi: u64 = 0x474c_5741_0000_0001;
 pub const restored_publication_close_abi: u64 =
     0x474c_5758_0000_0001;
+pub const publication_handoff_abi: u64 = 0x474c_5748_0000_0001;
+pub const source_exit_receipt_abi: u64 = 0x474c_5752_0000_0001;
 pub const Digest = [32]u8;
 pub const zero_digest: Digest = [_]u8{0} ** 32;
 
@@ -37,6 +39,10 @@ const publication_adoption_domain =
     "glacier-lane-weave-qos-publication-adoption-v1\x00";
 const restored_publication_close_domain =
     "glacier-lane-weave-qos-restored-publication-close-v1\x00";
+const publication_handoff_domain =
+    "glacier-lane-weave-qos-publication-handoff-v1\x00";
+const source_exit_receipt_domain =
+    "glacier-lane-weave-qos-source-exit-receipt-v1\x00";
 const receipt_domain = "glacier-lane-weave-qos-resource-receipt-v1\x00";
 
 pub const Error = error{
@@ -51,10 +57,12 @@ pub const Error = error{
     ServiceInFlight,
     AdoptionInFlight,
     PublicationCloseInFlight,
+    PublicationHandoffInFlight,
     StaleServicePermit,
     StaleServiceCommitTicket,
     StaleAdoptionLease,
     StalePublicationClose,
+    StalePublicationHandoff,
     StaleHandle,
     InvalidTransition,
     BankDrift,
@@ -69,6 +77,10 @@ pub const Error = error{
 pub const Config = struct {
     scheduler_epoch: u64,
     challenge: Digest,
+    /// Optional restart-stable coordinator identity. Zero preserves automatic
+    /// process-local allocation; durable cross-process plans should supply a
+    /// nonzero value and still rely on address fences for live capabilities.
+    coordinator_id: u64 = 0,
     max_weight: u16 = 64,
     /// Maximum logical quanta simulated by one deadline projection.
     max_projection_quanta: u64 = 1_000_000,
@@ -367,6 +379,66 @@ pub const RestoredPublicationCloseV1 = struct {
     close_sha256: Digest = zero_digest,
 };
 
+/// Single-use process-local barrier over one active flat publication lane.
+/// The capability binds the exact current publication boundary and the
+/// already-prepared durable archive lineage. While it is pending, every
+/// Scheduler logical mutator is fenced. The capability itself contains a live
+/// coordinator address and is never durable evidence.
+pub const PublicationHandoffV1 = struct {
+    abi_version: u64 = publication_handoff_abi,
+    scheduler_epoch: u64 = 0,
+    coordinator_id: u64 = 0,
+    coordinator_address: u64 = 0,
+    handoff_generation: u64 = 0,
+    handle: Handle = .{},
+    publication_request_epoch: u64 = 0,
+    publication_session_id: usize = 0,
+    expected_next_sequence: u64 = 0,
+    source_last_publication_permit_generation: u64 = 0,
+    source_receipt: resource_bank.Receipt,
+    source_receipt_sha256: Digest = zero_digest,
+    scheduler_chain_head_before_sha256: Digest = zero_digest,
+    checkpoint_sha256: Digest = zero_digest,
+    successor_segment_sha256: Digest = zero_digest,
+    target_ownership_intent_sha256: Digest = zero_digest,
+    prepared_archive_sha256: Digest = zero_digest,
+    predecessor_selector_sha256: Digest = zero_digest,
+    handoff_sha256: Digest = zero_digest,
+};
+
+/// Fixed, pointer-free evidence for the source-side linearization of one
+/// prepared publication handoff. The receipt binds the exact source
+/// publication boundary and durable lineage to the ordinary cancel Event-v1
+/// that atomically releases the source ResourceBank receipt.
+pub const SourceExitReceiptV1 = struct {
+    abi_version: u64 = source_exit_receipt_abi,
+    scheduler_epoch: u64 = 0,
+    coordinator_id: u64 = 0,
+    handoff_generation: u64 = 0,
+    handle: Handle = .{},
+    publication_request_epoch: u64 = 0,
+    expected_next_sequence: u64 = 0,
+    source_last_publication_permit_generation: u64 = 0,
+    source_receipt: resource_bank.Receipt,
+    source_receipt_sha256: Digest = zero_digest,
+    scheduler_chain_head_before_sha256: Digest = zero_digest,
+    checkpoint_sha256: Digest = zero_digest,
+    successor_segment_sha256: Digest = zero_digest,
+    target_ownership_intent_sha256: Digest = zero_digest,
+    prepared_archive_sha256: Digest = zero_digest,
+    predecessor_selector_sha256: Digest = zero_digest,
+    cancel_event_sequence: u64 = 0,
+    cancel_event_sha256: Digest = zero_digest,
+    source_exit_sha256: Digest = zero_digest,
+};
+
+/// Commit returns the ordinary scheduler event beside its fixed durable
+/// projection so callers never have to reconstruct event bytes from a root.
+pub const SourceExitCommitV1 = struct {
+    event: EventV1,
+    receipt: SourceExitReceiptV1,
+};
+
 /// Read-only logical scheduler snapshot.
 pub const SnapshotV1 = struct {
     abi_version: u64 = abi,
@@ -412,6 +484,10 @@ const PendingPublicationAdoption = struct {
 
 const PendingRestoredPublicationClose = struct {
     close: RestoredPublicationCloseV1,
+};
+
+const PendingPublicationHandoff = struct {
+    handoff: PublicationHandoffV1,
 };
 
 const ServiceCommitContext = struct {
@@ -491,6 +567,8 @@ pub const Scheduler = struct {
     pending_publication_adoption: ?PendingPublicationAdoption = null,
     next_restored_publication_close_generation: u64 = 1,
     pending_restored_publication_close: ?PendingRestoredPublicationClose = null,
+    next_publication_handoff_generation: u64 = 1,
+    pending_publication_handoff: ?PendingPublicationHandoff = null,
     cursor: u32 = 0,
     level: u16 = 1,
     maximum_service_gap: u64,
@@ -604,7 +682,11 @@ pub const Scheduler = struct {
                 tree_snapshot.rejected_lease_nodes != 0)
                 return Error.InvalidConfiguration;
         }
-        const service_coordinator_id = try reserveServiceCoordinatorId();
+        const service_coordinator_id =
+            if (config.coordinator_id != 0)
+                config.coordinator_id
+            else
+                try reserveServiceCoordinatorId();
 
         for (storage.slots) |*slot| slot.* = .{};
         for (storage.projection) |*slot| slot.* = .{};
@@ -1364,6 +1446,205 @@ pub const Scheduler = struct {
         );
     }
 
+    /// Freeze one active flat publication lane at an exact nonzero durable
+    /// handoff boundary. The caller supplies immutable archive lineage rather
+    /// than a successor selector root: the latter would be circular because
+    /// the source-exit receipt produced by commit belongs in that successor.
+    ///
+    /// The returned process-local capability must be consumed exactly once by
+    /// `abortPublicationHandoffV1` or `commitPublicationHandoffV1`.
+    pub fn beginPublicationHandoffV1(
+        self: *Scheduler,
+        handle: Handle,
+        request_epoch: u64,
+        session_id: usize,
+        expected_next_sequence: u64,
+        source_last_publication_permit_generation: u64,
+        checkpoint_sha256: Digest,
+        successor_segment_sha256: Digest,
+        target_ownership_intent_sha256: Digest,
+        prepared_archive_sha256: Digest,
+        predecessor_selector_sha256: Digest,
+    ) Error!PublicationHandoffV1 {
+        if (request_epoch == 0 or session_id == 0 or
+            expected_next_sequence == 0 or
+            source_last_publication_permit_generation == 0 or
+            source_last_publication_permit_generation ==
+                std.math.maxInt(u64) or
+            isZeroDigest(checkpoint_sha256) or
+            isZeroDigest(successor_segment_sha256) or
+            isZeroDigest(target_ownership_intent_sha256) or
+            isZeroDigest(prepared_archive_sha256) or
+            isZeroDigest(predecessor_selector_sha256))
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoAdoption();
+        try self.requireNoService();
+        try self.validateBank();
+        try self.preflightEvent();
+        if (self.next_publication_handoff_generation == 0 or
+            self.next_publication_handoff_generation ==
+                std.math.maxInt(u64))
+            return Error.GenerationOverflow;
+
+        const index = try self.validateHandle(handle, .active);
+        const slot = self.slots[index];
+        if (!slotPublicationBindingValid(slot) or
+            slot.publication_service_policy != .every_service or
+            slot.publication_request_epoch != request_epoch or
+            slot.publication_session_id != session_id)
+            return Error.InvalidTransition;
+        try self.validateFlatPublicationFence(
+            slot.receipt,
+            request_epoch,
+            session_id,
+            expected_next_sequence,
+            source_last_publication_permit_generation,
+        );
+
+        var handoff: PublicationHandoffV1 = .{
+            .scheduler_epoch = self.config.scheduler_epoch,
+            .coordinator_id = self.service_coordinator_id,
+            .coordinator_address = @as(u64, @intCast(@intFromPtr(self))),
+            .handoff_generation = self.next_publication_handoff_generation,
+            .handle = handle,
+            .publication_request_epoch = request_epoch,
+            .publication_session_id = session_id,
+            .expected_next_sequence = expected_next_sequence,
+            .source_last_publication_permit_generation = source_last_publication_permit_generation,
+            .source_receipt = slot.receipt,
+            .source_receipt_sha256 = slot.receipt_sha256,
+            .scheduler_chain_head_before_sha256 = self.chain_head_sha256,
+            .checkpoint_sha256 = checkpoint_sha256,
+            .successor_segment_sha256 = successor_segment_sha256,
+            .target_ownership_intent_sha256 = target_ownership_intent_sha256,
+            .prepared_archive_sha256 = prepared_archive_sha256,
+            .predecessor_selector_sha256 = predecessor_selector_sha256,
+        };
+        handoff.handoff_sha256 = publicationHandoffSha256(handoff);
+        self.next_publication_handoff_generation += 1;
+        self.pending_publication_handoff = .{ .handoff = handoff };
+        return handoff;
+    }
+
+    /// Revalidate one exact pending handoff without consuming its barrier.
+    /// Logical Scheduler state and ResourceBank accounting remain unchanged.
+    pub fn validatePublicationHandoffV1(
+        self: *Scheduler,
+        handoff: PublicationHandoffV1,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoService();
+        try self.validateBank();
+        _ = try self.validatePendingPublicationHandoff(handoff);
+        _ = try self.validateLivePublicationHandoff(handoff);
+    }
+
+    /// Consume one pending handoff without exiting the source. The exact
+    /// source publication lane becomes runnable again and the event chain is
+    /// unchanged.
+    pub fn abortPublicationHandoffV1(
+        self: *Scheduler,
+        handoff: PublicationHandoffV1,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoService();
+        try self.validateBank();
+        _ = try self.validatePendingPublicationHandoff(handoff);
+        _ = try self.validateLivePublicationHandoff(handoff);
+        self.pending_publication_handoff = null;
+    }
+
+    /// Atomically cancel the exact barrier-held source publication, release
+    /// its flat ResourceBank receipt, and emit a fixed source-exit receipt
+    /// bound to the ordinary cancel Event-v1 root.
+    pub fn commitPublicationHandoffV1(
+        self: *Scheduler,
+        handoff: PublicationHandoffV1,
+    ) Error!SourceExitCommitV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoService();
+        try self.validateBank();
+        try self.preflightEvent();
+        _ = try self.validatePendingPublicationHandoff(handoff);
+        const index = try self.validateLivePublicationHandoff(handoff);
+        const slot = &self.slots[index];
+
+        const before_state = self.stateSha256();
+        const before_counts = self.counts();
+        const before_used = self.used;
+        const before_tick = self.logical_tick;
+        const before_cursor = self.cursor;
+        const before_level = self.level;
+        const spec = slot.spec;
+        const receipt = slot.receipt;
+        const receipt_sha256 = slot.receipt_sha256;
+        const remaining = slot.remaining_quanta;
+        const next_used = subtractClaims(self.used, spec.claim) catch
+            return self.poisonBank();
+
+        self.bank.closePublicationSessionAndRelease(
+            receipt,
+            handoff.publication_request_epoch,
+            handoff.publication_session_id,
+            handoff.expected_next_sequence,
+        ) catch |err| switch (err) {
+            error.InvalidConfiguration => return Error.InvalidConfiguration,
+            error.InvalidTransition => return Error.InvalidTransition,
+            else => return self.poisonBank(),
+        };
+        self.used = next_used;
+        slot.* = .{};
+        self.pending_publication_handoff = null;
+
+        const event = self.emitCurrent(.{
+            .kind = .cancel,
+            .state_before_sha256 = before_state,
+            .logical_tick_before = before_tick,
+            .cursor_before = before_cursor,
+            .level_before = before_level,
+            .handle = handoff.handle,
+            .spec = spec,
+            .resource_receipt = receipt,
+            .resource_receipt_sha256 = receipt_sha256,
+            .remaining_before = remaining,
+            .active_before = before_counts.active,
+            .finished_before = before_counts.finished,
+            .bank_used_before = before_used,
+        });
+        var source_exit: SourceExitReceiptV1 = .{
+            .scheduler_epoch = handoff.scheduler_epoch,
+            .coordinator_id = handoff.coordinator_id,
+            .handoff_generation = handoff.handoff_generation,
+            .handle = handoff.handle,
+            .publication_request_epoch = handoff.publication_request_epoch,
+            .expected_next_sequence = handoff.expected_next_sequence,
+            .source_last_publication_permit_generation = handoff.source_last_publication_permit_generation,
+            .source_receipt = handoff.source_receipt,
+            .source_receipt_sha256 = handoff.source_receipt_sha256,
+            .scheduler_chain_head_before_sha256 = handoff.scheduler_chain_head_before_sha256,
+            .checkpoint_sha256 = handoff.checkpoint_sha256,
+            .successor_segment_sha256 = handoff.successor_segment_sha256,
+            .target_ownership_intent_sha256 = handoff.target_ownership_intent_sha256,
+            .prepared_archive_sha256 = handoff.prepared_archive_sha256,
+            .predecessor_selector_sha256 = handoff.predecessor_selector_sha256,
+            .cancel_event_sequence = event.event_sequence,
+            .cancel_event_sha256 = event.event_sha256,
+        };
+        source_exit.source_exit_sha256 =
+            sourceExitReceiptSha256(source_exit);
+        std.debug.assert(sourceExitReceiptValidV1(source_exit, event));
+        return .{ .event = event, .receipt = source_exit };
+    }
+
     /// Freeze one restored bound lane before caller-side allocation reclaim.
     /// While this capability is pending, service preparation and every other
     /// logical mutator fail closed. `kind` must match the lane's current
@@ -1992,6 +2273,130 @@ pub const Scheduler = struct {
         return pending;
     }
 
+    fn validatePendingPublicationHandoff(
+        self: *Scheduler,
+        handoff: PublicationHandoffV1,
+    ) Error!PendingPublicationHandoff {
+        const pending = self.pending_publication_handoff orelse
+            return Error.StalePublicationHandoff;
+        if (!std.mem.eql(
+            u8,
+            &pending.handoff.handoff_sha256,
+            &publicationHandoffSha256(pending.handoff),
+        )) return self.poisonInvariant();
+        if (handoff.abi_version != publication_handoff_abi or
+            handoff.scheduler_epoch != self.config.scheduler_epoch or
+            handoff.coordinator_id != self.service_coordinator_id or
+            handoff.coordinator_address !=
+                @as(u64, @intCast(@intFromPtr(self))) or
+            handoff.handoff_generation == 0 or
+            handoff.publication_request_epoch == 0 or
+            handoff.publication_session_id == 0 or
+            handoff.expected_next_sequence == 0 or
+            handoff.source_last_publication_permit_generation == 0 or
+            handoff.source_last_publication_permit_generation ==
+                std.math.maxInt(u64) or
+            !resource_bank.receiptIntegrityValidV1(
+                handoff.source_receipt,
+            ) or
+            isZeroDigest(handoff.source_receipt_sha256) or
+            isZeroDigest(handoff.scheduler_chain_head_before_sha256) or
+            isZeroDigest(handoff.checkpoint_sha256) or
+            isZeroDigest(handoff.successor_segment_sha256) or
+            isZeroDigest(handoff.target_ownership_intent_sha256) or
+            isZeroDigest(handoff.prepared_archive_sha256) or
+            isZeroDigest(handoff.predecessor_selector_sha256) or
+            !std.mem.eql(
+                u8,
+                &handoff.handoff_sha256,
+                &publicationHandoffSha256(handoff),
+            ) or !std.meta.eql(handoff, pending.handoff))
+            return Error.StalePublicationHandoff;
+        return pending;
+    }
+
+    fn validateLivePublicationHandoff(
+        self: *Scheduler,
+        handoff: PublicationHandoffV1,
+    ) Error!usize {
+        const index = try self.validateHandle(handoff.handle, .active);
+        const slot = self.slots[index];
+        if (!slotPublicationBindingValid(slot) or
+            slot.publication_service_policy != .every_service or
+            slot.publication_request_epoch !=
+                handoff.publication_request_epoch or
+            slot.publication_session_id !=
+                handoff.publication_session_id or
+            !std.meta.eql(slot.receipt, handoff.source_receipt) or
+            !std.mem.eql(
+                u8,
+                &slot.receipt_sha256,
+                &handoff.source_receipt_sha256,
+            ) or !std.mem.eql(
+            u8,
+            &self.chain_head_sha256,
+            &handoff.scheduler_chain_head_before_sha256,
+        ))
+            return Error.InvalidTransition;
+        try self.validateFlatPublicationFence(
+            slot.receipt,
+            handoff.publication_request_epoch,
+            handoff.publication_session_id,
+            handoff.expected_next_sequence,
+            handoff.source_last_publication_permit_generation,
+        );
+        return index;
+    }
+
+    fn validateFlatPublicationFence(
+        self: *Scheduler,
+        receipt: resource_bank.Receipt,
+        request_epoch: u64,
+        session_id: usize,
+        expected_next_sequence: u64,
+        source_last_publication_permit_generation: u64,
+    ) Error!void {
+        if (self.bank.child_slots != null or
+            self.bank.lease_tree_storage != null)
+            return Error.InvalidTransition;
+        self.bank.validatePublicationSession(
+            receipt,
+            request_epoch,
+            session_id,
+            expected_next_sequence,
+        ) catch |err| switch (err) {
+            error.InvalidConfiguration => return Error.InvalidConfiguration,
+            error.StaleReservation => return Error.StaleHandle,
+            error.InvalidTransition => return Error.InvalidTransition,
+            else => return self.poisonBank(),
+        };
+
+        // This Bank is dedicated to the Scheduler and no service can be
+        // pending while a handoff begins or remains held. The public
+        // publication-session validation above establishes the exact slot;
+        // reading its generation here binds G without incrementing it.
+        const bank_index: usize = @intCast(receipt.slot_index);
+        self.bank.mutex.lock();
+        defer self.bank.mutex.unlock();
+        if (bank_index >= self.bank.slots.len)
+            return self.poisonBank();
+        const bank_slot = self.bank.slots[bank_index];
+        if (self.bank.epoch != receipt.bank_epoch or
+            bank_slot.state != .committed or
+            bank_slot.generation != receipt.generation or
+            bank_slot.owner_key != receipt.owner_key or
+            !std.meta.eql(bank_slot.claim, receipt.claim) or
+            bank_slot.integrity != receipt.integrity or
+            bank_slot.publication_request_epoch != request_epoch or
+            bank_slot.publication_session_id != session_id or
+            bank_slot.publication_next_sequence != expected_next_sequence or
+            bank_slot.publication_permit_generation !=
+                source_last_publication_permit_generation or
+            bank_slot.publication_active or
+            bank_slot.publication_permit_integrity != 0)
+            return Error.InvalidTransition;
+    }
+
     fn validatePendingService(
         self: *Scheduler,
         permit: ServicePermitV1,
@@ -2248,6 +2653,8 @@ pub const Scheduler = struct {
             return Error.AdoptionInFlight;
         if (self.pending_restored_publication_close != null)
             return Error.PublicationCloseInFlight;
+        if (self.pending_publication_handoff != null)
+            return Error.PublicationHandoffInFlight;
     }
 
     fn requireNoService(self: *const Scheduler) Error!void {
@@ -3181,6 +3588,181 @@ pub fn restoredPublicationCloseSha256(
     return result;
 }
 
+/// Recompute one process-local handoff capability. The live coordinator
+/// address and Session address are deliberately included so copied authority
+/// cannot migrate to another in-memory Scheduler instance.
+pub fn publicationHandoffSha256(
+    handoff: PublicationHandoffV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(publication_handoff_domain);
+    hashU64(&hash, handoff.abi_version);
+    hashU64(&hash, handoff.scheduler_epoch);
+    hashU64(&hash, handoff.coordinator_id);
+    hashU64(&hash, handoff.coordinator_address);
+    hashU64(&hash, handoff.handoff_generation);
+    hashHandle(&hash, handoff.handle);
+    hashU64(&hash, handoff.publication_request_epoch);
+    hashU64(&hash, @intCast(handoff.publication_session_id));
+    hashU64(&hash, handoff.expected_next_sequence);
+    hashU64(
+        &hash,
+        handoff.source_last_publication_permit_generation,
+    );
+    hashReceipt(&hash, handoff.source_receipt);
+    hash.update(&handoff.source_receipt_sha256);
+    hash.update(&handoff.scheduler_chain_head_before_sha256);
+    hash.update(&handoff.checkpoint_sha256);
+    hash.update(&handoff.successor_segment_sha256);
+    hash.update(&handoff.target_ownership_intent_sha256);
+    hash.update(&handoff.prepared_archive_sha256);
+    hash.update(&handoff.predecessor_selector_sha256);
+    var result: Digest = undefined;
+    hash.final(&result);
+    return result;
+}
+
+/// Recompute the fixed source-exit evidence root. No native pointer or
+/// address participates in this durable projection.
+pub fn sourceExitReceiptSha256(
+    receipt: SourceExitReceiptV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(source_exit_receipt_domain);
+    hashU64(&hash, receipt.abi_version);
+    hashU64(&hash, receipt.scheduler_epoch);
+    hashU64(&hash, receipt.coordinator_id);
+    hashU64(&hash, receipt.handoff_generation);
+    hashHandle(&hash, receipt.handle);
+    hashU64(&hash, receipt.publication_request_epoch);
+    hashU64(&hash, receipt.expected_next_sequence);
+    hashU64(
+        &hash,
+        receipt.source_last_publication_permit_generation,
+    );
+    hashReceipt(&hash, receipt.source_receipt);
+    hash.update(&receipt.source_receipt_sha256);
+    hash.update(&receipt.scheduler_chain_head_before_sha256);
+    hash.update(&receipt.checkpoint_sha256);
+    hash.update(&receipt.successor_segment_sha256);
+    hash.update(&receipt.target_ownership_intent_sha256);
+    hash.update(&receipt.prepared_archive_sha256);
+    hash.update(&receipt.predecessor_selector_sha256);
+    hashU64(&hash, receipt.cancel_event_sequence);
+    hash.update(&receipt.cancel_event_sha256);
+    var result: Digest = undefined;
+    hash.final(&result);
+    return result;
+}
+
+/// Validate the fixed durable projection without requiring the full source
+/// Scheduler event. A target can apply this allocation-free gate before
+/// admitting any live authority; caller-retained archive context remains
+/// responsible for matching the five bound roots to selected objects.
+pub fn sourceExitReceiptStructurallyValidV1(
+    receipt: SourceExitReceiptV1,
+) bool {
+    _ = receipt.source_receipt.claim.hostBytes() catch return false;
+    if (receipt.abi_version != source_exit_receipt_abi or
+        receipt.scheduler_epoch == 0 or receipt.coordinator_id == 0 or
+        receipt.handoff_generation == 0 or
+        receipt.handle.scheduler_epoch != receipt.scheduler_epoch or
+        receipt.handle.slot_generation == 0 or
+        receipt.handle.tenant_key == 0 or receipt.handle.request_key == 0 or
+        receipt.handle.request_generation == 0 or
+        receipt.publication_request_epoch == 0 or
+        receipt.expected_next_sequence == 0 or
+        receipt.source_last_publication_permit_generation == 0 or
+        receipt.source_last_publication_permit_generation ==
+            std.math.maxInt(u64) or
+        receipt.source_receipt.bank_epoch == 0 or
+        receipt.source_receipt.generation == 0 or
+        receipt.source_receipt.owner_key == 0 or
+        receipt.source_receipt.integrity == 0 or
+        receipt.source_receipt.claim.queue_slots != 1 or
+        receipt.handle.slot_index != receipt.source_receipt.slot_index or
+        receipt.handle.slot_generation != receipt.source_receipt.generation or
+        !resource_bank.receiptIntegrityValidV1(receipt.source_receipt) or
+        isZeroDigest(receipt.source_receipt_sha256) or
+        isZeroDigest(receipt.scheduler_chain_head_before_sha256) or
+        isZeroDigest(receipt.checkpoint_sha256) or
+        isZeroDigest(receipt.successor_segment_sha256) or
+        isZeroDigest(receipt.target_ownership_intent_sha256) or
+        isZeroDigest(receipt.prepared_archive_sha256) or
+        isZeroDigest(receipt.predecessor_selector_sha256) or
+        receipt.cancel_event_sequence == 0 or
+        isZeroDigest(receipt.cancel_event_sha256) or
+        isZeroDigest(receipt.source_exit_sha256) or
+        !std.mem.eql(
+            u8,
+            &receipt.source_receipt_sha256,
+            &resourceReceiptSha256(receipt.source_receipt),
+        ) or !std.mem.eql(
+        u8,
+        &receipt.source_exit_sha256,
+        &sourceExitReceiptSha256(receipt),
+    ))
+        return false;
+    return true;
+}
+
+/// Validate the portable receipt against the exact ordinary cancel event that
+/// linearized source release. This is allocation-free and read-only.
+pub fn sourceExitReceiptValidV1(
+    receipt: SourceExitReceiptV1,
+    event: EventV1,
+) bool {
+    if (!sourceExitReceiptStructurallyValidV1(receipt)) return false;
+
+    if (event.abi_version != event_abi or
+        event.scheduler_epoch != receipt.scheduler_epoch or
+        event.event_sequence != receipt.cancel_event_sequence or
+        event.kind != .cancel or event.rejection_reason != .none or
+        !std.meta.eql(event.handle, receipt.handle) or
+        !std.meta.eql(event.resource_receipt, receipt.source_receipt) or
+        !std.mem.eql(
+            u8,
+            &event.resource_receipt_sha256,
+            &receipt.source_receipt_sha256,
+        ) or !std.mem.eql(
+        u8,
+        &event.previous_sha256,
+        &receipt.scheduler_chain_head_before_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &event.event_sha256,
+        &receipt.cancel_event_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &event.event_sha256,
+        &eventSha256(event),
+    ))
+        return false;
+
+    const active_after_plus_one = std.math.add(
+        u32,
+        event.active_after,
+        1,
+    ) catch return false;
+    const expected_bank_after = subtractClaims(
+        event.bank_used_before,
+        event.spec.claim,
+    ) catch return false;
+    return event.handle.tenant_key == event.spec.tenant_key and
+        event.handle.request_key == event.spec.request_key and
+        event.handle.request_generation == event.spec.request_generation and
+        event.resource_receipt.owner_key ==
+            event.spec.resource_owner_key and
+        std.meta.eql(event.resource_receipt.claim, event.spec.claim) and
+        event.remaining_before > 0 and event.remaining_after == 0 and
+        event.logical_tick_before == event.logical_tick_after and
+        event.cursor_before == event.cursor_after and
+        event.level_before == event.level_after and
+        event.active_before == active_after_plus_one and
+        event.finished_before == event.finished_after and
+        std.meta.eql(expected_bank_after, event.bank_used_after);
+}
+
 /// Recompute the portable, idempotent logical-service intent digest.
 pub fn serviceIntentSha256(intent: ServiceIntentV1) Digest {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
@@ -3475,6 +4057,10 @@ fn hashBool(hash: *std.crypto.hash.sha2.Sha256, value: bool) void {
     hashU8(hash, @intFromBool(value));
 }
 
+fn isZeroDigest(value: Digest) bool {
+    return std.mem.eql(u8, &value, &zero_digest);
+}
+
 fn hashU8(hash: *std.crypto.hash.sha2.Sha256, value: u8) void {
     hash.update(&.{value});
 }
@@ -3577,6 +4163,75 @@ fn expectPublicationAdoption(
     };
 }
 
+fn filledDigest(byte: u8) Digest {
+    return [_]u8{byte} ** 32;
+}
+
+fn containsPointer(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => true,
+        .array => |info| containsPointer(info.child),
+        .optional => |info| containsPointer(info.child),
+        .@"struct" => |info| blk: {
+            inline for (info.fields) |field|
+                if (containsPointer(field.type)) break :blk true;
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+const TestHandoffRoots = struct {
+    checkpoint: Digest = filledDigest(0x11),
+    successor_segment: Digest = filledDigest(0x22),
+    target_ownership_intent: Digest = filledDigest(0x33),
+    prepared_archive: Digest = filledDigest(0x44),
+    predecessor_selector: Digest = filledDigest(0x55),
+};
+
+const TestPublicationCommit = struct {
+    bank: *resource_bank.Bank,
+    permit: resource_bank.PublicationPermit,
+    committed: bool = false,
+
+    fn finalize(context: *anyopaque, event: *const EventV1) void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        std.debug.assert(event.kind == .service);
+        self.bank.commitPublicationAssumeValid(self.permit);
+        self.committed = true;
+    }
+};
+
+fn advanceTestBoundPublication(
+    scheduler: *Scheduler,
+    bank: *resource_bank.Bank,
+    admission: Admission,
+    request_epoch: u64,
+    session_id: usize,
+    expected_sequence: u64,
+) !resource_bank.PublicationPermit {
+    const service = try scheduler.prepareService();
+    const armed = try scheduler.armServiceCommit(service);
+    const publication_permit = try bank.beginPublication(
+        admission.event.resource_receipt,
+        request_epoch,
+        session_id,
+        expected_sequence,
+    );
+    var commit: TestPublicationCommit = .{
+        .bank = bank,
+        .permit = publication_permit,
+    };
+    _ = try scheduler.commitArmedServiceV2(armed.ticket, .{
+        .publication_request_epoch = request_epoch,
+        .publication_session_id = session_id,
+        .context = &commit,
+        .finalize = TestPublicationCommit.finalize,
+    });
+    std.debug.assert(commit.committed);
+    return publication_permit;
+}
+
 const BoundFinalizerCapture = struct {
     calls: usize = 0,
     event: ?EventV1 = null,
@@ -3653,6 +4308,7 @@ test "LaneWeave LeaseTree initialization is explicit and exposes exact identity"
     const config: Config = .{
         .scheduler_epoch = 0x5153_4553,
         .challenge = challenge,
+        .coordinator_id = 0x434f_4f52,
     };
     try std.testing.expectError(
         Error.InvalidConfiguration,
@@ -3700,7 +4356,10 @@ test "LaneWeave LeaseTree initialization is explicit and exposes exact identity"
     );
     const identity = try scheduler.identityV1();
     try std.testing.expectEqual(config.scheduler_epoch, identity.scheduler_epoch);
-    try std.testing.expect(identity.coordinator_id != 0);
+    try std.testing.expectEqual(
+        config.coordinator_id,
+        identity.coordinator_id,
+    );
     try std.testing.expectEqual(
         @as(u64, @intCast(@intFromPtr(&scheduler))),
         identity.coordinator_address,
@@ -4397,6 +5056,517 @@ test "LaneWeave copied publication adoption commit and cancel linearize" {
             committer.operation_error.?,
         );
         try std.testing.expect(cancelled);
+    }
+    try std.testing.expect((try fixture.bank.snapshot()).used.isZero());
+    try std.testing.expect(!(try fixture.scheduler.snapshot()).poisoned);
+    _ = try fixture.scheduler.close();
+}
+
+test "LaneWeave source handoff barrier is exact invisible and abortable" {
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    var publication_coordinator: u8 = 0;
+    const session_id = @intFromPtr(&publication_coordinator);
+    const request_epoch: u64 = 0x4841_4e44;
+    const admission = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 3, 0)),
+    );
+    try fixture.scheduler.bindPublicationSession(
+        admission,
+        request_epoch,
+        session_id,
+    );
+    const publication_permit = try advanceTestBoundPublication(
+        &fixture.scheduler,
+        &fixture.bank,
+        admission,
+        request_epoch,
+        session_id,
+        0,
+    );
+    const roots: TestHandoffRoots = .{};
+    const scheduler_before = try fixture.scheduler.snapshot();
+    const bank_before = try fixture.bank.snapshot();
+    const handoff_generation_before =
+        fixture.scheduler.next_publication_handoff_generation;
+
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        fixture.scheduler.beginPublicationHandoffV1(
+            admission.handle,
+            request_epoch,
+            session_id,
+            1,
+            publication_permit.generation,
+            zero_digest,
+            roots.successor_segment,
+            roots.target_ownership_intent,
+            roots.prepared_archive,
+            roots.predecessor_selector,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        fixture.scheduler.beginPublicationHandoffV1(
+            admission.handle,
+            request_epoch,
+            session_id,
+            1,
+            publication_permit.generation + 1,
+            roots.checkpoint,
+            roots.successor_segment,
+            roots.target_ownership_intent,
+            roots.prepared_archive,
+            roots.predecessor_selector,
+        ),
+    );
+    try std.testing.expectEqual(
+        handoff_generation_before,
+        fixture.scheduler.next_publication_handoff_generation,
+    );
+
+    const handoff = try fixture.scheduler.beginPublicationHandoffV1(
+        admission.handle,
+        request_epoch,
+        session_id,
+        1,
+        publication_permit.generation,
+        roots.checkpoint,
+        roots.successor_segment,
+        roots.target_ownership_intent,
+        roots.prepared_archive,
+        roots.predecessor_selector,
+    );
+    try fixture.scheduler.validatePublicationHandoffV1(handoff);
+    try std.testing.expectEqualDeep(
+        scheduler_before,
+        try fixture.scheduler.snapshot(),
+    );
+    try std.testing.expectEqualDeep(
+        bank_before,
+        try fixture.bank.snapshot(),
+    );
+
+    try std.testing.expectError(
+        Error.PublicationHandoffInFlight,
+        fixture.scheduler.prepareService(),
+    );
+    try std.testing.expectError(
+        Error.PublicationHandoffInFlight,
+        fixture.scheduler.serveOne(),
+    );
+    try std.testing.expectError(
+        Error.PublicationHandoffInFlight,
+        fixture.scheduler.admit(testSpec(2, 1, 1, 0)),
+    );
+    try std.testing.expectError(
+        Error.PublicationHandoffInFlight,
+        fixture.scheduler.cancel(admission.handle),
+    );
+    try std.testing.expectError(
+        Error.PublicationHandoffInFlight,
+        fixture.scheduler.retire(admission.handle),
+    );
+    try std.testing.expectError(
+        Error.PublicationHandoffInFlight,
+        fixture.scheduler.cancelBoundPublication(
+            admission.handle,
+            request_epoch,
+            session_id,
+            1,
+        ),
+    );
+    try std.testing.expectError(
+        Error.PublicationHandoffInFlight,
+        fixture.scheduler.close(),
+    );
+    try std.testing.expectError(
+        Error.PublicationHandoffInFlight,
+        fixture.scheduler.beginPublicationHandoffV1(
+            admission.handle,
+            request_epoch,
+            session_id,
+            1,
+            publication_permit.generation,
+            roots.checkpoint,
+            roots.successor_segment,
+            roots.target_ownership_intent,
+            roots.prepared_archive,
+            roots.predecessor_selector,
+        ),
+    );
+
+    var forged = handoff;
+    forged.prepared_archive_sha256[0] ^= 0xff;
+    forged.handoff_sha256 = publicationHandoffSha256(forged);
+    try std.testing.expectError(
+        Error.StalePublicationHandoff,
+        fixture.scheduler.validatePublicationHandoffV1(forged),
+    );
+    try std.testing.expectEqualDeep(
+        scheduler_before,
+        try fixture.scheduler.snapshot(),
+    );
+    try std.testing.expectEqualDeep(
+        bank_before,
+        try fixture.bank.snapshot(),
+    );
+
+    try fixture.scheduler.abortPublicationHandoffV1(handoff);
+    try std.testing.expectError(
+        Error.StalePublicationHandoff,
+        fixture.scheduler.abortPublicationHandoffV1(handoff),
+    );
+    try std.testing.expectError(
+        Error.StalePublicationHandoff,
+        fixture.scheduler.commitPublicationHandoffV1(handoff),
+    );
+    const service_after_abort = try fixture.scheduler.prepareService();
+    try fixture.scheduler.abortService(service_after_abort);
+    _ = try fixture.scheduler.cancelBoundPublication(
+        admission.handle,
+        request_epoch,
+        session_id,
+        1,
+    );
+    try std.testing.expect((try fixture.bank.snapshot()).used.isZero());
+    _ = try fixture.scheduler.close();
+}
+
+test "LaneWeave source exit receipt is fixed pointer free and exact" {
+    try std.testing.expect(!containsPointer(SourceExitReceiptV1));
+    try std.testing.expectEqual(
+        @as(u64, 0x474c_5752_0000_0001),
+        source_exit_receipt_abi,
+    );
+
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    var publication_coordinator: u8 = 0;
+    const session_id = @intFromPtr(&publication_coordinator);
+    const request_epoch: u64 = 0x4558_4954;
+    const admission = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 3, 0)),
+    );
+    try fixture.scheduler.bindPublicationSession(
+        admission,
+        request_epoch,
+        session_id,
+    );
+    const publication_permit = try advanceTestBoundPublication(
+        &fixture.scheduler,
+        &fixture.bank,
+        admission,
+        request_epoch,
+        session_id,
+        0,
+    );
+    const roots: TestHandoffRoots = .{};
+    const handoff = try fixture.scheduler.beginPublicationHandoffV1(
+        admission.handle,
+        request_epoch,
+        session_id,
+        1,
+        publication_permit.generation,
+        roots.checkpoint,
+        roots.successor_segment,
+        roots.target_ownership_intent,
+        roots.prepared_archive,
+        roots.predecessor_selector,
+    );
+    const committed =
+        try fixture.scheduler.commitPublicationHandoffV1(handoff);
+    try std.testing.expectEqual(EventKind.cancel, committed.event.kind);
+    try std.testing.expect(
+        sourceExitReceiptStructurallyValidV1(committed.receipt),
+    );
+    try std.testing.expect(
+        sourceExitReceiptValidV1(committed.receipt, committed.event),
+    );
+    try std.testing.expectEqualDeep(
+        handoff.source_receipt,
+        committed.receipt.source_receipt,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &roots.prepared_archive,
+        &committed.receipt.prepared_archive_sha256,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &roots.predecessor_selector,
+        &committed.receipt.predecessor_selector_sha256,
+    );
+
+    var mutated_receipt = committed.receipt;
+    mutated_receipt.checkpoint_sha256[0] ^= 1;
+    try std.testing.expect(
+        !sourceExitReceiptStructurallyValidV1(mutated_receipt),
+    );
+    try std.testing.expect(
+        !sourceExitReceiptValidV1(
+            mutated_receipt,
+            committed.event,
+        ),
+    );
+    var forged_handle_receipt = committed.receipt;
+    forged_handle_receipt.handle.slot_generation += 1;
+    forged_handle_receipt.source_exit_sha256 =
+        sourceExitReceiptSha256(forged_handle_receipt);
+    try std.testing.expect(
+        !sourceExitReceiptStructurallyValidV1(
+            forged_handle_receipt,
+        ),
+    );
+    var mutated_event = committed.event;
+    mutated_event.event_sha256[0] ^= 1;
+    try std.testing.expect(
+        !sourceExitReceiptValidV1(
+            committed.receipt,
+            mutated_event,
+        ),
+    );
+
+    const scheduler_after = try fixture.scheduler.snapshot();
+    const bank_after = try fixture.bank.snapshot();
+    try std.testing.expectEqual(@as(u32, 0), scheduler_after.active);
+    try std.testing.expect(scheduler_after.used.isZero());
+    try std.testing.expect(bank_after.used.isZero());
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        bank_after.committed_receipts,
+    );
+    try std.testing.expectEqual(@as(u64, 1), bank_after.releases);
+    try std.testing.expectError(
+        resource_bank.Error.StaleReservation,
+        fixture.bank.validateCommitted(handoff.source_receipt),
+    );
+    try std.testing.expectError(
+        Error.StaleHandle,
+        fixture.scheduler.cancelBoundPublication(
+            admission.handle,
+            request_epoch,
+            session_id,
+            1,
+        ),
+    );
+    try std.testing.expectError(
+        Error.StalePublicationHandoff,
+        fixture.scheduler.abortPublicationHandoffV1(handoff),
+    );
+    try std.testing.expectError(
+        Error.StalePublicationHandoff,
+        fixture.scheduler.commitPublicationHandoffV1(handoff),
+    );
+    _ = try fixture.scheduler.close();
+}
+
+test "LaneWeave source handoff rejects a retained service permit" {
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    var publication_coordinator: u8 = 0;
+    const session_id = @intFromPtr(&publication_coordinator);
+    const request_epoch: u64 = 0x5045_524d;
+    const admission = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 3, 0)),
+    );
+    try fixture.scheduler.bindPublicationSession(
+        admission,
+        request_epoch,
+        session_id,
+    );
+    const publication_permit = try advanceTestBoundPublication(
+        &fixture.scheduler,
+        &fixture.bank,
+        admission,
+        request_epoch,
+        session_id,
+        0,
+    );
+    const retained_service = try fixture.scheduler.prepareService();
+    const scheduler_before = try fixture.scheduler.snapshot();
+    const bank_before = try fixture.bank.snapshot();
+    const handoff_generation_before =
+        fixture.scheduler.next_publication_handoff_generation;
+    const roots: TestHandoffRoots = .{};
+
+    try std.testing.expectError(
+        Error.ServiceInFlight,
+        fixture.scheduler.beginPublicationHandoffV1(
+            admission.handle,
+            request_epoch,
+            session_id,
+            1,
+            publication_permit.generation,
+            roots.checkpoint,
+            roots.successor_segment,
+            roots.target_ownership_intent,
+            roots.prepared_archive,
+            roots.predecessor_selector,
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        scheduler_before,
+        try fixture.scheduler.snapshot(),
+    );
+    try std.testing.expectEqualDeep(
+        bank_before,
+        try fixture.bank.snapshot(),
+    );
+    try std.testing.expectEqual(
+        handoff_generation_before,
+        fixture.scheduler.next_publication_handoff_generation,
+    );
+    try std.testing.expect(
+        fixture.scheduler.pending_publication_handoff == null,
+    );
+
+    try fixture.scheduler.abortService(retained_service);
+    const handoff = try fixture.scheduler.beginPublicationHandoffV1(
+        admission.handle,
+        request_epoch,
+        session_id,
+        1,
+        publication_permit.generation,
+        roots.checkpoint,
+        roots.successor_segment,
+        roots.target_ownership_intent,
+        roots.prepared_archive,
+        roots.predecessor_selector,
+    );
+    try fixture.scheduler.abortPublicationHandoffV1(handoff);
+    _ = try fixture.scheduler.cancelBoundPublication(
+        admission.handle,
+        request_epoch,
+        session_id,
+        1,
+    );
+    _ = try fixture.scheduler.close();
+}
+
+test "LaneWeave copied source handoff commit and abort linearize" {
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    var publication_coordinator: u8 = 0;
+    const session_id = @intFromPtr(&publication_coordinator);
+    const request_epoch: u64 = 0x5241_4345;
+    const admission = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 3, 0)),
+    );
+    try fixture.scheduler.bindPublicationSession(
+        admission,
+        request_epoch,
+        session_id,
+    );
+    const publication_permit = try advanceTestBoundPublication(
+        &fixture.scheduler,
+        &fixture.bank,
+        admission,
+        request_epoch,
+        session_id,
+        0,
+    );
+    const roots: TestHandoffRoots = .{};
+    const handoff = try fixture.scheduler.beginPublicationHandoffV1(
+        admission.handle,
+        request_epoch,
+        session_id,
+        1,
+        publication_permit.generation,
+        roots.checkpoint,
+        roots.successor_segment,
+        roots.target_ownership_intent,
+        roots.prepared_archive,
+        roots.predecessor_selector,
+    );
+    var start = std.atomic.Value(bool).init(false);
+
+    const Committer = struct {
+        scheduler: *Scheduler,
+        start: *std.atomic.Value(bool),
+        handoff: PublicationHandoffV1,
+        result: ?SourceExitCommitV1 = null,
+        operation_error: ?Error = null,
+
+        fn run(self: *@This()) void {
+            while (!self.start.load(.acquire)) std.atomic.spinLoopHint();
+            self.result = self.scheduler.commitPublicationHandoffV1(
+                self.handoff,
+            ) catch |err| {
+                self.operation_error = err;
+                return;
+            };
+        }
+    };
+    const Aborter = struct {
+        scheduler: *Scheduler,
+        start: *std.atomic.Value(bool),
+        handoff: PublicationHandoffV1,
+        succeeded: bool = false,
+        operation_error: ?Error = null,
+
+        fn run(self: *@This()) void {
+            while (!self.start.load(.acquire)) std.atomic.spinLoopHint();
+            self.scheduler.abortPublicationHandoffV1(
+                self.handoff,
+            ) catch |err| {
+                self.operation_error = err;
+                return;
+            };
+            self.succeeded = true;
+        }
+    };
+
+    var committer: Committer = .{
+        .scheduler = &fixture.scheduler,
+        .start = &start,
+        .handoff = handoff,
+    };
+    var aborter: Aborter = .{
+        .scheduler = &fixture.scheduler,
+        .start = &start,
+        .handoff = handoff,
+    };
+    const commit_thread = try std.Thread.spawn(
+        .{},
+        Committer.run,
+        .{&committer},
+    );
+    const abort_thread = std.Thread.spawn(
+        .{},
+        Aborter.run,
+        .{&aborter},
+    ) catch |err| {
+        start.store(true, .release);
+        commit_thread.join();
+        return err;
+    };
+    start.store(true, .release);
+    commit_thread.join();
+    abort_thread.join();
+
+    const committed = committer.result != null;
+    try std.testing.expect(committed != aborter.succeeded);
+    if (committed) {
+        try std.testing.expectEqual(
+            Error.StalePublicationHandoff,
+            aborter.operation_error.?,
+        );
+        try std.testing.expect(sourceExitReceiptValidV1(
+            committer.result.?.receipt,
+            committer.result.?.event,
+        ));
+    } else {
+        try std.testing.expectEqual(
+            Error.StalePublicationHandoff,
+            committer.operation_error.?,
+        );
+        _ = try fixture.scheduler.cancelBoundPublication(
+            admission.handle,
+            request_epoch,
+            session_id,
+            1,
+        );
     }
     try std.testing.expect((try fixture.bank.snapshot()).used.isZero());
     try std.testing.expect(!(try fixture.scheduler.snapshot()).poisoned);

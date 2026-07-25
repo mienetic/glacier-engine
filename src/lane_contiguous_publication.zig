@@ -236,6 +236,71 @@ pub const Session = struct {
         };
     }
 
+    pub fn beginPublicationHandoffV1(
+        self: *Session,
+        checkpoint_sha256: Digest,
+        successor_segment_sha256: Digest,
+        target_ownership_intent_sha256: Digest,
+        prepared_archive_sha256: Digest,
+        predecessor_selector_sha256: Digest,
+    ) (Error || publication.Error || lane.Error)!lane.PublicationHandoffV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.initialized or self.phase != .idle or
+            self.active != null)
+            return Error.InvalidState;
+        _ = try self.snapshotVerifiedLocked();
+        return self.inner.beginPublicationHandoffV1(
+            checkpoint_sha256,
+            successor_segment_sha256,
+            target_ownership_intent_sha256,
+            prepared_archive_sha256,
+            predecessor_selector_sha256,
+        );
+    }
+
+    pub fn validatePublicationHandoffV1(
+        self: *Session,
+        handoff: lane.PublicationHandoffV1,
+    ) (Error || publication.Error || lane.Error)!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.initialized or self.phase != .idle or
+            self.active != null)
+            return Error.InvalidState;
+        _ = try self.snapshotVerifiedLocked();
+        try self.inner.validatePublicationHandoffV1(handoff);
+    }
+
+    pub fn abortPublicationHandoffV1(
+        self: *Session,
+        handoff: lane.PublicationHandoffV1,
+    ) (Error || publication.Error || lane.Error)!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.initialized or self.phase != .idle or
+            self.active != null)
+            return Error.InvalidState;
+        _ = try self.snapshotVerifiedLocked();
+        try self.inner.abortPublicationHandoffV1(handoff);
+    }
+
+    pub fn commitPublicationHandoffV1(
+        self: *Session,
+        handoff: lane.PublicationHandoffV1,
+    ) (Error || publication.Error || lane.Error)!lane.SourceExitCommitV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.initialized or self.phase != .idle or
+            self.active != null)
+            return Error.InvalidState;
+        _ = try self.snapshotVerifiedLocked();
+        const committed =
+            try self.inner.commitPublicationHandoffV1(handoff);
+        self.initialized = false;
+        return committed;
+    }
+
     /// Cancel an active bound request and return its atomic Event-v1 terminal
     /// evidence after verifying that no concrete state escaped privately.
     pub fn cancel(

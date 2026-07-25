@@ -2744,18 +2744,577 @@ test "compact multi-page INT4 generation matches eager generation" {
         prepared_session.result_receipt,
     );
 
-    // R1h consumes the exact R1g records into a fresh, live target receipt and
-    // an empty LeaseTree/scope. The retained adoption barrier prevents service
-    // before the later KV materialization/activation gate. Publication resumes
-    // at N with the source Bank permit generation seeded as a strict floor.
+    // The durable source handoff freezes the exact R1g boundary without
+    // changing any logical Session, Scheduler, or Bank snapshot. A coherently
+    // re-rooted capability is still stale because only the exact retained
+    // value can consume the barrier. Abort restores ordinary service.
+    var handoff_directory = testing.tmpDir(.{});
+    defer handoff_directory.cleanup();
+    var source_live_storage: [1024]u8 = undefined;
+    const source_live_set =
+        try engine.prepared_text_source_lease
+            .encodeSourceLiveSetV1(
+            checkpoint_expected.request_epoch,
+            checkpoint_expected.publication_next_sequence,
+            checkpoint_challenge,
+            &source_live_storage,
+        );
+    const source_live_selector =
+        try engine.core.continuation_checkpoint_file
+            .prepareInitialSelectorV1(source_live_set);
+    const handoff_max_set_bytes: usize = 1024 * 1024;
+    const handoff_active_storage =
+        try testing.allocator.alloc(
+            u8,
+            handoff_max_set_bytes,
+        );
+    defer testing.allocator.free(handoff_active_storage);
+    var handoff_lock_storage: [1]u8 = undefined;
+    var handoff_lease =
+        try engine.core.continuation_checkpoint_file
+            .LeaseV1.create(
+            handoff_directory.dir,
+            0x5458_4844,
+            checkpoint_challenge,
+            source_live_set,
+            source_live_selector,
+            handoff_max_set_bytes,
+            &handoff_lock_storage,
+            handoff_active_storage,
+        );
+    defer handoff_lease.close();
+    var source_live_grant: engine.prepared_text_source_lease.SourceLiveGrantV1 =
+        .{};
+    try engine.prepared_text_source_lease
+        .initSourceLiveGrantV1(
+        &source_live_grant,
+        &handoff_lease,
+    );
+    try prepared_session.attachSourceLiveGrantV1(
+        &source_live_grant,
+    );
+    const prepared_archive_sha256 =
+        model_contract.sha256("prepared-source-archive-v1");
+    const predecessor_selector_sha256 =
+        handoff_lease.selectorRoot();
+    const handoff_boundary_before =
+        try prepared_session.snapshotVerified();
+    const handoff_scheduler_before =
+        try session_scheduler.snapshot();
+    const handoff_bank_before = try session_bank.snapshot();
+    const handoff_result_state_before =
+        prepared_session.result_publication_state;
+    const handoff_receipt_before = prepared_session.result_receipt;
+    const source_handoff =
+        try prepared_session.beginDurableHandoffV1(
+            prepared_checkpoint,
+            checkpoint_challenge,
+            successor_target,
+            prepared_archive_sha256,
+            predecessor_selector_sha256,
+        );
+    try prepared_session.validateDurableHandoffV1();
+    try testing.expectEqualSlices(
+        u8,
+        &successor_artifacts.segment.source_checkpoint_sha256,
+        &source_handoff.checkpoint_sha256,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &successor_artifacts.segment.segment_sha256,
+        &source_handoff.successor_segment_sha256,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &successor_artifacts.segment.ownership_intent_sha256,
+        &source_handoff.target_ownership_intent_sha256,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &prepared_archive_sha256,
+        &source_handoff.prepared_archive_sha256,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &predecessor_selector_sha256,
+        &source_handoff.predecessor_selector_sha256,
+    );
+    try testing.expectError(
+        engine.lane_weave_qos.Error.PublicationHandoffInFlight,
+        session_scheduler.prepareService(),
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.captureCheckpointV1(
+            testing.allocator,
+            checkpoint_challenge,
+        ),
+    );
+    try testing.expectError(
+        engine.lane_weave_qos.Error.PublicationHandoffInFlight,
+        prepared_session.cancel(),
+    );
+
+    var substituted_handoff = source_handoff;
+    substituted_handoff.prepared_archive_sha256[0] ^= 1;
+    substituted_handoff.handoff_sha256 =
+        engine.lane_weave_qos.publicationHandoffSha256(
+            substituted_handoff,
+        );
+    try testing.expectError(
+        engine.lane_weave_qos.Error.StalePublicationHandoff,
+        prepared_session.inner.inner.publication_session
+            .validatePublicationHandoffV1(substituted_handoff),
+    );
+    var rebound_handoff = source_handoff;
+    rebound_handoff.expected_next_sequence += 1;
+    rebound_handoff.handoff_sha256 =
+        engine.lane_weave_qos.publicationHandoffSha256(
+            rebound_handoff,
+        );
+    try testing.expectError(
+        engine.lane_publication_txn.Error.InvalidState,
+        prepared_session.inner.inner.publication_session
+            .validatePublicationHandoffV1(rebound_handoff),
+    );
+    try testing.expectEqualDeep(
+        handoff_boundary_before,
+        try prepared_session.snapshotVerified(),
+    );
+    try testing.expectEqualDeep(
+        handoff_scheduler_before,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        handoff_bank_before,
+        try session_bank.snapshot(),
+    );
+
+    try prepared_session.abortDurableHandoffV1();
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.validateDurableHandoffV1(),
+    );
+    try testing.expectError(
+        engine.lane_weave_qos.Error.StalePublicationHandoff,
+        prepared_session.inner.inner.publication_session
+            .validatePublicationHandoffV1(source_handoff),
+    );
+    try testing.expectEqualDeep(
+        handoff_boundary_before,
+        try prepared_session.snapshotVerified(),
+    );
+    try testing.expectEqualDeep(
+        handoff_scheduler_before,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        handoff_bank_before,
+        try session_bank.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        handoff_result_state_before,
+        prepared_session.result_publication_state,
+    );
+    try testing.expectEqualDeep(
+        handoff_receipt_before,
+        prepared_session.result_receipt,
+    );
+    try prepared_session.releaseSourceLiveGrantV1();
+    try testing.expectEqual(
+        engine.prepared_text_source_lease
+            .SourceLivePhaseV1.completed,
+        source_live_grant.phase,
+    );
+    const service_after_handoff_abort =
+        try session_scheduler.prepareService();
+    try session_scheduler.abortService(service_after_handoff_abort);
+
+    // Commit is exercised on an isolated source that reuses the same prepared
+    // model/plan fixture. It atomically releases the sole Scheduler/Bank
+    // authority while leaving concrete buffers available only for deinit.
+    var exit_bank_slots: [1]engine.resource_bank.Slot = undefined;
+    var exit_bank = try engine.resource_bank.Bank.init(
+        &exit_bank_slots,
+        .{},
+        0x5458_4842,
+    );
+    var exit_lane_slots: [1]engine.lane_weave_qos.Slot = undefined;
+    var exit_projection: [1]engine.lane_weave_qos.ProjectionSlot = undefined;
+    var exit_scheduler = try engine.lane_weave_qos.Scheduler.init(
+        &exit_bank,
+        .{
+            .slots = &exit_lane_slots,
+            .projection = &exit_projection,
+        },
+        .{
+            .scheduler_epoch = 0x5458_4853,
+            .challenge = [_]u8{0x78} ** 32,
+            .max_weight = 1,
+        },
+    );
+    const exit_scheduling: engine.prepared_text_session.SchedulingV1 = .{
+        .tenant_key = 109,
+        .request_key = 110,
+        .request_generation = 1,
+        .resource_owner_key = 111,
+        .weight = 1,
+    };
+    var exit_bound_input = bound_input;
+    exit_bound_input.request_epoch = 0x5458_4850;
+    const exit_bound_plan =
+        try engine.prepared_text_session.makeBoundPlanV1(
+            prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            exit_scheduling,
+            &exit_scheduler,
+            exit_bound_input,
+        );
+    const exit_challenge = checkpoint_challenge;
+    var exit_handoff_directory = testing.tmpDir(.{});
+    defer exit_handoff_directory.cleanup();
+    var exit_source_live_storage: [1024]u8 = undefined;
+    const exit_source_live_set =
+        try engine.prepared_text_source_lease
+            .encodeSourceLiveSetV1(
+            exit_bound_plan.execution.request_epoch,
+            1,
+            exit_challenge,
+            &exit_source_live_storage,
+        );
+    const exit_source_live_selector =
+        try engine.core.continuation_checkpoint_file
+            .prepareInitialSelectorV1(
+            exit_source_live_set,
+        );
+    const exit_active_storage =
+        try testing.allocator.alloc(
+            u8,
+            handoff_max_set_bytes,
+        );
+    defer testing.allocator.free(exit_active_storage);
+    var exit_lock_storage: [1]u8 = undefined;
+    var exit_lease =
+        try engine.core.continuation_checkpoint_file
+            .LeaseV1.create(
+            exit_handoff_directory.dir,
+            0x5458_4845,
+            exit_challenge,
+            exit_source_live_set,
+            exit_source_live_selector,
+            handoff_max_set_bytes,
+            &exit_lock_storage,
+            exit_active_storage,
+        );
+    defer {
+        if (exit_lease.consumer_claim) |claim| {
+            exit_lease.releaseConsumerClaimV1(
+                claim,
+            ) catch {};
+        }
+        exit_lease.close();
+    }
+    var exit_source_live_grant: engine.prepared_text_source_lease.SourceLiveGrantV1 =
+        .{};
+    try engine.prepared_text_source_lease
+        .initSourceLiveGrantV1(
+        &exit_source_live_grant,
+        &exit_lease,
+    );
+    var exit_session: engine.prepared_text_session.SessionV3 = .{};
+    const exit_start = try exit_session.start(
+        testing.allocator,
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        exit_bound_input,
+        exit_bound_plan,
+        exit_scheduling,
+        &exit_scheduler,
+        &exit_bank,
+    );
+    switch (exit_start) {
+        .started => |event| try expectPreparedStartEvent(
+            event,
+            session_plan,
+        ),
+        .rejected => return error.TestUnexpectedResult,
+    }
+    var exit_sink: PreparedTextSink = .{};
+    const exit_first_permit = try exit_scheduler.prepareService();
+    _ = try exit_session.step(
+        exit_first_permit,
+        exit_sink.interface(),
+    );
+    try exit_session.attachSourceLiveGrantV1(
+        &exit_source_live_grant,
+    );
+    const exit_checkpoint = try exit_session.captureCheckpointV1(
+        testing.allocator,
+        exit_challenge,
+    );
+    defer testing.allocator.free(exit_checkpoint);
+    const exit_boundary = try exit_session.snapshotVerified();
+    var exit_expected = checkpoint_expected;
+    exit_expected.bound_plan_sha256 =
+        exit_bound_plan.bound_plan_sha256;
+    exit_expected.execution_plan_sha256 =
+        exit_bound_plan.execution.plan_sha256;
+    exit_expected.residency_binding_sha256 =
+        exit_bound_plan.residency.binding_sha256;
+    exit_expected.boundary_sha256 =
+        exit_boundary.boundary_sha256;
+    exit_expected.transcript_sha256 =
+        exit_boundary.base.publication.transcript_sha256;
+    exit_expected.state_commitment_sha256 =
+        exit_boundary.base.publication
+            .state.commitment_sha256;
+    exit_expected.request_epoch =
+        exit_bound_plan.execution.request_epoch;
+    exit_expected.publication_next_sequence =
+        exit_boundary.base.publication.next_sequence;
+    exit_expected.kv_positions = @intCast(
+        exit_session.inner.inner.resources.cache.len,
+    );
+    exit_expected.output_count = @intCast(
+        exit_session.outputTokens().len,
+    );
+    exit_expected.sampling_calls =
+        exit_session.inner.inner.sampling_calls;
+    const exit_source: engine.prepared_text_successor.SourceContextV1 = .{
+        .bound_plan_sha256 = exit_bound_plan.bound_plan_sha256,
+        .execution = exit_bound_plan.execution,
+        .residency = exit_bound_plan.residency,
+        .boundary_sha256 = exit_boundary.boundary_sha256,
+        .publication = exit_boundary.base.publication,
+        .receipt = exit_session.result_receipt,
+    };
+    var exit_target = successor_target;
+    exit_target.request_generation =
+        exit_bound_plan.execution.generation + 1;
+    exit_target.intent_generation =
+        exit_bound_plan.execution.generation + 1;
+    const exit_manifest_bytes =
+        try engine.prepared_text_restart_manifest
+            .encodedBytesV1(prompt.len);
+    const exit_manifest_storage =
+        try testing.allocator.alloc(
+            u8,
+            exit_manifest_bytes,
+        );
+    defer testing.allocator.free(exit_manifest_storage);
+    const exit_manifest =
+        try engine.prepared_text_restart_manifest.encodeV1(
+            .{
+                .prompt = &prompt,
+                .options = session_options,
+                .plan = session_plan,
+                .bound_plan = exit_bound_plan,
+                .expected_checkpoint = exit_expected,
+                .source = exit_source,
+                .target = exit_target,
+            },
+            exit_manifest_storage,
+        );
+    const exit_archive_bytes =
+        try engine.prepared_text_handoff_archive
+            .encodedRestartArchiveBytesV1(
+            exit_checkpoint.len,
+            exit_manifest.bytes.len,
+        );
+    const exit_archive_storage =
+        try testing.allocator.alloc(
+            u8,
+            exit_archive_bytes,
+        );
+    defer testing.allocator.free(exit_archive_storage);
+    const exit_archive =
+        try engine.prepared_text_handoff_archive
+            .encodeRestartArchiveV1(
+            1,
+            [_]u8{0} ** 32,
+            exit_checkpoint,
+            exit_manifest.bytes,
+            exit_archive_storage,
+        );
+    const exit_handoff =
+        try exit_session.beginDurableHandoffV1(
+            exit_checkpoint,
+            exit_challenge,
+            exit_target,
+            exit_archive.set.checkpoint_sha256,
+            exit_lease.selectorRoot(),
+        );
+    const source_exit = try exit_session.commitDurableHandoffV1();
+    const exit_authority_bytes =
+        try engine.prepared_text_durable_handoff
+            .encodedSourceExitedSetBytesV1(
+            exit_archive.set.bytes.len,
+        );
+    const exit_authority_storage =
+        try testing.allocator.alloc(
+            u8,
+            exit_authority_bytes,
+        );
+    defer testing.allocator.free(exit_authority_storage);
+    const exit_authority =
+        try engine.prepared_text_durable_handoff
+            .encodeSourceExitedSetV1(
+            exit_archive,
+            source_exit,
+            exit_source_live_set.checkpoint_sha256,
+            exit_authority_storage,
+        );
+    const exit_publication =
+        try engine.core.continuation_checkpoint_file
+            .preparePublicationV1(
+            &exit_lease,
+            exit_authority,
+        );
+    const exit_applied =
+        try engine.core.continuation_checkpoint_file
+            .publishV1(
+            &exit_lease,
+            exit_publication,
+        );
+    try testing.expectEqual(
+        engine.core.continuation_checkpoint_file
+            .ApplyDispositionV1.applied,
+        exit_applied.disposition,
+    );
+    try exit_session.completeDurableHandoffV1(.{
+        .checkpoint_sha256 = exit_applied.checkpoint_sha256,
+        .selector_sha256 = exit_applied.selector_sha256,
+    });
+    try testing.expectEqual(
+        engine.prepared_text_source_lease
+            .SourceLivePhaseV1.completed,
+        exit_source_live_grant.phase,
+    );
+    try testing.expect(
+        engine.lane_weave_qos.sourceExitReceiptValidV1(
+            source_exit.receipt,
+            source_exit.event,
+        ),
+    );
+    try testing.expectEqual(
+        engine.lane_weave_qos.EventKind.cancel,
+        source_exit.event.kind,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &exit_handoff.handoff_sha256,
+        &engine.lane_weave_qos.publicationHandoffSha256(
+            exit_handoff,
+        ),
+    );
+    try testing.expect(!exit_session.result_receipt_live);
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        exit_session.step(
+            exit_first_permit,
+            exit_sink.interface(),
+        ),
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        exit_session.captureCheckpointV1(
+            testing.allocator,
+            exit_challenge,
+        ),
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        exit_session.cancel(),
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        exit_session.commitDurableHandoffV1(),
+    );
+    const exit_scheduler_after =
+        try exit_scheduler.snapshot();
+    const exit_bank_after = try exit_bank.snapshot();
+    try testing.expectEqual(@as(u32, 0), exit_scheduler_after.active);
+    try testing.expect(exit_scheduler_after.used.isZero());
+    try testing.expect(exit_bank_after.used.isZero());
+    try testing.expectEqual(
+        @as(usize, 0),
+        exit_bank_after.committed_receipts,
+    );
+    exit_session.deinit();
+    try testing.expectEqualDeep(
+        exit_scheduler_after,
+        try exit_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        exit_bank_after,
+        try exit_bank.snapshot(),
+    );
+    _ = try exit_scheduler.close();
+
+    const selected_exit =
+        try engine.prepared_text_durable_handoff
+            .decodeSourceExitedSetV1(
+            exit_lease.stream(),
+            exit_lease.selector,
+            exit_source_live_set.checkpoint_sha256,
+        );
+    var activation_grant: engine.prepared_text_restore_admission
+        .SelectedSourceExitGrantV1 = .{};
+    try engine.prepared_text_durable_handoff
+        .initSelectedSourceExitGrantV1(
+        &activation_grant,
+        &exit_lease,
+        selected_exit,
+    );
+    var duplicate_activation_grant: engine.prepared_text_restore_admission
+        .SelectedSourceExitGrantV1 = .{};
+    try testing.expectError(
+        engine.prepared_text_durable_handoff
+            .Error.InvalidActivationGrant,
+        engine.prepared_text_durable_handoff
+            .initSelectedSourceExitGrantV1(
+            &duplicate_activation_grant,
+            &exit_lease,
+            selected_exit,
+        ),
+    );
+    const selected_plan =
+        try selected_exit.evidence.archive.object(
+            .extension,
+            engine.prepared_text_handoff_archive
+                .successor_plan_object_ordinal,
+        );
+    const selected_residency =
+        try selected_exit.evidence.archive.object(
+            .extension,
+            engine.prepared_text_handoff_archive
+                .successor_residency_object_ordinal,
+        );
+    const selected_segment =
+        try selected_exit.evidence.archive.object(
+            .extension,
+            engine.prepared_text_handoff_archive
+                .successor_segment_object_ordinal,
+        );
+    const selected_manifest =
+        selected_exit.evidence.manifest;
+
+    // R1h consumes the exact selector-selected records into a fresh target
+    // receipt and an empty LeaseTree/scope. The retained adoption barrier
+    // prevents service before materialization. Publication resumes at N with
+    // the source Bank permit generation seeded as a strict floor.
     const restore_evidence: engine.prepared_text_restore_admission.EvidenceV1 = .{
-        .encoded_plan = &encoded_successor_plan,
-        .encoded_residency = &encoded_successor_residency,
-        .encoded_segment = &encoded_successor_segment,
-        .encoded_checkpoint = prepared_checkpoint,
-        .expected_checkpoint = checkpoint_expected,
-        .source = successor_source,
-        .target = successor_target,
+        .encoded_plan = selected_plan.bytes,
+        .encoded_residency = selected_residency.bytes,
+        .encoded_segment = selected_segment.bytes,
+        .encoded_checkpoint = selected_exit.evidence.checkpoint.encoded,
+        .expected_checkpoint = selected_manifest.expected_checkpoint,
+        .source = selected_manifest.source,
+        .target = selected_manifest.target,
     };
     var foreign_restore_bank_slots: [1]engine.resource_bank.Slot = undefined;
     var foreign_restore_tree_roots: [1]engine.resource_bank.LeaseTreeRootSlot = undefined;
@@ -2797,6 +3356,7 @@ test "compact multi-page INT4 generation matches eager generation" {
             &foreign_restore_bank,
             @intFromPtr(&foreign_successor_session_identity),
             restore_evidence,
+            &activation_grant,
         ),
     );
     try testing.expectEqualDeep(
@@ -2816,6 +3376,7 @@ test "compact multi-page INT4 generation matches eager generation" {
             &successor_target_bank,
             restored_session.restoredPublicationSessionIdV1(),
             restore_evidence,
+            &activation_grant,
         );
     var prepared_restore = switch (restored_decision) {
         .prepared => |value| value,
@@ -2826,22 +3387,23 @@ test "compact multi-page INT4 generation matches eager generation" {
         .validatePreparedRestoredAdmissionV1(
         &prepared_restore,
         restore_evidence,
+        &activation_grant,
     );
     try testing.expectEqual(
-        checkpoint_expected.publication_next_sequence,
+        exit_expected.publication_next_sequence,
         prepared_restore.publication_next_sequence,
     );
     try testing.expectEqual(
-        checkpoint_boundary.base.publication
+        exit_boundary.base.publication
             .last_resource_permit_generation,
         prepared_restore.source_last_resource_permit_generation,
     );
     try testing.expectEqual(
-        successor_target.cache_node_key,
+        exit_target.cache_node_key,
         prepared_restore.target.cache_node_key,
     );
     try testing.expectEqual(
-        successor_target.cache_binding_key,
+        exit_target.cache_binding_key,
         prepared_restore.target.cache_binding_key,
     );
     try testing.expect(prepared_restore.tree.current.isZero());
@@ -2877,6 +3439,7 @@ test "compact multi-page INT4 generation matches eager generation" {
             .validatePreparedRestoredAdmissionV1(
             &forged_prepared_restore,
             restore_evidence,
+            &activation_grant,
         ),
     );
     try testing.expectEqualDeep(
@@ -2898,9 +3461,10 @@ test "compact multi-page INT4 generation matches eager generation" {
         &prompt,
         session_options,
         session_plan,
-        bound_plan,
+        exit_bound_plan,
         &prepared_restore,
         restore_evidence,
+        &activation_grant,
     );
     try testing.expectEqual(
         engine.prepared_text_restore_admission.Phase.activated,
@@ -2909,20 +3473,20 @@ test "compact multi-page INT4 generation matches eager generation" {
     const restored_boundary =
         try restored_session.snapshotVerified();
     try testing.expectEqual(
-        checkpoint_boundary.base.publication.next_sequence,
+        exit_boundary.base.publication.next_sequence,
         restored_boundary.base.publication.sequence_base,
     );
     try testing.expectEqualDeep(
-        checkpoint_boundary.base.publication.state,
+        exit_boundary.base.publication.state,
         restored_boundary.base.publication.state,
     );
     try testing.expectEqualSlices(
         u8,
-        &checkpoint_boundary.base.publication.transcript_sha256,
+        &exit_boundary.base.publication.transcript_sha256,
         &restored_boundary.base.publication.transcript_sha256,
     );
     try testing.expectEqual(
-        checkpoint_boundary.base.publication
+        exit_boundary.base.publication
             .last_resource_permit_generation,
         restored_boundary.base.publication
             .last_resource_permit_generation,
@@ -2959,20 +3523,20 @@ test "compact multi-page INT4 generation matches eager generation" {
         restored_next.proposal.transition,
     );
     try testing.expectEqual(
-        checkpoint_expected.publication_next_sequence,
+        exit_expected.publication_next_sequence,
         restored_next.proposal.sequence_base,
     );
     try testing.expectEqual(
-        checkpoint_expected.publication_next_sequence,
+        exit_expected.publication_next_sequence,
         restored_next.proposal.transaction_sequence,
     );
     try testing.expectEqualSlices(
         u8,
-        &checkpoint_boundary.base.publication.transcript_sha256,
+        &exit_boundary.base.publication.transcript_sha256,
         &restored_next.proposal.previous_transcript_sha256,
     );
     try testing.expectEqual(
-        checkpoint_boundary.base.publication
+        exit_boundary.base.publication
             .last_resource_permit_generation + 1,
         restored_next.proposal.resource_permit_generation,
     );
@@ -3053,10 +3617,11 @@ test "compact multi-page INT4 generation matches eager generation" {
     var stale_prepared_restore = copied_prepared_restore;
     try testing.expectError(
         engine.prepared_text_restore_admission
-            .Error.InvalidPreparedAdmission,
+            .Error.InvalidActivationGrant,
         engine.prepared_text_restore_admission
             .abortPreparedRestoredAdmissionV1(
             &stale_prepared_restore,
+            &activation_grant,
         ),
     );
     _ = try successor_target_scheduler.close();

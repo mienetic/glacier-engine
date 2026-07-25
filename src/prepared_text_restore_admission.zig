@@ -15,6 +15,7 @@ const std = @import("std");
 const core = @import("core");
 const lane = core.lane_weave_qos;
 const resource_bank = core.resource_bank;
+const checkpoint_file = core.continuation_checkpoint_file;
 const checkpoint = @import("prepared_text_checkpoint.zig");
 const successor = @import("prepared_text_successor.zig");
 
@@ -22,8 +23,11 @@ pub const canonical_request_weight: u16 = 1;
 pub const canonical_deadline_tick: u64 = 0;
 const bootstrap_domain =
     "glacier-prepared-text-restored-admission-bootstrap-v1\x00";
+const activation_grant_domain =
+    "glacier-prepared-text-selected-source-exit-grant-v1\x00";
 
 pub const Error = error{
+    InvalidActivationGrant,
     InvalidLiveTarget,
     InvalidPreparedAdmission,
     RecoveryRequired,
@@ -47,6 +51,56 @@ pub const Phase = enum(u8) {
     publication_session_closed,
     lease_tree_closed,
     aborted,
+};
+
+pub const ActivationGrantPhase = enum(u8) {
+    empty,
+    ready,
+    preparing,
+    prepared,
+    consumed,
+    terminal_selected,
+    completed,
+};
+
+/// Address-stable, process-local authority derived only from the active
+/// generation-two selector while its exclusive file lease is held. Copies
+/// fail the self-address fence. The lease must remain open and selector-stable
+/// through restored activation and terminal publication.
+pub const SelectedSourceExitGrantV1 = struct {
+    lease: ?*checkpoint_file.LeaseV1 = null,
+    self_address: usize = 0,
+    lease_address: usize = 0,
+    consumer_claim: checkpoint_file.ConsumerClaimV1 = .{},
+    initial_consumer_claim_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    source_scheduler_epoch: u64 = 0,
+    source_coordinator_id: u64 = 0,
+    source_bank_epoch: u64 = 0,
+    request_epoch: u64 = 0,
+    publication_next_sequence: u64 = 0,
+    source_last_resource_permit_generation: u64 = 0,
+    source_selector_generation: u64 = 0,
+    terminal_selector_generation: u64 = 0,
+    authority_checkpoint_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    selected_selector_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    predecessor_selector_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    source_exit_sha256: successor.Digest = [_]u8{0} ** 32,
+    source_receipt_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    checkpoint_sha256: successor.Digest = [_]u8{0} ** 32,
+    prepared_archive_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    successor_segment_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    ownership_intent_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    challenge_sha256: successor.Digest = [_]u8{0} ** 32,
+    grant_sha256: successor.Digest = [_]u8{0} ** 32,
+    phase: ActivationGrantPhase = .empty,
 };
 
 pub const PrepareRecoveryPhase = enum(u8) {
@@ -76,6 +130,16 @@ pub const PreparedRestoredAdmissionV1 = struct {
     successor_segment_sha256: successor.Digest,
     ownership_intent_sha256: successor.Digest,
     challenge_sha256: successor.Digest,
+    activation_grant_address: usize = 0,
+    activation_lease_address: usize = 0,
+    activation_grant_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    selected_authority_checkpoint_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    selected_selector_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    selected_source_exit_sha256: successor.Digest =
+        [_]u8{0} ** 32,
     bootstrap_sha256: successor.Digest,
     phase: Phase = .prepared,
 };
@@ -95,6 +159,9 @@ pub const PrepareRecoveryV1 = struct {
     request_epoch: u64,
     publication_next_sequence: u64,
     source_last_resource_permit_generation: u64,
+    activation_grant: ?*SelectedSourceExitGrantV1 = null,
+    activation_grant_sha256: successor.Digest =
+        [_]u8{0} ** 32,
     phase: PrepareRecoveryPhase = .adoption_held,
 };
 
@@ -138,6 +205,185 @@ pub fn materializedClaimV1(
     return result;
 }
 
+pub fn validateSelectedSourceExitGrantV1(
+    grant: *const SelectedSourceExitGrantV1,
+    expected_phase: ActivationGrantPhase,
+) !void {
+    const lease = grant.lease orelse
+        return Error.InvalidActivationGrant;
+    if (expected_phase == .empty or
+        expected_phase == .completed or
+        grant.phase != expected_phase or
+        grant.self_address != @intFromPtr(grant) or
+        grant.lease_address != @intFromPtr(lease) or
+        lease.state != .ready or
+        grant.source_scheduler_epoch == 0 or
+        grant.source_coordinator_id == 0 or
+        grant.source_bank_epoch == 0 or
+        grant.request_epoch == 0 or
+        grant.publication_next_sequence == 0 or
+        grant.source_last_resource_permit_generation == 0 or
+        grant.source_last_resource_permit_generation ==
+            std.math.maxInt(u64) or
+        grant.source_selector_generation == 0 or
+        grant.terminal_selector_generation <=
+            grant.source_selector_generation or
+        grant.consumer_claim.owner_address !=
+            grant.self_address or
+        grant.consumer_claim.lease_address !=
+            grant.lease_address or
+        grant.consumer_claim.claim_generation == 0 or
+        isZeroDigest(
+            grant.initial_consumer_claim_sha256,
+        ) or
+        isZeroDigest(grant.authority_checkpoint_sha256) or
+        isZeroDigest(grant.selected_selector_sha256) or
+        isZeroDigest(grant.predecessor_selector_sha256) or
+        isZeroDigest(grant.source_exit_sha256) or
+        isZeroDigest(grant.source_receipt_sha256) or
+        isZeroDigest(grant.checkpoint_sha256) or
+        isZeroDigest(grant.prepared_archive_sha256) or
+        isZeroDigest(grant.successor_segment_sha256) or
+        isZeroDigest(grant.ownership_intent_sha256) or
+        isZeroDigest(grant.challenge_sha256) or
+        !std.mem.eql(
+            u8,
+            &grant.grant_sha256,
+            &selectedSourceExitGrantRootV1(grant.*),
+        ))
+        return Error.InvalidActivationGrant;
+    lease.validateConsumerClaimV1(
+        grant.consumer_claim,
+    ) catch return Error.InvalidActivationGrant;
+    const active_set = lease.activeSet() catch
+        return Error.InvalidActivationGrant;
+    if (active_set.metadata.request_epoch !=
+        grant.request_epoch or
+        !std.mem.eql(
+            u8,
+            &active_set.metadata.challenge_sha256,
+            &grant.challenge_sha256,
+        ))
+        return Error.InvalidActivationGrant;
+    if (expected_phase == .terminal_selected) {
+        if (lease.selector.generation !=
+            grant.terminal_selector_generation or
+            active_set.metadata.generation !=
+                grant.terminal_selector_generation or
+            active_set.metadata.publication_next_sequence <=
+                grant.publication_next_sequence or
+            !std.mem.eql(
+                u8,
+                &lease.selector.previous_selector_sha256,
+                &grant.selected_selector_sha256,
+            ) or !std.mem.eql(
+            u8,
+            &active_set.metadata.parent_checkpoint_sha256,
+            &grant.authority_checkpoint_sha256,
+        ))
+            return Error.InvalidActivationGrant;
+    } else {
+        if (!std.mem.eql(
+            u8,
+            &grant.consumer_claim.claim_sha256,
+            &grant.initial_consumer_claim_sha256,
+        ) or lease.selector.generation !=
+            grant.source_selector_generation or
+            active_set.metadata.generation !=
+                grant.source_selector_generation or
+            lease.selector.publication_next_sequence !=
+                grant.publication_next_sequence or
+            active_set.metadata.publication_next_sequence !=
+                grant.publication_next_sequence or
+            !std.mem.eql(
+                u8,
+                &lease.selector.selector_sha256,
+                &grant.selected_selector_sha256,
+            ) or !std.mem.eql(
+            u8,
+            &active_set.checkpoint_sha256,
+            &grant.authority_checkpoint_sha256,
+        ) or !std.mem.eql(
+            u8,
+            &lease.selector.previous_selector_sha256,
+            &grant.predecessor_selector_sha256,
+        ))
+            return Error.InvalidActivationGrant;
+    }
+}
+
+/// Address-bearing grant identity. `phase` is intentionally excluded so the
+/// immutable identity survives ready -> preparing -> prepared -> consumed;
+/// phase transitions remain single-threaded under the pinned-address contract.
+pub fn selectedSourceExitGrantRootV1(
+    grant: SelectedSourceExitGrantV1,
+) successor.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(activation_grant_domain);
+    hashU64(&hash, grant.self_address);
+    hashU64(&hash, grant.lease_address);
+    hash.update(&grant.initial_consumer_claim_sha256);
+    hashU64(&hash, grant.source_scheduler_epoch);
+    hashU64(&hash, grant.source_coordinator_id);
+    hashU64(&hash, grant.source_bank_epoch);
+    hashU64(&hash, grant.request_epoch);
+    hashU64(&hash, grant.publication_next_sequence);
+    hashU64(
+        &hash,
+        grant.source_last_resource_permit_generation,
+    );
+    hashU64(&hash, grant.source_selector_generation);
+    hashU64(&hash, grant.terminal_selector_generation);
+    hash.update(&grant.authority_checkpoint_sha256);
+    hash.update(&grant.selected_selector_sha256);
+    hash.update(&grant.predecessor_selector_sha256);
+    hash.update(&grant.source_exit_sha256);
+    hash.update(&grant.source_receipt_sha256);
+    hash.update(&grant.checkpoint_sha256);
+    hash.update(&grant.prepared_archive_sha256);
+    hash.update(&grant.successor_segment_sha256);
+    hash.update(&grant.ownership_intent_sha256);
+    hash.update(&grant.challenge_sha256);
+    var digest: successor.Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+/// Abandon a not-yet-prepared grant and release the process-local claim while
+/// leaving the durable generation-two selector available for a later target.
+pub fn releaseReadyActivationGrantV1(
+    grant: *SelectedSourceExitGrantV1,
+) !void {
+    try validateSelectedSourceExitGrantV1(grant, .ready);
+    const lease = grant.lease orelse
+        return Error.InvalidActivationGrant;
+    lease.releaseConsumerClaimV1(
+        grant.consumer_claim,
+    ) catch return Error.InvalidActivationGrant;
+    grant.phase = .completed;
+}
+
+/// Called only after the restored Scheduler/Bank authority is closed. A
+/// terminal target must already have selected generation three; cancellation
+/// releases generation two for deterministic retry.
+pub fn completeRestoredActivationGrantV1(
+    grant: *SelectedSourceExitGrantV1,
+    terminal: bool,
+) void {
+    const expected_phase: ActivationGrantPhase =
+        if (terminal) .terminal_selected else .consumed;
+    validateSelectedSourceExitGrantV1(
+        grant,
+        expected_phase,
+    ) catch @panic("restored activation grant drift");
+    const lease = grant.lease orelse
+        @panic("restored activation lease missing");
+    lease.releaseConsumerClaimV1(
+        grant.consumer_claim,
+    ) catch @panic("restored activation claim release failed");
+    grant.phase = .completed;
+}
+
 /// Verify all portable evidence and a genuinely fresh live target before
 /// installing one adoption barrier. Tree/scope/session setup occurs behind
 /// that barrier, so no Scheduler service can observe partial restore state.
@@ -146,9 +392,14 @@ pub fn prepareRestoredAdmissionV1(
     bank: *resource_bank.Bank,
     session_id: usize,
     evidence: EvidenceV1,
+    activation_grant: *SelectedSourceExitGrantV1,
 ) !PrepareDecisionV1 {
     if (session_id == 0)
         return Error.InvalidLiveTarget;
+    try validateSelectedSourceExitGrantV1(
+        activation_grant,
+        .ready,
+    );
     const artifacts =
         successor.decodeAndVerifyForCheckpointV1(
             evidence.encoded_plan,
@@ -160,6 +411,12 @@ pub fn prepareRestoredAdmissionV1(
             evidence.target,
         ) catch |err| return err;
     const request_spec = requestSpecV1(artifacts, evidence.target);
+    try validateGrantForEvidenceV1(
+        activation_grant,
+        .ready,
+        evidence,
+        artifacts,
+    );
     try validateFreshTargetV1(
         scheduler,
         bank,
@@ -169,13 +426,20 @@ pub fn prepareRestoredAdmissionV1(
         request_spec,
     );
 
-    const decision = try scheduler.admitForPublicationAdoption(
+    activation_grant.phase = .preparing;
+    const decision = scheduler.admitForPublicationAdoption(
         request_spec,
         artifacts.segment.request_epoch,
         session_id,
-    );
+    ) catch |err| {
+        activation_grant.phase = .ready;
+        return err;
+    };
     const adoption = switch (decision) {
-        .rejected => |event| return .{ .rejected = event },
+        .rejected => |event| {
+            activation_grant.phase = .ready;
+            return .{ .rejected = event };
+        },
         .adopted => |value| value,
     };
 
@@ -188,6 +452,8 @@ pub fn prepareRestoredAdmissionV1(
         .request_epoch = artifacts.segment.request_epoch,
         .publication_next_sequence = artifacts.segment.sequence_base,
         .source_last_resource_permit_generation = artifacts.segment.source_last_resource_permit_generation,
+        .activation_grant = activation_grant,
+        .activation_grant_sha256 = activation_grant.grant_sha256,
     };
     const prepared = prepareAfterAdoptionV1(
         scheduler,
@@ -197,10 +463,35 @@ pub fn prepareRestoredAdmissionV1(
         artifacts,
         request_spec,
         adoption,
+        activation_grant,
         &recovery,
     ) catch |original_error| {
         _ = recoverPrepareRestoredAdmissionV1(&recovery) catch
             return .{ .recovery_required = recovery };
+        return original_error;
+    };
+    activation_grant.phase = .prepared;
+    validatePreparedRestoredAdmissionV1(
+        &prepared,
+        evidence,
+        activation_grant,
+    ) catch |original_error| {
+        activation_grant.phase = .preparing;
+        var cleanup = prepared;
+        _ = abortPreparedRestoredAdmissionV1Internal(
+            &cleanup,
+        ) catch {
+            recovery.tree = cleanup.tree;
+            recovery.scope = cleanup.scope;
+            recovery.phase = switch (cleanup.phase) {
+                .prepared => .publication_session_bound,
+                .publication_session_closed => .lease_tree_open,
+                .lease_tree_closed => .adoption_held,
+                .activated, .aborted => .recovered,
+            };
+            return .{ .recovery_required = recovery };
+        };
+        activation_grant.phase = .ready;
         return original_error;
     };
     return .{ .prepared = prepared };
@@ -240,6 +531,9 @@ pub fn recoverPrepareRestoredAdmissionV1(
                         recovery.adoption,
                     ) catch return Error.RecoveryRequired;
                 recovery.phase = .recovered;
+                if (recovery.activation_grant) |grant| {
+                    grant.phase = .ready;
+                }
                 return event;
             },
             .recovered => return Error.InvalidPreparedAdmission,
@@ -256,6 +550,7 @@ pub fn recoverPrepareRestoredAdmissionV1(
 pub fn validatePreparedRestoredAdmissionV1(
     prepared: *const PreparedRestoredAdmissionV1,
     evidence: EvidenceV1,
+    activation_grant: *const SelectedSourceExitGrantV1,
 ) !void {
     if (prepared.phase != .prepared or
         prepared.session_id == 0 or
@@ -267,6 +562,10 @@ pub fn validatePreparedRestoredAdmissionV1(
         prepared.source_last_resource_permit_generation ==
             std.math.maxInt(u64))
         return Error.InvalidPreparedAdmission;
+    validateSelectedSourceExitGrantV1(
+        activation_grant,
+        .prepared,
+    ) catch return Error.InvalidPreparedAdmission;
     if (!std.mem.eql(
         u8,
         &prepared.bootstrap_sha256,
@@ -318,8 +617,34 @@ pub fn validatePreparedRestoredAdmissionV1(
             u8,
             &artifacts.segment.challenge_sha256,
             &prepared.challenge_sha256,
-        ))
+        ) or prepared.activation_grant_address !=
+        @intFromPtr(activation_grant) or
+        prepared.activation_lease_address !=
+            activation_grant.lease_address or
+        !std.mem.eql(
+            u8,
+            &prepared.activation_grant_sha256,
+            &activation_grant.grant_sha256,
+        ) or !std.mem.eql(
+        u8,
+        &prepared.selected_authority_checkpoint_sha256,
+        &activation_grant.authority_checkpoint_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &prepared.selected_selector_sha256,
+        &activation_grant.selected_selector_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &prepared.selected_source_exit_sha256,
+        &activation_grant.source_exit_sha256,
+    ))
         return Error.InvalidPreparedAdmission;
+    try validateGrantForEvidenceV1(
+        activation_grant,
+        .prepared,
+        evidence,
+        artifacts,
+    );
     validateTargetIdentityV1(
         prepared.scheduler,
         prepared.bank,
@@ -389,6 +714,25 @@ pub fn validatePreparedRestoredAdmissionV1(
 /// same capability can therefore resume from its exact remaining authority.
 pub fn abortPreparedRestoredAdmissionV1(
     prepared: *PreparedRestoredAdmissionV1,
+    activation_grant: *SelectedSourceExitGrantV1,
+) !lane.EventV1 {
+    if (prepared.phase != .prepared and
+        prepared.phase != .publication_session_closed and
+        prepared.phase != .lease_tree_closed)
+        return Error.InvalidPreparedAdmission;
+    try validatePreparedGrantBindingV1(
+        prepared,
+        activation_grant,
+        .prepared,
+    );
+    const event =
+        try abortPreparedRestoredAdmissionV1Internal(prepared);
+    activation_grant.phase = .ready;
+    return event;
+}
+
+fn abortPreparedRestoredAdmissionV1Internal(
+    prepared: *PreparedRestoredAdmissionV1,
 ) !lane.EventV1 {
     try validateLiveCleanupAuthorityV1(prepared);
     while (true) {
@@ -419,6 +763,34 @@ pub fn abortPreparedRestoredAdmissionV1(
             .activated, .aborted => return Error.InvalidPreparedAdmission,
         }
     }
+}
+
+pub fn validatePreparedActivationGrantV1(
+    prepared: *const PreparedRestoredAdmissionV1,
+    activation_grant: *const SelectedSourceExitGrantV1,
+) !void {
+    if (prepared.phase != .prepared)
+        return Error.InvalidPreparedAdmission;
+    try validatePreparedGrantBindingV1(
+        prepared,
+        activation_grant,
+        .prepared,
+    );
+}
+
+/// The restored Session calls this only after adoption/materialization has
+/// linearized successfully. No fallible operation may follow this transition.
+pub fn consumePreparedActivationGrantV1(
+    prepared: *const PreparedRestoredAdmissionV1,
+    activation_grant: *SelectedSourceExitGrantV1,
+) void {
+    validatePreparedGrantBindingV1(
+        prepared,
+        activation_grant,
+        .prepared,
+    ) catch @panic("prepared restore activation grant drift");
+    std.debug.assert(prepared.phase == .activated);
+    activation_grant.phase = .consumed;
 }
 
 /// Validate only the sealed live handles needed for reverse cleanup. This path
@@ -495,6 +867,20 @@ fn validatePrepareRecoveryAuthorityV1(
             recovery.adoption.admission.event.resource_receipt,
         ))
         return Error.InvalidPreparedAdmission;
+    if (recovery.activation_grant) |grant| {
+        validateSelectedSourceExitGrantV1(
+            grant,
+            .preparing,
+        ) catch return Error.InvalidPreparedAdmission;
+        if (!std.mem.eql(
+            u8,
+            &recovery.activation_grant_sha256,
+            &grant.grant_sha256,
+        ))
+            return Error.InvalidPreparedAdmission;
+    } else if (!isZeroDigest(
+        recovery.activation_grant_sha256,
+    )) return Error.InvalidPreparedAdmission;
     recovery.scheduler.validatePublicationAdoption(
         recovery.adoption,
     ) catch return Error.InvalidPreparedAdmission;
@@ -594,6 +980,14 @@ pub fn preparedRestoredAdmissionRootV1(
     hash.update(&prepared.successor_segment_sha256);
     hash.update(&prepared.ownership_intent_sha256);
     hash.update(&prepared.challenge_sha256);
+    hashU64(&hash, prepared.activation_grant_address);
+    hashU64(&hash, prepared.activation_lease_address);
+    hash.update(&prepared.activation_grant_sha256);
+    hash.update(
+        &prepared.selected_authority_checkpoint_sha256,
+    );
+    hash.update(&prepared.selected_selector_sha256);
+    hash.update(&prepared.selected_source_exit_sha256);
     var digest: successor.Digest = undefined;
     hash.final(&digest);
     return digest;
@@ -607,6 +1001,7 @@ fn prepareAfterAdoptionV1(
     artifacts: successor.ArtifactsV1,
     request_spec: lane.RequestSpec,
     adoption: lane.PublicationAdoptionV1,
+    activation_grant: *SelectedSourceExitGrantV1,
     recovery: *PrepareRecoveryV1,
 ) !PreparedRestoredAdmissionV1 {
     try validateAdoptionV1(
@@ -665,12 +1060,121 @@ fn prepareAfterAdoptionV1(
         .successor_segment_sha256 = artifacts.segment.segment_sha256,
         .ownership_intent_sha256 = artifacts.segment.ownership_intent_sha256,
         .challenge_sha256 = artifacts.segment.challenge_sha256,
+        .activation_grant_address = @intFromPtr(activation_grant),
+        .activation_lease_address = activation_grant.lease_address,
+        .activation_grant_sha256 = activation_grant.grant_sha256,
+        .selected_authority_checkpoint_sha256 = activation_grant.authority_checkpoint_sha256,
+        .selected_selector_sha256 = activation_grant.selected_selector_sha256,
+        .selected_source_exit_sha256 = activation_grant.source_exit_sha256,
         .bootstrap_sha256 = undefined,
     };
     prepared.bootstrap_sha256 =
         preparedRestoredAdmissionRootV1(prepared);
-    try validatePreparedRestoredAdmissionV1(&prepared, evidence);
     return prepared;
+}
+
+fn validateGrantForEvidenceV1(
+    activation_grant: *const SelectedSourceExitGrantV1,
+    expected_phase: ActivationGrantPhase,
+    evidence: EvidenceV1,
+    artifacts: successor.ArtifactsV1,
+) !void {
+    try validateSelectedSourceExitGrantV1(
+        activation_grant,
+        expected_phase,
+    );
+    const source_receipt_sha256 =
+        lane.resourceReceiptSha256(evidence.source.receipt);
+    if (activation_grant.source_bank_epoch !=
+        evidence.source.receipt.bank_epoch or
+        activation_grant.request_epoch !=
+            artifacts.segment.request_epoch or
+        activation_grant.publication_next_sequence !=
+            artifacts.segment.sequence_base or
+        activation_grant.source_last_resource_permit_generation !=
+            artifacts.segment
+                .source_last_resource_permit_generation or
+        !std.mem.eql(
+            u8,
+            &activation_grant.source_receipt_sha256,
+            &source_receipt_sha256,
+        ) or !std.mem.eql(
+        u8,
+        &activation_grant.checkpoint_sha256,
+        &artifacts.segment.source_checkpoint_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &activation_grant.successor_segment_sha256,
+        &artifacts.segment.segment_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &activation_grant.ownership_intent_sha256,
+        &artifacts.segment.ownership_intent_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &activation_grant.challenge_sha256,
+        &artifacts.segment.challenge_sha256,
+    ) or evidence.source.publication.request_epoch !=
+        activation_grant.request_epoch or
+        evidence.source.publication.next_sequence !=
+            activation_grant.publication_next_sequence or
+        evidence.source.publication
+            .last_resource_permit_generation !=
+            activation_grant
+                .source_last_resource_permit_generation)
+        return Error.InvalidActivationGrant;
+}
+
+fn validatePreparedGrantBindingV1(
+    prepared: *const PreparedRestoredAdmissionV1,
+    activation_grant: *const SelectedSourceExitGrantV1,
+    expected_phase: ActivationGrantPhase,
+) !void {
+    try validateSelectedSourceExitGrantV1(
+        activation_grant,
+        expected_phase,
+    );
+    if (prepared.activation_grant_address !=
+        @intFromPtr(activation_grant) or
+        prepared.activation_lease_address !=
+            activation_grant.lease_address or
+        !std.mem.eql(
+            u8,
+            &prepared.activation_grant_sha256,
+            &activation_grant.grant_sha256,
+        ) or !std.mem.eql(
+        u8,
+        &prepared.selected_authority_checkpoint_sha256,
+        &activation_grant.authority_checkpoint_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &prepared.selected_selector_sha256,
+        &activation_grant.selected_selector_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &prepared.selected_source_exit_sha256,
+        &activation_grant.source_exit_sha256,
+    ) or prepared.source_bank_epoch !=
+        activation_grant.source_bank_epoch or
+        prepared.publication_next_sequence !=
+            activation_grant.publication_next_sequence or
+        prepared.source_last_resource_permit_generation !=
+            activation_grant
+                .source_last_resource_permit_generation or
+        !std.mem.eql(
+            u8,
+            &prepared.successor_segment_sha256,
+            &activation_grant.successor_segment_sha256,
+        ) or !std.mem.eql(
+        u8,
+        &prepared.ownership_intent_sha256,
+        &activation_grant.ownership_intent_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &prepared.challenge_sha256,
+        &activation_grant.challenge_sha256,
+    ))
+        return Error.InvalidActivationGrant;
 }
 
 fn validateFreshTargetV1(
@@ -992,6 +1496,14 @@ fn hashU64(
     var bytes: [8]u8 = undefined;
     std.mem.writeInt(u64, &bytes, @intCast(value), .little);
     hash.update(&bytes);
+}
+
+fn isZeroDigest(value: successor.Digest) bool {
+    return std.mem.eql(
+        u8,
+        &value,
+        &([_]u8{0} ** 32),
+    );
 }
 
 fn preparedCleanupFixtureV1(
@@ -1413,7 +1925,7 @@ test "prepared abort resumes exact closed-session and closed-tree phases" {
             8,
             .publication_session_closed,
         );
-        const event = try abortPreparedRestoredAdmissionV1(
+        const event = try abortPreparedRestoredAdmissionV1Internal(
             &prepared,
         );
         try testing.expectEqual(lane.EventKind.cancel, event.kind);
@@ -1500,7 +2012,7 @@ test "prepared abort resumes exact closed-session and closed-tree phases" {
             9,
             .lease_tree_closed,
         );
-        const event = try abortPreparedRestoredAdmissionV1(
+        const event = try abortPreparedRestoredAdmissionV1Internal(
             &prepared,
         );
         try testing.expectEqual(lane.EventKind.cancel, event.kind);

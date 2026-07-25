@@ -25,11 +25,11 @@ evidence. The plane and model-family sequence is specified in the
 | Track | Status | What works now | Main gap |
 | --- | --- | --- | --- |
 | Exact admission | Integrated | ResourceBank receipts, capacity rejection, release, snapshots | Physical telemetry adapters and long-running pressure campaigns |
-| Hierarchical ownership | Integrated | LeaseTree child scopes, fresh-Bank reacquisition, paged-KV remap, two-process handoff, and seven-phase checkpoint root-switch recovery | Production-model continuation and durable lifecycle metadata |
+| Hierarchical ownership | Integrated | LeaseTree child scopes, fresh-Bank reacquisition, paged-KV remap, two-process handoff, seven-phase checkpoint root-switch recovery, and lease-backed single-consumer prepared-text source/target grants | Production-model continuation, acknowledged target progress, and durable lifecycle metadata |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay, a bounded mixed-media pressure campaign, exact scheduler-receipt handoff to final-quantum media transactions, and scheduler-owned typed vision/audio/video result publication | Family-aware batching, preemption, placement, mixed typed-adapter workload profiles, and broader multi-tenant integration |
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
-| Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, and two-process resume | Production model/tokenizer state, native Linux execution, and durable lifecycle metadata |
-| AI runtime | Mixed prototype/integrated planes; R0 registry complete and R1a/R1b/R1c/R1d/R1e/R1f/R1g/R1h-a/R1h-b experimental slices integrated | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, an exact-identity serial greedy prepared-text session with plan-derived atomic start, Common Model Contract request-profile binding, total-versus-request claim projection for shared read-only artifact residency, V2 boundary evidence, fixed-length terminal results, canonical non-terminal state images, same-process state-buffer rebind, canonical successor evidence, fresh-target barrier-held admission, receipt-funded request-local ownership, charge-before-materialize runnable restored activation at sequence `N`, source-to-target Bank permit fencing, one uninterrupted/restored next-token comparison, and barrier-held restored teardown to zero; plus admission, scheduling, continuation, provider, media, package, C verifier, and retained-reference inspector surfaces | Durable prepared-text successor selection, source-exit and exclusive-target proof, fresh-process continuation and terminal equivalence; remaining request-shape accounting coverage, a fixed bound-plan wire, projected C verifier, `.generate_sequence` support record, verified raw-text tokenizer identity, variable-length terminal results, durable external result publication, non-blocking startup, stable APIs, production fixtures, native validation, physical resource integration, and distribution |
+| Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, two-process resume, and a three-generation prepared-text source-live/source-exited/terminal authority chain | Production model/tokenizer state, generation-one source recovery, acknowledged target progress, native Linux execution, and durable lifecycle metadata |
+| AI runtime | Mixed prototype/integrated planes; R0 registry complete and R1a/R1b/R1c/R1d/R1e/R1f/R1g/R1h-a/R1h-b plus the durable handoff slice integrated experimentally | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, an exact-identity serial greedy prepared-text session with plan-derived atomic start, Common Model Contract request-profile binding, total-versus-request claim projection for shared read-only artifact residency, fixed-length terminal results, canonical non-terminal state, same-process rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, and a five-object canonical restart archive with exact source exit, exclusive POSIX lease, one-shot target activation, fresh-process resume, generation-three terminal selection, and terminal-semantic oracle comparison; plus admission, scheduling, continuation, provider, media, package, C verifier, and retained-reference inspector surfaces | Recover source death before generation-two publication; add an idempotent durable result sink and acknowledged progress generation for target-crash replay; complete request-shape accounting, raw-text tokenizer identity, variable-length results, non-blocking startup, stable APIs, production fixtures, native multi-OS validation, GPU/device continuation, physical resource integration, and distribution |
 | Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, and validated bounded lossless delivery profiles for retained image/audio/video shapes; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, production generative-media adapters and broader formats, additional replay profiles, agents/retrieval, and specialized families |
 | Multimodal execution | Model-free runtime, scheduler-coupled final-quantum transactions, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, deterministic source-model/materializer replay, and vision/audio/video fixtures integrated; bounded canonical PNG/WAVE/APNG profiles and their additive format sidecar integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, a canonical typed-admission construction path, transition and format-evidence sidecars, strict lossless emit-and-accept modules, real two-generation PNG/WAVE/APNG registry-transition-format fixtures, an independent composed Python oracle, and optional format-aware read-only inspection without changing earlier V1 wires | Production encoder/container adapters and broader profiles, additional model/materializer profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, and physical playback/display and quality evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
@@ -95,6 +95,10 @@ evidence. The plane and model-family sequence is specified in the
 - [x] Canonical whole-checkpoint archive and fixed root selector with exact
   previous/successor recovery, seven process-death phases, independent
   verification, and a fresh live resume after every phase.
+- [x] Canonical five-object prepared-text restart archive, exact source-exit
+  receipt, source-live/source-exited/terminal selector lineage, exclusive
+  POSIX lease, one-shot activation grant, and a separate-process
+  baseline/source/target terminal-semantic comparison.
 - [x] Fixed shared image/audio/video descriptor, checked rational timeline,
   explicit event lineage, and exact-once logical chunk publication with a
   model-free demo and independent verifier.
@@ -327,16 +331,28 @@ verifiable state without weakening the current publication authority fence.
    restored LeaseTree-aware adoption.~~ Complete in R1h-b with publication
    `sequence_base`, one uninterrupted/restored next-token comparison, and
    barrier-held teardown to zero.
-8. Compose the records through the durable checkpoint selector, then prove
-   source exit, exclusive fresh-process target, uninterrupted/resumed terminal
-   equivalence, and zero duplicate publication.
+8. ~~Compose the records through the durable checkpoint selector, then prove
+   source exit, exclusive fresh-process target, and uninterrupted/resumed
+   terminal-semantic equivalence.~~ Complete experimentally with a canonical
+   five-object restart archive, source-live/source-exited/terminal generations,
+   a lease-backed one-shot target grant, and separate baseline/source/target
+   subprocesses.
+9. Add a source-side recovery journal for death before generation-two
+   publication. Until then the protocol remains fail-closed and unavailable in
+   that window.
+10. Add an idempotent external sink contract and acknowledged progress
+    generation. Until then a target death before generation three can replay
+    publication from `N`.
 
 See [Prepared Text Checkpoint](PREPARED_TEXT_CHECKPOINT.md) for the state wire
 and same-process safety boundary, and
 [Prepared Text Successor Evidence](PREPARED_TEXT_SUCCESSOR.md) for the R1g
 records and ownership-intent boundary, and
 [Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md) for the
-R1h-a bootstrap and R1h-b process-local activation boundary.
+R1h-a bootstrap and R1h-b process-local activation boundary. See
+[Durable Prepared-Text Handoff](PREPARED_TEXT_DURABLE_HANDOFF.md) for the
+five-object restart archive, three selector generations, lease/grant
+lifecycle, separate-process fixture, and current crash-window limits.
 
 ### Durable continuation capsule
 
@@ -1018,6 +1034,13 @@ must name:
 - evidence or artifact retained;
 - claim boundary;
 - rollback or stop condition.
+
+Prepared-text handoff work is intentionally split into contributor-sized
+targets: a generation-one source recovery journal, acknowledged sink-progress
+generation, independent manifest/selector verifier, native POSIX crash campaign,
+Win32 durable-file adapter, GPU residency/device-loss contract, and repeated
+handoff/lease-contention/replay workload. Each can merge independently when its
+authority boundary and nonclaims are explicit.
 
 See [Contributor projects](PROJECTS.md) for ready-to-split ideas. Contributors are
 also welcome to propose new tracks when they fit the north star and can begin with

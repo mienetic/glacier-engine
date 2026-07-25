@@ -133,10 +133,20 @@ pub const generate = @import("generate.zig");
 pub const prepared_text_checkpoint =
     @import("prepared_text_checkpoint.zig");
 pub const prepared_text_session = @import("prepared_text_session.zig");
+pub const prepared_text_source_lease =
+    @import("prepared_text_source_lease.zig");
 pub const prepared_text_successor =
     @import("prepared_text_successor.zig");
+pub const prepared_text_handoff_archive =
+    @import("prepared_text_handoff_archive.zig");
+pub const prepared_text_durable_handoff =
+    @import("prepared_text_durable_handoff.zig");
+pub const prepared_text_restart_manifest =
+    @import("prepared_text_restart_manifest.zig");
 pub const prepared_text_restore_admission =
     @import("prepared_text_restore_admission.zig");
+pub const prepared_text_terminal_equivalence =
+    @import("prepared_text_terminal_equivalence.zig");
 pub const decode_lane4 = @import("decode_lane4.zig");
 pub const sampling = @import("sampling.zig");
 pub const tokenizer = @import("tokenizer.zig");

@@ -1437,6 +1437,66 @@ pub fn build(b: *std.Build) void {
         &continuation_live_restart_worker_exe.step,
     );
 
+    // Prepared-text handoff first closes the exact source publication
+    // authority into a selector-chosen archive. A fresh target process holds
+    // the exclusive lease, proves a second writer would block, consumes the
+    // source-exit grant, restores at N, and reaches a receipt-independent
+    // terminal semantic with no duplicate publication sequence.
+    const prepared_text_live_restart_worker_exe = b.addExecutable(.{
+        .name = "glacier-prepared-text-live-restart-worker",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "bench/prepared_text_live_restart_worker.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    prepared_text_live_restart_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    prepared_text_live_restart_worker_exe.root_module.addImport(
+        "engine",
+        engine_mod,
+    );
+    prepared_text_live_restart_worker_exe.linkLibC();
+    if (int4_neon) |lib|
+        prepared_text_live_restart_worker_exe.linkLibrary(lib);
+    const prepared_text_live_restart_demo_exe = b.addExecutable(.{
+        .name = "glacier-prepared-text-live-restart-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/prepared_text_live_restart.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    prepared_text_live_restart_demo_exe.linkLibC();
+    const run_prepared_text_live_restart_demo = b.addRunArtifact(
+        prepared_text_live_restart_demo_exe,
+    );
+    run_prepared_text_live_restart_demo.addArtifactArg(
+        prepared_text_live_restart_worker_exe,
+    );
+    const prepared_text_live_restart_demo_step = b.step(
+        "prepared-text-live-restart-demo",
+        "Run selected source-exit and fresh-process prepared-text proof",
+    );
+    prepared_text_live_restart_demo_step.dependOn(
+        &run_prepared_text_live_restart_demo.step,
+    );
+    test_step.dependOn(&run_prepared_text_live_restart_demo.step);
+    test_compile_step.dependOn(
+        &prepared_text_live_restart_demo_exe.step,
+    );
+    test_compile_step.dependOn(
+        &prepared_text_live_restart_worker_exe.step,
+    );
+
     // Complete checkpoint sets are immutable archives selected by one fixed
     // root switch. A worker dies after every archive and selector durability
     // phase; fresh recovery accepts only the previous or successor set, then

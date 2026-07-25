@@ -17,8 +17,11 @@ canonical successor execution plan, residency binding, transcript segment, and
 target ownership intent without creating target authority. R1h-a consumes
 those records into a fresh barrier-held target bootstrap. R1h-b reserves
 receipt-funded ownership, materializes exact checkpoint state, and commits a
-process-local runnable target at the restored publication sequence. These are
-integrated experimental slices, not the completed R1 text runtime.
+process-local runnable target at the restored publication sequence. The durable
+handoff slice adds a canonical five-object restart archive, exact source exit,
+an exclusive selector lease, one-shot restored activation, and a
+receipt-independent terminal-semantic comparison across separate processes.
+These are integrated experimental slices, not the completed R1 text runtime.
 
 ## Supported envelope
 
@@ -43,12 +46,15 @@ integrated experimental slices, not the completed R1 text runtime.
 | R1g successor evidence | Read-only canonical 768-byte execution plan, 256-byte residency binding, and 512-byte transcript segment with source lineage, logical-KV identity, and target ownership intent |
 | R1h-a restored admission | Fresh target admission and receipt, a queue-free receipt-funded LeaseTree with one zero-current-claim scope, exact sequence and Bank permit-generation remap, and a process-local bootstrap root held behind the adoption barrier |
 | R1h-b restored activation | Charge-before-materialize target `SessionV3`, publication ABI v2 with global `sequence_base`, funded ownership without duplicate aggregate charge, one retained next-token comparison, and barrier-held close to zero |
+| Durable source handoff | Address-stable source-live grant under the exclusive selector lease; exact publication-handoff barrier and source-exit receipt; generation-two selection only after the source lane, receipt, and publication binding close |
+| Fresh-process target authority | Five-object canonical restart archive, selector-selected generation-two source exit, lease-backed one-shot activation grant retained through cancellation or generation-three terminal selection and retirement |
+| Terminal comparison | Receipt-independent terminal semantic joining model/request identity, token domains, output, logical KV, RNG, sampling state, and final position across separately completed baseline and target runs |
 
 `eos_token` must be outside the model vocabulary in this version. Fixed-length
 execution keeps the admitted service count identical to the number of
 publication transactions.
 
-## Preferred R1d–R1h lifecycle
+## Preferred prepared-text lifecycle
 
 1. Load a prepared image with `loader.loadPreparedWithOptions`.
 2. Build `prepared_text_session.OptionsV1`, then derive the canonical
@@ -102,12 +108,21 @@ publication transactions.
     canonical plan/residency/transcript records and exact-compares the complete
     live source context before and after the read-only operation. The result is
     evidence by itself; it creates no target receipt, permit, Session, or
-    publication authority. The two-stage R1h path can consume it in a separate
-    target branch.
-11. In that optional branch, place a zeroed target `SessionV3` at its final
-    address. Pass `target.restoredPublicationSessionIdV1()` with the exact
-    records and retained context to `prepareRestoredAdmissionV1` on a fresh
-    LeaseTree-enabled target Scheduler/Bank.
+    publication authority. The two-stage R1h path requires an independently
+    verified selected source-exit grant before it can consume the records.
+11. For an in-process composition test, initialize one
+    `SelectedSourceExitGrantV1` from the exact selector-selected generation two
+    while holding its exclusive lease. For the durable path, the source first
+    binds generation one to its address-stable source-live grant, captures the
+    five-object restart archive, commits the publication handoff, and selects
+    generation two before exiting. A fresh target opens that generation and
+    creates the one-shot activation grant; checkpoint bytes alone are
+    insufficient.
+12. Place a zeroed target `SessionV3` at its final address. Pass
+    `target.restoredPublicationSessionIdV1()`, the exact records and retained
+    context, and the same activation grant to
+    `prepareRestoredAdmissionV1` on a fresh LeaseTree-enabled target
+    Scheduler/Bank.
     Pattern-match every `PrepareDecisionV1` branch. `rejected` carries only the
     policy event and no live capability. `recovery_required` carries a
     process-local `PrepareRecoveryV1`; retain it and call
@@ -118,14 +133,16 @@ publication transactions.
     model/prompt/options/local plan, and source bound plan to
     `target.startRestoredV1`. If startup returns `RecoveryRequired`, retain both
     values and call `recoverRestoredStartV1`; then abort the still-prepared
-    bootstrap explicitly. After success the capability is `.activated` and
-    must not be aborted. The target can acquire its first service permit and
-    call `step`; finish with restored `cancel` or `retire`, retrying
-    `recoverRestoredCloseV1` if teardown reports recovery required. The
-    lower publication/contiguous restored initializers are composition points;
-    their ordinary close entry points reject funded-tree ownership. This
-    process-local branch does not exit or revoke the source.
-12. On the ordinary, non-restored lifecycle, call `sealTerminalResult` after
+    bootstrap explicitly. After success the prepared capability is
+    `.activated`, the grant is `.consumed`, and neither may be aborted. The
+    target can acquire its first service permit and call `step`. A durable
+    terminal target selects generation three with the exact terminal semantic
+    before `retire`; a non-terminal cancellation leaves generation two
+    retryable. Finish with restored `cancel` or `retire`, retrying
+    `recoverRestoredCloseV1` if teardown reports recovery required. The lower
+    publication/contiguous restored initializers are composition points; their
+    ordinary close entry points reject funded-tree ownership.
+13. On the ordinary, non-restored lifecycle, call `sealTerminalResult` after
     the fixed final token. It computes the canonical little-endian `u32` output
     root, joins it to the V2 boundary and source mapping, validates the actual
     request-charged receipt against both the live Bank publication session and
@@ -133,13 +150,13 @@ publication transactions.
     publication state exactly once from zero to one. The envelope context binds
     the exact artifact, execution plan, prompt/schema roots, cache identity,
     ownership root, publication challenge, and adapter evidence.
-13. Read the sealed `TerminalResultEvidenceV1` through `terminalResult` and
+14. Read the sealed `TerminalResultEvidenceV1` through `terminalResult` and
     validate it against the independently retained bound/local plans and exact
     output tokens. If the original Receipt is retained independently, use
     `terminalResultEvidenceValidForReceiptV1` to reject substitution by a
     different structurally valid receipt. Calling `sealTerminalResult` early or
     a second time rejects without changing the retained result evidence.
-14. For that ordinary lifecycle, call `retire` only after sealing. Before
+15. For that ordinary lifecycle, call `retire` only after sealing. Before
     sealing, call `cancel` instead. Cancellation is not valid after a terminal
     result becomes visible. Always call `deinit` to release the session's local
     allocations.
@@ -308,8 +325,9 @@ live R1h-a bootstrap and R1h-b activation boundary.
 ## R1h-b receipt-funded restored activation
 
 `SessionV3.startRestoredV1` accepts only the final Session address named by the
-R1h-a bootstrap. It revalidates the complete portable and live context, derives
-the successor bound plan, and reserves one queue-free allocation covering all
+R1h-a bootstrap and the same address-stable source-exit activation grant that
+prepared it. It revalidates the complete portable and live context, derives the
+successor bound plan, and reserves one queue-free allocation covering all
 request-local byte classes. The tree uses `receipt_funded`, so the allocation
 is exact ownership within the immutable receipt rather than a second aggregate
 charge.
@@ -319,7 +337,8 @@ uses `materializeIntoV1` to copy and revalidate checkpoint output, contiguous
 KV, RNG, and sampling state. The final fallible operation commits the funded
 batch and pending Scheduler adoption. Before that commit, service remains
 blocked; after it, the target is a runnable Session and the prepared capability
-is `.activated`.
+is `.activated`. The activation grant advances from `.prepared` to `.consumed`
+and remains retained by the Session.
 
 Publication ABI v2 distinguishes the global transaction sequence from
 target-local completed service. A restored Session starts with:
@@ -339,9 +358,9 @@ Restored close first acquires a Scheduler no-service barrier. It then retires
 and authorizes the funded allocation, frees Session backing, commits the
 allocation free, and atomically closes the publication namespace, empty tree,
 parent receipt, and Scheduler lane. Explicit recovery phases retain authority
-after any reported cleanup failure. This lifecycle remains process-local: it
-does not select a durable successor, exit the source, prove exclusive process
-handoff, or establish terminal resumed equivalence.
+after any reported cleanup failure. The R1h-b transaction remains
+process-local; the durable handoff layer supplies and retains the selected
+lease/grant authority around it.
 
 `SessionV3.start` remains a correctness-first startup transaction rather than a
 non-blocking startup mechanism. Its adoption barrier deliberately prevents the
@@ -349,6 +368,64 @@ same scheduler from admitting, servicing, cancelling, retiring, or closing
 logical work while startup allocation and prefill are in progress. A future
 staged activation design must preserve the same charge-before-materialize and
 replay guarantees before allowing concurrent scheduler progress.
+
+## Durable fresh-process handoff
+
+The durable layer composes R1e through R1h-b without serializing any live
+Session authority:
+
+```text
+generation 1: source live under exclusive lease and source-live grant
+        │ exact handoff barrier + source exit
+        ▼
+generation 2: source-exited receipt + five-object restart archive
+        │ exclusive target lease + one-shot activation grant
+        ▼
+generation 3: receipt-independent terminal semantic + exact lineage
+```
+
+The restart archive contains the checkpoint, successor execution plan,
+successor residency binding, successor transcript segment, and canonical
+restart manifest. The manifest carries prompt tokens, options, local and bound
+plans, checkpoint expectations, source context/receipt evidence, and target
+ownership as pointer-free canonical records. A fresh target decodes this object
+instead of reconstructing native source structures or trusting a JSON sidecar.
+
+The source-live grant owns the lease's only consumer claim and is fenced by its
+address. It is bound to the live source Scheduler/coordinator/Bank, request,
+sequence `N`, last publication-permit generation `G`, and receipt. Beginning
+handoff changes the grant phase; abort returns it to the live bound phase,
+while commit closes the exact source publication authority. Completion accepts
+only the immediate generation-two selector, then advances and releases the
+consumer claim.
+
+The target activation grant likewise owns the lease's only consumer claim.
+`prepareRestoredAdmissionV1` and `startRestoredV1` require that exact
+address-stable value. A second concurrent grant, copied grant, selector drift,
+lease drift, or phase replay rejects. Releasing a non-terminal grant permits a
+fresh retry against generation two. The restored Session keeps its active grant
+until a non-terminal cancellation or until the exact generation-three terminal
+semantic has been selected.
+
+The retained `prepared-text-live-restart-demo` runs a completed baseline
+worker, a source worker that selects generation two and exits, and a different
+target worker that resumes at `N`, selects generation three, and matches the
+baseline terminal semantic. It also checks exclusive locking, no source
+resurrection, no duplicate sequence in the retained run, and zero final
+Scheduler/Bank/LeaseTree ownership.
+
+This is not yet exactly-once external delivery across every crash window. A
+source death before generation two leaves generation one selected and the
+request unavailable. A target death after external output but before
+generation three can retry generation two and replay from `N`. Production use
+therefore needs an idempotent sink keyed by request/global sequence; an
+acknowledged durable progress generation remains roadmap work. The current
+durable adapter is POSIX-only. Windows durable files, GPU/device-resident
+continuation, and native multi-OS recovery campaigns remain roadmap work.
+
+See
+[Durable Prepared-Text Handoff](PREPARED_TEXT_DURABLE_HANDOFF.md) for the
+generation layouts, lease/grant lifecycle, demo command, and exact nonclaims.
 
 ## Compatibility lifecycles
 
@@ -415,6 +492,14 @@ required to restore the Session in another process.
   accepted admission and rollback cancellation retain the existing Event-v1
   evidence; the barrier is not a new semantic scheduler event or durable
   capability.
+- The durable selector, source-exit receipt, restart archive, and terminal
+  semantic are portable evidence. Source-live and target activation grants,
+  lease consumer claims, prepared admissions, receipts, permits, and Sessions
+  are process-local authority and must remain at their final addresses.
+- A live lease consumer claim permits only one source-live or target activation
+  grant. Closing the durable lease while that claim is retained rejects; a
+  copied/moved grant or selector-generation drift cannot be used to activate a
+  Session.
 - A receipt-funded tree partitions queue-free allocator ownership within the
   immutable request receipt. It does not reduce, replace, or add to the
   Scheduler/Bank aggregate charge and does not prove physical memory use.
@@ -442,10 +527,11 @@ required to restore the Session in another process.
   `recoverRestoredCloseV1`; the no-service barrier remains held.
 - For an ordinary Session, `SessionV3.retire` requires a sealed terminal result
   and cancellation is valid only before sealing. A restored finished Session
-  retires through its funded-tree close path; R1h-b does not claim terminal
-  uninterrupted/resumed equivalence. The `deinit` safety path closes a live
-  restored Session, but explicit cleanup is required for a retained startup
-  recovery.
+  retires through its funded-tree close path. In the durable composition, that
+  terminal close additionally requires the activation grant to observe the
+  exact generation-three terminal semantic. The `deinit` safety path closes a
+  live restored Session, but explicit cleanup is required for a retained
+  startup recovery.
 - Self-contained terminal-evidence validation reconstructs and checks the
   envelope's Receipt fields but does not prove current Bank authority. Live
   authority is checked during sealing; later consumers need an independently
@@ -503,6 +589,14 @@ the LaneWeave publication-adoption unit tests, the retained evidence verifies:
   logical KV, RNG, and sampling state under an exact target hard limit;
 - barrier-held restored cancellation returning the target receipt, tree, scope,
   allocation, Scheduler lane, and aggregate usage to zero;
+- canonical restart-manifest round-trip and contextual substitution rejection;
+- source-live grant copy/duplicate/selector-drift rejection and exact
+  generation-one-to-two completion;
+- generation-two one-shot target-grant retention through restored activation,
+  duplicate-grant rejection, and generation-three terminal selection;
+- separate baseline, source, and target workers with distinct source/target
+  process IDs, exclusive lease evidence, terminal-semantic equality, and zero
+  source/target logical ownership;
 - pending-permit rollback after an injected pre-publication failure;
 - zero used resources after retirement;
 - zero used resources after an injected initialization-allocation failure.
@@ -527,10 +621,13 @@ concurrent same-scheduler progress during startup.
 
 R1h-a by itself remains a non-runnable bootstrap: its caller-reserved session
 identity is an address-sized future binding rather than proof that activation
-succeeded. R1h-b can consume that exact capability into a process-local target,
-but it does not durably select the successor, revoke the source, prove exclusive
-process handoff, resume after process death, or establish terminal-result
-equivalence.
+succeeded. R1h-b can consume that exact capability into a process-local target.
+The durable composition adds selected source exit, exclusive fresh-process
+activation, and receipt-independent terminal-semantic equivalence, but it does
+not recover a source crash before generation two, suppress target replay before
+generation three, provide exactly-once external delivery without an idempotent
+sink, implement Windows durable files, continue GPU-resident state, or establish
+production-model/native-platform performance.
 
 `BoundPlanV1`, `ExecutionResidencyBindingV1`, and the Session bridge are still
 an experimental Zig/direct API. There is no fixed `BoundPlanV1` wire, projected
