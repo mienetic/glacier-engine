@@ -15,9 +15,9 @@ authority. R1f adds exact-current-boundary state-buffer rebind inside the
 original same-process Session while preserving that authority. R1g derives a
 canonical successor execution plan, residency binding, transcript segment, and
 target ownership intent without creating target authority. R1h-a consumes
-those records into a fresh target admission and receipt, an allocation-empty
-LeaseTree with one zero-current-claim scope, a restored sequence, and a Bank
-permit fence while retaining a non-runnable adoption barrier. These are
+those records into a fresh barrier-held target bootstrap. R1h-b reserves
+receipt-funded ownership, materializes exact checkpoint state, and commits a
+process-local runnable target at the restored publication sequence. These are
 integrated experimental slices, not the completed R1 text runtime.
 
 ## Supported envelope
@@ -41,13 +41,14 @@ integrated experimental slices, not the completed R1 text runtime.
 | R1e checkpoint | Canonical non-terminal output/RNG/KV image with independent Zig/Python verification and detached zero-slack materialization |
 | R1f rebind | Internally verified replacement of concrete output/KV backing at the exact current boundary while all live authority remains in the original Session |
 | R1g successor evidence | Read-only canonical 768-byte execution plan, 256-byte residency binding, and 512-byte transcript segment with source lineage, logical-KV identity, and target ownership intent |
-| R1h-a restored admission | Fresh target admission and receipt, an allocation-empty LeaseTree with one zero-current-claim scope, exact sequence and Bank permit-generation remap, and a process-local bootstrap root held behind the adoption barrier |
+| R1h-a restored admission | Fresh target admission and receipt, a queue-free receipt-funded LeaseTree with one zero-current-claim scope, exact sequence and Bank permit-generation remap, and a process-local bootstrap root held behind the adoption barrier |
+| R1h-b restored activation | Charge-before-materialize target `SessionV3`, publication ABI v2 with global `sequence_base`, funded ownership without duplicate aggregate charge, one retained next-token comparison, and barrier-held close to zero |
 
 `eos_token` must be outside the model vocabulary in this version. Fixed-length
 execution keeps the admitted service count identical to the number of
 publication transactions.
 
-## Preferred R1d/R1e/R1f/R1g/R1h-a lifecycle
+## Preferred R1d–R1h lifecycle
 
 1. Load a prepared image with `loader.loadPreparedWithOptions`.
 2. Build `prepared_text_session.OptionsV1`, then derive the canonical
@@ -101,39 +102,47 @@ publication transactions.
     canonical plan/residency/transcript records and exact-compares the complete
     live source context before and after the read-only operation. The result is
     evidence by itself; it creates no target receipt, permit, Session, or
-    publication authority. R1h-a can consume it in a separate target branch.
-11. In that optional branch, pass the exact records and retained context to
-    `prepareRestoredAdmissionV1` with a fresh LeaseTree-enabled target
-    Scheduler/Bank and a caller-reserved future-session identity/address.
+    publication authority. The two-stage R1h path can consume it in a separate
+    target branch.
+11. In that optional branch, place a zeroed target `SessionV3` at its final
+    address. Pass `target.restoredPublicationSessionIdV1()` with the exact
+    records and retained context to `prepareRestoredAdmissionV1` on a fresh
+    LeaseTree-enabled target Scheduler/Bank.
     Pattern-match every `PrepareDecisionV1` branch. `rejected` carries only the
     policy event and no live capability. `recovery_required` carries a
     process-local `PrepareRecoveryV1`; retain it and call
     `recoverPrepareRestoredAdmissionV1` until rollback returns its cancellation
-    event. `prepared` carries the fresh receipt, allocation-empty LeaseTree with
-    one zero-current-claim scope, restored `N/G`, and non-runnable adoption
-    barrier. Validate that payload read-only, then call
-    `abortPreparedRestoredAdmissionV1`; after `RecoveryRequired`, retain the
-    same payload and retry until its phase is `aborted`. Never drop either live
-    payload. Finish this target cleanup before returning to the source
-    lifecycle. R1h-a has no activation path and neither materializes checkpoint
-    state nor exits the source.
-12. After the fixed final token, call `sealTerminalResult`. It computes the
-    canonical little-endian `u32` output root, joins it to the V2 boundary and
-    source mapping, validates the actual request-charged receipt against both
-    the live Bank publication session and the residency projection, and on
-    success advances the terminal-result publication state exactly once from
-    zero to one. The envelope context binds the exact artifact, execution plan,
-    prompt/schema roots, cache identity, ownership root, publication challenge,
-    and adapter evidence.
+    event. `prepared` carries the fresh receipt, empty receipt-funded tree,
+    restored `N/G`, and non-runnable adoption barrier. Either abort it before
+    activation, or pass the same capability, checkpoint evidence, compatible
+    model/prompt/options/local plan, and source bound plan to
+    `target.startRestoredV1`. If startup returns `RecoveryRequired`, retain both
+    values and call `recoverRestoredStartV1`; then abort the still-prepared
+    bootstrap explicitly. After success the capability is `.activated` and
+    must not be aborted. The target can acquire its first service permit and
+    call `step`; finish with restored `cancel` or `retire`, retrying
+    `recoverRestoredCloseV1` if teardown reports recovery required. The
+    lower publication/contiguous restored initializers are composition points;
+    their ordinary close entry points reject funded-tree ownership. This
+    process-local branch does not exit or revoke the source.
+12. On the ordinary, non-restored lifecycle, call `sealTerminalResult` after
+    the fixed final token. It computes the canonical little-endian `u32` output
+    root, joins it to the V2 boundary and source mapping, validates the actual
+    request-charged receipt against both the live Bank publication session and
+    the residency projection, and on success advances the terminal-result
+    publication state exactly once from zero to one. The envelope context binds
+    the exact artifact, execution plan, prompt/schema roots, cache identity,
+    ownership root, publication challenge, and adapter evidence.
 13. Read the sealed `TerminalResultEvidenceV1` through `terminalResult` and
     validate it against the independently retained bound/local plans and exact
     output tokens. If the original Receipt is retained independently, use
     `terminalResultEvidenceValidForReceiptV1` to reject substitution by a
     different structurally valid receipt. Calling `sealTerminalResult` early or
     a second time rejects without changing the retained result evidence.
-14. Call `retire` only after sealing. Before sealing, call `cancel` instead.
-    Cancellation is not valid after a terminal result becomes visible. Always
-    call `deinit` to release the session's local allocations.
+14. For that ordinary lifecycle, call `retire` only after sealing. Before
+    sealing, call `cancel` instead. Cancellation is not valid after a terminal
+    result becomes visible. Always call `deinit` to release the session's local
+    allocations.
 
 The adoption barrier seals the admission, scheduler identity, publication
 request epoch, address-stable session identity, service policy, and a
@@ -294,7 +303,45 @@ See
 plan projection, segment offsets, root domains, mutation gates, and the R1h
 evidence boundary. See
 [Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md) for the
-live R1h-a bootstrap and non-runnable safety boundary.
+live R1h-a bootstrap and R1h-b activation boundary.
+
+## R1h-b receipt-funded restored activation
+
+`SessionV3.startRestoredV1` accepts only the final Session address named by the
+R1h-a bootstrap. It revalidates the complete portable and live context, derives
+the successor bound plan, and reserves one queue-free allocation covering all
+request-local byte classes. The tree uses `receipt_funded`, so the allocation
+is exact ownership within the immutable receipt rather than a second aggregate
+charge.
+
+After reservation, the target allocates its normal execution resources and
+uses `materializeIntoV1` to copy and revalidate checkpoint output, contiguous
+KV, RNG, and sampling state. The final fallible operation commits the funded
+batch and pending Scheduler adoption. Before that commit, service remains
+blocked; after it, the target is a runnable Session and the prepared capability
+is `.activated`.
+
+Publication ABI v2 distinguishes the global transaction sequence from
+target-local completed service. A restored Session starts with:
+
+```text
+sequence_base = next_sequence = output_length = sampling_calls = N
+target-local completed service = 0
+last Bank publication permit generation = G
+```
+
+Its first proposal therefore uses `transaction_sequence = N`, the checkpoint
+predecessor transcript, and Bank permit `G + 1`. The retained synthetic-model
+integration compares that transition with an uninterrupted reference,
+including output tokens, logical KV, RNG, and sampling count.
+
+Restored close first acquires a Scheduler no-service barrier. It then retires
+and authorizes the funded allocation, frees Session backing, commits the
+allocation free, and atomically closes the publication namespace, empty tree,
+parent receipt, and Scheduler lane. Explicit recovery phases retain authority
+after any reported cleanup failure. This lifecycle remains process-local: it
+does not select a durable successor, exit the source, prove exclusive process
+handoff, or establish terminal resumed equivalence.
 
 `SessionV3.start` remains a correctness-first startup transaction rather than a
 non-blocking startup mechanism. Its adoption barrier deliberately prevents the
@@ -320,7 +367,9 @@ residency-binding roots. `boundarySnapshotValidV2` checks only that this root
 list is internally canonical; `boundarySnapshotValidForBoundPlanV2` also
 requires those roots to match the expected bound plan, canonical local plan,
 and complete prepared-image identity, including its source and ABI
-fingerprints.
+fingerprints. The boundary root binds publication `sequence_base`, and
+contextual validation requires it to equal the execution plan's declared
+publication start.
 These are live in-process evidence groupings, not splice-resistant historical
 attestations or checkpoint payloads. They do not contain the KV or model bytes
 required to restore the Session in another process.
@@ -331,8 +380,9 @@ required to restore the Session in another process.
 - The caller owns the scheduler, bank storage, and downstream sink; the session
   borrows them for the active lifecycle.
 - `SessionV3` and its inner Sessions must already be at their final address
-  before `start`. Do not move, copy, mutate, or concurrently access them during
-  initialization, active publication, or adoption recovery.
+  before `start` or before their address is supplied to R1h-a. Do not move,
+  copy, mutate, or concurrently access them during initialization, active
+  publication, or recovery.
 - The Common Model Contract artifact manifest is a request-profile identity:
   prompt and output dimensions affect its root. It is not a stable package
   identity. Its `weights_sha256` remains the exact mapped `.glrt` container
@@ -365,6 +415,9 @@ required to restore the Session in another process.
   accepted admission and rollback cancellation retain the existing Event-v1
   evidence; the barrier is not a new semantic scheduler event or durable
   capability.
+- A receipt-funded tree partitions queue-free allocator ownership within the
+  immutable request receipt. It does not reduce, replace, or add to the
+  Scheduler/Bank aggregate charge and does not prove physical memory use.
 - Same-scheduler logical mutation during `start` fails with
   `AdoptionInFlight`; it must be retried only after `start` returns.
 - A successful `SessionV1.init` adopts the supplied admission. The caller must
@@ -383,10 +436,16 @@ required to restore the Session in another process.
   the Session while that authority is live. After the transient cleanup error
   is resolved, call `recoverStartAdoption` to retry cancellation. This API
   neither diagnoses nor repairs Scheduler or Bank state.
-- `SessionV3.retire` requires a sealed terminal result, while cancellation is
-  valid only before sealing. The `deinit` safety path still closes an adopted
-  lifecycle, but explicit sealing plus retirement or pre-seal cancellation is
-  preferred when the caller needs the resulting evidence and scheduler event.
+- If restored startup returns `RecoveryRequired`, call
+  `recoverRestoredStartV1` with the same prepared capability before moving or
+  dropping either value. If restored close returns `RecoveryRequired`, retry
+  `recoverRestoredCloseV1`; the no-service barrier remains held.
+- For an ordinary Session, `SessionV3.retire` requires a sealed terminal result
+  and cancellation is valid only before sealing. A restored finished Session
+  retires through its funded-tree close path; R1h-b does not claim terminal
+  uninterrupted/resumed equivalence. The `deinit` safety path closes a live
+  restored Session, but explicit cleanup is required for a retained startup
+  recovery.
 - Self-contained terminal-evidence validation reconstructs and checks the
   envelope's Receipt fields but does not prove current Bank authority. Live
   authority is checked during sealing; later consumers need an independently
@@ -428,14 +487,22 @@ the LaneWeave publication-adoption unit tests, the retained evidence verifies:
 - read-only successor capture with exact before/after Session, Scheduler, Bank,
   receipt, boundary, sequence, and state preservation;
 - coherent foreign live-target rejection before Scheduler/Bank mutation;
-- barrier-held restored admission with exact receipt, an allocation-empty
-  LeaseTree with one zero-current-claim scope, sequence `N`, source permit
-  floor `G`, and rejection of the ordinary flat adoption commit;
+- barrier-held restored admission with an exact receipt, allocation-empty
+  queue-free receipt-funded LeaseTree, sequence `N`, source permit floor `G`,
+  and rejection of the ordinary flat adoption commit;
 - exact restored-admission validation against independently retained R1g
   records and live target state;
 - reverse-order restored-admission abort to zero, retained setup-recovery
   authority, resumable cleanup phases, and stale copied-capability rejection
   after the first winner;
+- receipt-funded allocation activation without aggregate Scheduler/Bank growth,
+  mode-splicing rejection, and copied activation/abort single-winner behavior;
+- restored publication ABI v2 with global base `N`, first transaction `N`,
+  predecessor transcript continuity, and first target Bank permit `G + 1`;
+- one restored synthetic-model transition matching uninterrupted output,
+  logical KV, RNG, and sampling state under an exact target hard limit;
+- barrier-held restored cancellation returning the target receipt, tree, scope,
+  allocation, Scheduler lane, and aggregate usage to zero;
 - pending-permit rollback after an injected pre-publication failure;
 - zero used resources after retirement;
 - zero used resources after an injected initialization-allocation failure.
@@ -458,12 +525,12 @@ does not establish production-model quality, native performance evidence,
 tokenizer interoperability, strict cross-platform numerical equivalence, or
 concurrent same-scheduler progress during startup.
 
-R1h-a additionally does not create a target Session, restore checkpoint
-KV/output/RNG state, allocate the retained cache node, commit adoption, or
-publish a successor token. Its caller-reserved session identity is only an
-address-sized future binding, not proof that a Session exists. Every successful
-R1h-a bootstrap must currently be validated and aborted; activation is an
-R1h-b gate.
+R1h-a by itself remains a non-runnable bootstrap: its caller-reserved session
+identity is an address-sized future binding rather than proof that activation
+succeeded. R1h-b can consume that exact capability into a process-local target,
+but it does not durably select the successor, revoke the source, prove exclusive
+process handoff, resume after process death, or establish terminal-result
+equivalence.
 
 `BoundPlanV1`, `ExecutionResidencyBindingV1`, and the Session bridge are still
 an experimental Zig/direct API. There is no fixed `BoundPlanV1` wire, projected

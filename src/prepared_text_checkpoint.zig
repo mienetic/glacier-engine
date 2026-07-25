@@ -711,31 +711,37 @@ fn decodedViewsEqualV1(a: DecodedV1, b: DecodedV1) bool {
     );
 }
 
-pub fn materializeDetachedV1(
-    allocator: std.mem.Allocator,
+/// Copy one independently revalidated checkpoint into exact caller-owned
+/// backing. Destinations must be fresh, disjoint from the encoded image, and
+/// have the canonical full request capacities. No allocation occurs here.
+pub fn materializeIntoV1(
     decoded: DecodedV1,
-) Error!DetachedPayloadV1 {
+    cache: *kv.KVCache,
+    output: []u32,
+) Error!void {
     const verified = try revalidateDecodedV1(decoded);
-    var cache = kv.KVCache.init(
-        allocator,
-        verified.num_layers,
-        verified.kv_dim,
-        verified.max_kv_positions,
-    ) catch |err| switch (err) {
-        error.OutOfMemory => return Error.OutOfMemory,
-        else => return Error.InvalidCheckpoint,
-    };
-    errdefer cache.deinit();
+    if (cache.num_layers != verified.num_layers or
+        cache.dim != verified.kv_dim or
+        cache.max_seq != verified.max_kv_positions or
+        cache.len != 0 or cache.rowTxnActive() or
+        output.len != verified.max_new_tokens or
+        slicesOverlap(
+            verified.encoded,
+            std.mem.sliceAsBytes(output),
+        ))
+        return Error.UnsafeDestination;
     for (0..cache.num_layers) |layer| {
+        if (slicesOverlap(
+            verified.encoded,
+            std.mem.sliceAsBytes(cache.keys[layer]),
+        ) or slicesOverlap(
+            verified.encoded,
+            std.mem.sliceAsBytes(cache.values[layer]),
+        ))
+            return Error.UnsafeDestination;
         @memset(cache.keys[layer], 0);
         @memset(cache.values[layer], 0);
     }
-
-    const output = allocator.alloc(
-        u32,
-        verified.max_new_tokens,
-    ) catch return Error.OutOfMemory;
-    errdefer allocator.free(output);
     @memset(output, 0);
 
     var output_reader: Reader = .{
@@ -771,7 +777,7 @@ pub fn materializeDetachedV1(
     if (!std.mem.eql(
         u8,
         &lane_contiguous.logicalKvPrefixSha256(
-            &cache,
+            cache,
             cache.len,
         ),
         &verified.logical_kv_sha256,
@@ -787,6 +793,29 @@ pub fn materializeDetachedV1(
         &lane_contiguous.rngStateSha256(verified.rng_state),
         &verified.rng_state_sha256,
     )) return Error.InvalidCheckpoint;
+}
+
+pub fn materializeDetachedV1(
+    allocator: std.mem.Allocator,
+    decoded: DecodedV1,
+) Error!DetachedPayloadV1 {
+    const verified = try revalidateDecodedV1(decoded);
+    var cache = kv.KVCache.init(
+        allocator,
+        verified.num_layers,
+        verified.kv_dim,
+        verified.max_kv_positions,
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return Error.OutOfMemory,
+        else => return Error.InvalidCheckpoint,
+    };
+    errdefer cache.deinit();
+    const output = allocator.alloc(
+        u32,
+        verified.max_new_tokens,
+    ) catch return Error.OutOfMemory;
+    errdefer allocator.free(output);
+    try materializeIntoV1(verified, &cache, output);
 
     return .{
         .allocator = allocator,

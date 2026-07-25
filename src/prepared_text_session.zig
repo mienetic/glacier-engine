@@ -23,6 +23,8 @@ const lane_contiguous = @import("lane_contiguous_publication.zig");
 const publication = @import("lane_publication_txn.zig");
 const prepared_checkpoint = @import("prepared_text_checkpoint.zig");
 const prepared_successor = @import("prepared_text_successor.zig");
+const prepared_restore =
+    @import("prepared_text_restore_admission.zig");
 const kernels = @import("backends/cpu/kernels.zig");
 
 pub const plan_abi: u64 = 0x474c_5450_0000_0001;
@@ -390,6 +392,7 @@ pub fn boundaryRootV1(snapshot: BoundarySnapshotV1) [32]u8 {
     hashU64(&hash, snapshot.publication.abi_version);
     hashU64(&hash, snapshot.publication.request_epoch);
     hashU64(&hash, snapshot.publication.execution_abi);
+    hashU64(&hash, snapshot.publication.sequence_base);
     hashU64(&hash, snapshot.publication.next_sequence);
     hashU64(
         &hash,
@@ -416,6 +419,8 @@ pub fn boundarySnapshotValidV1(snapshot: BoundarySnapshotV1) bool {
         snapshot.publication.execution_abi != lane_contiguous.abi or
         snapshot.publication.state.execution_abi != lane_contiguous.abi or
         !publication.stateCommitmentValidV1(snapshot.publication.state) or
+        snapshot.publication.sequence_base >
+            snapshot.publication.next_sequence or
         snapshot.publication.next_sequence !=
             snapshot.publication.state.output_length or
         isZeroDigest(snapshot.publication.transcript_sha256))
@@ -536,7 +541,9 @@ pub fn boundarySnapshotValidForBoundPlanV2(
             &local_plan.prompt_sha256,
         ) and
         snapshot.base.publication.request_epoch ==
-            bound_plan.execution.request_epoch;
+            bound_plan.execution.request_epoch and
+        snapshot.base.publication.sequence_base ==
+            bound_plan.execution.publication_next_sequence;
 }
 
 /// Canonical terminal token-sequence root. Token ids are hashed as explicit
@@ -1016,7 +1023,6 @@ pub fn validateBoundPlanV1(value: BoundPlanV1) !void {
         value.execution.batch_items != 1 or
         value.execution.required_capabilities !=
             model_contract.no_capabilities or
-        value.execution.publication_next_sequence != 0 or
         value.residency.residency != .shared_read_only or
         value.artifact.family != value.execution.family or
         value.artifact.input_kind != value.execution.input_kind or
@@ -1070,6 +1076,45 @@ pub fn validateBoundPlanV1(value: BoundPlanV1) !void {
             &boundPlanRootV1(value),
         ))
         return Error.InvalidBoundPlan;
+}
+
+/// Rebind one already-verified R1g successor execution/residency pair to the
+/// immutable prepared artifact and token-domain metadata retained by its
+/// source BoundPlan. The resulting root is local process state; portable
+/// verification remains on the canonical successor wires.
+pub fn deriveSuccessorBoundPlanV1(
+    source: BoundPlanV1,
+    artifacts: prepared_successor.ArtifactsV1,
+) !BoundPlanV1 {
+    try validateBoundPlanV1(source);
+    if (!std.mem.eql(
+        u8,
+        &artifacts.successor_plan.previous_plan_sha256,
+        &source.execution.plan_sha256,
+    ) or artifacts.successor_plan.publication_next_sequence == 0 or
+        artifacts.successor_plan.generation <= source.execution.generation or
+        !std.mem.eql(
+            u8,
+            &artifacts.successor_plan.artifact_sha256,
+            &source.artifact.artifact_sha256,
+        ) or !std.meta.eql(
+        artifacts.successor_residency.request_claim,
+        source.residency.request_claim,
+    ))
+        return Error.InvalidBoundPlan;
+    var result: BoundPlanV1 = .{
+        .local_plan_sha256 = source.local_plan_sha256,
+        .artifact = source.artifact,
+        .execution = artifacts.successor_plan,
+        .residency = artifacts.successor_residency,
+        .token_domain_sha256 = source.token_domain_sha256,
+        .token_domain_config_sha256 = source.token_domain_config_sha256,
+        .artifact_license_sha256 = source.artifact_license_sha256,
+        .bound_plan_sha256 = undefined,
+    };
+    result.bound_plan_sha256 = boundPlanRootV1(result);
+    try validateBoundPlanV1(result);
+    return result;
 }
 
 fn validateAdmissionForAdoption(
@@ -1182,6 +1227,38 @@ const Resources = struct {
             .buffers = buffers,
             .rope_table = rope_table,
         };
+    }
+
+    fn initRestored(
+        allocator: std.mem.Allocator,
+        model: loader.LoadedModel,
+        decoded: prepared_checkpoint.DecodedV1,
+    ) !Resources {
+        const cfg = model.config;
+        const expected_kv_dim = std.math.mul(
+            usize,
+            cfg.num_kv_heads,
+            cfg.head_dim,
+        ) catch return Error.InvalidState;
+        if (decoded.num_layers != cfg.num_layers or
+            decoded.kv_dim != expected_kv_dim or
+            decoded.vocab_size != cfg.vocab_size or
+            decoded.output_count == 0 or
+            decoded.output_count != decoded.sampling_calls)
+            return Error.InvalidState;
+        var resources = try Resources.init(
+            allocator,
+            model,
+            decoded.max_kv_positions,
+            decoded.max_new_tokens,
+        );
+        errdefer resources.deinit();
+        try prepared_checkpoint.materializeIntoV1(
+            decoded,
+            &resources.cache,
+            resources.output,
+        );
+        return resources;
     }
 
     fn deinit(self: *Resources) void {
@@ -1332,6 +1409,97 @@ pub const SessionV1 = struct {
         );
     }
 
+    fn initializeRestoredAdopting(
+        self: *SessionV1,
+        allocator: std.mem.Allocator,
+        model: *const loader.LoadedModel,
+        prompt: []const u32,
+        options: OptionsV1,
+        plan: PlanV1,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+        adoption: lane.PublicationAdoptionV1,
+        tree: resource_bank.LeaseTreeV1,
+        batch: resource_bank.LeaseAllocationBatchV1,
+        decoded: prepared_checkpoint.DecodedV1,
+        restored: publication.TranscriptSnapshotV1,
+    ) !void {
+        if (self.resources_initialized or self.publication_bound or
+            self.recovery_adoption != null)
+            return Error.InvalidState;
+        const expected = try makePlanV1(model.*, prompt, options);
+        const expected_max_kv_positions = std.math.add(
+            usize,
+            prompt.len,
+            options.max_new_tokens - 1,
+        ) catch return generate.GenerateError.ContextTooLong;
+        if (!std.meta.eql(expected, plan) or
+            scheduler.bank != bank or
+            !std.meta.eql(plan.claim, adoption.admission.event.spec.claim) or
+            !std.mem.eql(
+                u8,
+                &decoded.local_plan_sha256,
+                &plan.plan_sha256,
+            ) or decoded.prompt_tokens != prompt.len or
+            decoded.max_new_tokens != options.max_new_tokens or
+            decoded.max_kv_positions != expected_max_kv_positions or
+            decoded.publication_next_sequence != restored.next_sequence or
+            decoded.output_count != restored.next_sequence or
+            decoded.sampling_calls != restored.state.sampling_calls or
+            restored.sequence_base != restored.next_sequence or
+            restored.request_epoch != adoption.publication_request_epoch or
+            !std.mem.eql(
+                u8,
+                &decoded.transcript_sha256,
+                &restored.transcript_sha256,
+            ) or !std.mem.eql(
+            u8,
+            &decoded.state_commitment_sha256,
+            &restored.state.commitment_sha256,
+        ))
+            return Error.InvalidState;
+
+        const resources = try Resources.initRestored(
+            allocator,
+            model.*,
+            decoded,
+        );
+        self.* = .{
+            .model = model,
+            .scheduler = scheduler,
+            .plan = plan,
+            .options = options,
+            .resources = resources,
+            .output_len = decoded.output_count,
+            .rng_state = decoded.rng_state,
+            .sampling_calls = decoded.sampling_calls,
+            .resources_initialized = true,
+            .publication_bound = true,
+        };
+        errdefer {
+            self.resources.deinit();
+            self.* = .{};
+        }
+
+        try self.publication_session
+            .initRestoredAdoptingWithFundedLeaseTree(
+            scheduler,
+            bank,
+            adoption,
+            tree,
+            batch,
+            restored,
+            decoded.logical_kv_sha256,
+            .{
+                .cache = &self.resources.cache,
+                .rng_state = &self.rng_state,
+                .sampling_calls = &self.sampling_calls,
+                .output = self.resources.output,
+                .output_len = &self.output_len,
+            },
+        );
+    }
+
     /// Adopt the exact just-admitted request. From `Scheduler.admit` through
     /// this call's return, the caller must not make another public call on the
     /// same Scheduler, including from another thread. This preserves the
@@ -1449,7 +1617,8 @@ pub const SessionV1 = struct {
         permit: lane.ServicePermitV1,
         downstream: publication.SinkV1,
     ) !publication.CommitReceiptV1 {
-        if (!self.publication_bound or self.finished)
+        if (!self.resources_initialized or
+            !self.publication_bound or self.finished)
             return Error.InvalidState;
 
         const stage = self.prepareStage() catch |err| {
@@ -1500,7 +1669,9 @@ pub const SessionV1 = struct {
     }
 
     pub fn snapshotVerified(self: *SessionV1) !BoundarySnapshotV1 {
-        if (!self.publication_bound) return Error.InvalidState;
+        if (!self.resources_initialized or
+            !self.publication_bound)
+            return Error.InvalidState;
         var snapshot: BoundarySnapshotV1 = .{
             .plan_sha256 = self.plan.plan_sha256,
             .image_identity = self.plan.image_identity,
@@ -1514,7 +1685,8 @@ pub const SessionV1 = struct {
     }
 
     pub fn retire(self: *SessionV1) !lane.EventV1 {
-        if (!self.publication_bound or !self.finished)
+        if (!self.resources_initialized or
+            !self.publication_bound or !self.finished)
             return Error.InvalidState;
         const event = try self.publication_session.retire();
         self.publication_bound = false;
@@ -1522,7 +1694,8 @@ pub const SessionV1 = struct {
     }
 
     pub fn cancel(self: *SessionV1) !lane.EventV1 {
-        if (!self.publication_bound or self.finished)
+        if (!self.resources_initialized or
+            !self.publication_bound or self.finished)
             return Error.InvalidState;
         const event = try self.publication_session.cancel();
         self.publication_bound = false;
@@ -1826,16 +1999,28 @@ const CheckpointContextV1 = struct {
     expected: prepared_checkpoint.ExpectedBindingsV1,
 };
 
-/// Preferred R1d-R1f session. V3 preserves the complete V2 execution lifecycle,
-/// adds one terminal, residency-aware Common Model Contract ResultEnvelope,
-/// and can replace exact non-terminal state buffers while retaining the
-/// original in-process publication authority.
+pub const RestoredLifecyclePhaseV1 = enum(u8) {
+    none,
+    allocation_abort_required,
+    live,
+    close_held,
+    retire_prepared,
+    backing_freed,
+    tree_empty,
+};
+
+/// Preferred R1d-R1h-b session. V3 preserves the complete V2 execution
+/// lifecycle, adds one terminal, residency-aware Common Model Contract
+/// ResultEnvelope, can replace exact non-terminal state buffers while
+/// retaining the original in-process publication authority, and can activate
+/// one charge-correct process-local restored target.
 ///
 /// The Model Contract publication state is a separate result domain from the
 /// per-token contiguous transcript: token transactions advance the V2
 /// boundary, then at most one explicit terminal seal can commit sequence
 /// 0 -> 1 before explicit retirement releases the request-charged receipt.
-/// `deinit` remains an abandonment cleanup path and may close without evidence.
+/// `deinit` remains an abandonment cleanup path and may close without evidence;
+/// a retained restored-start rollback still requires its prepared capability.
 pub const SessionV3 = struct {
     inner: SessionV2 = .{},
     result_publication_state: model_contract.PublicationStateV1 = undefined,
@@ -1844,6 +2029,257 @@ pub const SessionV3 = struct {
     result_state_initialized: bool = false,
     result_receipt_live: bool = false,
     terminal_result_sealed: bool = false,
+    restored_mode: bool = false,
+    restored_phase: RestoredLifecyclePhaseV1 = .none,
+    restored_scheduler: ?*lane.Scheduler = null,
+    restored_bank: ?*resource_bank.Bank = null,
+    restored_tree: resource_bank.LeaseTreeV1 = undefined,
+    restored_scope: resource_bank.LeaseNodeV1 = undefined,
+    restored_allocation: resource_bank.LeaseNodeV1 = undefined,
+    restored_batch: resource_bank.LeaseAllocationBatchV1 = undefined,
+    restored_close: lane.RestoredPublicationCloseV1 = undefined,
+    restored_retire_ticket: resource_bank.LeaseRetireTicketV1 = undefined,
+    restored_free_permit: resource_bank.LeaseFreePermitV1 = undefined,
+
+    /// Address that R1h-a must bind before any restored allocation. It names
+    /// the final nested publication coordinator, not the outer Session value.
+    pub fn restoredPublicationSessionIdV1(
+        self: *SessionV3,
+    ) usize {
+        return @intFromPtr(
+            &self.inner.inner.publication_session.inner,
+        );
+    }
+
+    /// Materialize and activate one verified R1g successor behind the exact
+    /// R1h-a barrier. The immutable receipt is already charged; this method
+    /// reserves a queue-free funded ownership carve-out before its first
+    /// allocator call, reconstructs concrete KV/output/RNG state, and makes
+    /// the Scheduler binding visible only as its final fallible operation.
+    pub fn startRestoredV1(
+        self: *SessionV3,
+        allocator: std.mem.Allocator,
+        model: *const loader.LoadedModel,
+        prompt: []const u32,
+        options: OptionsV1,
+        local_plan: PlanV1,
+        source_bound_plan: BoundPlanV1,
+        prepared: *prepared_restore.PreparedRestoredAdmissionV1,
+        evidence: prepared_restore.EvidenceV1,
+    ) !void {
+        if (self.result_state_initialized or
+            self.terminal_result_sealed or
+            self.inner.contract_bound or self.restored_mode or
+            self.restored_phase != .none)
+            return Error.InvalidState;
+        if (@as(u64, options.eos_token) <
+            @as(u64, @intCast(model.config.vocab_size)))
+            return Error.InvalidConfiguration;
+        if (prepared.session_id !=
+            self.restoredPublicationSessionIdV1())
+            return Error.InvalidAdmission;
+
+        try prepared_restore.validatePreparedRestoredAdmissionV1(
+            prepared,
+            evidence,
+        );
+        const artifacts =
+            try prepared_successor.decodeAndVerifyForCheckpointV1(
+                evidence.encoded_plan,
+                evidence.encoded_residency,
+                evidence.encoded_segment,
+                evidence.encoded_checkpoint,
+                evidence.expected_checkpoint,
+                evidence.source,
+                evidence.target,
+            );
+        const decoded =
+            try prepared_checkpoint.decodeCheckpointV1(
+                evidence.encoded_checkpoint,
+                evidence.expected_checkpoint,
+            );
+        const expected_local_plan =
+            try makePlanV1(model.*, prompt, options);
+        try validateBoundPlanV1(source_bound_plan);
+        if (!std.meta.eql(expected_local_plan, local_plan) or
+            !std.mem.eql(
+                u8,
+                &source_bound_plan.bound_plan_sha256,
+                &evidence.source.bound_plan_sha256,
+            ) or !std.meta.eql(
+            source_bound_plan.execution,
+            evidence.source.execution,
+        ) or !std.meta.eql(
+            source_bound_plan.residency,
+            evidence.source.residency,
+        ) or !std.mem.eql(
+            u8,
+            &source_bound_plan.local_plan_sha256,
+            &local_plan.plan_sha256,
+        ) or !std.mem.eql(
+            u8,
+            &decoded.bound_plan_sha256,
+            &source_bound_plan.bound_plan_sha256,
+        ) or !std.meta.eql(
+            local_plan.claim,
+            prepared.target.request_claim,
+        ))
+            return Error.InvalidBoundPlan;
+        const successor_bound_plan =
+            try deriveSuccessorBoundPlanV1(
+                source_bound_plan,
+                artifacts,
+            );
+        if (!std.mem.eql(
+            u8,
+            &successor_bound_plan.execution.plan_sha256,
+            &prepared.successor_execution_plan_sha256,
+        ) or !std.mem.eql(
+            u8,
+            &successor_bound_plan.residency.binding_sha256,
+            &prepared.successor_residency_binding_sha256,
+        ) or successor_bound_plan.execution.publication_next_sequence !=
+            prepared.publication_next_sequence)
+            return Error.InvalidBoundPlan;
+
+        const initial_result_state =
+            model_contract.initializePublicationStateV1(
+                successor_bound_plan.execution.request_epoch,
+                successor_bound_plan.artifact.artifact_sha256,
+            ) catch return Error.InvalidBoundPlan;
+        var restored = evidence.source.publication;
+        restored.sequence_base = prepared.publication_next_sequence;
+        if (restored.next_sequence !=
+            prepared.publication_next_sequence or
+            restored.last_resource_permit_generation !=
+                prepared.source_last_resource_permit_generation or
+            restored.terminal or
+            restored.state.output_length !=
+                prepared.publication_next_sequence or
+            restored.state.sampling_calls !=
+                prepared.publication_next_sequence or
+            !std.mem.eql(
+                u8,
+                &restored.state.commitment_sha256,
+                &decoded.state_commitment_sha256,
+            ) or !std.mem.eql(
+            u8,
+            &restored.transcript_sha256,
+            &decoded.transcript_sha256,
+        ))
+            return Error.InvalidState;
+
+        const materialized_claim =
+            prepared_restore.materializedClaimV1(local_plan.claim);
+        if (materialized_claim.isZero())
+            return Error.InvalidPlan;
+        var allocation_nodes: [1]resource_bank.LeaseNodeV1 =
+            undefined;
+        const reservation =
+            try prepared.bank
+                .reserveReceiptFundedAllocationsForSession(
+                prepared.tree,
+                prepared.adoption.publication_request_epoch,
+                prepared.session_id,
+                prepared.publication_next_sequence,
+                &.{.{
+                    .scope = prepared.scope,
+                    .node_key = prepared.target.cache_node_key,
+                    .binding_key = prepared.target.cache_binding_key,
+                    .claim = materialized_claim,
+                }},
+                &allocation_nodes,
+            );
+
+        self.inner.bound_plan = successor_bound_plan;
+        self.inner.contract_bound = true;
+        self.result_publication_state = initial_result_state;
+        self.result_receipt = prepared.receipt;
+        self.result_state_initialized = true;
+        self.result_receipt_live = true;
+        self.restored_mode = true;
+        self.restored_scheduler = prepared.scheduler;
+        self.restored_bank = prepared.bank;
+        self.restored_tree = reservation.tree;
+        self.restored_scope = prepared.scope;
+        self.restored_allocation = allocation_nodes[0];
+        self.restored_batch = reservation.batch;
+
+        self.inner.inner.initializeRestoredAdopting(
+            allocator,
+            model,
+            prompt,
+            options,
+            local_plan,
+            prepared.scheduler,
+            prepared.bank,
+            prepared.adoption,
+            reservation.tree,
+            reservation.batch,
+            decoded,
+            restored,
+        ) catch |original_error| {
+            const recovered_tree =
+                prepared.bank.abortAllocationsAfterFree(
+                    reservation.batch,
+                ) catch {
+                    self.restored_phase =
+                        .allocation_abort_required;
+                    return Error.RecoveryRequired;
+                };
+            prepared.tree = recovered_tree;
+            prepared.bootstrap_sha256 =
+                prepared_restore.preparedRestoredAdmissionRootV1(
+                    prepared.*,
+                );
+            self.* = .{};
+            return original_error;
+        };
+
+        self.restored_tree = self.inner.inner.publication_session
+            .inner.funded_lease_tree orelse
+            @panic("restored adoption lost funded tree");
+        self.restored_phase = .live;
+        prepared.tree = self.restored_tree;
+        prepared.phase = .activated;
+        prepared.bootstrap_sha256 =
+            prepared_restore.preparedRestoredAdmissionRootV1(
+                prepared.*,
+            );
+    }
+
+    /// Retry the only pre-activation recovery state retained by
+    /// `startRestoredV1`: allocator backing is already gone, but the funded
+    /// reservation must still be aborted before R1h-a authority is usable.
+    pub fn recoverRestoredStartV1(
+        self: *SessionV3,
+        prepared: *prepared_restore.PreparedRestoredAdmissionV1,
+    ) !void {
+        if (!self.restored_mode or
+            self.restored_phase != .allocation_abort_required or
+            self.restored_scheduler == null or
+            self.restored_scheduler.? != prepared.scheduler or
+            self.restored_bank == null or
+            self.restored_bank.? != prepared.bank or
+            prepared.phase != .prepared or
+            !std.meta.eql(
+                self.restored_batch.parent,
+                prepared.receipt,
+            ) or
+            prepared.session_id !=
+                self.restoredPublicationSessionIdV1())
+            return Error.InvalidState;
+        const recovered_tree =
+            prepared.bank.abortAllocationsAfterFree(
+                self.restored_batch,
+            ) catch return Error.RecoveryRequired;
+        prepared.tree = recovered_tree;
+        prepared.bootstrap_sha256 =
+            prepared_restore.preparedRestoredAdmissionRootV1(
+                prepared.*,
+            );
+        self.* = .{};
+    }
 
     pub fn start(
         self: *SessionV3,
@@ -1924,8 +2360,129 @@ pub const SessionV3 = struct {
     }
 
     pub fn deinit(self: *SessionV3) void {
+        if (self.restored_mode) {
+            switch (self.restored_phase) {
+                .live => {
+                    _ = self.closeRestoredV1() catch
+                        @panic("restored Session close failed");
+                },
+                .close_held,
+                .retire_prepared,
+                .backing_freed,
+                .tree_empty,
+                => {
+                    _ = self.recoverRestoredCloseV1() catch
+                        @panic("restored Session close recovery failed");
+                },
+                .allocation_abort_required => @panic("restored Session start recovery required"),
+                .none => @panic("invalid restored Session phase"),
+            }
+            return;
+        }
         self.inner.deinit();
         self.* = .{};
+    }
+
+    /// Establish the Scheduler-side no-service barrier, then reclaim concrete
+    /// resources before atomically closing the empty funded tree and receipt.
+    /// A failure after the barrier is retained in `restored_phase` and must be
+    /// retried with `recoverRestoredCloseV1`.
+    pub fn closeRestoredV1(
+        self: *SessionV3,
+    ) !lane.EventV1 {
+        if (!self.restored_mode or
+            self.restored_phase != .live or
+            !self.result_receipt_live or
+            !self.inner.contract_bound or
+            !self.inner.inner.resources_initialized or
+            !self.inner.inner.publication_bound)
+            return Error.InvalidState;
+        const publication_session =
+            &self.inner.inner.publication_session;
+        const snapshot = try publication_session.snapshotVerified();
+        const kind: lane.EventKind =
+            if (self.inner.isFinished()) .retire else .cancel;
+        self.restored_close =
+            try self.inner.inner.scheduler
+                .beginRestoredPublicationClose(
+                publication_session.admission.handle,
+                kind,
+                publication_session.request_epoch,
+                @intFromPtr(&publication_session.inner),
+                snapshot.next_sequence,
+                self.restored_tree,
+            );
+        self.restored_phase = .close_held;
+        return self.recoverRestoredCloseV1();
+    }
+
+    /// Resume one exact barrier-held cleanup phase. No phase uncharges the
+    /// parent receipt before allocator backing is gone, and no phase can make
+    /// Scheduler service runnable again.
+    pub fn recoverRestoredCloseV1(
+        self: *SessionV3,
+    ) !lane.EventV1 {
+        if (!self.restored_mode or
+            self.restored_phase == .none or
+            self.restored_phase == .live or
+            self.restored_phase == .allocation_abort_required)
+            return Error.InvalidState;
+        const publication_session =
+            &self.inner.inner.publication_session;
+        const bank = publication_session.bank;
+        const scheduler = self.inner.inner.scheduler;
+        while (true) {
+            switch (self.restored_phase) {
+                .close_held => {
+                    const prepared_retire =
+                        bank.beginRetireSubtreeForSession(
+                            self.restored_tree,
+                            self.restored_scope,
+                            publication_session.request_epoch,
+                            @intFromPtr(&publication_session.inner),
+                            self.restored_close
+                                .expected_next_sequence,
+                        ) catch return Error.RecoveryRequired;
+                    self.restored_tree = prepared_retire.tree;
+                    self.restored_retire_ticket =
+                        prepared_retire.ticket;
+                    self.restored_phase = .retire_prepared;
+                },
+                .retire_prepared => {
+                    if (!self.inner.inner.resources_initialized)
+                        return Error.RecoveryRequired;
+                    const authorized =
+                        bank.authorizeFree(
+                            self.restored_retire_ticket,
+                        ) catch return Error.RecoveryRequired;
+                    self.restored_tree = authorized.tree;
+                    self.restored_free_permit = authorized.permit;
+                    self.inner.inner.resources.deinit();
+                    self.inner.inner.resources_initialized = false;
+                    self.restored_phase = .backing_freed;
+                },
+                .backing_freed => {
+                    self.restored_tree =
+                        bank.commitFreeAfterAllocatorFree(
+                            self.restored_free_permit,
+                        ) catch return Error.RecoveryRequired;
+                    self.restored_phase = .tree_empty;
+                },
+                .tree_empty => {
+                    const event =
+                        scheduler.commitRestoredPublicationClose(
+                            self.restored_close,
+                            self.restored_tree,
+                        ) catch return Error.RecoveryRequired;
+                    self.* = .{};
+                    return event;
+                },
+                .none,
+                .allocation_abort_required,
+                .live,
+                => return Error.InvalidState,
+            }
+        }
     }
 
     pub fn step(
@@ -1934,23 +2491,32 @@ pub const SessionV3 = struct {
         downstream: publication.SinkV1,
     ) !publication.CommitReceiptV1 {
         if (!self.result_state_initialized or
+            (self.restored_mode and
+                self.restored_phase != .live) or
             self.terminal_result_sealed)
             return Error.InvalidState;
         return self.inner.step(permit, downstream);
     }
 
     pub fn outputTokens(self: *const SessionV3) []const u32 {
-        if (!self.result_state_initialized) return &.{};
+        if (!self.result_state_initialized or
+            (self.restored_mode and
+                self.restored_phase != .live))
+            return &.{};
         return self.inner.outputTokens();
     }
 
     pub fn isFinished(self: *const SessionV3) bool {
         return self.result_state_initialized and
+            (!self.restored_mode or
+                self.restored_phase == .live) and
             self.inner.isFinished();
     }
 
     pub fn snapshotVerified(self: *SessionV3) !BoundarySnapshotV2 {
-        if (!self.result_state_initialized)
+        if (!self.result_state_initialized or
+            (self.restored_mode and
+                self.restored_phase != .live))
             return Error.InvalidState;
         return self.inner.snapshotVerified();
     }
@@ -1961,6 +2527,8 @@ pub const SessionV3 = struct {
     ) !CheckpointContextV1 {
         if (!self.result_state_initialized or
             !self.result_receipt_live or
+            (self.restored_mode and
+                self.restored_phase != .live) or
             self.terminal_result_sealed or
             self.inner.isFinished())
             return Error.InvalidState;
@@ -2317,6 +2885,8 @@ pub const SessionV3 = struct {
     ) !TerminalResultEvidenceV1 {
         if (!self.result_state_initialized or
             !self.result_receipt_live or
+            (self.restored_mode and
+                self.restored_phase != .live) or
             !self.inner.isFinished() or
             self.terminal_result_sealed)
             return Error.InvalidState;
@@ -2414,6 +2984,13 @@ pub const SessionV3 = struct {
     }
 
     pub fn retire(self: *SessionV3) !lane.EventV1 {
+        if (self.restored_mode) {
+            if (self.restored_phase != .live)
+                return Error.InvalidState;
+            if (!self.inner.isFinished())
+                return Error.InvalidState;
+            return self.closeRestoredV1();
+        }
         if (!self.result_state_initialized or
             !self.result_receipt_live or
             !self.terminal_result_sealed)
@@ -2424,6 +3001,13 @@ pub const SessionV3 = struct {
     }
 
     pub fn cancel(self: *SessionV3) !lane.EventV1 {
+        if (self.restored_mode) {
+            if (self.restored_phase != .live)
+                return Error.InvalidState;
+            if (self.inner.isFinished())
+                return Error.InvalidState;
+            return self.closeRestoredV1();
+        }
         if (!self.result_state_initialized or
             !self.result_receipt_live or
             self.terminal_result_sealed)

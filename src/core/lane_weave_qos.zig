@@ -22,6 +22,8 @@ pub const service_commit_ticket_abi: u64 = 0x474c_5743_0000_0001;
 pub const service_finalizer_abi: u64 = 0x474c_5746_0000_0001;
 pub const service_finalizer_v2_abi: u64 = 0x474c_5746_0000_0002;
 pub const publication_adoption_abi: u64 = 0x474c_5741_0000_0001;
+pub const restored_publication_close_abi: u64 =
+    0x474c_5758_0000_0001;
 pub const Digest = [32]u8;
 pub const zero_digest: Digest = [_]u8{0} ** 32;
 
@@ -33,6 +35,8 @@ const service_commit_ticket_domain =
     "glacier-lane-weave-qos-service-commit-ticket-v1\x00";
 const publication_adoption_domain =
     "glacier-lane-weave-qos-publication-adoption-v1\x00";
+const restored_publication_close_domain =
+    "glacier-lane-weave-qos-restored-publication-close-v1\x00";
 const receipt_domain = "glacier-lane-weave-qos-resource-receipt-v1\x00";
 
 pub const Error = error{
@@ -46,9 +50,11 @@ pub const Error = error{
     NoRunnableRequest,
     ServiceInFlight,
     AdoptionInFlight,
+    PublicationCloseInFlight,
     StaleServicePermit,
     StaleServiceCommitTicket,
     StaleAdoptionLease,
+    StalePublicationClose,
     StaleHandle,
     InvalidTransition,
     BankDrift,
@@ -342,6 +348,25 @@ pub const PublicationAdoptionDecision = union(enum) {
     rejected: EventV1,
 };
 
+/// Single-use process-local barrier that removes one restored publication
+/// lane only after its receipt-funded allocation tree has been reclaimed.
+/// The barrier is snapshot-invisible, blocks every Scheduler mutator, and may
+/// be retained across caller-side allocator free/recovery phases.
+pub const RestoredPublicationCloseV1 = struct {
+    abi_version: u64 = restored_publication_close_abi,
+    scheduler_epoch: u64 = 0,
+    coordinator_id: u64 = 0,
+    coordinator_address: u64 = 0,
+    close_generation: u64 = 0,
+    kind: EventKind = .cancel,
+    handle: Handle = .{},
+    publication_request_epoch: u64 = 0,
+    publication_session_id: usize = 0,
+    expected_next_sequence: u64 = 0,
+    initial_tree: resource_bank.LeaseTreeV1 = undefined,
+    close_sha256: Digest = zero_digest,
+};
+
 /// Read-only logical scheduler snapshot.
 pub const SnapshotV1 = struct {
     abi_version: u64 = abi,
@@ -383,6 +408,10 @@ const PendingService = struct {
 
 const PendingPublicationAdoption = struct {
     adoption: PublicationAdoptionV1,
+};
+
+const PendingRestoredPublicationClose = struct {
+    close: RestoredPublicationCloseV1,
 };
 
 const ServiceCommitContext = struct {
@@ -460,6 +489,8 @@ pub const Scheduler = struct {
     pending_service: ?PendingService = null,
     next_publication_adoption_generation: u64 = 1,
     pending_publication_adoption: ?PendingPublicationAdoption = null,
+    next_restored_publication_close_generation: u64 = 1,
+    pending_restored_publication_close: ?PendingRestoredPublicationClose = null,
     cursor: u32 = 0,
     level: u16 = 1,
     maximum_service_gap: u64,
@@ -830,6 +861,56 @@ pub const Scheduler = struct {
             adoption.publication_service_policy,
         );
         self.pending_publication_adoption = null;
+    }
+
+    /// Commit one already-materialized receipt-funded allocation wave and
+    /// consume the restored-adoption barrier in the same Scheduler critical
+    /// section. ResourceBank performs the sole fallible linearization; after
+    /// it succeeds, installing the process-local slot binding and consuming
+    /// the barrier are infallible assignments.
+    pub fn commitRestoredPublicationAdoptionWithFundedLeaseTree(
+        self: *Scheduler,
+        adoption: PublicationAdoptionV1,
+        tree: resource_bank.LeaseTreeV1,
+        batch: resource_bank.LeaseAllocationBatchV1,
+        restored_next_sequence: u64,
+        source_last_publication_permit_generation: u64,
+    ) Error!resource_bank.LeaseTreeV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoService();
+        try self.validateBank();
+        _ = try self.validatePendingPublicationAdoption(adoption);
+        const index = try self.validatePublicationAdmission(
+            adoption.admission,
+        );
+        if (!std.meta.eql(tree.parent, self.slots[index].receipt) or
+            adoption.publication_service_policy != .every_service)
+            return Error.InvalidTransition;
+
+        const committed_tree =
+            self.bank.commitFundedAllocationsAndActivateRestoredPublication(
+                .{ .tree = tree, .batch = batch },
+                adoption.publication_request_epoch,
+                adoption.publication_session_id,
+                restored_next_sequence,
+                source_last_publication_permit_generation,
+            ) catch |err| switch (err) {
+                error.InvalidConfiguration => return Error.InvalidConfiguration,
+                error.StaleReservation => return Error.StaleHandle,
+                error.InvalidTransition, error.InvalidClaim => return Error.InvalidTransition,
+                else => return self.poisonBank(),
+            };
+
+        const slot = &self.slots[index];
+        slot.publication_request_epoch =
+            adoption.publication_request_epoch;
+        slot.publication_session_id = adoption.publication_session_id;
+        slot.publication_service_policy =
+            adoption.publication_service_policy;
+        self.pending_publication_adoption = null;
+        return committed_tree;
     }
 
     /// Validate one exact pending adoption without consuming its barrier.
@@ -1283,6 +1364,177 @@ pub const Scheduler = struct {
         );
     }
 
+    /// Freeze one restored bound lane before caller-side allocation reclaim.
+    /// While this capability is pending, service preparation and every other
+    /// logical mutator fail closed. `kind` must match the lane's current
+    /// lifecycle state: active lanes cancel and finished lanes retire.
+    pub fn beginRestoredPublicationClose(
+        self: *Scheduler,
+        handle: Handle,
+        kind: EventKind,
+        request_epoch: u64,
+        session_id: usize,
+        expected_next_sequence: u64,
+        tree: resource_bank.LeaseTreeV1,
+    ) Error!RestoredPublicationCloseV1 {
+        if (request_epoch == 0 or session_id == 0 or
+            expected_next_sequence == 0 or
+            (kind != .cancel and kind != .retire))
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoAdoption();
+        try self.requireNoService();
+        try self.validateBank();
+        try self.preflightEvent();
+        if (self.next_restored_publication_close_generation == 0 or
+            self.next_restored_publication_close_generation ==
+                std.math.maxInt(u64))
+            return Error.GenerationOverflow;
+
+        const required_state: SlotState =
+            if (kind == .cancel) .active else .finished;
+        const index = try self.validateHandle(handle, required_state);
+        const slot = self.slots[index];
+        if (!slotPublicationBindingValid(slot) or
+            slot.publication_request_epoch != request_epoch or
+            slot.publication_session_id != session_id or
+            !std.meta.eql(tree.parent, slot.receipt) or
+            !resource_bank.leaseTreeIntegrityValidV1(tree))
+            return Error.InvalidTransition;
+        self.bank.validateReceiptFundedLeaseTree(
+            tree,
+            true,
+        ) catch |err| switch (err) {
+            error.StaleReservation => return Error.StaleHandle,
+            error.InvalidConfiguration => return Error.InvalidConfiguration,
+            error.InvalidTransition, error.InvalidClaim => return Error.InvalidTransition,
+            else => return self.poisonBank(),
+        };
+        self.bank.validatePublicationSession(
+            slot.receipt,
+            request_epoch,
+            session_id,
+            expected_next_sequence,
+        ) catch |err| switch (err) {
+            error.StaleReservation => return Error.StaleHandle,
+            error.InvalidConfiguration => return Error.InvalidConfiguration,
+            error.InvalidTransition => return Error.InvalidTransition,
+            else => return self.poisonBank(),
+        };
+
+        var close_capability: RestoredPublicationCloseV1 = .{
+            .scheduler_epoch = self.config.scheduler_epoch,
+            .coordinator_id = self.service_coordinator_id,
+            .coordinator_address = @as(u64, @intCast(@intFromPtr(self))),
+            .close_generation = self.next_restored_publication_close_generation,
+            .kind = kind,
+            .handle = handle,
+            .publication_request_epoch = request_epoch,
+            .publication_session_id = session_id,
+            .expected_next_sequence = expected_next_sequence,
+            .initial_tree = tree,
+        };
+        close_capability.close_sha256 =
+            restoredPublicationCloseSha256(close_capability);
+        self.next_restored_publication_close_generation += 1;
+        self.pending_restored_publication_close =
+            .{ .close = close_capability };
+        return close_capability;
+    }
+
+    /// Finish a barrier-held restored close after allocator backing and every
+    /// funded allocation node have been reclaimed. ResourceBank atomically
+    /// closes the bound session, empty tree, and immutable parent receipt
+    /// before the Scheduler emits its ordinary cancel/retire Event-v1.
+    pub fn commitRestoredPublicationClose(
+        self: *Scheduler,
+        close_capability: RestoredPublicationCloseV1,
+        empty_tree: resource_bank.LeaseTreeV1,
+    ) Error!EventV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoService();
+        try self.validateBank();
+        try self.preflightEvent();
+        _ = try self.validatePendingRestoredPublicationClose(
+            close_capability,
+        );
+
+        const required_state: SlotState =
+            if (close_capability.kind == .cancel) .active else .finished;
+        const index = try self.validateHandle(
+            close_capability.handle,
+            required_state,
+        );
+        const slot = &self.slots[index];
+        if (!slotPublicationBindingValid(slot.*) or
+            slot.publication_request_epoch !=
+                close_capability.publication_request_epoch or
+            slot.publication_session_id !=
+                close_capability.publication_session_id or
+            !std.meta.eql(empty_tree.parent, slot.receipt) or
+            empty_tree.tree_key !=
+                close_capability.initial_tree.tree_key or
+            empty_tree.authority_key !=
+                close_capability.initial_tree.authority_key or
+            empty_tree.identity_generation !=
+                close_capability.initial_tree.identity_generation or
+            !std.meta.eql(
+                empty_tree.ceiling,
+                close_capability.initial_tree.ceiling,
+            ) or
+            !empty_tree.current.isZero())
+            return Error.InvalidTransition;
+
+        const before_state = self.stateSha256();
+        const before_counts = self.counts();
+        const before_used = self.used;
+        const before_tick = self.logical_tick;
+        const before_cursor = self.cursor;
+        const before_level = self.level;
+        const spec = slot.spec;
+        const receipt = slot.receipt;
+        const receipt_sha256 = slot.receipt_sha256;
+        const remaining = slot.remaining_quanta;
+        const next_used = subtractClaims(self.used, spec.claim) catch
+            return self.poisonBank();
+
+        self.bank
+            .closeActivatedRestoredPublicationSessionAndReleaseFundedLeaseTree(
+            empty_tree,
+            close_capability.publication_request_epoch,
+            close_capability.publication_session_id,
+            close_capability.expected_next_sequence,
+        ) catch |err| switch (err) {
+            error.InvalidConfiguration => return Error.InvalidConfiguration,
+            error.StaleReservation => return Error.StaleHandle,
+            error.InvalidTransition, error.InvalidClaim => return Error.InvalidTransition,
+            else => return self.poisonBank(),
+        };
+
+        self.used = next_used;
+        slot.* = .{};
+        self.pending_restored_publication_close = null;
+        return self.emitCurrent(.{
+            .kind = close_capability.kind,
+            .state_before_sha256 = before_state,
+            .logical_tick_before = before_tick,
+            .cursor_before = before_cursor,
+            .level_before = before_level,
+            .handle = close_capability.handle,
+            .spec = spec,
+            .resource_receipt = receipt,
+            .resource_receipt_sha256 = receipt_sha256,
+            .remaining_before = remaining,
+            .active_before = before_counts.active,
+            .finished_before = before_counts.finished,
+            .bank_used_before = before_used,
+        });
+    }
+
     /// Return a Bank-reconciled logical snapshot without advancing the chain.
     /// Pending service state is intentionally omitted, so prepare and abort are
     /// snapshot-invisible. Callers must retain the only permit authority until
@@ -1706,6 +1958,40 @@ pub const Scheduler = struct {
         return pending;
     }
 
+    fn validatePendingRestoredPublicationClose(
+        self: *Scheduler,
+        close_capability: RestoredPublicationCloseV1,
+    ) Error!PendingRestoredPublicationClose {
+        const pending = self.pending_restored_publication_close orelse
+            return Error.StalePublicationClose;
+        if (!std.mem.eql(
+            u8,
+            &pending.close.close_sha256,
+            &restoredPublicationCloseSha256(pending.close),
+        )) return self.poisonInvariant();
+        if (close_capability.abi_version !=
+            restored_publication_close_abi or
+            close_capability.scheduler_epoch !=
+                self.config.scheduler_epoch or
+            close_capability.coordinator_id !=
+                self.service_coordinator_id or
+            close_capability.coordinator_address !=
+                @as(u64, @intCast(@intFromPtr(self))) or
+            close_capability.close_generation == 0 or
+            close_capability.publication_request_epoch == 0 or
+            close_capability.publication_session_id == 0 or
+            close_capability.expected_next_sequence == 0 or
+            (close_capability.kind != .cancel and
+                close_capability.kind != .retire) or
+            !std.mem.eql(
+                u8,
+                &close_capability.close_sha256,
+                &restoredPublicationCloseSha256(close_capability),
+            ) or !std.meta.eql(close_capability, pending.close))
+            return Error.StalePublicationClose;
+        return pending;
+    }
+
     fn validatePendingService(
         self: *Scheduler,
         permit: ServicePermitV1,
@@ -1960,6 +2246,8 @@ pub const Scheduler = struct {
     fn requireNoAdoption(self: *const Scheduler) Error!void {
         if (self.pending_publication_adoption != null)
             return Error.AdoptionInFlight;
+        if (self.pending_restored_publication_close != null)
+            return Error.PublicationCloseInFlight;
     }
 
     fn requireNoService(self: *const Scheduler) Error!void {
@@ -2847,6 +3135,47 @@ pub fn publicationAdoptionSha256(
     const canonical_event_sha256 = eventSha256(adoption.admission.event);
     hash.update(&canonical_event_sha256);
     hash.update(&adoption.admission.event.resource_receipt_sha256);
+    var result: Digest = undefined;
+    hash.final(&result);
+    return result;
+}
+
+pub fn restoredPublicationCloseSha256(
+    close_capability: RestoredPublicationCloseV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(restored_publication_close_domain);
+    hashU64(&hash, close_capability.abi_version);
+    hashU64(&hash, close_capability.scheduler_epoch);
+    hashU64(&hash, close_capability.coordinator_id);
+    hashU64(&hash, close_capability.coordinator_address);
+    hashU64(&hash, close_capability.close_generation);
+    hashU8(&hash, @intFromEnum(close_capability.kind));
+    hashHandle(&hash, close_capability.handle);
+    hashU64(&hash, close_capability.publication_request_epoch);
+    hashU64(
+        &hash,
+        @intCast(close_capability.publication_session_id),
+    );
+    hashU64(&hash, close_capability.expected_next_sequence);
+    hashU64(&hash, close_capability.initial_tree.abi_version);
+    hashReceipt(&hash, close_capability.initial_tree.parent);
+    hashU64(&hash, close_capability.initial_tree.tree_key);
+    hashU64(&hash, close_capability.initial_tree.authority_key);
+    hashU64(
+        &hash,
+        close_capability.initial_tree.identity_generation,
+    );
+    hashU64(&hash, close_capability.initial_tree.generation);
+    hashU64(
+        &hash,
+        close_capability.initial_tree.structural_revision,
+    );
+    hashClaim(&hash, close_capability.initial_tree.ceiling);
+    hashClaim(&hash, close_capability.initial_tree.current);
+    hashU32(&hash, close_capability.initial_tree.active_nodes);
+    hashU64(&hash, close_capability.initial_tree.state_digest);
+    hashU64(&hash, close_capability.initial_tree.integrity);
     var result: Digest = undefined;
     hash.final(&result);
     return result;

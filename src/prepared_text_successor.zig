@@ -343,6 +343,13 @@ pub fn validateSuccessorSegmentV1(
         segment.terminal_sequence,
         segment.sequence_base,
     ) catch return Error.InvalidSegment;
+    if (segment.terminal_sequence == std.math.maxInt(u64))
+        return Error.InvalidSegment;
+    _ = std.math.add(
+        u64,
+        segment.source_last_resource_permit_generation,
+        expected_remaining,
+    ) catch return Error.ArithmeticOverflow;
     if (segment.abi_version != successor_segment_abi or
         segment.request_epoch == 0 or
         segment.sequence_base == 0 or
@@ -541,6 +548,9 @@ fn validateSourceContextV1(
         ) or
         source.publication.abi_version !=
             publication.transcript_snapshot_abi or
+        !publication.transcriptSnapshotValidV1(
+            source.publication,
+        ) or
         source.publication.request_epoch != decoded.request_epoch or
         source.publication.execution_abi != lane_contiguous.abi or
         source.publication.execution_abi !=
@@ -549,6 +559,8 @@ fn validateSourceContextV1(
             lane_contiguous.rng_state_abi or
         source.publication.next_sequence !=
             decoded.publication_next_sequence or
+        source.publication.sequence_base !=
+            source.execution.publication_next_sequence or
         source.publication.last_resource_permit_generation == 0 or
         source.publication.terminal or
         !publication.stateCommitmentValidV1(
@@ -1347,6 +1359,29 @@ test "prepared successor structural validation rejects coherent contradictions" 
         ),
     );
 
+    var exhausted_permit_space = fixture.artifacts.segment;
+    exhausted_permit_space.source_last_resource_permit_generation =
+        std.math.maxInt(u64) - 1;
+    exhausted_permit_space.segment_sha256 =
+        successorSegmentRootV1(exhausted_permit_space);
+    try testing.expectError(
+        Error.ArithmeticOverflow,
+        validateSuccessorSegmentV1(exhausted_permit_space),
+    );
+
+    var exhausted_sequence_space = fixture.artifacts.segment;
+    exhausted_sequence_space.terminal_sequence =
+        std.math.maxInt(u64);
+    exhausted_sequence_space.remaining_quanta =
+        exhausted_sequence_space.terminal_sequence -
+        exhausted_sequence_space.sequence_base;
+    exhausted_sequence_space.segment_sha256 =
+        successorSegmentRootV1(exhausted_sequence_space);
+    try testing.expectError(
+        Error.InvalidSegment,
+        validateSuccessorSegmentV1(exhausted_sequence_space),
+    );
+
     const decoded_checkpoint = try checkpoint.decodeCheckpointV1(
         fixture.encoded_checkpoint,
         fixture.expected_checkpoint,
@@ -1383,6 +1418,16 @@ test "prepared successor structural validation rejects coherent contradictions" 
         validateSourceContextV1(
             decoded_checkpoint,
             outer_abi_mismatch,
+        ),
+    );
+
+    var sequence_base_mismatch = fixture.source;
+    sequence_base_mismatch.publication.sequence_base += 1;
+    try testing.expectError(
+        Error.BindingMismatch,
+        validateSourceContextV1(
+            decoded_checkpoint,
+            sequence_base_mismatch,
         ),
     );
 

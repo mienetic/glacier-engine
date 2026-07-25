@@ -472,28 +472,29 @@ intent is evidence only, not a receipt or authority handoff.
 **Completed R1h-a slice:** `prepareRestoredAdmissionV1` consumes those exact
 records against a fresh, explicitly LeaseTree-enabled Scheduler/Bank. It
 acquires the intended admission and receipt, retains the non-runnable
-publication-adoption barrier, opens the exact allocation-empty LeaseTree with
-one zero-current-claim tenant scope, restores sequence `N`, and seeds the Bank
-publication generation at source `G`. The process-local bootstrap root binds
-the artifact roots, target intent,
+publication-adoption barrier, opens an allocation-empty queue-free
+receipt-funded LeaseTree with one zero-current-claim tenant scope, restores
+sequence `N`, and seeds the Bank publication generation at source `G`. The
+process-local bootstrap root binds the artifact roots, target intent,
 adoption, receipt, tree, scope, `N/G`, Scheduler/Bank/session addresses, and
 canonical scheduling projection. Validation is read-only; abort closes session
 then tree before cancelling the adoption. See
 [Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md).
 
-**Next R1h-b slice:** partition the request claim without double-counting,
-charge before checkpoint KV/output/RNG restoration, add a LeaseTree-aware
-restored adoption/publication contract, construct a runnable target Session,
-and prove its next token against the uninterrupted transition.
+**Completed R1h-b slice:** `SessionV3.startRestoredV1` reserves one funded
+allocation covering the queue-free request-local claim before its first
+allocator call, materializes exact checkpoint KV/output/RNG/sampling state, and
+commits that allocation with the pending Scheduler adoption. Publication ABI
+v2 carries `sequence_base = N`; the first target Bank permit is source `G + 1`.
+The retained synthetic-model path uses an exact target hard limit, matches one
+restored transition with uninterrupted output, logical KV, RNG, and sampling
+state, then closes allocator backing, funded ownership, the tree, receipt, and
+Scheduler lane to zero. Fresh-session publication remains base zero.
 
-**Done when:** parent and child ownership charge every resource exactly once
-and Scheduler/Bank totals agree; state cannot run before LeaseTree-aware
-adoption commit; injected failure at every materialize, bind, and commit phase
-returns the target to zero; the first target Bank permit is source `G + 1`;
-one restored next-token transition matches uninterrupted output, KV, RNG, and
-sampling state; and legacy flat adoption remains byte- and behavior-compatible.
-Durable selector composition, source exit, exclusive target activation, and
-fresh-process continuation remain separate gates.
+**Next slice:** compose the prepared checkpoint and successor records through a
+durable selector, prove source exit and exclusive target ownership across a
+process boundary, then compare uninterrupted and resumed terminal results.
+Process-local activation is not evidence for those properties.
 
 ### Paged-KV ownership restore fixture
 

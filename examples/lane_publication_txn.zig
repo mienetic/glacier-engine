@@ -148,7 +148,7 @@ pub fn main() !void {
     var expected_transcript: publication.Digest = undefined;
     _ = try std.fmt.hexToBytes(
         &expected_transcript,
-        "5525a18aa56ecf745a30aeea1e59e7b83d2543e3cedc18e9ed4178c8b1f576b2",
+        "3c0c4fc56025a9f8b2a3a40a6f0d774fa5255b8a340dd5e14ff2303fdd9729c6",
     );
     if (!std.mem.eql(
         u8,

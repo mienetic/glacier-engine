@@ -15,13 +15,13 @@ const core = @import("core");
 const lane = core.lane_weave_qos;
 const resource_bank = core.resource_bank;
 
-pub const abi: u64 = 0x474c_5054_0000_0001;
+pub const abi: u64 = 0x474c_5054_0000_0002;
 pub const state_commitment_abi: u64 = 0x474c_5053_0000_0001;
 pub const token_transition_abi: u64 = 0x474c_5058_0000_0001;
 pub const sink_abi: u64 = 0x474c_504b_0000_0001;
 pub const prepare_ack_abi: u64 = 0x474c_5041_0000_0001;
 pub const commit_receipt_abi: u64 = 0x474c_5043_0000_0001;
-pub const transcript_snapshot_abi: u64 = 0x474c_5056_0000_0001;
+pub const transcript_snapshot_abi: u64 = 0x474c_5056_0000_0002;
 pub const width: u8 = 1;
 pub const live_mask: u8 = 1;
 pub const Digest = [32]u8;
@@ -103,6 +103,10 @@ pub const ProposalV1 = struct {
     commit_receipt_abi_version: u64 = commit_receipt_abi,
     execution_abi: u64 = 0,
     request_epoch: u64 = 0,
+    /// Global transaction sequence at which this execution segment began.
+    /// Fresh sessions use zero. Restored sessions set this to their
+    /// checkpoint sequence so Scheduler-local completed work remains zero.
+    sequence_base: u64 = 0,
     transaction_sequence: u64 = 0,
     resource_permit_generation: u64 = 0,
     lane_width: u8 = width,
@@ -165,6 +169,7 @@ pub const TranscriptSnapshotV1 = struct {
     abi_version: u64 = transcript_snapshot_abi,
     request_epoch: u64,
     execution_abi: u64,
+    sequence_base: u64 = 0,
     next_sequence: u64,
     last_resource_permit_generation: u64,
     terminal: bool,
@@ -187,8 +192,10 @@ pub const Session = struct {
     request_epoch: u64 = 0,
     execution_abi: u64 = 0,
     initialized: bool = false,
+    sequence_base: u64 = 0,
     next_sequence: u64 = 0,
     last_resource_permit_generation: u64 = 0,
+    funded_lease_tree: ?resource_bank.LeaseTreeV1 = null,
     terminal: bool = false,
     state: StateCommitmentV1 = .{},
     transcript_sha256: Digest = zero_digest,
@@ -283,12 +290,86 @@ pub const Session = struct {
         };
     }
 
+    /// Install one externally authenticated nonzero transcript boundary over
+    /// a fresh target Receipt whose allocator payload is ready behind a
+    /// reserved parent-funded LeaseTree batch. All coordinator fields are
+    /// installed at their final address before the Scheduler atomically makes
+    /// that batch live and consumes the adoption barrier.
+    pub fn initRestoredAdoptingWithFundedLeaseTree(
+        self: *Session,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+        adoption: lane.PublicationAdoptionV1,
+        tree: resource_bank.LeaseTreeV1,
+        batch: resource_bank.LeaseAllocationBatchV1,
+        restored: TranscriptSnapshotV1,
+    ) (Error || lane.Error)!void {
+        if (self.initialized) return Error.InvalidState;
+        const admission = adoption.admission;
+        const session_id = @intFromPtr(self);
+        if (scheduler.bank != bank or
+            adoption.publication_session_id != session_id or
+            adoption.publication_service_policy != .every_service or
+            admission.event.spec.work_quanta == 0 or
+            admission.event.spec.claim.queue_slots != width or
+            !transcriptSnapshotValidV1(restored) or
+            restored.request_epoch !=
+                adoption.publication_request_epoch or
+            restored.sequence_base == 0 or
+            restored.sequence_base != restored.next_sequence or
+            restored.last_resource_permit_generation == 0 or
+            restored.last_resource_permit_generation ==
+                std.math.maxInt(u64) or
+            restored.terminal or
+            !std.meta.eql(tree.parent, admission.event.resource_receipt) or
+            tree.current.isZero() or
+            !std.meta.eql(batch.parent, tree.parent) or
+            batch.tree_key != tree.tree_key or
+            batch.tree_identity_generation !=
+                tree.identity_generation or
+            batch.request_epoch != restored.request_epoch or
+            batch.session_id != session_id or
+            batch.sequence != restored.next_sequence or
+            batch.node_count == 0 or batch.claim.isZero() or
+            !std.meta.eql(batch.claim, tree.current))
+            return Error.InvalidConfiguration;
+
+        self.* = .{
+            .scheduler = scheduler,
+            .bank = bank,
+            .admission = admission,
+            .request_epoch = restored.request_epoch,
+            .execution_abi = restored.execution_abi,
+            .initialized = true,
+            .sequence_base = restored.sequence_base,
+            .next_sequence = restored.next_sequence,
+            .last_resource_permit_generation = restored.last_resource_permit_generation,
+            .funded_lease_tree = tree,
+            .terminal = false,
+            .state = restored.state,
+            .transcript_sha256 = restored.transcript_sha256,
+        };
+        const committed_tree = scheduler
+            .commitRestoredPublicationAdoptionWithFundedLeaseTree(
+            adoption,
+            tree,
+            batch,
+            restored.next_sequence,
+            restored.last_resource_permit_generation,
+        ) catch |err| {
+            self.* = .{};
+            return err;
+        };
+        self.funded_lease_tree = committed_tree;
+    }
+
     /// Cancel an active request and atomically close the bound publication
     /// namespace, release its Scheduler-owned receipt, and emit Event-v1.
     pub fn cancel(self: *Session) (Error || lane.Error)!lane.EventV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (!self.initialized) return Error.InvalidState;
+        if (!self.initialized or self.funded_lease_tree != null)
+            return Error.InvalidState;
         const event = try self.scheduler.cancelBoundPublication(
             self.admission.handle,
             self.request_epoch,
@@ -304,7 +385,8 @@ pub const Session = struct {
     pub fn retire(self: *Session) (Error || lane.Error)!lane.EventV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (!self.initialized) return Error.InvalidState;
+        if (!self.initialized or self.funded_lease_tree != null)
+            return Error.InvalidState;
         const event = try self.scheduler.retireBoundPublication(
             self.admission.handle,
             self.request_epoch,
@@ -320,8 +402,14 @@ pub const Session = struct {
     pub fn close(self: *Session) (Error || lane.Error)!void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (!self.initialized) return Error.InvalidState;
-        if (self.next_sequence == self.admission.event.spec.work_quanta) {
+        if (!self.initialized or self.funded_lease_tree != null)
+            return Error.InvalidState;
+        const completed = std.math.sub(
+            u64,
+            self.next_sequence,
+            self.sequence_base,
+        ) catch return Error.InvalidState;
+        if (completed == self.admission.event.spec.work_quanta) {
             _ = try self.scheduler.retireBoundPublication(
                 self.admission.handle,
                 self.request_epoch,
@@ -346,6 +434,7 @@ pub const Session = struct {
         return .{
             .request_epoch = self.request_epoch,
             .execution_abi = self.execution_abi,
+            .sequence_base = self.sequence_base,
             .next_sequence = self.next_sequence,
             .last_resource_permit_generation = self.last_resource_permit_generation,
             .terminal = self.terminal,
@@ -377,21 +466,32 @@ pub const Session = struct {
             return err;
         };
 
-        const publication_permit = self.bank.beginPublication(
-            self.admission.event.resource_receipt,
-            self.request_epoch,
-            @intFromPtr(self),
-            self.next_sequence,
-        ) catch |err| {
-            try self.abortArmedOnly(armed.ticket);
-            return mapBankError(err);
-        };
+        const publication_permit = if (self.funded_lease_tree) |tree|
+            self.bank.beginPublicationWithLeaseTree(
+                tree,
+                self.request_epoch,
+                @intFromPtr(self),
+                self.next_sequence,
+            )
+        else
+            self.bank.beginPublication(
+                self.admission.event.resource_receipt,
+                self.request_epoch,
+                @intFromPtr(self),
+                self.next_sequence,
+            );
+        const acquired_publication_permit =
+            publication_permit catch |err| {
+                try self.abortArmedOnly(armed.ticket);
+                return mapBankError(err);
+            };
 
         const proposal: ProposalV1 = .{
             .execution_abi = self.execution_abi,
             .request_epoch = self.request_epoch,
+            .sequence_base = self.sequence_base,
             .transaction_sequence = self.next_sequence,
-            .resource_permit_generation = publication_permit.generation,
+            .resource_permit_generation = acquired_publication_permit.generation,
             .receipt = self.admission.event.resource_receipt,
             .receipt_sha256 = lane.resourceReceiptSha256(
                 self.admission.event.resource_receipt,
@@ -406,7 +506,7 @@ pub const Session = struct {
         if (!proposalValidV1(proposal)) {
             try self.rollbackAttempt(
                 armed.ticket,
-                publication_permit,
+                acquired_publication_permit,
                 null,
                 proposal,
                 .{},
@@ -418,7 +518,7 @@ pub const Session = struct {
         sink.prepare(sink.context, &proposal, &ack) catch {
             try self.rollbackAttempt(
                 armed.ticket,
-                publication_permit,
+                acquired_publication_permit,
                 null,
                 proposal,
                 ack,
@@ -428,17 +528,19 @@ pub const Session = struct {
         if (!prepareAckValidV1(ack, proposal_sha256)) {
             try self.rollbackAttempt(
                 armed.ticket,
-                publication_permit,
+                acquired_publication_permit,
                 sink,
                 proposal,
                 ack,
             );
             return Error.InvalidPrepareAck;
         }
-        self.bank.validatePublication(publication_permit) catch {
+        self.bank.validatePublication(
+            acquired_publication_permit,
+        ) catch {
             try self.rollbackAttempt(
                 armed.ticket,
-                publication_permit,
+                acquired_publication_permit,
                 sink,
                 proposal,
                 ack,
@@ -448,7 +550,7 @@ pub const Session = struct {
 
         var finalizer_context: FinalizerContext = .{
             .session = self,
-            .publication_permit = publication_permit,
+            .publication_permit = acquired_publication_permit,
             .proposal = proposal,
             .proposal_sha256 = proposal_sha256,
             .ack = ack,
@@ -462,7 +564,7 @@ pub const Session = struct {
         }) catch |err| {
             try self.rollbackAttempt(
                 armed.ticket,
-                publication_permit,
+                acquired_publication_permit,
                 sink,
                 proposal,
                 ack,
@@ -493,7 +595,12 @@ pub const Session = struct {
             intent.spec.work_quanta,
             intent.remaining_before,
         ) catch return Error.InvalidTransition;
-        if (completed != self.next_sequence or
+        const segment_sequence = std.math.sub(
+            u64,
+            self.next_sequence,
+            self.sequence_base,
+        ) catch return Error.InvalidTransition;
+        if (completed != segment_sequence or
             !tokenTransitionValidV1(transition) or
             !std.meta.eql(transition.before, self.state) or
             transition.before.execution_abi != self.execution_abi or
@@ -579,6 +686,7 @@ pub const TranscriptVerifierV1 = struct {
     receipt: resource_bank.Receipt,
     request_epoch: u64,
     execution_abi: u64,
+    sequence_base: u64 = 0,
     next_sequence: u64 = 0,
     last_resource_permit_generation: u64 = 0,
     terminal: bool = false,
@@ -613,6 +721,36 @@ pub const TranscriptVerifierV1 = struct {
         };
     }
 
+    /// Start verification at one externally authenticated nonzero checkpoint.
+    /// The target Receipt is intentionally independent from the predecessor
+    /// transcript; the enclosing successor evidence authorizes that remap.
+    pub fn initRestored(
+        receipt: resource_bank.Receipt,
+        restored: TranscriptSnapshotV1,
+    ) Error!TranscriptVerifierV1 {
+        if (!resource_bank.receiptIntegrityValidV1(receipt) or
+            receipt.claim.queue_slots != width or
+            !transcriptSnapshotValidV1(restored) or
+            restored.sequence_base == 0 or
+            restored.sequence_base != restored.next_sequence or
+            restored.last_resource_permit_generation == 0 or
+            restored.last_resource_permit_generation ==
+                std.math.maxInt(u64) or
+            restored.terminal)
+            return Error.InvalidConfiguration;
+        return .{
+            .receipt = receipt,
+            .request_epoch = restored.request_epoch,
+            .execution_abi = restored.execution_abi,
+            .sequence_base = restored.sequence_base,
+            .next_sequence = restored.next_sequence,
+            .last_resource_permit_generation = restored.last_resource_permit_generation,
+            .terminal = false,
+            .state = restored.state,
+            .transcript_sha256 = restored.transcript_sha256,
+        };
+    }
+
     pub fn apply(
         self: *TranscriptVerifierV1,
         receipt: CommitReceiptV1,
@@ -622,6 +760,7 @@ pub const TranscriptVerifierV1 = struct {
         const proposal = receipt.proposal;
         if (proposal.request_epoch != self.request_epoch or
             proposal.execution_abi != self.execution_abi or
+            proposal.sequence_base != self.sequence_base or
             !std.meta.eql(proposal.receipt, self.receipt))
             return Error.InvalidBinding;
         if (proposal.transaction_sequence != self.next_sequence)
@@ -650,6 +789,7 @@ pub const TranscriptVerifierV1 = struct {
         return .{
             .request_epoch = self.request_epoch,
             .execution_abi = self.execution_abi,
+            .sequence_base = self.sequence_base,
             .next_sequence = self.next_sequence,
             .last_resource_permit_generation = self.last_resource_permit_generation,
             .terminal = self.terminal,
@@ -680,6 +820,26 @@ pub const TranscriptVerifierV1 = struct {
         )) return Error.TranscriptChainMismatch;
     }
 };
+
+pub fn transcriptSnapshotValidV1(
+    snapshot: TranscriptSnapshotV1,
+) bool {
+    if (snapshot.abi_version != transcript_snapshot_abi or
+        snapshot.request_epoch == 0 or
+        snapshot.execution_abi == 0 or
+        snapshot.sequence_base > snapshot.next_sequence or
+        snapshot.next_sequence == std.math.maxInt(u64) or
+        snapshot.state.execution_abi != snapshot.execution_abi or
+        snapshot.state.output_length != snapshot.next_sequence or
+        !stateCommitmentValidV1(snapshot.state) or
+        isZero(snapshot.transcript_sha256))
+        return false;
+    if (snapshot.next_sequence == 0)
+        return snapshot.sequence_base == 0 and
+            snapshot.last_resource_permit_generation == 0 and
+            !snapshot.terminal;
+    return snapshot.last_resource_permit_generation != 0;
+}
 
 pub fn makeStateCommitmentV1(
     execution_abi: u64,
@@ -966,6 +1126,7 @@ pub fn proposalSha256(proposal: ProposalV1) Digest {
     hashU64(&hash, proposal.commit_receipt_abi_version);
     hashU64(&hash, proposal.execution_abi);
     hashU64(&hash, proposal.request_epoch);
+    hashU64(&hash, proposal.sequence_base);
     hashU64(&hash, proposal.transaction_sequence);
     hashU64(&hash, proposal.resource_permit_generation);
     hashU8(&hash, proposal.lane_width);
@@ -993,6 +1154,7 @@ pub fn proposalValidV1(proposal: ProposalV1) bool {
         proposal.prepare_ack_abi_version != prepare_ack_abi or
         proposal.commit_receipt_abi_version != commit_receipt_abi or
         proposal.execution_abi == 0 or proposal.request_epoch == 0 or
+        proposal.sequence_base > proposal.transaction_sequence or
         proposal.transaction_sequence == std.math.maxInt(u64) or
         proposal.resource_permit_generation == 0 or
         proposal.lane_width != width or
@@ -1031,7 +1193,12 @@ pub fn proposalValidV1(proposal: ProposalV1) bool {
         proposal.service_intent.spec.work_quanta,
         proposal.service_intent.remaining_before,
     ) catch return false;
-    return completed == proposal.transaction_sequence;
+    const segment_sequence = std.math.sub(
+        u64,
+        proposal.transaction_sequence,
+        proposal.sequence_base,
+    ) catch return false;
+    return completed == segment_sequence;
 }
 
 pub fn prepareAckValidV1(
@@ -1375,6 +1542,19 @@ fn initialTestState() StateCommitmentV1 {
     );
 }
 
+fn restoredTestState(sequence: u64) StateCommitmentV1 {
+    return makeStateCommitmentV1(
+        test_execution_abi,
+        16 + sequence,
+        filledDigest(0x51),
+        test_rng_abi,
+        filledDigest(0x52),
+        sequence,
+        sequence,
+        filledDigest(0x53),
+    );
+}
+
 fn nextTestTransition(
     before: StateCommitmentV1,
     token_id: u32,
@@ -1408,7 +1588,7 @@ fn containsPointer(comptime T: type) bool {
 }
 
 test "Lane publication pointer-free evidence and Session stay bounded" {
-    try testing.expect(@sizeOf(Session) <= 1280);
+    try testing.expect(@sizeOf(Session) <= 1536);
     try testing.expect(@sizeOf(ProposalV1) <= 1536);
     try testing.expect(@sizeOf(CommitReceiptV1) <= 2560);
     try testing.expect(!containsPointer(ProposalV1));
@@ -1514,6 +1694,246 @@ test "Lane publication models first-token KV and forced-token RNG honestly" {
     forged.after.commitment_sha256 = stateCommitmentSha256(forged.after);
     forged.transition_sha256 = tokenTransitionSha256(forged);
     try testing.expect(!tokenTransitionValidV1(forged));
+}
+
+test "Lane publication restored base maps first target service to global N" {
+    const sequence_base: u64 = 7;
+    const source_generation: u64 = 13;
+    var fixture: TestFixture = .{};
+    try fixture.init(1);
+    const permit = try fixture.scheduler.prepareService();
+    const armed = try fixture.scheduler.armServiceCommit(permit);
+
+    const before = restoredTestState(sequence_base);
+    const transition = try nextTestTransition(before, 97, true);
+    const receipt = fixture.admission.event.resource_receipt;
+    const proposal: ProposalV1 = .{
+        .execution_abi = test_execution_abi,
+        .request_epoch = 0x5251_4590,
+        .sequence_base = sequence_base,
+        .transaction_sequence = sequence_base,
+        .resource_permit_generation = source_generation + 1,
+        .receipt = receipt,
+        .receipt_sha256 = lane.resourceReceiptSha256(receipt),
+        .previous_transcript_sha256 = filledDigest(0x54),
+        .service_intent = armed.intent,
+        .service_intent_sha256 = armed.intent.intent_sha256,
+        .transition = transition,
+        .transition_sha256 = transition.transition_sha256,
+    };
+    try testing.expect(proposalValidV1(proposal));
+
+    const restored: TranscriptSnapshotV1 = .{
+        .request_epoch = proposal.request_epoch,
+        .execution_abi = test_execution_abi,
+        .sequence_base = sequence_base,
+        .next_sequence = sequence_base,
+        .last_resource_permit_generation = source_generation,
+        .terminal = false,
+        .state = before,
+        .transcript_sha256 = proposal.previous_transcript_sha256,
+    };
+    try testing.expect(transcriptSnapshotValidV1(restored));
+    const verifier = try TranscriptVerifierV1.initRestored(
+        receipt,
+        restored,
+    );
+    try testing.expectEqual(sequence_base, verifier.sequence_base);
+    try testing.expectEqual(sequence_base, verifier.next_sequence);
+
+    var wrong_base = proposal;
+    wrong_base.sequence_base -= 1;
+    try testing.expect(!proposalValidV1(wrong_base));
+    try testing.expect(!std.mem.eql(
+        u8,
+        &proposalSha256(proposal),
+        &proposalSha256(wrong_base),
+    ));
+
+    var future_base = proposal;
+    future_base.sequence_base += 1;
+    try testing.expect(!proposalValidV1(future_base));
+
+    var wrong_snapshot = restored;
+    wrong_snapshot.sequence_base -= 1;
+    try testing.expectError(
+        Error.InvalidConfiguration,
+        TranscriptVerifierV1.initRestored(receipt, wrong_snapshot),
+    );
+    try fixture.scheduler.abortArmedService(armed.ticket);
+    _ = try fixture.scheduler.cancel(fixture.admission.handle);
+    _ = try fixture.scheduler.close();
+}
+
+test "Lane publication restored funded session publishes first target quantum at N" {
+    const request_epoch: u64 = 0x5251_4591;
+    const sequence_base: u64 = 7;
+    const source_generation: u64 = 13;
+    const target_bank_epoch: u64 = 0x4241_4e92;
+    var bank_slots: [1]resource_bank.Slot = undefined;
+    var roots: [1]resource_bank.LeaseTreeRootSlot = undefined;
+    var nodes: [4]resource_bank.LeaseNodeSlot = undefined;
+    var lane_slots: [1]lane.Slot = undefined;
+    var projection: [1]lane.ProjectionSlot = undefined;
+    var bank = try resource_bank.Bank.initWithLeaseTree(
+        &bank_slots,
+        &roots,
+        &nodes,
+        .{
+            .host_bytes = 1 << 20,
+            .kv_bytes = 4096,
+            .output_journal_bytes = 1024,
+            .queue_slots = 1,
+        },
+        target_bank_epoch,
+    );
+    var scheduler = try lane.Scheduler.initWithLeaseTree(
+        &bank,
+        .{ .slots = &lane_slots, .projection = &projection },
+        .{
+            .scheduler_epoch = 0x5343_4892,
+            .challenge = filledDigest(0xa2),
+            .max_weight = 8,
+        },
+    );
+    var session: Session = .{};
+    const materialized_claim: resource_bank.Claim = .{
+        .kv_bytes = 4096,
+        .output_journal_bytes = 1024,
+    };
+    var request_claim = materialized_claim;
+    request_claim.queue_slots = 1;
+    const decision = try scheduler.admitForPublicationAdoption(
+        .{
+            .tenant_key = 11,
+            .request_key = 22,
+            .request_generation = 2,
+            .resource_owner_key = 33,
+            .weight = 1,
+            .work_quanta = 1,
+            .claim = request_claim,
+        },
+        request_epoch,
+        @intFromPtr(&session),
+    );
+    const adoption = switch (decision) {
+        .adopted => |value| value,
+        .rejected => return error.TestUnexpectedResult,
+    };
+    var tree = try bank.openReceiptFundedLeaseTree(
+        adoption.admission.event.resource_receipt,
+        0x5452_4545,
+        0x4155_5448,
+        materialized_claim,
+    );
+    const opened = try bank.openLeaseScope(
+        tree,
+        0x5343_4f50,
+        11,
+        materialized_claim,
+    );
+    tree = opened.tree;
+    try bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
+        tree,
+        target_bank_epoch - 1,
+        request_epoch,
+        @intFromPtr(&session),
+        sequence_base,
+        source_generation,
+    );
+    var allocation_nodes: [1]resource_bank.LeaseNodeV1 = undefined;
+    const reservation =
+        try bank.reserveReceiptFundedAllocationsForSession(
+            tree,
+            request_epoch,
+            @intFromPtr(&session),
+            sequence_base,
+            &.{.{
+                .scope = opened.scope,
+                .node_key = 0x4e4f_4445,
+                .binding_key = 0x4249_4e44,
+                .claim = materialized_claim,
+            }},
+            &allocation_nodes,
+        );
+
+    const before = restoredTestState(sequence_base);
+    const restored: TranscriptSnapshotV1 = .{
+        .request_epoch = request_epoch,
+        .execution_abi = test_execution_abi,
+        .sequence_base = sequence_base,
+        .next_sequence = sequence_base,
+        .last_resource_permit_generation = source_generation,
+        .terminal = false,
+        .state = before,
+        .transcript_sha256 = filledDigest(0x55),
+    };
+    try session.initRestoredAdoptingWithFundedLeaseTree(
+        &scheduler,
+        &bank,
+        adoption,
+        reservation.tree,
+        reservation.batch,
+        restored,
+    );
+    try testing.expectEqualDeep(restored, try session.snapshot());
+    try testing.expectError(Error.InvalidState, session.cancel());
+    try testing.expectError(Error.InvalidState, session.retire());
+    try testing.expectError(Error.InvalidState, session.close());
+
+    var verifier = try TranscriptVerifierV1.initRestored(
+        adoption.admission.event.resource_receipt,
+        restored,
+    );
+    var sink: TestSink = .{};
+    const transition = try nextTestTransition(before, 98, true);
+    const committed = try session.publish(
+        try scheduler.prepareService(),
+        transition,
+        sink.interface(),
+    );
+    try verifier.apply(committed);
+    try testing.expectEqual(sequence_base, committed.proposal.sequence_base);
+    try testing.expectEqual(
+        sequence_base,
+        committed.proposal.transaction_sequence,
+    );
+    try testing.expectEqual(
+        source_generation + 1,
+        committed.proposal.resource_permit_generation,
+    );
+    try testing.expectEqual(
+        sequence_base + 1,
+        (try session.snapshot()).next_sequence,
+    );
+
+    const live_tree = session.funded_lease_tree.?;
+    const close_authority = try scheduler.beginRestoredPublicationClose(
+        adoption.admission.handle,
+        .retire,
+        request_epoch,
+        @intFromPtr(&session),
+        sequence_base + 1,
+        live_tree,
+    );
+    const retiring = try bank.beginRetireSubtreeForSession(
+        live_tree,
+        opened.scope,
+        request_epoch,
+        @intFromPtr(&session),
+        sequence_base + 1,
+    );
+    const authorized = try bank.authorizeFree(retiring.ticket);
+    const empty_tree = try bank.commitFreeAfterAllocatorFree(
+        authorized.permit,
+    );
+    _ = try scheduler.commitRestoredPublicationClose(
+        close_authority,
+        empty_tree,
+    );
+    session.initialized = false;
+    try testing.expect((try bank.snapshot()).used.isZero());
+    _ = try scheduler.close();
 }
 
 test "Lane publication commits exact width-one AI state and verifies offline" {
@@ -1768,16 +2188,18 @@ test "Lane publication verifier rejects nested mutation and replay" {
         sink.interface(),
     );
 
-    var mutations: [9]CommitReceiptV1 = [_]CommitReceiptV1{committed} ** 9;
+    var mutations: [10]CommitReceiptV1 =
+        [_]CommitReceiptV1{committed} ** 10;
     mutations[0].abi_version +%= 1;
     mutations[1].proposal.execution_abi +%= 1;
-    mutations[2].proposal.service_intent.handle.request_key +%= 1;
-    mutations[3].proposal.transition.before.kv_position +%= 1;
-    mutations[4].proposal.transition.after.rng_state_sha256[0] ^= 1;
-    mutations[5].proposal.transition.token_id +%= 1;
-    mutations[6].prepare_ack.reservation_id +%= 1;
-    mutations[7].service_event.logical_tick_after +%= 1;
-    mutations[8].transcript_sha256[0] ^= 1;
+    mutations[2].proposal.sequence_base +%= 1;
+    mutations[3].proposal.service_intent.handle.request_key +%= 1;
+    mutations[4].proposal.transition.before.kv_position +%= 1;
+    mutations[5].proposal.transition.after.rng_state_sha256[0] ^= 1;
+    mutations[6].proposal.transition.token_id +%= 1;
+    mutations[7].prepare_ack.reservation_id +%= 1;
+    mutations[8].service_event.logical_tick_after +%= 1;
+    mutations[9].transcript_sha256[0] ^= 1;
     for (mutations) |mutation|
         try testing.expect(!commitReceiptValidV1(mutation));
 

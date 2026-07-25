@@ -6,7 +6,8 @@ identity. It is an integrated experimental evidence slice for the Glacier AI
 Runtime: an inspector, archive writer, or restored-admission
 implementation can agree on the exact plan, residency projection, sequence
 boundary, cache payload, and intended target ownership before any live target
-authority exists. R1h-a is the current non-runnable consumer of this evidence.
+authority exists. R1h-a consumes it into a non-runnable target bootstrap;
+R1h-b can then materialize and activate that exact target.
 
 The bridge deliberately reuses the Common Model Contract instead of
 serializing native `BoundPlanV1` memory:
@@ -240,11 +241,11 @@ R1g also does not provide:
 - raw-text tokenizer, production-model, native-platform, quality, or
   performance evidence.
 
-R1h-a now consumes these records into a fresh, barrier-held target admission,
-receipt, allocation-empty `LeaseTree` with one zero-current-claim scope,
-restored sequence, and Bank permit-generation fence. It remains non-runnable
-until charge-correct checkpoint materialization and LeaseTree-aware adoption
-commit are complete. See
+R1h-a consumes these records into a fresh, barrier-held target admission,
+receipt, queue-free receipt-funded `LeaseTree`, restored sequence, and Bank
+permit-generation fence. R1h-b reserves funded ownership before allocator
+materialization, restores the checkpoint into a process-local target
+`SessionV3`, and commits adoption with publication base `N`. See
 [Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md). Durable
-selector composition and fresh-process source-exit/exclusive-target proof
-remain separate later gates.
+selector composition, source exit, exclusive process handoff, fresh-process
+continuation, and terminal equivalence remain separate later gates.

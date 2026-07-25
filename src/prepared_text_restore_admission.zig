@@ -43,6 +43,7 @@ pub const EvidenceV1 = struct {
 
 pub const Phase = enum(u8) {
     prepared,
+    activated,
     publication_session_closed,
     lease_tree_closed,
     aborted,
@@ -124,6 +125,17 @@ pub fn requestSpecV1(
         .deadline_tick = canonical_deadline_tick,
         .claim = target.request_claim,
     };
+}
+
+/// Allocator-owned portion of the exact request claim. The immutable receipt
+/// remains charged for the complete request; the queue slot stays under the
+/// Scheduler while all byte classes become funded LeaseTree ownership.
+pub fn materializedClaimV1(
+    request_claim: resource_bank.Claim,
+) resource_bank.Claim {
+    var result = request_claim;
+    result.queue_slots = 0;
+    return result;
 }
 
 /// Verify all portable evidence and a genuinely fresh live target before
@@ -339,12 +351,15 @@ pub fn validatePreparedRestoredAdmissionV1(
         artifacts.segment.request_epoch,
         prepared.session_id,
     ) catch return Error.InvalidPreparedAdmission;
-    if (!std.meta.eql(prepared.tree.parent, prepared.receipt) or
+    const materialized_claim =
+        materializedClaimV1(prepared.target.request_claim);
+    if (materialized_claim.isZero() or
+        !std.meta.eql(prepared.tree.parent, prepared.receipt) or
         prepared.tree.tree_key != prepared.target.tree_key or
         prepared.tree.authority_key != prepared.target.authority_key or
         !std.meta.eql(
             prepared.tree.ceiling,
-            prepared.target.request_claim,
+            materialized_claim,
         ) or
         !prepared.tree.current.isZero() or
         prepared.tree.active_nodes != 1 or
@@ -358,7 +373,7 @@ pub fn validatePreparedRestoredAdmissionV1(
         prepared.scope.kind != .scope or
         !std.meta.eql(
             prepared.scope.ceiling,
-            prepared.target.request_claim,
+            materialized_claim,
         ) or
         !prepared.scope.claim.isZero())
         return Error.InvalidPreparedAdmission;
@@ -401,7 +416,7 @@ pub fn abortPreparedRestoredAdmissionV1(
                 prepared.phase = .aborted;
                 return event;
             },
-            .aborted => return Error.InvalidPreparedAdmission,
+            .activated, .aborted => return Error.InvalidPreparedAdmission,
         }
     }
 }
@@ -412,7 +427,8 @@ pub fn abortPreparedRestoredAdmissionV1(
 fn validateLiveCleanupAuthorityV1(
     prepared: *const PreparedRestoredAdmissionV1,
 ) !void {
-    if (prepared.phase == .aborted or
+    if (prepared.phase == .activated or
+        prepared.phase == .aborted or
         prepared.scheduler.bank != prepared.bank or
         prepared.session_id == 0 or
         prepared.session_id !=
@@ -455,7 +471,7 @@ fn validateLiveCleanupAuthorityV1(
                 prepared.receipt,
             ) catch return Error.InvalidPreparedAdmission;
         },
-        .aborted => unreachable,
+        .activated, .aborted => unreachable,
     }
 }
 
@@ -538,6 +554,10 @@ fn validateCleanupTreeV1(
         return Error.InvalidPreparedAdmission;
     bank.validateLeaseTree(tree) catch
         return Error.InvalidPreparedAdmission;
+    bank.validateReceiptFundedLeaseTree(
+        tree,
+        false,
+    ) catch return Error.InvalidPreparedAdmission;
     bank.validateLeaseNode(
         tree,
         scope,
@@ -598,18 +618,22 @@ fn prepareAfterAdoptionV1(
         artifacts.segment.request_epoch,
         session_id,
     );
-    recovery.tree = try bank.openLeaseTree(
+    const materialized_claim =
+        materializedClaimV1(evidence.target.request_claim);
+    if (materialized_claim.isZero())
+        return Error.InvalidPreparedAdmission;
+    recovery.tree = try bank.openReceiptFundedLeaseTree(
         adoption.admission.event.resource_receipt,
         evidence.target.tree_key,
         evidence.target.authority_key,
-        evidence.target.request_claim,
+        materialized_claim,
     );
     recovery.phase = .lease_tree_open;
     const opened = try bank.openLeaseScope(
         recovery.tree.?,
         evidence.target.scope_key,
         evidence.target.tenant_key,
-        evidence.target.request_claim,
+        materialized_claim,
     );
     recovery.tree = opened.tree;
     recovery.scope = opened.scope;
@@ -1021,7 +1045,10 @@ fn preparedCleanupFixtureV1(
 
 test "prepare recovery consumes adoption-only and bound-tree authority" {
     const testing = std.testing;
-    const claim: resource_bank.Claim = .{ .queue_slots = 1 };
+    const claim: resource_bank.Claim = .{
+        .kv_bytes = 16,
+        .queue_slots = 1,
+    };
     const request_spec: lane.RequestSpec = .{
         .tenant_key = 1,
         .request_key = 2,
@@ -1132,17 +1159,17 @@ test "prepare recovery consumes adoption-only and bound-tree authority" {
             .rejected => return error.TestUnexpectedResult,
         };
         const receipt = adoption.admission.event.resource_receipt;
-        const opened = try bank.openLeaseTree(
+        const opened = try bank.openReceiptFundedLeaseTree(
             receipt,
             11,
             12,
-            claim,
+            materializedClaimV1(claim),
         );
         const scoped = try bank.openLeaseScope(
             opened,
             13,
             request_spec.tenant_key,
-            claim,
+            materializedClaimV1(claim),
         );
         try bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
             scoped.tree,
@@ -1223,17 +1250,17 @@ test "prepare recovery consumes adoption-only and bound-tree authority" {
             .rejected => return error.TestUnexpectedResult,
         };
         const receipt = adoption.admission.event.resource_receipt;
-        const opened = try bank.openLeaseTree(
+        const opened = try bank.openReceiptFundedLeaseTree(
             receipt,
             21,
             22,
-            claim,
+            materializedClaimV1(claim),
         );
         const scoped = try bank.openLeaseScope(
             opened,
             23,
             request_spec.tenant_key,
-            claim,
+            materializedClaimV1(claim),
         );
         try bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
             scoped.tree,
@@ -1297,7 +1324,10 @@ test "prepare recovery consumes adoption-only and bound-tree authority" {
 
 test "prepared abort resumes exact closed-session and closed-tree phases" {
     const testing = std.testing;
-    const claim: resource_bank.Claim = .{ .queue_slots = 1 };
+    const claim: resource_bank.Claim = .{
+        .kv_bytes = 16,
+        .queue_slots = 1,
+    };
     const request_spec: lane.RequestSpec = .{
         .tenant_key = 31,
         .request_key = 32,
@@ -1346,17 +1376,17 @@ test "prepared abort resumes exact closed-session and closed-tree phases" {
             .rejected => return error.TestUnexpectedResult,
         };
         const receipt = adoption.admission.event.resource_receipt;
-        const opened = try bank.openLeaseTree(
+        const opened = try bank.openReceiptFundedLeaseTree(
             receipt,
             41,
             request_spec.request_key,
-            claim,
+            materializedClaimV1(claim),
         );
         const scoped = try bank.openLeaseScope(
             opened,
             42,
             request_spec.tenant_key,
-            claim,
+            materializedClaimV1(claim),
         );
         try bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
             scoped.tree,
@@ -1432,17 +1462,17 @@ test "prepared abort resumes exact closed-session and closed-tree phases" {
             .rejected => return error.TestUnexpectedResult,
         };
         const receipt = adoption.admission.event.resource_receipt;
-        const opened = try bank.openLeaseTree(
+        const opened = try bank.openReceiptFundedLeaseTree(
             receipt,
             51,
             request_spec.request_key,
-            claim,
+            materializedClaimV1(claim),
         );
         const scoped = try bank.openLeaseScope(
             opened,
             52,
             request_spec.tenant_key,
-            claim,
+            materializedClaimV1(claim),
         );
         try bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
             scoped.tree,

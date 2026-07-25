@@ -1,176 +1,218 @@
 # Prepared Text Restore Admission
 
-R1h-a turns verified prepared-text successor evidence into live target
-authority without making the target runnable. It is an integrated experimental
-control-plane slice for the Glacier AI Runtime.
+Prepared-text restore is split into two process-local stages. R1h-a turns
+verified successor evidence into a barrier-held target admission. R1h-b
+materializes exact checkpoint state under receipt-funded ownership and consumes
+that barrier into a runnable restored `SessionV3`.
 
-The gate consumes the existing fixed checkpoint, Common Model Contract
+The path consumes the fixed prepared-text checkpoint, Common Model Contract
 execution plan and residency binding, and successor transcript segment. It
-creates no additional durable wire. Its public output is `PrepareDecisionV1`.
-The `prepared` branch carries `PreparedRestoredAdmissionV1`; a rollback that
-cannot finish carries `PrepareRecoveryV1` in `recovery_required`. Both
-payloads contain process-local pointers or handles and must never be serialized
-or treated as transferable authority.
+adds no durable wire. `PrepareDecisionV1`, `PreparedRestoredAdmissionV1`, and
+the restored Session contain live pointers or generation-fenced handles and
+must not be serialized or treated as transferable authority.
 
-Its domain-separated bootstrap root binds the R1g evidence roots and ownership
-intent to the exact adoption, receipt, tree, scope, canonical request
-projection, source/target epochs, restored `N/G`, and live
-Scheduler/Bank/session addresses. The address-bearing root is an in-process
-corruption and replay fence, not portable authority. Independent
-cross-language verification therefore ends at the R1g records; R1h-a is
-validated through live operational state checks.
+## R1h-a target bootstrap
 
-## What the gate acquires
+`prepareRestoredAdmissionV1` performs these transitions:
 
-`prepareRestoredAdmissionV1` performs these transitions in order:
-
-1. reconstruct and exact-compare all R1g artifacts against caller-retained
-   checkpoint, source, and target context;
+1. reconstruct and exact-compare the R1g records against independently
+   retained checkpoint, source, and target context;
 2. require a fresh LeaseTree-enabled target Bank and fresh target Scheduler;
-3. match the live Scheduler epoch, coordinator ID, and Bank epoch to the target
-   intent, and match its challenge to the successor segment;
-4. derive one fixed scheduling policy from the intent:
-   `request_key = authority_key`, `weight = 1`, no deadline, and
+3. match the Scheduler epoch, coordinator ID, Bank epoch, and challenge to the
+   target intent;
+4. derive one fixed scheduling policy:
+   `request_key = authority_key`, weight one, no deadline, and
    `work_quanta = terminal_sequence - sequence_base`;
-5. acquire an accepted Scheduler admission and its exact fresh Bank receipt;
+5. acquire the exact Scheduler admission and immutable parent receipt;
 6. retain the Scheduler publication-adoption barrier;
-7. open the intended LeaseTree and one tenant scope under that receipt; and
-8. bind the Bank publication namespace to the caller-reserved future-session
-   identity/address, exact request epoch, restored sequence `N`, and the source
-   Bank's last publication-permit generation `G`.
+7. open the intended queue-free receipt-funded LeaseTree and one
+   zero-current-claim tenant scope; and
+8. bind the target publication namespace to the future Session address,
+   request epoch, checkpoint sequence `N`, and source Bank publication-permit
+   generation `G`.
 
-The result union has three explicit outcomes: `prepared`, policy `rejected`,
-or `recovery_required`. The third outcome is used only when setup failed and
-automatic reverse cleanup could not finish. It carries the exact process-local
-adoption, optional tree/scope, session values, and current cleanup phase rather
-than discarding live authority. Call
-`recoverPrepareRestoredAdmissionV1` with that payload until rollback completes
-and returns the cancellation event, or reports the still-blocked operation. It
-does not resume setup or produce a prepared target.
+The result is `prepared`, policy `rejected`, or `recovery_required`.
+`recovery_required` retains the exact process-local setup authority and phase.
+Call `recoverPrepareRestoredAdmissionV1` with the same value until rollback
+returns the cancellation event. Recovery resumes cleanup; it does not resume
+setup or create a prepared target.
 
-The Scheduler, Bank, and target-session addresses are live process-local
-bindings added by the bootstrap root; `TargetOwnershipV1` intentionally commits
-the coordinator ID rather than a portable address.
+The caller must bind the final nested publication-coordinator address returned
+by `SessionV3.restoredPublicationSessionIdV1`. Moving the Session after that
+binding invalidates the authority.
 
-The first future Bank publication permit is therefore `G + 1`, even though the
-target receipt begins in a fresh Bank. Scheduler service permits remain in
-their own target Scheduler epoch/coordinator namespace and are not seeded from
-the Bank publication generation.
+## Receipt-funded ownership
 
-## Why the tree is empty
+The immutable target receipt already charges the complete request claim.
+Ordinary additive LeaseTrees remain unchanged: their allocation claims extend
+the parent charge. R1h instead opts into `receipt_funded`, where allocation
+claims are ownership carve-outs within the already charged receipt and do not
+change `Bank.used` or aggregate peaks.
 
-The R1g request claim already accounts for the prepared Session's request-local
-KV capacity. LeaseTree v1 allocation claims are additive to their parent
-receipt. Reserving the same KV claim again below a receipt charged for the
-complete request would double-count memory and make Scheduler and Bank
-accounting diverge.
+`materializedClaimV1` copies every request claim class except `queue_slots`.
+The queue slot remains Scheduler-owned. This queue-free claim is the immutable
+tree and scope ceiling. R1h-a opens the tree with no allocation nodes; R1h-b
+reserves one allocation node for the complete queue-free claim using the
+retained cache node and binding keys.
 
-R1h-a therefore opens the exact allocation-empty tree and a tenant scope with
-zero current claim and a request-claim ceiling, but does not reserve the
-retained `cache_node_key` or `cache_binding_key`. Those keys remain committed
-intent for the next materialization gate. That gate must introduce an explicit
-parent/cache claim split or funded-suballocation contract before restoring
-KV/output/RNG state and committing the adoption.
+The funded tree is integrity-bound to its funding mode and activation state.
+The ceiling must fit the parent receipt class by class. Additive reservation
+APIs reject a funded tree, funded reservation APIs reject an additive tree, and
+publication through a funded tree rejects until activation commits.
 
-This is a deliberate safety boundary, not an accounting shortcut.
+## R1h-b activation
 
-## Non-runnable barrier
+`SessionV3.startRestoredV1` consumes a prepared R1h-a capability:
 
-An accepted R1h-a capability retains `PublicationAdoptionV1`. While that
-barrier is present, LaneWeave rejects service preparation, new admissions,
-cancellation, retirement, and close operations that could race target setup.
-The ordinary flat `commitPublicationAdoption` path also cannot consume the
-capability because the Bank namespace is already LeaseTree-bound.
+1. revalidate the checkpoint, successor records, source bound plan, target
+   intent, and live prepared authority;
+2. derive the canonical successor bound plan;
+3. reserve the funded allocation batch before the first allocator call;
+4. allocate exact Session backing and use `materializeIntoV1` to restore
+   output, contiguous KV, RNG, and sampling state with deterministic zero
+   slack;
+5. initialize the contiguous publication state from the checkpoint transcript
+   at sequence `N`; and
+6. commit the materialized funded batch and pending Scheduler adoption through
+   `commitRestoredPublicationAdoptionWithFundedLeaseTree`.
 
-The capability is therefore live ownership but not a runnable
-`SessionV3`. No target token can be sampled or published through this API.
+The Bank activation is the fallible linearization point. After it succeeds,
+installing the Scheduler slot binding and consuming the adoption barrier are
+infallible assignments under the Scheduler mutex. Service therefore observes
+either the original non-runnable bootstrap or the complete runnable Session,
+never partially restored state.
 
-## Validation and abort
+Success moves the prepared capability to `.activated`; it can no longer be
+passed to `abortPreparedRestoredAdmissionV1`. The restored Session owns the
+remaining lifecycle.
 
-`validatePreparedRestoredAdmissionV1` rechecks:
+If startup fails before activation, caller backing is freed before the funded
+batch is aborted. A blocked batch abort returns `RecoveryRequired` and retains
+`allocation_abort_required`; call `recoverRestoredStartV1` with the same
+prepared capability until ownership is clean. The R1h-a capability then
+remains prepared and may be explicitly aborted.
 
-- the exact portable records against independently retained checkpoint,
-  source, and target expectations;
-- the exact live Scheduler identity and Bank address;
-- the pending adoption and accepted admission;
-- the fresh receipt and request claim;
-- tree, scope, tenant, authority, and generation-fenced publication binding;
-- one active Scheduler lane and matching Scheduler/Bank usage;
-- exactly one allocation-empty tree and one zero-current-claim scope with the
-  request-claim ceiling; and
-- zero reserved, live, quiescing, or free-authorized LeaseTree allocations.
+## Global publication sequence
 
-`abortPreparedRestoredAdmissionV1` validates first, then performs the only
-legal reverse transition:
+Token-publication proposals and transcript snapshots use ABI v2 with an
+explicit `sequence_base`.
+
+For a fresh Session:
 
 ```text
-close restored publication session
-→ close allocation-empty LeaseTree and its scope
-→ cancel pending adoption and release receipt
+sequence_base = 0
+next_sequence = 0
+locally completed service = 0
 ```
 
-The first valid owner wins. A copied or replayed capability becomes stale after
-the successful abort and cannot release a reused slot. If an external actor
-violates the single-owner contract between the three cleanup transitions, the
-capability records the last completed transition before reporting
-`RecoveryRequired`. Calling `abortPreparedRestoredAdmissionV1` again resumes
-from that exact phase: publication session still bound, LeaseTree still open,
-or adoption still held. It never represents all three cases with one ambiguous
-state.
+For a restored Session:
 
-## Scope and next gate
+```text
+sequence_base = N
+next_sequence = N
+output_length = sampling_calls = N
+locally completed service = 0
+```
 
-R1h-a proves exact live target identity, fresh admission and receipt,
-LeaseTree-aware publication remapping, nonzero sequence restoration, and
-strict Bank permit monotonicity. It does not:
+The first restored proposal therefore has global
+`transaction_sequence = N`, retains the checkpoint predecessor transcript, and
+receives target Bank publication permit `G + 1`. Scheduler service permits
+remain in the fresh target Scheduler's own epoch and coordinator namespace.
 
-- allocate or materialize checkpoint KV/output/RNG state;
-- commit the Scheduler adoption;
-- create a runnable target Session;
+## Barrier-held close
+
+Restored cancellation and retirement first acquire
+`RestoredPublicationCloseV1`, a snapshot-invisible no-service barrier. While it
+is pending, Scheduler mutators cannot make the lane runnable or race allocator
+reclamation.
+
+Cleanup then advances through explicit phases:
+
+```text
+close barrier held
+→ subtree retirement prepared
+→ allocator free authorized
+→ Session backing freed
+→ funded allocation committed free
+→ publication session + empty tree + receipt + Scheduler lane closed
+```
+
+The final Bank transition atomically consumes the activated publication
+namespace, empty funded tree, zero-charge scopes, and immutable parent receipt.
+The Scheduler then emits the ordinary cancel or retire Event-v1. Failures after
+the close barrier retain the exact phase in the Session; retry
+`recoverRestoredCloseV1`. No recovery phase makes service runnable again or
+uncharges the parent before allocator backing is gone.
+
+## Validation and stale authority
+
+`validatePreparedRestoredAdmissionV1` is mutation-free and accepts only the
+pre-activation `.prepared` phase. It rechecks:
+
+- all portable records against independently retained source and target
+  context;
+- the live Scheduler identity, Bank address, adoption, receipt, and exact
+  request claim;
+- the queue-free funded tree mode, inactive activation bit, empty current
+  claim, and one zero-current-claim scope;
+- restored request epoch, sequence `N`, and source permit generation `G`; and
+- one active Scheduler lane with matching Scheduler/Bank aggregate usage.
+
+Before activation, `abortPreparedRestoredAdmissionV1` closes the restored
+publication namespace and empty tree, then cancels the pending adoption.
+Copied or replayed handles become stale after the first successful abort or
+activation. After activation, only the restored Session close path may release
+the funded allocation and parent receipt.
+
+## Scope
+
+R1h-b proves a charge-correct, process-local runnable target:
+
+- one immutable parent charge and one queue-free ownership carve-out;
+- checkpoint state materialized before publication activation;
+- global transaction sequence `N` and first target Bank permit `G + 1`;
+- one retained next-token comparison against uninterrupted output, logical KV,
+  RNG, and sampling state; and
+- restored cancellation returning Scheduler, Bank, tree, scope, and allocation
+  counts to zero.
+
+It does not:
+
+- durably select one successor;
 - exit or revoke the source;
-- durably choose one successor;
-- prove global source/target exclusivity;
-- survive process death as live authority; or
-- compare uninterrupted and resumed production-model output.
-
-The next prepared-text gate adds charge-correct KV/output/RNG restoration, a
-LeaseTree-aware adoption commit, restored Session construction, and one exact
-next-token comparison. Durable selection and source-exit proof remain separate
-gates after that.
+- prove exclusive target ownership across a process boundary;
+- survive process death as live authority;
+- establish exactly-once fresh-process continuation;
+- compare uninterrupted and resumed terminal results; or
+- establish production-model, native-platform, quality, or performance
+  evidence.
 
 ## Retained checks
 
 The retained suite covers:
 
-- legacy flat Scheduler initialization and explicit LeaseTree opt-in;
-- exact read-only Scheduler identity;
-- fenced restored Bank binding with invalid source/target epochs, zero and
-  exhausted generations, forged tree tokens, duplicate binds, and unchanged
-  failure snapshots;
-- first permit `G + 1`, abort/retry `G + 2`, and overflow behavior;
-- coherent foreign live Scheduler rejection before mutation;
-- pending-barrier service rejection;
-- rejection of the ordinary flat adoption commit;
-- exact prepared capability validation and allocation-empty-tree accounting;
-- coherent receipt/tree/session splicing rejected before either live authority
-  mutates;
-- retained setup-recovery authority from adoption-only, bound-session, and
-  tree-open rollback states, including one blocked cleanup, external repair,
-  and retry with the same payload;
-- reverse-cleanup entry from the exact session-closed and tree-closed phases;
-- successful reverse cleanup; and
-- stale copied-capability rejection after the first abort.
+- legacy additive LeaseTree and fresh-session publication behavior;
+- receipt-funded mode, queue rejection, ceiling enforcement, mode splicing,
+  copied activation/abort single-winner behavior, and unchanged aggregate
+  usage;
+- R1h-a fresh-target identity, prepared validation, reverse abort, setup
+  recovery, and stale-capability rejection;
+- publication ABI v2 restored initialization, first transaction at `N`,
+  predecessor transcript continuity, and permit `G + 1`;
+- restored contiguous KV/output/RNG binding validation; and
+- one synthetic-model restored next-token comparison followed by zero-state
+  cancellation.
 
 Use the ephemeral cache wrapper for focused Zig checks:
 
 ```bash
-tools/zig-with-ephemeral-cache.sh test \
+tools/zig-with-ephemeral-cache.sh test -OReleaseSafe \
   --dep core \
   -Mroot=src/core/resource_bank.zig \
   -Mcore=src/core/root.zig \
   -lc
 
-tools/zig-with-ephemeral-cache.sh test \
+tools/zig-with-ephemeral-cache.sh test -OReleaseSafe \
   --dep core \
   -Mroot=src/core/lane_weave_qos.zig \
   -Mcore=src/core/root.zig \
@@ -182,5 +224,9 @@ tools/zig-with-ephemeral-cache.sh test -OReleaseSafe \
   -Mcore=src/core/root.zig \
   -lc
 
-tools/zig-with-ephemeral-cache.sh build test -Dmetal=false -j2
+tools/zig-with-ephemeral-cache.sh build test \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
 ```
+
+The wrapper uses disposable local and global Zig caches and removes them after
+each command.

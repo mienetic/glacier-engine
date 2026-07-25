@@ -2575,12 +2575,26 @@ test "compact multi-page INT4 generation matches eager generation" {
     var successor_target_bank_slots: [2]engine.resource_bank.Slot = undefined;
     var successor_target_tree_roots: [2]engine.resource_bank.LeaseTreeRootSlot = undefined;
     var successor_target_tree_nodes: [2]engine.resource_bank.LeaseNodeSlot = undefined;
+    const successor_target_claim =
+        bound_plan.residency.request_claim;
     var successor_target_bank =
         try engine.resource_bank.Bank.initWithLeaseTree(
             &successor_target_bank_slots,
             &successor_target_tree_roots,
             &successor_target_tree_nodes,
-            .{},
+            .{
+                .host_bytes = try successor_target_claim.hostBytes(),
+                .capsule_bytes = successor_target_claim.capsule_bytes,
+                .kv_bytes = successor_target_claim.kv_bytes,
+                .activation_bytes = successor_target_claim.activation_bytes,
+                .partial_bytes = successor_target_claim.partial_bytes,
+                .logits_bytes = successor_target_claim.logits_bytes,
+                .output_journal_bytes = successor_target_claim.output_journal_bytes,
+                .staging_bytes = successor_target_claim.staging_bytes,
+                .device_bytes = successor_target_claim.device_bytes,
+                .io_bytes = successor_target_claim.io_bytes,
+                .queue_slots = successor_target_claim.queue_slots,
+            },
             successor_target_bank_epoch,
         );
     var successor_target_lane_slots: [2]engine.lane_weave_qos.Slot = undefined;
@@ -2773,14 +2787,15 @@ test "compact multi-page INT4 generation matches eager generation" {
         try foreign_restore_scheduler.snapshot();
     const foreign_restore_bank_before =
         try foreign_restore_bank.snapshotV3();
-    var successor_session_identity: u8 = 0;
+    var restored_session: engine.prepared_text_session.SessionV3 = .{};
+    var foreign_successor_session_identity: u8 = 0;
     try testing.expectError(
         engine.prepared_text_restore_admission.Error.InvalidLiveTarget,
         engine.prepared_text_restore_admission
             .prepareRestoredAdmissionV1(
             &foreign_restore_scheduler,
             &foreign_restore_bank,
-            @intFromPtr(&successor_session_identity),
+            @intFromPtr(&foreign_successor_session_identity),
             restore_evidence,
         ),
     );
@@ -2799,7 +2814,7 @@ test "compact multi-page INT4 generation matches eager generation" {
             .prepareRestoredAdmissionV1(
             &successor_target_scheduler,
             &successor_target_bank,
-            @intFromPtr(&successor_session_identity),
+            restored_session.restoredPublicationSessionIdV1(),
             restore_evidence,
         );
     var prepared_restore = switch (restored_decision) {
@@ -2831,7 +2846,7 @@ test "compact multi-page INT4 generation matches eager generation" {
     );
     try testing.expect(prepared_restore.tree.current.isZero());
     try testing.expectEqual(
-        @as(u32, 1),
+        @as(usize, 1),
         (try successor_target_bank.snapshotV3()).active_lease_scopes,
     );
     try testing.expectError(
@@ -2873,92 +2888,167 @@ test "compact multi-page INT4 generation matches eager generation" {
         try successor_target_bank.snapshotV3(),
     );
 
-    // A second receipt can carry a separately valid empty restored tree and
-    // publication session in the same Bank. Splicing those handles into the
-    // first Scheduler adoption must fail before either authority is mutated.
-    const mixed_restore_scheduler_before =
-        try successor_target_scheduler.snapshot();
-    const decoy_restore_receipt = try successor_target_bank.commit(
-        try successor_target_bank.reserve(
-            90_103,
-            successor_target.request_claim,
-        ),
+    // R1h-b reserves one queue-free ownership carve-out while the immutable
+    // receipt already consumes the target's exact hard limit. Any additive
+    // double charge would therefore reject before allocator materialization.
+    const copied_prepared_restore = prepared_restore;
+    try restored_session.startRestoredV1(
+        testing.allocator,
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        bound_plan,
+        &prepared_restore,
+        restore_evidence,
     );
-    var decoy_restore_tree = try successor_target_bank.openLeaseTree(
-        decoy_restore_receipt,
-        90_104,
-        90_105,
-        successor_target.request_claim,
+    try testing.expectEqual(
+        engine.prepared_text_restore_admission.Phase.activated,
+        prepared_restore.phase,
     );
-    const decoy_restore_opened =
-        try successor_target_bank.openLeaseScope(
-            decoy_restore_tree,
-            90_107,
-            90_106,
-            successor_target.request_claim,
-        );
-    decoy_restore_tree = decoy_restore_opened.tree;
-    var decoy_restore_session_identity: u8 = 0;
-    const decoy_restore_session_id =
-        @intFromPtr(&decoy_restore_session_identity);
-    try successor_target_bank
-        .bindRestoredPublicationSessionWithLeaseTreeFenced(
-        decoy_restore_tree,
-        successor_source.receipt.bank_epoch,
-        successor_artifacts.segment.request_epoch,
-        decoy_restore_session_id,
-        successor_artifacts.segment.sequence_base,
-        successor_artifacts.segment
-            .source_last_resource_permit_generation,
+    const restored_boundary =
+        try restored_session.snapshotVerified();
+    try testing.expectEqual(
+        checkpoint_boundary.base.publication.next_sequence,
+        restored_boundary.base.publication.sequence_base,
     );
-    var mixed_prepared_restore = prepared_restore;
-    mixed_prepared_restore.receipt = decoy_restore_receipt;
-    mixed_prepared_restore.tree = decoy_restore_tree;
-    mixed_prepared_restore.scope = decoy_restore_opened.scope;
-    mixed_prepared_restore.session_id = decoy_restore_session_id;
-    mixed_prepared_restore.bootstrap_sha256 =
-        engine.prepared_text_restore_admission
-            .preparedRestoredAdmissionRootV1(
-            mixed_prepared_restore,
-        );
-    const mixed_restore_bank_before =
+    try testing.expectEqualDeep(
+        checkpoint_boundary.base.publication.state,
+        restored_boundary.base.publication.state,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &checkpoint_boundary.base.publication.transcript_sha256,
+        &restored_boundary.base.publication.transcript_sha256,
+    );
+    try testing.expectEqual(
+        checkpoint_boundary.base.publication
+            .last_resource_permit_generation,
+        restored_boundary.base.publication
+            .last_resource_permit_generation,
+    );
+    const restored_bank_live =
         try successor_target_bank.snapshotV3();
-    try testing.expectError(
-        engine.prepared_text_restore_admission
-            .Error.InvalidPreparedAdmission,
-        engine.prepared_text_restore_admission
-            .abortPreparedRestoredAdmissionV1(
-            &mixed_prepared_restore,
-        ),
+    try testing.expectEqualDeep(
+        successor_target_claim,
+        restored_bank_live.used,
     );
     try testing.expectEqualDeep(
-        mixed_restore_bank_before,
-        try successor_target_bank.snapshotV3(),
+        successor_target_claim,
+        (try successor_target_scheduler.snapshot()).used,
     );
-    try successor_target_bank.closePublicationSession(
-        decoy_restore_receipt,
-        successor_artifacts.segment.request_epoch,
-        decoy_restore_session_id,
-        successor_artifacts.segment.sequence_base,
+    try testing.expectEqual(
+        @as(usize, 1),
+        restored_bank_live.live_allocations,
     );
-    try successor_target_bank.closeLeaseTree(decoy_restore_tree);
-    try successor_target_bank.release(decoy_restore_receipt);
-    try testing.expectEqualDeep(
-        mixed_restore_scheduler_before,
-        try successor_target_scheduler.snapshot(),
+    try testing.expectEqual(
+        @as(usize, 2),
+        restored_bank_live.active_lease_nodes,
     );
 
-    const copied_prepared_restore = prepared_restore;
-    const restore_cancel =
-        try engine.prepared_text_restore_admission
-            .abortPreparedRestoredAdmissionV1(&prepared_restore);
+    var restored_sink: PreparedTextSink = .{};
+    const restored_service_permit =
+        try successor_target_scheduler.prepareService();
+    const restored_next =
+        try restored_session.step(
+            restored_service_permit,
+            restored_sink.interface(),
+        );
+    try testing.expectEqualDeep(
+        reference_second_transition,
+        restored_next.proposal.transition,
+    );
+    try testing.expectEqual(
+        checkpoint_expected.publication_next_sequence,
+        restored_next.proposal.sequence_base,
+    );
+    try testing.expectEqual(
+        checkpoint_expected.publication_next_sequence,
+        restored_next.proposal.transaction_sequence,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &checkpoint_boundary.base.publication.transcript_sha256,
+        &restored_next.proposal.previous_transcript_sha256,
+    );
+    try testing.expectEqual(
+        checkpoint_boundary.base.publication
+            .last_resource_permit_generation + 1,
+        restored_next.proposal.resource_permit_generation,
+    );
+    try testing.expectEqualSlices(
+        u32,
+        &reference_output_after_two,
+        restored_session.outputTokens(),
+    );
+    try testing.expectEqualDeep(
+        reference_rng_after_two,
+        restored_session.inner.inner.rng_state,
+    );
+    try testing.expectEqual(
+        reference_sampling_after_two,
+        restored_session.inner.inner.sampling_calls,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &reference_logical_kv_after_two,
+        &engine.lane_contiguous_publication
+            .logicalKvPrefixSha256(
+            &restored_session.inner.inner.resources.cache,
+            restored_session.inner.inner.resources.cache.len,
+        ),
+    );
+
+    var retained_close_view = restored_session;
+    retained_close_view.restored_phase = .backing_freed;
+    try testing.expectEqual(
+        @as(usize, 0),
+        retained_close_view.outputTokens().len,
+    );
+    try testing.expect(!retained_close_view.isFinished());
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        retained_close_view.snapshotVerified(),
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        retained_close_view.step(
+            restored_service_permit,
+            restored_sink.interface(),
+        ),
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        retained_close_view.cancel(),
+    );
+    retained_close_view.inner.inner.resources_initialized = false;
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        retained_close_view.inner.inner.step(
+            restored_service_permit,
+            restored_sink.interface(),
+        ),
+    );
+
+    const restore_cancel = try restored_session.cancel();
     try testing.expectEqual(
         engine.lane_weave_qos.EventKind.cancel,
         restore_cancel.kind,
     );
+    const restored_bank_after =
+        try successor_target_bank.snapshotV3();
+    try testing.expect(restored_bank_after.used.isZero());
     try testing.expectEqual(
-        engine.prepared_text_restore_admission.Phase.aborted,
-        prepared_restore.phase,
+        @as(usize, 0),
+        restored_bank_after.active_lease_trees,
+    );
+    try testing.expectEqual(
+        @as(usize, 0),
+        restored_bank_after.active_lease_scopes,
+    );
+    try testing.expectEqual(
+        @as(u32, 0),
+        (try successor_target_scheduler.snapshot()).active,
     );
     var stale_prepared_restore = copied_prepared_restore;
     try testing.expectError(
@@ -2968,21 +3058,6 @@ test "compact multi-page INT4 generation matches eager generation" {
             .abortPreparedRestoredAdmissionV1(
             &stale_prepared_restore,
         ),
-    );
-    const restored_bank_after =
-        try successor_target_bank.snapshotV3();
-    try testing.expect(restored_bank_after.used.isZero());
-    try testing.expectEqual(
-        @as(u32, 0),
-        restored_bank_after.active_lease_trees,
-    );
-    try testing.expectEqual(
-        @as(u32, 0),
-        restored_bank_after.active_lease_scopes,
-    );
-    try testing.expectEqual(
-        @as(u32, 0),
-        (try successor_target_scheduler.snapshot()).active,
     );
     _ = try successor_target_scheduler.close();
 

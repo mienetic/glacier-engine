@@ -817,29 +817,58 @@ Status: **integrated experimental live-authority slice**.
   weight one, no deadline, and only the successor's remaining quanta;
 - acquires the exact target admission and fresh receipt, then retains the
   publication-adoption barrier so no service can observe partial restore state;
-- opens the intended allocation-empty LeaseTree with one zero-current-claim
-  tenant scope and restores the Bank publication namespace at sequence `N`;
-  and
+- opens the intended queue-free receipt-funded LeaseTree with one
+  zero-current-claim tenant scope and restores the Bank publication namespace
+  at sequence `N`; and
 - seeds the target Bank's publication-permit generation from the source fence,
   making its first future permit strictly greater across the fresh receipt.
 
 The live capability is process-local and single-use. Read-only validation
-rechecks the pending adoption, receipt, tree, scope, publication namespace, and
-exact Scheduler/Bank accounting. Abort closes the restored session, closes the
-allocation-empty tree and its scope, then cancels the adoption and releases the
-receipt; copied or replayed authority is stale after the first winner.
+rechecks the pending adoption, receipt, funded tree, scope, publication
+namespace, and exact Scheduler/Bank accounting. Before activation, abort closes
+the restored publication namespace and empty tree, then cancels the adoption
+and releases the receipt; copied or replayed authority is stale after the first
+winner.
 
-R1h-a intentionally allocates no KV node. The request receipt already charges
-the complete request claim, while LeaseTree v1 allocation claims are additive;
-allocating the same KV claim below it would double-charge and create
-Scheduler/Bank drift. The retained cache node/binding keys remain committed
-intent for R1h-b, which must add an explicit parent/cache split or funded
-suballocation contract, materialize state, construct the restored Session, and
-commit LeaseTree-aware adoption. See
+R1h-a intentionally allocates no request-local backing. The immutable receipt
+already charges the complete request claim, so the tree uses the explicit
+`receipt_funded` mode and excludes the Scheduler-owned queue slot. Its retained
+cache node/binding keys are consumed by R1h-b. See
 [Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md).
 
-Durable atomic selection, source exit, exclusive target activation, and
-fresh-process uninterrupted/resumed equivalence remain later gates.
+#### R1h-b — Receipt-funded restored Session activation
+
+Status: **integrated experimental process-local runtime slice**.
+`SessionV3.startRestoredV1` now:
+
+- revalidates the R1g checkpoint, successor records, source bound plan, target
+  ownership intent, and live R1h-a capability before allocator work;
+- reserves one queue-free funded allocation covering every request-local byte
+  class while leaving aggregate Scheduler and Bank usage equal to the
+  immutable parent receipt;
+- materializes exact output, contiguous KV, RNG, and sampling state into fresh
+  Session backing, with deterministic zero slack and reconstructed roots;
+- initializes publication ABI v2 with `sequence_base = N`, the checkpoint
+  transcript and state, and source Bank permit generation `G`;
+- commits the funded allocation batch and consumes the pending Scheduler
+  adoption through one protected activation path, so service cannot observe
+  partial restored state; and
+- closes through a no-service barrier that reclaims allocator backing and the
+  funded allocation before atomically releasing the publication namespace,
+  tree, receipt, and Scheduler lane.
+
+The retained synthetic-model path constrains the target Bank to the exact
+request hard limit, publishes the first target transaction at global sequence
+`N` with Bank permit `G + 1`, matches uninterrupted output, logical KV, RNG,
+and sampling state for that transition, and returns Scheduler/Bank accounting
+to zero after cancellation. Lower-level tests retain fresh-session behavior
+with `sequence_base = 0` and cover funded activation/abort single-winner
+semantics.
+
+R1h-b is process-local. It does not durably select a successor, exit or revoke
+the source, prove exclusive process handoff, resume after process death, or
+compare terminal uninterrupted and resumed results. Those remain the next R1
+gates.
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with

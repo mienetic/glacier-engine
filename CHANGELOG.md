@@ -8,6 +8,10 @@ before the first stable release.
 
 ### Changed
 
+- Token-publication proposals and transcript snapshots now use ABI v2 and carry
+  an explicit `sequence_base`. Fresh sessions retain base zero; restored
+  sessions preserve the checkpoint's global token sequence while the target
+  Scheduler begins with no locally completed service.
 - Stateful model prepare/rollback now leave caller-visible output and successor
   state buffers unchanged until commit; abort and drift scrub only private
   candidates.
@@ -21,6 +25,15 @@ before the first stable release.
 
 ### Added
 
+- Added process-local prepared-text restored activation. A fresh target receipt
+  remains the sole aggregate charge while a queue-free receipt-funded
+  `LeaseTree` records allocator ownership; checkpoint KV/output/RNG state is
+  materialized before adoption becomes runnable. The retained synthetic-model
+  path publishes one successor token at the restored sequence, preserves the
+  source publication-permit fence, matches uninterrupted output/KV/RNG/sampling
+  state, and closes restored ownership to zero. Durable selection, source exit,
+  exclusive process handoff, fresh-process continuation, and terminal
+  equivalence remain future gates.
 - Added a compile-time runtime support registry and deterministic read-only JSON
   inspector for eight append-only, retained exact-integer reference profiles:
   vision/audio/video encoders, stateless and stateful transcript/video-segment

@@ -210,6 +210,11 @@ formats, and independent verifiers.
 - **Proof-carrying continuation.** A fixed-size manifest binds model, tokenizer,
   plan, resource, schedule, KV, sampler, output, and publication state without
   duplicating those external objects.
+- **Receipt-funded restored execution.** A fresh prepared-text target keeps one
+  immutable request charge while a queue-free `LeaseTree` records exact
+  allocator ownership. Verified checkpoint state becomes runnable only when
+  materialization and adoption commit together, and restored close returns the
+  Scheduler and Bank to zero.
 - **Restore-before-visible ownership.** A canonical resource-state plan
   reacquires a fresh `ResourceBank`/`LeaseTree`, charges every allocation before
   materialization, verifies exact reconstructed bytes, and only then marks the
@@ -452,10 +457,10 @@ hardware-independent surface without those native backend dependencies.
 
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
-| AI runtime | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial pre-tokenized text request profiles, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture with detached output/RNG/contiguous-KV materialization, same-process exact-current-boundary KV/output rebind inside the original live Session under unchanged publication authority, canonical successor plan/residency plus a fixed transcript bridge and target ownership-intent evidence, a fresh-target restored admission held behind a non-runnable adoption barrier with an allocation-empty LeaseTree and one zero-current-claim scope, exact publication-sequence remapping, and a cross-Bank publication-permit generation fence, exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic eight-profile retained-reference compatibility inspector | Restore KV/output/RNG state under an explicit non-duplicating claim split, commit LeaseTree-aware adoption, and construct the runnable restored Session before durable selection and fresh-process prepared continuation; extend ownership/accounting coverage, verify raw-text tokenizer identity, add a durable external result sink, production fixtures, and native validation |
+| AI runtime | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial pre-tokenized text request profiles, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture with detached output/RNG/contiguous-KV materialization, same-process exact-current-boundary KV/output rebind, canonical successor plan/residency/transcript evidence, receipt-funded fresh-target ownership, charge-before-materialize restored `SessionV3` activation at sequence `N`, a first target Bank permit at source `G + 1`, and barrier-held teardown to zero, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic eight-profile retained-reference compatibility inspector | Durable successor selection, source-exit and exclusive-target proof, fresh-process prepared continuation, and uninterrupted/resumed terminal equivalence; extend ownership/accounting coverage, verify raw-text tokenizer identity, add a durable external result sink, production fixtures, and native validation |
 | Language interop | Installed experimental C header plus shared/static contract libraries; source and staged-install C consumers; C++ linkage check; standard-library Python `ctypes`; dependency-free Rust `extern "C"` gate; fixed profile enumeration and support-mask queries | Retained symbol/layout gates, native multi-OS consumers, stability policy, packages, then model/session execution bindings |
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures with scheduler-owned final-result publication, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, and exact deterministic producer-transition replay for retained reference profiles | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
-| State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor plan/residency/transcript evidence, and non-runnable fresh-target restored admission with receipt/permit remapping, an allocation-empty LeaseTree, and one zero-current-claim scope; capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Charge-correct prepared-state materialization and runnable target activation, durable successor selection, fresh-process uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
+| State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor evidence, receipt-funded restored materialization and runnable target activation with a global publication sequence base, plus capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Durable prepared-text selection and exclusive process handoff, fresh-process uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
 | Scheduling | Exact admission, deterministic weighted QoS, one bounded mixed-media pressure campaign with exact replay, final-quantum image/audio/video media transactions, and typed vision/audio/video result publication under the scheduler-owned receipt | Family-aware batching, preemption, multi-device placement, mixed typed-adapter workloads, and broader multi-tenant campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
 | Evidence | Hash-chained events, independent Python verifiers, a scheduled-media execution sidecar with exact receipt/output replay, compact provider evidence join, and an experimental read-only generated-media inspector with exact optional format-sidecar validation, including a two-generation 12-entry-per-generation capacity campaign | Provider/token inspectors, privacy-safe export and retention policy, and native multi-OS evidence |
@@ -506,27 +511,37 @@ receipt, restored admission, authority handoff, or runnable successor Session.
 
 R1h-a adds `prepareRestoredAdmissionV1`. It consumes those exact records
 against a genuinely fresh LeaseTree-enabled Scheduler/Bank, acquires the
-intended admission and receipt, opens the exact tree and tenant scope, restores
-publication sequence `N`, and seeds the target Bank publication-permit fence
-from the source generation. The pending adoption barrier remains live, so no
-service can run before checkpoint materialization. The tree is intentionally
-allocation-empty and contains one zero-current-claim scope: LeaseTree v1
-allocations are additive, while the request receipt already contains the KV
-claim. Charge-correct KV/output/RNG restoration and LeaseTree-aware adoption
-commit remain the next gate.
+intended admission and receipt, opens a queue-free receipt-funded tree and
+zero-current-claim tenant scope, restores publication sequence `N`, and seeds
+the target Bank publication-permit fence from source generation `G`. The
+pending adoption barrier remains live, so the bootstrap cannot receive service
+before checkpoint materialization.
+
+R1h-b adds `SessionV3.startRestoredV1`. It reserves one funded ownership node
+for every request-local byte class before allocator materialization, restores
+and revalidates KV/output/RNG state, and commits the funded allocation batch
+with the pending Scheduler adoption. Token-publication ABI v2 carries
+`sequence_base = N`, so the first target transaction remains global sequence
+`N` while target-local completed service starts at zero; the first target Bank
+permit is `G + 1`. A no-service close barrier frees concrete backing and the
+funded node before atomically closing the publication session, tree, and parent
+receipt. The retained synthetic-model integration matches one restored
+next-token transition, output, logical KV, RNG, and sampling state against its
+uninterrupted reference, then returns Scheduler and Bank usage to zero.
 
 The path still accepts pre-tokenized input only, does not cover every V1-valid
 request shape, and does not execute or attest a raw-text tokenizer, provide
 stable package/license byte identity, publish to a durable external result
-sink, transfer publication authority to a different Session, durably persist
-or resume the prepared session in a fresh process, support early EOS or
+sink, durably transfer exclusive publication authority across process exit,
+resume the prepared session in a fresh process, support early EOS or
 fewer-than-admitted outputs, provide concurrent Session mutation, or establish
 production native performance. The detached R1e payload cannot publish another
 token by itself; R1f installs it only through the original address-stable live
-Session. R1g supplies exact successor evidence, while R1h-a creates only a
-barrier-held target admission; neither creates a runnable restored Session,
-durable selector, source-exit proof, or exactly-once fresh-process
-continuation. The bound-plan bridge remains an experimental Zig/direct API
+Session. R1g supplies exact successor evidence, R1h-a creates a barrier-held
+target bootstrap, and R1h-b activates a process-local runnable target. The path
+still has no durable selector, source-exit proof, exclusive process handoff, or
+exactly-once fresh-process continuation. The bound-plan bridge remains an
+experimental Zig/direct API
 without a fixed bound-plan wire, projected C verifier, or `.generate_sequence`
 support record; cross-language ABI parity is future work.
 

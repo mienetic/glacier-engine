@@ -32,6 +32,7 @@ thermal observations distinct.
 | `zig test src/core/workload_pressure.zig -OReleaseSafe` plus `python3 -m unittest bench.tests.test_workload_pressure` | Versioned mixed-media explicit-open-loop pressure, capacity/resource rejection, exact `1:2:4` fairness, timeout, cancellation, logical delay/high-water summaries, zero-orphan close, exact replay, and independent cross-language roots |
 | `zig build lane-publication-demo -Dmetal=false` | One-token prepare/commit/abort with KV, RNG, sampler, output, schedule, and resource roots |
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
+| `tools/zig-with-ephemeral-cache.sh build test -Doptimize=ReleaseSafe -Dmetal=false -j2` | Full retained suite, including receipt-funded prepared-text activation at sequence `N`, one uninterrupted/restored synthetic-model transition comparison, and target teardown to zero |
 | `zig build continuation-capsule-demo -Dmetal=false` | Fixed-size committed-checkpoint manifest, typed external object binding, and substitution rejection |
 | `zig build continuation-resolver-demo -Dmetal=false` | Tenant-scoped exact-object lookup, bounded quotas, caller-owned output, and full composition verification |
 | `zig build continuation-bundle-demo -Dmetal=false` | Fixed tenant bundle, semantic/blob identity separation, canonical ordinals, and exact logical/unique totals |

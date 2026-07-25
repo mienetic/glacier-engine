@@ -229,7 +229,12 @@ explicit little-endian encoding rather than in-memory struct layout.
 ## Resource model
 
 ResourceBank currently covers exact logical counters declared by the runtime.
-LeaseTree subdivides a parent receipt into allocation and publication scopes.
+LeaseTree adds generation-fenced allocation and publication scopes under one
+receipt. Its default additive mode charges allocation claims beyond a
+control-plane parent claim. The explicit receipt-funded mode instead partitions
+a bounded queue-free ownership claim from an immutable receipt that is already
+fully charged; allocation state changes without increasing aggregate Bank
+usage. Funding mode and activation remain integrity-bound.
 The target resource model adds external observations without conflating them:
 
 ```text

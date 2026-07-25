@@ -170,6 +170,16 @@ pub const LeaseNodeState = enum(u8) {
     free_authorized,
 };
 
+/// Accounting policy for one LeaseTree sidecar. Additive trees preserve the
+/// original v1 behavior: allocation claims extend the immutable parent
+/// Receipt charge. Receipt-funded trees instead partition a bounded,
+/// queue-free subset of that already-charged Receipt for exact allocation
+/// ownership without changing aggregate Bank usage.
+pub const LeaseTreeFundingMode = enum(u8) {
+    additive,
+    receipt_funded,
+};
+
 const LeasePendingKind = enum(u8) {
     none,
     allocation,
@@ -201,6 +211,10 @@ pub const LeaseTreeRootSlot = struct {
     pending_count: u32 = 0,
     pending_claim: Claim = .{},
     pending_digest: u64 = 0,
+    /// Sidecar-only policy state. Neither field changes the pointer-free
+    /// LeaseTreeV1 layout; both are bound into its state digest.
+    funding_mode: LeaseTreeFundingMode = .additive,
+    restored_publication_activated: bool = false,
 };
 
 /// Shared fixed node pool. Indices, not pointers, form tree edges so public
@@ -1093,7 +1107,46 @@ pub const Bank = struct {
         authority_key: u64,
         ceiling: Claim,
     ) Error!LeaseTreeV1 {
+        return self.openLeaseTreeWithFundingMode(
+            receipt,
+            tree_key,
+            authority_key,
+            ceiling,
+            .additive,
+        );
+    }
+
+    /// Open a tree whose allocation claims are ownership carve-outs from the
+    /// immutable parent Receipt rather than additive Bank charges. The funded
+    /// ceiling is immutable, must fit the Receipt class by class, and cannot
+    /// include the Scheduler-owned queue slot.
+    pub fn openReceiptFundedLeaseTree(
+        self: *Bank,
+        receipt: Receipt,
+        tree_key: u64,
+        authority_key: u64,
+        ceiling: Claim,
+    ) Error!LeaseTreeV1 {
+        return self.openLeaseTreeWithFundingMode(
+            receipt,
+            tree_key,
+            authority_key,
+            ceiling,
+            .receipt_funded,
+        );
+    }
+
+    fn openLeaseTreeWithFundingMode(
+        self: *Bank,
+        receipt: Receipt,
+        tree_key: u64,
+        authority_key: u64,
+        ceiling: Claim,
+        funding_mode: LeaseTreeFundingMode,
+    ) Error!LeaseTreeV1 {
         if (tree_key == 0 or authority_key == 0 or ceiling.isZero())
+            return Error.InvalidClaim;
+        if (funding_mode == .receipt_funded and ceiling.queue_slots != 0)
             return Error.InvalidClaim;
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -1105,6 +1158,9 @@ pub const Bank = struct {
             slot.publication_request_epoch != 0 or
             slot.publication_session_id != 0 or slot.publication_active)
             return Error.InvalidTransition;
+        if (funding_mode == .receipt_funded and
+            !claimWithin(ceiling, receipt.claim))
+            return Error.InvalidClaim;
 
         const generations = try self.reserveLeaseGenerations(2);
         root.* = .{
@@ -1115,6 +1171,7 @@ pub const Bank = struct {
             .generation = generations + 1,
             .structural_revision = 1,
             .ceiling = ceiling,
+            .funding_mode = funding_mode,
         };
         self.refreshLeaseTreeRootLocked(receipt, root);
         self.lease_tree_opens +|= 1;
@@ -1213,6 +1270,50 @@ pub const Bank = struct {
         specs: []const LeaseAllocationSpecV1,
         out_nodes: []LeaseNodeV1,
     ) Error!LeaseAllocationReservationV1 {
+        return self.reserveAllocationsForSessionWithFundingMode(
+            tree,
+            request_epoch,
+            session_id,
+            expected_sequence,
+            specs,
+            out_nodes,
+            .additive,
+        );
+    }
+
+    /// Reserve allocator ownership already funded by the immutable parent
+    /// Receipt. Root/scope/node accounting advances exactly like an additive
+    /// batch, but Bank.used and all aggregate peaks remain unchanged.
+    pub fn reserveReceiptFundedAllocationsForSession(
+        self: *Bank,
+        tree: LeaseTreeV1,
+        request_epoch: u64,
+        session_id: usize,
+        expected_sequence: u64,
+        specs: []const LeaseAllocationSpecV1,
+        out_nodes: []LeaseNodeV1,
+    ) Error!LeaseAllocationReservationV1 {
+        return self.reserveAllocationsForSessionWithFundingMode(
+            tree,
+            request_epoch,
+            session_id,
+            expected_sequence,
+            specs,
+            out_nodes,
+            .receipt_funded,
+        );
+    }
+
+    fn reserveAllocationsForSessionWithFundingMode(
+        self: *Bank,
+        tree: LeaseTreeV1,
+        request_epoch: u64,
+        session_id: usize,
+        expected_sequence: u64,
+        specs: []const LeaseAllocationSpecV1,
+        out_nodes: []LeaseNodeV1,
+        funding_mode: LeaseTreeFundingMode,
+    ) Error!LeaseAllocationReservationV1 {
         if (request_epoch == 0 or session_id == 0 or specs.len == 0 or
             specs.len > std.math.maxInt(u32) or out_nodes.len < specs.len)
             return Error.InvalidConfiguration;
@@ -1221,7 +1322,10 @@ pub const Bank = struct {
 
         const root = try self.validateLeaseTreeLocked(tree);
         const parent_slot = try self.validateReceipt(tree.parent);
-        if (root.pending_kind != .none or parent_slot.publication_active or
+        if (root.funding_mode != funding_mode or
+            (funding_mode == .receipt_funded and
+                root.restored_publication_activated) or
+            root.pending_kind != .none or parent_slot.publication_active or
             parent_slot.publication_request_epoch != request_epoch or
             parent_slot.publication_session_id != session_id or
             parent_slot.publication_next_sequence != expected_sequence or
@@ -1280,17 +1384,21 @@ pub const Bank = struct {
         const next_tree_claim = try addClaims(root.current, aggregate);
         if (!claimWithin(next_tree_claim, root.ceiling))
             return Error.InvalidClaim;
-        const next_used = addClaims(self.used, aggregate) catch {
-            self.rejected_lease_capacity +|= 1;
-            return Error.ClaimOverflow;
-        };
-        const next_host_bytes = next_used.hostBytes() catch {
-            self.rejected_lease_capacity +|= 1;
-            return Error.ClaimOverflow;
-        };
-        if (!self.limits.fitsWithHost(next_used, next_host_bytes)) {
-            self.rejected_lease_capacity +|= 1;
-            return Error.CapacityExceeded;
+        var next_used = self.used;
+        var next_host_bytes: u64 = 0;
+        if (funding_mode == .additive) {
+            next_used = addClaims(self.used, aggregate) catch {
+                self.rejected_lease_capacity +|= 1;
+                return Error.ClaimOverflow;
+            };
+            next_host_bytes = next_used.hostBytes() catch {
+                self.rejected_lease_capacity +|= 1;
+                return Error.ClaimOverflow;
+            };
+            if (!self.limits.fitsWithHost(next_used, next_host_bytes)) {
+                self.rejected_lease_capacity +|= 1;
+                return Error.CapacityExceeded;
+            }
         }
 
         // Batch, each node, reserve-tree, and settle/abort-tree generations
@@ -1360,9 +1468,14 @@ pub const Bank = struct {
         );
         root.generation = reserve_tree_generation;
         root.structural_revision += 1;
-        self.used = next_used;
-        self.peak = maxClaims(self.peak, next_used);
-        self.peak_host_bytes = @max(self.peak_host_bytes, next_host_bytes);
+        if (funding_mode == .additive) {
+            self.used = next_used;
+            self.peak = maxClaims(self.peak, next_used);
+            self.peak_host_bytes = @max(
+                self.peak_host_bytes,
+                next_host_bytes,
+            );
+        }
         self.refreshLeaseTreeRootLocked(tree.parent, root);
 
         var batch: LeaseAllocationBatchV1 = .{
@@ -1401,6 +1514,8 @@ pub const Bank = struct {
         defer self.mutex.unlock();
 
         const root = try self.validateLeaseAllocationBatchLocked(batch);
+        if (root.funding_mode != .additive)
+            return Error.InvalidTransition;
         const storage = try self.leaseTreeStorage();
         for (storage.nodes) |*node| {
             if (node.active and
@@ -1422,6 +1537,72 @@ pub const Bank = struct {
         return makeLeaseTree(batch.parent, root.*);
     }
 
+    /// Atomically settle one complete receipt-funded allocation wave and make
+    /// its already-bound restored publication namespace usable. This is the
+    /// Bank linearization point consumed by LaneWeave adoption: before it,
+    /// funded-tree publication is rejected; after it, copied batch/tree
+    /// handles are stale and the exact current tree can publish.
+    pub fn commitFundedAllocationsAndActivateRestoredPublication(
+        self: *Bank,
+        reservation: LeaseAllocationReservationV1,
+        request_epoch: u64,
+        session_id: usize,
+        expected_next_sequence: u64,
+        source_last_generation: u64,
+    ) Error!LeaseTreeV1 {
+        if (request_epoch == 0 or session_id == 0 or
+            expected_next_sequence == 0 or source_last_generation == 0 or
+            source_last_generation == std.math.maxInt(u64))
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const tree_root =
+            try self.validateLeaseTreeLocked(reservation.tree);
+        const root =
+            try self.validateLeaseAllocationBatchLocked(reservation.batch);
+        const batch = reservation.batch;
+        const slot = try self.validateReceipt(batch.parent);
+        if (tree_root != root or
+            root.funding_mode != .receipt_funded or
+            root.restored_publication_activated or
+            !std.meta.eql(root.current, root.ceiling) or
+            !std.meta.eql(batch.claim, root.ceiling) or
+            batch.request_epoch != request_epoch or
+            batch.session_id != session_id or
+            batch.sequence != expected_next_sequence or
+            slot.state != .committed or
+            slot.publication_request_epoch != request_epoch or
+            slot.publication_session_id != session_id or
+            slot.publication_next_sequence != expected_next_sequence or
+            slot.publication_permit_generation != source_last_generation or
+            slot.publication_active or
+            slot.publication_permit_integrity != 0)
+            return Error.InvalidTransition;
+
+        const storage = try self.leaseTreeStorage();
+        for (storage.nodes) |*node| {
+            if (node.active and
+                node.receipt_slot_index == batch.parent.slot_index and
+                node.tree_identity_generation ==
+                    batch.tree_identity_generation and
+                node.pending_generation == batch.generation)
+            {
+                if (node.state != .reserved_unmaterialized)
+                    return Error.InvalidTransition;
+                node.state = .live;
+                node.pending_generation = 0;
+            }
+        }
+        clearLeasePending(root);
+        root.restored_publication_activated = true;
+        root.generation = batch.completion_tree_generation;
+        root.structural_revision += 1;
+        self.refreshLeaseTreeRootLocked(batch.parent, root);
+        self.lease_allocation_materializations +|= 1;
+        return makeLeaseTree(batch.parent, root.*);
+    }
+
     /// Cancel a reserved batch only after every successful caller-side
     /// allocation has been freed. Invalid/stale batches retain a safe charge.
     /// This external ordering is trusted; the Bank cannot observe allocators.
@@ -1435,7 +1616,10 @@ pub const Bank = struct {
         const root = try self.validateLeaseAllocationBatchLocked(batch);
         const storage = try self.leaseTreeStorage();
         const next_tree_claim = try subtractClaims(root.current, batch.claim);
-        const next_used = try subtractClaims(self.used, batch.claim);
+        const next_used = if (root.funding_mode == .receipt_funded)
+            self.used
+        else
+            try subtractClaims(self.used, batch.claim);
         for (storage.nodes) |*node| {
             if (!node.active or node.receipt_slot_index != batch.parent.slot_index or
                 node.tree_identity_generation != batch.tree_identity_generation or
@@ -1455,7 +1639,8 @@ pub const Bank = struct {
         clearLeasePending(root);
         root.generation = batch.completion_tree_generation;
         root.structural_revision += 1;
-        self.used = next_used;
+        if (root.funding_mode == .additive)
+            self.used = next_used;
         self.refreshLeaseTreeRootLocked(batch.parent, root);
         self.lease_allocation_aborts +|= 1;
         return makeLeaseTree(batch.parent, root.*);
@@ -1481,6 +1666,8 @@ pub const Bank = struct {
         const scope_slot = try self.validateLeaseNodeLocked(tree, scope);
         const parent_slot = try self.validateReceipt(tree.parent);
         if (scope_slot.kind != .scope or scope_slot.state != .live or
+            (root.funding_mode == .receipt_funded and
+                !root.restored_publication_activated) or
             root.pending_kind != .none or parent_slot.publication_active or
             parent_slot.publication_request_epoch != request_epoch or
             parent_slot.publication_session_id != session_id or
@@ -1681,7 +1868,10 @@ pub const Bank = struct {
         const root = try self.validateLeaseFreePermitLocked(permit);
         const storage = try self.leaseTreeStorage();
         const next_tree_claim = try subtractClaims(root.current, permit.claim);
-        const next_used = try subtractClaims(self.used, permit.claim);
+        const next_used = if (root.funding_mode == .receipt_funded)
+            self.used
+        else
+            try subtractClaims(self.used, permit.claim);
         const scope = &storage.nodes[permit.scope_index];
         const next_scope_claim = try subtractClaims(
             scope.subtree_claim,
@@ -1702,7 +1892,8 @@ pub const Bank = struct {
         clearLeasePending(root);
         root.generation = permit.completion_tree_generation;
         root.structural_revision += 1;
-        self.used = next_used;
+        if (root.funding_mode == .additive)
+            self.used = next_used;
         self.refreshLeaseTreeRootLocked(permit.parent, root);
         self.lease_reclaim_commits +|= 1;
         return makeLeaseTree(permit.parent, root.*);
@@ -1715,6 +1906,22 @@ pub const Bank = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         _ = try self.validateLeaseTreeLocked(tree);
+    }
+
+    /// Read-only mode/activation check for higher-level restored-admission
+    /// validation. The exact ceiling/current/node state remains authenticated
+    /// by the supplied LeaseTreeV1 token.
+    pub fn validateReceiptFundedLeaseTree(
+        self: *Bank,
+        tree: LeaseTreeV1,
+        expected_activated: bool,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const root = try self.validateLeaseTreeLocked(tree);
+        if (root.funding_mode != .receipt_funded or
+            root.restored_publication_activated != expected_activated)
+            return Error.InvalidTransition;
     }
 
     pub fn validateLeaseNode(
@@ -1739,6 +1946,7 @@ pub const Bank = struct {
         const root = try self.validateLeaseTreeLocked(tree);
         const parent_slot = try self.validateReceipt(tree.parent);
         if (root.pending_kind != .none or !root.current.isZero() or
+            root.restored_publication_activated or
             parent_slot.publication_active or
             parent_slot.publication_session_id != 0)
             return Error.InvalidTransition;
@@ -1763,6 +1971,69 @@ pub const Bank = struct {
         }
         root.* = .{};
         self.lease_tree_closes +|= 1;
+    }
+
+    /// Terminal restored-session teardown after every funded allocator payload
+    /// has been freed and committed out of the tree. The exact activated tree,
+    /// publication namespace, empty scopes, and Receipt are consumed in one
+    /// Bank critical section so no observer can see an unbound-but-charged
+    /// intermediate state.
+    pub fn closeActivatedRestoredPublicationSessionAndReleaseFundedLeaseTree(
+        self: *Bank,
+        tree: LeaseTreeV1,
+        request_epoch: u64,
+        session_id: usize,
+        expected_next_sequence: u64,
+    ) Error!void {
+        if (request_epoch == 0 or session_id == 0 or
+            expected_next_sequence == 0)
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const root = try self.validateLeaseTreeLocked(tree);
+        const slot = try self.validateReceipt(tree.parent);
+        if (root.funding_mode != .receipt_funded or
+            !root.restored_publication_activated or
+            root.pending_kind != .none or !root.current.isZero() or
+            slot.state != .committed or
+            slot.publication_request_epoch != request_epoch or
+            slot.publication_session_id != session_id or
+            slot.publication_next_sequence != expected_next_sequence or
+            slot.publication_active or
+            slot.publication_permit_integrity != 0)
+            return Error.InvalidTransition;
+
+        const storage = try self.leaseTreeStorage();
+        var node_count: u32 = 0;
+        for (storage.nodes) |node| {
+            if (!node.active or
+                node.receipt_slot_index != tree.parent.slot_index or
+                node.tree_identity_generation != tree.identity_generation)
+                continue;
+            if (node.kind != .scope or !node.claim.isZero() or
+                !node.subtree_claim.isZero() or node.pin_count != 0 or
+                node.published_references != 0)
+                return Error.InvalidTransition;
+            if (node_count == std.math.maxInt(u32))
+                return Error.InvalidConfiguration;
+            node_count += 1;
+        }
+        if (node_count != root.active_nodes)
+            return Error.InvalidTransition;
+        const next_used = try subtractClaims(self.used, tree.parent.claim);
+
+        for (storage.nodes) |*node| {
+            if (node.active and
+                node.receipt_slot_index == tree.parent.slot_index and
+                node.tree_identity_generation == tree.identity_generation)
+                node.* = .{};
+        }
+        root.* = .{};
+        self.used = next_used;
+        slot.* = .{};
+        self.lease_tree_closes +|= 1;
+        self.releases +|= 1;
     }
 
     /// Bind a never-before-published committed lease to one address-stable
@@ -2032,7 +2303,10 @@ pub const Bank = struct {
         defer self.mutex.unlock();
 
         const root = try self.validateLeaseTreeLocked(tree);
-        if (root.pending_kind != .none)
+        if (root.pending_kind != .none or
+            (root.funding_mode == .receipt_funded and
+                (!root.restored_publication_activated or
+                    !std.meta.eql(root.current, root.ceiling))))
             return Error.InvalidTransition;
         return self.beginPublicationLocked(
             tree.parent,
@@ -2389,7 +2663,11 @@ pub const Bank = struct {
                     !claimWithin(root_value.current, root_value.ceiling))
                     return Error.InvalidTransition;
                 try validateLeasePendingState(storage.nodes, @intCast(root_index), root_value);
-                derived_used = try addClaims(derived_used, root_value.current);
+                if (root_value.funding_mode == .additive)
+                    derived_used = try addClaims(
+                        derived_used,
+                        root_value.current,
+                    );
             }
             for (storage.nodes) |node| {
                 if (!node.active) continue;
@@ -2538,7 +2816,9 @@ pub const Bank = struct {
             return Error.InvalidConfiguration;
         const root = storage.roots[slot_index];
         return root.active and
-            (root.pending_kind != .none or !root.current.isZero());
+            (root.pending_kind != .none or !root.current.isZero() or
+                (root.funding_mode == .receipt_funded and
+                    root.restored_publication_activated));
     }
 
     fn reserveLeaseGenerations(self: *Bank, count: u64) Error!u64 {
@@ -2904,6 +3184,7 @@ const publication_permit_domain: u64 = 0x7075_626c_6973_6831;
 const child_lease_domain: u64 = 0x6368_696c_646c_7331;
 const lease_tree_domain: u64 = 0x6c65_6173_6574_7231;
 const lease_tree_state_domain: u64 = 0x6c65_6173_6573_7431;
+const lease_tree_funded_state_domain: u64 = 0x6c65_6173_6566_6431;
 const lease_node_domain: u64 = 0x6c65_6173_656e_6431;
 const lease_pending_domain: u64 = 0x6c65_6173_6570_6431;
 const lease_batch_domain: u64 = 0x6c65_6173_6562_6131;
@@ -3034,6 +3315,16 @@ fn leaseTreeStateDigest(
         result = mix64(result ^ @field(root.pending_claim, field.name));
     }
     result = mix64(result ^ root.pending_digest);
+    // Preserve every existing additive LeaseTreeV1 digest byte while giving
+    // the opt-in funded mode its own unforgeable-in-context state branch.
+    if (root.funding_mode == .receipt_funded) {
+        result = mix64(result ^ lease_tree_funded_state_domain);
+        result = mix64(
+            result ^ @as(u64, @intFromBool(
+                root.restored_publication_activated,
+            )),
+        );
+    }
     for (nodes, 0..) |node, index| {
         if (!node.active or node.receipt_slot_index != receipt_slot_index or
             node.tree_identity_generation != root.identity_generation)
@@ -3138,6 +3429,17 @@ fn validateLeaseTreeAccounting(
     receipt: Receipt,
     root: LeaseTreeRootSlot,
 ) Error!void {
+    switch (root.funding_mode) {
+        .additive => {
+            if (root.restored_publication_activated)
+                return Error.InvalidTransition;
+        },
+        .receipt_funded => {
+            if (root.ceiling.queue_slots != 0 or
+                !claimWithin(root.ceiling, receipt.claim))
+                return Error.InvalidTransition;
+        },
+    }
     var node_count: u32 = 0;
     var tree_claim: Claim = .{};
     for (nodes, 0..) |node, node_index| {
@@ -3186,6 +3488,12 @@ fn validateLeaseTreeAccounting(
                     scope.tree_identity_generation != root.identity_generation or
                     scope.generation != node.parent_generation or
                     scope.tenant_key != node.tenant_key)
+                    return Error.InvalidTransition;
+                if (root.funding_mode == .receipt_funded and
+                    ((root.restored_publication_activated and
+                        node.state == .reserved_unmaterialized) or
+                        (!root.restored_publication_activated and
+                            node.state != .reserved_unmaterialized)))
                     return Error.InvalidTransition;
                 tree_claim = try addClaims(tree_claim, node.claim);
             },
@@ -5466,4 +5774,449 @@ test "LeaseTree copied allocation batch decision linearizes one trusted outcome"
     try bank.closePublicationSession(receipt, 5, session_id, 0);
     try bank.closeLeaseTree(tree);
     try bank.release(receipt);
+}
+
+test "receipt-funded LeaseTree activates restored publication without double charge" {
+    const request_claim: Claim = .{
+        .kv_bytes = 64,
+        .output_journal_bytes = 16,
+        .queue_slots = 1,
+    };
+    const funded_claim: Claim = .{ .kv_bytes = 64 };
+    var slots = [_]Slot{.{}} ** 1;
+    var roots = [_]LeaseTreeRootSlot{.{}} ** slots.len;
+    var nodes = [_]LeaseNodeSlot{.{}} ** 2;
+    var bank = try Bank.initWithLeaseTree(
+        &slots,
+        &roots,
+        &nodes,
+        .{
+            .host_bytes = 80,
+            .kv_bytes = 64,
+            .output_journal_bytes = 16,
+            .queue_slots = 1,
+        },
+        0x5231_4842_4655_4e44,
+    );
+    const receipt = try bank.commit(try bank.reserve(
+        0x6f77_6e65_72,
+        request_claim,
+    ));
+    const before_open = try bank.snapshotV3();
+    try std.testing.expectError(
+        Error.InvalidClaim,
+        bank.openReceiptFundedLeaseTree(
+            receipt,
+            1,
+            2,
+            .{ .kv_bytes = 64, .queue_slots = 1 },
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidClaim,
+        bank.openReceiptFundedLeaseTree(
+            receipt,
+            1,
+            2,
+            .{ .kv_bytes = 65 },
+        ),
+    );
+    try std.testing.expectEqualDeep(before_open, try bank.snapshotV3());
+
+    var tree = try bank.openReceiptFundedLeaseTree(
+        receipt,
+        1,
+        2,
+        funded_claim,
+    );
+    try bank.validateReceiptFundedLeaseTree(tree, false);
+    roots[0].funding_mode = .additive;
+    try std.testing.expectError(
+        Error.StaleReservation,
+        bank.validateReceiptFundedLeaseTree(tree, false),
+    );
+    roots[0].funding_mode = .receipt_funded;
+    roots[0].restored_publication_activated = true;
+    try std.testing.expectError(
+        Error.StaleReservation,
+        bank.validateReceiptFundedLeaseTree(tree, false),
+    );
+    roots[0].restored_publication_activated = false;
+    try bank.validateReceiptFundedLeaseTree(tree, false);
+
+    const scoped = try bank.openLeaseScope(
+        tree,
+        3,
+        4,
+        funded_claim,
+    );
+    tree = scoped.tree;
+    const request_epoch: u64 = 5;
+    const next_sequence: u64 = 7;
+    const source_generation: u64 = 9;
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    try bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
+        tree,
+        bank.epoch + 1,
+        request_epoch,
+        session_id,
+        next_sequence,
+        source_generation,
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.beginPublicationWithLeaseTree(
+            tree,
+            request_epoch,
+            session_id,
+            next_sequence,
+        ),
+    );
+
+    const specs = [_]LeaseAllocationSpecV1{.{
+        .scope = scoped.scope,
+        .node_key = 6,
+        .binding_key = 7,
+        .claim = funded_claim,
+    }};
+    var leaves: [1]LeaseNodeV1 = undefined;
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.reserveAllocationsForSession(
+            tree,
+            request_epoch,
+            session_id,
+            next_sequence,
+            &specs,
+            &leaves,
+        ),
+    );
+    const reservation = try bank.reserveReceiptFundedAllocationsForSession(
+        tree,
+        request_epoch,
+        session_id,
+        next_sequence,
+        &specs,
+        &leaves,
+    );
+    var snapshot = try bank.snapshotV3();
+    try std.testing.expectEqualDeep(request_claim, snapshot.used);
+    try std.testing.expectEqualDeep(request_claim, snapshot.peak);
+    try std.testing.expectEqual(@as(u64, 80), snapshot.peak_host_bytes);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.reserved_unmaterialized_allocations);
+    try std.testing.expectEqualDeep(funded_claim, reservation.tree.current);
+
+    const before_failed_commit = snapshot;
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.commitAllocationsAfterAllocate(reservation.batch),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.commitFundedAllocationsAndActivateRestoredPublication(
+            reservation,
+            request_epoch,
+            session_id,
+            next_sequence,
+            source_generation + 1,
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        before_failed_commit,
+        try bank.snapshotV3(),
+    );
+    try bank.validateReceiptFundedLeaseTree(reservation.tree, false);
+
+    tree = try bank.commitFundedAllocationsAndActivateRestoredPublication(
+        reservation,
+        request_epoch,
+        session_id,
+        next_sequence,
+        source_generation,
+    );
+    try bank.validateReceiptFundedLeaseTree(tree, true);
+    try std.testing.expectError(
+        Error.StaleReservation,
+        bank.validateLeaseTree(reservation.tree),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.abortAllocationsAfterFree(reservation.batch),
+    );
+    snapshot = try bank.snapshotV3();
+    try std.testing.expectEqualDeep(request_claim, snapshot.used);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.live_allocations);
+
+    const publication = try bank.beginPublicationWithLeaseTree(
+        tree,
+        request_epoch,
+        session_id,
+        next_sequence,
+    );
+    try std.testing.expectEqual(source_generation + 1, publication.generation);
+    bank.commitPublicationAssumeValid(publication);
+
+    const retired = try bank.beginRetireSubtreeForSession(
+        tree,
+        scoped.scope,
+        request_epoch,
+        session_id,
+        next_sequence + 1,
+    );
+    const authorized = try bank.authorizeFree(retired.ticket);
+    tree = try bank.commitFreeAfterAllocatorFree(authorized.permit);
+    snapshot = try bank.snapshotV3();
+    try std.testing.expectEqualDeep(request_claim, snapshot.used);
+    try std.testing.expect(tree.current.isZero());
+    try std.testing.expectEqual(@as(usize, 0), snapshot.live_allocations);
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.beginPublicationWithLeaseTree(
+            tree,
+            request_epoch,
+            session_id,
+            next_sequence + 1,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.closePublicationSession(
+            receipt,
+            request_epoch,
+            session_id,
+            next_sequence + 1,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.closeLeaseTree(tree),
+    );
+
+    const before_failed_close = try bank.snapshotV3();
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.closeActivatedRestoredPublicationSessionAndReleaseFundedLeaseTree(
+            tree,
+            request_epoch,
+            session_id,
+            next_sequence,
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        before_failed_close,
+        try bank.snapshotV3(),
+    );
+    const copied_empty_tree = tree;
+    try bank.closeActivatedRestoredPublicationSessionAndReleaseFundedLeaseTree(
+        tree,
+        request_epoch,
+        session_id,
+        next_sequence + 1,
+    );
+    try std.testing.expectError(
+        Error.StaleReservation,
+        bank.closeActivatedRestoredPublicationSessionAndReleaseFundedLeaseTree(
+            copied_empty_tree,
+            request_epoch,
+            session_id,
+            next_sequence + 1,
+        ),
+    );
+    snapshot = try bank.snapshotV3();
+    try std.testing.expect(snapshot.used.isZero());
+    try std.testing.expectEqual(@as(usize, 0), snapshot.committed_receipts);
+    try std.testing.expectEqual(@as(usize, 0), snapshot.active_lease_trees);
+    try std.testing.expectEqual(@as(usize, 0), snapshot.active_lease_nodes);
+    try std.testing.expectEqual(@as(u64, 1), snapshot.releases);
+    try std.testing.expectEqual(@as(u64, 1), snapshot.lease_tree_closes);
+}
+
+test "copied funded allocation activation and abort linearize one outcome" {
+    const Activator = struct {
+        bank: *Bank,
+        start: *std.atomic.Value(bool),
+        reservation: LeaseAllocationReservationV1,
+        request_epoch: u64,
+        session_id: usize,
+        next_sequence: u64,
+        source_generation: u64,
+        tree: ?LeaseTreeV1 = null,
+        operation_error: ?Error = null,
+
+        fn run(self: *@This()) void {
+            while (!self.start.load(.acquire)) std.atomic.spinLoopHint();
+            self.tree = self.bank
+                .commitFundedAllocationsAndActivateRestoredPublication(
+                self.reservation,
+                self.request_epoch,
+                self.session_id,
+                self.next_sequence,
+                self.source_generation,
+            ) catch |err| {
+                self.operation_error = err;
+                return;
+            };
+        }
+    };
+    const Aborter = struct {
+        bank: *Bank,
+        start: *std.atomic.Value(bool),
+        batch: LeaseAllocationBatchV1,
+        tree: ?LeaseTreeV1 = null,
+        operation_error: ?Error = null,
+
+        fn run(self: *@This()) void {
+            while (!self.start.load(.acquire)) std.atomic.spinLoopHint();
+            self.tree = self.bank.abortAllocationsAfterFree(
+                self.batch,
+            ) catch |err| {
+                self.operation_error = err;
+                return;
+            };
+        }
+    };
+
+    const request_claim: Claim = .{
+        .kv_bytes = 64,
+        .queue_slots = 1,
+    };
+    const funded_claim: Claim = .{ .kv_bytes = 64 };
+    var slots = [_]Slot{.{}} ** 1;
+    var roots = [_]LeaseTreeRootSlot{.{}} ** slots.len;
+    var nodes = [_]LeaseNodeSlot{.{}} ** 2;
+    var bank = try Bank.initWithLeaseTree(
+        &slots,
+        &roots,
+        &nodes,
+        .{
+            .host_bytes = 64,
+            .kv_bytes = 64,
+            .queue_slots = 1,
+        },
+        0x5231_4842_5241_4345,
+    );
+    const receipt = try bank.commit(try bank.reserve(1, request_claim));
+    var tree = try bank.openReceiptFundedLeaseTree(
+        receipt,
+        2,
+        3,
+        funded_claim,
+    );
+    const scoped = try bank.openLeaseScope(
+        tree,
+        4,
+        5,
+        funded_claim,
+    );
+    tree = scoped.tree;
+    const request_epoch: u64 = 6;
+    const next_sequence: u64 = 7;
+    const source_generation: u64 = 8;
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    try bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
+        tree,
+        bank.epoch + 1,
+        request_epoch,
+        session_id,
+        next_sequence,
+        source_generation,
+    );
+    const specs = [_]LeaseAllocationSpecV1{.{
+        .scope = scoped.scope,
+        .node_key = 9,
+        .binding_key = 10,
+        .claim = funded_claim,
+    }};
+    var leaves: [1]LeaseNodeV1 = undefined;
+    const reservation = try bank.reserveReceiptFundedAllocationsForSession(
+        tree,
+        request_epoch,
+        session_id,
+        next_sequence,
+        &specs,
+        &leaves,
+    );
+
+    var start = std.atomic.Value(bool).init(false);
+    var activator: Activator = .{
+        .bank = &bank,
+        .start = &start,
+        .reservation = reservation,
+        .request_epoch = request_epoch,
+        .session_id = session_id,
+        .next_sequence = next_sequence,
+        .source_generation = source_generation,
+    };
+    var aborter: Aborter = .{
+        .bank = &bank,
+        .start = &start,
+        .batch = reservation.batch,
+    };
+    const activate_thread = try std.Thread.spawn(
+        .{},
+        Activator.run,
+        .{&activator},
+    );
+    const abort_thread = std.Thread.spawn(
+        .{},
+        Aborter.run,
+        .{&aborter},
+    ) catch |err| {
+        start.store(true, .release);
+        activate_thread.join();
+        return err;
+    };
+    start.store(true, .release);
+    activate_thread.join();
+    abort_thread.join();
+
+    try std.testing.expect(
+        (activator.tree == null) != (aborter.tree == null),
+    );
+    try std.testing.expectEqualDeep(
+        request_claim,
+        (try bank.snapshotV3()).used,
+    );
+    if (activator.tree) |activated_tree| {
+        try std.testing.expect(
+            aborter.operation_error.? == Error.InvalidTransition or
+                aborter.operation_error.? == Error.StaleReservation,
+        );
+        const retired = try bank.beginRetireSubtreeForSession(
+            activated_tree,
+            scoped.scope,
+            request_epoch,
+            session_id,
+            next_sequence,
+        );
+        const authorized = try bank.authorizeFree(retired.ticket);
+        tree = try bank.commitFreeAfterAllocatorFree(authorized.permit);
+        try bank
+            .closeActivatedRestoredPublicationSessionAndReleaseFundedLeaseTree(
+            tree,
+            request_epoch,
+            session_id,
+            next_sequence,
+        );
+    } else {
+        try std.testing.expect(
+            activator.operation_error.? == Error.InvalidTransition or
+                activator.operation_error.? == Error.StaleReservation,
+        );
+        tree = aborter.tree.?;
+        try bank.closePublicationSession(
+            receipt,
+            request_epoch,
+            session_id,
+            next_sequence,
+        );
+        try bank.closeLeaseTree(tree);
+        try bank.release(receipt);
+    }
+    const snapshot = try bank.snapshotV3();
+    try std.testing.expect(snapshot.used.isZero());
+    try std.testing.expectEqual(@as(usize, 0), snapshot.committed_receipts);
+    try std.testing.expectEqual(@as(usize, 0), snapshot.active_lease_trees);
 }

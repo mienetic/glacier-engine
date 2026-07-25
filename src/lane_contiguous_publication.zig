@@ -188,6 +188,54 @@ pub const Session = struct {
         };
     }
 
+    /// Bind one fully materialized nonzero checkpoint to a fresh target
+    /// adoption. The exact nested publication coordinator address, concrete
+    /// output/RNG/sampling state, and full logical KV prefix are validated
+    /// before the inner restored initializer consumes the adoption barrier.
+    pub fn initRestoredAdoptingWithFundedLeaseTree(
+        self: *Session,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+        adoption: lane.PublicationAdoptionV1,
+        tree: resource_bank.LeaseTreeV1,
+        batch: resource_bank.LeaseAllocationBatchV1,
+        restored: publication.TranscriptSnapshotV1,
+        restored_physical_kv_sha256: Digest,
+        bindings: BindingsV1,
+    ) (Error || publication.Error || lane.Error)!void {
+        if (self.initialized) return Error.InvalidState;
+        if (adoption.publication_session_id !=
+            @intFromPtr(&self.inner))
+            return Error.InvalidConfiguration;
+        const physical_kv_sha256 = try validateRestoredBindings(
+            adoption.admission,
+            restored,
+            restored_physical_kv_sha256,
+            bindings,
+        );
+
+        self.* = .{
+            .scheduler = scheduler,
+            .bank = bank,
+            .admission = adoption.admission,
+            .request_epoch = restored.request_epoch,
+            .bindings = bindings,
+            .physical_kv_sha256 = physical_kv_sha256,
+            .initialized = true,
+        };
+        self.inner.initRestoredAdoptingWithFundedLeaseTree(
+            scheduler,
+            bank,
+            adoption,
+            tree,
+            batch,
+            restored,
+        ) catch |err| {
+            self.* = .{};
+            return err;
+        };
+    }
+
     /// Cancel an active bound request and return its atomic Event-v1 terminal
     /// evidence after verifying that no concrete state escaped privately.
     pub fn cancel(
@@ -731,6 +779,106 @@ fn validateBindings(
     if (claim.kv_bytes < kv_bytes or
         claim.output_journal_bytes < output_bytes)
         return Error.InsufficientResourceClaim;
+}
+
+fn validateRestoredBindings(
+    admission: lane.Admission,
+    restored: publication.TranscriptSnapshotV1,
+    restored_physical_kv_sha256: Digest,
+    bindings: BindingsV1,
+) Error!Digest {
+    const cache = bindings.cache;
+    if (!publication.transcriptSnapshotValidV1(restored) or
+        restored.execution_abi != abi or
+        restored.sequence_base == 0 or
+        restored.sequence_base != restored.next_sequence or
+        restored.last_resource_permit_generation == 0 or
+        restored.last_resource_permit_generation ==
+            std.math.maxInt(u64) or
+        restored.terminal or
+        restored.state.execution_abi != abi or
+        restored.state.rng_state_abi != rng_state_abi or
+        admission.event.spec.work_quanta == 0 or
+        admission.event.spec.claim.queue_slots != publication.width or
+        cache.rowTxnActive() or !cacheShapeValid(cache) or
+        bindingsOverlap(bindings))
+        return Error.InvalidConfiguration;
+
+    const output_len = bindings.output_len.*;
+    const snapshot_output_len = std.math.cast(
+        usize,
+        restored.state.output_length,
+    ) orelse return Error.InvalidConfiguration;
+    const snapshot_kv_position = std.math.cast(
+        usize,
+        restored.state.kv_position,
+    ) orelse return Error.InvalidConfiguration;
+    const remaining = std.math.cast(
+        usize,
+        admission.event.spec.work_quanta,
+    ) orelse return Error.InvalidConfiguration;
+    const terminal_output_len = std.math.add(
+        usize,
+        output_len,
+        remaining,
+    ) catch return Error.InvalidConfiguration;
+    if (output_len == 0 or
+        output_len != snapshot_output_len or
+        output_len > bindings.output.len or
+        terminal_output_len > bindings.output.len or
+        cache.len != snapshot_kv_position or
+        cache.len > cache.max_seq or
+        remaining > cache.max_seq - cache.len or
+        bindings.sampling_calls.* !=
+            restored.state.sampling_calls or
+        !std.mem.eql(
+            u8,
+            &rngStateSha256(bindings.rng_state.*),
+            &restored.state.rng_state_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &outputStateSha256(
+                bindings.output[0..output_len],
+                false,
+            ),
+            &restored.state.output_state_sha256,
+        ))
+        return Error.InvalidBinding;
+
+    const physical_kv_sha256 = logicalKvPrefixSha256(
+        cache,
+        cache.len,
+    );
+    if (std.mem.eql(
+        u8,
+        &restored_physical_kv_sha256,
+        &publication.zero_digest,
+    ) or !std.mem.eql(
+        u8,
+        &physical_kv_sha256,
+        &restored_physical_kv_sha256,
+    ))
+        return Error.InvalidBinding;
+
+    const kv_bytes = std.math.cast(
+        u64,
+        cache.logicalLedger().allocation_payload_bytes,
+    ) orelse return Error.InvalidConfiguration;
+    const output_bytes_usize = std.math.mul(
+        usize,
+        bindings.output.len,
+        @sizeOf(u32),
+    ) catch return Error.InvalidConfiguration;
+    const output_bytes = std.math.cast(
+        u64,
+        output_bytes_usize,
+    ) orelse return Error.InvalidConfiguration;
+    const claim = admission.event.resource_receipt.claim;
+    if (claim.kv_bytes < kv_bytes or
+        claim.output_journal_bytes < output_bytes)
+        return Error.InsufficientResourceClaim;
+    return physical_kv_sha256;
 }
 
 fn cacheShapeValid(cache: *kv.KVCache) bool {
@@ -1399,7 +1547,139 @@ test "contiguous publication checks claims aliases and address binding" {
     try fixture.finishRequest(&session);
 }
 
+test "contiguous restored bindings reject concrete state mutation at N" {
+    const sequence_base: u64 = 2;
+    var cache = try kv.KVCache.init(testing.allocator, 2, 2, 4);
+    defer cache.deinit();
+    try prefillTestCache(&cache);
+    const second_row = try appendTestRow(&cache, 80);
+    try cache.commitRowsTxn(second_row);
+
+    var output = [_]u32{ 701, 702, 0, 0 };
+    var output_len: usize = sequence_base;
+    var rng: RngState = .{ 81, 82, 83, 84 };
+    var sampling_calls: u64 = sequence_base;
+    const bindings: BindingsV1 = .{
+        .cache = &cache,
+        .rng_state = &rng,
+        .sampling_calls = &sampling_calls,
+        .output = &output,
+        .output_len = &output_len,
+    };
+    const physical_kv_sha256 = logicalKvPrefixSha256(
+        &cache,
+        cache.len,
+    );
+    const state = publication.makeStateCommitmentV1(
+        abi,
+        @intCast(cache.len),
+        [_]u8{0xd1} ** 32,
+        rng_state_abi,
+        rngStateSha256(rng),
+        sampling_calls,
+        output_len,
+        outputStateSha256(output[0..output_len], false),
+    );
+    const restored: publication.TranscriptSnapshotV1 = .{
+        .request_epoch = 0x434f_5290,
+        .execution_abi = abi,
+        .sequence_base = sequence_base,
+        .next_sequence = sequence_base,
+        .last_resource_permit_generation = 9,
+        .terminal = false,
+        .state = state,
+        .transcript_sha256 = [_]u8{0xd2} ** 32,
+    };
+    var fixture: TestFixture = .{};
+    try fixture.init(2, testClaim(&cache, output.len));
+
+    try testing.expectEqualDeep(
+        physical_kv_sha256,
+        try validateRestoredBindings(
+            fixture.admission,
+            restored,
+            physical_kv_sha256,
+            bindings,
+        ),
+    );
+
+    var wrong_physical = physical_kv_sha256;
+    wrong_physical[0] ^= 1;
+    try testing.expectError(
+        Error.InvalidBinding,
+        validateRestoredBindings(
+            fixture.admission,
+            restored,
+            wrong_physical,
+            bindings,
+        ),
+    );
+
+    output[1] +%= 1;
+    try testing.expectError(
+        Error.InvalidBinding,
+        validateRestoredBindings(
+            fixture.admission,
+            restored,
+            physical_kv_sha256,
+            bindings,
+        ),
+    );
+    output[1] -%= 1;
+
+    rng[0] +%= 1;
+    try testing.expectError(
+        Error.InvalidBinding,
+        validateRestoredBindings(
+            fixture.admission,
+            restored,
+            physical_kv_sha256,
+            bindings,
+        ),
+    );
+    rng[0] -%= 1;
+
+    sampling_calls += 1;
+    try testing.expectError(
+        Error.InvalidBinding,
+        validateRestoredBindings(
+            fixture.admission,
+            restored,
+            physical_kv_sha256,
+            bindings,
+        ),
+    );
+    sampling_calls -= 1;
+
+    cache.keys[0][0] += 1;
+    try testing.expectError(
+        Error.InvalidBinding,
+        validateRestoredBindings(
+            fixture.admission,
+            restored,
+            physical_kv_sha256,
+            bindings,
+        ),
+    );
+    cache.keys[0][0] -= 1;
+
+    var wrong_base = restored;
+    wrong_base.sequence_base -= 1;
+    try testing.expectError(
+        Error.InvalidConfiguration,
+        validateRestoredBindings(
+            fixture.admission,
+            wrong_base,
+            physical_kv_sha256,
+            bindings,
+        ),
+    );
+
+    _ = try fixture.scheduler.cancel(fixture.admission.handle);
+    _ = try fixture.scheduler.close();
+}
+
 test "contiguous publication footprint stays bounded" {
-    try testing.expect(@sizeOf(Session) <= 4096);
+    try testing.expect(@sizeOf(Session) <= 4608);
     try testing.expect(@sizeOf(StageV1) <= 128);
 }

@@ -219,8 +219,16 @@ wave.
 
 **LaneWeave** — Glacier's deterministic admission and weighted service scheduler.
 
-**LeaseTree** — A hierarchy that subdivides one ResourceBank receipt into exact
-child ownership and publication scopes.
+**LeaseTree** — A hierarchy that gives one ResourceBank receipt exact child
+ownership and publication scopes. Additive trees charge child allocations in
+addition to a control-plane parent claim; receipt-funded trees partition a
+bounded queue-free ownership claim from an already charged immutable receipt.
+
+**Receipt-funded LeaseTree** — An explicit LeaseTree funding mode whose
+allocation nodes record generation-fenced ownership without increasing
+aggregate Bank usage. Its ceiling must fit the parent receipt class by class,
+cannot include Scheduler-owned queue slots, and is integrity-bound to restored
+publication activation state.
 
 **Media buffer lease** — A generation-fenced LeaseTree allocation for one
 decoded-source, mapping, scratch, or output region. The logical lease is charged
@@ -458,15 +466,23 @@ is exact and declared stream skew remains within policy.
 Scheduler, coordinator, fresh Bank/owner, LeaseTree/cache keys, successor
 generations, and exact request claim proposed for prepared-text restored
 admission. It is evidence only: R1h-a can consume it into a barrier-held live
-bootstrap, but the intent alone proves no reacquisition, source exit, target
-exclusivity, or authority to publish.
+bootstrap and R1h-b can consume that bootstrap into a process-local target, but
+the intent alone proves no reacquisition, source exit, target exclusivity, or
+authority to publish.
 
 **Prepared-text restored admission** — A process-local, single-use R1h-a
 bootstrap that consumes exact prepared-text successor evidence into a fresh
-Scheduler admission and Bank receipt, an allocation-empty LeaseTree with one
-zero-current-claim tenant scope, restored sequence, and Bank
-publication-permit fence. Its adoption barrier remains pending, so it is live
-target ownership but not a runnable restored Session.
+Scheduler admission and Bank receipt, an allocation-empty queue-free
+receipt-funded LeaseTree with one zero-current-claim tenant scope, restored
+sequence, and Bank publication-permit fence. Its adoption barrier remains
+pending until R1h-b materializes and activates a target.
+
+**Prepared-text restored Session** — A process-local R1h-b target created only
+after receipt-funded request-local ownership is reserved, exact checkpoint
+output/KV/RNG/sampling state is materialized, and the funded batch commits with
+the pending Scheduler adoption. It continues at global publication base `N`
+and does not by itself prove durable selection, source exit, or exclusive
+process handoff.
 
 **Restored ownership receipt** — A domain-separated commitment that replaces a
 dead source's retained-output authority with the fresh Bank epoch, receipt
@@ -505,6 +521,12 @@ transport events, usage settlement, cost, and durable journal state.
 
 **Publication** — The moment prepared KV, RNG, sampler, and output state becomes
 visible as one committed transition.
+
+**Publication sequence base** — The global token transaction sequence at which
+one execution segment begins. Fresh sessions use zero. A restored session uses
+checkpoint sequence `N`, allowing its target Scheduler to begin with no locally
+completed service while proposals and transcript verification retain global
+sequence continuity.
 
 **Receipt** — A generation-fenced proof that a specific operation was admitted or
 committed under a particular runtime state.

@@ -13,7 +13,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Family adaptation | future `ModelFamilyAdapter`, operation registry, typed state/output adapters | Describe family-specific artifacts, planning, state, candidate validation, and publication units without expanding authority |
 | Model | `.glacier`, `.glrt`, loader, prepared model | Validate source and execution layouts before use |
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
-| Resource | `ResourceBank`, `LeaseTree` | Reserve exact logical capacity and track ownership |
+| Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
@@ -332,9 +332,12 @@ activation bytes, scratch bytes, page slots, and operations. Admission returns a
 generation-fenced receipt. Stale, mutated, foreign, or over-capacity receipts
 fail before state changes.
 
-`LeaseTree` subdivides one request receipt into exact child ownership. It is used
-to connect physical KV page allocation and retirement to the parent resource
-claim without treating process RSS as proof of ownership.
+`LeaseTree` gives request allocations exact child ownership. Additive trees
+extend a control-plane parent receipt with separately charged allocation
+claims. Receipt-funded trees instead carve a bounded, queue-free ownership view
+out of an immutable receipt that already carries the full charge. Funding mode,
+ceiling, and restored-publication activation are integrity-bound. Neither mode
+treats process RSS as proof of ownership.
 
 ### LaneWeave
 
@@ -427,11 +430,11 @@ revalidate the envelope's structural receipt or compare it with an
 independently retained Receipt; only the live seal proves current Bank
 authority.
 
-`SessionV3` rejects sealing before the fixed final token and rejects duplicate
-sealing without mutating the result state. Retirement requires a sealed result;
-cancellation is valid only before sealing. The result envelope and
-`TerminalResultEvidenceV1` are live in-process evidence, not a durable external
-sink or a historical attestation.
+An ordinary `SessionV3` rejects sealing before the fixed final token and rejects
+duplicate sealing without mutating the result state. Its retirement requires a
+sealed result; cancellation is valid only before sealing. The result envelope
+and `TerminalResultEvidenceV1` are live in-process evidence, not a durable
+external sink or a historical attestation.
 
 R1e adds `prepared_text_checkpoint`, an adapter-level canonical state codec
 rather than a core model contract. At a verified non-terminal `SessionV3`
@@ -469,12 +472,9 @@ transcript/state roots, and address-bound scalar/cache fields remain unchanged.
 No permit or authority is created, consumed, or transferred. Old borrowed
 output/cache views become invalid after success.
 
-This retained-authority rebind is not a fresh-process restore. R1h-a now
-supplies only a barrier-held fresh target receipt and an allocation-empty
-LeaseTree remap with one zero-current-claim scope.
-Moving continuation into a new Session still requires charge-correct state
-materialization, LeaseTree-aware adoption commit, durable selection, source
-exit, and exclusive target activation.
+This retained-authority rebind is not a fresh-process restore. The separate R1h
+path uses successor evidence, a fresh target admission, receipt-funded
+ownership, and a new address-bound Session rather than changing R1f authority.
 
 R1g adds `prepared_text_successor`, a pointer-free evidence plane over that
 same exact checkpoint boundary. It reuses the Common Model Contract's canonical
@@ -498,21 +498,34 @@ freeze the three wire records and reject every-byte mutation, length errors,
 and coherently re-rooted foreign context.
 
 R1h-a now turns that intent into a fresh, live Scheduler admission and Bank
-receipt while retaining the non-runnable adoption barrier. It opens the exact
-allocation-empty LeaseTree with one zero-current-claim scope, restores sequence
-`N`, and seeds the Bank publication generation from source `G`; a process-local
-bootstrap root binds all evidence roots and live handles. It intentionally does
-not allocate KV because
-LeaseTree-v1 claims are additive to the already-complete request claim.
-Charge-correct materialization, LeaseTree-aware adoption commit, durable
-selection, source exit, exclusive target activation, and fresh-process
-execution remain later gates.
+receipt while retaining the non-runnable adoption barrier. It opens an
+allocation-empty queue-free receipt-funded LeaseTree with one
+zero-current-claim scope, restores sequence `N`, and seeds the Bank publication
+generation from source `G`; a process-local bootstrap root binds all evidence
+roots and live handles.
+
+R1h-b consumes that exact bootstrap through `SessionV3.startRestoredV1`. It
+reserves the queue-free request-local byte claim before allocator work,
+materializes and revalidates checkpoint output/KV/RNG/sampling state, then
+commits the funded batch with the pending Scheduler adoption. Token-publication
+ABI v2 carries `sequence_base = N`, allowing global token sequence to continue
+while the fresh target Scheduler starts with no completed local service. The
+first target Bank permit is `G + 1`.
+
+Restored close acquires a no-service Scheduler barrier before retiring the
+funded allocation and freeing Session backing. The final Bank transition
+atomically closes the publication namespace, empty tree, zero-charge scope, and
+parent receipt before LaneWeave emits its ordinary cancel or retire event. The
+retained synthetic-model path compares one target transition with uninterrupted
+output, logical KV, RNG, and sampling state and returns target accounting to
+zero.
 
 This lifecycle does not add early EOS, fewer-than-admitted outputs, a raw-text
 tokenizer, stable package or license byte attestation, durable prepared-session
-checkpoint publication, fresh-process resume, production-model evidence,
-strict cross-platform numerical equivalence, or native-platform performance
-evidence.
+checkpoint publication, durable successor selection, source exit, exclusive
+process handoff, fresh-process resume, terminal resumed equivalence,
+production-model evidence, strict cross-platform numerical equivalence, or
+native-platform performance evidence.
 The `deinit` safety path may abandon terminal evidence while closing and
 releasing the adopted lifecycle; it does not count as a successful result seal.
 
@@ -836,9 +849,9 @@ targets remain gated until their named native adapters and evidence pass.
   successor execution-plan/residency projection, fixed transcript segment,
   target ownership intent, and the restored-admission safety boundary.
 - [Prepared text restore admission](PREPARED_TEXT_RESTORE_ADMISSION.md):
-  barrier-held fresh target receipt, allocation-empty LeaseTree with one
-  zero-current-claim scope, sequence and Bank permit fencing, process-local
-  bootstrap root, and reverse cleanup.
+  barrier-held fresh target receipt, receipt-funded ownership,
+  charge-before-materialize process-local activation, global sequence and Bank
+  permit fencing, and restored cleanup to zero.
 - [Continuation capsule](CONTINUATION_CAPSULE.md): checkpoint manifest ABI.
 - [Continuation object resolver](CONTINUATION_OBJECT_RESOLVER.md): scoped
   lookup and quota contract.

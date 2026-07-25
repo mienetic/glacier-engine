@@ -1,15 +1,14 @@
 # Prepared Text Checkpoint
 
 The prepared-text checkpoint combines an experimental R1e codec with an R1f
-same-process rebind, an R1g successor-evidence bridge, and an R1h-a
-barrier-held target admission for one exact non-terminal `SessionV3` boundary.
-It captures the committed output prefix, RNG state, sampling count, and
-contiguous KV prefix as a canonical little-endian byte image. A verified image
-can be materialized into a fresh detached allocation, used to replace only the
-concrete state backing of the original live Session, joined to canonical
-pointer-free successor records, or joined with those successor records and
-independently retained source/target context to acquire a non-runnable fresh
-target receipt/tree bootstrap.
+same-process rebind, an R1g successor-evidence bridge, an R1h-a barrier-held
+target bootstrap, and R1h-b process-local restored Session activation for one
+exact non-terminal `SessionV3` boundary. It captures the committed output
+prefix, RNG state, sampling count, and contiguous KV prefix as a canonical
+little-endian byte image. A verified image can be materialized into a fresh
+detached allocation, copied into independently reserved exact backing, used to
+replace only the concrete state backing of the original live Session, or joined
+to canonical successor evidence and a fresh target lifecycle.
 
 Detached is an important boundary. The materialized payload has no Scheduler,
 ResourceBank, receipt, service permit, sink, or publication authority. It is
@@ -21,9 +20,10 @@ and successor plan/residency/transcript records are evidence, not a receipt or
 runnable Session. See
 [Prepared Text Successor Evidence](PREPARED_TEXT_SUCCESSOR.md).
 R1h-a acquires live target admission/receipt/tree authority, but leaves the
-adoption barrier pending and an allocation-empty LeaseTree with one
-zero-current-claim scope; it still does not attach authority to the detached
-payload or create a runnable restored Session. See
+adoption barrier pending and an allocation-empty receipt-funded LeaseTree with
+one zero-current-claim scope. R1h-b reserves funded ownership before allocator
+materialization, copies the verified state into target Session backing, and
+consumes the pending adoption only after the restored state is complete. See
 [Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md).
 
 ## What the slice proves
@@ -33,6 +33,8 @@ payload or create a runnable restored Session. See
 - The image binds independently retained local-plan, bound-plan, artifact,
   execution-plan, residency, boundary, transcript, state-commitment, and
   challenge roots.
+- The boundary root includes the publication segment's `sequence_base`;
+  contextual validation joins that base to the bound execution plan.
 - Output tokens use canonical little-endian `u32`.
 - KV payload order is layer ascending, committed K prefix, then committed V
   prefix. Every `f32` is preserved as its exact IEEE bit pattern encoded as a
@@ -42,6 +44,9 @@ payload or create a runnable restored Session. See
 - `materializeDetachedV1` zeros every output and KV allocation before copying
   the committed prefixes. Uncommitted capacity is therefore deterministic
   zero, not allocator residue.
+- `materializeIntoV1` performs the same copy and root validation without
+  allocating. It accepts only fresh exact-capacity output/KV backing disjoint
+  from the encoded checkpoint.
 - `SessionV3.rebindCheckpointV1` validates the live context both before and
   after internal materialization, verifies exact output/KV bytes and zero
   slack, then replaces only the original Session's output and KV backing.
@@ -68,9 +73,13 @@ payload or create a runnable restored Session. See
   complete live source context is unchanged before returning and grants no
   target authority.
 - `prepareRestoredAdmissionV1` consumes those records into a fresh target
-  admission and receipt, an exact allocation-empty LeaseTree with one
+  admission and receipt, an exact queue-free receipt-funded LeaseTree with one
   zero-current-claim scope, restored sequence, and cross-Bank
   publication-permit fence while retaining the non-runnable adoption barrier.
+- `SessionV3.startRestoredV1` reserves the complete request-local byte claim in
+  that funded tree before allocation, materializes exact checkpoint state, and
+  atomically activates a runnable process-local target at publication base
+  `N`.
 
 ## State constraints
 
@@ -89,9 +98,9 @@ Sequence zero is excluded because the next token would depend on prefill
 logits, which are not serialized. For `N > 0`, the prepared execution path
 recomputes the next logits from the last output token and committed KV state.
 The payload therefore contains the numerical inputs needed for the next decode
-only when it is joined to the original compatible model, scratch/rope state,
-live Session, and authority. It is not sufficient to construct a new runnable
-Session or authorize a continuation by itself.
+only when it is joined to the compatible model, scratch/rope state, Session,
+and independently validated authority. It cannot construct or authorize a
+continuation by itself.
 
 Capture also requires:
 
@@ -187,6 +196,12 @@ The checkpoint bytes and detached output/KV allocations are caller-owned and
 are not charged to the live Session's `ResourceBank`. Applications must apply
 their own memory admission to caller materialization.
 
+R1h-b does not adopt caller-built detached backing. The target reserves one
+receipt-funded allocation before its first allocator call, allocates exact
+Session-owned capacity, and invokes `materializeIntoV1` internally. This keeps
+the immutable parent receipt as the only aggregate charge while giving the
+restored backing an exact generation-fenced owner.
+
 `rebindCheckpointV1` does not accept a caller-built detached payload. It derives
 all expected roots and scalar bindings from the current live Session, decodes
 the bytes against those expectations, materializes with the Session allocator,
@@ -218,7 +233,8 @@ state is reported as the prepared-session `InvalidState`.
 - exactly-once continuation from a nonzero sequence;
 - durable filesystem publication or crash recovery;
 - source/target exclusivity or fresh-process handoff;
-- target admission, a remapped receipt/permit, or a runnable successor Session;
+- durable successor selection or source-exit proof;
+- uninterrupted/resumed terminal-result equivalence;
 - cross-backend numerical equivalence; or
 - confidentiality and authenticated storage.
 
@@ -237,11 +253,13 @@ make duplicate or stale publication possible.
    and explicit target ownership intent.~~ Complete in R1g as pointer-free
    evidence; it deliberately does not claim an authority handoff.
 3. ~~Add barrier-held Scheduler restored admission, a fresh ResourceBank
-   receipt/permit-generation fence, and allocation-empty LeaseTree-aware
-   publication/receipt remapping.~~ Complete in R1h-a without KV allocation or
+   receipt/permit-generation fence, and queue-free receipt-funded LeaseTree
+   publication/receipt remapping.~~ Complete in R1h-a without allocation or
    target activation.
-4. Partition request accounting, restore KV/output/RNG state under charge,
-   construct a restored Session, and commit LeaseTree-aware adoption.
+4. ~~Reserve request-local ownership without double-counting, restore
+   KV/output/RNG state under charge, construct a restored Session, and commit
+   LeaseTree-aware adoption.~~ Complete in R1h-b for process-local activation,
+   one next-token comparison, and teardown to zero.
 5. Wrap the state image and authority records in the existing immutable
    checkpoint archive and atomic selector.
 6. Prove source exit, target exclusivity, fresh-process continuation, no
