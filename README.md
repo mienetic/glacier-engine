@@ -268,6 +268,10 @@ formats, and independent verifiers.
 - **Verifiable provider operations.** Request coalescing, cancellation,
   settlement, cost journals, transport events, and a compact evidence root can
   be checked without provider credentials.
+- **Raw-payload-free provider evidence inspection.** A deterministic JSON command
+  checks the fixed outer join framing and checksum while labeling every nested
+  scalar and digest as self-asserted. It renders no prompt, payload, response,
+  or credential bytes and grants no authority.
 - **Lossless context packing.** Exact rendered duplicates declared idempotent by
   the caller can share one emitted span while every logical span remains mapped.
 - **Evidence-aware performance work.** Benchmarks record machine conditions,
@@ -424,6 +428,21 @@ tools/zig-with-ephemeral-cache.sh build runtime-support-inspector \
   -Doptimize=ReleaseSafe -Dmetal=false -j2
 ```
 
+Inspect one 712-byte provider evidence join as deterministic JSON without raw
+prompt, payload, response, or credential bytes:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build provider-evidence-inspector \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2 -- \
+  --join path/to/provider.join
+```
+
+This command verifies only the outer framing and checksum. The rendered lengths,
+sequence, event counts, and named digests remain self-asserted; nested
+composition, authenticity, provider execution, usage, cost, and authority are
+not established. See
+[Provider Evidence Inspector](docs/PROVIDER_EVIDENCE_INSPECTOR.md).
+
 The C ABI is a narrow verifier and support-query surface, not a stable
 inference SDK. See
 [Language interop](docs/LANGUAGE_INTEROP.md) for C, Python, and dependency-free
@@ -469,8 +488,8 @@ hardware-independent surface without those native backend dependencies.
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures with scheduler-owned final-result publication, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, and exact deterministic producer-transition replay for retained reference profiles | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor evidence, receipt-funded restored activation with a global publication sequence base, and experimental durable prepared-text selection, exact source exit, exclusive fresh-process activation, three-generation terminal lineage, and semantic oracle comparison; plus capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Pre-generation-two source recovery, acknowledged target progress and idempotent external delivery, native Linux recovery, Win32 durable files, device-resident continuation, and durable lifecycle metadata |
 | Scheduling | Exact admission, deterministic weighted QoS, one bounded mixed-media pressure campaign with exact replay, final-quantum image/audio/video media transactions, and typed vision/audio/video result publication under the scheduler-owned receipt | Family-aware batching, preemption, multi-device placement, mixed typed-adapter workloads, and broader multi-tenant campaigns |
-| Providers | Context packing, gateway, transport harness, settlement and cost wires | Pluggable live adapters outside the credential-free core |
-| Evidence | Hash-chained events, independent Python verifiers, a scheduled-media execution sidecar with exact receipt/output replay, compact provider evidence join, and an experimental read-only generated-media inspector with exact optional format-sidecar validation, including a two-generation 12-entry-per-generation capacity campaign | Provider/token inspectors, privacy-safe export and retention policy, and native multi-OS evidence |
+| Providers | Context packing, gateway, transport harness, settlement and cost wires, plus a read-only outer-envelope inspector that exposes no credentials or payload bytes | Pluggable live adapters outside the credential-free core and optional caller-supplied full-composition inspection |
+| Evidence | Hash-chained events, independent Python verifiers, a scheduled-media execution sidecar with exact receipt/output replay, compact provider evidence join, an experimental read-only provider outer-envelope inspector, and a generated-media inspector with exact optional format-sidecar validation, including a two-generation 12-entry-per-generation capacity campaign | Token transaction inspector, provider nested-composition workflow, privacy-safe export and retention policy, and native multi-OS evidence |
 | Multimodal | Shared identity/timeline, bounded decode/transforms, scheduler-coupled final-quantum image/audio/video transactions and typed perception results, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, typed producer/raw-output admission, host replay of exact deterministic source-model/materializer transitions, validated bounded PNG/WAVE/APNG profiles, and an integrated additive format-conformance sidecar with a maximum-entry repeated-modality composed oracle | External video-timeline normalization, production encoder/container adapters and broader profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, additional model/materializer profiles, and authorized physical playback/display and quality evidence |
 | Platforms | Native macOS development-host evidence; full build and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64; exported package modules; compile-time adapter-availability inventory; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64 | Split named core/CPU/durable/device/host-tool profiles; run native Linux/Windows/FreeBSD CPU, mapping, and recovery campaigns; finish Windows durable-file, clock, telemetry, and packaging adapters; then add mobile and reduced edge profiles |
 | Runtime Workload Lab | W0 deterministic mixed-media open-loop conformance and W1 scheduler-coupled image/audio/video execution cover overload, fairness, timeout, cancellation, exact logical high-water marks, replay, atomic publication, and zero-orphan close | Generated and closed-loop scenarios, typed model/provider/tool profiles, native latency/throughput reports with CPU/GPU placement, utilization, memory, fallback, and available power/thermal evidence, then bounded soak, disruption, and multi-OS replication |

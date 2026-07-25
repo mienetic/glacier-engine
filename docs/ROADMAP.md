@@ -34,7 +34,7 @@ evidence. The plane and model-family sequence is specified in the
 | Multimodal execution | Model-free runtime, scheduler-coupled final-quantum transactions, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, deterministic source-model/materializer replay, and vision/audio/video fixtures integrated; bounded canonical PNG/WAVE/APNG profiles and their additive format sidecar integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, a canonical typed-admission construction path, transition and format-evidence sidecars, strict lossless emit-and-accept modules, real two-generation PNG/WAVE/APNG registry-transition-format fixtures, an independent composed Python oracle, and optional format-aware read-only inspection without changing earlier V1 wires | Production encoder/container adapters and broader profiles, additional model/materializer profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, and physical playback/display and quality evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
-| Durable provider evidence | Integrated | Crash-recoverable journal and compact evidence join | Inspector, export, retention, and operational policy |
+| Durable provider evidence | Integrated; outer inspection prototype | Crash-recoverable journal, compact evidence join, and a deterministic read-only inspector for outer framing/checksum and self-asserted fields | Optional caller-supplied nested-composition inspection, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, full build and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Named core/CPU/durable/device/host-tool build profiles; native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; mobile lifecycle gates; and a reduced edge profile |
 | Benchmark evidence | Prototype | Paired harnesses, machine envelope, independent verification | More complete CPU/energy telemetry and reproducible machines |
 | Runtime Workload Lab | W0/W1 integrated | A portable versioned explicit-open-loop mixed-media contract retains exact overload, fairness, timeout, cancellation, logical-resource, replay, and zero-orphan evidence; an additive sidecar executes completed image/audio/video transactions under the same receipts and atomically binds final service to publication | Generated and closed-loop scenarios, typed model/provider/tool profiles, native CPU/GPU reports and physical observers, bounded soak/disruption, and multi-OS replication |
@@ -209,7 +209,10 @@ evidence. The plane and model-family sequence is specified in the
   temporary Zig caches, temporary install products, bounded parallelism, no
   model downloads, and fake-tool regression coverage for cleanup and exit
   behavior.
-- [ ] Read-only evidence inspector for provider and token transaction fixtures.
+- [x] Read-only provider evidence outer-envelope inspector with deterministic
+  JSON, independent oracle coverage, explicit self-asserted nested fields, and
+  no payload, credential, composition, or authority claim.
+- [ ] Read-only token transaction inspector.
 - [ ] Small redistributable fixtures covering the supported loader surface.
 - [ ] First tagged experimental release with checksums and migration notes.
 
@@ -464,7 +467,9 @@ Goal: make portable evidence understandable without weakening verification.
 
 Next slices:
 
-- provider evidence envelope renderer;
+- [x] provider evidence outer-envelope renderer;
+- [ ] optional provider nested-composition verification with every required
+  input supplied explicitly;
 - LaneWeave timeline JSON;
 - token transaction root explorer;
 - redaction-safe bundle manifest;

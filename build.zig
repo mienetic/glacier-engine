@@ -373,6 +373,90 @@ pub fn build(b: *std.Build) void {
         &run_runtime_support_inspector_oracle.step,
     );
 
+    // Read-only outer-envelope inspector for compact provider evidence joins.
+    // It deliberately reports that nested composition is unverified and grants
+    // no authority; the independent Python oracle retains that claim boundary.
+    const provider_evidence_inspector_exe = b.addExecutable(.{
+        .name = "glacier-provider-evidence-inspector",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/cli/provider_evidence_inspector.zig",
+            ),
+            .target = target,
+            .optimize = cli_control_optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    provider_evidence_inspector_exe.root_module.addImport(
+        "glacier_core",
+        core_mod,
+    );
+    const run_provider_evidence_inspector =
+        b.addRunArtifact(provider_evidence_inspector_exe);
+    if (b.args) |args| run_provider_evidence_inspector.addArgs(args);
+    const provider_evidence_inspector_run_step = b.step(
+        "provider-evidence-inspector",
+        "Validate and render one provider join outer envelope",
+    );
+    provider_evidence_inspector_run_step.dependOn(
+        &run_provider_evidence_inspector.step,
+    );
+
+    const provider_evidence_inspector_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/cli/provider_evidence_inspector.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    provider_evidence_inspector_tests.root_module.addImport(
+        "glacier_core",
+        core_mod,
+    );
+    const run_provider_evidence_inspector_tests =
+        b.addRunArtifact(provider_evidence_inspector_tests);
+    const run_provider_evidence_inspector_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_provider_evidence_inspector_oracle.setCwd(b.path("."));
+    run_provider_evidence_inspector_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_provider_evidence_inspector_oracle.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_provider_evidence_inspector_oracle.addFileArg(
+        b.path("bench/provider_evidence_inspector.py"),
+    );
+    run_provider_evidence_inspector_oracle.addArg("--inspector");
+    run_provider_evidence_inspector_oracle.addArtifactArg(
+        provider_evidence_inspector_exe,
+    );
+    const provider_evidence_inspector_test_step = b.step(
+        "provider-evidence-inspector-test",
+        "Run provider join outer-inspector tests and independent oracle",
+    );
+    provider_evidence_inspector_test_step.dependOn(
+        &run_provider_evidence_inspector_tests.step,
+    );
+    provider_evidence_inspector_test_step.dependOn(
+        &run_provider_evidence_inspector_oracle.step,
+    );
+    const provider_evidence_inspector_compile_step = b.step(
+        "provider-evidence-inspector-compile",
+        "Compile the provider evidence inspector without running it",
+    );
+    provider_evidence_inspector_compile_step.dependOn(
+        &provider_evidence_inspector_exe.step,
+    );
+    provider_evidence_inspector_compile_step.dependOn(
+        &provider_evidence_inspector_tests.step,
+    );
+
     // Verify the experimental C boundary in three independent ways: the Zig
     // implementation tests its fail-closed status behavior, a C11 consumer
     // compiles against the installed-shape header and static library, and a
@@ -926,6 +1010,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_engine_tests.step);
     test_step.dependOn(&run_package_module_tests.step);
     test_step.dependOn(&run_runtime_support_inspector_tests.step);
+    test_step.dependOn(provider_evidence_inspector_test_step);
     test_step.dependOn(&run_media_external_format_tests.step);
     test_step.dependOn(&run_progressive_int4_tests.step);
     test_step.dependOn(&run_integration_tests.step);
@@ -950,6 +1035,9 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&engine_tests.step);
     test_compile_step.dependOn(&package_module_tests.step);
     test_compile_step.dependOn(&runtime_support_inspector_tests.step);
+    test_compile_step.dependOn(
+        provider_evidence_inspector_compile_step,
+    );
     test_compile_step.dependOn(&media_external_format_tests.step);
     test_compile_step.dependOn(&progressive_int4_tests.step);
     test_compile_step.dependOn(&integration_tests.step);

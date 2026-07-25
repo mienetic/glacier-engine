@@ -72,7 +72,16 @@ or package download is required, and the example links from
 Create a human-readable renderer for the compact evidence join and its nested
 roots. Keep verification separate from presentation.
 
-**First slice:** decode only the envelope, lengths, sequence, and root names.
+**First slice delivered:** the read-only
+[Provider Evidence Inspector](PROVIDER_EVIDENCE_INSPECTOR.md) checks only the
+fixed outer framing and checksum, then renders the sequence, lengths, event
+counts, and named digests as self-asserted JSON. It exposes no raw prompt,
+payload, response, or credential bytes and makes no nested-composition,
+authenticity, usage, cost, or authority claim.
+
+**Next slice:** accept every required nested journal, gateway, transport, and
+cost artifact explicitly, run the full composition verifier, and preserve the
+same deterministic, raw-payload-free presentation boundary.
 
 ### Cost-journal portability campaign
 

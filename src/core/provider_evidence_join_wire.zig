@@ -5,6 +5,9 @@
 //! request/attempt/cost identities. Decoding requires the original evidence
 //! blobs and independently replays every nested verifier before accepting the
 //! join. The manifest grants no dispatch, append, lock or recovery authority.
+//! `decodeEnvelopeV1` is a deliberately narrower inspection boundary: it
+//! validates only this fixed outer framing and checksum and does not verify any
+//! nested evidence, cross-field meaning, closure claim, or authority.
 
 const std = @import("std");
 const gateway = @import("provider_token_gateway.zig");
@@ -74,6 +77,15 @@ pub const DecodedV1 = struct {
     envelope_sha256: Digest = gateway.zero_digest,
 };
 
+/// Type-visible boundary for outer-only inspection.
+///
+/// `self_asserted` has passed fixed framing and checksum validation only. It is
+/// intentionally not a `DecodedV1` return value so callers cannot accidentally
+/// confuse outer inspection with fully composed nested verification.
+pub const InspectedEnvelopeV1 = struct {
+    self_asserted: DecodedV1,
+};
+
 const TerminalRootsV1 = struct {
     provider_request_sha256: Digest,
     response_chain_sha256: Digest,
@@ -137,22 +149,15 @@ pub fn encodeV1(
     return output;
 }
 
-pub fn decodeAndVerifyV1(
-    encoded: []const u8,
-    header: journal.HeaderV1,
-    encoded_frame: []const u8,
-    encoded_gateway: []const u8,
-    encoded_transport: []const u8,
-    scratch: ScratchV1,
-) Error!DecodedV1 {
+/// Decode and validate only the fixed outer join framing and checksum.
+///
+/// The returned metadata and named digests are self-asserted by the envelope.
+/// Callers must not treat them as verified nested evidence or as proof that the
+/// joined provider attempt is semantically composed or closed. Use
+/// `decodeAndVerifyV1` with the original nested evidence for that stronger
+/// verification boundary.
+pub fn decodeEnvelopeV1(encoded: []const u8) Error!InspectedEnvelopeV1 {
     if (encoded.len != encoded_bytes) return Error.InvalidLength;
-    if (overlapsScratch(encoded, scratch) or invalidScratchLayout(
-        encoded_frame,
-        encoded_gateway,
-        encoded_transport,
-        scratch,
-    ))
-        return Error.InvalidStorage;
     var reader: Reader = .{ .bytes = encoded };
     if (!std.mem.eql(u8, try reader.readBytes(magic.len), &magic))
         return Error.InvalidMagic;
@@ -175,6 +180,27 @@ pub fn decodeAndVerifyV1(
         &value.envelope_sha256,
         &envelopeSha256(encoded[0 .. encoded.len - digest_bytes]),
     )) return Error.InvalidEnvelope;
+    return .{ .self_asserted = value };
+}
+
+pub fn decodeAndVerifyV1(
+    encoded: []const u8,
+    header: journal.HeaderV1,
+    encoded_frame: []const u8,
+    encoded_gateway: []const u8,
+    encoded_transport: []const u8,
+    scratch: ScratchV1,
+) Error!DecodedV1 {
+    if (encoded.len != encoded_bytes) return Error.InvalidLength;
+    if (overlapsScratch(encoded, scratch) or invalidScratchLayout(
+        encoded_frame,
+        encoded_gateway,
+        encoded_transport,
+        scratch,
+    ))
+        return Error.InvalidStorage;
+    const inspected = try decodeEnvelopeV1(encoded);
+    const value = inspected.self_asserted;
 
     var expected_storage: [encoded_bytes]u8 = undefined;
     const expected = try encodeV1(
@@ -546,6 +572,121 @@ test "join wire layout is fixed" {
     try std.testing.expectEqual(@as(usize, 712), encoded_bytes);
 }
 
+test "outer decoder validates fixed envelope without composing evidence" {
+    const value = testOuterValue();
+    const encoded = testOuterEnvelope(value);
+    const inspected = try decodeEnvelopeV1(&encoded);
+    const decoded = inspected.self_asserted;
+
+    var expected = value;
+    expected.envelope_sha256 =
+        envelopeSha256(encoded[0 .. encoded.len - digest_bytes]);
+    try std.testing.expect(std.meta.eql(expected, decoded));
+
+    try std.testing.expectError(
+        Error.InvalidLength,
+        decodeEnvelopeV1(encoded[0 .. encoded.len - 1]),
+    );
+    var extended: [encoded_bytes + 1]u8 = undefined;
+    @memcpy(extended[0..encoded_bytes], &encoded);
+    extended[encoded_bytes] = 0;
+    try std.testing.expectError(
+        Error.InvalidLength,
+        decodeEnvelopeV1(&extended),
+    );
+
+    var malformed = encoded;
+    malformed[0] ^= 1;
+    try std.testing.expectError(
+        Error.InvalidMagic,
+        decodeEnvelopeV1(&malformed),
+    );
+    malformed = encoded;
+    malformed[8] ^= 1;
+    try std.testing.expectError(
+        Error.InvalidAbi,
+        decodeEnvelopeV1(&malformed),
+    );
+    malformed = encoded;
+    malformed[16] ^= 1;
+    try std.testing.expectError(
+        Error.InvalidLength,
+        decodeEnvelopeV1(&malformed),
+    );
+    malformed = encoded;
+    malformed[24] ^= 2;
+    try std.testing.expectError(
+        Error.InvalidFlags,
+        decodeEnvelopeV1(&malformed),
+    );
+    malformed = encoded;
+    malformed[28] = 1;
+    try std.testing.expectError(
+        Error.InvalidFlags,
+        decodeEnvelopeV1(&malformed),
+    );
+    malformed = encoded;
+    malformed[header_bytes] ^= 1;
+    try std.testing.expectError(
+        Error.InvalidEnvelope,
+        decodeEnvelopeV1(&malformed),
+    );
+    malformed = encoded;
+    malformed[encoded.len - 1] ^= 1;
+    try std.testing.expectError(
+        Error.InvalidEnvelope,
+        decodeEnvelopeV1(&malformed),
+    );
+}
+
+test "resealed opaque substitutions remain outer-only and fail full verification" {
+    var encoded = testOuterEnvelope(testOuterValue());
+    std.mem.writeInt(u64, encoded[32..40], 8, .little);
+    @memset(
+        encoded[header_bytes .. header_bytes + digest_bytes],
+        0xa1,
+    );
+    const resealed = envelopeSha256(
+        encoded[0 .. encoded.len - digest_bytes],
+    );
+    @memcpy(encoded[encoded.len - digest_bytes ..], &resealed);
+
+    const inspected = try decodeEnvelopeV1(&encoded);
+    const decoded = inspected.self_asserted;
+    try std.testing.expectEqual(@as(u64, 8), decoded.journal_sequence);
+    const expected_header = testDigest(0xa1);
+    try std.testing.expectEqualSlices(
+        u8,
+        &expected_header,
+        &decoded.journal_header_sha256,
+    );
+
+    var gateway_events: [0]gateway.EventV2 = .{};
+    var gateway_owners: [0]gateway_wire.ReplayOwnerV1 = .{};
+    var gateway_consumers: [0]gateway_wire.ReplayConsumerV1 = .{};
+    var gateway_bindings: [0]gateway_wire.SettlementBindingV1 = .{};
+    var transport_events: [0]transport_wire.EventV1 = .{};
+    const scratch: ScratchV1 = .{
+        .gateway_events = &gateway_events,
+        .gateway_owners = &gateway_owners,
+        .gateway_consumers = &gateway_consumers,
+        .gateway_bindings = &gateway_bindings,
+        .transport_events = &transport_events,
+    };
+    const empty_header = std.mem.zeroes(journal.HeaderV1);
+    try std.testing.expectError(
+        Error.InvalidEvidence,
+        decodeAndVerifyV1(
+            &encoded,
+            empty_header,
+            &.{},
+            &.{},
+            &.{},
+            scratch,
+        ),
+    );
+}
+
 test "join scratch rejects cross-plane aliasing" {
     const storage_bytes = @max(
         @sizeOf(gateway.EventV2),
@@ -580,4 +721,60 @@ test "join scratch rejects cross-plane aliasing" {
         &.{},
         scratch,
     ));
+}
+
+fn testOuterValue() DecodedV1 {
+    return .{
+        .journal_sequence = 7,
+        .gateway_event_index = 3,
+        .transport_event_count = 5,
+        .journal_frame_bytes = 1_645,
+        .gateway_wire_bytes = 5_984,
+        .transport_wire_bytes = 2_758,
+        .journal_header_sha256 = testDigest(1),
+        .journal_previous_chain_sha256 = testDigest(2),
+        .journal_entry_sha256 = testDigest(3),
+        .cost_envelope_sha256 = testDigest(4),
+        .settlement_envelope_sha256 = testDigest(5),
+        .request_sha256 = testDigest(6),
+        .dispatch_key_sha256 = testDigest(7),
+        .intent_sha256 = testDigest(8),
+        .receipt_sha256 = testDigest(9),
+        .price_sha256 = testDigest(10),
+        .quote_sha256 = testDigest(11),
+        .cost_settlement_sha256 = testDigest(12),
+        .gateway_envelope_sha256 = testDigest(13),
+        .gateway_event_sha256 = testDigest(14),
+        .gateway_final_chain_sha256 = testDigest(15),
+        .transport_envelope_sha256 = testDigest(16),
+        .provider_request_sha256 = testDigest(17),
+        .response_chain_sha256 = testDigest(18),
+        .transport_outcome_sha256 = testDigest(19),
+    };
+}
+
+fn testOuterEnvelope(value: DecodedV1) [encoded_bytes]u8 {
+    var output: [encoded_bytes]u8 = [_]u8{0} ** encoded_bytes;
+    var writer: Writer = .{ .bytes = &output };
+    writer.writeBytes(&magic) catch unreachable;
+    writer.writeU64(wire_abi) catch unreachable;
+    writer.writeU64(encoded_bytes) catch unreachable;
+    writer.writeU32(value.flags) catch unreachable;
+    writer.writeU32(0) catch unreachable;
+    writer.writeU64(value.journal_sequence) catch unreachable;
+    writer.writeU32(value.gateway_event_index) catch unreachable;
+    writer.writeU32(value.transport_event_count) catch unreachable;
+    writer.writeU64(value.journal_frame_bytes) catch unreachable;
+    writer.writeU64(value.gateway_wire_bytes) catch unreachable;
+    writer.writeU64(value.transport_wire_bytes) catch unreachable;
+    writeDigests(&writer, value) catch unreachable;
+    writer.writeDigest(
+        envelopeSha256(output[0..writer.position]),
+    ) catch unreachable;
+    std.debug.assert(writer.position == output.len);
+    return output;
+}
+
+fn testDigest(fill: u8) Digest {
+    return [_]u8{fill} ** digest_bytes;
 }
