@@ -725,14 +725,48 @@ because prefill logits are not serialized. Its encoded and detached
 allocations are caller-owned and are not charged to the live Session's
 ResourceBank.
 
-The next control-plane slice is a verified retained-authority rebind at the
-exact current boundary. Fresh-process continuation additionally needs a
-successor plan/transcript ABI with a nonzero sequence base and source lineage,
-restored Scheduler/Bank and permit-generation semantics, LeaseTree-aware
-publication/receipt remapping, durable atomic selection, source exit, and
-exclusive target handoff. R1e therefore does not claim rewind, durable
-checkpointing, crash recovery, exactly-once resume, confidentiality,
-authentication, or cross-backend numerical identity.
+R1e does not attach runtime authority to the detached payload and does not
+claim rewind, durable checkpointing, crash recovery, exactly-once resume,
+confidentiality, authentication, or cross-backend numerical identity.
+
+#### R1f — Exact-boundary state rebind under retained authority
+
+Status: **integrated experimental same-process control-plane slice**.
+`SessionV3.rebindCheckpointV1` now:
+
+- accepts only the exact current, idle, non-terminal boundary of the original
+  live Session;
+- derives every decoder expectation from that Session and validates the
+  address-bound ownership, V2 boundary, plans, receipt, ResourceBank fence,
+  sequence, result state, and publication bindings before materialization;
+- decodes and materializes the candidate internally with the Session allocator,
+  then validates the complete live context again;
+- compares exact output IDs, raw committed KV bytes, logical/publication KV
+  roots, RNG/counters, geometry, and deterministic zero slack;
+- replaces only the existing cache/output field values after all fallible
+  checks, then releases their former backing; and
+- preserves the embedded publication-coordinator address, Scheduler,
+  ResourceBank, receipt, request epoch, sequence, transcript/state roots, and
+  cache/RNG/counter/output-length field addresses without consuming a permit or
+  emitting a Scheduler/Bank event.
+
+The same-boundary operation may repeat with fresh backing, and the next token
+matches the complete ordinary uninterrupted transition and post-step numerical
+state. A retained permit crosses rebind unchanged, while a phase-gated
+allocator sweeps every private materialization failure with zero live-state or
+accounting mutation. Once the Session advances, the old image rejects rather
+than rewinding or branching authority. Active row transactions, copied/moved
+Sessions, recovery adoption, sequence zero, terminal state, and substituted
+context also reject. Previously borrowed output/cache views and row marks are
+invalid after success.
+
+R1f remains a same-process buffer replacement inside the original Session. It
+does not create a new Session, transfer authority, provide concurrency,
+publish durable state, or resume after process death. Fresh-process
+continuation next needs a successor plan/transcript ABI with a nonzero sequence
+base and source lineage, restored Scheduler/Bank and permit-generation
+semantics, LeaseTree-aware publication/receipt remapping, durable atomic
+selection, source exit, and exclusive target handoff.
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with

@@ -512,6 +512,118 @@ const StartRecoveryFaultAllocator = struct {
     }
 };
 
+const PhaseFailAllocator = struct {
+    backing: std.mem.Allocator,
+    enabled: bool = false,
+    fail_index: usize = 0,
+    allocation_index: usize = 0,
+    has_induced_failure: bool = false,
+    live_allocations: usize = 0,
+    live_bytes: usize = 0,
+
+    fn allocator(self: *@This()) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
+        };
+    }
+
+    fn arm(self: *@This(), fail_index: usize) void {
+        self.enabled = true;
+        self.fail_index = fail_index;
+        self.allocation_index = 0;
+        self.has_induced_failure = false;
+    }
+
+    fn disarm(self: *@This()) void {
+        self.enabled = false;
+    }
+
+    fn alloc(
+        raw: *anyopaque,
+        len: usize,
+        alignment: std.mem.Alignment,
+        return_address: usize,
+    ) ?[*]u8 {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        if (self.enabled) {
+            const index = self.allocation_index;
+            self.allocation_index += 1;
+            if (index == self.fail_index) {
+                self.has_induced_failure = true;
+                return null;
+            }
+        }
+        const memory = self.backing.rawAlloc(
+            len,
+            alignment,
+            return_address,
+        ) orelse return null;
+        self.live_allocations += 1;
+        self.live_bytes += len;
+        return memory;
+    }
+
+    fn resize(
+        raw: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        new_len: usize,
+        return_address: usize,
+    ) bool {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        if (!self.backing.rawResize(
+            memory,
+            alignment,
+            new_len,
+            return_address,
+        )) return false;
+        self.live_bytes = self.live_bytes - memory.len + new_len;
+        return true;
+    }
+
+    fn remap(
+        raw: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        new_len: usize,
+        return_address: usize,
+    ) ?[*]u8 {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        const remapped = self.backing.rawRemap(
+            memory,
+            alignment,
+            new_len,
+            return_address,
+        ) orelse return null;
+        self.live_bytes = self.live_bytes - memory.len + new_len;
+        return remapped;
+    }
+
+    fn free(
+        raw: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        return_address: usize,
+    ) void {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        std.debug.assert(self.live_allocations > 0);
+        std.debug.assert(self.live_bytes >= memory.len);
+        self.backing.rawFree(
+            memory,
+            alignment,
+            return_address,
+        );
+        self.live_allocations -= 1;
+        self.live_bytes -= memory.len;
+    }
+};
+
 const TestEligibilityProvider = struct {
     calls: usize = 0,
     fail_step: ?usize = null,
@@ -1888,6 +2000,13 @@ test "compact multi-page INT4 generation matches eager generation" {
         recovery_v2_bank_before.releases,
         recovery_v2_bank_pending.releases,
     );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        recovery_v2_session.rebindCheckpointV1(
+            &.{},
+            [_]u8{0x7c} ** 32,
+        ),
+    );
 
     session_scheduler.closed = false;
     const recovery_v2_cancel =
@@ -2009,6 +2128,260 @@ test "compact multi-page INT4 generation matches eager generation" {
         cancel_v2_bank_after.releases,
     );
 
+    // Preserve an uninterrupted N=1 -> N=2 transition under a separate
+    // request identity. The numerical state commitment is request-independent,
+    // so R1f can later prove full transition equivalence rather than checking
+    // only the sampled token.
+    const reference_scheduling: engine.prepared_text_session.SchedulingV1 = .{
+        .tenant_key = 103,
+        .request_key = 104,
+        .request_generation = 1,
+        .resource_owner_key = 105,
+        .weight = 1,
+    };
+    var reference_bound_input = bound_input;
+    reference_bound_input.request_epoch = 0x5458_4554;
+    const reference_bound_plan =
+        try engine.prepared_text_session.makeBoundPlanV1(
+            prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            reference_scheduling,
+            &session_scheduler,
+            reference_bound_input,
+        );
+    var reference_session: engine.prepared_text_session.SessionV3 = .{};
+    const reference_start = try reference_session.start(
+        testing.allocator,
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        reference_bound_input,
+        reference_bound_plan,
+        reference_scheduling,
+        &session_scheduler,
+        &session_bank,
+    );
+    switch (reference_start) {
+        .started => |event| try expectPreparedStartEvent(
+            event,
+            session_plan,
+        ),
+        .rejected => return error.TestUnexpectedResult,
+    }
+    var reference_sink: PreparedTextSink = .{};
+    _ = try reference_session.step(
+        try session_scheduler.prepareService(),
+        reference_sink.interface(),
+    );
+    const reference_second_receipt = try reference_session.step(
+        try session_scheduler.prepareService(),
+        reference_sink.interface(),
+    );
+    const reference_second_transition =
+        reference_second_receipt.proposal.transition;
+    const reference_output_after_two = [2]u32{
+        reference_session.outputTokens()[0],
+        reference_session.outputTokens()[1],
+    };
+    const reference_rng_after_two =
+        reference_session.inner.inner.rng_state;
+    const reference_sampling_after_two =
+        reference_session.inner.inner.sampling_calls;
+    const reference_logical_kv_after_two =
+        engine.lane_contiguous_publication.logicalKvPrefixSha256(
+            &reference_session.inner.inner.resources.cache,
+            reference_session.inner.inner.resources.cache.len,
+        );
+    _ = try reference_session.cancel();
+    reference_session.deinit();
+    try testing.expect((try session_bank.snapshot()).used.isZero());
+
+    // Sweep every allocation boundary in R1f materialization. Each injected
+    // OOM must reclaim the private candidate and preserve the live Session,
+    // its authority snapshots, and every concrete backing pointer.
+    const rebind_oom_scheduling: engine.prepared_text_session.SchedulingV1 = .{
+        .tenant_key = 106,
+        .request_key = 107,
+        .request_generation = 1,
+        .resource_owner_key = 108,
+        .weight = 1,
+    };
+    var rebind_oom_bound_input = bound_input;
+    rebind_oom_bound_input.request_epoch = 0x5458_4555;
+    const rebind_oom_bound_plan =
+        try engine.prepared_text_session.makeBoundPlanV1(
+            prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            rebind_oom_scheduling,
+            &session_scheduler,
+            rebind_oom_bound_input,
+        );
+    var rebind_oom_allocator: PhaseFailAllocator = .{
+        .backing = testing.allocator,
+    };
+    var rebind_oom_session: engine.prepared_text_session.SessionV3 = .{};
+    const rebind_oom_start = try rebind_oom_session.start(
+        rebind_oom_allocator.allocator(),
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        rebind_oom_bound_input,
+        rebind_oom_bound_plan,
+        rebind_oom_scheduling,
+        &session_scheduler,
+        &session_bank,
+    );
+    switch (rebind_oom_start) {
+        .started => |event| try expectPreparedStartEvent(
+            event,
+            session_plan,
+        ),
+        .rejected => return error.TestUnexpectedResult,
+    }
+    var rebind_oom_sink: PreparedTextSink = .{};
+    _ = try rebind_oom_session.step(
+        try session_scheduler.prepareService(),
+        rebind_oom_sink.interface(),
+    );
+    const rebind_oom_challenge = [_]u8{0x6c} ** 32;
+    const rebind_oom_checkpoint =
+        try rebind_oom_session.captureCheckpointV1(
+            testing.allocator,
+            rebind_oom_challenge,
+        );
+    defer testing.allocator.free(rebind_oom_checkpoint);
+    const rebind_oom_live_allocations =
+        rebind_oom_allocator.live_allocations;
+    const rebind_oom_live_bytes =
+        rebind_oom_allocator.live_bytes;
+    var rebind_oom_sweep_completed = false;
+    var rebind_oom_fail_index: usize = 0;
+    while (rebind_oom_fail_index < 32) : (rebind_oom_fail_index += 1) {
+        const boundary_before =
+            try rebind_oom_session.snapshotVerified();
+        const scheduler_before =
+            try session_scheduler.snapshot();
+        const bank_before = try session_bank.snapshot();
+        const receipt_before = rebind_oom_session.result_receipt;
+        const result_state_before =
+            rebind_oom_session.result_publication_state;
+        const cache_instance_before =
+            rebind_oom_session.inner.inner
+                .resources.cache.instance_id;
+        const key_backing_before = @intFromPtr(
+            rebind_oom_session.inner.inner
+                .resources.cache.keys[0].ptr,
+        );
+        const value_backing_before = @intFromPtr(
+            rebind_oom_session.inner.inner
+                .resources.cache.values[0].ptr,
+        );
+        const output_backing_before = @intFromPtr(
+            rebind_oom_session.inner.inner.resources.output.ptr,
+        );
+
+        rebind_oom_allocator.arm(rebind_oom_fail_index);
+        const rebind_result =
+            rebind_oom_session.rebindCheckpointV1(
+                rebind_oom_checkpoint,
+                rebind_oom_challenge,
+            );
+        if (rebind_result) |_| {
+            rebind_oom_allocator.disarm();
+            try testing.expect(
+                !rebind_oom_allocator.has_induced_failure,
+            );
+            try testing.expectEqual(
+                rebind_oom_live_allocations,
+                rebind_oom_allocator.live_allocations,
+            );
+            try testing.expectEqual(
+                rebind_oom_live_bytes,
+                rebind_oom_allocator.live_bytes,
+            );
+            rebind_oom_sweep_completed = true;
+            break;
+        } else |err| {
+            rebind_oom_allocator.disarm();
+            if (err != error.OutOfMemory) return err;
+            try testing.expect(
+                rebind_oom_allocator.has_induced_failure,
+            );
+            try testing.expectEqualDeep(
+                boundary_before,
+                try rebind_oom_session.snapshotVerified(),
+            );
+            try testing.expectEqualDeep(
+                scheduler_before,
+                try session_scheduler.snapshot(),
+            );
+            try testing.expectEqualDeep(
+                bank_before,
+                try session_bank.snapshot(),
+            );
+            try testing.expectEqualDeep(
+                receipt_before,
+                rebind_oom_session.result_receipt,
+            );
+            try testing.expectEqualDeep(
+                result_state_before,
+                rebind_oom_session.result_publication_state,
+            );
+            try testing.expectEqual(
+                cache_instance_before,
+                rebind_oom_session.inner.inner
+                    .resources.cache.instance_id,
+            );
+            try testing.expectEqual(
+                key_backing_before,
+                @intFromPtr(
+                    rebind_oom_session.inner.inner
+                        .resources.cache.keys[0].ptr,
+                ),
+            );
+            try testing.expectEqual(
+                value_backing_before,
+                @intFromPtr(
+                    rebind_oom_session.inner.inner
+                        .resources.cache.values[0].ptr,
+                ),
+            );
+            try testing.expectEqual(
+                output_backing_before,
+                @intFromPtr(
+                    rebind_oom_session.inner.inner
+                        .resources.output.ptr,
+                ),
+            );
+            try testing.expectEqual(
+                rebind_oom_live_allocations,
+                rebind_oom_allocator.live_allocations,
+            );
+            try testing.expectEqual(
+                rebind_oom_live_bytes,
+                rebind_oom_allocator.live_bytes,
+            );
+        }
+    }
+    try testing.expect(rebind_oom_sweep_completed);
+    _ = try rebind_oom_session.cancel();
+    rebind_oom_session.deinit();
+    try testing.expectEqual(
+        @as(usize, 0),
+        rebind_oom_allocator.live_allocations,
+    );
+    try testing.expectEqual(
+        @as(usize, 0),
+        rebind_oom_allocator.live_bytes,
+    );
+    try testing.expect((try session_bank.snapshot()).used.isZero());
+
     var prepared_session: engine.prepared_text_session.SessionV3 = .{};
     const session_start = try prepared_session.start(
         testing.allocator,
@@ -2078,6 +2451,13 @@ test "compact multi-page INT4 generation matches eager generation" {
         engine.prepared_text_session.Error.InvalidState,
         prepared_session.captureCheckpointV1(
             testing.allocator,
+            [_]u8{0x7c} ** 32,
+        ),
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.rebindCheckpointV1(
+            &.{},
             [_]u8{0x7c} ** 32,
         ),
     );
@@ -2239,6 +2619,386 @@ test "compact multi-page INT4 generation matches eager generation" {
         ),
     );
 
+    // R1f replaces only concrete state backing inside the original Session.
+    // Challenge, active-row, and moved-Session failures all precede allocation
+    // takeover and leave the live authority boundary byte-for-byte unchanged.
+    // One service permit is retained across the whole operation and consumed
+    // only by the ordinary next-token step afterward.
+    const retained_rebind_permit =
+        try session_scheduler.prepareService();
+    const rebind_boundary_before =
+        try prepared_session.snapshotVerified();
+    const rebind_scheduler_before =
+        try session_scheduler.snapshot();
+    const rebind_bank_before = try session_bank.snapshot();
+    const rebind_result_state_before =
+        prepared_session.result_publication_state;
+    const rebind_receipt_before = prepared_session.result_receipt;
+    const coordinator_address_before = @intFromPtr(
+        &prepared_session.inner.inner
+            .publication_session.inner,
+    );
+    const cache_address_before = @intFromPtr(
+        &prepared_session.inner.inner.resources.cache,
+    );
+    const cache_instance_before =
+        prepared_session.inner.inner.resources.cache.instance_id;
+    const key_backing_before = @intFromPtr(
+        prepared_session.inner.inner.resources.cache.keys[0].ptr,
+    );
+    const value_backing_before = @intFromPtr(
+        prepared_session.inner.inner.resources.cache.values[0].ptr,
+    );
+    const output_backing_before = @intFromPtr(
+        prepared_session.inner.inner.resources.output.ptr,
+    );
+    try session_bank.validatePublicationSession(
+        rebind_receipt_before,
+        bound_plan.execution.request_epoch,
+        coordinator_address_before,
+        rebind_boundary_before.base.publication.next_sequence,
+    );
+
+    var corrupted_checkpoint = try testing.allocator.dupe(
+        u8,
+        prepared_checkpoint,
+    );
+    defer testing.allocator.free(corrupted_checkpoint);
+    corrupted_checkpoint[
+        engine.prepared_text_checkpoint.checkpoint_header_bytes
+    ] ^= 0x01;
+    const corrupted_checkpoint_body =
+        corrupted_checkpoint.len -
+        engine.prepared_text_checkpoint.checkpoint_footer_bytes;
+    const corrupted_checkpoint_root =
+        engine.prepared_text_checkpoint.checkpointRootV1(
+            corrupted_checkpoint[0..corrupted_checkpoint_body],
+        );
+    @memcpy(
+        corrupted_checkpoint[corrupted_checkpoint_body..],
+        &corrupted_checkpoint_root,
+    );
+    try testing.expectError(
+        engine.prepared_text_checkpoint.Error.InvalidCheckpoint,
+        prepared_session.rebindCheckpointV1(
+            corrupted_checkpoint,
+            checkpoint_challenge,
+        ),
+    );
+    try testing.expectEqualDeep(
+        rebind_boundary_before,
+        try prepared_session.snapshotVerified(),
+    );
+    try testing.expectEqualDeep(
+        rebind_scheduler_before,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        rebind_bank_before,
+        try session_bank.snapshot(),
+    );
+
+    try testing.expectError(
+        engine.prepared_text_checkpoint.Error.ChallengeMismatch,
+        prepared_session.rebindCheckpointV1(
+            prepared_checkpoint,
+            [_]u8{0x7d} ** 32,
+        ),
+    );
+    var moved_prepared_session = prepared_session;
+    moved_prepared_session.inner.inner
+        .publication_session.bindings.cache =
+        &moved_prepared_session.inner.inner.resources.cache;
+    moved_prepared_session.inner.inner
+        .publication_session.bindings.rng_state =
+        &moved_prepared_session.inner.inner.rng_state;
+    moved_prepared_session.inner.inner
+        .publication_session.bindings.sampling_calls =
+        &moved_prepared_session.inner.inner.sampling_calls;
+    moved_prepared_session.inner.inner
+        .publication_session.bindings.output_len =
+        &moved_prepared_session.inner.inner.output_len;
+    moved_prepared_session.inner.inner
+        .publication_session.bindings.output =
+        moved_prepared_session.inner.inner.resources.output;
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        moved_prepared_session.rebindCheckpointV1(
+            prepared_checkpoint,
+            checkpoint_challenge,
+        ),
+    );
+    const active_row_mark =
+        try prepared_session.inner.inner.resources.cache.beginRows(1);
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.rebindCheckpointV1(
+            prepared_checkpoint,
+            checkpoint_challenge,
+        ),
+    );
+    try prepared_session.inner.inner.resources.cache.abortRows(
+        active_row_mark,
+    );
+    try testing.expectEqualDeep(
+        rebind_boundary_before,
+        try prepared_session.snapshotVerified(),
+    );
+    try testing.expectEqualDeep(
+        rebind_scheduler_before,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        rebind_bank_before,
+        try session_bank.snapshot(),
+    );
+    try testing.expectEqual(
+        cache_instance_before,
+        prepared_session.inner.inner.resources.cache.instance_id,
+    );
+    try testing.expectEqual(
+        output_backing_before,
+        @intFromPtr(
+            prepared_session.inner.inner.resources.output.ptr,
+        ),
+    );
+
+    const rebound_checkpoint_sha256 =
+        try prepared_session.rebindCheckpointV1(
+            prepared_checkpoint,
+            checkpoint_challenge,
+        );
+    try testing.expectEqualSlices(
+        u8,
+        &decoded_checkpoint.checkpoint_sha256,
+        &rebound_checkpoint_sha256,
+    );
+    try testing.expectEqual(
+        coordinator_address_before,
+        @intFromPtr(
+            &prepared_session.inner.inner
+                .publication_session.inner,
+        ),
+    );
+    try testing.expectEqual(
+        cache_address_before,
+        @intFromPtr(
+            &prepared_session.inner.inner.resources.cache,
+        ),
+    );
+    try testing.expect(
+        cache_instance_before !=
+            prepared_session.inner.inner.resources.cache.instance_id,
+    );
+    try testing.expect(
+        key_backing_before != @intFromPtr(
+            prepared_session.inner.inner
+                .resources.cache.keys[0].ptr,
+        ),
+    );
+    try testing.expect(
+        value_backing_before != @intFromPtr(
+            prepared_session.inner.inner
+                .resources.cache.values[0].ptr,
+        ),
+    );
+    try testing.expect(
+        output_backing_before != @intFromPtr(
+            prepared_session.inner.inner.resources.output.ptr,
+        ),
+    );
+    try testing.expect(
+        prepared_session.inner.inner
+            .publication_session.bindings.cache ==
+            &prepared_session.inner.inner.resources.cache,
+    );
+    try testing.expect(
+        prepared_session.inner.inner
+            .publication_session.bindings.rng_state ==
+            &prepared_session.inner.inner.rng_state,
+    );
+    try testing.expect(
+        prepared_session.inner.inner
+            .publication_session.bindings.sampling_calls ==
+            &prepared_session.inner.inner.sampling_calls,
+    );
+    try testing.expect(
+        prepared_session.inner.inner
+            .publication_session.bindings.output_len ==
+            &prepared_session.inner.inner.output_len,
+    );
+    try testing.expectEqual(
+        @intFromPtr(
+            prepared_session.inner.inner.resources.output.ptr,
+        ),
+        @intFromPtr(
+            prepared_session.inner.inner
+                .publication_session.bindings.output.ptr,
+        ),
+    );
+    try testing.expectEqualDeep(
+        rebind_boundary_before,
+        try prepared_session.snapshotVerified(),
+    );
+    try testing.expectEqualDeep(
+        rebind_scheduler_before,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        rebind_bank_before,
+        try session_bank.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        rebind_result_state_before,
+        prepared_session.result_publication_state,
+    );
+    try testing.expectEqualDeep(
+        rebind_receipt_before,
+        prepared_session.result_receipt,
+    );
+    try session_bank.validatePublicationSession(
+        rebind_receipt_before,
+        bound_plan.execution.request_epoch,
+        coordinator_address_before,
+        rebind_boundary_before.base.publication.next_sequence,
+    );
+    const rebound_active_mark =
+        try prepared_session.inner.inner.resources.cache.beginRows(1);
+    try testing.expectEqual(
+        active_row_mark.cache_id,
+        rebound_active_mark.cache_id,
+    );
+    try testing.expectEqual(
+        active_row_mark.generation,
+        rebound_active_mark.generation,
+    );
+    try testing.expect(
+        active_row_mark.cache_instance !=
+            rebound_active_mark.cache_instance,
+    );
+    try testing.expectError(
+        error.InvalidTransaction,
+        prepared_session.inner.inner.resources.cache.abortRows(
+            active_row_mark,
+        ),
+    );
+    try prepared_session.inner.inner.resources.cache.abortRows(
+        rebound_active_mark,
+    );
+
+    // Rebinding the same exact boundary again is logically idempotent while
+    // still installing another fresh cache/output allocation.
+    const first_rebound_instance =
+        prepared_session.inner.inner.resources.cache.instance_id;
+    const first_rebound_output = @intFromPtr(
+        prepared_session.inner.inner.resources.output.ptr,
+    );
+    _ = try prepared_session.rebindCheckpointV1(
+        prepared_checkpoint,
+        checkpoint_challenge,
+    );
+    try testing.expect(
+        first_rebound_instance !=
+            prepared_session.inner.inner.resources.cache.instance_id,
+    );
+    try testing.expect(
+        first_rebound_output != @intFromPtr(
+            prepared_session.inner.inner.resources.output.ptr,
+        ),
+    );
+    try testing.expectEqualDeep(
+        rebind_boundary_before,
+        try prepared_session.snapshotVerified(),
+    );
+    try testing.expectEqualDeep(
+        rebind_scheduler_before,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        rebind_bank_before,
+        try session_bank.snapshot(),
+    );
+
+    // Once the live Session advances, the old internally valid checkpoint is
+    // stale and cannot rewind or branch the retained publication authority.
+    const rebound_next_receipt = try prepared_session.step(
+        retained_rebind_permit,
+        session_sink.interface(),
+    );
+    try testing.expectEqualDeep(
+        checkpoint_boundary.base.publication.state,
+        rebound_next_receipt.proposal.transition.before,
+    );
+    try testing.expectEqual(
+        session_oracle[1],
+        rebound_next_receipt.proposal.transition.token_id,
+    );
+    try testing.expectEqualDeep(
+        reference_second_transition,
+        rebound_next_receipt.proposal.transition,
+    );
+    try testing.expectEqualSlices(
+        u32,
+        &reference_output_after_two,
+        prepared_session.outputTokens(),
+    );
+    try testing.expectEqualDeep(
+        reference_rng_after_two,
+        prepared_session.inner.inner.rng_state,
+    );
+    try testing.expectEqual(
+        reference_sampling_after_two,
+        prepared_session.inner.inner.sampling_calls,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &reference_logical_kv_after_two,
+        &engine.lane_contiguous_publication
+            .logicalKvPrefixSha256(
+            &prepared_session.inner.inner.resources.cache,
+            prepared_session.inner.inner.resources.cache.len,
+        ),
+    );
+    const stale_boundary_before =
+        try prepared_session.snapshotVerified();
+    const stale_scheduler_before =
+        try session_scheduler.snapshot();
+    const stale_bank_before = try session_bank.snapshot();
+    const stale_cache_instance =
+        prepared_session.inner.inner.resources.cache.instance_id;
+    const stale_output_backing = @intFromPtr(
+        prepared_session.inner.inner.resources.output.ptr,
+    );
+    try testing.expectError(
+        engine.prepared_text_checkpoint.Error.BindingMismatch,
+        prepared_session.rebindCheckpointV1(
+            prepared_checkpoint,
+            checkpoint_challenge,
+        ),
+    );
+    try testing.expectEqualDeep(
+        stale_boundary_before,
+        try prepared_session.snapshotVerified(),
+    );
+    try testing.expectEqualDeep(
+        stale_scheduler_before,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        stale_bank_before,
+        try session_bank.snapshot(),
+    );
+    try testing.expectEqual(
+        stale_cache_instance,
+        prepared_session.inner.inner.resources.cache.instance_id,
+    );
+    try testing.expectEqual(
+        stale_output_backing,
+        @intFromPtr(
+            prepared_session.inner.inner.resources.output.ptr,
+        ),
+    );
+
     while (!prepared_session.isFinished()) {
         _ = try prepared_session.step(
             try session_scheduler.prepareService(),
@@ -2259,6 +3019,13 @@ test "compact multi-page INT4 generation matches eager generation" {
         engine.prepared_text_session.Error.InvalidState,
         prepared_session.captureCheckpointV1(
             testing.allocator,
+            checkpoint_challenge,
+        ),
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.rebindCheckpointV1(
+            prepared_checkpoint,
             checkpoint_challenge,
         ),
     );
@@ -2887,8 +3654,8 @@ test "compact multi-page INT4 generation matches eager generation" {
     try testing.expect(!prepared_session.result_receipt_live);
     const final_session_bank = try session_bank.snapshot();
     try testing.expect(final_session_bank.used.isZero());
-    try testing.expectEqual(@as(u64, 6), final_session_bank.successful_commits);
-    try testing.expectEqual(@as(u64, 6), final_session_bank.releases);
+    try testing.expectEqual(@as(u64, 8), final_session_bank.successful_commits);
+    try testing.expectEqual(@as(u64, 8), final_session_bank.releases);
     _ = try session_scheduler.close();
 
     // ResourceBank admission is an execution contract, not a numerical path:

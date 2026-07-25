@@ -433,7 +433,7 @@ release operations, then check exact zero-state recovery.
 
 **First slice:** one deterministic seed and one minimized stale-handle failure.
 
-### Prepared-session continuation authority
+### Prepared-session exact-boundary state rebind
 
 The data-plane foundation is complete: a live non-terminal `SessionV3`
 captures canonical output/RNG/contiguous-KV bytes, independent Zig/Python
@@ -441,17 +441,24 @@ verifiers reconstruct every state root, and a fresh detached allocation
 round-trips with zero slack. See
 [Prepared Text Checkpoint](PREPARED_TEXT_CHECKPOINT.md).
 
-**Next slice:** design and prove a retained-authority rebind at the exact
-current boundary. The Scheduler, ResourceBank, receipt, request epoch,
-publication sequence, and coordinator address must remain unchanged; stale,
-foreign, moved, active-attempt, and rewound boundaries must reject before
-mutation.
+**Completed R1f slice:** `SessionV3.rebindCheckpointV1` privately decodes and
+materializes the exact current checkpoint, rechecks the live boundary, then
+replaces only concrete KV/output backing under the original authority.
+Internal publication bindings remain valid before old backing is released;
+previously borrowed external output/cache views are invalid after success.
+Same-boundary repetition succeeds, while moved, active-row, recovery,
+terminal, challenge-mismatched, and stale checkpoints reject without takeover.
+The next-token transaction and terminal seal/retirement continue through the
+unchanged live receipt, Scheduler, ResourceBank, epoch, sequence, and embedded
+publication-coordinator address. The retained test carries one permit across
+rebind, compares the complete next transition and numerical state with an
+uninterrupted reference, and sweeps every candidate-allocation failure without
+leak or live-state mutation.
 
-**Done when:** the replacement concrete bindings validate under the existing
-live receipt, the original bindings can be retired without dangling pointers,
-one next-token transaction matches the uninterrupted path, terminal
-seal/retirement still release exactly once, and no API claims fresh-process or
-durable resume.
+**Next slice:** define a successor plan/transcript segment with a nonzero
+sequence base, source-boundary lineage, nonempty cache identity, and explicit
+ownership handoff. New-Session and fresh-process continuation remain separate
+gates.
 
 ### Paged-KV ownership restore fixture
 

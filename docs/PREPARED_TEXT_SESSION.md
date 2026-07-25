@@ -11,8 +11,9 @@ to the Common Model Contract while preserving the R1b transaction underneath.
 R1d layers the preferred fixed-length `SessionV3` terminal-result lifecycle
 over that bridge. R1e adds canonical non-terminal state capture and detached
 output/RNG/contiguous-KV materialization without transferring publication
-authority. These are integrated experimental slices, not the completed R1 text
-runtime.
+authority. R1f adds exact-current-boundary state-buffer rebind inside the
+original same-process Session while preserving that authority. These are
+integrated experimental slices, not the completed R1 text runtime.
 
 ## Supported envelope
 
@@ -33,12 +34,13 @@ runtime.
 | Mutable state | Session-owned KV rows, RNG state, sampling count, and output token buffer |
 | Evidence | `BoundarySnapshotV2` binds the live execution boundary; `TerminalResultEvidenceV1` joins it to the canonical output and actual charged receipt |
 | R1e checkpoint | Canonical non-terminal output/RNG/KV image with independent Zig/Python verification and detached zero-slack materialization |
+| R1f rebind | Internally verified replacement of concrete output/KV backing at the exact current boundary while all live authority remains in the original Session |
 
 `eos_token` must be outside the model vocabulary in this version. Fixed-length
 execution keeps the admitted service count identical to the number of
 publication transactions.
 
-## Preferred R1d/R1e lifecycle
+## Preferred R1d/R1e/R1f lifecycle
 
 1. Load a prepared image with `loader.loadPreparedWithOptions`.
 2. Build `prepared_text_session.OptionsV1`, then derive the canonical
@@ -138,10 +140,11 @@ all capacity, and copies only the committed prefixes.
 
 That new value is deliberately detached: it contains no Scheduler, Bank,
 receipt, permit, sink, mutex, or publication Session. It cannot run the next
-token or publish output. The current authority is bound to the exact live
-Session address and sequence, so creating a runnable Session from these bytes
-requires a later successor-plan, Scheduler, ResourceBank, and publication
-handoff protocol.
+token or publish output by itself. R1f lets only the original live Session
+rematerialize and install its exact current state while retaining the existing
+embedded-coordinator address, sequence, and authority. Constructing a different
+or fresh-process Session still requires successor-plan, Scheduler,
+ResourceBank, ownership-remapping, durability, and exclusive-handoff protocols.
 Both the encoded slice and detached allocations are caller-owned and are not
 charged to the live Session's `ResourceBank`.
 
@@ -160,12 +163,67 @@ See [Prepared Text Checkpoint](PREPARED_TEXT_CHECKPOINT.md) for the exact wire,
 ownership boundary, tests, and path from detached materialization to a safe
 fresh-process continuation.
 
-This is a correctness-first startup transaction, not a non-blocking startup
-mechanism. It deliberately prevents the same scheduler from admitting,
-servicing, cancelling, retiring, or closing logical work while materialization
-is in progress. A future staged activation design must preserve the same
-charge-before-materialize and replay guarantees before allowing concurrent
-scheduler progress.
+## R1f same-process state-buffer rebind
+
+At the same R1e boundary, the original live Session can install the canonical
+image without transferring authority:
+
+```zig
+const checkpoint_root = try session.rebindCheckpointV1(
+    checkpoint_bytes,
+    checkpoint_challenge,
+);
+```
+
+The method derives `ExpectedBindingsV1` from the live Session rather than from
+the image. It validates the current V2 boundary, retained plans, result state,
+nested receipt, exact ResourceBank fence, publication sequence, and
+address-stable ownership wiring; decodes and materializes internally with the
+Session allocator; then validates the same live context again. It also compares
+the exact committed output and raw KV bytes, RNG/counters, geometry, publication
+KV root, and zero slack.
+
+Only after every fallible check succeeds does the method replace the values of
+the existing cache and output fields and release their former allocations. The
+embedded publication coordinator at `&publication_session.inner`, Scheduler,
+ResourceBank, receipt, request epoch, sequence, transcript/state roots,
+cache-field address, and RNG/counter/output-length field addresses remain
+unchanged. No service permit is consumed and no Scheduler or Bank event is
+emitted. The next ordinary `step` recomputes logits and follows the same
+transition as the uninterrupted path.
+
+Rebinding the same exact boundary can safely repeat, but a checkpoint becomes
+stale as soon as the Session advances. Active KV row transactions, copied or
+moved Sessions, recovery-adoption state, sequence zero, terminal state, and
+context substitution reject before takeover. A successful rebind invalidates
+all previously borrowed output/cache slices and row-transaction marks.
+
+The retained integration test holds one service permit across rebind and uses
+that exact permit for the next ordinary step. It compares the whole token
+transition plus output, RNG, sampling count, and logical KV state with a
+separate uninterrupted Session. A phase-gated allocator sweeps every candidate
+allocation failure and verifies complete Session/Scheduler/Bank/pointer
+preservation with no leaked candidate.
+
+This is not a new Session, authority transfer, fresh-process restore, durable
+checkpoint publication, rewind, or concurrent mutation protocol. Candidate and
+old allocations coexist briefly without changing the logical ResourceBank
+claim; that overlap is not physical peak-memory evidence.
+
+R1f requires exclusive access to the Session and its bound receipt authority
+for the entire call. It does not hold the scheduler-wide adoption barrier while
+materializing, and unrelated work on the same Scheduler is not blocked or
+validated by rebind. R1f is not a concurrent Session or authority-mutation
+protocol. If a caller already holds a service permit, the Scheduler's ordinary
+pending-service fence may independently reject other logical mutators with
+`ServiceInFlight`; that fence belongs to the permit, not to rebind.
+
+`SessionV3.start` remains a correctness-first startup transaction rather than a
+non-blocking startup mechanism. Its adoption barrier deliberately prevents the
+same scheduler from admitting, servicing, cancelling, retiring, or closing
+logical work while startup allocation and prefill are in progress. A future
+staged activation design must preserve the same charge-before-materialize and
+replay guarantees before allowing concurrent scheduler progress.
 
 ## Compatibility lifecycles
 
@@ -290,17 +348,17 @@ the LaneWeave publication-adoption unit tests, the retained evidence verifies:
 - zero used resources after retirement;
 - zero used resources after an injected initialization-allocation failure.
 
-R1e does not claim that its request-profile manifest is a stable package
+R1f does not claim that its request-profile manifest is a stable package
 identity or that shared logical residency proves physical RSS. It does not
 execute a raw-text tokenizer, verify the caller-asserted token-domain,
 configuration, or license bytes, publish the terminal envelope to a durable
-external sink, serialize a durable checkpoint, transfer publication authority,
-or resume the prepared session in a fresh process. Its checkpoint image is a
-portable integrity and detached-materialization boundary, not a resumable
-Session or authenticated/encrypted storage. It also does not bridge every
-V1-valid request
-shape: profiles whose local activation accounting falls below the common
-token-input byte bound remain outside R1e. `SessionV3` requires exactly
+external sink, serialize a durable checkpoint, transfer publication authority
+to another Session, or resume the prepared session in a fresh process. Its
+checkpoint image plus same-process rebind is not authenticated/encrypted
+storage or a fresh authority-construction protocol. It also does not bridge
+every V1-valid request shape: profiles whose local activation accounting falls
+below the common token-input byte bound remain outside R1f. `SessionV3`
+requires exactly
 `max_new_tokens` outputs and does not support early EOS or a shorter terminal
 sequence; `SessionV2` remains available as the R1c boundary API. The fixture
 does not establish production-model quality, native performance evidence,

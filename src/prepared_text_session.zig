@@ -1820,8 +1820,15 @@ pub const SessionV2 = struct {
     }
 };
 
-/// Preferred R1d session. V3 preserves the complete V2 execution lifecycle and
-/// adds one terminal, residency-aware Common Model Contract ResultEnvelope.
+const CheckpointContextV1 = struct {
+    boundary: BoundarySnapshotV2,
+    expected: prepared_checkpoint.ExpectedBindingsV1,
+};
+
+/// Preferred R1d-R1f session. V3 preserves the complete V2 execution lifecycle,
+/// adds one terminal, residency-aware Common Model Contract ResultEnvelope,
+/// and can replace exact non-terminal state buffers while retaining the
+/// original in-process publication authority.
 ///
 /// The Model Contract publication state is a separate result domain from the
 /// per-token contiguous transcript: token transactions advance the V2
@@ -1947,15 +1954,10 @@ pub const SessionV3 = struct {
         return self.inner.snapshotVerified();
     }
 
-    /// Capture one exact, non-terminal prepared boundary as canonical bytes.
-    /// The returned allocation belongs to `allocator`. Decoding it can
-    /// materialize a detached output/RNG/KV payload, but does not transfer the
-    /// live Scheduler/Bank/publication authority held by this Session.
-    pub fn captureCheckpointV1(
+    fn checkpointContextV1(
         self: *SessionV3,
-        allocator: std.mem.Allocator,
         challenge_sha256: [32]u8,
-    ) ![]u8 {
+    ) !CheckpointContextV1 {
         if (!self.result_state_initialized or
             !self.result_receipt_live or
             self.terminal_result_sealed or
@@ -1971,7 +1973,18 @@ pub const SessionV3 = struct {
             output.len >= session.options.max_new_tokens)
             return Error.InvalidState;
 
-        const boundary = try self.inner.snapshotVerified();
+        const publication_session = &session.publication_session;
+        const bindings = publication_session.bindings;
+        if (bindings.cache != &session.resources.cache or
+            bindings.rng_state != &session.rng_state or
+            bindings.sampling_calls != &session.sampling_calls or
+            bindings.output_len != &session.output_len or
+            bindings.output.ptr != session.resources.output.ptr or
+            bindings.output.len != session.resources.output.len)
+            return Error.InvalidState;
+
+        const boundary = self.inner.snapshotVerified() catch
+            return Error.InvalidState;
         const local_plan = session.plan;
         const bound_plan = self.inner.bound_plan;
         try validateBoundPlanV1(bound_plan);
@@ -2000,7 +2013,6 @@ pub const SessionV3 = struct {
                 boundary.base.publication.request_epoch)
             return Error.InvalidState;
 
-        const publication_session = &session.publication_session;
         const nested_receipt =
             publication_session.admission.event.resource_receipt;
         if (!std.meta.eql(nested_receipt, self.result_receipt))
@@ -2013,18 +2025,9 @@ pub const SessionV3 = struct {
         ) catch return Error.InvalidState;
 
         const cache = &session.resources.cache;
-        const required =
-            try prepared_checkpoint.encodedCheckpointBytesV1(
-                cache.num_layers,
-                cache.dim,
-                cache.len,
-                output.len,
-            );
-        const bytes = allocator.alloc(u8, required) catch
-            return error.OutOfMemory;
-        errdefer allocator.free(bytes);
-        const encoded = try prepared_checkpoint.encodeCheckpointV1(
-            .{
+        return .{
+            .boundary = boundary,
+            .expected = .{
                 .local_plan_sha256 = local_plan.plan_sha256,
                 .bound_plan_sha256 = bound_plan.bound_plan_sha256,
                 .artifact_sha256 = bound_plan.artifact.artifact_sha256,
@@ -2039,16 +2042,223 @@ pub const SessionV3 = struct {
                 .prompt_tokens = local_plan.prompt_tokens,
                 .max_new_tokens = local_plan.max_new_tokens,
                 .vocab_size = @intCast(session.model.config.vocab_size),
+                .num_layers = @intCast(cache.num_layers),
+                .kv_dim = @intCast(cache.dim),
+                .max_kv_positions = @intCast(cache.max_seq),
+                .kv_positions = @intCast(cache.len),
+                .output_count = @intCast(output.len),
+                .sampling_calls = session.sampling_calls,
+                .challenge_sha256 = challenge_sha256,
+            },
+        };
+    }
+
+    fn validateRebindCandidateV1(
+        self: *SessionV3,
+        decoded: prepared_checkpoint.DecodedV1,
+        candidate: *prepared_checkpoint.DetachedPayloadV1,
+    ) !void {
+        const session = &self.inner.inner;
+        const live_cache = &session.resources.cache;
+        const candidate_cache = &candidate.cache;
+        const live_output = session.outputTokens();
+        if (!std.meta.eql(
+            candidate.allocator,
+            session.resources.allocator,
+        ) or candidate_cache.rowTxnActive() or
+            candidate_cache.instance_id == live_cache.instance_id or
+            candidate_cache.num_layers != live_cache.num_layers or
+            candidate_cache.dim != live_cache.dim or
+            candidate_cache.max_seq != live_cache.max_seq or
+            candidate_cache.len != live_cache.len or
+            candidate.output.ptr == session.resources.output.ptr or
+            candidate.output.len != session.resources.output.len or
+            candidate.output_len != live_output.len or
+            candidate.output_len != decoded.output_count or
+            !std.meta.eql(candidate.rng_state, session.rng_state) or
+            candidate.sampling_calls != session.sampling_calls or
+            !std.mem.eql(
+                u8,
+                &candidate.checkpoint_sha256,
+                &decoded.checkpoint_sha256,
+            ) or !std.mem.eql(
+            u8,
+            &decoded.logical_kv_sha256,
+            &session.publication_session.physical_kv_sha256,
+        ) or !std.mem.eql(
+            u32,
+            candidate.outputTokens(),
+            live_output,
+        ) or !std.mem.eql(
+            u8,
+            &lane_contiguous.logicalKvPrefixSha256(
+                candidate_cache,
+                candidate_cache.len,
+            ),
+            &lane_contiguous.logicalKvPrefixSha256(
+                live_cache,
+                live_cache.len,
+            ),
+        ))
+            return prepared_checkpoint.Error.InvalidCheckpoint;
+
+        for (0..live_cache.num_layers) |layer| {
+            if (!std.mem.eql(
+                u8,
+                std.mem.sliceAsBytes(
+                    candidate_cache.keysSliceCount(
+                        layer,
+                        candidate_cache.len,
+                    ),
+                ),
+                std.mem.sliceAsBytes(
+                    live_cache.keysSliceCount(
+                        layer,
+                        live_cache.len,
+                    ),
+                ),
+            ) or !std.mem.eql(
+                u8,
+                std.mem.sliceAsBytes(
+                    candidate_cache.valuesSliceCount(
+                        layer,
+                        candidate_cache.len,
+                    ),
+                ),
+                std.mem.sliceAsBytes(
+                    live_cache.valuesSliceCount(
+                        layer,
+                        live_cache.len,
+                    ),
+                ),
+            ))
+                return prepared_checkpoint.Error.InvalidCheckpoint;
+        }
+        for (candidate.output[candidate.output_len..]) |token| {
+            if (token != 0)
+                return prepared_checkpoint.Error.InvalidCheckpoint;
+        }
+        const slack_start =
+            candidate_cache.len * candidate_cache.dim;
+        for (0..candidate_cache.num_layers) |layer| {
+            for (candidate_cache.keys[layer][slack_start..]) |value| {
+                if (@as(u32, @bitCast(value)) != 0)
+                    return prepared_checkpoint.Error.InvalidCheckpoint;
+            }
+            for (candidate_cache.values[layer][slack_start..]) |value| {
+                if (@as(u32, @bitCast(value)) != 0)
+                    return prepared_checkpoint.Error.InvalidCheckpoint;
+            }
+        }
+    }
+
+    /// Capture one exact, non-terminal prepared boundary as canonical bytes.
+    /// The returned allocation belongs to `allocator`. Decoding it can
+    /// materialize a detached output/RNG/KV payload, but does not transfer the
+    /// live Scheduler/Bank/publication authority held by this Session.
+    pub fn captureCheckpointV1(
+        self: *SessionV3,
+        allocator: std.mem.Allocator,
+        challenge_sha256: [32]u8,
+    ) ![]u8 {
+        const context = try self.checkpointContextV1(
+            challenge_sha256,
+        );
+        const session = &self.inner.inner;
+        const output = session.outputTokens();
+        const cache = &session.resources.cache;
+        const required =
+            try prepared_checkpoint.encodedCheckpointBytesV1(
+                cache.num_layers,
+                cache.dim,
+                cache.len,
+                output.len,
+            );
+        const bytes = allocator.alloc(u8, required) catch
+            return error.OutOfMemory;
+        errdefer allocator.free(bytes);
+        const encoded = try prepared_checkpoint.encodeCheckpointV1(
+            .{
+                .local_plan_sha256 = context.expected.local_plan_sha256,
+                .bound_plan_sha256 = context.expected.bound_plan_sha256,
+                .artifact_sha256 = context.expected.artifact_sha256,
+                .execution_plan_sha256 = context.expected.execution_plan_sha256,
+                .residency_binding_sha256 = context.expected.residency_binding_sha256,
+                .boundary_sha256 = context.expected.boundary_sha256,
+                .transcript_sha256 = context.expected.transcript_sha256,
+                .state_commitment_sha256 = context.expected.state_commitment_sha256,
+                .request_epoch = context.expected.request_epoch,
+                .publication_next_sequence = context.expected.publication_next_sequence,
+                .prompt_tokens = context.expected.prompt_tokens,
+                .max_new_tokens = context.expected.max_new_tokens,
+                .vocab_size = context.expected.vocab_size,
                 .output_tokens = output,
                 .rng_state = session.rng_state,
                 .sampling_calls = session.sampling_calls,
                 .cache = cache,
-                .challenge_sha256 = challenge_sha256,
+                .challenge_sha256 = context.expected.challenge_sha256,
             },
             bytes,
         );
         std.debug.assert(encoded.len == bytes.len);
         return bytes;
+    }
+
+    /// Replace only the concrete KV/output backing at the exact current
+    /// non-terminal boundary. The embedded publication coordinator, Scheduler,
+    /// Bank, receipt, epoch, sequence, transcript, and scalar field addresses
+    /// remain unchanged. Previously borrowed output/cache views are invalid
+    /// after success. The caller must serialize the entire call with every
+    /// operation on this Session and its bound receipt authority.
+    pub fn rebindCheckpointV1(
+        self: *SessionV3,
+        encoded: []const u8,
+        challenge_sha256: [32]u8,
+    ) ![32]u8 {
+        const before = try self.checkpointContextV1(
+            challenge_sha256,
+        );
+        const decoded =
+            try prepared_checkpoint.decodeCheckpointV1(
+                encoded,
+                before.expected,
+            );
+        const session = &self.inner.inner;
+        var candidate =
+            try prepared_checkpoint.materializeDetachedV1(
+                session.resources.allocator,
+                decoded,
+            );
+        var candidate_owned = true;
+        defer if (candidate_owned) candidate.deinit();
+
+        const after = try self.checkpointContextV1(
+            challenge_sha256,
+        );
+        if (!std.meta.eql(before, after))
+            return Error.InvalidState;
+        try self.validateRebindCandidateV1(
+            decoded,
+            &candidate,
+        );
+
+        // Every fallible validation ends above. The cache and scalar fields
+        // retain their addresses; only their values and the copied output
+        // slice descriptor change before the old backing is released.
+        var old_cache = session.resources.cache;
+        const old_output = session.resources.output;
+        session.resources.cache = candidate.cache;
+        session.resources.output = candidate.output;
+        session.rng_state = candidate.rng_state;
+        session.sampling_calls = candidate.sampling_calls;
+        session.output_len = candidate.output_len;
+        session.publication_session.bindings.output =
+            session.resources.output;
+        candidate_owned = false;
+
+        session.resources.allocator.free(old_output);
+        old_cache.deinit();
+        return decoded.checkpoint_sha256;
     }
 
     /// Seal the only Common Model Contract result while the exact charged

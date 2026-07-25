@@ -1,14 +1,17 @@
 # Prepared Text Checkpoint
 
-The prepared-text checkpoint is an experimental R1e codec for one exact,
-non-terminal `SessionV3` boundary. It captures the committed output prefix,
-RNG state, sampling count, and contiguous KV prefix as a canonical
-little-endian byte image. A verified image can be materialized into a fresh,
-detached allocation in the same process.
+The prepared-text checkpoint combines an experimental R1e codec with an R1f
+same-process rebind for one exact, non-terminal `SessionV3` boundary. It
+captures the committed output prefix, RNG state, sampling count, and contiguous
+KV prefix as a canonical little-endian byte image. A verified image can be
+materialized into a fresh detached allocation or used to replace only the
+concrete state backing of the original live Session.
 
 Detached is an important boundary. The materialized payload has no Scheduler,
 ResourceBank, receipt, service permit, sink, or publication authority. It is
 not a runnable restored Session, a durable checkpoint, or fresh-process resume.
+R1f does not attach authority to that detached value; the live Session decodes
+and materializes the image internally while retaining its existing authority.
 
 ## What the slice proves
 
@@ -26,6 +29,22 @@ not a runnable restored Session, a durable checkpoint, or fresh-process resume.
 - `materializeDetachedV1` zeros every output and KV allocation before copying
   the committed prefixes. Uncommitted capacity is therefore deterministic
   zero, not allocator residue.
+- `SessionV3.rebindCheckpointV1` validates the live context both before and
+  after internal materialization, verifies exact output/KV bytes and zero
+  slack, then replaces only the original Session's output and KV backing.
+- A successful rebind preserves the embedded publication-coordinator address,
+  Scheduler, ResourceBank, receipt, request epoch, sequence, transcript/state
+  roots, cache-field address, and scalar-field addresses. It consumes no
+  service permit and emits no Scheduler or Bank event.
+- Rebinding the same exact boundary again is logically idempotent. A checkpoint
+  from an earlier sequence cannot rewind or branch the Session.
+- A service permit acquired before rebind remains valid for the ordinary next
+  step; the complete next transition, output/RNG/counters, and logical KV state
+  match a separately executed uninterrupted reference.
+- Failure atomicity is swept across every candidate-allocation boundary.
+  Coherently footer-resealed payload corruption, allocation failure, challenge
+  mismatch, moved authority, and an active row transaction leave the live
+  Session, Scheduler, Bank, receipt, and concrete backing unchanged.
 - The retained synthetic fixture has independent Zig and Python encoders,
   decoders, component roots, whole-wire golden, every-byte mutation rejection,
   coherent contradiction rejection, and raw `+0`, `-0`, infinity, and NaN
@@ -47,16 +66,19 @@ terminal = false
 Sequence zero is excluded because the next token would depend on prefill
 logits, which are not serialized. For `N > 0`, the prepared execution path
 recomputes the next logits from the last output token and committed KV state.
-That numerical property makes the payload sufficient for a future continuation
-protocol, but the current codec does not supply that protocol's authority.
+The payload therefore contains the numerical inputs needed for the next decode
+only when it is joined to the original compatible model, scratch/rope state,
+live Session, and authority. It is not sufficient to construct a new runnable
+Session or authorize a continuation by itself.
 
 Capture also requires:
 
 - the result receipt is still live;
 - terminal evidence is not sealed;
 - the nested admission receipt still equals the retained receipt;
-- the ResourceBank validates the exact Session address, request epoch, and
-  current publication sequence;
+- the ResourceBank validates the embedded publication-coordinator address
+  (`&publication_session.inner`), request epoch, and current publication
+  sequence;
 - no KV row transaction or publication attempt is active;
 - the V2 boundary remains contextually valid for the retained local and bound
   plans; and
@@ -118,6 +140,16 @@ var detached =
         decoded,
     );
 defer detached.deinit();
+
+const installed_root = try session.rebindCheckpointV1(
+    checkpoint_bytes,
+    checkpoint_challenge,
+);
+std.debug.assert(std.mem.eql(
+    u8,
+    &installed_root,
+    &decoded.checkpoint_sha256,
+));
 ```
 
 The caller must construct `ExpectedBindingsV1` from roots and scalar context
@@ -131,14 +163,36 @@ belongs to the supplied allocator. `DecodedV1` borrows the encoded slice;
 retain the bytes until decoding and detached materialization are complete.
 The checkpoint bytes and detached output/KV allocations are caller-owned and
 are not charged to the live Session's `ResourceBank`. Applications must apply
-their own memory admission until a future restore path reserves and subdivides
-that ownership before materialization.
+their own memory admission to caller materialization.
+
+`rebindCheckpointV1` does not accept a caller-built detached payload. It derives
+all expected roots and scalar bindings from the current live Session, decodes
+the bytes against those expectations, materializes with the Session allocator,
+and verifies the unchanged live context a second time before mutation. After
+all fallible checks, it moves the fresh cache/output descriptors into their
+existing fields and releases the old backing. Previously borrowed output
+slices, cache slices, and row-transaction marks are invalid after success.
+
+The brief overlap between old and candidate allocations is not a new
+`ResourceBank` admission or evidence of physical peak-memory accounting. The
+logical capacity and charged ownership are unchanged; integrations that impose
+a physical peak limit must enforce it outside this experimental rebind.
+Calls must be serialized with every other operation on the same Session.
+
+The experimental API preserves the checkpoint decoder's error categories
+rather than collapsing every rejection into one code. Examples include
+`ChallengeMismatch` for the caller challenge, `BindingMismatch` for a stale or
+foreign live context, `InvalidCheckpoint` for internally inconsistent payload
+bytes, and `OutOfMemory` for private materialization. Invalid live-Session
+state is reported as the prepared-session `InvalidState`.
 
 ## What is deliberately not implemented
 
-- replacing or rewinding a live Session;
+- moving the state into a new Session or rewinding the original Session to an
+  earlier boundary;
 - running the detached payload;
 - moving publication authority to a new Session address;
+- concurrent Session operations during rebind;
 - exactly-once continuation from a nonzero sequence;
 - durable filesystem publication or crash recovery;
 - source/target exclusivity or fresh-process handoff;
@@ -146,13 +200,15 @@ that ownership before materialization.
 - confidentiality and authenticated storage.
 
 The current publication Session and ResourceBank bind authority to the exact
-in-process Session address. Their initializers also begin at sequence zero.
-Bypassing those fences would make duplicate or stale publication possible.
+embedded publication-coordinator address (`&publication_session.inner`).
+Their initializers also begin at sequence zero. Bypassing those fences would
+make duplicate or stale publication possible.
 
-## Roadmap from codec to resume
+## Roadmap from same-process rebind to fresh-process continuation
 
-1. Add a verified retained-authority rebind at the exact current boundary,
-   without changing Scheduler, Bank, receipt, sequence, or coordinator address.
+1. ~~Add a verified retained-authority rebind at the exact current boundary,
+   without changing Scheduler, Bank, receipt, sequence, or coordinator
+   address.~~ Complete in R1f for the original same-process Session.
 2. Define a successor plan and transcript segment ABI with a nonzero sequence
    base, source-boundary lineage, nonempty cache payload root, and explicit
    ownership handoff.

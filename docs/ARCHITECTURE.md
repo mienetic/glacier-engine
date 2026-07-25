@@ -454,12 +454,25 @@ unmodified live Session.
 
 The detached value has no Scheduler, ResourceBank, receipt, permit, sink, or
 publication authority. It cannot continue generation or publish another token.
-The current authority remains bound to the original in-process Session address
-and nonzero sequence. A safe runnable restore therefore still needs a
-retained-authority rebind or successor-segment ABI, restored Scheduler/Bank
-semantics, LeaseTree-aware publication/receipt remapping, durable selection,
-and exclusive source/target handoff. The encoded and detached allocations are
-caller-owned and are not charged to the live Session's ResourceBank.
+The encoded and detached allocations are caller-owned and are not charged to
+the live Session's ResourceBank.
+
+R1f adds a narrower same-process operation:
+`SessionV3.rebindCheckpointV1` replaces only the concrete output and contiguous
+KV backing of the original Session at its exact current boundary. The live
+Session supplies all decoder expectations and materializes the candidate
+internally. It verifies the complete live context before and after
+materialization, validates exact raw committed state and zero slack, and
+performs no fallible work after takeover begins. The embedded publication
+coordinator, Scheduler, ResourceBank, receipt, request epoch, sequence,
+transcript/state roots, and address-bound scalar/cache fields remain unchanged.
+No permit or authority is created, consumed, or transferred. Old borrowed
+output/cache views become invalid after success.
+
+This retained-authority rebind is not a fresh-process restore. Moving
+continuation into a new Session still requires a successor-segment ABI,
+restored Scheduler/Bank semantics, LeaseTree-aware publication/receipt
+remapping, durable selection, source exit, and exclusive target handoff.
 
 This lifecycle does not add early EOS, fewer-than-admitted outputs, a raw-text
 tokenizer, stable package or license byte attestation, durable prepared-session
@@ -783,7 +796,8 @@ targets remain gated until their named native adapters and evidence pass.
 - [Prepared text session](PREPARED_TEXT_SESSION.md): exact prepared-image
   execution, publication, boundary, and terminal-result lifecycle.
 - [Prepared text checkpoint](PREPARED_TEXT_CHECKPOINT.md): canonical
-  non-terminal output/RNG/contiguous-KV state and detached materialization.
+  non-terminal output/RNG/contiguous-KV state, detached materialization, and
+  same-process exact-boundary rebind under retained authority.
 - [Continuation capsule](CONTINUATION_CAPSULE.md): checkpoint manifest ABI.
 - [Continuation object resolver](CONTINUATION_OBJECT_RESOLVER.md): scoped
   lookup and quota contract.
