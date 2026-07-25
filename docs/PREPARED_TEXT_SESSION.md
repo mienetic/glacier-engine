@@ -8,7 +8,9 @@ transactional token publication without downloading a model.
 R1a established the persistent numerical and publication lifecycle. R1b added
 atomic start for a shared scheduler. R1c adds the preferred `SessionV2` bridge
 to the Common Model Contract while preserving the R1b transaction underneath.
-These are integrated experimental slices, not the completed R1 text runtime.
+R1d layers the preferred fixed-length `SessionV3` terminal-result lifecycle
+over that bridge. These are integrated experimental slices, not the completed
+R1 text runtime.
 
 ## Supported envelope
 
@@ -22,18 +24,18 @@ These are integrated experimental slices, not the completed R1 text runtime.
 | Numerical policy | Common execution declares `implementation_defined`; retained evidence compares output tokens with the configured oracle |
 | Length | A nonzero, fixed `max_new_tokens` service count |
 | Common contract | `BoundPlanV1` cross-binds the local plan, request-profile artifact manifest, sequence execution plan, and residency projection |
-| Admission | `SessionV2.start` validates the complete binding before `SessionV1.start` derives the exact request claim and work quanta |
+| Admission | `SessionV3.start` validates the complete binding before `SessionV1.start` derives the exact request claim and work quanta |
 | Residency | Shared read-only `.glrt`; total logical claim and request-charged claim remain distinct |
 | R1c profile gate | The local activation claim must satisfy the Common Execution Plan's exact token-input byte lower bound |
-| Publication | One `LaneWeave` service permit commits one token transaction |
+| Publication | One `LaneWeave` service permit commits one token transaction; one terminal seal advances result state from zero to one |
 | Mutable state | Session-owned KV rows, RNG state, sampling count, and output token buffer |
-| Evidence | `BoundarySnapshotV2` binds the V1 boundary plus bound-plan, artifact, execution-plan, and residency roots |
+| Evidence | `BoundarySnapshotV2` binds the live execution boundary; `TerminalResultEvidenceV1` joins it to the canonical output and actual charged receipt |
 
 `eos_token` must be outside the model vocabulary in this version. Fixed-length
 execution keeps the admitted service count identical to the number of
 publication transactions.
 
-## Preferred R1c lifecycle
+## Preferred R1d lifecycle
 
 1. Load a prepared image with `loader.loadPreparedWithOptions`.
 2. Build `prepared_text_session.OptionsV1`, then derive the canonical
@@ -52,7 +54,7 @@ publication transactions.
    returns `InvalidBoundPlan` if the local activation claim is smaller than the
    Common Execution Plan's exact `u32` prompt-input byte count.
 5. Retain `BoundPlanInputV1` independently and pass it with the bound plan to
-   `SessionV2.start`. It reconstructs and compares the artifact, execution,
+   `SessionV3.start`. It reconstructs and compares the artifact, execution,
    residency, and local-plan binding before admission, so a coherently re-rooted
    token-domain or license substitution cannot authorize itself. It then
    installs those roots at the Session's final address and delegates to the
@@ -76,12 +78,27 @@ publication transactions.
    it to `step` with a `lane_publication_txn.SinkV1`. Each successful step
    publishes exactly one token and commits the corresponding KV/RNG/output
    transition.
-9. Call `SessionV2.snapshotVerified` at an idle boundary when evidence is
+9. Call `SessionV3.snapshotVerified` at an idle boundary when evidence is
    needed. It revalidates the bound plan before emitting `BoundarySnapshotV2`.
    A consumer that already holds the expected `BoundPlanV1` and local `PlanV1`
    should verify the join with `boundarySnapshotValidForBoundPlanV2`.
-10. After the fixed final token, call `retire`. Before completion, call `cancel`
-   instead. Always call `deinit` to release the session's local allocations.
+10. After the fixed final token, call `sealTerminalResult`. It computes the
+    canonical little-endian `u32` output root, joins it to the V2 boundary and
+    source mapping, validates the actual request-charged receipt against both
+    the live Bank publication session and the residency projection, and on
+    success advances the terminal-result publication state exactly once from
+    zero to one. The envelope context binds the exact artifact, execution plan,
+    prompt/schema roots, cache identity, ownership root, publication challenge,
+    and adapter evidence.
+11. Read the sealed `TerminalResultEvidenceV1` through `terminalResult` and
+    validate it against the independently retained bound/local plans and exact
+    output tokens. If the original Receipt is retained independently, use
+    `terminalResultEvidenceValidForReceiptV1` to reject substitution by a
+    different structurally valid receipt. Calling `sealTerminalResult` early or
+    a second time rejects without changing the retained result evidence.
+12. Call `retire` only after sealing. Before sealing, call `cancel` instead.
+    Cancellation is not valid after a terminal result becomes visible. Always
+    call `deinit` to release the session's local allocations.
 
 The adoption barrier seals the admission, scheduler identity, publication
 request epoch, address-stable session identity, service policy, and a
@@ -102,7 +119,9 @@ scheduler progress.
 Contract bridge. `SessionV1.init` remains available for integrations that
 already hold a successful admission. The `init` path retains the R1a exclusive
 boundary: no thread may call the same scheduler between successful admission
-and the return from `init`. New integrations should use `SessionV2.start`.
+and the return from `init`. `SessionV2` remains the R1c boundary API without
+the R1d terminal-result state. New fixed-length integrations should use
+`SessionV3.start`.
 
 The V1 boundary snapshot has a canonical root over the local plan, exact image
 identity, committed state, sequence position, and publication transcript.
@@ -121,7 +140,7 @@ required to restore the Session in another process.
 - The caller keeps the loaded model alive for the entire session.
 - The caller owns the scheduler, bank storage, and downstream sink; the session
   borrows them for the active lifecycle.
-- `SessionV2` and its inner Session must already be at their final address
+- `SessionV3` and its inner Sessions must already be at their final address
   before `start`. Do not move, copy, mutate, or concurrently access them during
   initialization, active publication, or adoption recovery.
 - The Common Model Contract artifact manifest is a request-profile identity:
@@ -131,7 +150,7 @@ required to restore the Session in another process.
 - `token_domain_sha256`, `token_domain_config_sha256`, and the artifact-license
   root are opaque caller assertions. Binding a digest does not verify the
   asserted tokenizer, configuration, license, or provenance. The caller must
-  retain the expected `BoundPlanInputV1` independently through `SessionV2.start`;
+  retain the expected `BoundPlanInputV1` independently through `SessionV3.start`;
   deriving those expectations back from the supplied bound plan would make a
   coherent substitution self-authorizing.
 - The execution plan includes the shared read-only `.glrt` bytes in its total
@@ -169,14 +188,19 @@ required to restore the Session in another process.
 - A numerical error before publication aborts the caller-supplied pending
   service permit; failure to restore that scheduler boundary is reported as a
   recovery-required error.
-- If `SessionV2.start` returns `RecoveryRequired`, the common binding and exact,
+- If `SessionV3.start` returns `RecoveryRequired`, the common binding and exact,
   single-use cancellation authority remain installed. Do not overwrite or move
   the Session while that authority is live. After the transient cleanup error
   is resolved, call `recoverStartAdoption` to retry cancellation. This API
   neither diagnoses nor repairs Scheduler or Bank state.
-- `retire`, `cancel`, and the `deinit` safety path close the adopted
-  publication lifecycle. Explicit retirement or cancellation is preferred when
-  the caller needs the resulting scheduler event.
+- `SessionV3.retire` requires a sealed terminal result, while cancellation is
+  valid only before sealing. The `deinit` safety path still closes an adopted
+  lifecycle, but explicit sealing plus retirement or pre-seal cancellation is
+  preferred when the caller needs the resulting evidence and scheduler event.
+- Self-contained terminal-evidence validation reconstructs and checks the
+  envelope's Receipt fields but does not prove current Bank authority. Live
+  authority is checked during sealing; later consumers need an independently
+  retained Receipt for exact receipt-substitution resistance.
 
 ## Retained evidence
 
@@ -185,7 +209,7 @@ in [`tests/model_forward.zig`](../tests/model_forward.zig) builds a tiny
 synthetic source model and prepares and maps its `.glrt` image. Together with
 the LaneWeave publication-adoption unit tests, the retained evidence verifies:
 
-- exact token equivalence with the configured legacy numerical oracle;
+- exact token equivalence with the configured numerical oracle;
 - rejection of in-vocabulary early EOS;
 - exact admission-claim and service-count binding;
 - plan-derived admission claim and work quanta through `SessionV1.start`;
@@ -199,24 +223,36 @@ the LaneWeave publication-adoption unit tests, the retained evidence verifies:
   failure, with the scheduler reusable afterward;
 - one downstream commit per output token with no abort;
 - canonical plan/image/publication boundary grouping and mutation rejection;
+- a canonical little-endian `u32` terminal output root and V2-bound source
+  mapping;
+- one residency-aware `ResultEnvelopeV1` carrying the exact request-charged
+  receipt rather than the total logical claim;
+- early, duplicate, and substituted terminal-result rejection before state
+  mutation;
+- shared Zig/Python artifact/plan/residency/result wire, Receipt-integrity, and
+  terminal output/source/evidence root goldens with adversarial mutation
+  coverage;
 - pending-permit rollback after an injected pre-publication failure;
 - zero used resources after retirement;
 - zero used resources after an injected initialization-allocation failure.
 
-R1c does not claim that its request-profile manifest is a stable package
+R1d does not claim that its request-profile manifest is a stable package
 identity or that shared logical residency proves physical RSS. It does not
 execute a raw-text tokenizer, verify the caller-asserted token-domain,
-configuration, or license bytes, publish a Common Model Contract
-`ResultEnvelopeV1`, serialize a durable checkpoint, or resume the prepared
-session in a fresh process. It also does not bridge every V1-valid request
+configuration, or license bytes, publish the terminal envelope to a durable
+external sink, serialize a durable checkpoint, or resume the prepared session
+in a fresh process. It also does not bridge every V1-valid request
 shape: profiles whose local activation accounting falls below the common
-token-input byte bound remain outside R1c. The fixture does not establish
-production-model quality, native performance evidence, tokenizer
-interoperability, strict cross-platform numerical equivalence, or concurrent
-same-scheduler progress during startup.
+token-input byte bound remain outside R1d. `SessionV3` requires exactly
+`max_new_tokens` outputs and does not support early EOS or a shorter terminal
+sequence; `SessionV2` remains available as the R1c boundary API. The fixture
+does not establish production-model quality, native performance evidence,
+tokenizer interoperability, strict cross-platform numerical equivalence, or
+concurrent same-scheduler progress during startup.
 
 `BoundPlanV1`, `ExecutionResidencyBindingV1`, and the Session bridge are still
-an experimental Zig/direct API. There is no fixed `BoundPlanV1` wire, C
-validator, independent golden oracle, or retained `.generate_sequence`
-`SupportRecordV1` yet. Cross-language ABI and support-registry parity are
-future work; the API may change while R1 is active.
+an experimental Zig/direct API. There is no fixed `BoundPlanV1` wire, projected
+C verifier, or retained `.generate_sequence` `SupportRecordV1` yet. The
+residency-aware artifact/plan/result projection and terminal roots have shared
+Zig/Python goldens; broader cross-language ABI and support-registry parity
+remain future work. The API may change while R1 is active.

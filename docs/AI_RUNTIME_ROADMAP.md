@@ -644,15 +644,56 @@ long-prompt/minimal-model profiles accepted by `SessionV1` can therefore fail
 requires a later ownership and accounting decision; R1c does not claim complete
 V1 shape coverage.
 
-R1c does not execute a raw-text tokenizer, emit a Common Model Contract
-`ResultEnvelopeV1`, add a prepared-session checkpoint or fresh-process resume,
-or establish production-model, native-platform, quality, or performance
-evidence. It also does not establish strict cross-platform numerical
-equivalence. `BoundPlanV1`, `ExecutionResidencyBindingV1`, and the bridge remain
-an experimental Zig/direct API: there is no fixed bound-plan wire, C validator,
-independent golden oracle, or `.generate_sequence` `SupportRecordV1`.
+R1c does not execute a raw-text tokenizer, add a prepared-session checkpoint or
+fresh-process resume, or establish production-model, native-platform, quality,
+or performance evidence. It also does not establish strict cross-platform
+numerical equivalence. `BoundPlanV1`, `ExecutionResidencyBindingV1`, and the
+bridge remain an experimental Zig/direct API: there is no fixed bound-plan
+wire, projected C verifier, or `.generate_sequence` `SupportRecordV1`.
 Cross-language ABI and support-registry parity, plus non-blocking staged
 activation, remain future work.
+
+#### R1d — Residency-aware terminal result
+
+Status: **integrated experimental terminal-evidence slice**. The preferred
+fixed-length `SessionV3` path now:
+
+- preserves the R1c bound-plan validation and R1b atomic admission transaction;
+- derives a canonical, domain-separated terminal output root from the exact
+  little-endian `u32` output tokens and binds it to the execution plan,
+  token-domain configuration, and fixed output count;
+- joins that output to `BoundarySnapshotV2` through a terminal source-mapping
+  root, so the artifact, plan, prompt, publication transcript, and final token
+  sequence cannot be substituted independently;
+- prepares and validates one Common Model Contract `ResultEnvelopeV1` whose
+  resource receipt is the actual `ResourceBank` charge from
+  `ExecutionResidencyBindingV1.request_claim`, not the execution plan's total
+  logical claim;
+- permits at most one explicit terminal seal; a successful seal advances the
+  dedicated result-publication state exactly once from `0 → 1`, early and
+  duplicate sealing reject before mutation, explicit retirement requires a
+  sealed result, and cancellation is allowed only before sealing; and
+- retains native Zig numerical, lifecycle, mutation, and zero-resource
+  retirement evidence plus shared Zig/Python goldens for the canonical
+  artifact/plan/residency/result records, Receipt integrity, terminal output,
+  source mapping, result evidence, and their substitution failures.
+
+This slice is deliberately fixed-length: `output_length` must equal
+`max_new_tokens`, and `SessionV3` does not add early-EOS or
+fewer-than-admitted-output semantics. `SessionV2` remains available as the R1c
+boundary API. R1d binds caller-supplied token-domain, configuration, and
+license roots but does not inspect the raw bytes they name; it therefore does
+not establish raw-text tokenizer identity, a stable package identity, or
+license-byte attestation.
+
+The terminal envelope and `TerminalResultEvidenceV1` are in-process evidence,
+not a durable external result sink or a historical attestation. R1d adds no
+fixed `BoundPlanV1` wire, projected C verifier, prepared-session checkpoint, or
+fresh-process resume. Production fixtures, strict cross-platform numerical
+equivalence, native multi-OS execution, quality/performance evidence, complete
+V1 ownership coverage, and non-blocking staged startup remain future work.
+The `deinit` safety path can abandon terminal evidence while closing the
+adopted lifecycle; it is cleanup, not a successful terminal-result publication.
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with

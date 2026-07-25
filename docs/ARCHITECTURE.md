@@ -409,23 +409,49 @@ residency-binding roots. `boundarySnapshotValidV2` verifies self-canonical root
 composition, while `boundarySnapshotValidForBoundPlanV2` contextually joins the
 snapshot to the expected bound plan, canonical local plan, and complete
 prepared-image identity, including source and ABI fingerprints. It remains
-neither a durable continuation payload nor a historical attestation. R1c does
-not
-execute a raw-text tokenizer, publish a Common Model Contract
-`ResultEnvelopeV1`, restore a prepared session in a fresh process, or establish
-production-model, strict cross-platform numerical, native-platform, or
-performance evidence.
+neither a durable continuation payload nor a historical attestation.
+
+R1d layers the preferred fixed-length `SessionV3` lifecycle over `SessionV2`.
+At the terminal boundary it hashes the exact output tokens as canonical
+little-endian `u32` values, joins that root to the verified V2 boundary through
+a source-mapping root, and prepares one Common Model Contract
+`ResultEnvelopeV1`. The envelope carries the actual request-charged
+`ResourceBank` receipt from `ExecutionResidencyBindingV1.request_claim`; the
+execution plan continues to describe the larger total logical claim.
+Contextual validation joins the artifact, plan, prompt, token-domain/cache
+configuration, ownership challenge, boundary transcript, adapter evidence, and
+charged receipt before the Session validates that Receipt against the live Bank
+publication session and advances a dedicated result-publication state exactly
+once from zero to one on a successful explicit seal. Offline consumers can
+revalidate the envelope's structural receipt or compare it with an
+independently retained Receipt; only the live seal proves current Bank
+authority.
+
+`SessionV3` rejects sealing before the fixed final token and rejects duplicate
+sealing without mutating the result state. Retirement requires a sealed result;
+cancellation is valid only before sealing. The result envelope and
+`TerminalResultEvidenceV1` are live in-process evidence, not a durable external
+sink or a historical attestation. This lifecycle does not add early EOS,
+fewer-than-admitted outputs, a raw-text tokenizer, stable package or license
+byte attestation, a prepared-session checkpoint, fresh-process resume,
+production-model evidence, strict cross-platform numerical equivalence, or
+native-platform performance evidence.
+The `deinit` safety path may abandon terminal evidence while closing and
+releasing the adopted lifecycle; it does not count as a successful result seal.
 
 The bound-plan and residency bridge is currently an experimental Zig/direct
-API. It has no fixed `BoundPlanV1` wire, C validator, independent golden oracle,
-or retained `.generate_sequence` `SupportRecordV1`; cross-language ABI and
-support-registry parity are future work.
+API. It has no fixed `BoundPlanV1` wire, projected C verifier, or retained
+`.generate_sequence` `SupportRecordV1`; cross-language ABI and support-registry
+parity are future work. The residency-aware artifact/plan/result projection
+and prepared terminal roots do have shared Zig/Python goldens and adversarial
+mutation coverage.
 
 The underlying `SessionV1.start` path owns admission and adoption as one sealed
 control-plane transaction. It derives the claim and service count from the text
 plan, commits the `ResourceBank` charge before materialization, and installs a
 scheduler-wide adoption barrier before allocation or prefill begins.
-`SessionV2` preserves this transaction after its common binding is validated.
+`SessionV2` and `SessionV3` preserve this transaction after their common
+binding is validated.
 The ready session commits the single-use authority into its every-service
 publication binding; failure emits the ordinary accepted-then-cancelled
 scheduler history and releases the exact receipt. If cancellation returns a

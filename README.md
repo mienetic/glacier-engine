@@ -452,7 +452,7 @@ hardware-independent surface without those native backend dependencies.
 
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
-| AI runtime | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial pre-tokenized text request profiles, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic eight-profile retained-reference compatibility inspector | Extend ownership/accounting coverage to remaining V1 shapes; add prepared-text checkpoint and fresh-process resume, verified raw-text tokenizer identity, typed result envelopes, production fixtures, and native validation |
+| AI runtime | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial pre-tokenized text request profiles, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic eight-profile retained-reference compatibility inspector | Extend ownership/accounting coverage to remaining V1 shapes; add prepared-text checkpoint and fresh-process resume, verified raw-text tokenizer identity, a durable external result sink, production fixtures, and native validation |
 | Language interop | Installed experimental C header plus shared/static contract libraries; source and staged-install C consumers; C++ linkage check; standard-library Python `ctypes`; dependency-free Rust `extern "C"` gate; fixed profile enumeration and support-mask queries | Retained symbol/layout gates, native multi-OS consumers, stability policy, packages, then model/session execution bindings |
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures with scheduler-owned final-result publication, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, and exact deterministic producer-transition replay for retained reference profiles | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, agent/tool, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Prepared-model uninterrupted/resumed comparison, native Linux recovery, and durable lifecycle metadata |
@@ -464,16 +464,27 @@ hardware-independent surface without those native backend dependencies.
 | Runtime Workload Lab | W0 deterministic mixed-media open-loop conformance and W1 scheduler-coupled image/audio/video execution cover overload, fairness, timeout, cancellation, exact logical high-water marks, replay, atomic publication, and zero-orphan close | Generated and closed-loop scenarios, typed model/provider/tool profiles, native latency/throughput reports with CPU/GPU placement, utilization, memory, fallback, and available power/thermal evidence, then bounded soak, disruption, and multi-OS replication |
 | Tooling | Zig build, exported `glacier`/`glacier_core` package modules, deterministic demos, benchmark harnesses | Product-specific build profiles, installer, stable library API, and simpler fixture workflow |
 
-The R1c text bridge binds a request-profile manifest, not a stable package
-identity. Shared read-only residency is logical accounting rather than physical
-RSS evidence, and its token-domain, configuration, and license roots are caller
-assertions. It accepts pre-tokenized `u32` input only and does not yet cover
-every V1-valid request shape, execute a raw-text tokenizer, publish a typed
-result envelope, checkpoint or resume a prepared session, or establish
-production native performance. Its bound-plan/residency bridge remains an
-experimental Zig/direct API without a fixed bound-plan wire, C validator,
-independent golden oracle, or `.generate_sequence` support record;
-cross-language ABI parity is future work.
+The R1d prepared-text path binds a request-profile manifest, not a stable
+package identity. Shared read-only residency is logical accounting rather than
+physical RSS evidence, and its token-domain, configuration, and license roots
+are caller assertions. For a completed fixed-length run, `SessionV3` seals one
+terminal `ResultEnvelopeV1` against the actual request-charged receipt,
+canonical little-endian `u32` output root, and V2 boundary/source mapping, then
+advances its result state exactly once from zero to one before explicit
+retirement. The `deinit` safety path may instead abandon terminal evidence while
+closing the adopted lifecycle.
+Retained Zig and independent Python evidence share exact projected
+artifact/plan/residency/result and terminal-root goldens, including Receipt
+integrity and adversarial substitutions.
+
+The path still accepts pre-tokenized input only, does not cover every V1-valid
+request shape, and does not execute or attest a raw-text tokenizer, provide
+stable package/license byte identity, publish to a durable external result
+sink, checkpoint or resume a prepared session, support early EOS or
+fewer-than-admitted outputs, or establish production native performance. Its
+bound-plan/residency bridge remains an experimental Zig/direct API without a
+fixed bound-plan wire, projected C verifier, or `.generate_sequence` support
+record; cross-language ABI parity is future work.
 
 Detailed status, acceptance gates, and contributor-sized work items live in the
 [roadmap](docs/ROADMAP.md).
