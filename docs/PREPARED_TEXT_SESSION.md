@@ -9,8 +9,10 @@ R1a established the persistent numerical and publication lifecycle. R1b added
 atomic start for a shared scheduler. R1c adds the preferred `SessionV2` bridge
 to the Common Model Contract while preserving the R1b transaction underneath.
 R1d layers the preferred fixed-length `SessionV3` terminal-result lifecycle
-over that bridge. These are integrated experimental slices, not the completed
-R1 text runtime.
+over that bridge. R1e adds canonical non-terminal state capture and detached
+output/RNG/contiguous-KV materialization without transferring publication
+authority. These are integrated experimental slices, not the completed R1 text
+runtime.
 
 ## Supported envelope
 
@@ -30,12 +32,13 @@ R1 text runtime.
 | Publication | One `LaneWeave` service permit commits one token transaction; one terminal seal advances result state from zero to one |
 | Mutable state | Session-owned KV rows, RNG state, sampling count, and output token buffer |
 | Evidence | `BoundarySnapshotV2` binds the live execution boundary; `TerminalResultEvidenceV1` joins it to the canonical output and actual charged receipt |
+| R1e checkpoint | Canonical non-terminal output/RNG/KV image with independent Zig/Python verification and detached zero-slack materialization |
 
 `eos_token` must be outside the model vocabulary in this version. Fixed-length
 execution keeps the admitted service count identical to the number of
 publication transactions.
 
-## Preferred R1d lifecycle
+## Preferred R1d/R1e lifecycle
 
 1. Load a prepared image with `loader.loadPreparedWithOptions`.
 2. Build `prepared_text_session.OptionsV1`, then derive the canonical
@@ -105,6 +108,57 @@ request epoch, address-stable session identity, service policy, and a
 single-use generation. While resource allocation and prefill are in progress,
 other logical mutators on the same scheduler fail with `AdoptionInFlight`.
 After adoption commits or cancels, normal shared-scheduler use resumes.
+
+## R1e detached checkpoint materialization
+
+At an idle boundary after at least one output and before the fixed terminal
+token, `SessionV3.captureCheckpointV1` can capture a canonical state image. The
+method revalidates the V2 boundary, bound plan, initial result-publication
+state, nested receipt, live Bank address fence, request epoch, and current
+publication sequence before serializing any state.
+
+The image contains:
+
+- independently matchable local-plan, bound-plan, artifact, execution,
+  residency, boundary, transcript, state-commitment, and challenge roots;
+- output tokens as canonical little-endian `u32`;
+- four raw RNG words and the exact sampling count;
+- committed contiguous KV values ordered by layer, K prefix, then V prefix,
+  with every `f32` preserved as raw little-endian bits; and
+- component roots plus a domain-separated whole-image root.
+
+`prepared_text_checkpoint.decodeCheckpointV1` reconstructs the output chain,
+RNG root, full logical KV root, incremental publication KV chain, and complete
+state commitment. It also compares every contextual root and exact scalar
+context—request epoch, sequence, bounds, vocabulary, geometry, output count,
+and sampling count—with `ExpectedBindingsV1`, which the caller must retain
+independently.
+`materializeDetachedV1` then allocates a new output buffer and KV cache, zeros
+all capacity, and copies only the committed prefixes.
+
+That new value is deliberately detached: it contains no Scheduler, Bank,
+receipt, permit, sink, mutex, or publication Session. It cannot run the next
+token or publish output. The current authority is bound to the exact live
+Session address and sequence, so creating a runnable Session from these bytes
+requires a later successor-plan, Scheduler, ResourceBank, and publication
+handoff protocol.
+Both the encoded slice and detached allocations are caller-owned and are not
+charged to the live Session's `ResourceBank`.
+
+Sequence zero is rejected because its next token depends on prefill logits,
+which are not in the image. Terminal, sealed, cancelled, retired,
+recovery-adoption, active-row, and stale-boundary capture also reject. The
+fixed profile enforces:
+
+```text
+0 < output_count = next_sequence = sampling_calls < max_new_tokens
+kv_positions = prompt_tokens + output_count - 1
+max_kv_positions = prompt_tokens + max_new_tokens - 1
+```
+
+See [Prepared Text Checkpoint](PREPARED_TEXT_CHECKPOINT.md) for the exact wire,
+ownership boundary, tests, and path from detached materialization to a safe
+fresh-process continuation.
 
 This is a correctness-first startup transaction, not a non-blocking startup
 mechanism. It deliberately prevents the same scheduler from admitting,
@@ -236,14 +290,17 @@ the LaneWeave publication-adoption unit tests, the retained evidence verifies:
 - zero used resources after retirement;
 - zero used resources after an injected initialization-allocation failure.
 
-R1d does not claim that its request-profile manifest is a stable package
+R1e does not claim that its request-profile manifest is a stable package
 identity or that shared logical residency proves physical RSS. It does not
 execute a raw-text tokenizer, verify the caller-asserted token-domain,
 configuration, or license bytes, publish the terminal envelope to a durable
-external sink, serialize a durable checkpoint, or resume the prepared session
-in a fresh process. It also does not bridge every V1-valid request
+external sink, serialize a durable checkpoint, transfer publication authority,
+or resume the prepared session in a fresh process. Its checkpoint image is a
+portable integrity and detached-materialization boundary, not a resumable
+Session or authenticated/encrypted storage. It also does not bridge every
+V1-valid request
 shape: profiles whose local activation accounting falls below the common
-token-input byte bound remain outside R1d. `SessionV3` requires exactly
+token-input byte bound remain outside R1e. `SessionV3` requires exactly
 `max_new_tokens` outputs and does not support early EOS or a shorter terminal
 sequence; `SessionV2` remains available as the R1c boundary API. The fixture
 does not establish production-model quality, native performance evidence,

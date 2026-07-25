@@ -695,6 +695,45 @@ V1 ownership coverage, and non-blocking staged startup remain future work.
 The `deinit` safety path can abandon terminal evidence while closing the
 adopted lifecycle; it is cleanup, not a successful terminal-result publication.
 
+#### R1e — Canonical prepared-state image
+
+Status: **integrated experimental state-codec slice**. The preferred
+non-terminal `SessionV3` path now:
+
+- captures only an idle, live-receipt boundary satisfying
+  `0 < output_count < max_new_tokens`;
+- binds independently retained local-plan, bound-plan, artifact, execution,
+  residency, V2 boundary, transcript, state-commitment, and challenge roots to
+  exact output, RNG, sampling, and committed contiguous-KV bytes;
+- serializes output IDs and raw `f32` KV bit patterns canonically in
+  little-endian order without normalizing negative zero, infinities, or NaN
+  payloads;
+- independently reconstructs the output chain, RNG root, full logical KV root,
+  initial prompt-KV root, every subsequent row root, incremental publication KV
+  chain, and final state commitment;
+- materializes a fresh detached output/KV allocation with all uncommitted
+  capacity zeroed, then revalidates the concrete roots; and
+- retains a shared Zig/Python raw-bit golden, every-byte mutation rejection,
+  coherent contradiction/context-substitution tests, and a real prepared-model
+  integration that continues the original Session through terminal seal.
+
+The state image is portable data, but its materialized value has no Scheduler,
+ResourceBank, receipt, permit, sink, or publication authority. It is not a
+runnable restored Session. The live authority remains address- and
+sequence-bound to the source Session, and sequence zero remains excluded
+because prefill logits are not serialized. Its encoded and detached
+allocations are caller-owned and are not charged to the live Session's
+ResourceBank.
+
+The next control-plane slice is a verified retained-authority rebind at the
+exact current boundary. Fresh-process continuation additionally needs a
+successor plan/transcript ABI with a nonzero sequence base and source lineage,
+restored Scheduler/Bank and permit-generation semantics, LeaseTree-aware
+publication/receipt remapping, durable atomic selection, source exit, and
+exclusive target handoff. R1e therefore does not claim rewind, durable
+checkpointing, crash recovery, exactly-once resume, confidentiality,
+authentication, or cross-backend numerical identity.
+
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with
 exact ownership and output evidence.

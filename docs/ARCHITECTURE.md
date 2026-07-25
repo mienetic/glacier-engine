@@ -431,11 +431,41 @@ authority.
 sealing without mutating the result state. Retirement requires a sealed result;
 cancellation is valid only before sealing. The result envelope and
 `TerminalResultEvidenceV1` are live in-process evidence, not a durable external
-sink or a historical attestation. This lifecycle does not add early EOS,
-fewer-than-admitted outputs, a raw-text tokenizer, stable package or license
-byte attestation, a prepared-session checkpoint, fresh-process resume,
-production-model evidence, strict cross-platform numerical equivalence, or
-native-platform performance evidence.
+sink or a historical attestation.
+
+R1e adds `prepared_text_checkpoint`, an adapter-level canonical state codec
+rather than a core model contract. At a verified non-terminal `SessionV3`
+boundary with `0 < output_count < max_new_tokens`,
+`captureCheckpointV1` cross-binds the local and common plan roots, V2 boundary,
+publication transcript and state commitment, output prefix, RNG words,
+sampling count, and committed contiguous KV prefix. The KV wire uses the same
+layer/K/V/raw-bit ordering as the live full-prefix commitment.
+
+The independent decoder reconstructs both forms of KV evidence: the full
+logical prefix root and the publication protocol's initial-prompt root plus
+per-decode-row chain. It then reconstructs the complete state commitment rather
+than trusting roots embedded in the image. A detached materializer allocates a
+new output journal and contiguous cache, zeros all capacity, restores only the
+committed prefixes, and verifies the resulting concrete roots again. Zig and
+Python share a synthetic raw-bit golden and whole-image mutation rejection;
+the real prepared model integration captures after its first output,
+materializes a detached copy, and then finishes, seals, and retires the
+unmodified live Session.
+
+The detached value has no Scheduler, ResourceBank, receipt, permit, sink, or
+publication authority. It cannot continue generation or publish another token.
+The current authority remains bound to the original in-process Session address
+and nonzero sequence. A safe runnable restore therefore still needs a
+retained-authority rebind or successor-segment ABI, restored Scheduler/Bank
+semantics, LeaseTree-aware publication/receipt remapping, durable selection,
+and exclusive source/target handoff. The encoded and detached allocations are
+caller-owned and are not charged to the live Session's ResourceBank.
+
+This lifecycle does not add early EOS, fewer-than-admitted outputs, a raw-text
+tokenizer, stable package or license byte attestation, durable prepared-session
+checkpoint publication, fresh-process resume, production-model evidence,
+strict cross-platform numerical equivalence, or native-platform performance
+evidence.
 The `deinit` safety path may abandon terminal evidence while closing and
 releasing the adopted lifecycle; it does not count as a successful result seal.
 
@@ -750,6 +780,10 @@ targets remain gated until their named native adapters and evidence pass.
 - [Paging](PAGING.md): weight and KV paging boundaries.
 - [Model format](FORMAT_SPEC.md): portable draft format.
 - [Native runtime image](RUNTIME_IMAGE.md): execution image ABI.
+- [Prepared text session](PREPARED_TEXT_SESSION.md): exact prepared-image
+  execution, publication, boundary, and terminal-result lifecycle.
+- [Prepared text checkpoint](PREPARED_TEXT_CHECKPOINT.md): canonical
+  non-terminal output/RNG/contiguous-KV state and detached materialization.
 - [Continuation capsule](CONTINUATION_CAPSULE.md): checkpoint manifest ABI.
 - [Continuation object resolver](CONTINUATION_OBJECT_RESOLVER.md): scoped
   lookup and quota contract.

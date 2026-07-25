@@ -433,6 +433,26 @@ release operations, then check exact zero-state recovery.
 
 **First slice:** one deterministic seed and one minimized stale-handle failure.
 
+### Prepared-session continuation authority
+
+The data-plane foundation is complete: a live non-terminal `SessionV3`
+captures canonical output/RNG/contiguous-KV bytes, independent Zig/Python
+verifiers reconstruct every state root, and a fresh detached allocation
+round-trips with zero slack. See
+[Prepared Text Checkpoint](PREPARED_TEXT_CHECKPOINT.md).
+
+**Next slice:** design and prove a retained-authority rebind at the exact
+current boundary. The Scheduler, ResourceBank, receipt, request epoch,
+publication sequence, and coordinator address must remain unchanged; stale,
+foreign, moved, active-attempt, and rewound boundaries must reject before
+mutation.
+
+**Done when:** the replacement concrete bindings validate under the existing
+live receipt, the original bindings can be retired without dangling pointers,
+one next-token transaction matches the uninterrupted path, terminal
+seal/retirement still release exactly once, and no API claims fresh-process or
+durable resume.
+
 ### Paged-KV ownership restore fixture
 
 This slice is now implemented with canonical committed-row images, durable
