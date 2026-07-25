@@ -21,6 +21,7 @@ const sampling = @import("sampling.zig");
 const runtime_image = @import("model/runtime_image.zig");
 const lane_contiguous = @import("lane_contiguous_publication.zig");
 const publication = @import("lane_publication_txn.zig");
+const prepared_checkpoint = @import("prepared_text_checkpoint.zig");
 const kernels = @import("backends/cpu/kernels.zig");
 
 pub const plan_abi: u64 = 0x474c_5450_0000_0001;
@@ -1944,6 +1945,110 @@ pub const SessionV3 = struct {
         if (!self.result_state_initialized)
             return Error.InvalidState;
         return self.inner.snapshotVerified();
+    }
+
+    /// Capture one exact, non-terminal prepared boundary as canonical bytes.
+    /// The returned allocation belongs to `allocator`. Decoding it can
+    /// materialize a detached output/RNG/KV payload, but does not transfer the
+    /// live Scheduler/Bank/publication authority held by this Session.
+    pub fn captureCheckpointV1(
+        self: *SessionV3,
+        allocator: std.mem.Allocator,
+        challenge_sha256: [32]u8,
+    ) ![]u8 {
+        if (!self.result_state_initialized or
+            !self.result_receipt_live or
+            self.terminal_result_sealed or
+            self.inner.isFinished())
+            return Error.InvalidState;
+        const session = &self.inner.inner;
+        if (!session.resources_initialized or
+            !session.publication_bound or
+            session.recovery_adoption != null)
+            return Error.InvalidState;
+        const output = session.outputTokens();
+        if (output.len == 0 or
+            output.len >= session.options.max_new_tokens)
+            return Error.InvalidState;
+
+        const boundary = try self.inner.snapshotVerified();
+        const local_plan = session.plan;
+        const bound_plan = self.inner.bound_plan;
+        try validateBoundPlanV1(bound_plan);
+        const expected_result_state =
+            model_contract.initializePublicationStateV1(
+                bound_plan.execution.request_epoch,
+                bound_plan.artifact.artifact_sha256,
+            ) catch return Error.InvalidState;
+        if (!boundarySnapshotValidForBoundPlanV2(
+            boundary,
+            bound_plan,
+            local_plan,
+        ) or boundary.base.publication.terminal or
+            !std.meta.eql(
+                self.result_publication_state,
+                expected_result_state,
+            ) or
+            boundary.base.publication.next_sequence != output.len or
+            boundary.base.publication.state.output_length != output.len or
+            boundary.base.publication.state.sampling_calls !=
+                output.len or
+            local_plan.prompt_tokens == 0 or
+            local_plan.max_new_tokens !=
+                session.options.max_new_tokens or
+            bound_plan.execution.request_epoch !=
+                boundary.base.publication.request_epoch)
+            return Error.InvalidState;
+
+        const publication_session = &session.publication_session;
+        const nested_receipt =
+            publication_session.admission.event.resource_receipt;
+        if (!std.meta.eql(nested_receipt, self.result_receipt))
+            return Error.InvalidState;
+        publication_session.bank.validatePublicationSession(
+            self.result_receipt,
+            bound_plan.execution.request_epoch,
+            @intFromPtr(&publication_session.inner),
+            boundary.base.publication.next_sequence,
+        ) catch return Error.InvalidState;
+
+        const cache = &session.resources.cache;
+        const required =
+            try prepared_checkpoint.encodedCheckpointBytesV1(
+                cache.num_layers,
+                cache.dim,
+                cache.len,
+                output.len,
+            );
+        const bytes = allocator.alloc(u8, required) catch
+            return error.OutOfMemory;
+        errdefer allocator.free(bytes);
+        const encoded = try prepared_checkpoint.encodeCheckpointV1(
+            .{
+                .local_plan_sha256 = local_plan.plan_sha256,
+                .bound_plan_sha256 = bound_plan.bound_plan_sha256,
+                .artifact_sha256 = bound_plan.artifact.artifact_sha256,
+                .execution_plan_sha256 = bound_plan.execution.plan_sha256,
+                .residency_binding_sha256 = bound_plan.residency.binding_sha256,
+                .boundary_sha256 = boundary.boundary_sha256,
+                .transcript_sha256 = boundary.base.publication.transcript_sha256,
+                .state_commitment_sha256 = boundary.base.publication
+                    .state.commitment_sha256,
+                .request_epoch = bound_plan.execution.request_epoch,
+                .publication_next_sequence = boundary.base.publication.next_sequence,
+                .prompt_tokens = local_plan.prompt_tokens,
+                .max_new_tokens = local_plan.max_new_tokens,
+                .vocab_size = @intCast(session.model.config.vocab_size),
+                .output_tokens = output,
+                .rng_state = session.rng_state,
+                .sampling_calls = session.sampling_calls,
+                .cache = cache,
+                .challenge_sha256 = challenge_sha256,
+            },
+            bytes,
+        );
+        std.debug.assert(encoded.len == bytes.len);
+        return bytes;
     }
 
     /// Seal the only Common Model Contract result while the exact charged

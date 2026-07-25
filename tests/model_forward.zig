@@ -2074,6 +2074,13 @@ test "compact multi-page INT4 generation matches eager generation" {
         early_seal_bank_before,
         try session_bank.snapshot(),
     );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.captureCheckpointV1(
+            testing.allocator,
+            [_]u8{0x7c} ** 32,
+        ),
+    );
 
     var session_sink: PreparedTextSink = .{};
     const rejected_permit = try session_scheduler.prepareService();
@@ -2089,6 +2096,149 @@ test "compact multi-page INT4 generation matches eager generation" {
     );
     try testing.expectEqual(@as(usize, 0), session_sink.prepare_calls);
     try testing.expectEqual(@as(usize, 0), session_sink.commit_calls);
+    _ = try prepared_session.step(
+        try session_scheduler.prepareService(),
+        session_sink.interface(),
+    );
+    try testing.expect(!prepared_session.isFinished());
+
+    // R1e captures only a live non-terminal boundary. It can reconstruct an
+    // exact detached output/RNG/contiguous-KV payload, while deliberately
+    // carrying no authority with which to publish another token.
+    const checkpoint_challenge = [_]u8{0x7c} ** 32;
+    const checkpoint_scheduler_before =
+        try session_scheduler.snapshot();
+    const checkpoint_bank_before = try session_bank.snapshot();
+    const prepared_checkpoint = try prepared_session.captureCheckpointV1(
+        testing.allocator,
+        checkpoint_challenge,
+    );
+    defer testing.allocator.free(prepared_checkpoint);
+    const repeated_checkpoint =
+        try prepared_session.captureCheckpointV1(
+            testing.allocator,
+            checkpoint_challenge,
+        );
+    defer testing.allocator.free(repeated_checkpoint);
+    try testing.expectEqualSlices(
+        u8,
+        prepared_checkpoint,
+        repeated_checkpoint,
+    );
+    try testing.expectEqualDeep(
+        checkpoint_scheduler_before,
+        try session_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        checkpoint_bank_before,
+        try session_bank.snapshot(),
+    );
+
+    const checkpoint_boundary =
+        try prepared_session.snapshotVerified();
+    const checkpoint_expected: engine.prepared_text_checkpoint.ExpectedBindingsV1 = .{
+        .local_plan_sha256 = session_plan.plan_sha256,
+        .bound_plan_sha256 = bound_plan.bound_plan_sha256,
+        .artifact_sha256 = bound_plan.artifact.artifact_sha256,
+        .execution_plan_sha256 = bound_plan.execution.plan_sha256,
+        .residency_binding_sha256 = bound_plan.residency.binding_sha256,
+        .boundary_sha256 = checkpoint_boundary.boundary_sha256,
+        .transcript_sha256 = checkpoint_boundary.base.publication.transcript_sha256,
+        .state_commitment_sha256 = checkpoint_boundary.base.publication
+            .state.commitment_sha256,
+        .request_epoch = bound_plan.execution.request_epoch,
+        .publication_next_sequence = checkpoint_boundary.base.publication.next_sequence,
+        .prompt_tokens = session_plan.prompt_tokens,
+        .max_new_tokens = session_plan.max_new_tokens,
+        .vocab_size = @intCast(
+            prepared_session_model.config.vocab_size,
+        ),
+        .num_layers = @intCast(
+            prepared_session_model.config.num_layers,
+        ),
+        .kv_dim = @intCast(
+            prepared_session_model.config.num_kv_heads *
+                prepared_session_model.config.head_dim,
+        ),
+        .max_kv_positions = @intCast(
+            prepared_session.inner.inner.resources.cache.max_seq,
+        ),
+        .kv_positions = @intCast(
+            prepared_session.inner.inner.resources.cache.len,
+        ),
+        .output_count = @intCast(
+            prepared_session.outputTokens().len,
+        ),
+        .sampling_calls = prepared_session.inner.inner.sampling_calls,
+        .challenge_sha256 = checkpoint_challenge,
+    };
+    const decoded_checkpoint =
+        try engine.prepared_text_checkpoint.decodeCheckpointV1(
+            prepared_checkpoint,
+            checkpoint_expected,
+        );
+    var detached_checkpoint =
+        try engine.prepared_text_checkpoint.materializeDetachedV1(
+            testing.allocator,
+            decoded_checkpoint,
+        );
+    defer detached_checkpoint.deinit();
+    try testing.expectEqualSlices(
+        u32,
+        prepared_session.outputTokens(),
+        detached_checkpoint.outputTokens(),
+    );
+    try testing.expectEqual(
+        prepared_session.inner.inner.sampling_calls,
+        detached_checkpoint.sampling_calls,
+    );
+    try testing.expectEqual(
+        prepared_session.inner.inner.rng_state,
+        detached_checkpoint.rng_state,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &engine.lane_contiguous_publication
+            .logicalKvPrefixSha256(
+            &prepared_session.inner.inner.resources.cache,
+            prepared_session.inner.inner.resources.cache.len,
+        ),
+        &engine.lane_contiguous_publication
+            .logicalKvPrefixSha256(
+            &detached_checkpoint.cache,
+            detached_checkpoint.cache.len,
+        ),
+    );
+    for (0..detached_checkpoint.cache.num_layers) |layer| {
+        const slack_start = detached_checkpoint.cache.len *
+            detached_checkpoint.cache.dim;
+        for (
+            detached_checkpoint.cache.keys[layer][slack_start..],
+        ) |value| {
+            try testing.expectEqual(
+                @as(u32, 0),
+                @as(u32, @bitCast(value)),
+            );
+        }
+        for (
+            detached_checkpoint.cache.values[layer][slack_start..],
+        ) |value| {
+            try testing.expectEqual(
+                @as(u32, 0),
+                @as(u32, @bitCast(value)),
+            );
+        }
+    }
+    var foreign_checkpoint_expected = checkpoint_expected;
+    foreign_checkpoint_expected.bound_plan_sha256[0] ^= 0x01;
+    try testing.expectError(
+        engine.prepared_text_checkpoint.Error.BindingMismatch,
+        engine.prepared_text_checkpoint.decodeCheckpointV1(
+            prepared_checkpoint,
+            foreign_checkpoint_expected,
+        ),
+    );
+
     while (!prepared_session.isFinished()) {
         _ = try prepared_session.step(
             try session_scheduler.prepareService(),
@@ -2105,6 +2255,13 @@ test "compact multi-page INT4 generation matches eager generation" {
         session_sink.commit_calls,
     );
     try testing.expectEqual(@as(usize, 0), session_sink.abort_calls);
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        prepared_session.captureCheckpointV1(
+            testing.allocator,
+            checkpoint_challenge,
+        ),
+    );
     for (
         session_sink.receipts[0..session_sink.commit_calls],
         0..,
