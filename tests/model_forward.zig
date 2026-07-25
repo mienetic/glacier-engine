@@ -238,6 +238,116 @@ fn expectPreparedStartEvent(
     );
 }
 
+fn expectBoundPlanRequestAccounting(
+    bound_plan: engine.prepared_text_session.BoundPlanV1,
+    local_plan: engine.prepared_text_session.PlanV1,
+) !void {
+    var expected_total = local_plan.claim;
+    expected_total.capsule_bytes = try std.math.add(
+        u64,
+        local_plan.claim.capsule_bytes,
+        local_plan.image_identity.container_bytes,
+    );
+    try testing.expectEqualDeep(
+        expected_total,
+        bound_plan.execution.claim,
+    );
+    try testing.expectEqualDeep(
+        local_plan.claim,
+        bound_plan.residency.request_claim,
+    );
+}
+
+fn makeRelationallyMismatchedBoundPlan(
+    original: engine.prepared_text_session.BoundPlanV1,
+) !engine.prepared_text_session.BoundPlanV1 {
+    const contract = engine.core.model_contract;
+    var value = original;
+
+    // Every nested record and the outer root remain canonical, but the
+    // artifact profile no longer agrees with the execution dimensions.
+    value.artifact.input_features = try std.math.add(
+        u64,
+        value.artifact.input_features,
+        1,
+    );
+    value.artifact.artifact_sha256 = [_]u8{0} ** 32;
+    var artifact_wire: [contract.artifact_manifest_bytes]u8 = undefined;
+    try contract.encodeArtifactManifestV1(
+        value.artifact,
+        &artifact_wire,
+    );
+    value.artifact = try contract.decodeArtifactManifestV1(
+        &artifact_wire,
+    );
+
+    value.execution.artifact_sha256 =
+        value.artifact.artifact_sha256;
+    value.execution.plan_sha256 = [_]u8{0} ** 32;
+    var execution_wire: [contract.execution_plan_bytes]u8 = undefined;
+    try contract.encodeExecutionPlanV1(
+        value.execution,
+        &execution_wire,
+    );
+    value.execution = try contract.decodeExecutionPlanV1(
+        &execution_wire,
+    );
+    value.residency = try contract.makeExecutionResidencyBindingV1(
+        value.execution,
+        original.residency.residency,
+        original.residency.resident_weight_bytes,
+        original.residency.request_claim,
+    );
+    value.bound_plan_sha256 =
+        engine.prepared_text_session.boundPlanRootV1(value);
+    return value;
+}
+
+fn expectSessionV2PreAdmissionRejected(
+    model: *const engine.loader.LoadedModel,
+    prompt: []const u32,
+    options: engine.prepared_text_session.OptionsV1,
+    local_plan: engine.prepared_text_session.PlanV1,
+    bound_input: engine.prepared_text_session.BoundPlanInputV1,
+    bound_plan: engine.prepared_text_session.BoundPlanV1,
+    scheduling: engine.prepared_text_session.SchedulingV1,
+    scheduler: *engine.lane_weave_qos.Scheduler,
+    bank: *engine.resource_bank.Bank,
+) !void {
+    const scheduler_before = try scheduler.snapshot();
+    const bank_before = try bank.snapshot();
+    var failing_allocator = std.testing.FailingAllocator.init(
+        testing.allocator,
+        .{ .fail_index = 0 },
+    );
+    var session: engine.prepared_text_session.SessionV2 = .{};
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidBoundPlan,
+        session.start(
+            failing_allocator.allocator(),
+            model,
+            prompt,
+            options,
+            local_plan,
+            bound_input,
+            bound_plan,
+            scheduling,
+            scheduler,
+            bank,
+        ),
+    );
+    try testing.expect(!failing_allocator.has_induced_failure);
+    try testing.expect(!session.contract_bound);
+    try testing.expect(!session.inner.resources_initialized);
+    try testing.expect(!session.inner.publication_bound);
+    try testing.expect(session.inner.recovery_adoption == null);
+    try testing.expectEqualDeep(
+        scheduler_before,
+        try scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(bank_before, try bank.snapshot());
+}
+
 const StartRecoveryFaultAllocator = struct {
     scheduler: *engine.lane_weave_qos.Scheduler,
     backing: std.mem.Allocator,
@@ -1252,29 +1362,511 @@ test "compact multi-page INT4 generation matches eager generation" {
             .max_weight = 1,
         },
     );
-    var prepared_session: engine.prepared_text_session.SessionV1 = .{};
+    const session_scheduling: engine.prepared_text_session.SchedulingV1 = .{
+        .tenant_key = 71,
+        .request_key = 72,
+        .request_generation = 1,
+        .resource_owner_key = 73,
+        .weight = 1,
+    };
+    const session_request_epoch: u64 = 0x5458_4550;
+    const model_contract = engine.core.model_contract;
+    const token_domain_sha256 =
+        model_contract.sha256("fixture-token-domain-v1");
+    const token_domain_config_sha256 =
+        model_contract.sha256("fixture-token-domain-config-v1");
+    const artifact_license_sha256 =
+        model_contract.sha256("fixture-artifact-license-v1");
+    const bound_input: engine.prepared_text_session.BoundPlanInputV1 = .{
+        .request_epoch = session_request_epoch,
+        .token_domain_sha256 = token_domain_sha256,
+        .token_domain_config_sha256 = token_domain_config_sha256,
+        .artifact_license_sha256 = artifact_license_sha256,
+    };
+    const bound_plan =
+        try engine.prepared_text_session.makeBoundPlanV1(
+            prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            session_scheduling,
+            &session_scheduler,
+            bound_input,
+        );
+    try engine.prepared_text_session.validateBoundPlanV1(bound_plan);
+    try testing.expectEqual(
+        model_contract.OperationIdV1.generate_sequence,
+        bound_plan.execution.operation,
+    );
+    try testing.expectEqualDeep(
+        session_plan.image_identity.container_sha256,
+        bound_plan.artifact.weights_sha256,
+    );
+    try testing.expectEqual(
+        session_plan.image_identity.container_bytes,
+        bound_plan.artifact.weight_bytes,
+    );
+    try testing.expectEqualDeep(
+        bound_plan.artifact.artifact_sha256,
+        bound_plan.execution.artifact_sha256,
+    );
+    try testing.expectEqualDeep(
+        bound_plan.artifact.weights_sha256,
+        bound_plan.execution.weights_sha256,
+    );
+    try expectBoundPlanRequestAccounting(bound_plan, session_plan);
+
+    // Retain an adversarial relation test: each nested record and the outer
+    // bound root are canonical, yet the artifact/execution dimensions differ.
+    const relational_substitution =
+        try makeRelationallyMismatchedBoundPlan(bound_plan);
+    try model_contract.validateArtifactManifestV1(
+        relational_substitution.artifact,
+    );
+    try model_contract.validateExecutionPlanV1(
+        relational_substitution.execution,
+    );
+    try model_contract.validateExecutionResidencyBindingV1(
+        relational_substitution.residency,
+        relational_substitution.execution,
+    );
+    try testing.expectEqualDeep(
+        relational_substitution.bound_plan_sha256,
+        engine.prepared_text_session.boundPlanRootV1(
+            relational_substitution,
+        ),
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidBoundPlan,
+        engine.prepared_text_session.validateBoundPlanV1(
+            relational_substitution,
+        ),
+    );
+
+    // This independently valid plan changes only its token-domain authority.
+    // The trusted caller input remains unchanged, so SessionV2 must reject the
+    // coherent substitution before admission or allocation can affect state.
+    const substituted_bound_plan =
+        try engine.prepared_text_session.makeBoundPlanV1(
+            prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            session_scheduling,
+            &session_scheduler,
+            .{
+                .request_epoch = session_request_epoch,
+                .token_domain_sha256 = model_contract.sha256(
+                    "substituted-fixture-token-domain-v1",
+                ),
+                .token_domain_config_sha256 = token_domain_config_sha256,
+                .artifact_license_sha256 = artifact_license_sha256,
+            },
+        );
+    try engine.prepared_text_session.validateBoundPlanV1(
+        substituted_bound_plan,
+    );
+    try expectSessionV2PreAdmissionRejected(
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        bound_input,
+        substituted_bound_plan,
+        session_scheduling,
+        &session_scheduler,
+        &session_bank,
+    );
+
+    var substituted_bound_input = bound_input;
+    substituted_bound_input.request_epoch += 1;
+    try expectSessionV2PreAdmissionRejected(
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        substituted_bound_input,
+        bound_plan,
+        session_scheduling,
+        &session_scheduler,
+        &session_bank,
+    );
+    substituted_bound_input = bound_input;
+    substituted_bound_input.token_domain_config_sha256 =
+        model_contract.sha256("substituted-token-config-v1");
+    try expectSessionV2PreAdmissionRejected(
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        substituted_bound_input,
+        bound_plan,
+        session_scheduling,
+        &session_scheduler,
+        &session_bank,
+    );
+    substituted_bound_input = bound_input;
+    substituted_bound_input.artifact_license_sha256 =
+        model_contract.sha256("substituted-license-v1");
+    try expectSessionV2PreAdmissionRejected(
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        substituted_bound_input,
+        bound_plan,
+        session_scheduling,
+        &session_scheduler,
+        &session_bank,
+    );
+    substituted_bound_input = bound_input;
+    substituted_bound_input.previous_plan_sha256 =
+        model_contract.sha256("substituted-previous-plan-v1");
+    try expectSessionV2PreAdmissionRejected(
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        substituted_bound_input,
+        bound_plan,
+        session_scheduling,
+        &session_scheduler,
+        &session_bank,
+    );
+    var substituted_scheduling = session_scheduling;
+    substituted_scheduling.request_key += 1;
+    try expectSessionV2PreAdmissionRejected(
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        bound_input,
+        bound_plan,
+        substituted_scheduling,
+        &session_scheduler,
+        &session_bank,
+    );
+    var foreign_bank_slots: [1]engine.resource_bank.Slot = undefined;
+    var foreign_lane_slots: [1]engine.lane_weave_qos.Slot = undefined;
+    var foreign_projection: [1]engine.lane_weave_qos.ProjectionSlot = undefined;
+    var foreign_bank = try engine.resource_bank.Bank.init(
+        &foreign_bank_slots,
+        .{},
+        0x5458_4647,
+    );
+    var foreign_scheduler =
+        try engine.lane_weave_qos.Scheduler.init(
+            &foreign_bank,
+            .{
+                .slots = &foreign_lane_slots,
+                .projection = &foreign_projection,
+            },
+            .{
+                .scheduler_epoch = 0x5458_4657,
+                .challenge = [_]u8{0x47} ** 32,
+                .max_weight = 1,
+            },
+        );
+    try expectSessionV2PreAdmissionRejected(
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        bound_input,
+        bound_plan,
+        session_scheduling,
+        &foreign_scheduler,
+        &foreign_bank,
+    );
+    _ = try foreign_scheduler.close();
+
+    // A valid V2 binding that fails its first private allocation must consume
+    // the accepted adoption through cancellation and clear the wrapper.
+    const oom_scheduling: engine.prepared_text_session.SchedulingV1 = .{
+        .tenant_key = 91,
+        .request_key = 92,
+        .request_generation = 1,
+        .resource_owner_key = 93,
+        .weight = 1,
+    };
+    var oom_bound_input = bound_input;
+    oom_bound_input.request_epoch = 0x5458_4551;
+    const oom_bound_plan =
+        try engine.prepared_text_session.makeBoundPlanV1(
+            prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            oom_scheduling,
+            &session_scheduler,
+            oom_bound_input,
+        );
+    const oom_scheduler_before = try session_scheduler.snapshot();
+    const oom_bank_before = try session_bank.snapshot();
+    var oom_allocator = std.testing.FailingAllocator.init(
+        testing.allocator,
+        .{ .fail_index = 0 },
+    );
+    var oom_session: engine.prepared_text_session.SessionV2 = .{};
+    try testing.expectError(
+        error.OutOfMemory,
+        oom_session.start(
+            oom_allocator.allocator(),
+            &prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            oom_bound_input,
+            oom_bound_plan,
+            oom_scheduling,
+            &session_scheduler,
+            &session_bank,
+        ),
+    );
+    try testing.expect(oom_allocator.has_induced_failure);
+    try testing.expect(!oom_session.contract_bound);
+    try testing.expect(!oom_session.inner.resources_initialized);
+    try testing.expect(!oom_session.inner.publication_bound);
+    try testing.expect(oom_session.inner.recovery_adoption == null);
+    const oom_scheduler_after = try session_scheduler.snapshot();
+    const oom_bank_after = try session_bank.snapshot();
+    try testing.expectEqual(
+        oom_scheduler_before.next_event_sequence + 2,
+        oom_scheduler_after.next_event_sequence,
+    );
+    try testing.expectEqual(
+        oom_scheduler_before.active,
+        oom_scheduler_after.active,
+    );
+    try testing.expect(oom_bank_after.used.isZero());
+    try testing.expectEqual(
+        oom_bank_before.successful_commits + 1,
+        oom_bank_after.successful_commits,
+    );
+    try testing.expectEqual(
+        oom_bank_before.releases + 1,
+        oom_bank_after.releases,
+    );
+
+    // If cancellation itself is temporarily unavailable, V2 retains both the
+    // exact bound plan and V1 adoption authority until explicit recovery.
+    const recovery_v2_scheduling: engine.prepared_text_session.SchedulingV1 = .{
+        .tenant_key = 94,
+        .request_key = 95,
+        .request_generation = 1,
+        .resource_owner_key = 96,
+        .weight = 1,
+    };
+    var recovery_v2_bound_input = bound_input;
+    recovery_v2_bound_input.request_epoch = 0x5458_4552;
+    const recovery_v2_bound_plan =
+        try engine.prepared_text_session.makeBoundPlanV1(
+            prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            recovery_v2_scheduling,
+            &session_scheduler,
+            recovery_v2_bound_input,
+        );
+    const recovery_v2_scheduler_before =
+        try session_scheduler.snapshot();
+    const recovery_v2_bank_before = try session_bank.snapshot();
+    var recovery_v2_allocator: StartRecoveryFaultAllocator = .{
+        .scheduler = &session_scheduler,
+        .backing = testing.allocator,
+    };
+    var recovery_v2_session: engine.prepared_text_session.SessionV2 = .{};
+    try testing.expectError(
+        engine.prepared_text_session.Error.RecoveryRequired,
+        recovery_v2_session.start(
+            recovery_v2_allocator.allocator(),
+            &prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            recovery_v2_bound_input,
+            recovery_v2_bound_plan,
+            recovery_v2_scheduling,
+            &session_scheduler,
+            &session_bank,
+        ),
+    );
+    try testing.expect(recovery_v2_allocator.triggered);
+    try testing.expect(recovery_v2_session.contract_bound);
+    try testing.expectEqualDeep(
+        recovery_v2_bound_plan,
+        recovery_v2_session.bound_plan,
+    );
+    try testing.expect(
+        recovery_v2_session.inner.recovery_adoption != null,
+    );
+    try testing.expect(
+        !recovery_v2_session.inner.resources_initialized,
+    );
+    try testing.expect(!recovery_v2_session.inner.publication_bound);
+    const recovery_v2_scheduler_pending =
+        try session_scheduler.snapshot();
+    const recovery_v2_bank_pending = try session_bank.snapshot();
+    try testing.expect(recovery_v2_scheduler_pending.closed);
+    try testing.expectEqual(
+        recovery_v2_scheduler_before.active + 1,
+        recovery_v2_scheduler_pending.active,
+    );
+    try testing.expectEqualDeep(
+        session_plan.claim,
+        recovery_v2_bank_pending.used,
+    );
+    try testing.expectEqual(
+        recovery_v2_bank_before.successful_commits + 1,
+        recovery_v2_bank_pending.successful_commits,
+    );
+    try testing.expectEqual(
+        recovery_v2_bank_before.releases,
+        recovery_v2_bank_pending.releases,
+    );
+
+    session_scheduler.closed = false;
+    const recovery_v2_cancel =
+        try recovery_v2_session.recoverStartAdoption();
+    try testing.expectEqual(
+        engine.lane_weave_qos.EventKind.cancel,
+        recovery_v2_cancel.kind,
+    );
+    try testing.expect(!recovery_v2_session.contract_bound);
+    try testing.expect(
+        recovery_v2_session.inner.recovery_adoption == null,
+    );
+    const recovery_v2_scheduler_after =
+        try session_scheduler.snapshot();
+    const recovery_v2_bank_after = try session_bank.snapshot();
+    try testing.expect(!recovery_v2_scheduler_after.closed);
+    try testing.expectEqual(
+        recovery_v2_scheduler_before.next_event_sequence + 2,
+        recovery_v2_scheduler_after.next_event_sequence,
+    );
+    try testing.expectEqual(
+        recovery_v2_scheduler_before.active,
+        recovery_v2_scheduler_after.active,
+    );
+    try testing.expect(recovery_v2_bank_after.used.isZero());
+    try testing.expectEqual(
+        recovery_v2_bank_before.successful_commits + 1,
+        recovery_v2_bank_after.successful_commits,
+    );
+    try testing.expectEqual(
+        recovery_v2_bank_before.releases + 1,
+        recovery_v2_bank_after.releases,
+    );
+    try testing.expectError(
+        engine.prepared_text_session.Error.InvalidState,
+        recovery_v2_session.recoverStartAdoption(),
+    );
+
+    // A common plan binds only immutable Scheduler/Bank identity. Advancing
+    // the event chain after plan creation cannot invalidate a valid start.
+    const cancel_v2_scheduling: engine.prepared_text_session.SchedulingV1 = .{
+        .tenant_key = 97,
+        .request_key = 98,
+        .request_generation = 1,
+        .resource_owner_key = 99,
+        .weight = 1,
+    };
+    var cancel_v2_bound_input = bound_input;
+    cancel_v2_bound_input.request_epoch = 0x5458_4553;
+    const cancel_v2_bound_plan =
+        try engine.prepared_text_session.makeBoundPlanV1(
+            prepared_session_model,
+            &prompt,
+            session_options,
+            session_plan,
+            cancel_v2_scheduling,
+            &session_scheduler,
+            cancel_v2_bound_input,
+        );
+    const chain_before = try session_scheduler.snapshot();
+    const chain_advance_decision = try session_scheduler.admit(.{
+        .tenant_key = 100,
+        .request_key = 101,
+        .request_generation = 1,
+        .resource_owner_key = 102,
+        .weight = 1,
+        .work_quanta = 1,
+        .claim = .{ .queue_slots = 1 },
+    });
+    const chain_advance = switch (chain_advance_decision) {
+        .admitted => |value| value,
+        .rejected => return error.TestUnexpectedResult,
+    };
+    _ = try session_scheduler.cancel(chain_advance.handle);
+    try testing.expectEqual(
+        chain_before.next_event_sequence + 2,
+        (try session_scheduler.snapshot()).next_event_sequence,
+    );
+
+    const cancel_v2_bank_before = try session_bank.snapshot();
+    var cancel_v2_session: engine.prepared_text_session.SessionV2 = .{};
+    const cancel_v2_start = try cancel_v2_session.start(
+        testing.allocator,
+        &prepared_session_model,
+        &prompt,
+        session_options,
+        session_plan,
+        cancel_v2_bound_input,
+        cancel_v2_bound_plan,
+        cancel_v2_scheduling,
+        &session_scheduler,
+        &session_bank,
+    );
+    switch (cancel_v2_start) {
+        .started => |event| try expectPreparedStartEvent(
+            event,
+            session_plan,
+        ),
+        .rejected => return error.TestUnexpectedResult,
+    }
+    const cancel_v2_event = try cancel_v2_session.cancel();
+    try testing.expectEqual(
+        engine.lane_weave_qos.EventKind.cancel,
+        cancel_v2_event.kind,
+    );
+    cancel_v2_session.deinit();
+    const cancel_v2_bank_after = try session_bank.snapshot();
+    try testing.expect(cancel_v2_bank_after.used.isZero());
+    try testing.expectEqual(
+        cancel_v2_bank_before.successful_commits + 1,
+        cancel_v2_bank_after.successful_commits,
+    );
+    try testing.expectEqual(
+        cancel_v2_bank_before.releases + 1,
+        cancel_v2_bank_after.releases,
+    );
+
+    var prepared_session: engine.prepared_text_session.SessionV2 = .{};
     const session_start = try prepared_session.start(
         testing.allocator,
         &prepared_session_model,
         &prompt,
         session_options,
         session_plan,
-        .{
-            .tenant_key = 71,
-            .request_key = 72,
-            .request_generation = 1,
-            .resource_owner_key = 73,
-            .weight = 1,
-        },
+        bound_input,
+        bound_plan,
+        session_scheduling,
         &session_scheduler,
         &session_bank,
-        0x5458_4550,
     );
     switch (session_start) {
-        .started => |event| try expectPreparedStartEvent(
-            event,
-            session_plan,
-        ),
+        .started => |event| {
+            try expectPreparedStartEvent(event, session_plan);
+            try testing.expectEqualDeep(
+                bound_plan.residency.request_claim,
+                event.spec.claim,
+            );
+            try testing.expectEqualDeep(
+                bound_plan.residency.request_claim,
+                event.resource_receipt.claim,
+            );
+        },
         .rejected => return error.TestUnexpectedResult,
     }
 
@@ -1298,12 +1890,12 @@ test "compact multi-page INT4 generation matches eager generation" {
     defer prepared_session.deinit();
     var session_sink: PreparedTextSink = .{};
     const rejected_permit = try session_scheduler.prepareService();
-    prepared_session.sampling_calls = std.math.maxInt(u64);
+    prepared_session.inner.sampling_calls = std.math.maxInt(u64);
     const forced_failure = prepared_session.step(
         rejected_permit,
         session_sink.interface(),
     );
-    prepared_session.sampling_calls = 0;
+    prepared_session.inner.sampling_calls = 0;
     try testing.expectError(
         engine.prepared_text_session.Error.InvalidState,
         forced_failure,
@@ -1369,29 +1961,109 @@ test "compact multi-page INT4 generation matches eager generation" {
     const session_checkpoint = try prepared_session.snapshotVerified();
     try testing.expectEqual(
         session_plan.plan_sha256,
-        session_checkpoint.plan_sha256,
+        session_checkpoint.base.plan_sha256,
     );
     try testing.expect(
-        engine.prepared_text_session.boundarySnapshotValidV1(
+        engine.prepared_text_session.boundarySnapshotValidV2(
             session_checkpoint,
         ),
     );
-    var substituted_boundary = session_checkpoint;
-    substituted_boundary.plan_sha256[0] ^= 1;
     try testing.expect(
-        !engine.prepared_text_session.boundarySnapshotValidV1(
+        engine.prepared_text_session.boundarySnapshotValidForBoundPlanV2(
+            session_checkpoint,
+            bound_plan,
+            session_plan,
+        ),
+    );
+    try testing.expect(
+        !engine.prepared_text_session.boundarySnapshotValidForBoundPlanV2(
+            session_checkpoint,
+            substituted_bound_plan,
+            session_plan,
+        ),
+    );
+    try testing.expectEqualDeep(
+        bound_plan.bound_plan_sha256,
+        session_checkpoint.bound_plan_sha256,
+    );
+    try testing.expectEqualDeep(
+        bound_plan.artifact.artifact_sha256,
+        session_checkpoint.artifact_sha256,
+    );
+    try testing.expectEqualDeep(
+        bound_plan.execution.plan_sha256,
+        session_checkpoint.execution_plan_sha256,
+    );
+    try testing.expectEqualDeep(
+        bound_plan.residency.binding_sha256,
+        session_checkpoint.residency_binding_sha256,
+    );
+
+    // Wire roots can be coherently re-sealed after an ImageIdentity
+    // substitution, but the local plan remains the trusted identity context.
+    var source_identity_boundary = session_checkpoint;
+    source_identity_boundary.base.image_identity
+        .source_fingerprint[0] ^= 1;
+    source_identity_boundary.base.boundary_sha256 =
+        engine.prepared_text_session.boundaryRootV1(
+            source_identity_boundary.base,
+        );
+    source_identity_boundary.boundary_sha256 =
+        engine.prepared_text_session.boundaryRootV2(
+            source_identity_boundary,
+        );
+    try testing.expect(
+        engine.prepared_text_session.boundarySnapshotValidV2(
+            source_identity_boundary,
+        ),
+    );
+    try testing.expect(
+        !engine.prepared_text_session.boundarySnapshotValidForBoundPlanV2(
+            source_identity_boundary,
+            bound_plan,
+            session_plan,
+        ),
+    );
+    var abi_identity_boundary = session_checkpoint;
+    abi_identity_boundary.base.image_identity
+        .abi_fingerprint[0] ^= 1;
+    abi_identity_boundary.base.boundary_sha256 =
+        engine.prepared_text_session.boundaryRootV1(
+            abi_identity_boundary.base,
+        );
+    abi_identity_boundary.boundary_sha256 =
+        engine.prepared_text_session.boundaryRootV2(
+            abi_identity_boundary,
+        );
+    try testing.expect(
+        engine.prepared_text_session.boundarySnapshotValidV2(
+            abi_identity_boundary,
+        ),
+    );
+    try testing.expect(
+        !engine.prepared_text_session.boundarySnapshotValidForBoundPlanV2(
+            abi_identity_boundary,
+            bound_plan,
+            session_plan,
+        ),
+    );
+
+    var substituted_boundary = session_checkpoint;
+    substituted_boundary.execution_plan_sha256[0] ^= 1;
+    try testing.expect(
+        !engine.prepared_text_session.boundarySnapshotValidV2(
             substituted_boundary,
         ),
     );
     try testing.expectEqual(
         session_oracle.len,
-        session_checkpoint.publication.state.output_length,
+        session_checkpoint.base.publication.state.output_length,
     );
     _ = try prepared_session.retire();
     const final_session_bank = try session_bank.snapshot();
     try testing.expect(final_session_bank.used.isZero());
-    try testing.expectEqual(@as(u64, 2), final_session_bank.successful_commits);
-    try testing.expectEqual(@as(u64, 2), final_session_bank.releases);
+    try testing.expectEqual(@as(u64, 6), final_session_bank.successful_commits);
+    try testing.expectEqual(@as(u64, 6), final_session_bank.releases);
     _ = try session_scheduler.close();
 
     // ResourceBank admission is an execution contract, not a numerical path:

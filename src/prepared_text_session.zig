@@ -10,6 +10,7 @@ const std = @import("std");
 const core = @import("core");
 const resource_bank = core.resource_bank;
 const lane = core.lane_weave_qos;
+const model_contract = core.model_contract;
 const tensor = core.tensor;
 const forward = @import("forward.zig");
 const loader = @import("loader.zig");
@@ -24,15 +25,36 @@ const kernels = @import("backends/cpu/kernels.zig");
 
 pub const plan_abi: u64 = 0x474c_5450_0000_0001;
 pub const session_abi: u64 = 0x474c_5453_0000_0001;
+pub const bound_plan_abi: u64 = 0x474c_5443_0000_0001;
+pub const session_v2_abi: u64 = 0x474c_5453_0000_0002;
+pub const prepared_artifact_profile_abi: u64 =
+    0x474c_5441_0000_0001;
 
 const prompt_domain = "glacier-prepared-text-prompt-v1\x00";
 const plan_domain = "glacier-prepared-text-plan-v1\x00";
 const boundary_domain = "glacier-prepared-text-boundary-v1\x00";
+const artifact_metadata_domain =
+    "glacier-prepared-text-artifact-metadata-v1\x00";
+const cache_bundle_domain =
+    "glacier-prepared-text-cache-bundle-v1\x00";
+const empty_cache_payload_domain =
+    "glacier-prepared-text-empty-cache-payload-v1\x00";
+const ownership_domain =
+    "glacier-prepared-text-ownership-v1\x00";
+const input_schema_domain =
+    "glacier-prepared-text-input-schema-v1\x00";
+const output_schema_domain =
+    "glacier-prepared-text-output-schema-v1\x00";
+const bound_plan_domain =
+    "glacier-prepared-text-bound-plan-v1\x00";
+const boundary_v2_domain =
+    "glacier-prepared-text-boundary-v2\x00";
 
 pub const Error = error{
     PreparedImageRequired,
     InvalidConfiguration,
     InvalidPlan,
+    InvalidBoundPlan,
     InvalidAdmission,
     AdmissionClaimMismatch,
     InvalidState,
@@ -115,6 +137,46 @@ pub const BoundarySnapshotV1 = struct {
     boundary_sha256: [32]u8,
 };
 
+/// Opaque, caller-asserted identities for pre-tokenized u32 input. R1c binds
+/// these roots but does not execute a tokenizer or attest the bytes behind
+/// them. `artifact_license_sha256` has the same assertion-only status. The
+/// caller passes this value independently to both plan construction and V2
+/// start so a coherently re-rooted substitution cannot become self-authorizing.
+pub const BoundPlanInputV1 = struct {
+    request_epoch: u64,
+    token_domain_sha256: [32]u8,
+    token_domain_config_sha256: [32]u8,
+    artifact_license_sha256: [32]u8,
+    previous_plan_sha256: [32]u8 = [_]u8{0} ** 32,
+};
+
+/// Cross-binding between the prepared-text profile and canonical Model
+/// Contract identities. The common plan describes total logical resources;
+/// `residency` projects that total to the exact request-charged claim.
+pub const BoundPlanV1 = struct {
+    abi_version: u64 = bound_plan_abi,
+    local_plan_sha256: [32]u8,
+    artifact: model_contract.ArtifactManifestV1,
+    execution: model_contract.ExecutionPlanV1,
+    residency: model_contract.ExecutionResidencyBindingV1,
+    token_domain_sha256: [32]u8,
+    token_domain_config_sha256: [32]u8,
+    artifact_license_sha256: [32]u8,
+    bound_plan_sha256: [32]u8,
+};
+
+/// V2 evidence keeps the stable V1 boundary intact and adds common artifact,
+/// execution-plan, and charged-claim projection roots.
+pub const BoundarySnapshotV2 = struct {
+    abi_version: u64 = session_v2_abi,
+    base: BoundarySnapshotV1,
+    bound_plan_sha256: [32]u8,
+    artifact_sha256: [32]u8,
+    execution_plan_sha256: [32]u8,
+    residency_binding_sha256: [32]u8,
+    boundary_sha256: [32]u8,
+};
+
 fn hashU32(hash: *std.crypto.hash.sha2.Sha256, value: u32) void {
     var bytes: [4]u8 = undefined;
     std.mem.writeInt(u32, &bytes, value, .little);
@@ -153,6 +215,138 @@ fn planSha256(plan: PlanV1) [32]u8 {
     inline for (std.meta.fields(resource_bank.Claim)) |field| {
         hashU64(&hash, @field(plan.claim, field.name));
     }
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+fn artifactMetadataSha256(
+    model: loader.LoadedModel,
+    plan: PlanV1,
+) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(artifact_metadata_domain);
+    hashU64(&hash, prepared_artifact_profile_abi);
+    hash.update(&plan.image_identity.source_fingerprint);
+    hash.update(&plan.image_identity.abi_fingerprint);
+    hashU64(&hash, plan.image_identity.container_bytes);
+    hash.update(&plan.image_identity.container_sha256);
+    hashU64(&hash, @intCast(model.config.dim));
+    hashU64(&hash, @intCast(model.config.hidden_dim));
+    hashU64(&hash, @intCast(model.config.num_layers));
+    hashU64(&hash, @intCast(model.config.vocab_size));
+    hashU64(&hash, @intCast(model.config.num_heads));
+    hashU64(&hash, @intCast(model.config.head_dim));
+    hashU64(&hash, @intCast(model.config.num_kv_heads));
+    hashU32(&hash, @bitCast(model.config.rms_eps));
+    hashU32(&hash, @bitCast(model.config.rope_theta));
+    hash.update(&[_]u8{
+        @intFromBool(model.config.tie_word_embeddings),
+        @intFromBool(model.prepared_mlp_layout == .separate),
+    });
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+fn cacheBundleSha256(
+    model: loader.LoadedModel,
+    plan: PlanV1,
+) ![32]u8 {
+    const max_positions = std.math.add(
+        u64,
+        plan.prompt_tokens,
+        plan.max_new_tokens - 1,
+    ) catch return Error.InvalidBoundPlan;
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(cache_bundle_domain);
+    hashU64(&hash, @intCast(model.config.num_layers));
+    hashU64(&hash, @intCast(model.config.num_kv_heads));
+    hashU64(&hash, @intCast(model.config.head_dim));
+    hashU64(&hash, max_positions);
+    hashU64(&hash, plan.claim.kv_bytes);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+fn emptyCachePayloadSha256(cache_bundle_sha256: [32]u8) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(empty_cache_payload_domain);
+    hash.update(&cache_bundle_sha256);
+    hashU64(&hash, 0);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+fn ownershipSha256(
+    scheduling: SchedulingV1,
+    scheduler: *const lane.Scheduler,
+    request_epoch: u64,
+) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(ownership_domain);
+    hashU64(&hash, request_epoch);
+    hashU64(&hash, scheduler.config.scheduler_epoch);
+    hashU64(&hash, scheduler.bank_epoch);
+    hashU64(&hash, scheduling.tenant_key);
+    hashU64(&hash, scheduling.request_key);
+    hashU64(&hash, scheduling.request_generation);
+    hashU64(&hash, scheduling.resource_owner_key);
+    hashU64(&hash, scheduling.weight);
+    hashU64(&hash, scheduling.deadline_tick);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+fn inputSchemaSha256(
+    model: loader.LoadedModel,
+    plan: PlanV1,
+    input: BoundPlanInputV1,
+) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(input_schema_domain);
+    hashU64(&hash, @sizeOf(u32));
+    hashU64(&hash, plan.prompt_tokens);
+    hashU64(&hash, @intCast(model.config.vocab_size));
+    hash.update(&input.token_domain_sha256);
+    hash.update(&input.token_domain_config_sha256);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+fn outputSchemaSha256(
+    model: loader.LoadedModel,
+    plan: PlanV1,
+    input: BoundPlanInputV1,
+) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(output_schema_domain);
+    hashU64(&hash, @sizeOf(u32));
+    hashU64(&hash, plan.max_new_tokens);
+    hashU64(&hash, @intCast(model.config.vocab_size));
+    hashU32(&hash, plan.eos_token);
+    hash.update(&input.token_domain_sha256);
+    hash.update(&input.token_domain_config_sha256);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+pub fn boundPlanRootV1(value: BoundPlanV1) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(bound_plan_domain);
+    hashU64(&hash, value.abi_version);
+    hash.update(&value.local_plan_sha256);
+    hash.update(&value.artifact.artifact_sha256);
+    hash.update(&value.execution.plan_sha256);
+    hash.update(&value.residency.binding_sha256);
+    hash.update(&value.token_domain_sha256);
+    hash.update(&value.token_domain_config_sha256);
+    hash.update(&value.artifact_license_sha256);
     var digest: [32]u8 = undefined;
     hash.final(&digest);
     return digest;
@@ -208,6 +402,115 @@ pub fn boundarySnapshotValidV1(snapshot: BoundarySnapshotV1) bool {
     );
 }
 
+pub fn boundaryRootV2(snapshot: BoundarySnapshotV2) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(boundary_v2_domain);
+    hashU64(&hash, snapshot.abi_version);
+    hash.update(&snapshot.base.boundary_sha256);
+    hash.update(&snapshot.bound_plan_sha256);
+    hash.update(&snapshot.artifact_sha256);
+    hash.update(&snapshot.execution_plan_sha256);
+    hash.update(&snapshot.residency_binding_sha256);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+pub fn boundarySnapshotValidV2(snapshot: BoundarySnapshotV2) bool {
+    if (snapshot.abi_version != session_v2_abi or
+        !boundarySnapshotValidV1(snapshot.base) or
+        isZeroDigest(snapshot.bound_plan_sha256) or
+        isZeroDigest(snapshot.artifact_sha256) or
+        isZeroDigest(snapshot.execution_plan_sha256) or
+        isZeroDigest(snapshot.residency_binding_sha256))
+        return false;
+    const expected = boundaryRootV2(snapshot);
+    return std.mem.eql(u8, &snapshot.boundary_sha256, &expected);
+}
+
+/// Contextual verification for consumers that possess the bound plan. The
+/// self-canonical V2 boundary alone authenticates only its own root list; this
+/// check joins that list back to the canonical plan and prepared image.
+pub fn boundarySnapshotValidForBoundPlanV2(
+    snapshot: BoundarySnapshotV2,
+    bound_plan: BoundPlanV1,
+    local_plan: PlanV1,
+) bool {
+    if (!boundarySnapshotValidV2(snapshot))
+        return false;
+    validateBoundPlanV1(bound_plan) catch return false;
+    if (local_plan.abi_version != plan_abi or
+        local_plan.prompt_tokens == 0 or
+        local_plan.max_new_tokens == 0 or
+        local_plan.image_identity.container_bytes == 0 or
+        isZeroDigest(local_plan.prompt_sha256) or
+        isZeroDigest(local_plan.image_identity.source_fingerprint) or
+        isZeroDigest(local_plan.image_identity.abi_fingerprint) or
+        isZeroDigest(local_plan.image_identity.container_sha256) or
+        !std.mem.eql(
+            u8,
+            &local_plan.plan_sha256,
+            &planSha256(local_plan),
+        ))
+        return false;
+    return std.mem.eql(
+        u8,
+        &snapshot.bound_plan_sha256,
+        &bound_plan.bound_plan_sha256,
+    ) and
+        std.mem.eql(
+            u8,
+            &snapshot.artifact_sha256,
+            &bound_plan.artifact.artifact_sha256,
+        ) and
+        std.mem.eql(
+            u8,
+            &snapshot.execution_plan_sha256,
+            &bound_plan.execution.plan_sha256,
+        ) and
+        std.mem.eql(
+            u8,
+            &snapshot.residency_binding_sha256,
+            &bound_plan.residency.binding_sha256,
+        ) and
+        std.mem.eql(
+            u8,
+            &snapshot.base.plan_sha256,
+            &local_plan.plan_sha256,
+        ) and
+        std.mem.eql(
+            u8,
+            &bound_plan.local_plan_sha256,
+            &local_plan.plan_sha256,
+        ) and
+        std.meta.eql(
+            snapshot.base.image_identity,
+            local_plan.image_identity,
+        ) and
+        std.meta.eql(
+            bound_plan.residency.request_claim,
+            local_plan.claim,
+        ) and
+        std.mem.eql(
+            u8,
+            &snapshot.base.image_identity.container_sha256,
+            &bound_plan.artifact.weights_sha256,
+        ) and
+        snapshot.base.image_identity.container_bytes ==
+            bound_plan.artifact.weight_bytes and
+        bound_plan.artifact.input_features ==
+            local_plan.prompt_tokens and
+        bound_plan.artifact.output_dimensions ==
+            local_plan.max_new_tokens and
+        std.mem.eql(
+            u8,
+            &bound_plan.execution.media_object_sha256,
+            &local_plan.prompt_sha256,
+        ) and
+        snapshot.base.publication.request_epoch ==
+            bound_plan.execution.request_epoch;
+}
+
 fn isZeroDigest(digest: [32]u8) bool {
     return std.mem.allEqual(u8, &digest, 0);
 }
@@ -261,6 +564,216 @@ pub fn makePlanV1(
     };
     plan.plan_sha256 = planSha256(plan);
     return plan;
+}
+
+fn totalLogicalClaim(
+    request_claim: resource_bank.Claim,
+    shared_artifact_bytes: u64,
+) !resource_bank.Claim {
+    var total = request_claim;
+    total.capsule_bytes = std.math.add(
+        u64,
+        request_claim.capsule_bytes,
+        shared_artifact_bytes,
+    ) catch return Error.InvalidBoundPlan;
+    return total;
+}
+
+/// Construct the exact common-plan bridge for one pre-tokenized request
+/// profile. The artifact manifest is intentionally request-profile-specific:
+/// its root varies with prompt and output dimensions, while
+/// `weights_sha256` remains the exact mapped `.glrt` container digest.
+pub fn makeBoundPlanV1(
+    model: loader.LoadedModel,
+    prompt: []const u32,
+    options: OptionsV1,
+    local_plan: PlanV1,
+    scheduling: SchedulingV1,
+    scheduler: *const lane.Scheduler,
+    input: BoundPlanInputV1,
+) !BoundPlanV1 {
+    const expected_local = try makePlanV1(model, prompt, options);
+    if (!std.meta.eql(expected_local, local_plan) or
+        input.request_epoch == 0 or
+        isZeroDigest(input.token_domain_sha256) or
+        isZeroDigest(input.token_domain_config_sha256) or
+        isZeroDigest(input.artifact_license_sha256) or
+        scheduling.tenant_key == 0 or scheduling.request_key == 0 or
+        scheduling.request_generation == 0 or
+        scheduling.resource_owner_key == 0 or scheduling.weight == 0)
+        return Error.InvalidBoundPlan;
+    if (local_plan.prompt_tokens == 0 or model.config.vocab_size <= 1)
+        return Error.InvalidBoundPlan;
+
+    const metadata_sha256 = artifactMetadataSha256(model, local_plan);
+    const artifact =
+        model_contract.makeArtifactManifestFromDigestV1(
+            .autoregressive,
+            prepared_artifact_profile_abi,
+            .token_ids,
+            .token_ids,
+            .implementation_defined,
+            1,
+            local_plan.prompt_tokens,
+            local_plan.max_new_tokens,
+            @sizeOf(u32),
+            @sizeOf(u32),
+            1,
+            local_plan.image_identity.container_bytes,
+            local_plan.image_identity.container_sha256,
+            metadata_sha256,
+            input.artifact_license_sha256,
+        ) catch return Error.InvalidBoundPlan;
+    const cache_bundle_sha256 =
+        try cacheBundleSha256(model, local_plan);
+    const total_claim = try totalLogicalClaim(
+        local_plan.claim,
+        local_plan.image_identity.container_bytes,
+    );
+    const execution = model_contract.makeExecutionPlanV1(
+        artifact,
+        .generate_sequence,
+        .{
+            .request_epoch = input.request_epoch,
+            .generation = scheduling.request_generation,
+            .batch_items = 1,
+            .publication_next_sequence = 0,
+            .maximum_absolute_output = @intCast(model.config.vocab_size - 1),
+            .claim = total_claim,
+            .media_object_sha256 = local_plan.prompt_sha256,
+            .processor_state_sha256 = input.token_domain_sha256,
+            .processor_bundle_sha256 = input.token_domain_config_sha256,
+            .cache_bundle_sha256 = cache_bundle_sha256,
+            .cache_payload_sha256 = emptyCachePayloadSha256(cache_bundle_sha256),
+            .ownership_sha256 = ownershipSha256(
+                scheduling,
+                scheduler,
+                input.request_epoch,
+            ),
+            .challenge_sha256 = scheduler.config.challenge,
+            .previous_plan_sha256 = input.previous_plan_sha256,
+            .input_schema_sha256 = inputSchemaSha256(model, local_plan, input),
+            .output_schema_sha256 = outputSchemaSha256(model, local_plan, input),
+            .scratch_bytes = local_plan.claim.partial_bytes,
+        },
+    ) catch return Error.InvalidBoundPlan;
+    const residency =
+        model_contract.makeExecutionResidencyBindingV1(
+            execution,
+            .shared_read_only,
+            local_plan.image_identity.container_bytes,
+            local_plan.claim,
+        ) catch return Error.InvalidBoundPlan;
+    var value: BoundPlanV1 = .{
+        .local_plan_sha256 = local_plan.plan_sha256,
+        .artifact = artifact,
+        .execution = execution,
+        .residency = residency,
+        .token_domain_sha256 = input.token_domain_sha256,
+        .token_domain_config_sha256 = input.token_domain_config_sha256,
+        .artifact_license_sha256 = input.artifact_license_sha256,
+        .bound_plan_sha256 = [_]u8{0} ** 32,
+    };
+    value.bound_plan_sha256 = boundPlanRootV1(value);
+    try validateBoundPlanV1(value);
+    return value;
+}
+
+pub fn validateBoundPlanV1(value: BoundPlanV1) !void {
+    var artifact_wire: [model_contract.artifact_manifest_bytes]u8 =
+        undefined;
+    model_contract.encodeArtifactManifestV1(
+        value.artifact,
+        &artifact_wire,
+    ) catch return Error.InvalidBoundPlan;
+    if (!std.meta.eql(
+        value.artifact,
+        model_contract.decodeArtifactManifestV1(&artifact_wire) catch
+            return Error.InvalidBoundPlan,
+    )) return Error.InvalidBoundPlan;
+
+    var execution_wire: [model_contract.execution_plan_bytes]u8 =
+        undefined;
+    model_contract.encodeExecutionPlanV1(
+        value.execution,
+        &execution_wire,
+    ) catch return Error.InvalidBoundPlan;
+    if (!std.meta.eql(
+        value.execution,
+        model_contract.decodeExecutionPlanV1(&execution_wire) catch
+            return Error.InvalidBoundPlan,
+    )) return Error.InvalidBoundPlan;
+    model_contract.validateExecutionResidencyBindingV1(
+        value.residency,
+        value.execution,
+    ) catch return Error.InvalidBoundPlan;
+
+    if (value.abi_version != bound_plan_abi or
+        value.artifact.artifact_abi !=
+            prepared_artifact_profile_abi or
+        value.artifact.max_batch_items != 1 or
+        value.execution.family != .autoregressive or
+        value.execution.operation != .generate_sequence or
+        value.execution.input_kind != .token_ids or
+        value.execution.output_kind != .token_ids or
+        value.execution.numerical_policy != .implementation_defined or
+        value.execution.batch_items != 1 or
+        value.execution.required_capabilities !=
+            model_contract.no_capabilities or
+        value.execution.publication_next_sequence != 0 or
+        value.residency.residency != .shared_read_only or
+        value.artifact.family != value.execution.family or
+        value.artifact.input_kind != value.execution.input_kind or
+        value.artifact.output_kind != value.execution.output_kind or
+        value.artifact.numerical_policy !=
+            value.execution.numerical_policy or
+        value.artifact.input_features !=
+            value.execution.input_features or
+        value.artifact.output_dimensions !=
+            value.execution.output_dimensions or
+        value.artifact.input_element_bytes !=
+            value.execution.input_element_bytes or
+        value.artifact.output_element_bytes !=
+            value.execution.output_element_bytes or
+        value.artifact.weight_bytes != value.execution.weight_bytes or
+        value.artifact.weight_element_bytes != 1 or
+        value.execution.scratch_bytes !=
+            value.residency.request_claim.partial_bytes or
+        isZeroDigest(value.local_plan_sha256) or
+        isZeroDigest(value.token_domain_sha256) or
+        isZeroDigest(value.token_domain_config_sha256) or
+        isZeroDigest(value.artifact_license_sha256) or
+        !std.mem.eql(
+            u8,
+            &value.execution.artifact_sha256,
+            &value.artifact.artifact_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &value.execution.weights_sha256,
+            &value.artifact.weights_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &value.execution.processor_state_sha256,
+            &value.token_domain_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &value.execution.processor_bundle_sha256,
+            &value.token_domain_config_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &value.artifact.license_sha256,
+            &value.artifact_license_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &value.bound_plan_sha256,
+            &boundPlanRootV1(value),
+        ))
+        return Error.InvalidBoundPlan;
 }
 
 fn validateAdmissionForAdoption(
@@ -853,6 +1366,162 @@ pub const SessionV1 = struct {
             final_h,
             self.resources.logits,
         );
+    }
+};
+
+/// Address-stable prepared session with a canonical common-plan binding.
+///
+/// V2 owns an unchanged `SessionV1` and installs the verified binding before
+/// admission adoption begins. This closes the interval in which publication
+/// could become visible without the common artifact, execution-plan, and
+/// residency roots already being present at the session's final address.
+/// Like V1, callers must not move, copy, mutate, or concurrently access this
+/// value during an active lifecycle or start-adoption recovery.
+pub const SessionV2 = struct {
+    inner: SessionV1 = .{},
+    bound_plan: BoundPlanV1 = undefined,
+    contract_bound: bool = false,
+
+    /// Verify the supplied plan against the independently retained
+    /// `bound_input` before making any Scheduler, Bank, or allocator call.
+    pub fn start(
+        self: *SessionV2,
+        allocator: std.mem.Allocator,
+        model: *const loader.LoadedModel,
+        prompt: []const u32,
+        options: OptionsV1,
+        local_plan: PlanV1,
+        bound_input: BoundPlanInputV1,
+        bound_plan: BoundPlanV1,
+        scheduling: SchedulingV1,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+    ) !StartDecisionV1 {
+        if (self.contract_bound or self.inner.resources_initialized or
+            self.inner.publication_bound or
+            self.inner.recovery_adoption != null)
+            return Error.InvalidState;
+
+        const expected = try makeBoundPlanV1(
+            model.*,
+            prompt,
+            options,
+            local_plan,
+            scheduling,
+            scheduler,
+            bound_input,
+        );
+        if (!std.meta.eql(expected, bound_plan))
+            return Error.InvalidBoundPlan;
+
+        // The roots must be installed before SessionV1 can commit the
+        // Scheduler's publication-adoption barrier.
+        self.bound_plan = bound_plan;
+        self.contract_bound = true;
+        const decision = self.inner.start(
+            allocator,
+            model,
+            prompt,
+            options,
+            local_plan,
+            scheduling,
+            scheduler,
+            bank,
+            bound_input.request_epoch,
+        ) catch |err| {
+            if (err != Error.RecoveryRequired) self.* = .{};
+            return err;
+        };
+        switch (decision) {
+            .started => return decision,
+            .rejected => {
+                self.* = .{};
+                return decision;
+            },
+        }
+    }
+
+    /// Retry the exact cleanup retained by V1 while preserving the common
+    /// binding until the accepted adoption has been cancelled successfully.
+    pub fn recoverStartAdoption(self: *SessionV2) !lane.EventV1 {
+        if (!self.contract_bound) return Error.InvalidState;
+        const event = try self.inner.recoverStartAdoption();
+        self.* = .{};
+        return event;
+    }
+
+    pub fn deinit(self: *SessionV2) void {
+        self.inner.deinit();
+        self.* = .{};
+    }
+
+    pub fn step(
+        self: *SessionV2,
+        permit: lane.ServicePermitV1,
+        downstream: publication.SinkV1,
+    ) !publication.CommitReceiptV1 {
+        if (!self.contract_bound) return Error.InvalidState;
+        return self.inner.step(permit, downstream);
+    }
+
+    pub fn outputTokens(self: *const SessionV2) []const u32 {
+        if (!self.contract_bound) return &.{};
+        return self.inner.outputTokens();
+    }
+
+    pub fn isFinished(self: *const SessionV2) bool {
+        return self.contract_bound and self.inner.isFinished();
+    }
+
+    pub fn snapshotVerified(self: *SessionV2) !BoundarySnapshotV2 {
+        if (!self.contract_bound) return Error.InvalidState;
+        try validateBoundPlanV1(self.bound_plan);
+        const base = try self.inner.snapshotVerified();
+        if (!std.mem.eql(
+            u8,
+            &self.bound_plan.local_plan_sha256,
+            &base.plan_sha256,
+        ) or
+            !std.mem.eql(
+                u8,
+                &self.bound_plan.artifact.weights_sha256,
+                &base.image_identity.container_sha256,
+            ) or
+            self.bound_plan.artifact.weight_bytes !=
+                base.image_identity.container_bytes or
+            !std.meta.eql(
+                self.bound_plan.residency.request_claim,
+                self.inner.plan.claim,
+            ) or
+            self.bound_plan.execution.request_epoch !=
+                base.publication.request_epoch)
+            return Error.InvalidBoundPlan;
+        var snapshot: BoundarySnapshotV2 = .{
+            .base = base,
+            .bound_plan_sha256 = self.bound_plan.bound_plan_sha256,
+            .artifact_sha256 = self.bound_plan.artifact.artifact_sha256,
+            .execution_plan_sha256 = self.bound_plan.execution.plan_sha256,
+            .residency_binding_sha256 = self.bound_plan.residency.binding_sha256,
+            .boundary_sha256 = [_]u8{0} ** 32,
+        };
+        snapshot.boundary_sha256 = boundaryRootV2(snapshot);
+        if (!boundarySnapshotValidForBoundPlanV2(
+            snapshot,
+            self.bound_plan,
+            self.inner.plan,
+        ))
+            return Error.InvalidState;
+        return snapshot;
+    }
+
+    pub fn retire(self: *SessionV2) !lane.EventV1 {
+        if (!self.contract_bound) return Error.InvalidState;
+        return self.inner.retire();
+    }
+
+    pub fn cancel(self: *SessionV2) !lane.EventV1 {
+        if (!self.contract_bound) return Error.InvalidState;
+        return self.inner.cancel();
     }
 };
 
