@@ -469,12 +469,31 @@ every-byte mutation rejection, length rejection, contextual substitutions, and
 failure-atomic three-record encoding form the retained gate. The ownership
 intent is evidence only, not a receipt or authority handoff.
 
-**Next R1h slice:** consume those exact records in restored Scheduler admission,
-acquire and validate a fresh `ResourceBank` receipt with permit-generation
-fencing, and remap publication ownership through `LeaseTree` without making
-the target runnable before every authority check passes. Durable selector
-composition, source exit, exclusive target activation, and fresh-process
-continuation remain separate gates.
+**Completed R1h-a slice:** `prepareRestoredAdmissionV1` consumes those exact
+records against a fresh, explicitly LeaseTree-enabled Scheduler/Bank. It
+acquires the intended admission and receipt, retains the non-runnable
+publication-adoption barrier, opens the exact allocation-empty LeaseTree with
+one zero-current-claim tenant scope, restores sequence `N`, and seeds the Bank
+publication generation at source `G`. The process-local bootstrap root binds
+the artifact roots, target intent,
+adoption, receipt, tree, scope, `N/G`, Scheduler/Bank/session addresses, and
+canonical scheduling projection. Validation is read-only; abort closes session
+then tree before cancelling the adoption. See
+[Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md).
+
+**Next R1h-b slice:** partition the request claim without double-counting,
+charge before checkpoint KV/output/RNG restoration, add a LeaseTree-aware
+restored adoption/publication contract, construct a runnable target Session,
+and prove its next token against the uninterrupted transition.
+
+**Done when:** parent and child ownership charge every resource exactly once
+and Scheduler/Bank totals agree; state cannot run before LeaseTree-aware
+adoption commit; injected failure at every materialize, bind, and commit phase
+returns the target to zero; the first target Bank permit is source `G + 1`;
+one restored next-token transition matches uninterrupted output, KV, RNG, and
+sampling state; and legacy flat adoption remains byte- and behavior-compatible.
+Durable selector composition, source exit, exclusive target activation, and
+fresh-process continuation remain separate gates.
 
 ### Paged-KV ownership restore fixture
 

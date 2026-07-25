@@ -456,10 +456,17 @@ is exact and declared stream skew remains within policy.
 
 **Ownership intent** — A domain-separated, pointer-free commitment naming the
 Scheduler, coordinator, fresh Bank/owner, LeaseTree/cache keys, successor
-generations, and exact request claim proposed for a later prepared-text
-restored admission. It is evidence only: unlike a restored ownership receipt,
-it proves no reacquisition, source exit, target exclusivity, or authority to
-publish.
+generations, and exact request claim proposed for prepared-text restored
+admission. It is evidence only: R1h-a can consume it into a barrier-held live
+bootstrap, but the intent alone proves no reacquisition, source exit, target
+exclusivity, or authority to publish.
+
+**Prepared-text restored admission** — A process-local, single-use R1h-a
+bootstrap that consumes exact prepared-text successor evidence into a fresh
+Scheduler admission and Bank receipt, an allocation-empty LeaseTree with one
+zero-current-claim tenant scope, restored sequence, and Bank
+publication-permit fence. Its adoption barrier remains pending, so it is live
+target ownership but not a runnable restored Session.
 
 **Restored ownership receipt** — A domain-separated commitment that replaces a
 dead source's retained-output authority with the fresh Bank epoch, receipt

@@ -801,11 +801,45 @@ R1g ownership intent is pointer-free evidence, not an authority handoff or
 receipt. It does not exit the source, admit a target, acquire a live Bank
 receipt or service permit, remap a `LeaseTree`, create a runnable target
 Session, durably select a successor, resume after process death, or prove
-exactly-once continuation. R1h next adds restored Scheduler admission,
-fresh-Bank receipt and permit-generation fences, and LeaseTree-aware
-publication/receipt remapping. Durable atomic selection, source exit, exclusive
-target activation, and fresh-process uninterrupted/resumed equivalence remain
-later gates.
+exactly-once continuation.
+
+#### R1h-a — Barrier-held restored admission and receipt remap
+
+Status: **integrated experimental live-authority slice**.
+`prepared_text_restore_admission` now:
+
+- consumes the exact R1g plan, residency, segment, checkpoint, retained source,
+  and target ownership intent before any target mutation;
+- requires a genuinely fresh LeaseTree-enabled Bank and an explicitly opted-in
+  fresh Scheduler whose live epoch, coordinator ID, and Bank epoch match the
+  target intent, while its challenge matches the successor segment;
+- derives one fixed missing scheduling policy: authority key as request key,
+  weight one, no deadline, and only the successor's remaining quanta;
+- acquires the exact target admission and fresh receipt, then retains the
+  publication-adoption barrier so no service can observe partial restore state;
+- opens the intended allocation-empty LeaseTree with one zero-current-claim
+  tenant scope and restores the Bank publication namespace at sequence `N`;
+  and
+- seeds the target Bank's publication-permit generation from the source fence,
+  making its first future permit strictly greater across the fresh receipt.
+
+The live capability is process-local and single-use. Read-only validation
+rechecks the pending adoption, receipt, tree, scope, publication namespace, and
+exact Scheduler/Bank accounting. Abort closes the restored session, closes the
+allocation-empty tree and its scope, then cancels the adoption and releases the
+receipt; copied or replayed authority is stale after the first winner.
+
+R1h-a intentionally allocates no KV node. The request receipt already charges
+the complete request claim, while LeaseTree v1 allocation claims are additive;
+allocating the same KV claim below it would double-charge and create
+Scheduler/Bank drift. The retained cache node/binding keys remain committed
+intent for R1h-b, which must add an explicit parent/cache split or funded
+suballocation contract, materialize state, construct the restored Session, and
+commit LeaseTree-aware adoption. See
+[Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md).
+
+Durable atomic selection, source exit, exclusive target activation, and
+fresh-process uninterrupted/resumed equivalence remain later gates.
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with

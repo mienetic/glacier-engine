@@ -135,6 +135,8 @@ pub const prepared_text_checkpoint =
 pub const prepared_text_session = @import("prepared_text_session.zig");
 pub const prepared_text_successor =
     @import("prepared_text_successor.zig");
+pub const prepared_text_restore_admission =
+    @import("prepared_text_restore_admission.zig");
 pub const decode_lane4 = @import("decode_lane4.zig");
 pub const sampling = @import("sampling.zig");
 pub const tokenizer = @import("tokenizer.zig");

@@ -2572,9 +2572,37 @@ test "compact multi-page INT4 generation matches eager generation" {
         session_bank.epoch,
         100,
     );
+    var successor_target_bank_slots: [2]engine.resource_bank.Slot = undefined;
+    var successor_target_tree_roots: [2]engine.resource_bank.LeaseTreeRootSlot = undefined;
+    var successor_target_tree_nodes: [2]engine.resource_bank.LeaseNodeSlot = undefined;
+    var successor_target_bank =
+        try engine.resource_bank.Bank.initWithLeaseTree(
+            &successor_target_bank_slots,
+            &successor_target_tree_roots,
+            &successor_target_tree_nodes,
+            .{},
+            successor_target_bank_epoch,
+        );
+    var successor_target_lane_slots: [2]engine.lane_weave_qos.Slot = undefined;
+    var successor_target_projection: [2]engine.lane_weave_qos.ProjectionSlot = undefined;
+    var successor_target_scheduler =
+        try engine.lane_weave_qos.Scheduler.initWithLeaseTree(
+            &successor_target_bank,
+            .{
+                .slots = &successor_target_lane_slots,
+                .projection = &successor_target_projection,
+            },
+            .{
+                .scheduler_epoch = 90_001,
+                .challenge = checkpoint_challenge,
+                .max_weight = 1,
+            },
+        );
+    const successor_target_identity =
+        try successor_target_scheduler.identityV1();
     const successor_target: engine.prepared_text_successor.TargetOwnershipV1 = .{
-        .scheduler_epoch = 90_001,
-        .coordinator_id = 90_002,
+        .scheduler_epoch = successor_target_identity.scheduler_epoch,
+        .coordinator_id = successor_target_identity.coordinator_id,
         .bank_epoch = successor_target_bank_epoch,
         .request_generation = successor_generation,
         .resource_owner_key = 90_003,
@@ -2701,6 +2729,262 @@ test "compact multi-page INT4 generation matches eager generation" {
         successor_receipt_before,
         prepared_session.result_receipt,
     );
+
+    // R1h consumes the exact R1g records into a fresh, live target receipt and
+    // an empty LeaseTree/scope. The retained adoption barrier prevents service
+    // before the later KV materialization/activation gate. Publication resumes
+    // at N with the source Bank permit generation seeded as a strict floor.
+    const restore_evidence: engine.prepared_text_restore_admission.EvidenceV1 = .{
+        .encoded_plan = &encoded_successor_plan,
+        .encoded_residency = &encoded_successor_residency,
+        .encoded_segment = &encoded_successor_segment,
+        .encoded_checkpoint = prepared_checkpoint,
+        .expected_checkpoint = checkpoint_expected,
+        .source = successor_source,
+        .target = successor_target,
+    };
+    var foreign_restore_bank_slots: [1]engine.resource_bank.Slot = undefined;
+    var foreign_restore_tree_roots: [1]engine.resource_bank.LeaseTreeRootSlot = undefined;
+    var foreign_restore_tree_nodes: [1]engine.resource_bank.LeaseNodeSlot = undefined;
+    var foreign_restore_bank =
+        try engine.resource_bank.Bank.initWithLeaseTree(
+            &foreign_restore_bank_slots,
+            &foreign_restore_tree_roots,
+            &foreign_restore_tree_nodes,
+            .{},
+            successor_target_bank_epoch,
+        );
+    var foreign_restore_lane_slots: [1]engine.lane_weave_qos.Slot = undefined;
+    var foreign_restore_projection: [1]engine.lane_weave_qos.ProjectionSlot = undefined;
+    var foreign_restore_scheduler =
+        try engine.lane_weave_qos.Scheduler.initWithLeaseTree(
+            &foreign_restore_bank,
+            .{
+                .slots = &foreign_restore_lane_slots,
+                .projection = &foreign_restore_projection,
+            },
+            .{
+                .scheduler_epoch = successor_target.scheduler_epoch,
+                .challenge = checkpoint_challenge,
+                .max_weight = 1,
+            },
+        );
+    const foreign_restore_scheduler_before =
+        try foreign_restore_scheduler.snapshot();
+    const foreign_restore_bank_before =
+        try foreign_restore_bank.snapshotV3();
+    var successor_session_identity: u8 = 0;
+    try testing.expectError(
+        engine.prepared_text_restore_admission.Error.InvalidLiveTarget,
+        engine.prepared_text_restore_admission
+            .prepareRestoredAdmissionV1(
+            &foreign_restore_scheduler,
+            &foreign_restore_bank,
+            @intFromPtr(&successor_session_identity),
+            restore_evidence,
+        ),
+    );
+    try testing.expectEqualDeep(
+        foreign_restore_scheduler_before,
+        try foreign_restore_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        foreign_restore_bank_before,
+        try foreign_restore_bank.snapshotV3(),
+    );
+    _ = try foreign_restore_scheduler.close();
+
+    const restored_decision =
+        try engine.prepared_text_restore_admission
+            .prepareRestoredAdmissionV1(
+            &successor_target_scheduler,
+            &successor_target_bank,
+            @intFromPtr(&successor_session_identity),
+            restore_evidence,
+        );
+    var prepared_restore = switch (restored_decision) {
+        .prepared => |value| value,
+        .rejected => return error.TestUnexpectedResult,
+        .recovery_required => return error.TestUnexpectedResult,
+    };
+    try engine.prepared_text_restore_admission
+        .validatePreparedRestoredAdmissionV1(
+        &prepared_restore,
+        restore_evidence,
+    );
+    try testing.expectEqual(
+        checkpoint_expected.publication_next_sequence,
+        prepared_restore.publication_next_sequence,
+    );
+    try testing.expectEqual(
+        checkpoint_boundary.base.publication
+            .last_resource_permit_generation,
+        prepared_restore.source_last_resource_permit_generation,
+    );
+    try testing.expectEqual(
+        successor_target.cache_node_key,
+        prepared_restore.target.cache_node_key,
+    );
+    try testing.expectEqual(
+        successor_target.cache_binding_key,
+        prepared_restore.target.cache_binding_key,
+    );
+    try testing.expect(prepared_restore.tree.current.isZero());
+    try testing.expectEqual(
+        @as(u32, 1),
+        (try successor_target_bank.snapshotV3()).active_lease_scopes,
+    );
+    try testing.expectError(
+        engine.lane_weave_qos.Error.AdoptionInFlight,
+        successor_target_scheduler.prepareService(),
+    );
+    try testing.expectError(
+        engine.resource_bank.Error.InvalidTransition,
+        successor_target_scheduler.commitPublicationAdoption(
+            prepared_restore.adoption,
+        ),
+    );
+    var forged_prepared_restore = prepared_restore;
+    forged_prepared_restore.target.cache_node_key ^= 1;
+    forged_prepared_restore.bootstrap_sha256 =
+        engine.prepared_text_restore_admission
+            .preparedRestoredAdmissionRootV1(
+            forged_prepared_restore,
+        );
+    const forged_restore_scheduler_before =
+        try successor_target_scheduler.snapshot();
+    const forged_restore_bank_before =
+        try successor_target_bank.snapshotV3();
+    try testing.expectError(
+        engine.prepared_text_restore_admission
+            .Error.InvalidPreparedAdmission,
+        engine.prepared_text_restore_admission
+            .validatePreparedRestoredAdmissionV1(
+            &forged_prepared_restore,
+            restore_evidence,
+        ),
+    );
+    try testing.expectEqualDeep(
+        forged_restore_scheduler_before,
+        try successor_target_scheduler.snapshot(),
+    );
+    try testing.expectEqualDeep(
+        forged_restore_bank_before,
+        try successor_target_bank.snapshotV3(),
+    );
+
+    // A second receipt can carry a separately valid empty restored tree and
+    // publication session in the same Bank. Splicing those handles into the
+    // first Scheduler adoption must fail before either authority is mutated.
+    const mixed_restore_scheduler_before =
+        try successor_target_scheduler.snapshot();
+    const decoy_restore_receipt = try successor_target_bank.commit(
+        try successor_target_bank.reserve(
+            90_103,
+            successor_target.request_claim,
+        ),
+    );
+    var decoy_restore_tree = try successor_target_bank.openLeaseTree(
+        decoy_restore_receipt,
+        90_104,
+        90_105,
+        successor_target.request_claim,
+    );
+    const decoy_restore_opened =
+        try successor_target_bank.openLeaseScope(
+            decoy_restore_tree,
+            90_107,
+            90_106,
+            successor_target.request_claim,
+        );
+    decoy_restore_tree = decoy_restore_opened.tree;
+    var decoy_restore_session_identity: u8 = 0;
+    const decoy_restore_session_id =
+        @intFromPtr(&decoy_restore_session_identity);
+    try successor_target_bank
+        .bindRestoredPublicationSessionWithLeaseTreeFenced(
+        decoy_restore_tree,
+        successor_source.receipt.bank_epoch,
+        successor_artifacts.segment.request_epoch,
+        decoy_restore_session_id,
+        successor_artifacts.segment.sequence_base,
+        successor_artifacts.segment
+            .source_last_resource_permit_generation,
+    );
+    var mixed_prepared_restore = prepared_restore;
+    mixed_prepared_restore.receipt = decoy_restore_receipt;
+    mixed_prepared_restore.tree = decoy_restore_tree;
+    mixed_prepared_restore.scope = decoy_restore_opened.scope;
+    mixed_prepared_restore.session_id = decoy_restore_session_id;
+    mixed_prepared_restore.bootstrap_sha256 =
+        engine.prepared_text_restore_admission
+            .preparedRestoredAdmissionRootV1(
+            mixed_prepared_restore,
+        );
+    const mixed_restore_bank_before =
+        try successor_target_bank.snapshotV3();
+    try testing.expectError(
+        engine.prepared_text_restore_admission
+            .Error.InvalidPreparedAdmission,
+        engine.prepared_text_restore_admission
+            .abortPreparedRestoredAdmissionV1(
+            &mixed_prepared_restore,
+        ),
+    );
+    try testing.expectEqualDeep(
+        mixed_restore_bank_before,
+        try successor_target_bank.snapshotV3(),
+    );
+    try successor_target_bank.closePublicationSession(
+        decoy_restore_receipt,
+        successor_artifacts.segment.request_epoch,
+        decoy_restore_session_id,
+        successor_artifacts.segment.sequence_base,
+    );
+    try successor_target_bank.closeLeaseTree(decoy_restore_tree);
+    try successor_target_bank.release(decoy_restore_receipt);
+    try testing.expectEqualDeep(
+        mixed_restore_scheduler_before,
+        try successor_target_scheduler.snapshot(),
+    );
+
+    const copied_prepared_restore = prepared_restore;
+    const restore_cancel =
+        try engine.prepared_text_restore_admission
+            .abortPreparedRestoredAdmissionV1(&prepared_restore);
+    try testing.expectEqual(
+        engine.lane_weave_qos.EventKind.cancel,
+        restore_cancel.kind,
+    );
+    try testing.expectEqual(
+        engine.prepared_text_restore_admission.Phase.aborted,
+        prepared_restore.phase,
+    );
+    var stale_prepared_restore = copied_prepared_restore;
+    try testing.expectError(
+        engine.prepared_text_restore_admission
+            .Error.InvalidPreparedAdmission,
+        engine.prepared_text_restore_admission
+            .abortPreparedRestoredAdmissionV1(
+            &stale_prepared_restore,
+        ),
+    );
+    const restored_bank_after =
+        try successor_target_bank.snapshotV3();
+    try testing.expect(restored_bank_after.used.isZero());
+    try testing.expectEqual(
+        @as(u32, 0),
+        restored_bank_after.active_lease_trees,
+    );
+    try testing.expectEqual(
+        @as(u32, 0),
+        restored_bank_after.active_lease_scopes,
+    );
+    try testing.expectEqual(
+        @as(u32, 0),
+        (try successor_target_scheduler.snapshot()).active,
+    );
+    _ = try successor_target_scheduler.close();
 
     var detached_checkpoint =
         try engine.prepared_text_checkpoint.materializeDetachedV1(

@@ -1,22 +1,30 @@
 # Prepared Text Checkpoint
 
 The prepared-text checkpoint combines an experimental R1e codec with an R1f
-same-process rebind and an R1g successor-evidence bridge for one exact,
-non-terminal `SessionV3` boundary. It captures the committed output prefix, RNG
-state, sampling count, and contiguous KV prefix as a canonical little-endian
-byte image. A verified image can be materialized into a fresh detached
-allocation, used to replace only the concrete state backing of the original
-live Session, or joined to canonical pointer-free successor records.
+same-process rebind, an R1g successor-evidence bridge, and an R1h-a
+barrier-held target admission for one exact non-terminal `SessionV3` boundary.
+It captures the committed output prefix, RNG state, sampling count, and
+contiguous KV prefix as a canonical little-endian byte image. A verified image
+can be materialized into a fresh detached allocation, used to replace only the
+concrete state backing of the original live Session, joined to canonical
+pointer-free successor records, or joined with those successor records and
+independently retained source/target context to acquire a non-runnable fresh
+target receipt/tree bootstrap.
 
 Detached is an important boundary. The materialized payload has no Scheduler,
 ResourceBank, receipt, service permit, sink, or publication authority. It is
 not a runnable restored Session, a durable checkpoint, or fresh-process resume.
 R1f does not attach authority to that detached value; the live Session decodes
 and materializes the image internally while retaining its existing authority.
-R1g likewise creates no target authority: its target ownership intent and
-successor plan/residency/transcript records are evidence for a later
-restored-admission gate, not a receipt or runnable Session. See
+R1g likewise creates no target authority by itself: its target ownership intent
+and successor plan/residency/transcript records are evidence, not a receipt or
+runnable Session. See
 [Prepared Text Successor Evidence](PREPARED_TEXT_SUCCESSOR.md).
+R1h-a acquires live target admission/receipt/tree authority, but leaves the
+adoption barrier pending and an allocation-empty LeaseTree with one
+zero-current-claim scope; it still does not attach authority to the detached
+payload or create a runnable restored Session. See
+[Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md).
 
 ## What the slice proves
 
@@ -59,6 +67,10 @@ restored-admission gate, not a receipt or runnable Session. See
   transcript segment at the exact checkpoint sequence. It verifies that the
   complete live source context is unchanged before returning and grants no
   target authority.
+- `prepareRestoredAdmissionV1` consumes those records into a fresh target
+  admission and receipt, an exact allocation-empty LeaseTree with one
+  zero-current-claim scope, restored sequence, and cross-Bank
+  publication-permit fence while retaining the non-runnable adoption barrier.
 
 ## State constraints
 
@@ -224,12 +236,15 @@ make duplicate or stale publication possible.
    nonzero sequence base, source-boundary lineage, nonempty cache payload root,
    and explicit target ownership intent.~~ Complete in R1g as pointer-free
    evidence; it deliberately does not claim an authority handoff.
-3. Add Scheduler restored-admission semantics, a ResourceBank/permit
-   generation fence, and LeaseTree-aware publication/receipt remapping
-   compatible with that successor segment.
-4. Wrap the state image and authority records in the existing immutable
+3. ~~Add barrier-held Scheduler restored admission, a fresh ResourceBank
+   receipt/permit-generation fence, and allocation-empty LeaseTree-aware
+   publication/receipt remapping.~~ Complete in R1h-a without KV allocation or
+   target activation.
+4. Partition request accounting, restore KV/output/RNG state under charge,
+   construct a restored Session, and commit LeaseTree-aware adoption.
+5. Wrap the state image and authority records in the existing immutable
    checkpoint archive and atomic selector.
-5. Prove source exit, target exclusivity, fresh-process continuation, no
+6. Prove source exit, target exclusivity, fresh-process continuation, no
    duplicate token, and final terminal-result equivalence.
 
 Each step is a separate contributor-sized correctness gate. The codec and R1g

@@ -3,10 +3,10 @@
 R1g adds an allocation-free, pointer-free evidence bridge from one verified
 non-terminal prepared-text checkpoint to a canonical successor execution
 identity. It is an integrated experimental evidence slice for the Glacier AI
-Runtime: an inspector, archive writer, or later restored-admission
+Runtime: an inspector, archive writer, or restored-admission
 implementation can agree on the exact plan, residency projection, sequence
 boundary, cache payload, and intended target ownership before any live target
-authority exists.
+authority exists. R1h-a is the current non-runnable consumer of this evidence.
 
 The bridge deliberately reuses the Common Model Contract instead of
 serializing native `BoundPlanV1` memory:
@@ -84,7 +84,7 @@ request claim.
 
 ## Ownership intent
 
-`TargetOwnershipV1` names the target proposed for a later restored admission:
+`TargetOwnershipV1` names the target proposed for restored admission:
 
 - scheduler epoch and coordinator identity;
 - target Bank epoch and request generation;
@@ -240,8 +240,11 @@ R1g also does not provide:
 - raw-text tokenizer, production-model, native-platform, quality, or
   performance evidence.
 
-R1h is the next correctness slice: restored Scheduler admission, a newly
-validated Bank receipt and permit-generation fence, and `LeaseTree`-aware
-publication/receipt remapping against these exact successor records. Durable
+R1h-a now consumes these records into a fresh, barrier-held target admission,
+receipt, allocation-empty `LeaseTree` with one zero-current-claim scope,
+restored sequence, and Bank permit-generation fence. It remains non-runnable
+until charge-correct checkpoint materialization and LeaseTree-aware adoption
+commit are complete. See
+[Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md). Durable
 selector composition and fresh-process source-exit/exclusive-target proof
-follow as separate gates.
+remain separate later gates.

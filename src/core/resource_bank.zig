@@ -826,6 +826,32 @@ pub const Bank = struct {
         if (slot.state != .committed) return Error.InvalidTransition;
     }
 
+    /// Read-only proof that one exact committed receipt can be released
+    /// without first closing a child lease, LeaseTree, or publication
+    /// session. A nonzero request epoch may remain as a terminal publication
+    /// tombstone after its address-stable session has been closed.
+    pub fn validateReleaseReady(
+        self: *Bank,
+        receipt: Receipt,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const slot = try self.validateReceipt(receipt);
+        const child_active = if (self.child_slots) |storage|
+            storage[receipt.slot_index].active
+        else
+            false;
+        const lease_tree_active = try self.hasActiveLeaseTreeLocked(
+            receipt.slot_index,
+        );
+        if (slot.state != .committed or
+            slot.publication_session_id != 0 or
+            slot.publication_active or
+            child_active or lease_tree_active)
+            return Error.InvalidTransition;
+    }
+
     /// Open the sole mutable allocation charge beneath an immutable committed
     /// parent. A zero initial claim is valid so admission can precede the
     /// first allocator-backed payload. Opening is allowed only before the
@@ -1840,6 +1866,81 @@ pub const Bank = struct {
         slot.publication_next_sequence = restored_next_sequence;
         slot.publication_active = false;
         slot.publication_permit_integrity = 0;
+    }
+
+    /// Restore one exact transcript fence while preserving the source Bank's
+    /// last publication-permit generation. The next target permit is
+    /// therefore strictly greater even though the target Receipt is fresh.
+    /// This is intentionally separate from the legacy restored bind.
+    pub fn bindRestoredPublicationSessionWithLeaseTreeFenced(
+        self: *Bank,
+        tree: LeaseTreeV1,
+        source_bank_epoch: u64,
+        request_epoch: u64,
+        session_id: usize,
+        restored_next_sequence: u64,
+        source_last_publication_permit_generation: u64,
+    ) Error!void {
+        if (source_bank_epoch == 0 or source_bank_epoch == self.epoch or
+            request_epoch == 0 or session_id == 0 or
+            restored_next_sequence == 0 or
+            source_last_publication_permit_generation == 0 or
+            source_last_publication_permit_generation ==
+                std.math.maxInt(u64))
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const root = try self.validateLeaseTreeLocked(tree);
+        const slot = try self.validateReceipt(tree.parent);
+        if (root.pending_kind != .none or slot.state != .committed or
+            slot.publication_session_id != 0 or
+            slot.publication_request_epoch != 0 or
+            slot.publication_next_sequence != 0 or
+            slot.publication_permit_generation != 0 or
+            slot.publication_active or
+            slot.publication_permit_integrity != 0)
+            return Error.InvalidTransition;
+        slot.publication_request_epoch = request_epoch;
+        slot.publication_session_id = session_id;
+        slot.publication_next_sequence = restored_next_sequence;
+        slot.publication_permit_generation =
+            source_last_publication_permit_generation;
+        slot.publication_active = false;
+        slot.publication_permit_integrity = 0;
+    }
+
+    /// Validate the exact idle target state installed by the fenced restored
+    /// bind. Source Bank identity remains a retained-artifact responsibility:
+    /// only target fields persisted by ResourceBank are accepted here.
+    pub fn validateRestoredPublicationSessionWithLeaseTreeFenced(
+        self: *Bank,
+        tree: LeaseTreeV1,
+        request_epoch: u64,
+        session_id: usize,
+        restored_next_sequence: u64,
+        source_last_publication_permit_generation: u64,
+    ) Error!void {
+        if (request_epoch == 0 or session_id == 0 or
+            restored_next_sequence == 0 or
+            source_last_publication_permit_generation == 0 or
+            source_last_publication_permit_generation ==
+                std.math.maxInt(u64))
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const root = try self.validateLeaseTreeLocked(tree);
+        const slot = try self.validateReceipt(tree.parent);
+        if (root.pending_kind != .none or slot.state != .committed or
+            slot.publication_request_epoch != request_epoch or
+            slot.publication_session_id != session_id or
+            slot.publication_next_sequence != restored_next_sequence or
+            slot.publication_permit_generation !=
+                source_last_publication_permit_generation or
+            slot.publication_active or
+            slot.publication_permit_integrity != 0)
+            return Error.InvalidTransition;
     }
 
     pub fn bindPublicationSessionWithTree(
@@ -4174,6 +4275,246 @@ test "forged token and arithmetic overflow fail closed" {
             .kv_bytes = 1,
         }),
     );
+}
+
+test "fenced restored LeaseTree bind preserves permit monotonicity atomically" {
+    var slots = [_]Slot{.{}} ** 1;
+    var roots = [_]LeaseTreeRootSlot{.{}} ** 1;
+    var nodes = [_]LeaseNodeSlot{.{}} ** 2;
+    const target_bank_epoch: u64 = 0x5231_4842;
+    var bank = try Bank.initWithLeaseTreeStorage(
+        &slots,
+        &roots,
+        &nodes,
+        .{ .queue_slots = 1 },
+        target_bank_epoch,
+    );
+    const receipt = try bank.commit(try bank.reserve(
+        0x6f77_6e65_72,
+        .{ .queue_slots = 1 },
+    ));
+    const opened = try bank.openLeaseTree(
+        receipt,
+        0x7472_6565,
+        0x6175_7468,
+        .{ .kv_bytes = 1 },
+    );
+    const scoped = try bank.openLeaseScope(
+        opened,
+        0x7363_6f70_65,
+        0x7465_6e61_6e74,
+        .{ .kv_bytes = 1 },
+    );
+    const tree = scoped.tree;
+    const source_bank_epoch: u64 = 0x5231_4853;
+    const request_epoch: u64 = 0x7265_7175_6573_74;
+    const restored_next_sequence: u64 = 37;
+    const source_last_generation: u64 = 19;
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+
+    const unbound_slot = slots[0];
+    const unbound_snapshot = try bank.snapshotV3();
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
+            tree,
+            0,
+            request_epoch,
+            session_id,
+            restored_next_sequence,
+            source_last_generation,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
+            tree,
+            target_bank_epoch,
+            request_epoch,
+            session_id,
+            restored_next_sequence,
+            source_last_generation,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
+            tree,
+            source_bank_epoch,
+            request_epoch,
+            session_id,
+            restored_next_sequence,
+            0,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
+            tree,
+            source_bank_epoch,
+            request_epoch,
+            session_id,
+            restored_next_sequence,
+            std.math.maxInt(u64),
+        ),
+    );
+    var forged_tree = tree;
+    forged_tree.tree_key ^= 1;
+    try std.testing.expectError(
+        Error.StaleReservation,
+        bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
+            forged_tree,
+            source_bank_epoch,
+            request_epoch,
+            session_id,
+            restored_next_sequence,
+            source_last_generation,
+        ),
+    );
+    try std.testing.expectEqualDeep(unbound_slot, slots[0]);
+    try std.testing.expectEqualDeep(unbound_snapshot, try bank.snapshotV3());
+
+    try bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
+        tree,
+        source_bank_epoch,
+        request_epoch,
+        session_id,
+        restored_next_sequence,
+        source_last_generation,
+    );
+    try bank.validateRestoredPublicationSessionWithLeaseTreeFenced(
+        tree,
+        request_epoch,
+        session_id,
+        restored_next_sequence,
+        source_last_generation,
+    );
+    const bound_slot = slots[0];
+    const bound_snapshot = try bank.snapshotV3();
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.validateRestoredPublicationSessionWithLeaseTreeFenced(
+            tree,
+            request_epoch,
+            session_id,
+            restored_next_sequence + 1,
+            source_last_generation,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.validateRestoredPublicationSessionWithLeaseTreeFenced(
+            tree,
+            request_epoch,
+            session_id,
+            restored_next_sequence,
+            source_last_generation + 1,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
+            tree,
+            source_bank_epoch,
+            request_epoch,
+            session_id,
+            restored_next_sequence,
+            source_last_generation,
+        ),
+    );
+    try std.testing.expectEqualDeep(bound_slot, slots[0]);
+    try std.testing.expectEqualDeep(bound_snapshot, try bank.snapshotV3());
+
+    const first = try bank.beginPublicationWithLeaseTree(
+        tree,
+        request_epoch,
+        session_id,
+        restored_next_sequence,
+    );
+    try std.testing.expectEqual(
+        source_last_generation + 1,
+        first.generation,
+    );
+    try std.testing.expectEqual(restored_next_sequence, first.sequence);
+    try bank.abortPublication(first);
+    const retry = try bank.beginPublicationWithLeaseTree(
+        tree,
+        request_epoch,
+        session_id,
+        restored_next_sequence,
+    );
+    try std.testing.expectEqual(
+        source_last_generation + 2,
+        retry.generation,
+    );
+    try bank.abortPublication(retry);
+    try bank.closePublicationSession(
+        receipt,
+        request_epoch,
+        session_id,
+        restored_next_sequence,
+    );
+    try bank.closeLeaseTree(tree);
+    try bank.release(receipt);
+
+    var boundary_slots = [_]Slot{.{}} ** 1;
+    var boundary_roots = [_]LeaseTreeRootSlot{.{}} ** 1;
+    var boundary_nodes = [_]LeaseNodeSlot{.{}} ** 1;
+    var boundary_bank = try Bank.initWithLeaseTreeStorage(
+        &boundary_slots,
+        &boundary_roots,
+        &boundary_nodes,
+        .{ .queue_slots = 1 },
+        target_bank_epoch + 1,
+    );
+    const boundary_receipt = try boundary_bank.commit(
+        try boundary_bank.reserve(1, .{ .queue_slots = 1 }),
+    );
+    const boundary_tree = try boundary_bank.openLeaseTree(
+        boundary_receipt,
+        1,
+        2,
+        .{ .kv_bytes = 1 },
+    );
+    try boundary_bank.bindRestoredPublicationSessionWithLeaseTreeFenced(
+        boundary_tree,
+        source_bank_epoch,
+        request_epoch,
+        session_id,
+        restored_next_sequence,
+        std.math.maxInt(u64) - 1,
+    );
+    const boundary_permit = try boundary_bank.beginPublicationWithLeaseTree(
+        boundary_tree,
+        request_epoch,
+        session_id,
+        restored_next_sequence,
+    );
+    try std.testing.expectEqual(
+        std.math.maxInt(u64),
+        boundary_permit.generation,
+    );
+    try boundary_bank.abortPublication(boundary_permit);
+    const exhausted_slot = boundary_slots[0];
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        boundary_bank.beginPublicationWithLeaseTree(
+            boundary_tree,
+            request_epoch,
+            session_id,
+            restored_next_sequence,
+        ),
+    );
+    try std.testing.expectEqualDeep(exhausted_slot, boundary_slots[0]);
+    try boundary_bank.closePublicationSession(
+        boundary_receipt,
+        request_epoch,
+        session_id,
+        restored_next_sequence,
+    );
+    try boundary_bank.closeLeaseTree(boundary_tree);
+    try boundary_bank.release(boundary_receipt);
 }
 
 test "LeaseTree reserve materialize publish and free preserves exact sums" {

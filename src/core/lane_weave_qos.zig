@@ -359,6 +359,17 @@ pub const SnapshotV1 = struct {
     closed: bool,
 };
 
+/// Read-only process-local identity used to bind restored admission intent
+/// before any Scheduler mutation. The address is live authority, not a
+/// portable evidence field.
+pub const IdentityV1 = struct {
+    scheduler_epoch: u64,
+    coordinator_id: u64,
+    coordinator_address: u64,
+    bank_epoch: u64,
+    challenge_sha256: Digest,
+};
+
 const Selection = struct {
     slot_index: usize,
     cursor_after: u32,
@@ -466,11 +477,41 @@ pub const Scheduler = struct {
         storage: Storage,
         config: Config,
     ) Error!Scheduler {
+        return initWithBankStorage(bank, storage, config, .flat);
+    }
+
+    /// Opt into a fresh LeaseTree-backed Bank while preserving the legacy
+    /// flat-only initializer. Tree allocation remains an explicit later
+    /// operation; initialization only validates the dedicated storage mode.
+    pub fn initWithLeaseTree(
+        bank: *resource_bank.Bank,
+        storage: Storage,
+        config: Config,
+    ) Error!Scheduler {
+        return initWithBankStorage(bank, storage, config, .lease_tree);
+    }
+
+    const BankStorageMode = enum {
+        flat,
+        lease_tree,
+    };
+
+    fn initWithBankStorage(
+        bank: *resource_bank.Bank,
+        storage: Storage,
+        config: Config,
+        bank_storage_mode: BankStorageMode,
+    ) Error!Scheduler {
+        const storage_mode_valid = switch (bank_storage_mode) {
+            .flat => bank.child_slots == null and
+                bank.lease_tree_storage == null,
+            .lease_tree => bank.child_slots == null and
+                bank.lease_tree_storage != null,
+        };
         if (storage.slots.len == 0 or
             storage.slots.len != storage.projection.len or
             storage.slots.len > std.math.maxInt(u32) or
-            bank.slots.len != storage.slots.len or bank.child_slots != null or
-            bank.lease_tree_storage != null or
+            bank.slots.len != storage.slots.len or !storage_mode_valid or
             config.scheduler_epoch == 0 or
             config.max_weight == 0 or
             config.max_projection_quanta == 0 or
@@ -499,6 +540,39 @@ pub const Scheduler = struct {
             bank_snapshot.rejected_capacity != 0 or
             bank_snapshot.rejected_slots != 0)
             return Error.InvalidConfiguration;
+        if (bank_storage_mode == .lease_tree) {
+            const tree_snapshot = bank.snapshotV3() catch
+                return Error.InvalidConfiguration;
+            if (tree_snapshot.bank_epoch != bank_snapshot.bank_epoch or
+                !std.meta.eql(tree_snapshot.limits, bank_snapshot.limits) or
+                !std.meta.eql(tree_snapshot.used, bank_snapshot.used) or
+                tree_snapshot.active_child_leases != 0 or
+                tree_snapshot.active_lease_trees != 0 or
+                tree_snapshot.active_lease_scopes != 0 or
+                tree_snapshot.active_lease_nodes != 0 or
+                tree_snapshot.reserved_unmaterialized_allocations != 0 or
+                tree_snapshot.live_allocations != 0 or
+                tree_snapshot.quiescing_allocations != 0 or
+                tree_snapshot.free_authorized_allocations != 0 or
+                tree_snapshot.child_opens != 0 or
+                tree_snapshot.child_grows != 0 or
+                tree_snapshot.child_shrinks != 0 or
+                tree_snapshot.child_closes != 0 or
+                tree_snapshot.rejected_child_capacity != 0 or
+                tree_snapshot.lease_tree_opens != 0 or
+                tree_snapshot.lease_scope_opens != 0 or
+                tree_snapshot.lease_allocation_reserves != 0 or
+                tree_snapshot.lease_allocation_materializations != 0 or
+                tree_snapshot.lease_allocation_aborts != 0 or
+                tree_snapshot.lease_reclaim_prepares != 0 or
+                tree_snapshot.lease_reclaim_authorizations != 0 or
+                tree_snapshot.lease_reclaim_cancels != 0 or
+                tree_snapshot.lease_reclaim_commits != 0 or
+                tree_snapshot.lease_tree_closes != 0 or
+                tree_snapshot.rejected_lease_capacity != 0 or
+                tree_snapshot.rejected_lease_nodes != 0)
+                return Error.InvalidConfiguration;
+        }
         const service_coordinator_id = try reserveServiceCoordinatorId();
 
         for (storage.slots) |*slot| slot.* = .{};
@@ -756,6 +830,22 @@ pub const Scheduler = struct {
             adoption.publication_service_policy,
         );
         self.pending_publication_adoption = null;
+    }
+
+    /// Validate one exact pending adoption without consuming its barrier.
+    /// Success leaves logical state unchanged; authority drift retains the
+    /// existing fail-closed poisoning behavior.
+    pub fn validatePublicationAdoption(
+        self: *Scheduler,
+        adoption: PublicationAdoptionV1,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoService();
+        try self.validateBank();
+        _ = try self.validatePendingPublicationAdoption(adoption);
+        _ = try self.validatePublicationAdmission(adoption.admission);
     }
 
     /// Consume one live adoption authority by cancelling its exact admission.
@@ -1216,6 +1306,22 @@ pub const Scheduler = struct {
             .chain_head_sha256 = self.chain_head_sha256,
             .poisoned = self.poisoned,
             .closed = self.closed,
+        };
+    }
+
+    /// Return the exact process-local identity that future admission
+    /// authorities bind. This does not expose or consume pending permits.
+    pub fn identityV1(self: *Scheduler) Error!IdentityV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.validateBank();
+        return .{
+            .scheduler_epoch = self.config.scheduler_epoch,
+            .coordinator_id = self.service_coordinator_id,
+            .coordinator_address = @intCast(@intFromPtr(self)),
+            .bank_epoch = self.bank_epoch,
+            .challenge_sha256 = self.config.challenge,
         };
     }
 
@@ -3204,6 +3310,80 @@ test "LaneWeave ServiceFinalizer-v1 layout and source literal stay stable" {
     try std.testing.expectEqual(service_finalizer_abi, finalizer.abi_version);
 }
 
+test "LaneWeave LeaseTree initialization is explicit and exposes exact identity" {
+    var flat_bank_slots = [_]resource_bank.Slot{.{}} ** 1;
+    var flat_lane_slots = [_]Slot{.{}} ** 1;
+    var flat_projection = [_]ProjectionSlot{.{}} ** 1;
+    var flat_bank = try resource_bank.Bank.init(
+        &flat_bank_slots,
+        .{ .queue_slots = 1 },
+        0x464c_4154,
+    );
+    var challenge = zero_digest;
+    challenge[0] = 0xa5;
+    const config: Config = .{
+        .scheduler_epoch = 0x5153_4553,
+        .challenge = challenge,
+    };
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        Scheduler.initWithLeaseTree(
+            &flat_bank,
+            .{
+                .slots = &flat_lane_slots,
+                .projection = &flat_projection,
+            },
+            config,
+        ),
+    );
+
+    var tree_bank_slots = [_]resource_bank.Slot{.{}} ** 1;
+    var roots = [_]resource_bank.LeaseTreeRootSlot{.{}} ** 1;
+    var nodes = [_]resource_bank.LeaseNodeSlot{.{}} ** 2;
+    var tree_lane_slots = [_]Slot{.{}} ** 1;
+    var tree_projection = [_]ProjectionSlot{.{}} ** 1;
+    var tree_bank = try resource_bank.Bank.initWithLeaseTreeStorage(
+        &tree_bank_slots,
+        &roots,
+        &nodes,
+        .{ .queue_slots = 1 },
+        0x5452_4545,
+    );
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        Scheduler.init(
+            &tree_bank,
+            .{
+                .slots = &tree_lane_slots,
+                .projection = &tree_projection,
+            },
+            config,
+        ),
+    );
+
+    var scheduler = try Scheduler.initWithLeaseTree(
+        &tree_bank,
+        .{
+            .slots = &tree_lane_slots,
+            .projection = &tree_projection,
+        },
+        config,
+    );
+    const identity = try scheduler.identityV1();
+    try std.testing.expectEqual(config.scheduler_epoch, identity.scheduler_epoch);
+    try std.testing.expect(identity.coordinator_id != 0);
+    try std.testing.expectEqual(
+        @as(u64, @intCast(@intFromPtr(&scheduler))),
+        identity.coordinator_address,
+    );
+    try std.testing.expectEqual(@as(u64, 0x5452_4545), identity.bank_epoch);
+    try std.testing.expectEqualDeep(
+        config.challenge,
+        identity.challenge_sha256,
+    );
+    _ = try scheduler.close();
+}
+
 test "LaneWeave IWRR golden order is interleaved and bounded" {
     var fixture: TestFixture = .{};
     try fixture.init(3, 4);
@@ -3383,6 +3563,23 @@ test "LaneWeave publication adoption is snapshot invisible and cancel compatible
     try std.testing.expectEqualDeep(
         try legacy.bank.snapshot(),
         try adopted.bank.snapshot(),
+    );
+    try adopted.scheduler.validatePublicationAdoption(adoption);
+    try std.testing.expectEqualDeep(
+        adoption_snapshot,
+        try adopted.scheduler.snapshot(),
+    );
+    var validation_forged = adoption;
+    validation_forged.publication_session_id += 1;
+    validation_forged.adoption_sha256 =
+        publicationAdoptionSha256(validation_forged);
+    try std.testing.expectError(
+        Error.StaleAdoptionLease,
+        adopted.scheduler.validatePublicationAdoption(validation_forged),
+    );
+    try std.testing.expectEqualDeep(
+        adoption_snapshot,
+        try adopted.scheduler.snapshot(),
     );
 
     try std.testing.expectError(

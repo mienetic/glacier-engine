@@ -14,7 +14,10 @@ output/RNG/contiguous-KV materialization without transferring publication
 authority. R1f adds exact-current-boundary state-buffer rebind inside the
 original same-process Session while preserving that authority. R1g derives a
 canonical successor execution plan, residency binding, transcript segment, and
-target ownership intent without creating target authority. These are
+target ownership intent without creating target authority. R1h-a consumes
+those records into a fresh target admission and receipt, an allocation-empty
+LeaseTree with one zero-current-claim scope, a restored sequence, and a Bank
+permit fence while retaining a non-runnable adoption barrier. These are
 integrated experimental slices, not the completed R1 text runtime.
 
 ## Supported envelope
@@ -38,12 +41,13 @@ integrated experimental slices, not the completed R1 text runtime.
 | R1e checkpoint | Canonical non-terminal output/RNG/KV image with independent Zig/Python verification and detached zero-slack materialization |
 | R1f rebind | Internally verified replacement of concrete output/KV backing at the exact current boundary while all live authority remains in the original Session |
 | R1g successor evidence | Read-only canonical 768-byte execution plan, 256-byte residency binding, and 512-byte transcript segment with source lineage, logical-KV identity, and target ownership intent |
+| R1h-a restored admission | Fresh target admission and receipt, an allocation-empty LeaseTree with one zero-current-claim scope, exact sequence and Bank permit-generation remap, and a process-local bootstrap root held behind the adoption barrier |
 
 `eos_token` must be outside the model vocabulary in this version. Fixed-length
 execution keeps the admitted service count identical to the number of
 publication transactions.
 
-## Preferred R1d/R1e/R1f/R1g lifecycle
+## Preferred R1d/R1e/R1f/R1g/R1h-a lifecycle
 
 1. Load a prepared image with `loader.loadPreparedWithOptions`.
 2. Build `prepared_text_session.OptionsV1`, then derive the canonical
@@ -96,9 +100,24 @@ publication transactions.
     independently selected target ownership intent. Successor capture derives
     canonical plan/residency/transcript records and exact-compares the complete
     live source context before and after the read-only operation. The result is
-    evidence for later restored admission; it creates no target receipt,
-    permit, Session, or publication authority.
-11. After the fixed final token, call `sealTerminalResult`. It computes the
+    evidence by itself; it creates no target receipt, permit, Session, or
+    publication authority. R1h-a can consume it in a separate target branch.
+11. In that optional branch, pass the exact records and retained context to
+    `prepareRestoredAdmissionV1` with a fresh LeaseTree-enabled target
+    Scheduler/Bank and a caller-reserved future-session identity/address.
+    Pattern-match every `PrepareDecisionV1` branch. `rejected` carries only the
+    policy event and no live capability. `recovery_required` carries a
+    process-local `PrepareRecoveryV1`; retain it and call
+    `recoverPrepareRestoredAdmissionV1` until rollback returns its cancellation
+    event. `prepared` carries the fresh receipt, allocation-empty LeaseTree with
+    one zero-current-claim scope, restored `N/G`, and non-runnable adoption
+    barrier. Validate that payload read-only, then call
+    `abortPreparedRestoredAdmissionV1`; after `RecoveryRequired`, retain the
+    same payload and retry until its phase is `aborted`. Never drop either live
+    payload. Finish this target cleanup before returning to the source
+    lifecycle. R1h-a has no activation path and neither materializes checkpoint
+    state nor exits the source.
+12. After the fixed final token, call `sealTerminalResult`. It computes the
     canonical little-endian `u32` output root, joins it to the V2 boundary and
     source mapping, validates the actual request-charged receipt against both
     the live Bank publication session and the residency projection, and on
@@ -106,13 +125,13 @@ publication transactions.
     zero to one. The envelope context binds the exact artifact, execution plan,
     prompt/schema roots, cache identity, ownership root, publication challenge,
     and adapter evidence.
-12. Read the sealed `TerminalResultEvidenceV1` through `terminalResult` and
+13. Read the sealed `TerminalResultEvidenceV1` through `terminalResult` and
     validate it against the independently retained bound/local plans and exact
     output tokens. If the original Receipt is retained independently, use
     `terminalResultEvidenceValidForReceiptV1` to reject substitution by a
     different structurally valid receipt. Calling `sealTerminalResult` early or
     a second time rejects without changing the retained result evidence.
-13. Call `retire` only after sealing. Before sealing, call `cancel` instead.
+14. Call `retire` only after sealing. Before sealing, call `cancel` instead.
     Cancellation is not valid after a terminal result becomes visible. Always
     call `deinit` to release the session's local allocations.
 
@@ -273,7 +292,9 @@ be serialized with every operation on the Session and its bound receipt.
 See
 [Prepared Text Successor Evidence](PREPARED_TEXT_SUCCESSOR.md) for the exact
 plan projection, segment offsets, root domains, mutation gates, and the R1h
-restored-admission boundary.
+evidence boundary. See
+[Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md) for the
+live R1h-a bootstrap and non-runnable safety boundary.
 
 `SessionV3.start` remains a correctness-first startup transaction rather than a
 non-blocking startup mechanism. Its adoption barrier deliberately prevents the
@@ -406,6 +427,15 @@ the LaneWeave publication-adoption unit tests, the retained evidence verifies:
   length, coherent foreign-context, and contextual-substitution rejection;
 - read-only successor capture with exact before/after Session, Scheduler, Bank,
   receipt, boundary, sequence, and state preservation;
+- coherent foreign live-target rejection before Scheduler/Bank mutation;
+- barrier-held restored admission with exact receipt, an allocation-empty
+  LeaseTree with one zero-current-claim scope, sequence `N`, source permit
+  floor `G`, and rejection of the ordinary flat adoption commit;
+- exact restored-admission validation against independently retained R1g
+  records and live target state;
+- reverse-order restored-admission abort to zero, retained setup-recovery
+  authority, resumable cleanup phases, and stale copied-capability rejection
+  after the first winner;
 - pending-permit rollback after an injected pre-publication failure;
 - zero used resources after retirement;
 - zero used resources after an injected initialization-allocation failure.
@@ -427,6 +457,13 @@ sequence; `SessionV2` remains available as the R1c boundary API. The fixture
 does not establish production-model quality, native performance evidence,
 tokenizer interoperability, strict cross-platform numerical equivalence, or
 concurrent same-scheduler progress during startup.
+
+R1h-a additionally does not create a target Session, restore checkpoint
+KV/output/RNG state, allocate the retained cache node, commit adoption, or
+publish a successor token. Its caller-reserved session identity is only an
+address-sized future binding, not proof that a Session exists. Every successful
+R1h-a bootstrap must currently be validated and aborted; activation is an
+R1h-b gate.
 
 `BoundPlanV1`, `ExecutionResidencyBindingV1`, and the Session bridge are still
 an experimental Zig/direct API. There is no fixed `BoundPlanV1` wire, projected

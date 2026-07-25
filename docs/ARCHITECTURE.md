@@ -469,10 +469,12 @@ transcript/state roots, and address-bound scalar/cache fields remain unchanged.
 No permit or authority is created, consumed, or transferred. Old borrowed
 output/cache views become invalid after success.
 
-This retained-authority rebind is not a fresh-process restore. Moving
-continuation into a new Session still requires restored Scheduler/Bank
-semantics, LeaseTree-aware publication/receipt remapping, durable selection,
-source exit, and exclusive target activation.
+This retained-authority rebind is not a fresh-process restore. R1h-a now
+supplies only a barrier-held fresh target receipt and an allocation-empty
+LeaseTree remap with one zero-current-claim scope.
+Moving continuation into a new Session still requires charge-correct state
+materialization, LeaseTree-aware adoption commit, durable selection, source
+exit, and exclusive target activation.
 
 R1g adds `prepared_text_successor`, a pointer-free evidence plane over that
 same exact checkpoint boundary. It reuses the Common Model Contract's canonical
@@ -495,10 +497,16 @@ record, or runnable target Session. Zig and independent Python verification
 freeze the three wire records and reject every-byte mutation, length errors,
 and coherently re-rooted foreign context.
 
-R1h must turn that intent into live authority through restored Scheduler
-admission, a fresh validated Bank receipt and permit-generation fence, and
-LeaseTree-aware publication/receipt remapping. Durable selection, source exit,
-exclusive target activation, and fresh-process execution remain later gates.
+R1h-a now turns that intent into a fresh, live Scheduler admission and Bank
+receipt while retaining the non-runnable adoption barrier. It opens the exact
+allocation-empty LeaseTree with one zero-current-claim scope, restores sequence
+`N`, and seeds the Bank publication generation from source `G`; a process-local
+bootstrap root binds all evidence roots and live handles. It intentionally does
+not allocate KV because
+LeaseTree-v1 claims are additive to the already-complete request claim.
+Charge-correct materialization, LeaseTree-aware adoption commit, durable
+selection, source exit, exclusive target activation, and fresh-process
+execution remain later gates.
 
 This lifecycle does not add early EOS, fewer-than-admitted outputs, a raw-text
 tokenizer, stable package or license byte attestation, durable prepared-session
@@ -827,6 +835,10 @@ targets remain gated until their named native adapters and evidence pass.
 - [Prepared text successor evidence](PREPARED_TEXT_SUCCESSOR.md): canonical
   successor execution-plan/residency projection, fixed transcript segment,
   target ownership intent, and the restored-admission safety boundary.
+- [Prepared text restore admission](PREPARED_TEXT_RESTORE_ADMISSION.md):
+  barrier-held fresh target receipt, allocation-empty LeaseTree with one
+  zero-current-claim scope, sequence and Bank permit fencing, process-local
+  bootstrap root, and reverse cleanup.
 - [Continuation capsule](CONTINUATION_CAPSULE.md): checkpoint manifest ABI.
 - [Continuation object resolver](CONTINUATION_OBJECT_RESOLVER.md): scoped
   lookup and quota contract.
