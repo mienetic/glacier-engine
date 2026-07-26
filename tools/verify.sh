@@ -158,6 +158,7 @@ verification_prefix="$verification_root/prefix"
 affected_paths_file="$verification_root/affected.paths0"
 affected_flags_file="$verification_root/affected.flags"
 selected_targets_file="$verification_root/selected.targets"
+selected_target_steps_file="$verification_root/selected.target-steps"
 PYTHONDONTWRITEBYTECODE=1
 export ZIG_LOCAL_CACHE_DIR ZIG_GLOBAL_CACHE_DIR PYTHONDONTWRITEBYTECODE
 
@@ -242,6 +243,10 @@ run_zig_build() {
 
 run_zig_metal_build() {
     zig build native-metal-observation-test \
+        native-metal-correctness-test \
+        profile-device-compile \
+        profile-host-tool-compile \
+        -Dmetal-output-dir="$verification_root/metal" \
         -Doptimize=ReleaseSafe \
         -Dmetal=true \
         -j2 \
@@ -270,15 +275,22 @@ plan_has() {
 
 run_target_gates() {
     selected_target=$1
+    set --
+    while IFS=' ' read -r step_target selected_step extra ||
+        [ -n "$step_target$selected_step$extra" ]; do
+        if [ "$step_target" = "$selected_target" ]; then
+            set -- "$@" "$selected_step"
+        fi
+    done <"$selected_target_steps_file"
+    target_gate_label=$(
+        printf '%s' "$*" | tr ' ' '+'
+    )
     if [ "$has_zig" -eq 1 ]; then
-        # Passing any named step suppresses Zig's default install step. Name
-        # both roots explicitly so one build runner constructs one shared DAG
-        # and visits common compile steps only once for this target.
-        run_gate "portability/$selected_target/install+test-compile" \
-            run_zig_target_build "$selected_target" install test-compile
+        run_gate "portability/$selected_target/$target_gate_label" \
+            run_zig_target_build "$selected_target" "$@"
     else
         record_skip \
-            "portability/$selected_target/install+test-compile" \
+            "portability/$selected_target/$target_gate_label" \
             "requires a working zig executable"
     fi
 }
@@ -313,8 +325,15 @@ run_or_reuse_native_suite() {
 run_target_plan() {
     selected_target_count=0
     seen_targets="|"
+    target_plan_valid=1
+    previous_target_rank=0
     if [ ! -f "$selected_targets_file" ]; then
         record_fail "verifier/targets" "selected target plan is unavailable"
+        return
+    fi
+    if [ ! -f "$selected_target_steps_file" ]; then
+        record_fail "verifier/target-steps" \
+            "selected target-step plan is unavailable"
         return
     fi
     while IFS= read -r selected_target || [ -n "$selected_target" ]; do
@@ -322,6 +341,7 @@ run_target_plan() {
             "" | -* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+-]*)
                 record_fail "verifier/targets" \
                     "policy emitted an invalid target name"
+                target_plan_valid=0
                 continue
                 ;;
         esac
@@ -329,11 +349,134 @@ run_target_plan() {
             *"|$selected_target|"*)
                 record_fail "verifier/targets" \
                     "policy emitted a duplicate target: $selected_target"
+                target_plan_valid=0
                 continue
                 ;;
         esac
+        case "$selected_target" in
+            x86_64-linux-musl) target_rank=1 ;;
+            aarch64-linux-musl) target_rank=2 ;;
+            x86_64-windows-gnu) target_rank=3 ;;
+            x86_64-freebsd) target_rank=4 ;;
+            *)
+                record_fail "verifier/targets" \
+                    "policy emitted an unknown target: $selected_target"
+                target_plan_valid=0
+                continue
+                ;;
+        esac
+        if [ "$target_rank" -le "$previous_target_rank" ]; then
+            record_fail "verifier/targets" \
+                "policy emitted targets out of retained order: $selected_target"
+            target_plan_valid=0
+        else
+            previous_target_rank=$target_rank
+        fi
         seen_targets="${seen_targets}${selected_target}|"
         selected_target_count=$((selected_target_count + 1))
+    done <"$selected_targets_file"
+
+    seen_target_steps="|"
+    while IFS=' ' read -r step_target selected_step extra ||
+        [ -n "$step_target$selected_step$extra" ]; do
+        if [ -z "$step_target" ] || [ -z "$selected_step" ] ||
+            [ -n "$extra" ]; then
+            record_fail "verifier/target-steps" \
+                "policy emitted a malformed target-step record"
+            target_plan_valid=0
+            continue
+        fi
+        case "$seen_targets" in
+            *"|$step_target|"*) ;;
+            *)
+                record_fail "verifier/target-steps" \
+                    "policy emitted a step for an unselected target: $step_target"
+                target_plan_valid=0
+                continue
+                ;;
+        esac
+        case "$selected_step" in
+            install | install-benchmarks | test-compile | profile-core-compile | profile-cpu-compile | profile-durable-compile | profile-device-compile | profile-host-tool-compile | profile-complete-compile) ;;
+            *)
+                record_fail "verifier/target-steps" \
+                    "policy emitted an unknown target step: $selected_step"
+                target_plan_valid=0
+                continue
+                ;;
+        esac
+        case "$seen_target_steps" in
+            *"|$step_target:$selected_step|"*)
+                record_fail "verifier/target-steps" \
+                    "policy emitted a duplicate target step: $step_target $selected_step"
+                target_plan_valid=0
+                ;;
+            *)
+                seen_target_steps="${seen_target_steps}${step_target}:${selected_step}|"
+                ;;
+        esac
+    done <"$selected_target_steps_file"
+
+    while IFS= read -r selected_target || [ -n "$selected_target" ]; do
+        selected_step_words=
+        previous_profile_rank=0
+        selected_step_count=0
+        selected_steps_valid=1
+        while IFS=' ' read -r step_target selected_step extra ||
+            [ -n "$step_target$selected_step$extra" ]; do
+            if [ "$step_target" != "$selected_target" ]; then
+                continue
+            fi
+            selected_step_count=$((selected_step_count + 1))
+            if [ -z "$selected_step_words" ]; then
+                selected_step_words=$selected_step
+            else
+                selected_step_words="$selected_step_words $selected_step"
+            fi
+            case "$selected_step" in
+                profile-core-compile) profile_rank=1 ;;
+                profile-cpu-compile) profile_rank=2 ;;
+                profile-durable-compile) profile_rank=3 ;;
+                profile-device-compile) profile_rank=4 ;;
+                profile-host-tool-compile) profile_rank=5 ;;
+                install | install-benchmarks | test-compile | profile-complete-compile) profile_rank=0 ;;
+                *) selected_steps_valid=0 ;;
+            esac
+            if [ "$profile_rank" -gt 0 ]; then
+                if [ "$profile_rank" -le "$previous_profile_rank" ]; then
+                    selected_steps_valid=0
+                fi
+                previous_profile_rank=$profile_rank
+            fi
+        done <"$selected_target_steps_file"
+        if [ "$selected_step_count" -eq 0 ]; then
+            record_fail "verifier/target-steps" \
+                "selected target has no build steps: $selected_target"
+            target_plan_valid=0
+        elif [ "$selected_step_words" = \
+            "install install-benchmarks test-compile" ]; then
+            :
+        elif [ "$selected_step_words" = \
+            "profile-complete-compile" ]; then
+            :
+        elif [ "$selected_steps_valid" -ne 1 ]; then
+            record_fail "verifier/target-steps" \
+                "target steps are not a canonical focused profile list: $selected_target"
+            target_plan_valid=0
+        else
+            case "$selected_step_words" in
+                *install* | *test-compile* | *profile-complete-compile*)
+                    record_fail "verifier/target-steps" \
+                        "full target steps cannot mix with focused profiles: $selected_target"
+                    target_plan_valid=0
+                    ;;
+            esac
+        fi
+    done <"$selected_targets_file"
+
+    if [ "$target_plan_valid" -ne 1 ]; then
+        return
+    fi
+    while IFS= read -r selected_target || [ -n "$selected_target" ]; do
         run_target_gates "$selected_target"
     done <"$selected_targets_file"
 }
@@ -390,7 +533,8 @@ if [ "$profile" = "affected" ]; then
         if python3 tools/verification_policy.py plan \
             --paths0 "$affected_paths_file" \
             --flags "$affected_flags_file" \
-            --targets "$selected_targets_file"; then
+            --targets "$selected_targets_file" \
+            --target-steps "$selected_target_steps_file"; then
             affected_plan_ready=1
             target_plan_ready=1
             record_pass "policy/affected-selection" "union plan created"
@@ -401,7 +545,8 @@ if [ "$profile" = "affected" ]; then
 elif [ "$profile" = "matrix" ]; then
     if [ "$has_python" -eq 1 ] &&
         python3 tools/verification_policy.py retained-targets \
-            --targets "$selected_targets_file"; then
+            --targets "$selected_targets_file" \
+            --target-steps "$selected_target_steps_file"; then
         target_plan_ready=1
         record_pass "policy/target-selection" "retained target plan created"
     else

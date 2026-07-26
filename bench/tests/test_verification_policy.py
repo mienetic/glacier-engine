@@ -39,11 +39,71 @@ EXPECTED_AARCH64_CPU_SOURCE_PATHS = frozenset(
     }
 )
 
+EXPECTED_METAL_NATIVE_SOURCE_PATHS = frozenset(
+    {
+        "src/backends/metal/backend.zig",
+        "src/backends/metal/native_observer.zig",
+        "src/backends/metal/shaders/dequant.metal",
+        "src/backends/metal/shaders/matmul.metal",
+        "src/backends/metal/shim.m",
+        "tests/metal_correctness.zig",
+        "tests/native_metal_observation.zig",
+        "examples/native_metal_observation.zig",
+        "bench/metal_kernel.zig",
+    }
+)
+
+EXPECTED_CORE_CONTRACT_PATHS = frozenset(
+    {
+        "src/ffi/model_contract_c.zig",
+        "include/glacier/model_contract.h",
+        "tests/model_contract_c_consumer.c",
+        "tests/model_contract_cpp_consumer.cpp",
+    }
+)
+
+EXPECTED_SHARED_RUNTIME_COMPLETE_PATHS = frozenset(
+    {
+        "src/prepared_text_source_lease.zig",
+        "src/prepared_text_durable_handoff.zig",
+        "src/continuation_live_restart.zig",
+    }
+)
+
+EXPECTED_DURABLE_RUNTIME_PROFILE_PATHS = frozenset(
+    {
+        "examples/action_outbox_file_recovery.zig",
+        "examples/action_outbox_store.zig",
+        "examples/continuation_object_sweep_file.zig",
+        "examples/continuation_object_payload_file.zig",
+        "examples/continuation_live_restart.zig",
+        "examples/prepared_text_live_restart.zig",
+        "examples/continuation_checkpoint_file.zig",
+        "bench/action_outbox_file_worker.zig",
+        "bench/continuation_object_sweep_file_worker.zig",
+        "bench/continuation_object_payload_file_worker.zig",
+        "bench/continuation_live_restart_worker.zig",
+        "bench/prepared_text_live_restart_worker.zig",
+        "bench/continuation_checkpoint_file_worker.zig",
+    }
+)
+
 
 class VerificationPolicyTests(unittest.TestCase):
     def assert_targets(self, paths, expected):
         plan = policy.classify_paths(paths)
         self.assertEqual(plan.targets, tuple(expected))
+        return plan
+
+    def assert_target_steps(self, paths, expected):
+        plan = policy.classify_paths(paths)
+        self.assertEqual(
+            tuple(
+                (target_plan.target, target_plan.steps)
+                for target_plan in plan.target_plans
+            ),
+            tuple(expected),
+        )
         return plan
 
     def test_documentation_only_selects_quick_gates(self):
@@ -96,6 +156,181 @@ class VerificationPolicyTests(unittest.TestCase):
                 self.assertTrue(plan.requires("python-full"))
                 if changed_path == "build.zig":
                     self.assertTrue(plan.requires("metal-native"))
+                self.assertEqual(
+                    tuple(
+                        policy.TargetBuildPlan(
+                            target,
+                            policy.FULL_TARGET_STEPS,
+                        )
+                        for target in policy.RETAINED_TARGETS
+                    ),
+                    plan.target_plans,
+                )
+
+    def test_audited_paths_select_focused_target_profiles(self):
+        self.assertEqual(
+            EXPECTED_CORE_CONTRACT_PATHS,
+            policy.CORE_CONTRACT_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_SHARED_RUNTIME_COMPLETE_PATHS,
+            policy.SHARED_RUNTIME_COMPLETE_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_DURABLE_RUNTIME_PROFILE_PATHS,
+            policy.DURABLE_RUNTIME_PROFILE_PATHS,
+        )
+        for changed_path in sorted(EXPECTED_CORE_CONTRACT_PATHS):
+            with self.subTest(changed_path=changed_path):
+                self.assert_target_steps(
+                    [changed_path],
+                    tuple(
+                        (
+                            target,
+                            ("profile-core-compile",),
+                        )
+                        for target in policy.RETAINED_TARGETS
+                    ),
+                )
+        for changed_path in sorted(
+            EXPECTED_SHARED_RUNTIME_COMPLETE_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                self.assert_target_steps(
+                    [changed_path],
+                    tuple(
+                        (
+                            target,
+                            policy.COMPLETE_COMPILE_TARGET_STEPS,
+                        )
+                        for target in policy.RETAINED_TARGETS
+                    ),
+                )
+        for changed_path in sorted(
+            EXPECTED_DURABLE_RUNTIME_PROFILE_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                self.assert_target_steps(
+                    [changed_path],
+                    tuple(
+                        (
+                            target,
+                            ("profile-durable-compile",),
+                        )
+                        for target in policy.RETAINED_TARGETS
+                    ),
+                )
+        cases = {
+            "src/core/scheduler.zig": (
+                "profile-complete-compile",
+            ),
+            "src/ffi/model_contract_c.zig": (
+                "profile-core-compile",
+            ),
+            "src/backends/cpu/backend.zig": (
+                "profile-complete-compile",
+            ),
+            "src/model/runtime_image.zig": (
+                "profile-complete-compile",
+            ),
+            "src/cli/main.zig": (
+                "profile-host-tool-compile",
+            ),
+            "src/continuation_live_restart.zig": (
+                "profile-complete-compile",
+            ),
+        }
+        for changed_path, steps in cases.items():
+            with self.subTest(changed_path=changed_path):
+                self.assert_target_steps(
+                    [changed_path],
+                    tuple(
+                        (target, steps)
+                        for target in policy.RETAINED_TARGETS
+                    ),
+                )
+
+        self.assert_target_steps(
+            ["src/core/continuation_checkpoint_file.zig"],
+            tuple(
+                (
+                    target,
+                    policy.COMPLETE_COMPILE_TARGET_STEPS,
+                )
+                for target in policy.RETAINED_TARGETS
+            ),
+        )
+
+    def test_profile_prefixes_are_case_sensitive_and_roots_fail_closed(self):
+        for changed_path in (
+            "src/core/root.zig",
+            "Src/Core/scheduler.zig",
+            "src/Core/windows.zig",
+            "src/Backends/cpu/backend.zig",
+            "Src/Backends/Metal/backend.zig",
+            "src/platform/POSIX/files.zig",
+            "src/cli/main.ZIG",
+            "Bench/metal_kernel.zig",
+            "Tests/metal_correctness.zig",
+            "Examples/interop/rust_verify.rs",
+            "src/backends/cuda/backend.zig",
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets(
+                    [changed_path],
+                    policy.RETAINED_TARGETS,
+                )
+                self.assertTrue(
+                    all(
+                        target_plan.steps
+                        == policy.FULL_TARGET_STEPS
+                        for target_plan in plan.target_plans
+                    )
+                )
+
+    def test_target_profiles_union_and_full_dominance_are_per_target(self):
+        complete_plus_focused = self.assert_target_steps(
+            [
+                "src/core/scheduler.zig",
+                "src/cli/main.zig",
+            ],
+            tuple(
+                (
+                    target,
+                    policy.COMPLETE_COMPILE_TARGET_STEPS,
+                )
+                for target in policy.RETAINED_TARGETS
+            ),
+        )
+        self.assertTrue(
+            complete_plus_focused.requires("native-full")
+        )
+
+        per_target = self.assert_target_steps(
+            [
+                "src/core/scheduler.zig",
+                "src/platform/windows/dispatch.zig",
+            ],
+            (
+                (
+                    policy.RETAINED_TARGETS[0],
+                    policy.COMPLETE_COMPILE_TARGET_STEPS,
+                ),
+                (
+                    policy.RETAINED_TARGETS[1],
+                    policy.COMPLETE_COMPILE_TARGET_STEPS,
+                ),
+                (
+                    policy.RETAINED_TARGETS[2],
+                    policy.FULL_TARGET_STEPS,
+                ),
+                (
+                    policy.RETAINED_TARGETS[3],
+                    policy.COMPLETE_COMPILE_TARGET_STEPS,
+                ),
+            ),
+        )
+        self.assertTrue(per_target.requires("native-full"))
 
     def test_rust_source_selects_the_native_rust_gate(self):
         plan = self.assert_targets(
@@ -156,6 +391,18 @@ class VerificationPolicyTests(unittest.TestCase):
                     [changed_path],
                     policy.AARCH64_LINUX_TARGETS,
                 )
+                self.assertEqual(
+                    (
+                        policy.TargetBuildPlan(
+                            policy.AARCH64_LINUX_TARGETS[0],
+                            (
+                                "profile-cpu-compile",
+                                "profile-host-tool-compile",
+                            ),
+                        ),
+                    ),
+                    plan.target_plans,
+                )
                 self.assertTrue(plan.requires("darwin-aarch64-native"))
                 self.assertTrue(plan.requires("native-full"))
                 self.assertTrue(plan.requires("python-full"))
@@ -167,7 +414,6 @@ class VerificationPolicyTests(unittest.TestCase):
             "src/platform/freebsd/memory.zig": policy.FREEBSD_TARGETS,
             "src/platform/posix/files.zig": policy.POSIX_TARGETS,
             "src/platform/unix/files.zig": policy.POSIX_TARGETS,
-            "src/platform/POSIX/files.zig": policy.POSIX_TARGETS,
             "src/platform/windows.zig": policy.WINDOWS_TARGETS,
             "bench/native_observer_linux.zig": policy.LINUX_TARGETS,
         }
@@ -210,6 +456,22 @@ class VerificationPolicyTests(unittest.TestCase):
             ],
             policy.AARCH64_LINUX_TARGETS + policy.WINDOWS_TARGETS,
         )
+        self.assertEqual(
+            (
+                policy.TargetBuildPlan(
+                    policy.AARCH64_LINUX_TARGETS[0],
+                    (
+                        "profile-cpu-compile",
+                        "profile-host-tool-compile",
+                    ),
+                ),
+                policy.TargetBuildPlan(
+                    policy.WINDOWS_TARGETS[0],
+                    policy.FULL_TARGET_STEPS,
+                ),
+            ),
+            plan.target_plans,
+        )
         self.assertTrue(plan.requires("darwin-aarch64-native"))
         self.assertTrue(plan.requires("native-full"))
         self.assertTrue(plan.requires("python-full"))
@@ -226,18 +488,39 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertTrue(plan.requires("native-full"))
         self.assertTrue(plan.requires("python-full"))
 
-    def test_metal_change_requires_native_darwin_without_foreign_targets(self):
-        for changed_path in (
-            "src/backends/metal/command_queue.zig",
-            "tests/native_metal_observation.zig",
-            "examples/native_metal_observation.zig",
-            "bench/metal_kernel.zig",
-        ):
+    def test_metal_paths_are_audited_and_unknowns_fail_closed(self):
+        self.assertEqual(
+            EXPECTED_METAL_NATIVE_SOURCE_PATHS,
+            policy.METAL_NATIVE_SOURCE_PATHS,
+        )
+        for changed_path in sorted(EXPECTED_METAL_NATIVE_SOURCE_PATHS):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
                 self.assertEqual(
                     plan.flags,
                     frozenset({"metal-native"}),
+                )
+
+        for changed_path in (
+            "tests/metal_future.zig",
+            "src/backends/experimental/shader.metal",
+        ):
+            with self.subTest(changed_path=changed_path):
+                unclassified = self.assert_targets(
+                    [changed_path],
+                    policy.RETAINED_TARGETS,
+                )
+                self.assertEqual(
+                    frozenset(
+                        {"metal-native", "native-full", "python-full"}
+                    ),
+                    unclassified.flags,
+                )
+                self.assertTrue(
+                    all(
+                        target_plan.steps == policy.FULL_TARGET_STEPS
+                        for target_plan in unclassified.target_plans
+                    )
                 )
 
         shared = self.assert_targets(
@@ -345,6 +628,94 @@ class VerificationPolicyTests(unittest.TestCase):
                 plan = self.assert_targets([changed_path], targets)
                 self.assertEqual(flags, plan.flags)
 
+    def test_build_graph_keeps_profiles_and_benchmarks_opt_in(self):
+        source = (REPOSITORY_ROOT / "build.zig").read_text(
+            encoding="utf-8"
+        )
+        for step in policy.FOCUSED_TARGET_STEPS:
+            with self.subTest(step=step):
+                self.assertEqual(1, source.count('"' + step + '"'))
+        self.assertEqual(
+            1,
+            source.count('"profile-complete-compile"'),
+        )
+        self.assertIn('"install-benchmarks"', source)
+        self.assertIn('"native-metal-correctness-test"', source)
+        self.assertEqual(1, source.count("b.installArtifact("))
+        self.assertNotIn(
+            "run_cmd.step.dependOn(b.getInstallStep())",
+            source,
+        )
+        self.assertNotIn(
+            "profile_cpu_compile_step.dependOn("
+            "profile_core_compile_step)",
+            source,
+        )
+        self.assertIn(
+            "profile_core_compile_step.dependOn(\n"
+            "        &contract_installed_c_consumer.step,\n"
+            "    );",
+            source,
+        )
+        self.assertNotIn(
+            "profile_durable_compile_step.dependOn("
+            "profile_cpu_compile_step)",
+            source,
+        )
+        self.assertNotIn(
+            "profile_device_compile_step.dependOn("
+            "profile_cpu_compile_step)",
+            source,
+        )
+        self.assertIn(
+            "profile_device_compile_step.dependOn(\n"
+            "        &metal_kernel_bench_exe.step,\n"
+            "    );",
+            source,
+        )
+        self.assertEqual(
+            1,
+            source.count("buildMetalLib(b, metal_output_dir)"),
+        )
+        self.assertIn(
+            "run_native_metal_correctness_tests.step.dependOn(\n"
+            "            &run_native_metal_observation_verifier.step,\n"
+            "        );",
+            source,
+        )
+        complete_profile_start = source.index(
+            "const profile_complete_compile_step"
+        )
+        complete_profile_source = source[
+            complete_profile_start : source.index(
+                "const run_cmd",
+                complete_profile_start,
+            )
+        ]
+        self.assertIn(
+            "profile_complete_compile_step.dependOn("
+            "test_compile_step)",
+            complete_profile_source,
+        )
+        for artifact in (
+            "bench_exe",
+            "lane4_bench_exe",
+            "paged_lane4_bench_exe",
+            "paged_resident_bench_exe",
+            "paged_lease_bench_exe",
+            "paged_lease_admission_bench_exe",
+            "int4_kernel_bench_exe",
+            "eligible_argmax_bench_exe",
+            "progressive_kernel_bench_exe",
+            "metal_kernel_bench_exe",
+            "quant_bench_exe",
+        ):
+            with self.subTest(complete_consumer=artifact):
+                self.assertIn(
+                    "&" + artifact + ".step",
+                    complete_profile_source,
+                )
+
     def test_paths_are_deduplicated_and_byte_sorted(self):
         plan = policy.classify_paths(
             ["docs/z.md", "docs/a\nname.md", "docs/z.md"]
@@ -384,12 +755,62 @@ class VerificationPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             flags = Path(temporary_directory) / "flags"
             targets = Path(temporary_directory) / "targets"
+            target_steps = Path(temporary_directory) / "target-steps"
             policy.write_flags(plan, flags)
             policy.write_targets(plan.targets, targets)
+            policy.write_target_steps(plan.target_plans, target_steps)
             self.assertNotIn("target:", flags.read_text(encoding="utf-8"))
             self.assertEqual(
                 targets.read_text(encoding="ascii").splitlines(),
                 list(policy.WINDOWS_TARGETS),
+            )
+            self.assertEqual(
+                target_steps.read_text(
+                    encoding="ascii"
+                ).splitlines(),
+                [
+                    policy.WINDOWS_TARGETS[0] + " install",
+                    policy.WINDOWS_TARGETS[0]
+                    + " install-benchmarks",
+                    policy.WINDOWS_TARGETS[0] + " test-compile",
+                ],
+            )
+            focused_plan = (
+                policy.TargetBuildPlan(
+                    policy.RETAINED_TARGETS[0],
+                    (
+                        "profile-core-compile",
+                        "profile-cpu-compile",
+                    ),
+                ),
+            )
+            policy.write_target_steps(focused_plan, target_steps)
+            self.assertEqual(
+                [
+                    policy.RETAINED_TARGETS[0]
+                    + " profile-core-compile",
+                    policy.RETAINED_TARGETS[0]
+                    + " profile-cpu-compile",
+                ],
+                target_steps.read_text(
+                    encoding="ascii"
+                ).splitlines(),
+            )
+            complete_plan = (
+                policy.TargetBuildPlan(
+                    policy.RETAINED_TARGETS[0],
+                    policy.COMPLETE_COMPILE_TARGET_STEPS,
+                ),
+            )
+            policy.write_target_steps(complete_plan, target_steps)
+            self.assertEqual(
+                [
+                    policy.RETAINED_TARGETS[0]
+                    + " profile-complete-compile"
+                ],
+                target_steps.read_text(
+                    encoding="ascii"
+                ).splitlines(),
             )
             with self.assertRaises(ValueError):
                 policy.write_targets(
@@ -398,6 +819,72 @@ class VerificationPolicyTests(unittest.TestCase):
                 )
             with self.assertRaises(ValueError):
                 policy.write_targets(("unknown-target",), targets)
+            invalid_target_plans = (
+                (
+                    policy.TargetBuildPlan(
+                        "unknown-target",
+                        ("profile-core-compile",),
+                    ),
+                ),
+                (
+                    policy.TargetBuildPlan(
+                        policy.RETAINED_TARGETS[0],
+                        (),
+                    ),
+                ),
+                (
+                    policy.TargetBuildPlan(
+                        policy.RETAINED_TARGETS[0],
+                        ("unknown-step",),
+                    ),
+                ),
+                (
+                    policy.TargetBuildPlan(
+                        policy.RETAINED_TARGETS[0],
+                        (
+                            "install",
+                            "install-benchmarks",
+                            "profile-core-compile",
+                            "test-compile",
+                        ),
+                    ),
+                ),
+                (
+                    policy.TargetBuildPlan(
+                        policy.RETAINED_TARGETS[0],
+                        (
+                            "profile-core-compile",
+                            "profile-complete-compile",
+                        ),
+                    ),
+                ),
+                (
+                    policy.TargetBuildPlan(
+                        policy.RETAINED_TARGETS[0],
+                        (
+                            "profile-cpu-compile",
+                            "profile-core-compile",
+                        ),
+                    ),
+                ),
+                (
+                    policy.TargetBuildPlan(
+                        policy.RETAINED_TARGETS[0],
+                        ("profile-core-compile",),
+                    ),
+                    policy.TargetBuildPlan(
+                        policy.RETAINED_TARGETS[0],
+                        ("profile-cpu-compile",),
+                    ),
+                ),
+            )
+            for invalid_plan in invalid_target_plans:
+                with self.subTest(invalid_plan=invalid_plan):
+                    with self.assertRaises(ValueError):
+                        policy.write_target_steps(
+                            invalid_plan,
+                            target_steps,
+                        )
 
     def test_rejects_paths_outside_repository(self):
         for invalid_path in ("/tmp/runtime.zig", "../runtime.zig", "src//runtime.zig"):
@@ -645,6 +1132,123 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             timeout=30,
         )
 
+    def run_matrix(self, repository, environment):
+        return subprocess.run(
+            (
+                str(repository / "tools" / "verify.sh"),
+                "matrix",
+            ),
+            cwd=repository,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def test_native_metal_gate_compiles_device_consumers_in_same_graph(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            self.make_fake_command(
+                root / "fake-bin" / "uname",
+                "printf 'Darwin\\n'\n",
+            )
+            metal_benchmark = repository / "bench" / "metal_kernel.zig"
+            metal_benchmark.write_text("", encoding="ascii")
+
+            result = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn("PASS  native/metal:", result.stdout)
+            metal_calls = [
+                line
+                for line in Path(
+                    environment["VERIFY_INTEGRATION_ZIG_LOG"]
+                )
+                .read_text(encoding="ascii")
+                .splitlines()
+                if line.startswith(
+                    "build native-metal-observation-test "
+                    "native-metal-correctness-test "
+                    "profile-device-compile "
+                    "profile-host-tool-compile "
+                )
+            ]
+            self.assertEqual(1, len(metal_calls), metal_calls)
+            self.assertIn(
+                "-Dmetal-output-dir=",
+                metal_calls[0],
+            )
+
+    def test_shell_rejects_unknown_or_out_of_order_policy_targets(self):
+        mutations = (
+            (
+                "unknown",
+                '"x86_64-linux-musl",',
+                '"a-valid-but-unknown-target",',
+                "policy emitted an unknown target: "
+                "a-valid-but-unknown-target",
+            ),
+            (
+                "out-of-order",
+                (
+                    '    "x86_64-linux-musl",\n'
+                    '    "aarch64-linux-musl",'
+                ),
+                (
+                    '    "aarch64-linux-musl",\n'
+                    '    "x86_64-linux-musl",'
+                ),
+                (
+                    "policy emitted targets out of retained order: "
+                    "x86_64-linux-musl"
+                ),
+            ),
+        )
+        for name, before, after, expected_message in mutations:
+            with self.subTest(name=name):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    repository, merge_base, environment = (
+                        self.make_repository(root)
+                    )
+                    policy_path = (
+                        repository / "tools" / "verification_policy.py"
+                    )
+                    source = policy_path.read_text(encoding="utf-8")
+                    self.assertEqual(1, source.count(before))
+                    policy_path.write_text(
+                        source.replace(before, after, 1),
+                        encoding="utf-8",
+                    )
+
+                    result = self.run_verify(
+                        repository,
+                        merge_base,
+                        environment,
+                    )
+
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertIn(expected_message, result.stdout)
+                    target_calls = [
+                        line
+                        for line in Path(
+                            environment["VERIFY_INTEGRATION_ZIG_LOG"]
+                        )
+                        .read_text(encoding="ascii")
+                        .splitlines()
+                        if " -Dtarget=" in line
+                    ]
+                    self.assertEqual([], target_calls)
+
     def test_native_strict_mode_and_policy_emitted_target_execution(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -694,7 +1298,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 self.assertIn(
                     "PASS  portability/"
                     + target
-                    + "/install+test-compile:",
+                    + "/install+install-benchmarks+test-compile:",
                     shared.stdout,
                 )
                 self.assertNotIn(
@@ -719,7 +1323,9 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             self.assertTrue(
                 all(
-                    line.startswith("build install test-compile ")
+                    line.startswith(
+                        "build install install-benchmarks test-compile "
+                    )
                     for line in target_calls
                 ),
                 target_calls,
@@ -784,7 +1390,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertIn(
                 "FAIL  portability/"
                 + target
-                + "/install+test-compile: exit 19",
+                + "/install+install-benchmarks+test-compile: exit 19",
                 result.stdout,
             )
             target_calls = [
@@ -798,8 +1404,167 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             ]
             self.assertEqual(1, len(target_calls), target_calls)
             self.assertIn(
-                "build install test-compile -Dtarget=" + target + " ",
+                "build install install-benchmarks test-compile -Dtarget="
+                + target
+                + " ",
                 target_calls[0],
+            )
+
+    def test_complete_compile_closure_uses_one_invocation_per_target(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            core_path = repository / "src" / "core" / "scheduler.zig"
+            core_path.parent.mkdir(parents=True)
+            core_path.write_text("", encoding="ascii")
+            cpu_path = (
+                repository / "src" / "backends" / "cpu" / "backend.zig"
+            )
+            cpu_path.parent.mkdir(parents=True)
+            cpu_path.write_text("", encoding="ascii")
+
+            result = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            target_calls = [
+                line
+                for line in Path(
+                    environment["VERIFY_INTEGRATION_ZIG_LOG"]
+                )
+                .read_text(encoding="ascii")
+                .splitlines()
+                if " -Dtarget=" in line
+            ]
+            self.assertEqual(
+                len(policy.RETAINED_TARGETS),
+                len(target_calls),
+                target_calls,
+            )
+            for target in policy.RETAINED_TARGETS:
+                expected = (
+                    "build profile-complete-compile -Dtarget="
+                    + target
+                    + " "
+                )
+                self.assertEqual(
+                    1,
+                    sum(line.startswith(expected) for line in target_calls),
+                    target_calls,
+                )
+                self.assertIn(
+                    "PASS  portability/"
+                    + target
+                    + "/profile-complete-compile:",
+                    result.stdout,
+                )
+
+    def test_full_steps_dominate_focused_profiles_per_target_only(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            core_path = repository / "src" / "core" / "scheduler.zig"
+            core_path.parent.mkdir(parents=True)
+            core_path.write_text("", encoding="ascii")
+            windows_path = (
+                repository
+                / "src"
+                / "platform"
+                / "windows"
+                / "dispatch.zig"
+            )
+            windows_path.parent.mkdir(parents=True)
+            windows_path.write_text("", encoding="ascii")
+
+            result = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            target_calls = [
+                line
+                for line in Path(
+                    environment["VERIFY_INTEGRATION_ZIG_LOG"]
+                )
+                .read_text(encoding="ascii")
+                .splitlines()
+                if " -Dtarget=" in line
+            ]
+            self.assertEqual(
+                len(policy.RETAINED_TARGETS),
+                len(target_calls),
+                target_calls,
+            )
+            windows_target = policy.WINDOWS_TARGETS[0]
+            for target in policy.RETAINED_TARGETS:
+                if target == windows_target:
+                    expected_steps = (
+                        "install install-benchmarks test-compile"
+                    )
+                else:
+                    expected_steps = "profile-complete-compile"
+                self.assertEqual(
+                    1,
+                    sum(
+                        line.startswith(
+                            "build "
+                            + expected_steps
+                            + " -Dtarget="
+                            + target
+                            + " "
+                        )
+                        for line in target_calls
+                    ),
+                    target_calls,
+                )
+
+    def test_matrix_keeps_one_full_invocation_per_retained_target(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, _, environment = self.make_repository(root)
+
+            result = self.run_matrix(repository, environment)
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            target_calls = [
+                line
+                for line in Path(
+                    environment["VERIFY_INTEGRATION_ZIG_LOG"]
+                )
+                .read_text(encoding="ascii")
+                .splitlines()
+                if " -Dtarget=" in line
+            ]
+            self.assertEqual(
+                len(policy.RETAINED_TARGETS),
+                len(target_calls),
+                target_calls,
+            )
+            self.assertTrue(
+                all(
+                    line.startswith(
+                        "build install install-benchmarks test-compile "
+                    )
+                    for line in target_calls
+                ),
+                target_calls,
             )
 
     def test_posix_reuses_native_suite_for_darwin_evidence(self):
@@ -969,6 +1734,21 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 1,
                 len(arm64_native_test_calls),
                 arm64_native_test_calls,
+            )
+            arm64_target_calls = [
+                line
+                for line in zig_log.read_text(
+                    encoding="ascii"
+                ).splitlines()
+                if " -Dtarget=" in line
+            ]
+            self.assertEqual(1, len(arm64_target_calls))
+            self.assertTrue(
+                arm64_target_calls[0].startswith(
+                    "build profile-cpu-compile "
+                    "profile-host-tool-compile "
+                ),
+                arm64_target_calls,
             )
 
     def test_swift_probe_requires_the_focused_darwin_gate(self):

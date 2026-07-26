@@ -159,6 +159,12 @@ pub const metal_enabled = blk: {
     }
     break :blk false;
 };
+pub const metal_library_path: [*:0]const u8 = blk: {
+    if (@hasDecl(@import("config"), "metal_library_path")) {
+        break :blk @import("config").metal_library_path.ptr;
+    }
+    break :blk "zig-out/metal/shaders.metallib";
+};
 
 pub const model = @import("model/format.zig");
 pub const safetensors = @import("model/safetensors.zig");

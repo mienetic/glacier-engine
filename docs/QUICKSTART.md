@@ -29,6 +29,13 @@ zig build -Doptimize=ReleaseSafe -Dmetal=false
 ./zig-out/bin/glacier --version
 ```
 
+The default install stages only the production CLI. Benchmark and diagnostic
+executables are opt-in:
+
+```sh
+zig build install-benchmarks -Doptimize=ReleaseSafe -Dmetal=false
+```
+
 The verifier's default quick profile runs bounded, model-free contributor
 checks and prints an explicit reason for every skipped broad or platform gate.
 

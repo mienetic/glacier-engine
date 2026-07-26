@@ -507,7 +507,7 @@ fn runMetalTest(allocator: std.mem.Allocator, w: *std.Io.Writer) !void {
     defer allocator.free(cpu_out);
 
     // GPU path.
-    var backend = engine.MetalBackend.init("zig-out/metal/shaders.metallib") catch |err| {
+    var backend = engine.MetalBackend.init(engine.metal_library_path) catch |err| {
         try w.print("metal-test: no Metal device ({s})\n", .{@errorName(err)});
         return;
     };

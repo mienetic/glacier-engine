@@ -25,6 +25,17 @@ pub fn build(b: *std.Build) void {
     const use_metal = b.option(bool, "metal", "Link the Metal backend (macOS only)") orelse metal_default;
     if (use_metal and target.result.os.tag != .macos)
         @panic("-Dmetal=true is only supported for macOS targets");
+    const metal_output_dir = b.option(
+        []const u8,
+        "metal-output-dir",
+        "Directory for generated Metal shader products",
+    ) orelse "zig-out/metal";
+    if (metal_output_dir.len == 0)
+        @panic("-Dmetal-output-dir must not be empty");
+    const metal_library_path = b.allocator.dupeZ(
+        u8,
+        b.fmt("{s}/shaders.metallib", .{metal_output_dir}),
+    ) catch @panic("out of memory");
     const sanitize_thread = b.option(
         bool,
         "sanitize-thread",
@@ -36,6 +47,11 @@ pub fn build(b: *std.Build) void {
     // --- Build options exposed to Zig as comptime flags ----------------------
     const opts = b.addOptions();
     opts.addOption(bool, "metal_enabled", use_metal);
+    opts.addOption(
+        [:0]const u8,
+        "metal_library_path",
+        metal_library_path,
+    );
     // Create the config module ONCE so all importers share the same instance
     // (calling createModule() multiple times produces duplicate modules over
     // the same file, which Zig rejects).
@@ -139,6 +155,11 @@ pub fn build(b: *std.Build) void {
         });
         break :blk shim;
     };
+    const metal_lib: ?*std.Build.Step.Run =
+        if (target.result.os.tag == .macos)
+            buildMetalLib(b, metal_output_dir)
+        else
+            null;
 
     // AArch64 NEON kernel for fused packed-INT4 decode projections. Other
     // architectures compile the portable Zig fallback and need no C object.
@@ -976,11 +997,23 @@ pub fn build(b: *std.Build) void {
     }
     if (int4_neon) |lib| metal_tests.linkLibrary(lib);
     const run_metal_tests = b.addRunArtifact(metal_tests);
+    const run_native_metal_correctness_tests =
+        b.addRunArtifact(metal_tests);
     // The metal correctness test loads shaders.metallib at runtime; make
     // sure it exists before the test runs.
     if (metal_shim != null) {
-        run_metal_tests.step.dependOn(&buildMetalLib(b).step);
+        run_metal_tests.step.dependOn(&metal_lib.?.step);
+        run_native_metal_correctness_tests.step.dependOn(
+            &metal_lib.?.step,
+        );
     }
+    const native_metal_correctness_test_step = b.step(
+        "native-metal-correctness-test",
+        "Run focused native Metal correctness tests",
+    );
+    native_metal_correctness_test_step.dependOn(
+        &run_native_metal_correctness_tests.step,
+    );
 
     // Pure trace/oracle tests for the actual-model PagedLease runner. The
     // 400 MB model remains an explicitly invoked host artifact, while masks,
@@ -1478,7 +1511,7 @@ pub fn build(b: *std.Build) void {
         target.result.abi == builtin.abi)
     {
         const shim = metal_shim.?;
-        const native_metal_lib = buildMetalLib(b);
+        const native_metal_lib = metal_lib.?;
         const native_metal_observation_tests = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(
@@ -1563,6 +1596,9 @@ pub fn build(b: *std.Build) void {
         run_native_metal_observation_verifier.step.dependOn(
             &run_native_metal_observation_model.step,
         );
+        run_native_metal_correctness_tests.step.dependOn(
+            &run_native_metal_observation_verifier.step,
+        );
         native_metal_observation_pure_test_step.dependOn(
             &run_native_metal_observation_tests.step,
         );
@@ -1584,6 +1620,9 @@ pub fn build(b: *std.Build) void {
             &native_metal_failure.step,
         );
         native_metal_observation_compile_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_correctness_test_step.dependOn(
             &native_metal_failure.step,
         );
     }
@@ -3746,6 +3785,13 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&provider_context_adapter_demo_exe.step);
 
     // --- Benchmark -----------------------------------------------------------
+    // Benchmark and diagnostic executables are developer tools rather than
+    // production runtime payloads. Keep them behind an explicit install step
+    // so the default install and `run` paths build only the CLI.
+    const install_benchmarks_step = b.step(
+        "install-benchmarks",
+        "Install all benchmark and diagnostic executables",
+    );
     const bench_exe = b.addExecutable(.{
         .name = "glacier-bench",
         .root_module = b.createModule(.{
@@ -3758,7 +3804,8 @@ pub fn build(b: *std.Build) void {
     bench_exe.root_module.addImport("core", core_mod);
     bench_exe.linkLibC();
     if (int4_neon) |lib| bench_exe.linkLibrary(lib);
-    b.installArtifact(bench_exe);
+    const install_bench = b.addInstallArtifact(bench_exe, .{});
+    install_benchmarks_step.dependOn(&install_bench.step);
 
     // Same-process actual-model DecodeLane4 smoke driver. This is a diagnostic
     // evidence producer, not part of the production CLI and not by itself a
@@ -3798,9 +3845,13 @@ pub fn build(b: *std.Build) void {
             stripped,
             "glacier-bench-lane4",
         );
-        b.getInstallStep().dependOn(&install_stripped.step);
+        install_benchmarks_step.dependOn(&install_stripped.step);
     } else {
-        b.installArtifact(lane4_bench_exe);
+        const install_lane4_bench =
+            b.addInstallArtifact(lane4_bench_exe, .{});
+        install_benchmarks_step.dependOn(
+            &install_lane4_bench.step,
+        );
     }
 
     // Actual-model P2b diagnostic. It loads one image and produces an
@@ -3819,7 +3870,11 @@ pub fn build(b: *std.Build) void {
     paged_lane4_bench_exe.root_module.addImport("core", core_mod);
     paged_lane4_bench_exe.linkLibC();
     if (int4_neon) |lib| paged_lane4_bench_exe.linkLibrary(lib);
-    b.installArtifact(paged_lane4_bench_exe);
+    const install_paged_lane4_bench =
+        b.addInstallArtifact(paged_lane4_bench_exe, .{});
+    install_benchmarks_step.dependOn(
+        &install_paged_lane4_bench.step,
+    );
 
     // P2c-a actual-model diagnostic. It compares the legacy full-capacity
     // parent receipt with the optional child-sidecar allocator-commitment arm
@@ -3837,7 +3892,11 @@ pub fn build(b: *std.Build) void {
     paged_resident_bench_exe.root_module.addImport("core", core_mod);
     paged_resident_bench_exe.linkLibC();
     if (int4_neon) |lib| paged_resident_bench_exe.linkLibrary(lib);
-    b.installArtifact(paged_resident_bench_exe);
+    const install_paged_resident_bench =
+        b.addInstallArtifact(paged_resident_bench_exe, .{});
+    install_benchmarks_step.dependOn(
+        &install_paged_resident_bench.step,
+    );
 
     // Actual-model P2c-b evidence source. The base executable compares
     // retain-until-teardown with immediate terminal reclamation for one
@@ -3861,7 +3920,11 @@ pub fn build(b: *std.Build) void {
     );
     paged_lease_bench_exe.linkLibC();
     if (int4_neon) |lib| paged_lease_bench_exe.linkLibrary(lib);
-    b.installArtifact(paged_lease_bench_exe);
+    const install_paged_lease_bench =
+        b.addInstallArtifact(paged_lease_bench_exe, .{});
+    install_benchmarks_step.dependOn(
+        &install_paged_lease_bench.step,
+    );
 
     // Same production source path, but an explicit executable identity selects
     // the two-cohort actual-model CLI. Cohort A yields only after its exact
@@ -3887,7 +3950,11 @@ pub fn build(b: *std.Build) void {
     );
     paged_lease_admission_bench_exe.linkLibC();
     if (int4_neon) |lib| paged_lease_admission_bench_exe.linkLibrary(lib);
-    b.installArtifact(paged_lease_admission_bench_exe);
+    const install_paged_lease_admission_bench =
+        b.addInstallArtifact(paged_lease_admission_bench_exe, .{});
+    install_benchmarks_step.dependOn(
+        &install_paged_lease_admission_bench.step,
+    );
 
     // Microbenchmark for the packed INT4 decode kernels.  It is kept as a
     // separate executable so end-to-end generation timings are not confused
@@ -3904,7 +3971,11 @@ pub fn build(b: *std.Build) void {
     int4_kernel_bench_exe.root_module.addImport("core", core_mod);
     int4_kernel_bench_exe.linkLibC();
     if (int4_neon) |lib| int4_kernel_bench_exe.linkLibrary(lib);
-    b.installArtifact(int4_kernel_bench_exe);
+    const install_int4_kernel_bench =
+        b.addInstallArtifact(int4_kernel_bench_exe, .{});
+    install_benchmarks_step.dependOn(
+        &install_int4_kernel_bench.step,
+    );
 
     // Same-process full-versus-eligible LM-head benchmark over a real GLRT
     // image. Its deterministic synthetic activation keeps this an isolated
@@ -3921,7 +3992,11 @@ pub fn build(b: *std.Build) void {
     eligible_argmax_bench_exe.root_module.addImport("core", core_mod);
     eligible_argmax_bench_exe.linkLibC();
     if (int4_neon) |lib| eligible_argmax_bench_exe.linkLibrary(lib);
-    b.installArtifact(eligible_argmax_bench_exe);
+    const install_eligible_argmax_bench =
+        b.addInstallArtifact(eligible_argmax_bench_exe, .{});
+    install_benchmarks_step.dependOn(
+        &install_eligible_argmax_bench.step,
+    );
 
     // Isolated Prism P1/P2/P4 bitplane microbenchmark.  This reports scalar
     // oracle versus architecture-dispatched kernel timings without conflating
@@ -3937,7 +4012,11 @@ pub fn build(b: *std.Build) void {
     progressive_kernel_bench_exe.root_module.addImport("progressive_int4", progressive_int4_mod);
     progressive_kernel_bench_exe.linkLibC();
     if (int4_neon) |lib| progressive_kernel_bench_exe.linkLibrary(lib);
-    b.installArtifact(progressive_kernel_bench_exe);
+    const install_progressive_kernel_bench =
+        b.addInstallArtifact(progressive_kernel_bench_exe, .{});
+    install_benchmarks_step.dependOn(
+        &install_progressive_kernel_bench.step,
+    );
 
     // Optional Metal persistent-weight microbenchmark. The executable is
     // still built on every platform, but only links the Objective-C shim when
@@ -3958,7 +4037,11 @@ pub fn build(b: *std.Build) void {
         metal_kernel_bench_exe.linkFramework("Metal");
         metal_kernel_bench_exe.linkFramework("Foundation");
     }
-    b.installArtifact(metal_kernel_bench_exe);
+    const install_metal_kernel_bench =
+        b.addInstallArtifact(metal_kernel_bench_exe, .{});
+    install_benchmarks_step.dependOn(
+        &install_metal_kernel_bench.step,
+    );
 
     // --- Quant-error benchmark (independent exe) -----------------------------
     const quant_bench_exe = b.addExecutable(.{
@@ -3973,10 +4056,158 @@ pub fn build(b: *std.Build) void {
     quant_bench_exe.root_module.addImport("core", core_mod);
     quant_bench_exe.linkLibC();
     if (int4_neon) |lib| quant_bench_exe.linkLibrary(lib);
-    b.installArtifact(quant_bench_exe);
+    const install_quant_bench =
+        b.addInstallArtifact(quant_bench_exe, .{});
+    install_benchmarks_step.dependOn(
+        &install_quant_bench.step,
+    );
+
+    // --- Cross-target compile profiles --------------------------------------
+    // Affected-path verification selects the smallest audited union of these
+    // roots. Every profile reuses existing artifact steps, so multiple named
+    // profiles in one Zig invocation share their dependency graph.
+    const profile_core_compile_step = b.step(
+        "profile-core-compile",
+        "Compile the portable core and language-contract boundary",
+    );
+    profile_core_compile_step.dependOn(&core_tests.step);
+    profile_core_compile_step.dependOn(&contract_shared.step);
+    profile_core_compile_step.dependOn(&contract_static.step);
+    profile_core_compile_step.dependOn(&contract_c_tests.step);
+    profile_core_compile_step.dependOn(&contract_c_consumer.step);
+    profile_core_compile_step.dependOn(
+        &contract_c_shared_consumer.step,
+    );
+    profile_core_compile_step.dependOn(&contract_cpp_consumer.step);
+    profile_core_compile_step.dependOn(
+        &contract_installed_c_consumer.step,
+    );
+
+    const profile_cpu_compile_step = b.step(
+        "profile-cpu-compile",
+        "Compile the public runtime and CPU execution surface",
+    );
+    profile_cpu_compile_step.dependOn(&engine_tests.step);
+    profile_cpu_compile_step.dependOn(&package_module_tests.step);
+    profile_cpu_compile_step.dependOn(&progressive_int4_tests.step);
+    profile_cpu_compile_step.dependOn(&integration_tests.step);
+    profile_cpu_compile_step.dependOn(&pager_tests.step);
+    profile_cpu_compile_step.dependOn(&model_tests.step);
+
+    const profile_durable_compile_step = b.step(
+        "profile-durable-compile",
+        "Compile durable state, recovery, and process-worker surfaces",
+    );
+    profile_durable_compile_step.dependOn(
+        action_outbox_recovery_compile_step,
+    );
+    profile_durable_compile_step.dependOn(
+        &continuation_sweep_file_demo_exe.step,
+    );
+    profile_durable_compile_step.dependOn(
+        &continuation_sweep_file_worker_exe.step,
+    );
+    profile_durable_compile_step.dependOn(
+        &continuation_payload_file_demo_exe.step,
+    );
+    profile_durable_compile_step.dependOn(
+        &continuation_payload_file_worker_exe.step,
+    );
+    profile_durable_compile_step.dependOn(
+        &continuation_live_restart_demo_exe.step,
+    );
+    profile_durable_compile_step.dependOn(
+        &continuation_live_restart_worker_exe.step,
+    );
+    profile_durable_compile_step.dependOn(
+        &prepared_text_live_restart_demo_exe.step,
+    );
+    profile_durable_compile_step.dependOn(
+        &prepared_text_live_restart_worker_exe.step,
+    );
+    profile_durable_compile_step.dependOn(
+        &continuation_checkpoint_file_demo_exe.step,
+    );
+    profile_durable_compile_step.dependOn(
+        &continuation_checkpoint_file_worker_exe.step,
+    );
+    profile_durable_compile_step.dependOn(
+        &provider_gateway_demo_exe.step,
+    );
+
+    const profile_device_compile_step = b.step(
+        "profile-device-compile",
+        "Compile accelerator-facing tests and diagnostics",
+    );
+    profile_device_compile_step.dependOn(&metal_tests.step);
+    profile_device_compile_step.dependOn(
+        &metal_kernel_bench_exe.step,
+    );
+
+    const profile_host_tool_compile_step = b.step(
+        "profile-host-tool-compile",
+        "Compile the CLI and retained read-only host inspectors",
+    );
+    profile_host_tool_compile_step.dependOn(&exe.step);
+    profile_host_tool_compile_step.dependOn(
+        runtime_support_inspector_compile_step,
+    );
+    profile_host_tool_compile_step.dependOn(
+        provider_evidence_inspector_compile_step,
+    );
+    profile_host_tool_compile_step.dependOn(
+        native_observation_compile_step,
+    );
+    profile_host_tool_compile_step.dependOn(
+        &generated_media_evidence_inspector_exe.step,
+    );
+
+    // Keep the compatibility umbrella authoritative while allowing affected
+    // verification to name only the smaller roots above.
+    test_compile_step.dependOn(profile_core_compile_step);
+    test_compile_step.dependOn(profile_cpu_compile_step);
+    test_compile_step.dependOn(profile_durable_compile_step);
+    test_compile_step.dependOn(profile_device_compile_step);
+    test_compile_step.dependOn(profile_host_tool_compile_step);
+
+    // Shared producer APIs need every retained compile consumer, including
+    // demos and benchmarks that intentionally sit outside the five domain
+    // profiles. This root is complete but compile-only: it avoids staging
+    // production or benchmark files into the installation prefix.
+    const profile_complete_compile_step = b.step(
+        "profile-complete-compile",
+        "Compile every retained production, test, demo, and benchmark consumer",
+    );
+    profile_complete_compile_step.dependOn(test_compile_step);
+    profile_complete_compile_step.dependOn(&bench_exe.step);
+    profile_complete_compile_step.dependOn(&lane4_bench_exe.step);
+    profile_complete_compile_step.dependOn(
+        &paged_lane4_bench_exe.step,
+    );
+    profile_complete_compile_step.dependOn(
+        &paged_resident_bench_exe.step,
+    );
+    profile_complete_compile_step.dependOn(
+        &paged_lease_bench_exe.step,
+    );
+    profile_complete_compile_step.dependOn(
+        &paged_lease_admission_bench_exe.step,
+    );
+    profile_complete_compile_step.dependOn(
+        &int4_kernel_bench_exe.step,
+    );
+    profile_complete_compile_step.dependOn(
+        &eligible_argmax_bench_exe.step,
+    );
+    profile_complete_compile_step.dependOn(
+        &progressive_kernel_bench_exe.step,
+    );
+    profile_complete_compile_step.dependOn(
+        &metal_kernel_bench_exe.step,
+    );
+    profile_complete_compile_step.dependOn(&quant_bench_exe.step);
 
     const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_cmd.addArgs(args);
     const run_step = b.step("run", "Run the glacier CLI");
     run_step.dependOn(&run_cmd.step);
@@ -3984,53 +4215,70 @@ pub fn build(b: *std.Build) void {
     // --- Metal shader compilation (macOS only, opt-in) -----------------------
     // `zig build metal-lib` compiles the .metal shaders to a .metallib and
     // the Objective-C shim to a static archive. The artifacts are placed in
-    // zig-out/metal/. The Zig Metal backend reads the .metallib path at
-    // runtime; this step does not link anything into the main exes by default.
+    // zig-out/metal/ by default; -Dmetal-output-dir selects an isolated
+    // location. The Zig Metal backend receives that exact path at compile
+    // time; this step does not link anything into the main exes by default.
     if (target.result.os.tag == .macos) {
         const metal_step = b.step("metal-lib", "Compile Metal shaders + Obj-C shim (macOS)");
-        metal_step.dependOn(&buildMetalLib(b).step);
-        metal_step.dependOn(&buildShimArchive(b).step);
+        metal_step.dependOn(&metal_lib.?.step);
+        metal_step.dependOn(
+            &buildShimArchive(b, metal_output_dir).step,
+        );
     }
 }
 
-/// Compile src/backends/metal/shaders/*.metal → zig-out/shaders.metallib.
-fn buildMetalLib(b: *std.Build) *std.Build.Step.Run {
-    const mkdir = b.addSystemCommand(&.{ "mkdir", "-p", "zig-out/metal" });
+/// Compile src/backends/metal/shaders/*.metal into one runtime library.
+fn buildMetalLib(
+    b: *std.Build,
+    output_dir: []const u8,
+) *std.Build.Step.Run {
+    const mkdir = b.addSystemCommand(&.{ "mkdir", "-p", output_dir });
+    const dequant_air = b.fmt("{s}/dequant.air", .{output_dir});
+    const matmul_air = b.fmt("{s}/matmul.air", .{output_dir});
+    const metallib = b.fmt(
+        "{s}/shaders.metallib",
+        .{output_dir},
+    );
 
     // Compile both dequant and matmul shaders into separate .air files,
     // then link them into a single .metallib.
     const compile_dequant = b.addSystemCommand(&.{
-        "xcrun",                     "-sdk", "macosx",                                   "metal",
-        "-std=metal3.0",             "-c",   "src/backends/metal/shaders/dequant.metal", "-o",
-        "zig-out/metal/dequant.air",
+        "xcrun",         "-sdk", "macosx",                                   "metal",
+        "-std=metal3.0", "-c",   "src/backends/metal/shaders/dequant.metal", "-o",
+        dequant_air,
     });
     compile_dequant.step.dependOn(&mkdir.step);
 
     const compile_matmul = b.addSystemCommand(&.{
-        "xcrun",                    "-sdk", "macosx",                                  "metal",
-        "-std=metal3.0",            "-c",   "src/backends/metal/shaders/matmul.metal", "-o",
-        "zig-out/metal/matmul.air",
+        "xcrun",         "-sdk", "macosx",                                  "metal",
+        "-std=metal3.0", "-c",   "src/backends/metal/shaders/matmul.metal", "-o",
+        matmul_air,
     });
     compile_matmul.step.dependOn(&mkdir.step);
 
     const compile_metallib = b.addSystemCommand(&.{
-        "xcrun",                     "-sdk",                     "macosx", "metallib",
-        "zig-out/metal/dequant.air", "zig-out/metal/matmul.air", "-o",     "zig-out/metal/shaders.metallib",
+        "xcrun",    "-sdk",      "macosx",
+        "metallib", dequant_air, matmul_air,
+        "-o",       metallib,
     });
     compile_metallib.step.dependOn(&compile_dequant.step);
     compile_metallib.step.dependOn(&compile_matmul.step);
     return compile_metallib;
 }
 
-/// Compile src/backends/metal/shim.m → zig-out/metal/shim.o.
-fn buildShimArchive(b: *std.Build) *std.Build.Step.Run {
-    const mkdir = b.addSystemCommand(&.{ "mkdir", "-p", "zig-out/metal" });
+/// Compile src/backends/metal/shim.m into the selected Metal output directory.
+fn buildShimArchive(
+    b: *std.Build,
+    output_dir: []const u8,
+) *std.Build.Step.Run {
+    const mkdir = b.addSystemCommand(&.{ "mkdir", "-p", output_dir });
+    const shim_object = b.fmt("{s}/shim.o", .{output_dir});
     const compile = b.addSystemCommand(&.{
-        "xcrun",                "-sdk",                      "macosx",
-        "clang",                "-fobjc-arc",                "-framework",
-        "Metal",                "-framework",                "Foundation",
-        "-c",                   "src/backends/metal/shim.m", "-o",
-        "zig-out/metal/shim.o",
+        "xcrun",     "-sdk",                      "macosx",
+        "clang",     "-fobjc-arc",                "-framework",
+        "Metal",     "-framework",                "Foundation",
+        "-c",        "src/backends/metal/shim.m", "-o",
+        shim_object,
     });
     compile.step.dependOn(&mkdir.step);
     return compile;

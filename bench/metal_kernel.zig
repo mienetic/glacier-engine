@@ -24,7 +24,7 @@ fn runMetal() !void {
     const iterations = if (args.len > 3) try std.fmt.parseInt(usize, args[3], 10) else 32;
     const group_size = if (args.len > 4) try std.fmt.parseInt(u32, args[4], 10) else 8;
 
-    var backend = engine.MetalBackend.init("zig-out/metal/shaders.metallib") catch |err| {
+    var backend = engine.MetalBackend.init(engine.metal_library_path) catch |err| {
         std.debug.print("metal-kernel: unavailable ({s})\n", .{@errorName(err)});
         return;
     };

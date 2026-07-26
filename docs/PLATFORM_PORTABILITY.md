@@ -111,9 +111,14 @@ zig build test-compile -Dtarget=x86_64-freebsd -Dmetal=false -Doptimize=ReleaseS
 ```
 
 Those historical commands recorded the two roots separately. Current
-`tools/verify.sh affected` and `matrix` runs pass `install` and `test-compile`
-to one Zig invocation per selected target, preserving both roots while sharing
-one build graph and avoiding a second target-scoped build-runner process.
+`tools/verify.sh matrix` runs pass `install`, `install-benchmarks`, and
+`test-compile` to one Zig invocation per target. `tools/verify.sh affected`
+uses the same full plan for shared roots and unknown inputs, but audited
+changes select an ordered union of named core, CPU, durable, device, and
+host-tool compile profiles instead. Shared producer APIs use a complete
+consumer compile closure that includes retained demos and benchmarks without
+installing those products. Full steps dominate compile profiles independently
+per target.
 
 The focused experimental C contract libraries, Zig ABI tests, and independent
 C11 consumer also compiled and linked for the four full cross-build targets:
@@ -244,10 +249,12 @@ The main blockers are boundary violations rather than language choice:
 - some telemetry and benchmark harnesses assume macOS commands, timers, and
   resource fields;
 - Metal discovery, compilation, and linking are coupled to macOS tooling;
-- the default install graph still includes host-oriented CLI and benchmark
-  products even though dependency consumers can import the exported modules
-  independently; named core, CPU, durable, mobile, and host-tool product
-  profiles are still missing;
+- the default install graph now stages only the production CLI, benchmark and
+  diagnostic executables are opt-in through `install-benchmarks`, and affected
+  verification has named core, CPU, durable, device, and host-tool compile
+  profiles plus a complete consumer compile closure; the transitional
+  core still exports durable POSIX modules and the profiles are verification
+  roots rather than final distributable products;
 - the current core test aggregation includes threaded and filesystem tests,
   which prevents a reduced single-threaded edge target from compiling;
 - 32-bit targets expose unchecked conversions from canonical `u64` lengths and

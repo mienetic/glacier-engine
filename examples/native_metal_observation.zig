@@ -24,7 +24,7 @@ pub fn main() !void {
             @panic("native Metal readiness leaked allocator ownership");
     }
     var backend = try engine.MetalBackend.init(
-        "zig-out/metal/shaders.metallib",
+        engine.metal_library_path,
     );
     defer backend.deinit();
     const artifact = try engine.metal_native_observer.runReadinessV1(

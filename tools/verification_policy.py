@@ -28,6 +28,22 @@ FREEBSD_TARGETS: Tuple[str, ...] = (RETAINED_TARGETS[3],)
 POSIX_TARGETS: Tuple[str, ...] = LINUX_TARGETS + FREEBSD_TARGETS
 MAXIMUM_SHEBANG_BYTES = 256
 
+FULL_TARGET_STEPS: Tuple[str, ...] = (
+    "install",
+    "install-benchmarks",
+    "test-compile",
+)
+FOCUSED_TARGET_STEPS: Tuple[str, ...] = (
+    "profile-core-compile",
+    "profile-cpu-compile",
+    "profile-durable-compile",
+    "profile-device-compile",
+    "profile-host-tool-compile",
+)
+COMPLETE_COMPILE_TARGET_STEPS: Tuple[str, ...] = (
+    "profile-complete-compile",
+)
+
 GITHUB_CONTROL_PREFIXES = (
     ".github/workflows/",
     ".github/actions/",
@@ -116,6 +132,47 @@ AARCH64_CPU_SOURCE_PATHS = {
     "src/backends/cpu/progressive_int4_neon.c",
 }
 
+METAL_NATIVE_SOURCE_PATHS = {
+    "src/backends/metal/backend.zig",
+    "src/backends/metal/native_observer.zig",
+    "src/backends/metal/shaders/dequant.metal",
+    "src/backends/metal/shaders/matmul.metal",
+    "src/backends/metal/shim.m",
+    "tests/metal_correctness.zig",
+    "tests/native_metal_observation.zig",
+    "examples/native_metal_observation.zig",
+    "bench/metal_kernel.zig",
+}
+
+CORE_CONTRACT_PATHS = {
+    "src/ffi/model_contract_c.zig",
+    "include/glacier/model_contract.h",
+    "tests/model_contract_c_consumer.c",
+    "tests/model_contract_cpp_consumer.cpp",
+}
+
+SHARED_RUNTIME_COMPLETE_PATHS = {
+    "src/prepared_text_source_lease.zig",
+    "src/prepared_text_durable_handoff.zig",
+    "src/continuation_live_restart.zig",
+}
+
+DURABLE_RUNTIME_PROFILE_PATHS = {
+    "examples/action_outbox_file_recovery.zig",
+    "examples/action_outbox_store.zig",
+    "examples/continuation_object_sweep_file.zig",
+    "examples/continuation_object_payload_file.zig",
+    "examples/continuation_live_restart.zig",
+    "examples/prepared_text_live_restart.zig",
+    "examples/continuation_checkpoint_file.zig",
+    "bench/action_outbox_file_worker.zig",
+    "bench/continuation_object_sweep_file_worker.zig",
+    "bench/continuation_object_payload_file_worker.zig",
+    "bench/continuation_live_restart_worker.zig",
+    "bench/prepared_text_live_restart_worker.zig",
+    "bench/continuation_checkpoint_file_worker.zig",
+}
+
 
 @dataclass(frozen=True)
 class PathDecision:
@@ -123,6 +180,13 @@ class PathDecision:
     reason: str
     flags: FrozenSet[str]
     targets: Tuple[str, ...]
+    target_steps: Tuple[str, ...] = FULL_TARGET_STEPS
+
+
+@dataclass(frozen=True)
+class TargetBuildPlan:
+    target: str
+    steps: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -131,6 +195,7 @@ class VerificationPlan:
     decisions: Tuple[PathDecision, ...]
     flags: FrozenSet[str]
     targets: Tuple[str, ...]
+    target_plans: Tuple[TargetBuildPlan, ...]
 
     def requires(self, flag: str) -> bool:
         return flag in self.flags
@@ -334,6 +399,18 @@ def _decision_for_path(path: str) -> PathDecision:
     suffix = Path(lower).suffix
     first_component = lower.split("/", 1)[0]
 
+    if (
+        first_component in CODE_ROOTS
+        and path != lower
+        and suffix in SHARED_CODE_SUFFIXES
+    ):
+        return PathDecision(
+            path,
+            "non-canonical code path; conservatively validate every target",
+            _compiled_flags(suffix),
+            RETAINED_TARGETS,
+        )
+
     policy_flags = POLICY_CONTROL_PATHS.get(lower)
     if policy_flags is not None:
         policy_targets = (
@@ -398,7 +475,7 @@ def _decision_for_path(path: str) -> PathDecision:
             (),
         )
 
-    if lower in AARCH64_CPU_SOURCE_PATHS:
+    if path in AARCH64_CPU_SOURCE_PATHS:
         return PathDecision(
             path,
             "AArch64 CPU kernel changed; validate Linux and native Darwin branches",
@@ -410,6 +487,85 @@ def _decision_for_path(path: str) -> PathDecision:
                 }
             ),
             AARCH64_LINUX_TARGETS,
+            (
+                "profile-cpu-compile",
+                "profile-host-tool-compile",
+            ),
+        )
+
+    if path in METAL_NATIVE_SOURCE_PATHS:
+        return PathDecision(
+            path,
+            "audited native Metal implementation or consumer changed",
+            frozenset({"metal-native"}),
+            (),
+        )
+
+    if path in CORE_CONTRACT_PATHS:
+        return PathDecision(
+            path,
+            "portable core language-contract boundary changed",
+            _compiled_flags(suffix),
+            RETAINED_TARGETS,
+            ("profile-core-compile",),
+        )
+
+    if path in SHARED_RUNTIME_COMPLETE_PATHS:
+        return PathDecision(
+            path,
+            "shared durable runtime producer changed",
+            _compiled_flags(suffix),
+            RETAINED_TARGETS,
+            COMPLETE_COMPILE_TARGET_STEPS,
+        )
+
+    if path in DURABLE_RUNTIME_PROFILE_PATHS:
+        return PathDecision(
+            path,
+            "durable runtime or process-recovery consumer changed",
+            _compiled_flags(suffix),
+            RETAINED_TARGETS,
+            ("profile-durable-compile",),
+        )
+
+    if (
+        path != "src/core/root.zig"
+        and path.startswith("src/core/")
+        and Path(path).suffix == ".zig"
+    ):
+        return PathDecision(
+            path,
+            "portable core implementation changed",
+            _compiled_flags(suffix),
+            RETAINED_TARGETS,
+            COMPLETE_COMPILE_TARGET_STEPS,
+        )
+
+    if (
+        (
+            path.startswith("src/backends/cpu/")
+            or path.startswith("src/model/")
+        )
+        and Path(path).suffix == ".zig"
+    ):
+        return PathDecision(
+            path,
+            "CPU runtime or model implementation changed",
+            _compiled_flags(suffix),
+            RETAINED_TARGETS,
+            COMPLETE_COMPILE_TARGET_STEPS,
+        )
+
+    if (
+        path.startswith("src/cli/")
+        and Path(path).suffix == ".zig"
+    ):
+        return PathDecision(
+            path,
+            "CLI or retained host inspector changed",
+            _compiled_flags(suffix),
+            RETAINED_TARGETS,
+            ("profile-host-tool-compile",),
         )
 
     if suffix == ".py":
@@ -451,18 +607,32 @@ def _decision_for_path(path: str) -> PathDecision:
             (),
         )
 
-    special_flags = set()
+    if suffix == ".metal":
+        return PathDecision(
+            path,
+            "unclassified Metal shader; run native Metal and fail closed",
+            _compiled_flags(suffix) | frozenset({"metal-native"}),
+            RETAINED_TARGETS,
+        )
+
     if (
-        lower.startswith("src/backends/metal/")
-        or lower == "tests/metal_correctness.zig"
-        or (
-            first_component in {"bench", "examples", "tests"}
-            and suffix in SHARED_CODE_SUFFIXES
-            and _has_basename_token(path, "metal")
+        suffix in SHARED_CODE_SUFFIXES
+        and (
+            path.startswith("src/backends/metal/")
+            or (
+                first_component in {"bench", "examples", "tests"}
+                and _has_basename_token(path, "metal")
+            )
         )
     ):
-        special_flags.add("metal-native")
+        return PathDecision(
+            path,
+            "unclassified Metal code path; run native Metal and fail closed",
+            _compiled_flags(suffix) | frozenset({"metal-native"}),
+            RETAINED_TARGETS,
+        )
 
+    special_flags = set()
     platform_flags, platform_targets = _platform_requirements(path)
     special_flags.update(platform_flags)
     if platform_targets:
@@ -512,6 +682,76 @@ def _decision_for_path(path: str) -> PathDecision:
     )
 
 
+def _validated_decision_steps(
+    decision: PathDecision,
+) -> Tuple[str, ...]:
+    steps = decision.target_steps
+    if steps in (
+        FULL_TARGET_STEPS,
+        COMPLETE_COMPILE_TARGET_STEPS,
+    ):
+        return steps
+    if (
+        not steps
+        or len(set(steps)) != len(steps)
+        or any(step not in FOCUSED_TARGET_STEPS for step in steps)
+        or tuple(
+            step for step in FOCUSED_TARGET_STEPS if step in steps
+        )
+        != steps
+    ):
+        raise ValueError(
+            "path decision has an invalid target-step plan: "
+            + decision.path
+        )
+    return steps
+
+
+def _build_target_plans(
+    decisions: Sequence[PathDecision],
+) -> Tuple[TargetBuildPlan, ...]:
+    selected_steps = {target: set() for target in RETAINED_TARGETS}
+    full_targets = set()
+    complete_compile_targets = set()
+    for decision in decisions:
+        if not decision.targets:
+            continue
+        steps = _validated_decision_steps(decision)
+        for target in decision.targets:
+            if target not in selected_steps:
+                raise ValueError(
+                    "path decision selected an unknown target: " + target
+                )
+            if steps == FULL_TARGET_STEPS:
+                full_targets.add(target)
+            elif steps == COMPLETE_COMPILE_TARGET_STEPS:
+                complete_compile_targets.add(target)
+            else:
+                selected_steps[target].update(steps)
+
+    plans = []
+    for target in RETAINED_TARGETS:
+        if target in full_targets:
+            plans.append(TargetBuildPlan(target, FULL_TARGET_STEPS))
+            continue
+        if target in complete_compile_targets:
+            plans.append(
+                TargetBuildPlan(
+                    target,
+                    COMPLETE_COMPILE_TARGET_STEPS,
+                )
+            )
+            continue
+        steps = tuple(
+            step
+            for step in FOCUSED_TARGET_STEPS
+            if step in selected_steps[target]
+        )
+        if steps:
+            plans.append(TargetBuildPlan(target, steps))
+    return tuple(plans)
+
+
 def classify_paths(paths: Iterable[str]) -> VerificationPlan:
     unique_paths = {_validated_path(path) for path in paths}
     ordered_paths = tuple(sorted(unique_paths, key=os.fsencode))
@@ -520,13 +760,15 @@ def classify_paths(paths: Iterable[str]) -> VerificationPlan:
     flags = frozenset(
         flag for decision in decisions for flag in decision.flags
     )
-    selected_targets = {
-        target for decision in decisions for target in decision.targets
-    }
-    targets = tuple(
-        target for target in RETAINED_TARGETS if target in selected_targets
+    target_plans = _build_target_plans(decisions)
+    targets = tuple(target_plan.target for target_plan in target_plans)
+    return VerificationPlan(
+        ordered_paths,
+        decisions,
+        flags,
+        targets,
+        target_plans,
     )
-    return VerificationPlan(ordered_paths, decisions, flags, targets)
 
 
 def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
@@ -544,7 +786,11 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
     ):
         if flag in decision.flags:
             names.append(label)
-    names.extend("portability/" + target for target in decision.targets)
+    target_step_label = "+".join(decision.target_steps)
+    names.extend(
+        "portability/" + target + "/" + target_step_label
+        for target in decision.targets
+    )
     return tuple(names)
 
 
@@ -572,10 +818,17 @@ def print_report(plan: VerificationPlan) -> None:
         if plan.requires(flag):
             selected_gates.append(label)
     print("Selected gates: " + ", ".join(selected_gates))
-    if plan.targets:
-        print("Selected targets: " + ", ".join(plan.targets))
+    if plan.target_plans:
+        print("Selected target plans:")
+        for target_plan in plan.target_plans:
+            print(
+                "  "
+                + target_plan.target
+                + ": "
+                + ", ".join(target_plan.steps)
+            )
     else:
-        print("Selected targets: (none)")
+        print("Selected target plans: (none)")
 
 
 def write_flags(plan: VerificationPlan, output: Union[os.PathLike, str]) -> None:
@@ -601,6 +854,36 @@ def write_targets(
         "".join(target + "\n" for target in ordered_targets),
         encoding="ascii",
     )
+
+
+def write_target_steps(
+    target_plans: Sequence[TargetBuildPlan],
+    output: Union[os.PathLike, str],
+) -> None:
+    targets = tuple(target_plan.target for target_plan in target_plans)
+    if (
+        len(set(targets)) != len(targets)
+        or any(target not in RETAINED_TARGETS for target in targets)
+        or targets
+        != tuple(target for target in RETAINED_TARGETS if target in targets)
+    ):
+        raise ValueError(
+            "target-step plan is not a unique retained-target subset"
+        )
+
+    records = []
+    for target_plan in target_plans:
+        decision = PathDecision(
+            path="<target-plan>",
+            reason="serialized target plan",
+            flags=frozenset(),
+            targets=(target_plan.target,),
+            target_steps=target_plan.steps,
+        )
+        steps = _validated_decision_steps(decision)
+        for step in steps:
+            records.append(target_plan.target + " " + step + "\n")
+    Path(output).write_text("".join(records), encoding="ascii")
 
 
 def check_changed_python(paths: Sequence[str]) -> None:
@@ -664,6 +947,7 @@ def _parser() -> argparse.ArgumentParser:
     plan_parser.add_argument("--paths0", required=True)
     plan_parser.add_argument("--flags", required=True)
     plan_parser.add_argument("--targets", required=True)
+    plan_parser.add_argument("--target-steps", required=True)
 
     python_parser = subparsers.add_parser("python-syntax")
     python_parser.add_argument("--paths0", required=True)
@@ -677,6 +961,7 @@ def _parser() -> argparse.ArgumentParser:
 
     target_parser = subparsers.add_parser("retained-targets")
     target_parser.add_argument("--targets", required=True)
+    target_parser.add_argument("--target-steps", required=True)
     return parser
 
 
@@ -688,6 +973,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             write_paths0(paths, arguments.paths0)
         elif arguments.command == "retained-targets":
             write_targets(RETAINED_TARGETS, arguments.targets)
+            target_plans = tuple(
+                TargetBuildPlan(target, FULL_TARGET_STEPS)
+                for target in RETAINED_TARGETS
+            )
+            write_target_steps(target_plans, arguments.target_steps)
             print("Selected targets: " + ", ".join(RETAINED_TARGETS))
         else:
             paths = read_paths0(arguments.paths0)
@@ -696,6 +986,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 print_report(plan)
                 write_flags(plan, arguments.flags)
                 write_targets(plan.targets, arguments.targets)
+                write_target_steps(
+                    plan.target_plans,
+                    arguments.target_steps,
+                )
             elif arguments.command == "python-syntax":
                 check_changed_python(paths)
             elif arguments.command == "shell-syntax":

@@ -39,9 +39,8 @@ test "Metal dequant matches CPU reference within FP16 tolerance" {
     defer allocator.free(cpu_out);
 
     // --- Metal path ------------------------------------------------------
-    // Locate the metallib. The build's metal-lib step writes it to
-    // zig-out/metal/shaders.metallib; tests run from the repo root.
-    var backend = engine.MetalBackend.init("zig-out/metal/shaders.metallib") catch |err| {
+    // Locate the metallib generated for this exact build invocation.
+    var backend = engine.MetalBackend.init(engine.metal_library_path) catch |err| {
         // No Metal device available — skip rather than fail. This lets the
         // test suite run in headless CI containers that match os.tag==macos
         // but have no GPU.
@@ -75,7 +74,7 @@ test "Metal dequant matches CPU reference within FP16 tolerance" {
 test "Metal dispatch rejects malformed payload" {
     if (!config.metal_enabled) return error.SkipZigTest;
 
-    var backend = engine.MetalBackend.init("zig-out/metal/shaders.metallib") catch return error.SkipZigTest;
+    var backend = engine.MetalBackend.init(engine.metal_library_path) catch return error.SkipZigTest;
     defer backend.deinit();
 
     var out: [16]u8 = undefined;
@@ -127,7 +126,7 @@ test "Metal fused INT4 matvec matches CPU packed kernel" {
         group_size,
     );
 
-    var backend = engine.MetalBackend.init("zig-out/metal/shaders.metallib") catch return error.SkipZigTest;
+    var backend = engine.MetalBackend.init(engine.metal_library_path) catch return error.SkipZigTest;
     defer backend.deinit();
     const gpu_weight = try backend.createInt4Weight(
         quantized.packed_bytes,
