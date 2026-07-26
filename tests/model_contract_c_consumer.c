@@ -8,6 +8,18 @@ _Static_assert(
     GLACIER_MODEL_OUTPUT_TOKEN_IDS == UINT64_C(11),
     "token ID output kind changed"
 );
+_Static_assert(
+    GLACIER_MODEL_FAMILY_TOOL_EXECUTOR == UINT64_C(18),
+    "tool executor family ID changed"
+);
+_Static_assert(
+    GLACIER_MODEL_OPERATION_EXECUTE_ACTION == UINT64_C(14),
+    "tool execution operation ID changed"
+);
+_Static_assert(
+    GLACIER_MODEL_OUTPUT_TOOL_RESULT == UINT64_C(12),
+    "tool result output kind changed"
+);
 
 static int hex_value(int character) {
     if (character >= '0' && character <= '9') {

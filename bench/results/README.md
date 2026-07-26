@@ -39,6 +39,8 @@ The repository's strongest checked-in evidence is deterministic conformance:
 - retained W0/W1 open-loop workload evidence, the W2 generated corpus, and
   separately versioned W3 finite-source closed-loop replay;
 - W4a mixed typed-perception lifecycle and publication conformance;
+- first W4b typed-tool authorization, transaction, replay, and cleanup
+  conformance;
 - prepared runtime-image integrity;
 - provider gateway, transport, settlement, cost, and journal replay;
 - lossless context mapping and token reconciliation;
@@ -76,6 +78,24 @@ together:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build typed-workload-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
+`typed-tool-conformance-v1.json` is the canonical
+`glacier.typed-tool-conformance/v1` report, not a performance result. Its
+3,024-byte typed-workload plan drives one credential-free, process-local
+`bounded_add` tool through cancellation, timeout, execution, scheduler
+rejection, exact replay, policy denial, and idempotency conflict. The native
+transaction uses a scheduler-before-mutation precommit and retained-lock
+publish; the independent Python implementation derives every portable record
+and report byte. The complete 3,223-byte report SHA-256 is
+`12290bf9c833a02e95666294d39f9e83320b9f031e40ede9278da190883c41e2`;
+its evidence root is
+`5926b5fec3a69fdc9f000e44004f206db459a236a1900c85a0bd9f51080ec3a7`.
+Verify native execution, independent replay, and retained bytes together:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build typed-tool-workload-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 

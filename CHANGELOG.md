@@ -25,6 +25,18 @@ before the first stable release.
 
 ### Added
 
+- Added the first W4b typed tool transaction profile. New pointer-free tool
+  records separate descriptor, bounded arguments, agent proposal, local policy,
+  authorization, effect, and scheduler-bound delivery. A fixed-storage
+  process-local `bounded_add` harness commits only through a LaneWeave
+  transaction whose locked precommit runs before scheduler mutation and whose
+  bounded publish callback cannot fail. It retains exact execute, duplicate
+  reuse, denial, idempotency conflict, cancellation, timeout, rejection,
+  replay, storage-drift rejection, and zero-authority cleanup evidence. The
+  retained eight-item report is reproduced by an independent Python
+  implementation without changing W4a. This slice grants no filesystem,
+  network, process, credential, clock, or random authority and does not
+  establish durable or external exactly-once effects.
 - Added W4a mixed typed-workload conformance as a separate, bounded ABI. A
   generic caller-storage-backed driver now carries exact profile and item
   contracts through deterministic admission, cancellation, timeout, final

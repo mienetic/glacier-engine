@@ -36,27 +36,19 @@ RESIDENCY_MAGIC = b"GMRBND1\x00"
 ARTIFACT_DOMAIN = b"glacier-model-artifact-manifest-v1\x00"
 PLAN_DOMAIN = b"glacier-model-execution-plan-v1\x00"
 RESULT_DOMAIN = b"glacier-model-result-envelope-v1\x00"
-RESIDENCY_DOMAIN = (
-    b"glacier-model-execution-residency-binding-v1\x00"
-)
+RESIDENCY_DOMAIN = b"glacier-model-execution-residency-binding-v1\x00"
 PUBLICATION_STATE_DOMAIN = b"glacier-model-publication-state-v1\x00"
 PUBLICATION_COMMIT_DOMAIN = b"glacier-model-publication-commit-v1\x00"
-PREPARED_TERMINAL_OUTPUT_DOMAIN = (
-    b"glacier-prepared-text-terminal-output-v1\x00"
-)
+PREPARED_TERMINAL_OUTPUT_DOMAIN = b"glacier-prepared-text-terminal-output-v1\x00"
 PREPARED_TERMINAL_SOURCE_MAPPING_DOMAIN = (
     b"glacier-prepared-text-terminal-source-mapping-v1\x00"
 )
 PREPARED_TERMINAL_RESULT_EVIDENCE_DOMAIN = (
     b"glacier-prepared-text-terminal-result-evidence-v1\x00"
 )
-AUDIO_SOURCE_MAPPING_DOMAIN = (
-    b"glacier-audio-window-source-mapping-v1\x00"
-)
+AUDIO_SOURCE_MAPPING_DOMAIN = b"glacier-audio-window-source-mapping-v1\x00"
 VIDEO_SELECTION_DOMAIN = b"glacier-temporal-video-selection-v1\x00"
-VIDEO_SOURCE_MAPPING_DOMAIN = (
-    b"glacier-temporal-video-source-mapping-v1\x00"
-)
+VIDEO_SOURCE_MAPPING_DOMAIN = b"glacier-temporal-video-source-mapping-v1\x00"
 CLAIM_FIELDS = (
     "capsule_bytes",
     "kv_bytes",
@@ -104,23 +96,26 @@ RESULT_DIGEST_FIELDS = (
 AUTOREGRESSIVE = 1
 VISION_UNDERSTANDING = 3
 VIDEO_UNDERSTANDING = 6
+TOOL_EXECUTOR = 18
 DECODE_NEXT = 2
 ENCODE = 3
 SEGMENT = 10
 GENERATE_SEQUENCE = 13
+EXECUTE_ACTION = 14
 TOKEN_ID_INPUT = 1
 IMAGE_FEATURE_U8 = 3
 VIDEO_FEATURE_U8 = 5
 EMBEDDING_I32 = 2
 VIDEO_SEGMENT = 10
 TOKEN_IDS = 11
+TOOL_RESULT = 12
 EXACT_INTEGER = 1
 REQUEST_OWNED = 1
 SHARED_READ_ONLY = 2
-FAMILY_IDS = frozenset(range(1, 18))
-OPERATION_IDS = frozenset(range(1, 14))
+FAMILY_IDS = frozenset(range(1, 19))
+OPERATION_IDS = frozenset(range(1, 15))
 INPUT_KIND_IDS = frozenset(range(1, 8))
-OUTPUT_KIND_IDS = frozenset(range(1, 12))
+OUTPUT_KIND_IDS = frozenset(range(1, 13))
 NUMERICAL_POLICY_IDS = frozenset(range(1, 5))
 ARTIFACT_RESIDENCY_IDS = frozenset((REQUEST_OWNED, SHARED_READ_ONLY))
 
@@ -188,9 +183,7 @@ def prepared_terminal_output_root_v1(
         + _u64(len(tokens))
         + b"".join(_u32(token) for token in tokens)
     )
-    return hashlib.sha256(
-        PREPARED_TERMINAL_OUTPUT_DOMAIN + body
-    ).digest()
+    return hashlib.sha256(PREPARED_TERMINAL_OUTPUT_DOMAIN + body).digest()
 
 
 def verify_prepared_terminal_output_root_v1(
@@ -237,9 +230,7 @@ def prepared_terminal_source_mapping_root_v1(
         + _digest(output_sha256, allow_zero=True)
         + _u64(output_token_count)
     )
-    return hashlib.sha256(
-        PREPARED_TERMINAL_SOURCE_MAPPING_DOMAIN + body
-    ).digest()
+    return hashlib.sha256(PREPARED_TERMINAL_SOURCE_MAPPING_DOMAIN + body).digest()
 
 
 def prepared_terminal_result_evidence_root_v1(
@@ -256,9 +247,7 @@ def prepared_terminal_result_evidence_root_v1(
         + _digest(result_sha256, allow_zero=True)
         + _digest(publication_state_after_sha256, allow_zero=True)
     )
-    return hashlib.sha256(
-        PREPARED_TERMINAL_RESULT_EVIDENCE_DOMAIN + body
-    ).digest()
+    return hashlib.sha256(PREPARED_TERMINAL_RESULT_EVIDENCE_DOMAIN + body).digest()
 
 
 def _claim_values(claim: Record) -> tuple[int, ...]:
@@ -423,9 +412,12 @@ def encode_artifact(value: Record) -> bytes:
     ):
         raise ModelContractError("invalid artifact")
     output = bytearray(ARTIFACT_MANIFEST_BYTES)
-    output[:32] = ARTIFACT_MAGIC + _u64(ARTIFACT_MANIFEST_ABI) + _u64(
-        ARTIFACT_MANIFEST_BYTES
-    ) + _u64(0)
+    output[:32] = (
+        ARTIFACT_MAGIC
+        + _u64(ARTIFACT_MANIFEST_ABI)
+        + _u64(ARTIFACT_MANIFEST_BYTES)
+        + _u64(0)
+    )
     output[32:112] = b"".join(_u64(value) for value in scalars)
     output[112:208] = b"".join(digests)
     output[208:216] = _u64(weight_element_bytes)
@@ -505,14 +497,10 @@ def make_plan(
     if batch_items <= 0 or batch_items > artifact["max_batch_items"]:
         raise ModelContractError("invalid plan batch")
     input_bytes = (
-        batch_items
-        * artifact["input_features"]
-        * artifact["input_element_bytes"]
+        batch_items * artifact["input_features"] * artifact["input_element_bytes"]
     )
     output_bytes = (
-        batch_items
-        * artifact["output_dimensions"]
-        * artifact["output_element_bytes"]
+        batch_items * artifact["output_dimensions"] * artifact["output_element_bytes"]
     )
     value: Record = {
         "family": artifact["family"],
@@ -583,8 +571,7 @@ def encode_plan(value: Record) -> bytes:
     expected_input = scalars[7] * scalars[8] * input_element_bytes
     expected_output = scalars[7] * scalars[9] * output_element_bytes
     if (
-        min(scalars[5], scalars[6], scalars[7], scalars[8], scalars[9])
-        <= 0
+        min(scalars[5], scalars[6], scalars[7], scalars[8], scalars[9]) <= 0
         or scalars[10] != expected_input
         or scalars[11] != expected_output
         or input_element_bytes <= 0
@@ -604,9 +591,9 @@ def encode_plan(value: Record) -> bytes:
     ):
         raise ModelContractError("invalid execution plan")
     output = bytearray(EXECUTION_PLAN_BYTES)
-    output[:32] = PLAN_MAGIC + _u64(EXECUTION_PLAN_ABI) + _u64(
-        EXECUTION_PLAN_BYTES
-    ) + _u64(0)
+    output[:32] = (
+        PLAN_MAGIC + _u64(EXECUTION_PLAN_ABI) + _u64(EXECUTION_PLAN_BYTES) + _u64(0)
+    )
     output[32:168] = b"".join(_u64(scalar) for scalar in scalars)
     output[176:256] = b"".join(_u64(scalar) for scalar in claim)
     output[256:640] = b"".join(digests)
@@ -690,10 +677,7 @@ def _validate_residency_shape(binding: Record) -> None:
     _u64(resident_weight_bytes)
     _ = (artifact_sha256, weights_sha256, plan_sha256)
     claim_host_bytes(request_claim)
-    if (
-        residency not in ARTIFACT_RESIDENCY_IDS
-        or request_claim["queue_slots"] == 0
-    ):
+    if residency not in ARTIFACT_RESIDENCY_IDS or request_claim["queue_slots"] == 0:
         raise ModelContractError("invalid residency binding")
     if residency == REQUEST_OWNED:
         if resident_weight_bytes != 0:
@@ -701,8 +685,7 @@ def _validate_residency_shape(binding: Record) -> None:
     else:
         if (
             resident_weight_bytes == 0
-            or request_claim["capsule_bytes"]
-            > U64_MAX - resident_weight_bytes
+            or request_claim["capsule_bytes"] > U64_MAX - resident_weight_bytes
         ):
             raise ModelContractError("invalid shared residency")
 
@@ -718,14 +701,10 @@ def _validate_residency_projection(
     if binding["residency"] == SHARED_READ_ONLY:
         if binding["resident_weight_bytes"] != plan["weight_bytes"]:
             raise ModelContractError("resident weight mismatch")
-        projected_claim["capsule_bytes"] += binding[
-            "resident_weight_bytes"
-        ]
+        projected_claim["capsule_bytes"] += binding["resident_weight_bytes"]
     if (
-        binding["artifact_sha256"]
-        != plan["artifact_sha256"]
-        or binding["weights_sha256"]
-        != plan["weights_sha256"]
+        binding["artifact_sha256"] != plan["artifact_sha256"]
+        or binding["weights_sha256"] != plan["weights_sha256"]
         or binding["plan_sha256"] != plan["plan_sha256"]
         or not _claims_equal(projected_claim, plan["claim"])
     ):
@@ -828,25 +807,16 @@ def require_support(records: list[Record], plan: Record) -> None:
     )
     candidates = records
     for field, message in stages:
-        candidates = [
-            record
-            for record in candidates
-            if record[field] == plan[field]
-        ]
+        candidates = [record for record in candidates if record[field] == plan[field]]
         if not candidates:
             raise ModelContractError(message)
     for record in candidates:
         if (
             plan["batch_items"] <= record["max_batch_items"]
-            and plan["input_features"]
-            <= record["max_input_features"]
-            and plan["output_dimensions"]
-            <= record["max_output_dimensions"]
+            and plan["input_features"] <= record["max_input_features"]
+            and plan["output_dimensions"] <= record["max_output_dimensions"]
         ):
-            if (
-                plan["required_capabilities"]
-                & ~record["allowed_capabilities"]
-            ):
+            if plan["required_capabilities"] & ~record["allowed_capabilities"]:
                 raise ModelContractError("unsupported capabilities")
             return
     raise ModelContractError("unsupported dimensions")
@@ -1022,10 +992,7 @@ def encode_result(value: Record) -> bytes:
     if (
         min(scalars[4], scalars[5], scalars[7], scalars[8]) <= 0
         or output_element_bytes <= 0
-        or scalars[9]
-        != scalars[7]
-        * scalars[8]
-        * output_element_bytes
+        or scalars[9] != scalars[7] * scalars[8] * output_element_bytes
         or min(scalars[10], scalars[12], scalars[13]) <= 0
         or resource_integrity <= 0
         or claim[5] < scalars[9]
@@ -1037,14 +1004,12 @@ def encode_result(value: Record) -> bytes:
     ):
         raise ModelContractError("invalid result")
     candidate: Record = {**value}
-    if publication_commit_root(candidate) != candidate[
-        "publication_commit_sha256"
-    ]:
+    if publication_commit_root(candidate) != candidate["publication_commit_sha256"]:
         raise ModelContractError("publication commit mismatch")
     output = bytearray(RESULT_ENVELOPE_BYTES)
-    output[:32] = RESULT_MAGIC + _u64(RESULT_ENVELOPE_ABI) + _u64(
-        RESULT_ENVELOPE_BYTES
-    ) + _u64(0)
+    output[:32] = (
+        RESULT_MAGIC + _u64(RESULT_ENVELOPE_ABI) + _u64(RESULT_ENVELOPE_BYTES) + _u64(0)
+    )
     output[32:144] = b"".join(_u64(scalar) for scalar in scalars)
     output[144:224] = b"".join(_u64(scalar) for scalar in claim)
     output[224:232] = _u64(resource_integrity)
@@ -1180,8 +1145,7 @@ def _verify_plan_result_relationship(
     if (
         any(plan[field] != result[field] for field in shared_fields)
         or any(plan[field] != result[field] for field in shared_digests)
-        or result["publication_sequence"]
-        != plan["publication_next_sequence"]
+        or result["publication_sequence"] != plan["publication_next_sequence"]
         or result["plan_sha256"] != plan["plan_sha256"]
         or not _claims_equal(result["claim"], expected_claim)
     ):
@@ -1195,10 +1159,7 @@ def _verify_plan_result_relationship(
             "previous_result_sha256": result["previous_result_sha256"],
         }
     )
-    if (
-        result["publication_state_before_sha256"]
-        != expected_state_root
-    ):
+    if result["publication_state_before_sha256"] != expected_state_root:
         raise ModelContractError("result publication state mismatch")
 
 
@@ -1319,16 +1280,16 @@ def reference_integer_projection(
                 * struct.unpack(
                     "b",
                     weights[
-                        dimension * features + feature :
-                        dimension * features + feature + 1
+                        dimension * features + feature : dimension * features
+                        + feature
+                        + 1
                     ],
                 )[0]
                 for feature in range(features)
             )
-            if (
-                abs(accumulator) > plan["maximum_absolute_output"]
-                or not -(1 << 31) <= accumulator < (1 << 31)
-            ):
+            if abs(accumulator) > plan["maximum_absolute_output"] or not -(
+                1 << 31
+            ) <= accumulator < (1 << 31):
                 raise ModelContractError("invalid projection candidate")
             output.extend(struct.pack("<i", accumulator))
     return bytes(output)
@@ -1366,10 +1327,9 @@ def reference_i16_projection(
                     weight_offset,
                 )[0]
                 accumulator += input_value * weight_value
-            if (
-                abs(accumulator) > plan["maximum_absolute_output"]
-                or not -(1 << 31) <= accumulator < (1 << 31)
-            ):
+            if abs(accumulator) > plan["maximum_absolute_output"] or not -(
+                1 << 31
+            ) <= accumulator < (1 << 31):
                 raise ModelContractError("invalid audio candidate")
             output.extend(struct.pack("<i", accumulator))
     return bytes(output)
@@ -1526,9 +1486,9 @@ def validate_temporal_video_selection(
         for value in values.values():
             _u64(value)
         selection_root = _digest(selection["selection_sha256"])
-        last_frame = values["first_frame"] + (
-            values["frame_count"] - 1
-        ) * values["frame_stride"]
+        last_frame = (
+            values["first_frame"] + (values["frame_count"] - 1) * values["frame_stride"]
+        )
         _u64(last_frame)
         source_end = last_frame + 1
         _u64(source_end)
@@ -1564,8 +1524,7 @@ def validate_temporal_video_selection(
         or values["target_start_tick"] != target_start[0]
         or values["target_end_tick"] != target_end[0]
         or values["target_start_tick"] >= values["target_end_tick"]
-        or selection_root
-        != _temporal_video_selection_root(video_state, selection)
+        or selection_root != _temporal_video_selection_root(video_state, selection)
     ):
         raise ModelContractError("invalid temporal video selection")
     return {**values, "selection_sha256": selection_root}
@@ -1615,10 +1574,7 @@ def materialize_temporal_video_frames(
             raise ModelContractError("invalid temporal video cache")
         selected = bytearray()
         for index in range(selection["frame_count"]):
-            frame = (
-                selection["first_frame"]
-                + index * selection["frame_stride"]
-            )
+            frame = selection["first_frame"] + index * selection["frame_stride"]
             offset = (frame - parameters[2]) * parameters[1]
             selected.extend(video_cache[offset : offset + parameters[1]])
         if len(selected) != selection["frame_count"] * parameters[1]:

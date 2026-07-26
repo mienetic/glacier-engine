@@ -435,6 +435,15 @@ evidence while an independent Python implementation derives the plan wire and
 logical replay; one retained report binds both sets of roots. See
 [Typed Workload Conformance](TYPED_WORKLOAD_CONFORMANCE.md).
 
+**Completed first W4b tool slice:** one separately versioned process-local tool
+profile now separates proposal from local policy, commits a bounded counter
+effect and delivery receipt with the exact armed scheduler service event,
+reuses an exact duplicate without a second mutation, denies out-of-policy work,
+rejects an idempotency conflict, and gives cancelled, timed-out, and rejected
+work no effect authority. Native mutation tests and an independent Python
+implementation retain the eight-item campaign and final zero state without
+changing W4a. See [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md).
+
 This is deterministic conformance, not a throughput, wall-clock latency,
 physical-memory, energy, or soak result.
 
@@ -444,7 +453,8 @@ Small independent follow-up slices include:
   generator/shrinker check while preserving every prior case root;
 - add one retained W3 plan, phase/lineage mutation, or independent decoder
   while preserving every existing V1 root;
-- add one provider, tool, stateful, streaming, or non-media W4 profile without
+- add one provider, stateful, streaming, durable live-tool, or non-media W4
+  profile without
   weakening authoritative replay or receipt ownership;
 - build a read-only scenario/result inspector that exposes no authority;
 - add a bounded family-aware batch or safe-preemption profile with an explicit
@@ -659,8 +669,14 @@ Separate a model-proposed action from permission to invoke a tool. A proposal
 may name a schema and arguments but cannot acquire network, filesystem, process,
 or credential authority by itself.
 
-**First slice:** one fake idempotent tool, exact proposal/result roots,
-operation/byte ceilings, cancellation, replay rejection, and no real I/O.
+**Completed first slice:** one fixed-storage idempotent `bounded_add` tool now
+retains exact descriptor, proposal, policy, authorization, effect, delivery,
+scheduler, and replay roots with no ambient or real I/O. A scheduler-locked
+precommit rejects participant drift before Event-v1 mutation and retains the
+tool-state lock through its bounded, non-failing publish callback.
+
+**Next slice:** define a durable ActionOutbox, acknowledgement, ambiguity
+reconciliation, and compensation boundary before adding an external dispatcher.
 
 ### Production weight pager
 

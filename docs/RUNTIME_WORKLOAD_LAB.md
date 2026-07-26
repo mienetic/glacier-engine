@@ -12,12 +12,13 @@ It separates four kinds of evidence:
 4. bounded soak and disruption recovery.
 
 The deterministic open-loop, generated deterministic open-loop,
-scheduler-coupled media, finite-source deterministic closed-loop, and first
-mixed typed-perception layers are integrated. Provider, tool, stateful,
-batched, preemptible, and device-backed typed profiles, native multi-request
-reports, and soak campaigns remain staged work. A logical driver step is never
-reported as a millisecond, and a logical resource claim is never reported as
-RSS, device residency, energy, or temperature.
+scheduler-coupled media, finite-source deterministic closed-loop, mixed
+typed-perception, and first process-local typed tool layers are integrated.
+Provider, stateful, streaming, batched, preemptible, device-backed, and durable
+live-tool profiles, native multi-request reports, and soak campaigns remain
+staged work. A logical driver step is never reported as a millisecond, and a
+logical resource claim is never reported as RSS, device residency, energy, or
+temperature.
 
 ## Why this belongs in the runtime
 
@@ -98,10 +99,16 @@ Results from different modes are not merged into one headline number.
   timeout publish or scrub exactly; concrete evidence and a fresh logical
   replay end with zero model/cache ownership. See
   [Typed Workload Conformance](TYPED_WORKLOAD_CONFORMANCE.md).
-- [ ] **W4b — Broader typed workloads.** Add provider, tool, stateful,
-  streaming, batched, preemptible, and device-backed profiles. Each profile
-  must name its execution unit, exact claim, cancellation/preemption boundary,
-  correctness gate, and publication authority without weakening W4a.
+- [ ] **W4b — Broader typed workloads.** The first sub-slice is complete: one
+  process-local typed tool transaction separates proposal and policy, commits
+  execute/reuse/deny/conflict delivery with the exact scheduler service event
+  only after a scheduler-locked precommit accepts retained tool state, and
+  closes cancellation, timeout, rejection, and ownership to zero. Provider,
+  stateful, streaming, batched, preemptible, device-backed, and durable live-tool
+  profiles remain. Each profile must name its execution unit, exact claim,
+  cancellation/preemption boundary, correctness gate, and publication authority
+  without weakening W4a. See
+  [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md).
 - [ ] **W5 — Native observation and machine comparability.** Add a
   family-neutral runner plus CPU, GPU/accelerator, memory, power, and thermal
   observers with explicit `present`, `missing`, `denied`, and `unsupported`
@@ -255,7 +262,8 @@ Independent contributions can add:
    generator/shrinker check;
 2. one retained deterministic closed-loop plan, phase/lineage mutation, or
    independent decoder while preserving every existing V1 root;
-3. one typed workload-driver profile;
+3. one typed workload-driver profile, or one durable ActionOutbox/reconciliation
+   record that does not weaken the process-local tool proof;
 4. a family-neutral observer interface and one native OS implementation;
 5. a bounded Metal observer slice for device identity, host submit/sync timing,
    fallback detection, and explicit availability states;
@@ -267,4 +275,5 @@ Each slice must retain its fixtures, failure cases, exact acceptance command,
 and nonclaims. See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md),
 [Generated Workload Corpus](GENERATED_WORKLOAD_CORPUS.md),
 [Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md), and
+[Typed Tool Workload](TYPED_TOOL_WORKLOAD.md), plus the
 [Benchmark and Evidence Guide](BENCHMARKS.md) for the existing foundations.

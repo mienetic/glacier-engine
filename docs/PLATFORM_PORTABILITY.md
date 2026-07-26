@@ -113,6 +113,15 @@ typed-perception test root and canonical report runner; no foreign binary was
 executed. It confirms portability of the new source slice, not native runtime
 support or physical CPU/GPU behavior.
 
+On 2026-07-26, the additive W4b `typed-tool-workload-compile` target likewise
+passed in `ReleaseSafe` for `x86_64-linux-musl`, `aarch64-linux-musl`,
+`x86_64-windows-gnu`, and `x86_64-freebsd`. That target compiles the
+pointer-free tool records, fixed-storage transactional harness, typed-tool
+campaign tests, and canonical report runner. The macOS host did not execute
+the foreign binaries, so this is source/compile portability evidence only; it
+does not establish native threading, CPU/GPU behavior, sandboxing, or external
+tool dispatch on those systems.
+
 ## Existing portability seams and blockers
 
 Useful seams already exist:

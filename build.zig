@@ -1303,6 +1303,91 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(typed_workload_test_step);
     test_compile_step.dependOn(typed_workload_compile_step);
 
+    // W4b-a keeps pure tool execution separate from W4a. The retained
+    // fixed-storage harness has no ambient I/O authority; its native report
+    // must match the independent Python scheduler and tool replay exactly.
+    const typed_tool_workload_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/typed_tool_workload.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_typed_tool_workload_tests = b.addRunArtifact(
+        typed_tool_workload_tests,
+    );
+    const typed_tool_workload_exe = b.addExecutable(.{
+        .name = "glacier-typed-tool-workload",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/typed_tool_workload.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    typed_tool_workload_exe.root_module.addImport("core", core_mod);
+    const run_typed_tool_workload = b.addRunArtifact(
+        typed_tool_workload_exe,
+    );
+    const typed_tool_workload_demo_step = b.step(
+        "typed-tool-workload-demo",
+        "Print the canonical typed tool workload report",
+    );
+    typed_tool_workload_demo_step.dependOn(
+        &run_typed_tool_workload.step,
+    );
+
+    const run_typed_tool_workload_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_typed_tool_workload_oracle.setCwd(b.path("."));
+    run_typed_tool_workload_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_typed_tool_workload_oracle.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_typed_tool_workload_oracle.addFileArg(
+        b.path("bench/typed_tool_conformance.py"),
+    );
+    run_typed_tool_workload_oracle.addArg("--runner");
+    run_typed_tool_workload_oracle.addArtifactArg(
+        typed_tool_workload_exe,
+    );
+    run_typed_tool_workload_oracle.addArg("--fixture");
+    run_typed_tool_workload_oracle.addFileArg(
+        b.path("bench/results/typed-tool-conformance-v1.json"),
+    );
+
+    const typed_tool_workload_test_step = b.step(
+        "typed-tool-workload-test",
+        "Run typed tool workload tests and independent replay",
+    );
+    typed_tool_workload_test_step.dependOn(
+        &run_typed_tool_workload_tests.step,
+    );
+    typed_tool_workload_test_step.dependOn(
+        &run_typed_tool_workload_oracle.step,
+    );
+    const typed_tool_workload_compile_step = b.step(
+        "typed-tool-workload-compile",
+        "Compile the typed tool workload tests and runner",
+    );
+    typed_tool_workload_compile_step.dependOn(
+        &typed_tool_workload_tests.step,
+    );
+    typed_tool_workload_compile_step.dependOn(
+        &typed_tool_workload_exe.step,
+    );
+    test_step.dependOn(typed_tool_workload_test_step);
+    test_compile_step.dependOn(typed_tool_workload_compile_step);
+
     // Model-free deterministic QoS conformance demo. Native tests execute it,
     // cross-target gates compile it, and it is never installed as a production
     // or benchmark binary.

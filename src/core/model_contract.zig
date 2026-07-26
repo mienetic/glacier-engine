@@ -64,6 +64,7 @@ pub const ModelFamilyIdV1 = enum(u64) {
     routed_model = 15,
     adapter_composition = 16,
     provider_hosted = 17,
+    tool_executor = 18,
 };
 
 pub const OperationIdV1 = enum(u64) {
@@ -80,6 +81,7 @@ pub const OperationIdV1 = enum(u64) {
     route = 11,
     select_action = 12,
     generate_sequence = 13,
+    execute_action = 14,
 };
 
 pub const InputKindV1 = enum(u64) {
@@ -104,6 +106,7 @@ pub const OutputKindV1 = enum(u64) {
     typed_action = 9,
     video_segment = 10,
     token_ids = 11,
+    tool_result = 12,
 };
 
 pub const NumericalPolicyV1 = enum(u64) {
@@ -112,6 +115,21 @@ pub const NumericalPolicyV1 = enum(u64) {
     bounded_float32 = 3,
     implementation_defined = 4,
 };
+
+test "tool execution vocabulary keeps stable additive IDs" {
+    try std.testing.expectEqual(
+        @as(u64, 18),
+        @intFromEnum(ModelFamilyIdV1.tool_executor),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 14),
+        @intFromEnum(OperationIdV1.execute_action),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 12),
+        @intFromEnum(OutputKindV1.tool_result),
+    );
+}
 
 pub const UnsupportedReasonV1 = enum(u64) {
     family = 1,

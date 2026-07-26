@@ -21,6 +21,7 @@ pub const service_intent_abi: u64 = 0x474c_5749_0000_0001;
 pub const service_commit_ticket_abi: u64 = 0x474c_5743_0000_0001;
 pub const service_finalizer_abi: u64 = 0x474c_5746_0000_0001;
 pub const service_finalizer_v2_abi: u64 = 0x474c_5746_0000_0002;
+pub const service_transaction_abi: u64 = 0x474c_5754_0000_0001;
 pub const publication_adoption_abi: u64 = 0x474c_5741_0000_0001;
 pub const restored_publication_close_abi: u64 =
     0x474c_5758_0000_0001;
@@ -55,6 +56,7 @@ pub const Error = error{
     ServiceOverflow,
     NoRunnableRequest,
     ServiceInFlight,
+    ServicePrecommitRejected,
     AdoptionInFlight,
     PublicationCloseInFlight,
     PublicationHandoffInFlight,
@@ -198,6 +200,30 @@ pub const ArmedServiceV1 = struct {
 pub const ServiceFinalizerV1 = struct {
     abi_version: u64 = service_finalizer_abi,
     context: *anyopaque,
+    finalize: *const fn (
+        context: *anyopaque,
+        event: *const EventV1,
+    ) void,
+};
+
+/// Additive two-phase finalization boundary for one unprotected armed service.
+/// `precommit` receives the exact canonical intent while the Scheduler mutex is
+/// held and before any scheduler, request, receipt-chain or Event-v1 mutation.
+/// Returning false rejects the commit without consuming the armed ticket.
+///
+/// A participant may acquire its own state lock in `precommit` and retain that
+/// lock until `finalize` publishes the Event-v1-bound result, closing the
+/// validation-to-publication race. It must release anything it acquired before
+/// returning false because `finalize` will not run. Both callbacks must be
+/// bounded, must not perform I/O, and must not re-enter this Scheduler.
+/// `finalize` remains infallible; a panic is a process-fatal contract breach.
+pub const ServiceTransactionV1 = struct {
+    abi_version: u64 = service_transaction_abi,
+    context: *anyopaque,
+    precommit: *const fn (
+        context: *anyopaque,
+        intent: *const ServiceIntentV1,
+    ) bool,
     finalize: *const fn (
         context: *anyopaque,
         event: *const EventV1,
@@ -1315,6 +1341,41 @@ pub const Scheduler = struct {
             pending.permit,
             context,
             finalizer,
+        );
+    }
+
+    /// Transactionally commit one unprotected armed service. Every scheduler
+    /// and ticket fence is validated under the Scheduler mutex before
+    /// `precommit` runs. Rejection preserves the armed ticket and all logical
+    /// state so the caller may repair participant state, retry, or abort.
+    pub fn commitArmedServiceTransaction(
+        self: *Scheduler,
+        ticket: ServiceCommitTicketV1,
+        transaction: ServiceTransactionV1,
+    ) Error!EventV1 {
+        if (transaction.abi_version != service_transaction_abi)
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.requireOpen();
+        try self.requireNoAdoption();
+        const pending = try self.validateServiceCommitTicket(ticket);
+        const context = try self.validateServiceCommitLocked(pending.permit);
+        if (serviceRequiresBoundFinalizerV2(self.slots[context.index]))
+            return Error.InvalidTransition;
+        const intent = self.serviceIntentFor(
+            pending.permit,
+            context.index,
+        );
+        if (!transaction.precommit(transaction.context, &intent))
+            return Error.ServicePrecommitRejected;
+        return self.commitServiceLocked(
+            pending.permit,
+            context,
+            .{
+                .context = transaction.context,
+                .finalize = transaction.finalize,
+            },
         );
     }
 
@@ -6276,6 +6337,156 @@ test "LaneWeave armed service intent is idempotent and ticket fenced" {
     );
     try fixture.scheduler.abortArmedService(retry.ticket);
     _ = try fixture.scheduler.cancel(admission.handle);
+    _ = try fixture.scheduler.close();
+}
+
+test "LaneWeave service transaction rejection preserves armed state" {
+    const Capture = struct {
+        allow: bool = false,
+        precommit_calls: usize = 0,
+        finalize_calls: usize = 0,
+        intent: ?ServiceIntentV1 = null,
+
+        fn precommit(
+            context: *anyopaque,
+            intent: *const ServiceIntentV1,
+        ) bool {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.precommit_calls += 1;
+            self.intent = intent.*;
+            return self.allow;
+        }
+
+        fn finalize(context: *anyopaque, _: *const EventV1) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.finalize_calls += 1;
+        }
+
+        fn interface(self: *@This()) ServiceTransactionV1 {
+            return .{
+                .context = self,
+                .precommit = precommit,
+                .finalize = finalize,
+            };
+        }
+    };
+
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    const admission = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 1, 0)),
+    );
+    const before = try fixture.scheduler.snapshot();
+    const permit = try fixture.scheduler.prepareService();
+    const armed = try fixture.scheduler.armServiceCommit(permit);
+    var capture: Capture = .{};
+
+    var bad_abi = capture.interface();
+    bad_abi.abi_version = service_finalizer_abi;
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        fixture.scheduler.commitArmedServiceTransaction(
+            armed.ticket,
+            bad_abi,
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 0), capture.precommit_calls);
+    try std.testing.expectEqual(@as(usize, 0), capture.finalize_calls);
+    try std.testing.expectEqualDeep(before, try fixture.scheduler.snapshot());
+
+    try std.testing.expectError(
+        Error.ServicePrecommitRejected,
+        fixture.scheduler.commitArmedServiceTransaction(
+            armed.ticket,
+            capture.interface(),
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 1), capture.precommit_calls);
+    try std.testing.expectEqual(@as(usize, 0), capture.finalize_calls);
+    try std.testing.expectEqualDeep(armed.intent, capture.intent.?);
+    try std.testing.expectEqualDeep(before, try fixture.scheduler.snapshot());
+
+    try fixture.scheduler.abortArmedService(armed.ticket);
+    try std.testing.expectEqualDeep(before, try fixture.scheduler.snapshot());
+    _ = try fixture.scheduler.cancel(admission.handle);
+    _ = try fixture.scheduler.close();
+}
+
+test "LaneWeave service transaction commits in exact callback order" {
+    const Capture = struct {
+        slot: *Slot,
+        phase: u8 = 0,
+        precommit_calls: usize = 0,
+        finalize_calls: usize = 0,
+        remaining_at_precommit: u64 = 0,
+        remaining_at_finalize: u64 = 0,
+        intent: ?ServiceIntentV1 = null,
+        event: ?EventV1 = null,
+
+        fn precommit(
+            context: *anyopaque,
+            intent: *const ServiceIntentV1,
+        ) bool {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.precommit_calls += 1;
+            self.phase = if (self.phase == 0) 1 else std.math.maxInt(u8);
+            self.remaining_at_precommit = self.slot.remaining_quanta;
+            self.intent = intent.*;
+            return true;
+        }
+
+        fn finalize(context: *anyopaque, event: *const EventV1) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.finalize_calls += 1;
+            self.phase = if (self.phase == 1) 2 else std.math.maxInt(u8);
+            self.remaining_at_finalize = self.slot.remaining_quanta;
+            self.event = event.*;
+        }
+
+        fn interface(self: *@This()) ServiceTransactionV1 {
+            return .{
+                .context = self,
+                .precommit = precommit,
+                .finalize = finalize,
+            };
+        }
+    };
+
+    var fixture: TestFixture = .{};
+    try fixture.init(1, 1);
+    const admission = try expectAdmitted(
+        try fixture.scheduler.admit(testSpec(1, 1, 1, 0)),
+    );
+    const permit = try fixture.scheduler.prepareService();
+    const armed = try fixture.scheduler.armServiceCommit(permit);
+    var capture: Capture = .{ .slot = &fixture.lane_slots[0] };
+    const event = try fixture.scheduler.commitArmedServiceTransaction(
+        armed.ticket,
+        capture.interface(),
+    );
+
+    try std.testing.expectEqual(@as(u8, 2), capture.phase);
+    try std.testing.expectEqual(@as(usize, 1), capture.precommit_calls);
+    try std.testing.expectEqual(@as(usize, 1), capture.finalize_calls);
+    try std.testing.expectEqual(@as(u64, 1), capture.remaining_at_precommit);
+    try std.testing.expectEqual(@as(u64, 0), capture.remaining_at_finalize);
+    try std.testing.expectEqualDeep(armed.intent, capture.intent.?);
+    try std.testing.expectEqualDeep(event, capture.event.?);
+    try std.testing.expect(eventMatchesServiceIntentV1(
+        event,
+        armed.intent,
+    ));
+    try std.testing.expectError(
+        Error.StaleServiceCommitTicket,
+        fixture.scheduler.commitArmedServiceTransaction(
+            armed.ticket,
+            capture.interface(),
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 1), capture.precommit_calls);
+    try std.testing.expectEqual(@as(usize, 1), capture.finalize_calls);
+
+    _ = try fixture.scheduler.retire(admission.handle);
     _ = try fixture.scheduler.close();
 }
 

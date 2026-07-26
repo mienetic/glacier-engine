@@ -21,6 +21,14 @@ test "package exports runtime and core modules independently of host tools" {
     try std.testing.expect(
         @hasDecl(glacier, "TypedPerceptionWorkload"),
     );
+    try std.testing.expect(
+        @hasDecl(glacier, "typed_tool_workload"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "TypedToolWorkload"),
+    );
+    try std.testing.expect(@hasDecl(glacier, "ToolActionContract"));
+    try std.testing.expect(@hasDecl(glacier, "ToolActionHarness"));
     try std.testing.expect(@hasDecl(glacier, "prepared_text_successor"));
     try std.testing.expect(
         @hasDecl(glacier, "prepared_text_restore_admission"),
@@ -50,6 +58,18 @@ test "package exports runtime and core modules independently of host tools" {
     try std.testing.expect(
         @hasDecl(glacier_core, "TypedPerceptionWorkload"),
     );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "typed_tool_workload"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "TypedToolWorkload"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "ToolActionContract"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "ToolActionHarness"),
+    );
     try std.testing.expect(@hasDecl(glacier_core, "RuntimeSupportRegistry"));
     try std.testing.expectEqual(
         @as(usize, 8),
@@ -75,6 +95,18 @@ test "package exports runtime and core modules independently of host tools" {
     try std.testing.expect(
         glacier.TypedPerceptionWorkload ==
             glacier_core.TypedPerceptionWorkload,
+    );
+    try std.testing.expect(
+        glacier.TypedToolWorkload ==
+            glacier_core.TypedToolWorkload,
+    );
+    try std.testing.expect(
+        glacier.ToolActionContract ==
+            glacier_core.ToolActionContract,
+    );
+    try std.testing.expect(
+        glacier.ToolActionHarness ==
+            glacier_core.ToolActionHarness,
     );
 }
 

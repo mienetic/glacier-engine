@@ -26,6 +26,12 @@ pub const typed_workload_driver =
     @import("typed_workload_driver.zig");
 pub const typed_perception_workload =
     @import("typed_perception_workload.zig");
+pub const typed_tool_workload =
+    @import("typed_tool_workload.zig");
+pub const tool_action_contract =
+    @import("tool_action_contract.zig");
+pub const tool_action_harness =
+    @import("tool_action_harness.zig");
 pub const scheduled_media_pressure =
     @import("scheduled_media_pressure.zig");
 pub const workload_scenario_corpus =
@@ -153,6 +159,9 @@ pub const WorkloadClosedLoop = workload_closed_loop;
 pub const TypedWorkloadContract = typed_workload_contract;
 pub const TypedWorkloadDriver = typed_workload_driver;
 pub const TypedPerceptionWorkload = typed_perception_workload;
+pub const TypedToolWorkload = typed_tool_workload;
+pub const ToolActionContract = tool_action_contract;
+pub const ToolActionHarness = tool_action_harness.Harness;
 pub const ScheduledMediaPressure = scheduled_media_pressure;
 pub const WorkloadScenarioCorpus = workload_scenario_corpus;
 pub const ProviderTokenGateway = provider_token_gateway.Gateway;
