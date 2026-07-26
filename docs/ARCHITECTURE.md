@@ -14,6 +14,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Model | `.glacier`, `.glrt`, loader, prepared model | Validate source and execution layouts before use |
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Device selection | `DeviceCapabilityV1`, canonical inventory, plan-bound requirement, selection receipt | Choose one compatible present CPU or accelerator deterministically before admission without granting allocation, queue, dispatch, or publication authority |
+| Device allocation contract prototype | Adapter-quoted manifest, `ResourceBank.ChildLease`, allocation admission, opaque object set, live/recovery/terminal receipts | Charge exact fake-backend allocation bytes before callbacks, retain charge through cleanup uncertainty, and reject stale or substituted ownership without claiming native allocation, residency, or execution integration |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b/W4b-c/W4b-d | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, uncertain external-action handoff, generation-fenced fake reconciliation, and durable storage faults without presenting logical steps as native performance |
@@ -876,11 +877,11 @@ Common Model Contract execution-plan root
        SelectionReceiptV1
        pointer-free decision evidence
                  │
-                 ▼
- native adapter revalidates fingerprint + registry identity
-                 │
-                 └─ future allocation/queue/dispatch authority
-                    remains a separate contract
+       ┌─────────┴────────────┐
+       ▼                      ▼
+native readiness      fake allocation lifecycle
+revalidates device    quote → charge → objects
+identity              → release/recovery
 ```
 
 `DeviceCapabilityV1` hashes stable backend and physical-device identity,
@@ -907,12 +908,27 @@ loading and barrier participation, requires exact nonzero buffer geometry, and
 matches a CPU oracle for shapes on both sides of the 16x16 tile boundary without
 turning those tests into a performance result.
 
-The receipt grants no physical allocation, residency, queue, dispatch, or
-publication authority. Device-loss quarantine/recovery, asynchronous
-cancellation, multi-GPU partitioning/scheduling, telemetry, performance,
-retained driver/device ranges, and native support on cross-compiled targets
-remain open. See
-[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md).
+The receipt itself grants no allocation, residency, queue, dispatch, or
+publication authority.
+
+The next portable layer is now implemented through a deterministic fake
+allocator. `AllocationRequestV1` binds the exact selection, requirement,
+authority, canonical multi-buffer quote manifest, and committed parent
+receipt. Admission replays every live quote before opening an exact
+device-byte `ResourceBank.ChildLease`; allocation calls then produce opaque
+object identities and generations. Only a complete object set becomes a live
+lease. Failure/cancellation frees partial objects before uncharging, while a
+failed free returns recovery authority and preserves the child charge.
+
+This is a portable ownership/accounting state machine, not native allocation
+or residency evidence. The fake V1 also uses the mutually exclusive
+ChildLease sidecar and therefore does not yet compose with a receipt already
+using LeaseTree. Native allocation, LeaseTree integration, physical residency,
+device-loss quarantine/recovery, asynchronous cancellation, multi-device
+partitioning/scheduling, telemetry, performance, retained driver/device ranges,
+and native support on cross-compiled targets remain open. See
+[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md) and
+[Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md).
 
 ## Native observation flow
 

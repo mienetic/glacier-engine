@@ -128,10 +128,22 @@ caller-output mutation. These are bounded correctness and binding claims, not
 performance or device-range claims. See
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md).
 
+The second Stage-5 portable contract slice is also complete. A receipt-bound,
+fixed-storage fake allocation coordinator now replays the complete selection,
+requires nonzero
+hard ceilings and no fallback, replays an adapter quote per canonical buffer,
+charges exact backend-reported bytes through a `ResourceBank.ChildLease`
+before allocation, and binds opaque object identities to a generation-fenced
+live lease. Partial failure and synchronous cancellation free every acquired
+object before returning the charge. A failed free produces recovery authority
+and retains the charge until retry succeeds. See
+[Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md).
+
 Small next slices:
 
-- add a receipt-bound fake allocation lease with exact physical-byte ceilings
-  and cancellation-safe release;
+- add a native Metal allocation adapter with direct per-object allocated-byte
+  evidence and generation-fenced private objects;
+- compose device allocation with the LeaseTree-backed execution path;
 - add explicit device-loss, quarantine, and stale-selection rejection before a
   fresh selection receipt;
 - add deterministic two-device partition planning without live multi-GPU
@@ -141,12 +153,13 @@ Small next slices:
 - add a new native backend capability projection only with CPU-oracle and
   lifecycle evidence on the named device.
 
-**Done when:** the new slice keeps stable capability facts separate from dynamic
-observations, consumes or replaces a selection receipt explicitly, rejects
-unknown ceilings and undeclared fallback, and preserves zero resource/scheduler
-mutation on selection failure. Physical allocation/residency, device-loss
-recovery, multi-GPU scheduling, telemetry, performance, retained device ranges,
-and native support remain unimplemented unless the slice supplies direct named
+**Done when:** the native follow-up keeps stable capability facts separate from
+dynamic observations, consumes the exact selection explicitly, reports each
+backend object through a directly observed byte quantity, and demonstrates
+allocate-before-activate plus free-before-uncharge on the named device.
+Physical residency remains a separate later contract. Device-loss recovery,
+multi-GPU scheduling, telemetry, performance, retained device ranges, and
+native support remain unimplemented unless a slice supplies direct named
 evidence for that exact claim. Cross-compilation never counts as native
 support.
 

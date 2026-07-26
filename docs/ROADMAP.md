@@ -30,7 +30,7 @@ evidence. The plane and model-family sequence is specified in the
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, two-process resume, and a three-generation prepared-text source-live/source-exited/terminal authority chain | Production model/tokenizer state, generation-one source recovery, acknowledged target progress, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes; R0 registry complete and R1a/R1b/R1c/R1d/R1e/R1f/R1g/R1h-a/R1h-b plus the durable handoff slice integrated experimentally | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, an exact-identity serial greedy prepared-text session with plan-derived atomic start, Common Model Contract request-profile binding, total-versus-request claim projection for shared read-only artifact residency, fixed-length terminal results, canonical non-terminal state, same-process rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, and a five-object canonical restart archive with exact source exit, exclusive POSIX lease, one-shot target activation, fresh-process resume, generation-three terminal selection, and terminal-semantic oracle comparison; plus admission, scheduling, continuation, provider, media, package, C verifier, and retained-reference inspector surfaces | Recover source death before generation-two publication; add an idempotent durable result sink and acknowledged progress generation for target-crash replay; complete request-shape accounting, raw-text tokenizer identity, variable-length results, non-blocking startup, stable APIs, production fixtures, native multi-OS validation, GPU/device continuation, physical resource integration, and distribution |
-| Device capability and selection | Integrated portable decision contract with one native Metal binding | Pointer-free capability fingerprints, canonical discovery-epoch inventory, execution-plan-bound requirements, deterministic allocation-free selection, explicit CPU-fallback evidence, and native Metal local-epoch binding plus fingerprint/registry-identity revalidation; asymmetric partial-edge FP16 tiled matmul shapes match the CPU oracle | Receipt-bound physical allocation/residency, device-loss quarantine and recovery, multi-GPU partitioning/scheduling, direct telemetry, performance evidence, retained device ranges, and native support beyond the tested host |
+| Device runtime | Portable selection integrated; fake allocation contract prototype implemented; execution integration pending; one native Metal readiness binding | Pointer-free capability selection; adapter-quoted multi-buffer manifests; exact pre-allocation `ResourceBank.ChildLease` charge; generation-fenced fake object sets; cancellation rollback; conservative cleanup recovery; native Metal fingerprint revalidation; and asymmetric partial-edge FP16 tiled matmul CPU-oracle correctness | Native allocation adapter and LeaseTree composition; separate residency authority; device-loss quarantine/recovery; multi-device partitioning/scheduling; direct telemetry; performance evidence; retained device ranges; and native support beyond the tested host |
 | Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, validated bounded lossless delivery profiles for retained image/audio/video shapes, a typed pure-tool transaction fixture, a durable POSIX external-action handoff fixture, and a bounded same-process fake dispatch/status authority; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, tool-authorization, ActionOutbox, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, live provider-backed and OS-isolated dispatch/status adapters, production generative-media adapters and broader formats, additional replay profiles, agents/retrieval, and specialized families |
 | Multimodal execution | Model-free runtime, scheduler-coupled final-quantum transactions, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, deterministic source-model/materializer replay, and vision/audio/video fixtures integrated; bounded canonical PNG/WAVE/APNG profiles and their additive format sidecar integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, a canonical typed-admission construction path, transition and format-evidence sidecars, strict lossless emit-and-accept modules, real two-generation PNG/WAVE/APNG registry-transition-format fixtures, an independent composed Python oracle, and optional format-aware read-only inspection without changing earlier V1 wires | Production encoder/container adapters and broader profiles, additional model/materializer profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, and physical playback/display and quality evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
@@ -267,10 +267,14 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   on the readiness device.
   Correct the tiled FP16 matrix multiplication path for asymmetric and partial
   edge tiles, with exact-length rejection and CPU-oracle correctness tests.
-- [ ] Add receipt-bound physical device allocation and residency, device-loss
-  quarantine/recovery, multi-GPU partitioning and scheduling, direct device
-  telemetry, retained performance evidence, and advertised native device
-  support matrices.
+- [x] Add the receipt-bound fake device-allocation lifecycle: live adapter
+  quote replay, canonical multi-buffer manifests, exact pre-allocation
+  `ChildLease` charge, generation-fenced object sets, failure/cancellation
+  rollback, conservative cleanup recovery, and independent root replay.
+- [ ] Add native device allocation and LeaseTree composition, then add
+  residency as a separate authority, device-loss quarantine/recovery,
+  multi-device partitioning and scheduling, direct device telemetry, retained
+  performance evidence, and advertised native device support matrices.
 - [ ] Split `core-contract`, CPU runtime, durable runtime, device runtime, CLI,
   mobile library, reduced edge profile, and host-only tools in the build graph.
 - [ ] Finish replacing direct durable-file calls with bounded recovery
@@ -824,15 +828,20 @@ diagnostic dispatch.
 See the
 [device capability and selection contract](DEVICE_CAPABILITY_CONTRACT.md).
 
-Completed slice:
+Completed slices:
 
 - ~~backend capability fingerprint and bounded deterministic selection;~~
 - ~~explicit pinned-device and opt-in CPU-fallback decisions;~~
 - ~~native Metal capability projection and dispatch-device revalidation.~~
+- ~~receipt-bound fake allocation lifecycle with exact live quote replay,
+  charge-before-allocate ordering, cancellation rollback, and cleanup
+  recovery.~~
 
 Next slices:
 
-- receipt-bound physical allocation and residency;
+- native allocation ownership with direct per-object byte evidence;
+- LeaseTree-backed execution composition;
+- separate physical residency authority and evidence;
 - device-loss events, quarantine, and recovery under a new receipt;
 - deterministic partition plan;
 - transfer ownership and cancellation;
@@ -841,9 +850,12 @@ Next slices:
 - multi-GPU scheduling, telemetry, native support ranges, and performance
   evidence.
 
-The completed decision contract grants no allocation, queue, dispatch,
-residency, or publication authority. Cross-compilation remains source/build
-evidence rather than native device or operating-system support.
+The selection receipt still grants no allocation, queue, dispatch, residency,
+or publication authority. The fake allocation lease grants authority only
+inside its bounded fake registry and proves lifecycle/accounting semantics,
+not native allocation or residency. Cross-compilation remains source/build
+evidence rather than native device or operating-system support. See
+[Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md).
 
 ## P2 — Serving and isolation
 

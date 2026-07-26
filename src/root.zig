@@ -12,6 +12,10 @@ pub const pager = core.pager;
 pub const scheduler = core.scheduler;
 pub const resource_bank = core.resource_bank;
 pub const platform_capabilities = core.platform_capabilities;
+pub const device_capability_contract =
+    core.device_capability_contract;
+pub const device_allocation_lease =
+    core.device_allocation_lease;
 pub const lane_weave_qos = core.lane_weave_qos;
 pub const workload_pressure = core.workload_pressure;
 pub const workload_closed_loop = core.workload_closed_loop;
@@ -82,6 +86,10 @@ pub const PageId = core.PageId;
 pub const Backend = core.Backend;
 pub const ResourceBank = core.ResourceBank;
 pub const PlatformCapabilities = core.PlatformCapabilities;
+pub const DeviceCapabilityContract =
+    core.DeviceCapabilityContract;
+pub const DeviceAllocationLease =
+    core.DeviceAllocationLease;
 pub const LaneWeaveQoS = core.LaneWeaveQoS;
 pub const WorkloadPressure = core.WorkloadPressure;
 pub const WorkloadClosedLoop = core.WorkloadClosedLoop;

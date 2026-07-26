@@ -121,6 +121,12 @@ artifact, input/output schema, state, exact resource/scratch/output ceilings,
 numerical policy, backend capabilities, challenge, and rejection/fallback
 policy before execution begins.
 
+**DeviceAllocationLeaseV1** — A generation-fenced portable authority produced
+only after a replayed selection, live adapter quotes, exact
+`ResourceBank.ChildLease` charge, and complete backend object set agree. The
+current adapter is fake and proves ordering/accounting/recovery semantics, not
+native allocation or physical residency.
+
 **StateAdapter** — A proposed family-specific contract for verifying,
 checkpointing, restoring, and releasing typed state such as KV, recurrent
 state, encoder caches, latents, temporal caches, media windows, retrieval

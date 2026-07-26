@@ -360,6 +360,17 @@ formats, and independent verifiers.
   unsupported cross-product combinations. The
   receipt is decision evidence only: it grants no allocation, queue, dispatch,
   residency, or publication authority.
+- **Receipt-bound allocation contract prototype.** A fixed-storage fake allocator
+  replays the complete selection and a live quote for every canonical buffer,
+  charges exact backend-reported bytes through a `ResourceBank.ChildLease`
+  before allocation, and returns a generation-fenced opaque object-set lease
+  only after every allocation succeeds. Partial failure and synchronous
+  cancellation free acquired objects before returning the charge. A failed
+  free keeps the charge and returns retryable recovery authority. V1 binds the
+  exact adapter instance and permits one materialized lease per context. This
+  proves portable ordering, accounting, rollback, and stale-handle semantics;
+  it is not native GPU allocation, residency, or LeaseTree execution
+  integration evidence.
 - **Native Metal execution readiness.** On a native macOS Metal device, the
   focused hard gate executes one fixed synthetic 37x64 INT4 matrix-vector
   operation, exactly once across the entire gate, and checks its output against
@@ -380,11 +391,12 @@ formats, and independent verifiers.
   partial-edge shapes and rejects zero, overflowing, short, or oversized
   buffers without mutating caller output.
 
-The device milestone does not yet provide physical allocation or residency
-authority, device-loss recovery, multi-GPU partitioning or scheduling, native
-support on a cross-compiled target, retained telemetry, or performance
-evidence. See the
-[device capability and selection contract](docs/DEVICE_CAPABILITY_CONTRACT.md).
+The device milestone does not yet provide native allocation or physical
+residency authority, device-loss recovery, multi-GPU partitioning or
+scheduling, native support on a cross-compiled target, retained telemetry, or
+performance evidence. See the
+[device capability and selection contract](docs/DEVICE_CAPABILITY_CONTRACT.md)
+and [device allocation lease](docs/DEVICE_ALLOCATION_LEASE.md).
 
 Run that fail-closed native gate on macOS with:
 
@@ -604,7 +616,7 @@ hardware-independent surface without those native backend dependencies.
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures with scheduler-owned final-result publication, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, one process-local typed tool transaction, a durable POSIX external-action handoff store, and a same-process generation-fenced fake dispatch/status authority for retained reference profiles | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, OS-isolated real-credential adapters, live tools and agent loops, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor evidence, receipt-funded restored activation with a global publication sequence base, and experimental durable prepared-text selection, exact source exit, exclusive fresh-process activation, three-generation terminal lineage, and semantic oracle comparison; plus capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Pre-generation-two source recovery, acknowledged target progress and idempotent external delivery, native Linux recovery, Win32 durable files, device-resident continuation, and durable lifecycle metadata |
 | Scheduling | Exact admission, deterministic weighted QoS, one fixed and 32 generated bounded mixed-media open-loop pressure cases, a separately versioned finite-source deterministic closed-loop campaign with FIFO next-step replacement and exact replay, final-quantum image/audio/video media transactions, deterministic exact-signature shrinking, one mixed typed vision/audio/temporal-video workload with typed result publication under the scheduler-owned receipt, and one atomic process-local typed tool transaction profile | Family-aware batching, preemption, multi-device placement, provider/stateful/live-tool workload profiles, and broader multi-tenant campaigns |
-| Device selection | Portable capability fingerprints, discovery-epoch inventory, execution-plan-bound requirements, allocation-free deterministic selection, explicit CPU fallback evidence, and native Metal fingerprint revalidation; corrected asymmetric Metal FP16 tiled matmul shapes pass CPU-oracle tests | Receipt-bound physical allocation and residency, device-loss quarantine and recovery, multi-GPU partitioning/scheduling, direct telemetry, retained performance evidence, and native support matrices |
+| Device runtime | Portable capability selection, native Metal fingerprint revalidation, an adapter-quoted fake multi-buffer allocation contract prototype, exact charge-before-allocate accounting, generation-fenced object sets, cancellation rollback, cleanup recovery, and corrected asymmetric Metal FP16 tiled matmul CPU-oracle tests | Native allocation adapter and LeaseTree composition; separate residency authority; device-loss quarantine/recovery; multi-device partitioning/scheduling; direct telemetry; retained performance evidence; and native support matrices |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires, a read-only outer-envelope inspector, and a pointer-free ActionOutbox adapter contract exercised by a same-process fake authority whose portable values contain no credentials or payload bytes | Pluggable live adapters outside the credential-free core, OS-isolated credential handling, and optional caller-supplied full-composition inspection |
 | Evidence | Hash-chained events, independent Python verifiers, a scheduled-media execution sidecar with exact receipt/output replay, compact provider evidence join, an experimental read-only provider outer-envelope inspector, a generated-media inspector with exact optional format-sidecar validation, independent ActionOutbox dispatch/status model tests with live canonical Zig-report parity, a fixed native-observation contract with availability, stable source identity, per-event provenance, unavailable-reason identity, per-record sample-clock identity, and value-clock identity for present time metrics, plus one native macOS Metal diagnostic-readiness gate with exactly one synthetic dispatch | Token transaction inspector, provider nested-composition workflow, privacy-safe export and retention policy, direct CPU/GPU utilization, residency, thermal, frequency, power, and energy adapters, retained native reports, and native multi-OS evidence |
 | Multimodal | Shared identity/timeline, bounded decode/transforms, scheduler-coupled final-quantum image/audio/video transactions and typed perception results, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, typed producer/raw-output admission, host replay of exact deterministic source-model/materializer transitions, validated bounded PNG/WAVE/APNG profiles, and an integrated additive format-conformance sidecar with a maximum-entry repeated-modality composed oracle | External video-timeline normalization, production encoder/container adapters and broader profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, additional model/materializer profiles, and authorized physical playback/display and quality evidence |
@@ -737,6 +749,7 @@ valuable as new features.
 - [Glacier AI Runtime roadmap](docs/AI_RUNTIME_ROADMAP.md)
 - [Platform portability](docs/PLATFORM_PORTABILITY.md)
 - [Device capability and selection](docs/DEVICE_CAPABILITY_CONTRACT.md)
+- [Device allocation lease](docs/DEVICE_ALLOCATION_LEASE.md)
 - [Contributor projects](docs/PROJECTS.md)
 - [Benchmark and evidence guide](docs/BENCHMARKS.md)
 - [Native observation contract and runner](docs/NATIVE_OBSERVATION.md)

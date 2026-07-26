@@ -475,9 +475,13 @@ revalidates its selected capability and registry identity against the same
 Metal device. Separately, the corrected tiled FP16 matmul
 matches its CPU oracle on asymmetric partial-edge shapes and rejects malformed
 exact buffer geometry before output mutation. This expands tested correctness,
-not advertised device range or performance. The remaining physical allocation,
-residency, device-loss recovery, multi-GPU scheduling, direct CPU/device
-telemetry, native multi-platform campaigns, and performance evidence stay open.
+not advertised device range or performance. A separate receipt-bound fake
+allocation contract prototype now proves adapter quote replay, exact logical
+charge-before-allocate ordering, multi-buffer rollback, cleanup recovery, and
+stale ownership fencing. It is not native allocation or residency evidence.
+Native allocation, LeaseTree composition, physical residency, device-loss
+recovery, multi-device scheduling, direct CPU/device telemetry, native
+multi-platform campaigns, and performance evidence stay open.
 Contract validation requires a present logical CPU count of at least one and
 accepts signed physical temperatures down to, but never below, absolute zero.
 
@@ -1340,9 +1344,9 @@ Contributors can work on the runtime without downloading a large model:
   generation with explicit crash boundaries;
 - one replicated non-macOS POSIX recovery campaign or bounded Win32
   durable-file adapter slice;
-- one receipt-bound CPU/GPU allocation, residency, placement, device-loss, or
-  multi-device evidence slice that consumes a fresh selection receipt and
-  rejects unsupported fallback;
+- one native allocation, LeaseTree integration, residency, placement,
+  device-loss, or multi-device evidence slice that consumes a fresh selection
+  receipt, builds on the fake lifecycle, and rejects unsupported fallback;
 - one repeated-handoff, lease-contention, replay, disruption, or bounded-soak
   workload profile;
 - one read-only evidence inspector or validated renderer extension;
@@ -1351,5 +1355,6 @@ Contributors can work on the runtime without downloading a large model:
 Every slice should state its accepted inputs, maximum resources, authority,
 rejection paths, evidence command, and nonclaims. See
 [Contributor Projects](PROJECTS.md),
-[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md), and
+[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md),
+[Device Allocation Lease](DEVICE_ALLOCATION_LEASE.md), and
 [Evidence Policy](EVIDENCE_POLICY.md).

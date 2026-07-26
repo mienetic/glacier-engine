@@ -70,6 +70,11 @@ epoch, and revalidates the selected fingerprint and registry identity against
 the same readiness device. See
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md).
 
+The follow-on [Device Allocation Lease](DEVICE_ALLOCATION_LEASE.md) adds a
+portable fake quote/charge/materialize/release/recovery lifecycle. It does not
+change any platform classification because no native allocator implements
+that lease yet.
+
 That native hard gate still makes exactly one real GPU dispatch in total for a
 fixed synthetic 37x64 INT4 operation and requires CPU-oracle correctness,
 Metal registry identity, `currentAllocatedSize`, command-buffer GPU timestamps,
@@ -401,12 +406,16 @@ receipt with explicit fallback before admission. The receipt contains no
 pointer or backend handle and cannot allocate, submit, publish, or prove
 continued liveness.
 
-The next interface layer must consume that receipt while describing buffer
-ownership, physical allocation/residency, queue or stream ordering,
-synchronization, loss/quarantine, and cancellation. OS and accelerator support
-remain separate dimensions, and multi-GPU partitioning/scheduling remains open.
-See the
-[device capability and selection contract](DEVICE_CAPABILITY_CONTRACT.md).
+The first lifecycle layer now consumes that receipt through a deterministic
+fake allocator. It replays exact quotes, charges a `ResourceBank.ChildLease`
+before allocation, binds opaque object generations, rolls back partial
+failure/cancellation, and keeps the charge through cleanup recovery. This
+proves portable ownership semantics only. Native allocation, physical
+residency, queue or stream ordering, synchronization, loss/quarantine, and
+multi-GPU partitioning/scheduling remain open. OS and accelerator support
+remain separate dimensions. See the
+[device capability and selection contract](DEVICE_CAPABILITY_CONTRACT.md) and
+[device allocation lease](DEVICE_ALLOCATION_LEASE.md).
 
 Planned backend families may include:
 
@@ -585,7 +594,12 @@ not represented as partial support.
 - ~~retain the existing Metal correctness path behind the common device
   decision contract;~~ complete for the tested readiness binding and corrected
   asymmetric FP16 tiled matmul CPU-oracle cases only;
-- add receipt-bound physical allocation and residency authority;
+- ~~add a receipt-bound fake allocation lifecycle;~~ complete for portable
+  quote replay, exact logical charge, failure/cancellation rollback, recovery,
+  and stale-handle fencing only;
+- add a native allocation adapter with direct per-object allocated-byte
+  evidence and compose it with LeaseTree-backed execution;
+- add physical residency as a separate optional authority and evidence layer;
 - add explicit device-loss events, quarantine, and recovery under a fresh
   selection receipt;
 - add deterministic multi-device partitioning and scheduling;
@@ -594,16 +608,19 @@ not represented as partial support.
   element type, and operation rather than by backend name alone.
 
 Exit: G5 and G6 evidence is retained for every advertised cell in the device
-matrix. The completed selection slice alone does not satisfy this exit.
+matrix. The completed selection and fake-allocation slices do not satisfy this
+exit.
 
 ## Claim boundary
 
 The source-compilation probes above do not establish native execution,
 filesystem durability, mobile lifecycle safety, accelerator correctness,
 installation quality, physical telemetry, or performance. The W5a
-cross-compile gate likewise does not establish native observation. The portable
-selection contract and one Metal binding do not establish physical allocation
-or residency, device-loss recovery, multi-GPU behavior, telemetry,
-performance, or native support for any cross-compiled target. This document is
-an implementation plan and evidence ledger, not a declaration that every
-listed platform is currently supported.
+cross-compile gate likewise does not establish native observation. The
+portable selection contract, fake allocation lifecycle, and one Metal
+readiness binding do not establish native allocation or residency, device-loss
+recovery, multi-GPU behavior, telemetry, performance, or native support for
+any cross-compiled target. The fake lifecycle establishes ordering,
+accounting, recovery, and fencing semantics only. This document is an
+implementation plan and evidence ledger, not a declaration that every listed
+platform is currently supported.

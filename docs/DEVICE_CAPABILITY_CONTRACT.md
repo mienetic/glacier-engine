@@ -169,7 +169,7 @@ device, or operating-system support.
 ## Claim boundary
 
 This slice establishes a deterministic capability fingerprint and selection
-decision. It does not establish:
+decision. The selection receipt itself does not establish:
 
 - physical allocation or residency;
 - device-loss recovery or live migration;
@@ -179,7 +179,14 @@ decision. It does not establish:
 - native support on a cross-compiled target; or
 - latency, throughput, utilization, memory, power, thermal, or energy results.
 
-The next device-runtime slices are a receipt-bound allocation lease, explicit
-device-loss event and quarantine transition, deterministic repartition or
-fallback under a new selection receipt, and a transactional stateless model
-path that publishes only after native candidate validation.
+The separate
+[Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md) now consumes this
+decision through a deterministic fake adapter and proves quote/charge,
+rollback, recovery, and stale-handle semantics. It does not turn this selection
+receipt into native allocation or residency authority.
+
+The next device-runtime slices are a native allocation adapter and LeaseTree
+composition, explicit device-loss event and quarantine transition,
+deterministic repartition or fallback under a new selection receipt, separate
+residency authority, and a transactional stateless model path that publishes
+only after native candidate validation.

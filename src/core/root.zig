@@ -18,6 +18,8 @@ pub const resource_bank = @import("resource_bank.zig");
 pub const platform_capabilities = @import("platform_capabilities.zig");
 pub const device_capability_contract =
     @import("device_capability_contract.zig");
+pub const device_allocation_lease =
+    @import("device_allocation_lease.zig");
 pub const lane_weave_qos = @import("lane_weave_qos.zig");
 pub const workload_pressure = @import("workload_pressure.zig");
 pub const workload_closed_loop =
@@ -177,6 +179,7 @@ pub const ResourceBank = resource_bank.Bank;
 pub const PlatformCapabilities = platform_capabilities;
 pub const DeviceCapabilityContract =
     device_capability_contract;
+pub const DeviceAllocationLease = device_allocation_lease;
 pub const LaneWeaveQoS = lane_weave_qos.Scheduler;
 pub const WorkloadPressure = workload_pressure;
 pub const WorkloadClosedLoop = workload_closed_loop;
