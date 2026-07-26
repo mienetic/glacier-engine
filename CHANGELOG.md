@@ -25,6 +25,18 @@ before the first stable release.
 
 ### Added
 
+- Added the W4b-b portable ActionOutbox record and recovery contract. A
+  pointer-free, fixed-storage journal binds an allowed tool proposal to a
+  payload-locator digest and stable remote-request digest. A committed intent
+  moves the action to `uncertain`; only the `reconciled_not_applied` semantic
+  record returns it to `ready`, and compensation is a separately authorized
+  child action. Canonical body/footer records, all 7,521 retained cuts from the
+  complete header through the ten-event journal, semantic replay, and an
+  independent Python oracle are covered without granting filesystem, network,
+  process, credential, or live-dispatch authority. Future adapters remain
+  responsible for authenticating external evidence. This slice is a portable
+  protocol and does not claim `fsync` durability, provider truth, or external
+  exactly-once effects.
 - Added the first W4b typed tool transaction profile. New pointer-free tool
   records separate descriptor, bounded arguments, agent proposal, local policy,
   authorization, effect, and scheduler-bound delivery. A fixed-storage

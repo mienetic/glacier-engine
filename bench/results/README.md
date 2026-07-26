@@ -99,6 +99,24 @@ tools/zig-with-ephemeral-cache.sh build typed-tool-workload-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
+`action-outbox-conformance-v1.json` is the canonical
+`glacier.action-outbox-conformance/v1` report, not a performance or durability
+result. It binds a 320-byte header and ten 752-byte body/footer records for one
+primary action and one separately authorized compensation child. Native and
+independent Python recovery agree at all 7,521 retained cut boundaries,
+including a complete body without its commit footer. The complete 2,382-byte
+report SHA-256 is
+`6e308a76378d1c23365f1303b45edc5e2f07f9e571851fe457cd9e1ebd37e157`;
+its semantic report root is
+`23d6019e2b3b1171f12255bd353e2f90d0da38fa6b8d15a38503a938cb3f8f8e`.
+Verify the native protocol, independent replay, retained bytes, and canonical
+runner output together:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build action-outbox-record-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
 ## Adding a result
 
 1. Read [Benchmark and evidence guide](../../docs/BENCHMARKS.md) and

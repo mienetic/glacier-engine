@@ -15,12 +15,13 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
-| Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication or process-local effect delivery, idempotency, and cleanup without presenting logical steps as native performance |
+| Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, or uncertain external-action handoff without presenting logical steps as native performance |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
 | Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay`, `GeneratedMediaCheckpoint`, `GeneratedMediaPayloadArchive`, `GeneratedMediaOutputRegistry`, `GeneratedMediaProducerAdmission`, producer-transition replay/evidence | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, validate typed generated outputs and exact raw bytes, replay retained deterministic producer transitions, and publish only through explicit family and atomic visibility boundaries |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
+| Agent and tool action | `ToolActionContract`, fixed-storage tool harness, ActionOutbox record/recovery | Keep model proposals separate from local authorization, publish bounded process-local effects atomically, and retain external dispatch uncertainty until an acknowledgement or reconciliation record; live adapters remain responsible for external truth |
 | Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
 
@@ -903,6 +904,10 @@ targets remain gated until their named native adapters and evidence pass.
   policy authority, fixed-storage idempotency and retained-state integrity,
   scheduler-before-mutation precommit plus infallible retained-lock publish,
   independent replay, and explicit external-effect nonclaims.
+- [ActionOutbox protocol](ACTION_OUTBOX.md): stable external request identity,
+  body/footer event records, uncertainty-preserving prefix recovery,
+  acknowledgement/reconciliation separation, safe retry, and separately
+  authorized compensation children without live I/O authority.
 - [Typed model-family contracts and vision adapter](MODEL_FAMILY_ADAPTER.md):
   canonical artifact/plan/result records, explicit support negotiation, and a
   cache-bound transactional embedding fixture with scheduler-owned

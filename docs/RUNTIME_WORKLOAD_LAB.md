@@ -13,12 +13,13 @@ It separates four kinds of evidence:
 
 The deterministic open-loop, generated deterministic open-loop,
 scheduler-coupled media, finite-source deterministic closed-loop, mixed
-typed-perception, and first process-local typed tool layers are integrated.
+typed-perception, first process-local typed tool, and portable ActionOutbox
+record/recovery layers are integrated.
 Provider, stateful, streaming, batched, preemptible, device-backed, and durable
-live-tool profiles, native multi-request reports, and soak campaigns remain
-staged work. A logical driver step is never reported as a millisecond, and a
-logical resource claim is never reported as RSS, device residency, energy, or
-temperature.
+file/live-dispatch tool profiles, native multi-request reports, and soak
+campaigns remain staged work. A logical driver step is never reported as a
+millisecond, and a logical resource claim is never reported as RSS, device
+residency, energy, or temperature.
 
 ## Why this belongs in the runtime
 
@@ -104,11 +105,16 @@ Results from different modes are not merged into one headline number.
   execute/reuse/deny/conflict delivery with the exact scheduler service event
   only after a scheduler-locked precommit accepts retained tool state, and
   closes cancellation, timeout, rejection, and ownership to zero. Provider,
-  stateful, streaming, batched, preemptible, device-backed, and durable live-tool
-  profiles remain. Each profile must name its execution unit, exact claim,
-  cancellation/preemption boundary, correctness gate, and publication authority
-  without weakening W4a. See
-  [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md).
+  stateful, streaming, batched, preemptible, and device-backed profiles remain.
+  W4b-b now adds a portable ActionOutbox record campaign: unresolved dispatch
+  intent remains uncertain, only a `reconciled_not_applied` semantic record
+  permits retry, and compensation is a separate authorized child. A future
+  adapter must authenticate reconciliation evidence. Synced storage and live
+  dispatch remain staged. Each profile must name its execution unit, exact
+  claim, cancellation/preemption boundary, correctness gate, and publication
+  authority without weakening W4a. See
+  [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md) and
+  [ActionOutbox Protocol](ACTION_OUTBOX.md).
 - [ ] **W5 — Native observation and machine comparability.** Add a
   family-neutral runner plus CPU, GPU/accelerator, memory, power, and thermal
   observers with explicit `present`, `missing`, `denied`, and `unsupported`
@@ -262,8 +268,8 @@ Independent contributions can add:
    generator/shrinker check;
 2. one retained deterministic closed-loop plan, phase/lineage mutation, or
    independent decoder while preserving every existing V1 root;
-3. one typed workload-driver profile, or one durable ActionOutbox/reconciliation
-   record that does not weaken the process-local tool proof;
+3. one typed workload-driver profile, durable ActionOutbox storage adapter, or
+   reconciliation/dispatch harness that does not weaken either tool proof;
 4. a family-neutral observer interface and one native OS implementation;
 5. a bounded Metal observer slice for device identity, host submit/sync timing,
    fallback detection, and explicit availability states;

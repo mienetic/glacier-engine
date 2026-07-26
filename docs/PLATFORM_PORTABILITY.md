@@ -122,6 +122,12 @@ the foreign binaries, so this is source/compile portability evidence only; it
 does not establish native threading, CPU/GPU behavior, sandboxing, or external
 tool dispatch on those systems.
 
+On 2026-07-26, the additive W4b-b `action-outbox-record-compile` target passed
+in `ReleaseSafe` for the same four targets. It compiles the fixed-storage
+record/recovery tests and canonical report example. No foreign binary was
+executed, no filesystem adapter was exercised, and no external action was
+dispatched; this establishes source/compile portability only.
+
 ## Existing portability seams and blockers
 
 Useful seams already exist:

@@ -32,6 +32,10 @@ pub const tool_action_contract =
     @import("tool_action_contract.zig");
 pub const tool_action_harness =
     @import("tool_action_harness.zig");
+pub const tool_action_outbox_record =
+    @import("tool_action_outbox_record.zig");
+pub const tool_action_outbox_conformance =
+    @import("tool_action_outbox_conformance.zig");
 pub const scheduled_media_pressure =
     @import("scheduled_media_pressure.zig");
 pub const workload_scenario_corpus =
@@ -162,6 +166,9 @@ pub const TypedPerceptionWorkload = typed_perception_workload;
 pub const TypedToolWorkload = typed_tool_workload;
 pub const ToolActionContract = tool_action_contract;
 pub const ToolActionHarness = tool_action_harness.Harness;
+pub const ToolActionOutboxRecord = tool_action_outbox_record;
+pub const ToolActionOutboxConformance =
+    tool_action_outbox_conformance;
 pub const ScheduledMediaPressure = scheduled_media_pressure;
 pub const WorkloadScenarioCorpus = workload_scenario_corpus;
 pub const ProviderTokenGateway = provider_token_gateway.Gateway;

@@ -174,8 +174,12 @@ with completion-only publication, authoritative replay, and final zero
 model/cache ownership. The first W4b slice now adds a process-local typed tool
 transaction with separate proposal/policy authority, exact execute/reuse/deny/
 conflict evidence, and atomic delivery on the scheduler service event.
-Provider, stateful, streaming, durable live-tool, family-aware batch,
-preemption, and multi-device profiles remain planned.
+W4b-b adds a separate portable ActionOutbox record/recovery campaign with
+stable remote-request identity, explicit uncertainty, a reconciliation record
+required before safe retry, and separately authorized compensation. Provider
+truth authentication, stateful and streaming profiles, durable-file/live-
+dispatch tools, family-aware batch, preemption, and multi-device profiles
+remain planned.
 
 Promotion gate: retained mixed-family pressure campaigns meet declared
 fairness, deadline, logical-resource, cancellation, and zero-orphan invariants;
@@ -456,7 +460,12 @@ evidence level applied to retained native campaigns:
    bounded process-local tool through proposal authorization, locked
    scheduler-before-mutation precommit, exact-once logical execution, duplicate
    receipt reuse, denial, conflict, cancellation, timeout, rejection,
-   independent replay, and zero authority. Provider,
+   independent replay, and zero authority. W4b-b separately retains canonical
+   external-action intent records: every unresolved dispatch remains uncertain,
+   retry requires a committed `reconciled_not_applied` record, and compensation
+   is a new child action. Its native/Python campaign covers all 7,521 retained
+   cuts from the complete header through the journal without claiming
+   authenticated provider truth, file sync, or live dispatch. Provider,
    stateful, streaming, durable external-tool dispatch, batching, preemption,
    device execution, and real backpressure remain planned.
 2. **Native workload** runs declared model-family mixes against a real CPU,
@@ -540,7 +549,7 @@ expand the base adapter's capabilities.
 | Video generation | temporal latent steps, frame/segment publication | Ordered two-frame raw manifest publication, cancellation-safe retry, one-segment backpressure, application display acknowledgement, distinct-process restart, shared generated-output checkpoint composition, multi-segment registry continuity with exact encoded payloads, host-verified retained source-model/renderer plus complete acknowledgement replay, a validated bounded two-frame gray8 APNG profile, and a real two-generation registry-transition-format chain with independent oracle coverage; production model/device paths gated | Add production adapters, broader profiles, and additional replay profiles | Production model quality, general external-container conformance, explicit display authority |
 | Audio/music generation | acoustic or token steps, waveform decode | Shared bounded exact-integer waveform-output transaction, multi-chunk registry continuity, and a retained deterministic producer-transition replay profile integrated; music models gated | Add a legal production artifact, additional replay profile, or production renderer/codec fixture | Timeline continuity, chunk lineage, rights/provenance policy, calibrated quality |
 | Multimodal fusion | cross-attention, joint embedding, interleaved generation | Idea; shared identities exist | Image+text or audio+text synthetic fusion fixture | Each modality retains source/state identity through one output transaction |
-| Tool-use and agent policy | choose action, arguments, observation, continue | First process-local typed transaction integrated; live adapters gated | Add a durable ActionOutbox and ambiguity reconciliation without changing the pure-tool proof | Separate action authorization, idempotency, result identity, cancellation, capability isolation, durable dispatch |
+| Tool-use and agent policy | choose action, arguments, observation, continue | Process-local typed transaction plus portable ActionOutbox record/recovery, ambiguity reconciliation, safe retry, and compensation-child protocol integrated; synced storage and live adapters gated | Add a descriptor-relative durable store, crash fixtures, then a credential-isolated dispatcher without changing either retained proof | Separate action authorization, idempotency, result identity, cancellation, capability isolation, durable dispatch |
 | Retrieval and recommendation | embed, search, rerank, recommend | Idea | In-memory fixed corpus and exact top-k tie policy | Index/version identity, tenant filtering, deterministic tie/evidence policy |
 | Time-series and tabular | forecast, classify, anomaly score | Idea | Tiny typed table/window fixture | Schema/time identity, missing-value policy, exact output horizon |
 | Graph, geospatial, and scientific | message passing, field inference, simulation surrogate | Idea | Small bounded graph or grid fixture | Topology/coordinate/unit identity, resource bound, typed scientific output |

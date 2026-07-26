@@ -21,6 +21,10 @@ pub const typed_perception_workload = core.typed_perception_workload;
 pub const typed_tool_workload = core.typed_tool_workload;
 pub const tool_action_contract = core.tool_action_contract;
 pub const tool_action_harness = core.tool_action_harness;
+pub const tool_action_outbox_record =
+    core.tool_action_outbox_record;
+pub const tool_action_outbox_conformance =
+    core.tool_action_outbox_conformance;
 pub const scheduled_media_pressure =
     core.scheduled_media_pressure;
 pub const workload_scenario_corpus =
@@ -71,6 +75,9 @@ pub const TypedPerceptionWorkload = core.TypedPerceptionWorkload;
 pub const TypedToolWorkload = core.TypedToolWorkload;
 pub const ToolActionContract = core.ToolActionContract;
 pub const ToolActionHarness = core.ToolActionHarness;
+pub const ToolActionOutboxRecord = core.ToolActionOutboxRecord;
+pub const ToolActionOutboxConformance =
+    core.ToolActionOutboxConformance;
 pub const ScheduledMediaPressure = core.ScheduledMediaPressure;
 pub const WorkloadScenarioCorpus = core.WorkloadScenarioCorpus;
 pub const ProviderTokenGateway = core.ProviderTokenGateway;

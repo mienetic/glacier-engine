@@ -1388,6 +1388,92 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(typed_tool_workload_test_step);
     test_compile_step.dependOn(typed_tool_workload_compile_step);
 
+    // W4b-b starts the external-action handoff boundary with a portable,
+    // allocation-free journal. The record core has no I/O authority: it
+    // proves canonical intent, uncertainty, reconciliation, compensation,
+    // and prefix recovery before a durable file adapter is introduced.
+    const action_outbox_record_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/tool_action_outbox_conformance.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_action_outbox_record_tests = b.addRunArtifact(
+        action_outbox_record_tests,
+    );
+    const action_outbox_record_test_step = b.step(
+        "action-outbox-record-test",
+        "Run portable ActionOutbox record and recovery tests",
+    );
+    action_outbox_record_test_step.dependOn(
+        &run_action_outbox_record_tests.step,
+    );
+    const action_outbox_record_exe = b.addExecutable(.{
+        .name = "glacier-action-outbox-record",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/action_outbox_record.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    action_outbox_record_exe.root_module.addImport("core", core_mod);
+    const run_action_outbox_record = b.addRunArtifact(
+        action_outbox_record_exe,
+    );
+    const action_outbox_record_demo_step = b.step(
+        "action-outbox-record-demo",
+        "Print the canonical ActionOutbox conformance report",
+    );
+    action_outbox_record_demo_step.dependOn(
+        &run_action_outbox_record.step,
+    );
+    const run_action_outbox_record_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_action_outbox_record_oracle.setCwd(b.path("."));
+    run_action_outbox_record_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_action_outbox_record_oracle.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_action_outbox_record_oracle.addFileArg(
+        b.path("bench/action_outbox_conformance.py"),
+    );
+    run_action_outbox_record_oracle.addArg("--runner");
+    run_action_outbox_record_oracle.addArtifactArg(
+        action_outbox_record_exe,
+    );
+    run_action_outbox_record_oracle.addArg("--fixture");
+    run_action_outbox_record_oracle.addFileArg(
+        b.path(
+            "bench/results/action-outbox-conformance-v1.json",
+        ),
+    );
+    action_outbox_record_test_step.dependOn(
+        &run_action_outbox_record_oracle.step,
+    );
+    const action_outbox_record_compile_step = b.step(
+        "action-outbox-record-compile",
+        "Compile portable ActionOutbox record tests and report",
+    );
+    action_outbox_record_compile_step.dependOn(
+        &action_outbox_record_tests.step,
+    );
+    action_outbox_record_compile_step.dependOn(
+        &action_outbox_record_exe.step,
+    );
+    test_step.dependOn(action_outbox_record_test_step);
+    test_compile_step.dependOn(action_outbox_record_compile_step);
+
     // Model-free deterministic QoS conformance demo. Native tests execute it,
     // cross-target gates compile it, and it is never installed as a production
     // or benchmark binary.

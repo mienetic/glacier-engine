@@ -103,8 +103,10 @@ effect authority.
 This ordering is sufficient for the retained in-process tool because its
 effect is bounded, deterministic, and infallible after the locked precommit. A
 real external effect needs a durable ActionOutbox and reconciliation protocol
-before dispatch; it must not call a network, process, or filesystem API from
-either scheduler callback.
+before dispatch. The separately versioned W4b-b record layer now defines that
+portable intent/uncertainty protocol, but synced storage and dispatch remain
+gated. Neither scheduler callback may call a network, process, or filesystem
+API.
 
 ## Retained campaign
 
@@ -163,8 +165,10 @@ requires byte-for-byte agreement with the retained fixture and native runner.
 
 Useful follow-ups remain independently reviewable:
 
-- define a durable ActionOutbox record before adding any external dispatcher;
-- add an acknowledgement and ambiguity-reconciliation state machine;
+- connect the portable [ActionOutbox Protocol](ACTION_OUTBOX.md) to a
+  descriptor-relative locked store with ordered body/footer sync;
+- retain process-death and explicit incomplete-tail repair fixtures;
+- add a credential-isolated fake dispatcher and authoritative status adapter;
 - add capability-scoped process, network, or filesystem adapters one at a time;
 - add bounded output-size and wall-time policies outside the logical scheduler;
 - connect an agent-policy result to a tool proposal without merging proposal

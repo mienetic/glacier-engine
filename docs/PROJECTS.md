@@ -444,6 +444,16 @@ work no effect authority. Native mutation tests and an independent Python
 implementation retain the eight-item campaign and final zero state without
 changing W4a. See [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md).
 
+**Completed W4b-b record slice:** a separate ActionOutbox journal now retains
+the allowed action, payload identity, and stable remote-request identity. A
+committed intent remains uncertain after restart, and only the
+`reconciled_not_applied` semantic record permits retry; authenticating that
+classification belongs to a future adapter. Compensation is a newly
+authorized child action. Native and independent Python replay cover all 7,521
+retained cuts from the complete header through the journal. This is a portable
+record protocol, not a synced file or live tool adapter. See
+[ActionOutbox Protocol](ACTION_OUTBOX.md).
+
 This is deterministic conformance, not a throughput, wall-clock latency,
 physical-memory, energy, or soak result.
 
@@ -675,8 +685,14 @@ scheduler, and replay roots with no ambient or real I/O. A scheduler-locked
 precommit rejects participant drift before Event-v1 mutation and retains the
 tool-state lock through its bounded, non-failing publish callback.
 
-**Next slice:** define a durable ActionOutbox, acknowledgement, ambiguity
-reconciliation, and compensation boundary before adding an external dispatcher.
+**Completed second slice:** the portable ActionOutbox record/recovery boundary
+defines acknowledgement, ambiguity reconciliation, safe retry, payload
+identity, and a separately authorized compensation child. It intentionally has
+no file or dispatcher authority.
+
+**Next slice:** add a descriptor-relative, locked durable-file adapter with
+body-sync/footer-sync, explicit incomplete-tail repair, and process-death
+fixtures before adding a credential-isolated fake dispatcher.
 
 ### Production weight pager
 
