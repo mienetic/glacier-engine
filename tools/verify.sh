@@ -181,6 +181,7 @@ trap 'terminate_verification TERM 143' TERM
 pass_count=0
 skip_count=0
 fail_count=0
+last_gate_status=0
 
 record_pass() {
     pass_count=$((pass_count + 1))
@@ -215,6 +216,7 @@ run_gate() {
         gate_status=$?
     fi
     active_pid=
+    last_gate_status=$gate_status
 
     gate_finished=$(date +%s)
     gate_elapsed=$((gate_finished - gate_started))
@@ -269,14 +271,14 @@ plan_has() {
 run_target_gates() {
     selected_target=$1
     if [ "$has_zig" -eq 1 ]; then
-        run_gate "portability/$selected_target/build" \
-            run_zig_target_build "$selected_target"
-        run_gate "portability/$selected_target/test-compile" \
-            run_zig_target_build "$selected_target" test-compile
+        # Passing any named step suppresses Zig's default install step. Name
+        # both roots explicitly so one build runner constructs one shared DAG
+        # and visits common compile steps only once for this target.
+        run_gate "portability/$selected_target/install+test-compile" \
+            run_zig_target_build "$selected_target" install test-compile
     else
-        record_skip "portability/$selected_target/build" \
-            "requires a working zig executable"
-        record_skip "portability/$selected_target/test-compile" \
+        record_skip \
+            "portability/$selected_target/install+test-compile" \
             "requires a working zig executable"
     fi
 }
@@ -286,6 +288,25 @@ record_native_unavailable() {
         record_fail "$1" "$2"
     else
         record_skip "$1" "$2"
+    fi
+}
+
+run_or_reuse_native_suite() {
+    native_gate=$1
+    if [ "$native_full_status" = "0" ]; then
+        record_pass "$native_gate" \
+            "covered by native/releasesafe-suite"
+    elif [ "$native_full_status" = "unavailable" ]; then
+        record_native_unavailable "$native_gate" \
+            "requires a working zig executable"
+    elif [ "$native_full_status" != "not-run" ]; then
+        record_fail "$native_gate" \
+            "covering native/releasesafe-suite failed"
+    elif [ "$has_zig" -eq 1 ]; then
+        run_gate "$native_gate" run_zig_build test
+    else
+        record_native_unavailable "$native_gate" \
+            "requires a working zig executable"
     fi
 }
 
@@ -443,6 +464,7 @@ fi
 
 run_native_full=0
 run_python_full=0
+native_full_status=not-run
 case "$profile" in
     full | matrix)
         run_native_full=1
@@ -462,7 +484,9 @@ if [ "$run_native_full" -eq 1 ]; then
     if [ "$has_zig" -eq 1 ]; then
         run_gate "native/releasesafe-suite" \
             run_zig_build test
+        native_full_status=$last_gate_status
     else
+        native_full_status=unavailable
         record_skip "native/releasesafe-suite" "requires a working zig executable"
     fi
 elif [ "$profile" = "quick" ]; then
@@ -485,6 +509,7 @@ else
 fi
 
 host_name=$(uname -s 2>/dev/null || printf unknown)
+host_arch=$(uname -m 2>/dev/null || printf unknown)
 run_rust_gate=0
 require_rust_gate=0
 case "$profile" in
@@ -543,11 +568,37 @@ if [ "$profile" = "affected" ] &&
     if [ "$host_name" != "Darwin" ]; then
         record_native_unavailable "native/darwin" \
             "requires native Darwin execution"
-    elif [ "$has_zig" -eq 1 ]; then
-        run_gate "native/darwin" run_zig_build test
     else
-        record_native_unavailable "native/darwin" \
-            "requires a working zig executable"
+        run_or_reuse_native_suite "native/darwin"
+    fi
+fi
+
+if [ "$profile" = "affected" ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "darwin-aarch64-native"; then
+    if [ "$host_name" != "Darwin" ]; then
+        record_native_unavailable "native/darwin-aarch64" \
+            "requires native Darwin AArch64 execution"
+    elif [ "$host_arch" != "arm64" ] && [ "$host_arch" != "aarch64" ]; then
+        record_native_unavailable "native/darwin-aarch64" \
+            "requires native Darwin AArch64 execution"
+    else
+        run_or_reuse_native_suite "native/darwin-aarch64"
+    fi
+fi
+
+if [ "$profile" = "affected" ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "darwin-swift"; then
+    if [ "$host_name" != "Darwin" ]; then
+        record_native_unavailable "native/darwin-swift" \
+            "requires native Darwin execution"
+    elif [ ! -x /usr/bin/swiftc ]; then
+        record_native_unavailable "native/darwin-swift" \
+            "requires /usr/bin/swiftc"
+    else
+        run_gate "native/darwin-swift" \
+            /usr/bin/swiftc -typecheck bench/lane4_process_info.swift
     fi
 fi
 

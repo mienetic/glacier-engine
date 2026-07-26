@@ -11,6 +11,34 @@ from tools import verification_policy as policy
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
+EXPECTED_INTEROP_RUNTIME_FIXTURE_PATHS = frozenset(
+    {
+        "examples/interop/fixtures/artifact_manifest_v1.hex",
+        "examples/interop/fixtures/execution_plan_v1.hex",
+        "examples/interop/fixtures/result_envelope_v1.hex",
+    }
+)
+
+EXPECTED_BENCH_RUNTIME_DATA_PATHS = frozenset(
+    {
+        "bench/eval-qwen2.5.ids",
+        "bench/eval.txt",
+        "bench/pair-prefill-natural-pp128.ids",
+        "bench/pair-prefill-natural-pp512.ids",
+        "bench/pair-prefill-natural-pp2048.ids",
+        "bench/pair-prefill-natural-provenance.json",
+        "bench/paired.example.json",
+    }
+)
+
+EXPECTED_AARCH64_CPU_SOURCE_PATHS = frozenset(
+    {
+        "src/backends/cpu/crc32_arm.c",
+        "src/backends/cpu/int4_neon.c",
+        "src/backends/cpu/progressive_int4_neon.c",
+    }
+)
+
 
 class VerificationPolicyTests(unittest.TestCase):
     def assert_targets(self, paths, expected):
@@ -72,10 +100,65 @@ class VerificationPolicyTests(unittest.TestCase):
     def test_rust_source_selects_the_native_rust_gate(self):
         plan = self.assert_targets(
             ["examples/interop/rust_verify.rs"],
-            policy.RETAINED_TARGETS,
+            (),
         )
-        self.assertTrue(plan.requires("rust-native"))
-        self.assertTrue(plan.requires("native-full"))
+        self.assertEqual(plan.flags, frozenset({"rust-native"}))
+
+    def test_runtime_inputs_do_not_select_foreign_compilation(self):
+        self.assertEqual(
+            EXPECTED_INTEROP_RUNTIME_FIXTURE_PATHS,
+            policy.INTEROP_RUNTIME_FIXTURE_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_BENCH_RUNTIME_DATA_PATHS,
+            policy.BENCH_RUNTIME_DATA_PATHS,
+        )
+        for changed_path in sorted(EXPECTED_INTEROP_RUNTIME_FIXTURE_PATHS):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    frozenset({"python-full", "rust-native"}),
+                    plan.flags,
+                )
+        for changed_path in sorted(EXPECTED_BENCH_RUNTIME_DATA_PATHS):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(frozenset({"python-full"}), plan.flags)
+
+    def test_unknown_interop_hex_fixture_remains_conservative(self):
+        for changed_path in (
+            "examples/interop/fixtures/new.hex",
+            "examples/interop/fixtures/nested/new.hex",
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets(
+                    [changed_path],
+                    policy.RETAINED_TARGETS,
+                )
+                self.assertTrue(plan.requires("native-full"))
+                self.assertTrue(plan.requires("python-full"))
+
+    def test_swift_probe_uses_focused_darwin_typecheck_gate(self):
+        plan = self.assert_targets(["bench/lane4_process_info.swift"], ())
+        self.assertEqual(
+            frozenset({"darwin-swift", "python-full"}),
+            plan.flags,
+        )
+
+    def test_aarch64_cpu_sources_select_only_aarch64_linux(self):
+        self.assertEqual(
+            EXPECTED_AARCH64_CPU_SOURCE_PATHS,
+            policy.AARCH64_CPU_SOURCE_PATHS,
+        )
+        for changed_path in sorted(EXPECTED_AARCH64_CPU_SOURCE_PATHS):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets(
+                    [changed_path],
+                    policy.AARCH64_LINUX_TARGETS,
+                )
+                self.assertTrue(plan.requires("darwin-aarch64-native"))
+                self.assertTrue(plan.requires("native-full"))
+                self.assertTrue(plan.requires("python-full"))
 
     def test_platform_specific_paths_select_only_relevant_targets(self):
         cases = {
@@ -83,12 +166,18 @@ class VerificationPolicyTests(unittest.TestCase):
             "src/platform/linux/memory.zig": policy.LINUX_TARGETS,
             "src/platform/freebsd/memory.zig": policy.FREEBSD_TARGETS,
             "src/platform/posix/files.zig": policy.POSIX_TARGETS,
+            "src/platform/unix/files.zig": policy.POSIX_TARGETS,
+            "src/platform/POSIX/files.zig": policy.POSIX_TARGETS,
             "src/platform/windows.zig": policy.WINDOWS_TARGETS,
             "bench/native_observer_linux.zig": policy.LINUX_TARGETS,
         }
         for changed_path, expected in cases.items():
             with self.subTest(changed_path=changed_path):
                 self.assert_targets([changed_path], expected)
+        posix = policy.classify_paths(["src/platform/posix/files.zig"])
+        self.assertTrue(posix.requires("darwin-native"))
+        unix = policy.classify_paths(["src/platform/unix/files.zig"])
+        self.assertTrue(unix.requires("darwin-native"))
 
     def test_selection_is_the_union_of_all_changed_paths(self):
         plan = self.assert_targets(
@@ -110,6 +199,30 @@ class VerificationPolicyTests(unittest.TestCase):
             policy.LINUX_TARGETS + policy.WINDOWS_TARGETS,
         )
         self.assertTrue(plan.requires("darwin-native"))
+        self.assertTrue(plan.requires("native-full"))
+        self.assertTrue(plan.requires("python-full"))
+
+    def test_mixed_aarch64_and_windows_changes_keep_ordered_union(self):
+        plan = self.assert_targets(
+            [
+                "src/backends/cpu/int4_neon.c",
+                "src/platform/windows/dispatch.zig",
+            ],
+            policy.AARCH64_LINUX_TARGETS + policy.WINDOWS_TARGETS,
+        )
+        self.assertTrue(plan.requires("darwin-aarch64-native"))
+        self.assertTrue(plan.requires("native-full"))
+        self.assertTrue(plan.requires("python-full"))
+
+    def test_specialized_path_plus_shared_code_restores_every_target(self):
+        plan = self.assert_targets(
+            [
+                "src/backends/cpu/int4_neon.c",
+                "src/root.zig",
+            ],
+            policy.RETAINED_TARGETS,
+        )
+        self.assertTrue(plan.requires("darwin-aarch64-native"))
         self.assertTrue(plan.requires("native-full"))
         self.assertTrue(plan.requires("python-full"))
 
@@ -192,6 +305,45 @@ class VerificationPolicyTests(unittest.TestCase):
         )
         self.assertTrue(python_plan.requires("python-changed"))
         self.assertTrue(python_plan.requires("native-full"))
+
+        wrapper_plan = self.assert_targets(
+            ["tools/zig-with-ephemeral-cache.sh"],
+            (),
+        )
+        self.assertEqual(
+            frozenset({"python-full", "shell-changed"}),
+            wrapper_plan.flags,
+        )
+
+    def test_control_paths_are_case_normalized(self):
+        cases = {
+            "Tools/Verification_Policy.py": (
+                policy.RETAINED_TARGETS,
+                frozenset(
+                    {"native-full", "python-changed", "python-full"}
+                ),
+            ),
+            "Tools/Verify.SH": (
+                policy.RETAINED_TARGETS,
+                frozenset(
+                    {"native-full", "python-full", "shell-changed"}
+                ),
+            ),
+            "Tools/Zig-With-Ephemeral-Cache.SH": (
+                (),
+                frozenset({"python-full", "shell-changed"}),
+            ),
+            "Build.zig": (
+                policy.RETAINED_TARGETS,
+                frozenset(
+                    {"metal-native", "native-full", "python-full"}
+                ),
+            ),
+        }
+        for changed_path, (targets, flags) in cases.items():
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], targets)
+                self.assertEqual(flags, plan.flags)
 
     def test_paths_are_deduplicated_and_byte_sorted(self):
         plan = policy.classify_paths(
@@ -443,8 +595,22 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
         fake_bin.mkdir()
         self.make_fake_command(
             fake_bin / "zig",
+            ': "${VERIFY_INTEGRATION_ZIG_LOG:?}"\n'
+            'printf "%s\\n" "$*" >>"$VERIFY_INTEGRATION_ZIG_LOG"\n'
             'if [ "${1:-}" = "version" ]; then\n'
             "    printf '0.15.2\\n'\n"
+            "fi\n"
+            'if [ -n "${VERIFY_INTEGRATION_FAIL_TARGET:-}" ]; then\n'
+            '    case "$*" in\n'
+            '        *"-Dtarget=$VERIFY_INTEGRATION_FAIL_TARGET "*)\n'
+            "            exit 19\n"
+            "            ;;\n"
+            "    esac\n"
+            "fi\n"
+            'if [ -n "${VERIFY_INTEGRATION_FAIL_NATIVE_TEST:-}" ] '
+            '&& [ "${1:-}" = "build" ] '
+            '&& [ "${2:-}" = "test" ]; then\n'
+            "    exit 23\n"
             "fi\n"
             "exit 0\n",
         )
@@ -456,6 +622,9 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
         environment = dict(os.environ)
         environment["PATH"] = str(fake_bin) + os.pathsep + environment["PATH"]
         environment["TMPDIR"] = str(root)
+        environment["VERIFY_INTEGRATION_ZIG_LOG"] = str(
+            root / "zig.calls"
+        )
         environment.pop("GLACIER_VERIFY_BASE", None)
         environment.pop("GLACIER_VERIFY_REQUIRE_NATIVE", None)
         environment.pop("PYTHONPATH", None)
@@ -511,11 +680,67 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
 
             darwin_path.unlink()
+            shared_path = repository / "src" / "runtime.zig"
+            shared_path.write_text("", encoding="ascii")
+            zig_log = Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+            zig_log.write_text("", encoding="ascii")
+            shared = self.run_verify(repository, merge_base, environment)
+            self.assertEqual(
+                shared.returncode,
+                0,
+                shared.stdout + shared.stderr,
+            )
+            for target in policy.RETAINED_TARGETS:
+                self.assertIn(
+                    "PASS  portability/"
+                    + target
+                    + "/install+test-compile:",
+                    shared.stdout,
+                )
+                self.assertNotIn(
+                    "portability/" + target + "/build:",
+                    shared.stdout,
+                )
+                self.assertNotIn(
+                    "portability/" + target + "/test-compile:",
+                    shared.stdout,
+                )
+            target_calls = [
+                line
+                for line in zig_log.read_text(
+                    encoding="ascii"
+                ).splitlines()
+                if " -Dtarget=" in line
+            ]
+            self.assertEqual(
+                len(policy.RETAINED_TARGETS),
+                len(target_calls),
+                target_calls,
+            )
+            self.assertTrue(
+                all(
+                    line.startswith("build install test-compile ")
+                    for line in target_calls
+                ),
+                target_calls,
+            )
+            for target in policy.RETAINED_TARGETS:
+                self.assertEqual(
+                    1,
+                    sum(
+                        " -Dtarget=" + target + " " in line
+                        for line in target_calls
+                    ),
+                    target_calls,
+                )
+
+            shared_path.unlink()
             rust_path = (
                 repository / "examples" / "interop" / "rust_verify.rs"
             )
             rust_path.parent.mkdir(parents=True)
             rust_path.write_text("fn main() {}\n", encoding="ascii")
+            zig_log.write_text("", encoding="ascii")
             rust = self.run_verify(repository, merge_base, environment)
             self.assertEqual(
                 rust.returncode,
@@ -523,15 +748,312 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 rust.stdout + rust.stderr,
             )
             self.assertIn("PASS  interop/rust:", rust.stdout)
-            for target in policy.RETAINED_TARGETS:
-                self.assertIn(
-                    "PASS  portability/" + target + "/build:",
-                    rust.stdout,
+            self.assertNotIn("PASS  portability/", rust.stdout)
+            self.assertFalse(
+                any(
+                    " -Dtarget=" in line
+                    for line in zig_log.read_text(
+                        encoding="ascii"
+                    ).splitlines()
                 )
-                self.assertIn(
-                    "PASS  portability/" + target + "/test-compile:",
-                    rust.stdout,
+            )
+
+    def test_combined_target_gate_propagates_one_target_failure(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            windows_path = (
+                repository
+                / "src"
+                / "platform"
+                / "windows"
+                / "runtime.zig"
+            )
+            windows_path.parent.mkdir(parents=True)
+            windows_path.write_text("", encoding="ascii")
+            target = policy.WINDOWS_TARGETS[0]
+            environment["VERIFY_INTEGRATION_FAIL_TARGET"] = target
+
+            result = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn(
+                "FAIL  portability/"
+                + target
+                + "/install+test-compile: exit 19",
+                result.stdout,
+            )
+            target_calls = [
+                line
+                for line in Path(
+                    environment["VERIFY_INTEGRATION_ZIG_LOG"]
                 )
+                .read_text(encoding="ascii")
+                .splitlines()
+                if " -Dtarget=" in line
+            ]
+            self.assertEqual(1, len(target_calls), target_calls)
+            self.assertIn(
+                "build install test-compile -Dtarget=" + target + " ",
+                target_calls[0],
+            )
+
+    def test_posix_reuses_native_suite_for_darwin_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            self.make_fake_command(
+                root / "fake-bin" / "uname",
+                "printf 'Darwin\\n'\n",
+            )
+            posix_path = (
+                repository / "src" / "platform" / "posix" / "files.zig"
+            )
+            posix_path.parent.mkdir(parents=True)
+            posix_path.write_text("", encoding="ascii")
+            zig_log = Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+            zig_log.write_text("", encoding="ascii")
+
+            result = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  native/releasesafe-suite:",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  native/darwin: covered by "
+                "native/releasesafe-suite",
+                result.stdout,
+            )
+            native_test_calls = [
+                line
+                for line in zig_log.read_text(
+                    encoding="ascii"
+                ).splitlines()
+                if line.startswith("build test ")
+            ]
+            self.assertEqual(1, len(native_test_calls), native_test_calls)
+
+            zig_log.write_text("", encoding="ascii")
+            failure_environment = dict(environment)
+            failure_environment["VERIFY_INTEGRATION_FAIL_NATIVE_TEST"] = "1"
+            failed = self.run_verify(
+                repository,
+                merge_base,
+                failure_environment,
+            )
+            self.assertNotEqual(0, failed.returncode)
+            self.assertIn(
+                "FAIL  native/releasesafe-suite: exit 23",
+                failed.stdout,
+            )
+            self.assertIn(
+                "FAIL  native/darwin: covering "
+                "native/releasesafe-suite failed",
+                failed.stdout,
+            )
+            failed_native_test_calls = [
+                line
+                for line in zig_log.read_text(
+                    encoding="ascii"
+                ).splitlines()
+                if line.startswith("build test ")
+            ]
+            self.assertEqual(
+                1,
+                len(failed_native_test_calls),
+                failed_native_test_calls,
+            )
+
+    def test_aarch64_kernel_requires_aarch64_darwin_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            self.make_fake_command(
+                root / "fake-bin" / "uname",
+                "case \"${1:-}\" in\n"
+                "    -m) printf 'x86_64\\n' ;;\n"
+                "    *) printf 'Darwin\\n' ;;\n"
+                "esac\n",
+            )
+            source_path = (
+                repository / "src" / "backends" / "cpu" / "int4_neon.c"
+            )
+            source_path.parent.mkdir(parents=True)
+            source_path.write_text("", encoding="ascii")
+            zig_log = Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+            zig_log.write_text("", encoding="ascii")
+
+            intel = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+            self.assertEqual(
+                0,
+                intel.returncode,
+                intel.stdout + intel.stderr,
+            )
+            self.assertIn(
+                "SKIP  native/darwin-aarch64: "
+                "requires native Darwin AArch64 execution",
+                intel.stdout,
+            )
+            native_test_calls = [
+                line
+                for line in zig_log.read_text(
+                    encoding="ascii"
+                ).splitlines()
+                if line.startswith("build test ")
+            ]
+            self.assertEqual(1, len(native_test_calls), native_test_calls)
+
+            strict_environment = dict(environment)
+            strict_environment["GLACIER_VERIFY_REQUIRE_NATIVE"] = "1"
+            strict = self.run_verify(
+                repository,
+                merge_base,
+                strict_environment,
+            )
+            self.assertNotEqual(0, strict.returncode)
+            self.assertIn(
+                "FAIL  native/darwin-aarch64: "
+                "requires native Darwin AArch64 execution",
+                strict.stdout,
+            )
+
+            self.make_fake_command(
+                root / "fake-bin" / "uname",
+                "case \"${1:-}\" in\n"
+                "    -m) printf 'arm64\\n' ;;\n"
+                "    *) printf 'Darwin\\n' ;;\n"
+                "esac\n",
+            )
+            zig_log.write_text("", encoding="ascii")
+            arm64 = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+            self.assertEqual(
+                0,
+                arm64.returncode,
+                arm64.stdout + arm64.stderr,
+            )
+            self.assertIn(
+                "PASS  native/darwin-aarch64: covered by "
+                "native/releasesafe-suite",
+                arm64.stdout,
+            )
+            arm64_native_test_calls = [
+                line
+                for line in zig_log.read_text(
+                    encoding="ascii"
+                ).splitlines()
+                if line.startswith("build test ")
+            ]
+            self.assertEqual(
+                1,
+                len(arm64_native_test_calls),
+                arm64_native_test_calls,
+            )
+
+    def test_swift_probe_requires_the_focused_darwin_gate(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            swift_path = repository / "bench" / "lane4_process_info.swift"
+            swift_path.write_text(
+                'import Foundation\nprint("probe")\n',
+                encoding="ascii",
+            )
+
+            ordinary = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+            self.assertEqual(
+                0,
+                ordinary.returncode,
+                ordinary.stdout + ordinary.stderr,
+            )
+            self.assertIn(
+                "SKIP  native/darwin-swift: "
+                "requires native Darwin execution",
+                ordinary.stdout,
+            )
+
+            strict_environment = dict(environment)
+            strict_environment["GLACIER_VERIFY_REQUIRE_NATIVE"] = "1"
+            strict = self.run_verify(
+                repository,
+                merge_base,
+                strict_environment,
+            )
+            self.assertNotEqual(0, strict.returncode)
+            self.assertIn(
+                "FAIL  native/darwin-swift: "
+                "requires native Darwin execution",
+                strict.stdout,
+            )
+
+    @unittest.skipUnless(
+        Path("/usr/bin/swiftc").is_file(),
+        "native Swift type-check integration requires /usr/bin/swiftc",
+    )
+    def test_swift_probe_typechecks_foundation_api_on_darwin(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            self.make_fake_command(
+                root / "fake-bin" / "uname",
+                "printf 'Darwin\\n'\n",
+            )
+            swift_path = repository / "bench" / "lane4_process_info.swift"
+            swift_path.write_text(
+                "import Foundation\n"
+                "_ = ProcessInfo.processInfo.activeProcessorCount\n",
+                encoding="ascii",
+            )
+
+            valid = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+            self.assertEqual(
+                0,
+                valid.returncode,
+                valid.stdout + valid.stderr,
+            )
+            self.assertIn("PASS  native/darwin-swift:", valid.stdout)
+
+            swift_path.write_text(
+                "import Foundation\n"
+                "_ = ProcessInfo.processInfo.definitelyMissing\n",
+                encoding="ascii",
+            )
+            invalid = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+            self.assertNotEqual(0, invalid.returncode)
+            self.assertIn("FAIL  native/darwin-swift:", invalid.stdout)
 
 
 if __name__ == "__main__":

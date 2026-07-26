@@ -22,6 +22,7 @@ RETAINED_TARGETS: Tuple[str, ...] = (
 )
 
 LINUX_TARGETS: Tuple[str, ...] = RETAINED_TARGETS[0:2]
+AARCH64_LINUX_TARGETS: Tuple[str, ...] = (RETAINED_TARGETS[1],)
 WINDOWS_TARGETS: Tuple[str, ...] = (RETAINED_TARGETS[2],)
 FREEBSD_TARGETS: Tuple[str, ...] = (RETAINED_TARGETS[3],)
 POSIX_TARGETS: Tuple[str, ...] = LINUX_TARGETS + FREEBSD_TARGETS
@@ -44,7 +45,7 @@ POLICY_CONTROL_PATHS = {
     ),
     "tools/verify.sh": frozenset({"native-full", "python-full", "shell-changed"}),
     "tools/zig-with-ephemeral-cache.sh": frozenset(
-        {"native-full", "python-full", "shell-changed"}
+        {"python-full", "shell-changed"}
     ),
 }
 
@@ -87,10 +88,32 @@ CODE_ROOTS = {
 BUILD_CONTROL_PATHS = {
     "build.zig",
     "build.zig.zon",
-    "Cargo.lock",
-    "Cargo.toml",
-    "CMakeLists.txt",
-    "Makefile",
+    "cargo.lock",
+    "cargo.toml",
+    "cmakelists.txt",
+    "makefile",
+}
+
+INTEROP_RUNTIME_FIXTURE_PATHS = {
+    "examples/interop/fixtures/artifact_manifest_v1.hex",
+    "examples/interop/fixtures/execution_plan_v1.hex",
+    "examples/interop/fixtures/result_envelope_v1.hex",
+}
+
+BENCH_RUNTIME_DATA_PATHS = {
+    "bench/eval-qwen2.5.ids",
+    "bench/eval.txt",
+    "bench/pair-prefill-natural-pp128.ids",
+    "bench/pair-prefill-natural-pp512.ids",
+    "bench/pair-prefill-natural-pp2048.ids",
+    "bench/pair-prefill-natural-provenance.json",
+    "bench/paired.example.json",
+}
+
+AARCH64_CPU_SOURCE_PATHS = {
+    "src/backends/cpu/crc32_arm.c",
+    "src/backends/cpu/int4_neon.c",
+    "src/backends/cpu/progressive_int4_neon.c",
 }
 
 
@@ -281,8 +304,11 @@ def _platform_requirements(
         selected_targets.update(LINUX_TARGETS)
     if _has_platform_token(path, "freebsd"):
         selected_targets.update(FREEBSD_TARGETS)
-    if _has_platform_token(path, "posix") or _has_platform_token(path, "unix"):
+    if _has_platform_token(path, "posix") or _has_platform_token(
+        path, "unix"
+    ):
         selected_targets.update(POSIX_TARGETS)
+        flags.add("darwin-native")
     targets = tuple(
         target for target in RETAINED_TARGETS if target in selected_targets
     )
@@ -308,13 +334,23 @@ def _decision_for_path(path: str) -> PathDecision:
     suffix = Path(lower).suffix
     first_component = lower.split("/", 1)[0]
 
-    policy_flags = POLICY_CONTROL_PATHS.get(path)
+    policy_flags = POLICY_CONTROL_PATHS.get(lower)
     if policy_flags is not None:
+        policy_targets = (
+            ()
+            if lower == "tools/zig-with-ephemeral-cache.sh"
+            else RETAINED_TARGETS
+        )
         return PathDecision(
             path,
-            "verification control changed; validate every retained target",
+            (
+                "ephemeral-cache wrapper changed; validate its shell and "
+                "Python integration without compiling foreign targets"
+                if not policy_targets
+                else "verification control changed; validate every retained target"
+            ),
             policy_flags,
-            RETAINED_TARGETS,
+            policy_targets,
         )
 
     if _is_github_control(path):
@@ -328,6 +364,52 @@ def _decision_for_path(path: str) -> PathDecision:
             "GitHub workflow, action, or dependency automation changed",
             frozenset(flags),
             RETAINED_TARGETS,
+        )
+
+    if lower == "examples/interop/rust_verify.rs":
+        return PathDecision(
+            path,
+            "native Rust contract consumer changed",
+            frozenset({"rust-native"}),
+            (),
+        )
+
+    if lower in INTEROP_RUNTIME_FIXTURE_PATHS:
+        return PathDecision(
+            path,
+            "runtime interop fixture changed; replay native consumers",
+            frozenset({"python-full", "rust-native"}),
+            (),
+        )
+
+    if lower in BENCH_RUNTIME_DATA_PATHS:
+        return PathDecision(
+            path,
+            "benchmark runtime data changed; replay Python consumers",
+            frozenset({"python-full"}),
+            (),
+        )
+
+    if lower == "bench/lane4_process_info.swift":
+        return PathDecision(
+            path,
+            "Darwin ProcessInfo probe changed; type-check Swift and replay its verifier",
+            frozenset({"darwin-swift", "python-full"}),
+            (),
+        )
+
+    if lower in AARCH64_CPU_SOURCE_PATHS:
+        return PathDecision(
+            path,
+            "AArch64 CPU kernel changed; validate Linux and native Darwin branches",
+            frozenset(
+                {
+                    "darwin-aarch64-native",
+                    "native-full",
+                    "python-full",
+                }
+            ),
+            AARCH64_LINUX_TARGETS,
         )
 
     if suffix == ".py":
@@ -395,9 +477,9 @@ def _decision_for_path(path: str) -> PathDecision:
             platform_targets,
         )
 
-    if path in BUILD_CONTROL_PATHS:
+    if lower in BUILD_CONTROL_PATHS:
         build_flags = {"native-full", "python-full"}
-        if path in {"build.zig", "build.zig.zon"}:
+        if lower in {"build.zig", "build.zig.zon"}:
             build_flags.add("metal-native")
         return PathDecision(
             path,
@@ -456,6 +538,8 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
         ("rust-native", "interop/rust"),
         ("native-full", "native/releasesafe-suite"),
         ("darwin-native", "native/darwin"),
+        ("darwin-aarch64-native", "native/darwin-aarch64"),
+        ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
     ):
         if flag in decision.flags:
@@ -481,6 +565,8 @@ def print_report(plan: VerificationPlan) -> None:
         ("rust-native", "interop/rust"),
         ("native-full", "native/releasesafe-suite"),
         ("darwin-native", "native/darwin"),
+        ("darwin-aarch64-native", "native/darwin-aarch64"),
+        ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
     ):
         if plan.requires(flag):

@@ -110,6 +110,11 @@ zig build -Dtarget=x86_64-freebsd -Dmetal=false -Doptimize=ReleaseSafe
 zig build test-compile -Dtarget=x86_64-freebsd -Dmetal=false -Doptimize=ReleaseSafe
 ```
 
+Those historical commands recorded the two roots separately. Current
+`tools/verify.sh affected` and `matrix` runs pass `install` and `test-compile`
+to one Zig invocation per selected target, preserving both roots while sharing
+one build graph and avoiding a second target-scoped build-runner process.
+
 The focused experimental C contract libraries, Zig ABI tests, and independent
 C11 consumer also compiled and linked for the four full cross-build targets:
 

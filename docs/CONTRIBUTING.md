@@ -73,12 +73,17 @@ narrow change never hides the checks required by another changed path.
 | GitHub workflow, action, or dependency automation | Quick gates, native ReleaseSafe, Python discovery, and every retained target |
 | Python verifier, harness, or retained result | Changed-file Python syntax and full Python unittest discovery; no foreign Zig target |
 | POSIX shell script | Syntax under its declared `sh` or `bash` shebang |
-| Rust source | Native Rust contract gate, native ReleaseSafe, Python discovery, and every retained target; `rustc` is required |
+| Retained Rust interop consumer | Native Rust contract gate only; `rustc` is required, but foreign Zig targets cannot compile or validate this runtime consumer |
+| Other Rust build input | Native Rust contract gate, native ReleaseSafe, Python discovery, and every retained target until its build graph is classified |
+| Retained runtime interop `.hex` fixture | Quick C/C++/Python replay, full Python discovery, and the native Rust contract gate; no foreign Zig target; new fixture paths remain conservative until classified |
+| Benchmark runtime data (`.ids`, paired manifests, evaluation text) | Full Python discovery; no foreign Zig target |
+| Darwin Swift ProcessInfo probe | Full Python discovery plus focused native `swiftc -typecheck`; no broad Zig or foreign-target build |
 | Shared Zig/C/C++/header/build input | Native ReleaseSafe, Python discovery, and every retained cross-target build |
+| AArch64 NEON/CRC C kernel | Native ReleaseSafe with explicit Apple Silicon (`arm64`/`aarch64`) Darwin evidence, Python discovery, and the retained AArch64 Linux target; Intel macOS and Rosetta report unavailable instead of reusing an unrelated x86_64 pass |
 | Linux-specific runtime | Native ReleaseSafe plus both retained Linux targets |
 | Windows-specific runtime | Native ReleaseSafe plus the retained Windows target |
 | FreeBSD-specific runtime | Native ReleaseSafe plus the retained FreeBSD target |
-| Shared POSIX runtime | Native ReleaseSafe plus both Linux targets and FreeBSD |
+| Shared POSIX runtime | Native ReleaseSafe, explicit Darwin evidence, both Linux targets, and FreeBSD; the Darwin label reuses the native suite instead of compiling twice |
 | Darwin- or macOS-specific runtime | Native Darwin ReleaseSafe tests; a non-Darwin skip is not passing evidence |
 | Metal backend | Native Darwin Metal tests; a non-Darwin skip is not passing evidence |
 | Unknown input under a code tree | Conservatively use every retained target |
@@ -131,16 +136,20 @@ The retained cross-target set is:
 
 The Python policy emits the ordered target plan; the shell validates and runs
 every emitted entry rather than maintaining a second target list. For each
-selected target, verification runs both the default `zig build -Dtarget=...`
-step and `zig build test-compile -Dtarget=...` sequentially. Metal-only changes
-use the focused `native-metal-observation-test` hard gate on Darwin. The
-one-command profiles use one protected temporary workspace, shared private Zig
-cache directories, temporary target prefixes, `-j2`, and repository fixtures
-only. No persistent
-repository cache is needed. The quick profile intentionally marks broad native,
-Python, Rust, sanitizer, and cross-target work as skipped; it is a contributor
-smoke gate, not evidence that those matrices passed. The matrix profile runs
-the full host gates followed by all four retained targets.
+selected target, verification passes the explicit `install` and `test-compile`
+roots to one `zig build` invocation. Naming `install` is required because Zig
+does not select its default step once another top-level step is named. The
+single build runner constructs one shared dependency graph, preserves both
+production-artifact and compile-only test coverage, and avoids a second
+build-script load, graph construction, cache-validation pass, and target
+process. Metal-only changes use the focused `native-metal-observation-test`
+hard gate on Darwin. The one-command profiles use one protected temporary
+workspace, shared private Zig cache directories, temporary target prefixes,
+`-j2`, and repository fixtures only. No persistent repository cache is needed.
+The quick profile intentionally marks broad native, Python, Rust, sanitizer,
+and cross-target work as skipped; it is a contributor smoke gate, not evidence
+that those matrices passed. The matrix profile runs the full host gates
+followed by all four retained targets.
 
 Record an unsupported ThreadSanitizer environment as **not run**, not passed.
 
