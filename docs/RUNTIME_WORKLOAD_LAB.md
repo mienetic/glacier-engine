@@ -17,11 +17,14 @@ typed-perception, first process-local typed tool, and portable ActionOutbox
 record/recovery layers are integrated. W4b-c also integrates a
 descriptor-relative POSIX durable store and separates deterministic
 write/repair fault matrices from a real host process-death campaign.
-Provider, stateful, streaming, batched, preemptible, device-backed, and
-credential-isolated dispatch/status profiles, native multi-request reports, and
-soak campaigns remain staged work. A logical driver step is never reported as
-a millisecond, and a logical resource claim is never reported as RSS, device
-residency, energy, or temperature.
+W4b-d now composes that store with pointer-free adapter values, a durable
+dispatch/status driver, and a bounded same-process fake authority with an
+opaque synthetic credential. Provider, stateful, streaming, batched,
+preemptible, device-backed, live-service, and OS-isolated real-credential
+profiles, native multi-request reports, and soak campaigns remain staged work.
+A logical driver step is never reported as a millisecond, and a logical
+resource claim is never reported as RSS, device residency, energy, or
+temperature.
 
 ## Why this belongs in the runtime
 
@@ -111,7 +114,7 @@ Results from different modes are not merged into one headline number.
   W4b-b adds a portable ActionOutbox record campaign: unresolved dispatch
   intent remains uncertain, only a `reconciled_not_applied` semantic record
   permits retry, and compensation is a separate authorized child. A future
-  adapter must authenticate reconciliation evidence. W4b-c adds the canonical
+  adapter must validate reconciliation evidence. W4b-c adds the canonical
   clean committed `320 + 752n` descriptor-relative POSIX stream with advisory
   locking,
   no-follow/identity/private-mode fences, semantic preflight, ordered
@@ -120,10 +123,30 @@ Results from different modes are not merged into one headline number.
   section-prefix cases, 751 incomplete tails, and 8 repair-fault outcomes; 49
   host
   `SIGKILL` deaths cover 3 initialization, 40 append, and 6 repair boundaries.
-  Live dispatch, authenticated status, power-loss behavior, and Windows
-  durable files remain staged. Each profile must name its execution unit,
-  exact claim, cancellation/preemption boundary, correctness gate, and
-  publication authority without weakening W4a. See
+  W4b-d adds pointer-free descriptor/request/evidence contracts, driver-only
+  intent-before-callback ordering, and a fixed-storage fake authority with an
+  opaque synthetic credential. Dispatch protects one future reconciliation
+  slot per existing uncertain action and requires three additional journal
+  records; status runs only when free slots cover every uncertain action.
+  Atomic
+  `not_applied_fenced` at generation `G` rejects delayed attempts through `G`;
+  only exact `G + 1` preserves the stable request while deriving a new dispatch
+  root. Pending and unknown status never permit retry, and terminal duplicates
+  keep the fake application count at one. Integrated Zig tests inject
+  deterministic same-process faults at four terminal-transition and four
+  fenced-transition append phases, then freshly reopen, repair when required,
+  and reconcile. Twenty independent Python tests rebuild the portable
+  semantics; a separate Python CLI invocation compares a live canonical Zig
+  report. No JSON fixture is retained. The
+  earlier 49-death W4b-c campaign remains the only
+  ActionOutbox process-death evidence. Live dispatch, real credentials,
+  network/provider/tool effects, OS-level isolation or security proof,
+  cryptographic origin, fake-service restart persistence, power-loss behavior,
+  Windows durable files, native platform behavior, performance, and external
+  exactly-once delivery remain staged. Each profile must name its execution
+  unit, exact claim,
+  cancellation/preemption boundary, correctness gate, and publication
+  authority without weakening W4a. See
   [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md) and
   [ActionOutbox Protocol](ACTION_OUTBOX.md).
 - [ ] **W5 — Native observation and machine comparability.** Add a
@@ -279,8 +302,9 @@ Independent contributions can add:
    generator/shrinker check;
 2. one retained deterministic closed-loop plan, phase/lineage mutation, or
    independent decoder while preserving every existing V1 root;
-3. one typed workload-driver profile or credential-isolated
-   reconciliation/dispatch harness that does not weaken either tool proof;
+3. one real-service or OS-isolated dispatch/status adapter that preserves the
+   driver ordering and generation-fence proof without weakening either tool
+   proof;
 4. a family-neutral observer interface and one native OS implementation;
 5. a bounded Metal observer slice for device identity, host submit/sync timing,
    fallback detection, and explicit availability states;

@@ -435,7 +435,7 @@ evidence while an independent Python implementation derives the plan wire and
 logical replay; one retained report binds both sets of roots. See
 [Typed Workload Conformance](TYPED_WORKLOAD_CONFORMANCE.md).
 
-**Completed first W4b tool slice:** one separately versioned process-local tool
+**Completed W4b-a tool slice:** one separately versioned process-local tool
 profile now separates proposal from local policy, commits a bounded counter
 effect and delivery receipt with the exact armed scheduler service event,
 reuses an exact duplicate without a second mutation, denies out-of-policy work,
@@ -465,6 +465,16 @@ dispatcher, provider-truth proof, external exactly-once mechanism, power-loss
 test, or Windows durable-file implementation. See
 [ActionOutbox Protocol](ACTION_OUTBOX.md).
 
+**Completed W4b-d fenced-adapter slice:** pointer-free request/evidence values,
+a driver that commits intent before callback, and a bounded same-process fake
+authority now enforce atomic generation fencing, stale rejection before and
+after terminal completion, and retry only at exact `G + 1`. Deterministic
+same-process faults cover four terminal-transition plus four fenced-transition
+append phases with fresh reopen/repair/reconciliation. The independent Python
+model has no retained JSON fixture; the gate separately validates a live
+canonical Zig report. This is not live dispatch, real credential handling,
+OS isolation, service-restart persistence, or external exactly-once evidence.
+
 These are deterministic conformance and named-host recovery fixtures, not
 throughput, wall-clock latency, physical-memory, energy, or soak results.
 
@@ -474,7 +484,7 @@ Small independent follow-up slices include:
   generator/shrinker check while preserving every prior case root;
 - add one retained W3 plan, phase/lineage mutation, or independent decoder
   while preserving every existing V1 root;
-- add one provider, stateful, streaming, credential-isolated live-tool, or
+- add one provider, stateful, streaming, OS-isolated live-tool, or
   non-media W4 profile without
   weakening authoritative replay or receipt ownership;
 - build a read-only scenario/result inspector that exposes no authority;
@@ -706,8 +716,14 @@ body-sync/footer-sync, advisory locking and namespace/identity fences,
 snapshot-bound incomplete-tail repair, mandatory close/reopen reacquisition,
 independent deterministic fault matrices, and 49 host process-death fixtures.
 
-**Next slice:** add a credential-isolated fake dispatcher and authoritative
-status adapter without changing the portable record or durable-store proofs.
+**Completed fourth slice:** W4b-d adds the credential-free pointer-free adapter
+contract, durable-ordering driver, and bounded same-process fake dispatcher.
+Its synthetic credential remains separated inside the opaque callback context;
+authoritative generation-fenced status does not prove credential isolation.
+
+**Next slice:** add one capability-scoped live dispatch/status adapter and an
+OS-isolated credential boundary without changing the portable record,
+durable-store, or same-process conformance proofs.
 
 ### Production weight pager
 

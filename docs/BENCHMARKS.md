@@ -33,9 +33,10 @@ thermal observations distinct.
 | `tools/zig-with-ephemeral-cache.sh build workload-scenario-corpus-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_workload_scenario_corpus` | Four retained seeds × eight generated deterministic open-loop classes, coordinate-addressed SHA-256 decisions, unchanged W0/W1 contracts and reference goldens, independent scenario/evidence verification, zero-orphan close, and one synthetic exact-signature local-minimum shrink fixture |
 | `tools/zig-with-ephemeral-cache.sh build workload-closed-loop-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_workload_closed_loop` | Separately versioned finite-source deterministic closed-loop plan/result wires, exact four-phase ordering, terminal-driven FIFO next-step successors, lineage and target bounds, direct cross-language replay, mutation rejection, preserved W0/W1/W2 goldens, and final zero ownership |
 | `tools/zig-with-ephemeral-cache.sh build typed-workload-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_typed_workload_conformance` | Separate W4a profile/item/plan contract, generic scheduler lifecycle callbacks, retained exact-integer vision/audio-window/temporal-video execution under scheduler-owned receipts, independently replayed logical roots, native concrete-evidence mutation gates, semantic-substitution rejection, and final zero model/cache ownership |
-| `tools/zig-with-ephemeral-cache.sh build typed-tool-workload-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_typed_tool_conformance` | First W4b process-local tool transaction: separate proposal/policy authority, retained fixed-storage integrity, execute/reuse/deny/conflict semantics, scheduler-before-mutation precommit plus exact-event publish, independent replay, cancellation/timeout/rejection absence, and final zero authority |
+| `tools/zig-with-ephemeral-cache.sh build typed-tool-workload-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_typed_tool_conformance` | W4b-a process-local tool transaction: separate proposal/policy authority, retained fixed-storage integrity, execute/reuse/deny/conflict semantics, scheduler-before-mutation precommit plus exact-event publish, independent replay, cancellation/timeout/rejection absence, and final zero authority |
 | `tools/zig-with-ephemeral-cache.sh build action-outbox-record-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_action_outbox_conformance` | W4b-b portable ActionOutbox protocol: canonical body/footer records, stable remote-request identity, uncertainty-preserving restart, a reconciliation record required before safe retry, separately authorized compensation, all 7,521 retained cuts from the complete header through the journal, and independent byte-for-byte replay; no authenticated provider truth, filesystem durability, or live external effect |
 | `tools/zig-with-ephemeral-cache.sh build action-outbox-recovery-test -Dmetal=false -Doptimize=ReleaseSafe -j2` | W4b-c descriptor-relative POSIX store: clean committed `320 + 752n` prefixes, semantic preflight, exclusive advisory lock and namespace/identity fences, ordered body/footer sync, exact snapshot/lease/repair roots, explicit repair/reacquisition, Zig/Python matrices covering 40 append phases + 754 section-prefix cases + 751 repair tails + 8 repair faults, and 49 host process deaths; no power-loss, live-dispatch, provider-truth, external exactly-once, Windows-durability, or performance claim |
+| `tools/zig-with-ephemeral-cache.sh build action-outbox-dispatch-test -Dmetal=false -Doptimize=ReleaseSafe -j2` | W4b-d pointer-free adapter contract, trusted StoreV1 driver, and bounded same-process fake authority: one protected future reconciliation slot per existing uncertain action plus three additional dispatch slots, status admitted only when free slots cover every uncertain action, durable intent before dispatch, atomic `not_applied_fenced(G)`, stale `<= G` rejection before and after terminal completion, exact `G + 1` retry with stable request and a new dispatch root, pending/unknown no-retry, terminal duplicate application count one, deterministic same-process faults at four terminal-transition plus four fenced-transition append phases followed by fresh reopen/repair/reconciliation, integrated Zig coverage, 20 independent Python tests, and a separate live canonical Zig-to-Python reference validation |
 | `zig build lane-publication-demo -Dmetal=false` | One-token prepare/commit/abort with KV, RNG, sampler, output, schedule, and resource roots |
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
 | `tools/zig-with-ephemeral-cache.sh build test -Doptimize=ReleaseSafe -Dmetal=false -j2` | Full retained suite, including receipt-funded prepared-text activation at sequence `N`, one uninterrupted/restored synthetic-model transition comparison, and target teardown to zero |
@@ -101,9 +102,32 @@ spawns and kills 49 workers—3 during initialization, 40 during append, and 6
 during repair—then requires fresh replay and convergence. Neither class is a
 latency benchmark or a storage-device power-cut test.
 
+The W4b-d dispatch gate is a third, narrower evidence class. Its same-process
+fake authority holds an opaque synthetic credential and performs no network,
+provider, or tool effect. Pointer-free portable values exclude credential
+material. Only the driver entry points establish durable ordering: low-level
+contract callbacks validate composition but cannot prove that an intent was
+synced first. Dispatch protects one future slot per existing uncertain action
+and requires three additional records; status runs only when free slots cover
+all uncertain actions. Only an atomic `not_applied_fenced` result permits a
+next-generation retry. The gate runs 20 Python tests that independently rebuild
+the model, then separately invokes the Python CLI to compare a live canonical
+Zig report; no JSON fixture is retained. Integrated Zig coverage injects
+deterministic same-process faults at four terminal-transition and four
+fenced-transition append phases, then freshly reopens, repairs when required,
+and reconciles.
+
+This gate uses no real credential and proves no OS sandbox or credential
+security, cryptographic origin, fake-service restart persistence, new
+process-death behavior, native platform behavior, performance, power behavior,
+or external exactly-once delivery. The W4b-c 49-death campaign remains the
+separate process-death evidence.
+
 All commands should normally use `-Doptimize=ReleaseSafe` when validating
-contracts. They are credential-free. Most are model-free; the vision adapter
-test runs only a deterministic exact-integer reference fixture.
+contracts. None requires a real credential. Portable evidence is
+credential-free; W4b-d injects a synthetic value only into the opaque context
+of its same-process fake authority. Most commands are model-free; the vision
+adapter test runs only a deterministic exact-integer reference fixture.
 
 The typed model-family proof records canonical artifact/plan/result roots,
 explicit support decisions, exact integer fixture output, provisional candidate

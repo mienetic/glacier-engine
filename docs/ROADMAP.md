@@ -30,14 +30,14 @@ evidence. The plane and model-family sequence is specified in the
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, two-process resume, and a three-generation prepared-text source-live/source-exited/terminal authority chain | Production model/tokenizer state, generation-one source recovery, acknowledged target progress, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes; R0 registry complete and R1a/R1b/R1c/R1d/R1e/R1f/R1g/R1h-a/R1h-b plus the durable handoff slice integrated experimentally | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, an exact-identity serial greedy prepared-text session with plan-derived atomic start, Common Model Contract request-profile binding, total-versus-request claim projection for shared read-only artifact residency, fixed-length terminal results, canonical non-terminal state, same-process rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, and a five-object canonical restart archive with exact source exit, exclusive POSIX lease, one-shot target activation, fresh-process resume, generation-three terminal selection, and terminal-semantic oracle comparison; plus admission, scheduling, continuation, provider, media, package, C verifier, and retained-reference inspector surfaces | Recover source death before generation-two publication; add an idempotent durable result sink and acknowledged progress generation for target-crash replay; complete request-shape accounting, raw-text tokenizer identity, variable-length results, non-blocking startup, stable APIs, production fixtures, native multi-OS validation, GPU/device continuation, physical resource integration, and distribution |
-| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, validated bounded lossless delivery profiles for retained image/audio/video shapes, a typed pure-tool transaction fixture, and a durable POSIX external-action handoff fixture; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, tool-authorization, ActionOutbox, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, credential-isolated dispatch/status adapters, production generative-media adapters and broader formats, additional replay profiles, agents/retrieval, and specialized families |
+| Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, validated bounded lossless delivery profiles for retained image/audio/video shapes, a typed pure-tool transaction fixture, a durable POSIX external-action handoff fixture, and a bounded same-process fake dispatch/status authority; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, tool-authorization, ActionOutbox, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, live provider-backed and OS-isolated dispatch/status adapters, production generative-media adapters and broader formats, additional replay profiles, agents/retrieval, and specialized families |
 | Multimodal execution | Model-free runtime, scheduler-coupled final-quantum transactions, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, deterministic source-model/materializer replay, and vision/audio/video fixtures integrated; bounded canonical PNG/WAVE/APNG profiles and their additive format sidecar integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, a canonical typed-admission construction path, transition and format-evidence sidecars, strict lossless emit-and-accept modules, real two-generation PNG/WAVE/APNG registry-transition-format fixtures, an independent composed Python oracle, and optional format-aware read-only inspection without changing earlier V1 wires | Production encoder/container adapters and broader profiles, additional model/materializer profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, and physical playback/display and quality evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated; outer inspection prototype | Crash-recoverable journal, compact evidence join, and a deterministic read-only inspector for outer framing/checksum and self-asserted fields | Optional caller-supplied nested-composition inspection, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, full build and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Named core/CPU/durable/device/host-tool build profiles; native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; mobile lifecycle gates; and a reduced edge profile |
 | Benchmark evidence | Prototype | Paired harnesses, machine envelope, independent verification | More complete CPU/energy telemetry and reproducible machines |
-| Runtime Workload Lab | W0–W4a, W4b-a process-local tools, W4b-b ActionOutbox record recovery, and W4b-c durable POSIX storage integrated | Portable open-loop, generated-corpus, scheduler-coupled media, finite-source closed-loop, mixed typed-perception, process-local typed tools, and external-action handoff contracts retain overload, fairness, timeout, cancellation, exact receipt/effect reuse, uncertainty, safe retry, typed publication, replay, deterministic storage-fault matrices, and real host process-death recovery without treating logical steps as native timing | Provider, stateful, streaming, batched, preemptible, device-backed, and credential-isolated dispatch/status W4 profiles; native CPU/GPU reports and physical observers; bounded soak/disruption; and multi-OS replication |
+| Runtime Workload Lab | W0–W4a, W4b-a process-local tools, W4b-b ActionOutbox record recovery, W4b-c durable POSIX storage, and the bounded W4b-d same-process dispatch/status slice integrated | Portable open-loop, generated-corpus, scheduler-coupled media, finite-source closed-loop, mixed typed-perception, process-local typed tools, and external-action handoff contracts retain overload, fairness, timeout, cancellation, exact receipt/effect reuse, uncertainty, safe retry, typed publication, replay, deterministic storage-fault matrices, and real host process-death recovery; W4b-d additionally enforces durable intent before callback and generation-fenced retry in fixed storage without treating logical steps as native timing | Provider, stateful, streaming, batched, preemptible, device-backed, live provider-backed, and OS-isolated dispatch/status W4 profiles; native CPU/GPU reports and physical observers; bounded soak/disruption; and multi-OS replication |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
 ## P0 — Open-source usability
@@ -297,7 +297,7 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   concrete evidence roots, independent Python replay, semantic-substitution
   rejection, publication only for completion, and final zero model/cache
   ownership without changing W0–W3.
-- [x] Add the first W4b typed tool transaction with separate proposal and
+- [x] Add the W4b-a typed tool transaction with separate proposal and
   policy authority, fixed-storage idempotency and integrity fencing, a
   scheduler-before-mutation precommit with retained-lock process-local effect
   delivery on the exact service event, independent replay, and zero-authority
@@ -315,9 +315,20 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   sync, snapshot/lease/repair roots, explicit tail repair, mandatory fresh
   reacquisition, 40 append-phase + 754 section-prefix + 751 repair-tail + 8
   repair-fault Zig/Python cases, and 49 real host process deaths.
+- [x] Add the bounded W4b-d same-process dispatch/status slice without changing
+  the W4b-b/c record or store ABI: pointer-free credential-free request and
+  evidence values, exact descriptor/attempt composition, durable intent before
+  callback, a multi-action capacity guard that protects one future slot per
+  uncertain action, fixed-storage fake authority, atomic generation fencing,
+  delayed dispatch rejection before and after terminal completion, retry only at
+  `G + 1`, deterministic same-process faults across four terminal-transition
+  plus four fenced-transition append phases with fresh reopen/reconciliation,
+  and an independent standard-library Python model.
+  The gate also compares a live canonical Zig report through the Python model;
+  it adds no retained JSON fixture or new process-death matrix.
 - [ ] Extend W4 through separately retained provider, stateful, streaming,
-  batched, preemptible, device-backed, and credential-isolated dispatch/status
-  profiles.
+  batched, preemptible, device-backed, live provider-backed, and OS-isolated
+  dispatch/status profiles.
 - [ ] Retain native per-OS mixed-family load and bounded soak campaigns with
   CPU/GPU identity and placement, host/device timing, memory residency, power,
   thermal, backend, fault-schedule, memory-growth, recovery, and zero-orphan
@@ -335,12 +346,13 @@ and logical-only claim boundary.
 See [Typed Workload Conformance](TYPED_WORKLOAD_CONFORMANCE.md) for the W4a
 plan, generic lifecycle driver, retained mixed-perception campaign, evidence
 roots, independent replay, and logical-only claim boundary.
-See [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md) for the first W4b
+See [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md) for the W4b-a
 proposal/policy/idempotency/effect transaction and its external-effect
 nonclaims.
-See [ActionOutbox Protocol](ACTION_OUTBOX.md) for W4b-c stable request,
+See [ActionOutbox Protocol](ACTION_OUTBOX.md) for W4b-b/c stable request,
 uncertainty, reconciliation, compensation, durable POSIX publication, and
-explicit prefix repair.
+explicit prefix repair plus the bounded W4b-d same-process adapter boundary,
+generation fence, and retry rules.
 See [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md) for the W0–W8 workload,
 native-observation, resilience, and platform-replication sequence.
 See [Platform Portability](PLATFORM_PORTABILITY.md) for the evidence matrix,
@@ -787,7 +799,7 @@ ideas unless a different status is stated.
 | --- | --- | --- |
 | Semantic Model Capsule | Idea | Stable operator/tokenizer/adapter meaning independent of source tensor names |
 | Capability Grant | Prototype (resolver scope) | Least-authority extensions for planners, tokenizers, stores, tools, and transports |
-| ToolTxn and ActionOutbox | Prototype (process-local transaction plus portable outbox record/recovery and descriptor-relative POSIX durable store; live dispatch gated) | Recoverable AI tool execution with stable idempotency and explicit ambiguous outcomes |
+| ToolTxn and ActionOutbox | Prototype (process-local transaction, portable outbox record/recovery, descriptor-relative POSIX durable store, and bounded same-process fake dispatch/status authority; live external dispatch gated) | Recoverable AI tool execution with stable idempotency and explicit ambiguous outcomes |
 | ModelTxn | Idea | Atomic model/adapter hot swap without split model/KV/output state |
 | Object Fabric | Prototype (durable payload bytes and logical ownership reacquisition; in-memory object lifecycle) | Tenant-safe content-addressed model, plan, KV, continuation, media, and evidence objects |
 | Media Capsule | Idea (gated) | Typed image, audio, and video identity with explicit decode/preprocess meaning |
@@ -858,8 +870,20 @@ Current slices:
    semantic preflight, ordered body/footer sync, exact snapshot/lease/repair
    roots, explicit repair/reacquisition, independent deterministic matrices,
    and a 49-process-death host campaign;
-4. next: credential-isolated fake dispatch and authoritative status adapter;
-5. terminal output publication that cites the durable action receipt.
+4. integrated credential-free pointer-free adapter evidence, durable-intent
+   ordering driver, and bounded fixed-storage same-process fake authority:
+   only an atomic `not_applied_fenced` result for generation `G` permits the
+   existing safe-retry transition, delayed dispatch through `G` rejects, and
+   the next attempt is exactly `G + 1` with the stable request unchanged;
+5. next: live provider/tool adapters with real credential handling, service
+   restart persistence, and an optional OS-isolated transport;
+6. terminal output publication that cites the durable action receipt.
+
+The current fake authority performs no network, provider, or tool effect. Its
+opaque context keeps credentials out of portable evidence, but does not provide
+an OS sandbox, hostile-process security proof, cryptographic origin, or
+service-restart persistence. W4b-d adds no new process-death, platform,
+performance, or external exactly-once evidence.
 
 Promotion gate: with an adapter that enforces the stable idempotency key and
 authoritative status lookup, process termination at every phase never grants an

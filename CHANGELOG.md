@@ -25,6 +25,30 @@ before the first stable release.
 
 ### Added
 
+- Added the W4b-d generation-fenced ActionOutbox adapter slice without changing
+  the W4b-b/c wire or store ABI. Pointer-free request/evidence values compose
+  through a driver that commits intent before callback, protects one future
+  reconciliation slot per uncertain action, and refuses status authority when
+  the bounded journal cannot retain every outstanding reconciliation. A
+  fixed-storage same-process fake serializes dispatch/status, atomically fences
+  generation `G`, rejects delayed `<= G` dispatch before and after terminal
+  completion, admits only exact `G + 1`, and applies terminal duplicates once.
+  Deterministic fresh-reopen tests cover four terminal-transition plus four
+  fenced-transition append phases; 20 independent Python tests and a separate
+  live Zig-to-Python canonical-report check cover the portable semantics. This
+  adds no live provider/tool effect, real credential, OS isolation,
+  service-restart persistence, process-death, power-loss, native-platform,
+  performance, or external exactly-once claim.
+- Added the W4b-c descriptor-relative POSIX durable ActionOutbox store. It
+  retains clean committed `320 + 752n` prefixes under exclusive advisory lock,
+  no-follow/private/one-link and descriptor-entry identity fences, semantic
+  preflight, ordered body/footer synchronization, snapshot-bound repair, and
+  mandatory fresh reacquisition. Deterministic Zig/Python matrices cover 40
+  append phases, 754 section prefixes, 751 incomplete tails, and 8 repair
+  faults; a separate host campaign covers 49 real `SIGKILL` deaths across
+  initialization, append, and repair. This is named POSIX host evidence, not a
+  device power-loss, Windows durability, live-dispatch, provider-truth,
+  performance, or external exactly-once claim.
 - Added the W4b-b portable ActionOutbox record and recovery contract. A
   pointer-free, fixed-storage journal binds an allowed tool proposal to a
   payload-locator digest and stable remote-request digest. A committed intent
@@ -37,7 +61,7 @@ before the first stable release.
   responsible for authenticating external evidence. This slice is a portable
   protocol and does not claim `fsync` durability, provider truth, or external
   exactly-once effects.
-- Added the first W4b typed tool transaction profile. New pointer-free tool
+- Added the W4b-a typed tool transaction profile. New pointer-free tool
   records separate descriptor, bounded arguments, agent proposal, local policy,
   authorization, effect, and scheduler-bound delivery. A fixed-storage
   process-local `bounded_add` harness commits only through a LaneWeave

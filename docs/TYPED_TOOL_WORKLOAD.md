@@ -1,6 +1,6 @@
 # Typed Tool Workload
 
-The typed tool workload is the first W4b Runtime Workload Lab slice. It joins
+The typed tool workload is the W4b-a Runtime Workload Lab slice. It joins
 one bounded, credential-free tool transaction to the existing typed-workload
 plan, LaneWeave scheduler, and ResourceBank receipt lifecycle.
 
@@ -163,12 +163,15 @@ requires byte-for-byte agreement with the retained fixture and native runner.
 
 ## Next contributor slices
 
-Useful follow-ups remain independently reviewable:
+W4b-b now supplies the portable [ActionOutbox Protocol](ACTION_OUTBOX.md),
+W4b-c its durable POSIX store and process-death campaign, and W4b-d its bounded
+same-process fenced fake dispatcher/status authority. Useful follow-ups remain
+independently reviewable:
 
-- connect the portable [ActionOutbox Protocol](ACTION_OUTBOX.md) to a
-  descriptor-relative locked store with ordered body/footer sync;
-- retain process-death and explicit incomplete-tail repair fixtures;
-- add a credential-isolated fake dispatcher and authoritative status adapter;
+- add one capability-scoped live dispatch/status adapter atop the completed
+  portable record, durable-store, and ordering-driver boundaries;
+- retain authenticated adapter-specific status and fence evidence without
+  treating transport absence as provider truth;
 - add capability-scoped process, network, or filesystem adapters one at a time;
 - add bounded output-size and wall-time policies outside the logical scheduler;
 - connect an agent-policy result to a tool proposal without merging proposal

@@ -15,13 +15,13 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
-| Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b/W4b-c | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, uncertain external-action handoff, and durable storage faults without presenting logical steps as native performance |
+| Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b/W4b-c/W4b-d | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, uncertain external-action handoff, generation-fenced fake reconciliation, and durable storage faults without presenting logical steps as native performance |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
 | Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay`, `GeneratedMediaCheckpoint`, `GeneratedMediaPayloadArchive`, `GeneratedMediaOutputRegistry`, `GeneratedMediaProducerAdmission`, producer-transition replay/evidence | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, validate typed generated outputs and exact raw bytes, replay retained deterministic producer transitions, and publish only through explicit family and atomic visibility boundaries |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
-| Agent and tool action | `ToolActionContract`, fixed-storage tool harness, ActionOutbox record/recovery and POSIX file store | Keep model proposals separate from local authorization, publish bounded process-local effects atomically, durably retain external dispatch uncertainty, and require authenticated acknowledgement or reconciliation before a terminal decision or safe retry |
+| Agent and tool action | `ToolActionContract`, fixed-storage tool harness, ActionOutbox record/recovery, POSIX file store, pointer-free adapter contract, dispatch driver, bounded fake authority | Keep model proposals separate from local authorization, publish bounded process-local effects atomically, durably retain external dispatch uncertainty, and allow retry only after status atomically fences the attempted generation |
 | Durability | settlement/cost wires, cost journal, ActionOutbox snapshot/lease/repair roots | Commit replayable cost and external-action evidence across process failure without granting external-effect authority |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
 
@@ -788,6 +788,63 @@ storage-ordering and process-death claims only: the adapter has no credentials,
 does not authenticate provider status, does not perform a live dispatch, does
 not provide external exactly-once delivery, and does not emulate device power
 loss. Windows durable storage remains a separate adapter.
+
+W4b-d leaves that record and store format unchanged and adds a pointer-free
+adapter contract, a trusted driver, and a bounded fixed-storage fake authority:
+
+```text
+ready state
+    │ reserve 3 records
+    ▼
+durable dispatch_intent(G) ──> adapter callback
+                                   │
+                 terminal evidence│pending/error
+                                   ▼
+                       terminal or uncertain
+                                   │ reserve 1 record
+                                   ▼
+                   authoritative status callback
+                  ┌──────────────┴──────────────┐
+                  │                             │
+       pending / unknown              not_applied_fenced(G)
+          stay uncertain              durable ready transition
+                                                │
+                                                ▼
+                          retry G+1, stable remote request,
+                              new dispatch request root
+```
+
+Dispatch admission protects one future reconciliation slot for every existing
+uncertain action and requires three additional slots for the new intent,
+immediate observation, and its possible later reconciliation. Status admission
+requires free slots to cover every uncertain action before a callback may
+install a remote fence. Resolving one action consumes one slot and removes one
+obligation, so driver-only admission cannot overcommit a bounded journal. The
+driver durably appends the exact intent before invoking adapter code. A fence installed at
+generation `G` rejects every delayed dispatch through `G`, while the exact
+`G + 1` retry retains the stable remote request identity and derives a new
+dispatch root. Pending and unknown status do not create retry authority.
+Terminal duplicate dispatches replay the same evidence and leave the fake
+application count at one.
+
+The fake authority serializes callbacks under a same-process mutex and keeps a
+synthetic credential only in its opaque context. Portable descriptors,
+requests, evidence, and transitions contain no pointers or credential
+material. This is an API-boundary fixture, not an OS sandbox or credential
+security proof. The low-level contract constructors and callbacks validate
+integrity and composition but do not prove filesystem durability; the ordering
+claim applies only to the driver entry points.
+
+Integrated Zig tests inject deterministic same-process faults at four
+terminal-transition and four fenced-transition append phases, then freshly
+reopen, repair when required, and reconcile status. Twenty independent Python
+tests check the portable contract and fake generation-fence semantics; a
+separate Python CLI invocation compares a live canonical Zig reference report
+byte-for-byte. No JSON fixture is retained. W4b-d
+performs no network, provider, or tool effect and adds no real credential,
+cryptographic-origin, fake-service restart-persistence, process-death, native
+platform, performance, power, or external-exactly-once claim. The separate
+W4b-c 49-death store campaign remains unchanged.
 
 ## Provider execution flow
 

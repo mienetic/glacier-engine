@@ -113,7 +113,7 @@ typed-perception test root and canonical report runner; no foreign binary was
 executed. It confirms portability of the new source slice, not native runtime
 support or physical CPU/GPU behavior.
 
-On 2026-07-26, the additive W4b `typed-tool-workload-compile` target likewise
+On 2026-07-26, the additive W4b-a `typed-tool-workload-compile` target likewise
 passed in `ReleaseSafe` for `x86_64-linux-musl`, `aarch64-linux-musl`,
 `x86_64-windows-gnu`, and `x86_64-freebsd`. That target compiles the
 pointer-free tool records, fixed-storage transactional harness, typed-tool
@@ -135,6 +135,26 @@ adapter and return `UnsupportedPlatform`; this is not native filesystem
 evidence. On the macOS development host, the separate recovery gate exercises
 3 initialization, 40 append, and 6 repair `SIGKILL` boundaries. No Windows
 durable-file implementation or native Windows recovery campaign exists.
+
+On 2026-07-26, the W4b-d `action-outbox-dispatch-test` passed on the macOS
+development host in `ReleaseSafe`. It composes pointer-free portable adapter
+values with the POSIX `StoreV1` driver and a bounded same-process fake authority.
+The fake keeps an opaque synthetic credential, performs no external I/O, and
+uses deterministic append faults rather than a new process-death campaign.
+This focused result adds no native Linux, Windows, or FreeBSD execution claim,
+no real-credential or OS-sandbox/security proof, no cryptographic-origin or
+fake-service-restart-persistence proof, and no CPU, GPU, performance, power,
+network/provider/tool-effect, or external-exactly-once evidence. The W4b-c
+49-death campaign remains the applicable ActionOutbox recovery evidence in the
+matrix above.
+
+The additive W4b-d `action-outbox-dispatch-compile` gate also passed in
+`ReleaseSafe` for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD
+x86_64 after the canonical reference-report executable was added. Those
+foreign binaries were compiled, not run. This establishes source and build
+portability only; it exercises no native filesystem recovery, mutex
+interleaving, credential backend, sandbox, service process, or external I/O on
+those targets.
 
 ## Existing portability seams and blockers
 

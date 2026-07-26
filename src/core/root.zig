@@ -40,6 +40,14 @@ pub const tool_action_outbox_file =
     @import("tool_action_outbox_file.zig");
 pub const tool_action_outbox_store_conformance =
     @import("tool_action_outbox_store_conformance.zig");
+pub const tool_action_outbox_adapter_contract =
+    @import("tool_action_outbox_adapter_contract.zig");
+pub const tool_action_outbox_dispatch_driver =
+    @import("tool_action_outbox_dispatch_driver.zig");
+pub const tool_action_outbox_fake_adapter =
+    @import("tool_action_outbox_fake_adapter.zig");
+pub const tool_action_outbox_dispatch_conformance =
+    @import("tool_action_outbox_dispatch_conformance.zig");
 pub const scheduled_media_pressure =
     @import("scheduled_media_pressure.zig");
 pub const workload_scenario_corpus =
@@ -176,6 +184,14 @@ pub const ToolActionOutboxConformance =
 pub const ToolActionOutboxFile = tool_action_outbox_file;
 pub const ToolActionOutboxStoreConformance =
     tool_action_outbox_store_conformance;
+pub const ToolActionOutboxAdapterContract =
+    tool_action_outbox_adapter_contract;
+pub const ToolActionOutboxDispatchDriver =
+    tool_action_outbox_dispatch_driver;
+pub const ToolActionOutboxFakeAdapter =
+    tool_action_outbox_fake_adapter;
+pub const ToolActionOutboxDispatchConformance =
+    tool_action_outbox_dispatch_conformance;
 pub const ScheduledMediaPressure = scheduled_media_pressure;
 pub const WorkloadScenarioCorpus = workload_scenario_corpus;
 pub const ProviderTokenGateway = provider_token_gateway.Gateway;

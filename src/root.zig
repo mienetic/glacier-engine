@@ -29,6 +29,14 @@ pub const tool_action_outbox_file =
     core.tool_action_outbox_file;
 pub const tool_action_outbox_store_conformance =
     core.tool_action_outbox_store_conformance;
+pub const tool_action_outbox_adapter_contract =
+    core.tool_action_outbox_adapter_contract;
+pub const tool_action_outbox_dispatch_driver =
+    core.tool_action_outbox_dispatch_driver;
+pub const tool_action_outbox_fake_adapter =
+    core.tool_action_outbox_fake_adapter;
+pub const tool_action_outbox_dispatch_conformance =
+    core.tool_action_outbox_dispatch_conformance;
 pub const scheduled_media_pressure =
     core.scheduled_media_pressure;
 pub const workload_scenario_corpus =
@@ -86,6 +94,14 @@ pub const ToolActionOutboxFile =
     core.ToolActionOutboxFile;
 pub const ToolActionOutboxStoreConformance =
     core.ToolActionOutboxStoreConformance;
+pub const ToolActionOutboxAdapterContract =
+    core.ToolActionOutboxAdapterContract;
+pub const ToolActionOutboxDispatchDriver =
+    core.ToolActionOutboxDispatchDriver;
+pub const ToolActionOutboxFakeAdapter =
+    core.ToolActionOutboxFakeAdapter;
+pub const ToolActionOutboxDispatchConformance =
+    core.ToolActionOutboxDispatchConformance;
 pub const ScheduledMediaPressure = core.ScheduledMediaPressure;
 pub const WorkloadScenarioCorpus = core.WorkloadScenarioCorpus;
 pub const ProviderTokenGateway = core.ProviderTokenGateway;

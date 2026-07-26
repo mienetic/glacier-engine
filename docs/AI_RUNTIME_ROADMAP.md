@@ -171,7 +171,7 @@ independent replay, and final zero ownership. W4a now adds a separate typed
 plan and family-neutral lifecycle driver that composes the retained vision,
 audio-window, and temporal-video adapters under the exact scheduler receipt,
 with completion-only publication, authoritative replay, and final zero
-model/cache ownership. The first W4b slice now adds a process-local typed tool
+model/cache ownership. W4b-a now adds a process-local typed tool
 transaction with separate proposal/policy authority, exact execute/reuse/deny/
 conflict evidence, and atomic delivery on the scheduler service event.
 W4b-b adds a separate portable ActionOutbox record/recovery campaign with
@@ -181,9 +181,17 @@ a descriptor-relative POSIX durable store over the unchanged canonical stream:
 semantic preflight, advisory locking and namespace/identity fences, ordered
 body/footer sync, exact snapshot/lease/repair roots, explicit repair and fresh
 reacquisition, independent write/repair matrices, and 49 real host process
-deaths. Provider-truth authentication, credential-isolated dispatch/status,
-stateful and streaming profiles, family-aware batch, preemption, and
-multi-device profiles remain planned.
+deaths. W4b-d adds a credential-free pointer-free adapter contract, a driver
+that durably commits intent before invoking a callback, protects one future
+reconciliation slot per uncertain action, and admits status only when free
+slots cover all uncertain actions, plus a bounded fixed-storage same-process
+fake dispatch/status authority. Only an atomic
+`not_applied_fenced` status for attempt `G` returns the action to `ready`;
+delayed dispatch through `G` rejects, while a retry uses exactly `G + 1`, the
+same stable request, and a new dispatch root. Live provider/tool effects, real
+credential handling, OS isolation, service-restart persistence, stateful and
+streaming profiles, family-aware batch, preemption, and multi-device profiles
+remain planned.
 
 Promotion gate: retained mixed-family pressure campaigns meet declared
 fairness, deadline, logical-resource, cancellation, and zero-orphan invariants;
@@ -438,7 +446,7 @@ The complete W0–W8 sequence and report contract are defined in the
 deliberately separate campaign classes; replicated execution is a higher
 evidence level applied to retained native campaigns:
 
-1. **Deterministic pressure — W0 through W4a plus the first W4b tool slice
+1. **Deterministic pressure — W0 through W4a plus the W4b-a tool slice
    implemented.** V1 replays one bounded
    model-free explicit arrival schedule to verify admission, weighted fairness,
    deadline completion, timeout, cancellation, overload rejection, exact
@@ -460,7 +468,7 @@ evidence level applied to retained native campaigns:
    adapters through canonical typed profiles and items. It binds admitted work
    to the scheduler-owned receipt, executes only at final service, publishes
    only completed typed results, independently replays the logical schedule,
-   and closes model/cache ownership to zero. A separate W4b report drives one
+   and closes model/cache ownership to zero. A separate W4b-a report drives one
    bounded process-local tool through proposal authorization, locked
    scheduler-before-mutation precommit, exact-once logical execution, duplicate
    receipt reuse, denial, conflict, cancellation, timeout, rejection,
@@ -474,7 +482,14 @@ evidence level applied to retained native campaigns:
    initialization, append, and repair. This proves the named POSIX host
    process-death fixture, not power-loss behavior, authenticated provider truth,
    live dispatch, external exactly-once delivery, or Windows durability.
-   Provider, stateful, streaming, credential-isolated external-tool dispatch,
+   The adjacent W4b-d code slice now provides a bounded same-process fake
+   dispatch/status authority: intent is durable before callback, and only an
+   atomic generation fence authorizes retry. An independent Python model
+   rebuilds its roots and fence/transition behavior and verifies a live
+   canonical Zig report, but there is no retained JSON fixture. The slice adds
+   no process-death, platform,
+   performance, or external exactly-once evidence. Provider, stateful,
+   streaming, live external-tool dispatch, OS-isolated credential handling,
    batching, preemption, device execution, and real backpressure remain
    planned.
 2. **Native workload** runs declared model-family mixes against a real CPU,
@@ -558,7 +573,7 @@ expand the base adapter's capabilities.
 | Video generation | temporal latent steps, frame/segment publication | Ordered two-frame raw manifest publication, cancellation-safe retry, one-segment backpressure, application display acknowledgement, distinct-process restart, shared generated-output checkpoint composition, multi-segment registry continuity with exact encoded payloads, host-verified retained source-model/renderer plus complete acknowledgement replay, a validated bounded two-frame gray8 APNG profile, and a real two-generation registry-transition-format chain with independent oracle coverage; production model/device paths gated | Add production adapters, broader profiles, and additional replay profiles | Production model quality, general external-container conformance, explicit display authority |
 | Audio/music generation | acoustic or token steps, waveform decode | Shared bounded exact-integer waveform-output transaction, multi-chunk registry continuity, and a retained deterministic producer-transition replay profile integrated; music models gated | Add a legal production artifact, additional replay profile, or production renderer/codec fixture | Timeline continuity, chunk lineage, rights/provenance policy, calibrated quality |
 | Multimodal fusion | cross-attention, joint embedding, interleaved generation | Idea; shared identities exist | Image+text or audio+text synthetic fusion fixture | Each modality retains source/state identity through one output transaction |
-| Tool-use and agent policy | choose action, arguments, observation, continue | Process-local typed transaction plus portable ActionOutbox record/recovery, ambiguity reconciliation, safe retry, compensation-child protocol, and descriptor-relative POSIX durable storage integrated; live adapters gated | Add a credential-isolated fake dispatcher and authoritative status adapter without changing the retained protocol or storage proofs | Separate action authorization, idempotency, result identity, cancellation, capability isolation, durable dispatch |
+| Tool-use and agent policy | choose action, arguments, observation, continue | Process-local typed transaction plus portable ActionOutbox record/recovery, ambiguity reconciliation, safe retry, compensation-child protocol, descriptor-relative POSIX durable storage, and a bounded same-process fake dispatch/status authority integrated; live adapters gated | Add a live provider/tool adapter with real credential handling, restart-persistent authoritative state, and an optional OS-isolated transport without changing the retained protocol or storage proofs | Separate action authorization, idempotency, result identity, cancellation, capability isolation, durable dispatch |
 | Retrieval and recommendation | embed, search, rerank, recommend | Idea | In-memory fixed corpus and exact top-k tie policy | Index/version identity, tenant filtering, deterministic tie/evidence policy |
 | Time-series and tabular | forecast, classify, anomaly score | Idea | Tiny typed table/window fixture | Schema/time identity, missing-value policy, exact output horizon |
 | Graph, geospatial, and scientific | message passing, field inference, simulation surrogate | Idea | Small bounded graph or grid fixture | Topology/coordinate/unit identity, resource bound, typed scientific output |
@@ -1173,8 +1188,9 @@ for profile, format-sidecar, inspector, portability, and nonclaim boundaries.
 
 ### R5 — Agents, retrieval, and specialized families
 
-- add action proposal separate from action authorization;
-- add idempotent fake-tool/result transactions;
+- [x] add action proposal separate from action authorization through W4b-a;
+- [x] add an idempotent bounded fake-tool/result transaction through W4b-a;
+- add capability-scoped live tool dispatch with OS-isolated credentials;
 - add retrieval/index identity and deterministic result publication;
 - publish templates for time-series, graph, geospatial, and scientific adapters;
 - validate routed experts and adapter composition.

@@ -1,7 +1,9 @@
 # ActionOutbox Record and Recovery Protocol
 
-Status: W4b-c portable record contract plus descriptor-relative POSIX durable
-store. This is not a live dispatcher or an external-truth adapter.
+Status: W4b-b portable record contract, W4b-c descriptor-relative POSIX
+durable store, plus the W4b-d portable adapter contract, ordering driver, and
+bounded fixed-storage same-process fake dispatch/status authority. This is not
+a live network, provider, or tool adapter.
 
 ## Purpose
 
@@ -130,6 +132,47 @@ truncation, synchronizes and verifies the committed prefix, then leaves the
 store in `repair_complete`. Append authority returns only after close, fresh
 exclusive reacquisition, and full replay.
 
+## Bounded same-process dispatch and status
+
+W4b-d adds a credential-free sidecar contract without changing the 320-byte
+header, 752-byte records, event kinds, replay rules, or `StoreV1` format.
+Its pointer-free values bind:
+
+- one public adapter descriptor and authority epoch to the descriptor root
+  already pinned by the outbox header;
+- one dispatch request to the exact committed intent, stable request,
+  idempotency key, attempt generation, payload identity, and dispatch root;
+- dispatch evidence to that request, authority revision, disposition, service
+  event, and terminal result when present;
+- one separate status request to the currently uncertain attempt; and
+- status evidence to the same adapter epoch and an authoritative disposition.
+
+The process-local adapter boundary is an opaque context plus dispatch and
+status callbacks. Credentials may exist only behind that boundary; they are
+not fields of the portable descriptor, request, evidence, transition, record,
+or recovery state. The public namespace and schema roots must not be derived
+from credentials. Evidence hashes commit to byte identity but do not
+cryptographically prove who produced a callback.
+
+The driver first durably appends the exact next-generation
+`dispatch_intent`. That successful append is the callback-invocation
+linearization point: no adapter code runs before it. A callback error, invalid
+evidence, or failure to append the resulting acknowledgement leaves the
+committed action recoverably `uncertain`; none grants retry authority.
+The lower-level contract constructors and callback wrappers validate hashes
+and composition only; they cannot prove a store commit or authoritative
+replayed state. The intent-before-callback and status-from-uncertain guarantees
+apply to the driver entry points, not to direct low-level callback invocation.
+
+The bounded fake authority retains stable-request state in caller-provided
+fixed storage. A status result of `not_applied_fenced` atomically fences the
+queried generation `G` before it can authorize the existing
+`reconciled_not_applied` transition. A delayed dispatch at generation `G` or
+earlier is then rejected. The next dispatch is exactly generation `G + 1`,
+retains the stable request and idempotency identity, and derives a new dispatch
+root. `pending`, `unknown`, plain absence, timeout, and transport or callback
+failure remain uncertain and cannot authorize another attempt.
+
 ## Record kinds
 
 | Kind | Required content |
@@ -155,9 +198,10 @@ reordered, or cross-action transitions are invalid.
 | `succeeded` | a committed acknowledgement or reconciliation record classifies success |
 | `failed` | a committed acknowledgement or reconciliation record classifies terminal failure |
 
-The intent record moves `ready` to `uncertain`. A future dispatcher must commit
-that record before external work; there is no `sent` phase to hide a
-termination window, and this slice has no dispatcher.
+The intent record moves `ready` to `uncertain`. The W4b-d driver commits that
+record before its same-process fake adapter callback; there is no `sent` phase
+to hide the ordering boundary. Live external dispatch remains outside this
+slice.
 
 Timeout, disconnect, partial response, process stop, or adapter crash remains `uncertain`. Terminal phases never reopen.
 
@@ -201,13 +245,23 @@ These are different evidence:
 - Both record an adapter classification and opaque nonzero evidence digest.
   The portable core cannot authenticate that digest or invent provider truth.
 
-A future adapter is responsible for authenticating response and status evidence
-before appending these record kinds. Positive acknowledgement may support
-`succeeded`; a permanent negative may support `failed`.
+The bounded fake authority classifies response and status evidence through a
+trusted same-process callback before the driver appends these record kinds.
+Positive acknowledgement may support `succeeded`; a permanent negative may
+support `failed`. A future live adapter must establish its own authenticated
+origin and authoritative service semantics.
 
 The state machine returns from `uncertain` to `ready` only for a committed
-`reconciled_not_applied` record. That structural rule does not prove the
+`reconciled_not_applied` record. In the W4b-d driver, only validated
+`not_applied_fenced` status evidence for the exact attempt can produce that
+record. The portable record rule and evidence hashes alone do not prove an
 external lookup was authoritative.
+Before dispatch, the driver protects one future reconciliation slot for every
+existing uncertain action and requires three additional slots for the new
+intent, immediate observation, and possible reconciliation. Status runs only
+when the remaining slots can cover every uncertain action. This prevents
+driver-only multi-action admission from overcommitting the bounded journal;
+direct store appends remain caller discipline.
 `reconciled_success` closes as `succeeded`; `reconciled_failure` closes as
 `failed`. Pending or unknown observations do not create a terminal or
 safe-retry record and therefore leave the committed action `uncertain`.
@@ -270,15 +324,29 @@ The record and durable-store gates must prove:
     independent Python model; and
 14. 49 real host process deaths—3 initialization, 40 append, and 6 repair
     deaths—reopen to the exact committed prefix and converge to the same final
-    semantic state.
+    semantic state;
+15. the W4b-d driver invokes no adapter callback until its exact dispatch
+    intent is durably committed;
+16. only `not_applied_fenced` status evidence for generation `G` maps to
+    `reconciled_not_applied`, while pending, unknown, and plain absence do not;
+17. the fake authority rejects delayed dispatch at generation `G` or earlier
+    after fencing, and retry advances exactly to `G + 1` with the same stable
+    request and a new dispatch root;
+18. portable adapter values contain neither pointers nor credential fields;
+    and
+19. an independent standard-library Python model rebuilds the adapter roots,
+    transition mapping, fence ordering, terminal replay, and credential
+    noninterference cases.
 
 ## Nonclaims
 
-W4b-c provides no live network dispatcher, credentials, sandbox, provider
-integration, or authenticated provider truth. It performs no external
-reconciliation or compensation and provides no external exactly-once delivery.
-The next adapter slice is a credential-isolated fake dispatcher and status
-adapter.
+W4b-d is a bounded fixed-storage, same-process fake dispatch/status authority.
+It performs no network, provider, or tool effect and uses no real credentials.
+Its opaque callback boundary is API separation, not an OS sandbox, process
+isolation, hostile-code security proof, or cryptographic proof of evidence
+origin. The fake service has no restart-persistent authority state. This slice
+adds no new process-death, multi-platform, performance, power-loss, or external
+exactly-once evidence. Live and provider-backed integration remains planned.
 
 The current durable adapter is POSIX-only; a Windows durable-file adapter is
 not implemented. Its locks are advisory and coordinate cooperating processes,
@@ -291,7 +359,7 @@ reported external effect occurred.
 
 ## Verification
 
-The ActionOutbox gates are:
+The retained W4b-b/c ActionOutbox gates are:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build action-outbox-record-test \
@@ -305,8 +373,19 @@ tools/zig-with-ephemeral-cache.sh build action-outbox-recovery-test \
 python3 -m unittest bench.tests.test_action_outbox_store_conformance
 ```
 
+The bounded same-process W4b-d gate is:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build action-outbox-dispatch-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
 The recovery command is correctness evidence and may take longer because it
 spawns and terminates 49 workers. See
 [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md),
 [Architecture](ARCHITECTURE.md), and [Roadmap](ROADMAP.md) for the surrounding
-boundaries and contributor order.
+boundaries and contributor order. W4b-d adds bounded contract, driver,
+fake-authority, durable append-fault integration, and independent Python model
+coverage, including a live canonical Zig-to-Python report comparison. It does
+not add a retained JSON fixture, process-death campaign, or
+platform/performance matrix.

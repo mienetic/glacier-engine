@@ -39,7 +39,7 @@ The repository's strongest checked-in evidence is deterministic conformance:
 - retained W0/W1 open-loop workload evidence, the W2 generated corpus, and
   separately versioned W3 finite-source closed-loop replay;
 - W4a mixed typed-perception lifecycle and publication conformance;
-- first W4b typed-tool authorization, transaction, replay, and cleanup
+- W4b-a typed-tool authorization, transaction, replay, and cleanup
   conformance;
 - portable ActionOutbox record recovery and deterministic durable-store
   conformance, kept separate from host process-death observations;

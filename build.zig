@@ -1601,6 +1601,101 @@ pub fn build(b: *std.Build) void {
         action_outbox_recovery_compile_step,
     );
 
+    // W4b-d composes the unchanged record/store layers with a bounded
+    // same-process fake authority. It proves intent-before-callback ordering,
+    // authoritative generation fencing, stale-dispatch rejection, exact
+    // terminal replay, and reopen convergence under deterministic append
+    // faults. This is not a live network or new process-death campaign.
+    const action_outbox_dispatch_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/tool_action_outbox_dispatch_conformance.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_action_outbox_dispatch_tests = b.addRunArtifact(
+        action_outbox_dispatch_tests,
+    );
+    const action_outbox_adapter_exe = b.addExecutable(.{
+        .name = "glacier-action-outbox-adapter",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/action_outbox_adapter.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    action_outbox_adapter_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    const run_action_outbox_dispatch_model =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_action_outbox_adapter_conformance",
+        });
+    run_action_outbox_dispatch_model.setCwd(b.path("."));
+    run_action_outbox_dispatch_model.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_action_outbox_dispatch_model.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    const run_action_outbox_adapter_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_action_outbox_adapter_oracle.setCwd(b.path("."));
+    run_action_outbox_adapter_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_action_outbox_adapter_oracle.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_action_outbox_adapter_oracle.addFileArg(
+        b.path("bench/action_outbox_adapter_conformance.py"),
+    );
+    run_action_outbox_adapter_oracle.addArg("--runner");
+    run_action_outbox_adapter_oracle.addArtifactArg(
+        action_outbox_adapter_exe,
+    );
+    const action_outbox_dispatch_test_step = b.step(
+        "action-outbox-dispatch-test",
+        "Run fenced ActionOutbox dispatch and status conformance",
+    );
+    action_outbox_dispatch_test_step.dependOn(
+        &run_action_outbox_dispatch_tests.step,
+    );
+    action_outbox_dispatch_test_step.dependOn(
+        &run_action_outbox_dispatch_model.step,
+    );
+    action_outbox_dispatch_test_step.dependOn(
+        &run_action_outbox_adapter_oracle.step,
+    );
+    const action_outbox_dispatch_compile_step = b.step(
+        "action-outbox-dispatch-compile",
+        "Compile fenced ActionOutbox dispatch conformance",
+    );
+    action_outbox_dispatch_compile_step.dependOn(
+        &action_outbox_dispatch_tests.step,
+    );
+    action_outbox_dispatch_compile_step.dependOn(
+        &action_outbox_adapter_exe.step,
+    );
+    test_step.dependOn(action_outbox_dispatch_test_step);
+    test_compile_step.dependOn(
+        action_outbox_dispatch_compile_step,
+    );
+
     // Model-free deterministic QoS conformance demo. Native tests execute it,
     // cross-target gates compile it, and it is never installed as a production
     // or benchmark binary.

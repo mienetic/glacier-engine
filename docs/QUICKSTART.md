@@ -163,7 +163,18 @@ platform commands, and nonclaims.
 
 ## 6. Run model-free architecture demos
 
-Each demo is deterministic, credential-free, and included in `zig build test`.
+Each demo is deterministic, requires no real credential, and is included in
+`zig build test`.
+The W4b-d dispatch gate uses an opaque synthetic credential only inside a
+bounded same-process fake authority; its pointer-free portable values remain
+credential-free. The driver durably appends intent before dispatch and permits
+retry only after atomic `not_applied_fenced` status. It performs no network,
+provider, or tool effect and adds no real-credential, OS-sandbox/security,
+cryptographic-origin, fake-service-restart-persistence, new-process-death,
+native-platform, performance, power, or external-exactly-once claim. The
+gate runs a 20-test Python suite that independently rebuilds the model and a
+separate Python CLI invocation that compares a live canonical Zig reference
+report. No JSON fixture is retained.
 
 ```sh
 # Exact admission and deterministic weighted scheduling
@@ -181,6 +192,12 @@ tools/zig-with-ephemeral-cache.sh build action-outbox-record-test \
 # (correctness evidence only; no live dispatch or device power-loss emulation)
 tools/zig-with-ephemeral-cache.sh build action-outbox-recovery-test \
   -Doptimize=ReleaseSafe -Dmetal=false -j2
+
+# Compose StoreV1 with fenced fake dispatch/status; this target includes
+# integrated Zig coverage, 20 independent Python tests, and a separate
+# live-report parity check
+tools/zig-with-ephemeral-cache.sh build action-outbox-dispatch-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
 
 # Bind a committed checkpoint without embedding its external object payloads
 zig build continuation-capsule-demo -Doptimize=ReleaseSafe -Dmetal=false
