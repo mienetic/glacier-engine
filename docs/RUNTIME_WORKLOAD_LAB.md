@@ -175,12 +175,26 @@ Results from different modes are not merged into one headline number.
     GPU/accelerator, memory-residency, power, thermal, frequency, utilization,
     and energy sources while preserving explicit unavailability, per-record
     sample-clock identities, and value-clock identities for present time
-    metrics. Logical CPU count must remain positive; signed physical
-    temperatures may not fall below absolute zero.
+    metrics. Two bounded implementation slices are now present: a
+    platform-neutral host record layer plus a Linux `/proc/meminfo` adapter for
+    the exact
+    `MemAvailable` field, with bounded read/provenance, strict parsing, checked
+    byte conversion, and injected tests for missing, denied, malformed,
+    duplicate, overflow, and oversized input; and a native macOS Metal
+    diagnostic-readiness adapter that runs one fixed 37x64 INT4 matrix-vector
+    dispatch, checks it against the CPU oracle, and requires device identity,
+    command-buffer timestamps, ownership closure, and no CPU fallback. The
+    Metal gate performs exactly one real GPU dispatch in total. Logical CPU
+    count must remain positive; signed physical temperatures may not fall below
+    absolute zero. W5b remains open for the unsupported physical metrics and
+    retained native campaign evidence.
   - [ ] **W5c — Native observer coverage.** Broaden retained native macOS
-    evidence and add Linux, Windows, and FreeBSD adapter evidence as each
-    platform becomes available. Cross-compilation remains source/build
-    evidence and does not complete this slice.
+    evidence by retaining an addressable Metal readiness result, run the
+    required Linux available-memory smoke on a native Linux host, and add
+    Windows and FreeBSD adapter evidence as each platform becomes available.
+    Cross-host parser tests, an unretained local native pass, and
+    cross-compilation remain narrower than retained campaign evidence and do
+    not complete this slice.
 - [ ] **W6 — Native workload reports.** Retain raw request observations and
   versioned throughput, latency, CPU, accelerator, memory, fairness, and
   outcome summaries.
@@ -237,12 +251,14 @@ swap activity, adjacent-state matching, in-run external CPU activity, post-run
 contamination checks, wall time, and peak RSS. W5a extracts the strict
 `pmset`, `vm_stat`, and `top` parser seam into the shared bounded host observer;
 the paired harness also delegates external-process CPU parsing while retaining
-its campaign policy. The W5a observer emits a fixed eleven-metric universe and
-labels malformed, permission-denied, and unimplemented observations
-separately, retaining a bounded readable JSON reason only when unavailable.
-It does not directly observe CPU temperature, effective frequency, core
-residency, package energy, GPU utilization, command timing, device residency,
-or accelerator energy.
+its campaign policy. The W5a host observer emits a fixed eleven-metric universe
+and labels malformed, permission-denied, and unimplemented observations
+separately, retaining a bounded readable JSON reason only when unavailable. It
+does not directly observe CPU temperature, effective frequency, core residency,
+package energy, GPU utilization, device residency, or accelerator energy. The
+separate Metal readiness adapter observes command-buffer start/end timestamps
+for its single fixed dispatch, but those timestamps remain diagnostic and are
+not a workload-latency result.
 
 ## GPU and accelerator observation
 
@@ -285,14 +301,33 @@ The current accelerator baseline is an optional macOS Metal path exposing INT4
 dequantization, FP16 matrix multiplication, and persistent INT4 matrix-vector
 execution. Retained CPU-oracle tests cover dequantization and the fused INT4
 matrix-vector path; an isolated smoke microbenchmark covers persistent-weight
-matrix-vector execution. This is not yet the family-neutral Workload Lab
-runner, a complete model-family backend, a device-telemetry plane, or native
-Linux/Windows accelerator support.
+matrix-vector execution. The new readiness adapter additionally binds the
+family-neutral W5 runner to one fixed synthetic 37x64 INT4 matrix-vector
+operation on a native Metal device. Its hard gate makes exactly one real GPU
+dispatch, requires a completed command buffer, checks output correctness and
+zero leaked ownership, rejects CPU fallback, and composes device/placement,
+observation, workload, run, dispatch, and output roots.
 
-W0 and W1 do not exercise this Metal path. A successful baseline run
-demonstrates only those retained kernels on that exact host; it does not
-promote a backend/device support cell. Platform and backend truth remains
-governed by
+The readiness report records Metal registry identity, pre/post
+`currentAllocatedSize`, and command-buffer GPU timestamps.
+`recommendedMaxWorkingSetSize` is capacity context only. Utilization,
+committed/resident bytes, queue depth, temperature, frequency, power, and energy
+remain explicit `unsupported` observations. The independent verifier checks
+composition and corruption of a self-asserted live capture; it does not
+authenticate the capture's origin.
+
+W0 and W1 do not exercise this Metal path. A successful readiness invocation is
+diagnostic evidence for only that exact host session; it is not a throughput,
+latency, performance, or broad device-support result. The repository does not
+yet retain an addressable native Metal result, so implementation evidence and
+retained native campaign evidence remain distinct. Run the gate with:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-metal-observation-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+Platform and backend truth remains governed by
 [Platform Portability](PLATFORM_PORTABILITY.md).
 
 ## Native report contract

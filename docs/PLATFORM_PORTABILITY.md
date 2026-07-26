@@ -39,9 +39,9 @@ surface.
 
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
-| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | Optional Metal path exists; promotion still requires per-device retained gates | Development host, not a broad platform certification |
-| Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
-| Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
+| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | A hard diagnostic-readiness gate runs one fixed 37x64 INT4 dispatch with CPU-oracle and command-buffer evidence; no addressable result or device support range is retained | Development host, not a broad platform certification |
+| Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is implemented; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
+| Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is architecture-neutral; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
 | FreeBSD / x86_64 | Full artifact, `test-compile`, and generated-media conformance cross-build gates pass in `ReleaseSafe` | Not established by cross-compilation | No retained native FreeBSD filesystem campaign | No retained FreeBSD accelerator backend | Cross-build candidate; not native-supported |
 | Android / AArch64 | Core source-compilation probe passed | No device or emulator execution evidence | No Android lifecycle/storage recovery campaign | No Android accelerator backend | Research target; not supported |
@@ -52,13 +52,35 @@ surface.
 W5a does not change a classification in this matrix. It adds one portable
 native-observation contract and runner plus a bounded macOS read-only host
 adapter. The focused gate includes a native macOS observer smoke on the
-development host. Portable records separate stable source identity from
-per-event provenance and retain a nonzero reason identity only when
-unavailable; present records carry none, and the macOS JSON adds a bounded
-readable reason only when unavailable. Direct CPU/device power,
-temperature, frequency, energy, utilization, residency, device timing, and any
-separate clock-calibration evidence remain unverified, and no other operating
-system has a retained native observer campaign yet.
+development host. The first follow-up adds a platform-neutral JSON seam and a
+strict bounded Linux `/proc/meminfo` `MemAvailable` adapter implementation.
+Its parser, availability mapping, and injected dispatcher tests run on any
+Python host, but Linux remains a cross-build candidate until the mandatory
+smoke is retained natively. Portable records separate stable source identity
+from per-event provenance and retain a nonzero reason identity only when
+unavailable; present records carry none, and host JSON adds a bounded readable
+reason only when unavailable.
+
+The native macOS Metal follow-up also does not certify a platform or device
+range. Its hard gate makes exactly one real GPU dispatch in total for a fixed
+synthetic 37x64 INT4 operation and requires CPU-oracle correctness, Metal
+registry identity, `currentAllocatedSize`, command-buffer GPU timestamps,
+ownership closure, no fallback, and composed roots. The duration is diagnostic,
+not a throughput, latency, or performance result.
+`recommendedMaxWorkingSetSize` is capacity context only; utilization,
+committed/resident bytes, queue depth, temperature, frequency, power, and energy
+remain unsupported. The verifier checks composition/corruption of self-asserted
+live output, not cryptographic origin. No native result is retained here, so a
+local pass and repository implementation evidence remain narrower than
+addressable native campaign evidence. W5b and non-macOS native observer
+coverage remain open.
+
+Run the native diagnostic gate on macOS with:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-metal-observation-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
 
 ### Probe record
 
@@ -189,7 +211,13 @@ Useful seams already exist:
   files, hard-termination fixture, and Metal source availability separately
   from native verification or support;
 - W5a keeps fixed observation records and policy evaluation in portable Zig
-  while read-only host probes and callback contexts remain outside core;
+  while read-only host probes and callback contexts remain outside core; the
+  post-W5a JSON dispatcher now gives Linux, Windows, and FreeBSD adapters a
+  platform-shaped context, and only Linux has the first bounded source
+  implementation;
+- the macOS-only Metal readiness adapter binds one real command buffer to the
+  portable W5 runner while keeping native device authority and timestamps
+  outside core; its hard gate is diagnostic and fail-closed;
 - `src/core/` contains canonical state, admission, scheduling, media, provider,
   and recovery logic that is largely independent of an accelerator;
 - Metal enablement is a build-time option and is rejected for non-macOS

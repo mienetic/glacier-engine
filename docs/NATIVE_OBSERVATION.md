@@ -4,6 +4,10 @@ Native observation is the boundary between a deterministic workload and claims
 about the machine that ran it. W5a delivers the first bounded version of that
 boundary: a portable observation contract, a family-neutral runner, a
 download-free reference workload, and a shared read-only macOS host observer.
+The first post-W5a platform slice adds a platform-neutral JSON record layer and
+a bounded Linux available-memory adapter without changing the portable Zig V1
+contract. A native macOS Metal readiness slice now binds the same runner to one
+fixed synthetic accelerator dispatch.
 
 W5a is an integrated conformance slice, not completion of W5. Direct CPU and
 accelerator power, temperature, frequency, energy, utilization, and residency
@@ -155,10 +159,13 @@ The gate covers portable contract and runner tests, the canonical reference
 report, independent verification, the macOS observer parser/capture tests, and
 the existing paired-harness parser regression tests.
 
-## macOS read-only observer
+## Host JSON observers
 
-`bench/native_observer.py` is a bounded host-side adapter. It always emits the
-same eleven-metric universe:
+`bench/native_observation_common.py` owns the fixed eleven-metric registry,
+record validation, bounded reason and provenance rules, stable source
+projection, and platform-shaped execution context. `bench/native_observer.py`
+remains the compatible dispatcher and macOS parser facade. Every adapter emits
+the same metric universe:
 
 - host monotonic time and logical CPU count;
 - total CPU busy, CPU idle, and CPU used outside the observed workload process
@@ -176,10 +183,27 @@ Malformed output is `missing`, a permission failure is `denied`, and a metric
 without an adapter is `unsupported`. Each unavailable JSON record also carries
 a bounded readable reason; a present record carries no reason.
 
-On another operating system this adapter does not invoke macOS commands. It can
-still directly report the runtime monotonic clock and logical CPU count; the
-remaining fixed metrics are explicit `unsupported` values until that platform
-has its own adapter.
+On Linux, `bench/native_observer_linux.py` reads only the fixed
+`/proc/meminfo` path and directly reports `MemAvailable` as
+`host_available_memory_bytes`. The read retains at most 64 KiB plus one
+overflow-detection byte. The parser requires strict ASCII, exactly one
+`MemAvailable: <unsigned integer> kB` field, and checked KiB-to-byte conversion
+within signed 64-bit range. Missing, denied, malformed, duplicate, wrong-unit,
+overflow, and oversized results remain unavailable; no raw file contents enter
+the observation. Stable identity binds the path, parser schema, and read bound,
+while each event retains timestamps, status, byte count, and content digest.
+
+The historical macOS JSON schema remains
+`glacier.native-observation/macos-v1`. Other platform adapters use
+`glacier.native-observation/host-v1`; this is a new versioned diagnostic
+envelope, not a reinterpretation of the macOS value. On a platform without a
+selected adapter, the dispatcher reports only the portable runtime monotonic
+clock and logical CPU count and leaves the remaining metrics explicitly
+`unsupported`. Non-Darwin execution does not request a POSIX process-group ID,
+so future Windows adapters do not inherit a Unix-only runtime call.
+Host V1 also records the actual operating system, `native` versus `simulated`
+capture mode, and publication eligibility. An adapter injected across operating
+systems remains useful for parser/model tests but is explicitly nonpublishable.
 
 The strict `pmset`, `vm_stat`, `top`, and external-process CPU parsers were
 extracted into this shared module. The existing paired harness now delegates to
@@ -187,6 +211,59 @@ the same parser seam while retaining its own campaign admission and pairing
 policy. This avoids two different interpretations of the same macOS source
 fields. The focused gate includes a native read-only macOS smoke when it runs
 on Darwin.
+
+Linux parser and injected-adapter tests run on every Python host. A native Linux
+job makes the smoke mandatory with:
+
+```sh
+GLACIER_REQUIRE_NATIVE_OBSERVER=Linux \
+  python3 -m unittest bench.tests.test_native_observer_linux
+```
+
+The command fails instead of silently skipping when the requirement is set on
+the wrong operating system. Cross-host parser fixtures and cross-compilation
+remain implementation evidence, not native Linux observation evidence.
+
+## Native macOS Metal readiness
+
+The focused Metal adapter runs only on a native macOS host with Metal enabled.
+It constructs one fixed in-memory 37x64 INT4 matrix-vector workload, dispatches
+it exactly once across the entire hard gate, and compares the result with the
+CPU oracle. The remaining Zig and Python mutation checks use synthetic values;
+they do not issue additional GPU work.
+
+Run the hard gate with:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-metal-observation-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+The gate fails rather than skips when a native Metal device, completed command
+buffer, valid GPU start/end timestamps, correctness, zero leaked weight
+ownership, or explicit no-fallback evidence is unavailable. Its diagnostic
+report binds the W5 descriptor, plan, probe/pre/post bundles, workload receipt,
+run report, device and placement identities, dispatch receipt, output root, and
+one-queue/one-invocation cardinality. The live device context includes the Metal
+registry identity, `currentAllocatedSize` before and after the dispatch, and
+command-buffer GPU timestamps.
+
+These fields establish execution readiness for that fixed operation on that
+host session. They are not throughput, latency, or any other performance claim.
+The timestamp-derived device duration is checked for internal consistency but
+is not promoted as a benchmark sample. `recommendedMaxWorkingSetSize` is
+capacity context only, never current usage or an admission ceiling. The adapter
+leaves accelerator utilization, committed bytes, resident bytes, queue depth,
+temperature, frequency, power, and energy explicitly `unsupported`.
+
+The independent Python verifier checks bounded JSON, semantic composition, and
+corruption or substitution of the self-asserted live capture. The report has no
+signed or hardware-backed origin anchor, so successful verification is not
+cryptographic authenticity or historical attestation. The repository currently
+retains the implementation and its verifier, not an addressable native Metal
+result. A passing invocation is native evidence only for the exact host and
+session that produced it until a raw artifact is retained under the evidence
+policy. W5b therefore remains open.
 
 ## Evidence and claim boundary
 
@@ -210,21 +287,29 @@ improvement. Cross-compiling the portable contract for Linux, Windows, or
 FreeBSD proves source and build portability only. It is not native observation
 evidence for those systems.
 
+The post-W5a Linux slice proves the bounded parser, adapter dispatch seam, and
+all availability/error mappings with injected sources. A native Linux smoke is
+still required before publishing Linux machine evidence.
+
+The Metal readiness slice proves that its fixed correctness-gated INT4 command
+can execute once with a completed receipt and the named diagnostic fields on a
+native host. It does not turn those fields into a retained performance result,
+broader backend certification, or support for another device or operating
+system.
+
 ## Contributor-ready next slices
 
 Each adapter can merge independently when it preserves the V1 metric meaning
 and availability rules:
 
-1. add one Linux host metric source with bounded parsing and
-   present/missing/denied/unsupported tests, then run it on a native Linux host;
+1. retain the required `/proc/meminfo` smoke on a native Linux host;
 2. add one Windows or FreeBSD host adapter without calling platform commands
    from the portable core;
 3. add direct macOS CPU power, temperature, frequency, or energy observation
    only through a trustworthy named API, retaining permission and absence
    outcomes;
-4. add a bounded device adapter for identity, placement, fallback, host
-   submit/synchronization timing, and explicit device-time value-clock
-   identity;
+4. retain an addressable Metal readiness artifact for a named host/device while
+   preserving diagnostic-only claim scope;
 5. add direct accelerator utilization or memory-residency evidence without
    deriving it from logical resource claims; or
 6. build the W6 raw-request/native-summary codec and independent verifier while

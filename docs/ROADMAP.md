@@ -36,8 +36,8 @@ evidence. The plane and model-family sequence is specified in the
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated; outer inspection prototype | Crash-recoverable journal, compact evidence join, and a deterministic read-only inspector for outer framing/checksum and self-asserted fields | Optional caller-supplied nested-composition inspection, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, full build and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Named core/CPU/durable/device/host-tool build profiles; native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; mobile lifecycle gates; and a reduced edge profile |
-| Benchmark evidence | Prototype with W5a observation foundation integrated | Paired harnesses, machine envelope, fixed native-observation ABI, stable source identity separate from event provenance, nonzero unavailable-reason identity with no present-reason identity, fail-closed family-neutral runner, independent reference verification, and a shared bounded macOS host observer | Direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters plus reproducible native machines |
-| Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, and the W5a native-observation foundation integrated; W4b and W5 remain open | Portable pressure, typed workloads, external-action handoff, deterministic storage faults, real host process-death recovery, and a download-free three-profile/six-item observation reference now retain explicit machine-state availability, stable source and per-event provenance, nonzero unavailable-reason identity with no present-reason identity, host/device planes, per-record sample-clock identity, value-clock identity only for present time metrics, fail-closed pre-admission, post-run contamination, fallback, correctness, and zero-orphan evidence without relabeling logical steps as native timing | Remaining W4 profiles; direct physical CPU/GPU adapters; W6 native reports; W7 soak/disruption; and W8 native multi-OS replication |
+| Benchmark evidence | Prototype with W5a, a bounded Linux host source, and a native macOS Metal diagnostic-readiness implementation integrated | Paired harnesses, machine envelope, fixed native-observation ABI, stable source identity separate from event provenance, nonzero unavailable-reason identity with no present-reason identity, fail-closed family-neutral runner, independent reference verification, a shared bounded macOS host observer, a strict bounded Linux `MemAvailable` adapter with cross-host parser/model tests, and one fixed correctness-gated Metal dispatch with command-buffer timestamps and explicit unsupported telemetry | Retained native Linux and Metal artifacts; direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters; plus reproducible native machines |
+| Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, W5a, and bounded W5b Linux-source and macOS Metal readiness implementations integrated; W4b and W5 remain open | Portable pressure, typed workloads, external-action handoff, deterministic storage faults, real host process-death recovery, and a download-free three-profile/six-item observation reference now retain explicit machine-state availability, stable source and per-event provenance, nonzero unavailable-reason identity with no present-reason identity, host/device planes, per-record sample-clock identity, value-clock identity only for present time metrics, fail-closed pre-admission, post-run contamination, fallback, correctness, and zero-orphan evidence without relabeling logical steps as native timing; the host JSON seam adds checked bounded Linux available-memory parsing, while the native Metal hard gate performs exactly one fixed 37x64 INT4 dispatch as diagnostic readiness evidence only | Remaining W4 profiles; retained native Linux and Metal observer evidence; direct physical CPU/GPU adapters; W6 native reports; W7 soak/disruption; and W8 native multi-OS replication |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
 ## P0 — Open-source usability
@@ -337,6 +337,23 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   three-profile/six-item typed-perception reference. Extract the bounded macOS
   host parsers into one shared observer used by the paired harness, and keep
   foreign-target compilation distinct from native evidence.
+- [x] Add the first post-W5a platform adapter slice: a platform-neutral JSON
+  metric registry/validator and dispatcher seam plus a fixed-path, 64 KiB
+  bounded Linux `/proc/meminfo` `MemAvailable` parser. Preserve the historical
+  macOS JSON schema, separate stable source identity from per-read event
+  provenance, avoid Unix process-group calls on non-Darwin dispatch, and make
+  native Linux acceptance explicitly required rather than silently skipped.
+  Native Linux evidence remains pending.
+- [x] Add the bounded native macOS Metal readiness slice without promoting it
+  to a benchmark: run one fixed synthetic 37x64 INT4 matrix-vector dispatch
+  exactly once across the hard gate; require CPU-oracle correctness, completed
+  command-buffer GPU timestamps, registry-bound device/placement identity,
+  allocation context, zero leaked ownership, explicit no-fallback evidence, and
+  composed descriptor/plan/run/dispatch roots. Treat
+  `recommendedMaxWorkingSetSize` only as capacity context and keep utilization,
+  committed/resident bytes, queue depth, temperature, frequency, power, and
+  energy explicitly unsupported. The verifier checks composition/corruption of
+  self-asserted live output; a retained native result remains pending.
 - [ ] Extend W4 through separately retained provider, stateful, streaming,
   batched, preemptible, device-backed, live provider-backed, and OS-isolated
   dispatch/status profiles.
@@ -367,8 +384,8 @@ uncertainty, reconciliation, compensation, durable POSIX publication, and
 explicit prefix repair plus the bounded W4b-d same-process adapter boundary,
 generation fence, and retry rules.
 See [Native Observation Contract](NATIVE_OBSERVATION.md) for W5a availability,
-admission, two-clock semantics, fallback, macOS-observer, verification, and
-nonclaim rules.
+admission, two-clock semantics, fallback, host observers, native Metal
+readiness, verification, and nonclaim rules.
 See [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md) for the W0–W8 workload,
 native-observation, resilience, and platform-replication sequence.
 See [Platform Portability](PLATFORM_PORTABILITY.md) for the evidence matrix,
@@ -1088,6 +1105,16 @@ CPU count at least one and allow physical temperature below zero only down to
 absolute zero. It does not directly
 prove CPU temperature, effective frequency, performance/efficiency core
 residency, package energy, or device telemetry on every platform.
+
+The macOS Metal readiness implementation narrows one device gap: its native
+hard gate performs one fixed 37x64 INT4 dispatch and checks registry identity,
+`currentAllocatedSize`, command-buffer timestamps, ownership, correctness,
+fallback, and artifact composition. It is diagnostic-only, with
+`recommendedMaxWorkingSetSize` retained as capacity context and all other
+utilization/residency/queue/thermal/frequency/power/energy metrics unsupported.
+No addressable native result is retained yet, and the self-asserted live report
+has composition/corruption verification rather than cryptographic
+authentication. W5b remains open.
 
 Priorities:
 

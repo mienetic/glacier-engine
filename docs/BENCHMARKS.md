@@ -37,7 +37,8 @@ thermal observations distinct.
 | `tools/zig-with-ephemeral-cache.sh build action-outbox-record-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_action_outbox_conformance` | W4b-b portable ActionOutbox protocol: canonical body/footer records, stable remote-request identity, uncertainty-preserving restart, a reconciliation record required before safe retry, separately authorized compensation, all 7,521 retained cuts from the complete header through the journal, and independent byte-for-byte replay; no authenticated provider truth, filesystem durability, or live external effect |
 | `tools/zig-with-ephemeral-cache.sh build action-outbox-recovery-test -Dmetal=false -Doptimize=ReleaseSafe -j2` | W4b-c descriptor-relative POSIX store: clean committed `320 + 752n` prefixes, semantic preflight, exclusive advisory lock and namespace/identity fences, ordered body/footer sync, exact snapshot/lease/repair roots, explicit repair/reacquisition, Zig/Python matrices covering 40 append phases + 754 section-prefix cases + 751 repair tails + 8 repair faults, and 49 host process deaths; no power-loss, live-dispatch, provider-truth, external exactly-once, Windows-durability, or performance claim |
 | `tools/zig-with-ephemeral-cache.sh build action-outbox-dispatch-test -Dmetal=false -Doptimize=ReleaseSafe -j2` | W4b-d pointer-free adapter contract, trusted StoreV1 driver, and bounded same-process fake authority: one protected future reconciliation slot per existing uncertain action plus three additional dispatch slots, status admitted only when free slots cover every uncertain action, durable intent before dispatch, atomic `not_applied_fenced(G)`, stale `<= G` rejection before and after terminal completion, exact `G + 1` retry with stable request and a new dispatch root, pending/unknown no-retry, terminal duplicate application count one, deterministic same-process faults at four terminal-transition plus four fenced-transition append phases followed by fresh reopen/repair/reconciliation, integrated Zig coverage, 20 independent Python tests, and a separate live canonical Zig-to-Python reference validation |
-| `zig build native-observation-test -Dmetal=false` | W5a fixed portable observer ABI and family-neutral runner: explicit present/missing/denied/unsupported, stable source identity separate from per-event provenance, nonzero unavailable-reason identity and no present-reason identity (all-zero fixed field), host/accelerator planes, sample-clock identity on every record and value-clock identity only on present time-valued metrics, fail-closed probe and pre-run admission, retained post-run contamination, correctness/zero-orphan/fallback gates, a download-free three-profile/six-item report checked independently, shared macOS system parsers, and a native read-only macOS smoke when run on Darwin; no throughput, latency, direct GPU/power/thermal, or multi-OS native claim |
+| `zig build native-observation-test -Dmetal=false` | W5a fixed portable observer ABI and family-neutral runner: explicit present/missing/denied/unsupported, stable source identity separate from per-event provenance, nonzero unavailable-reason identity and no present-reason identity (all-zero fixed field), host/accelerator planes, sample-clock identity on every record and value-clock identity only on present time-valued metrics, fail-closed probe and pre-run admission, retained post-run contamination, correctness/zero-orphan/fallback gates, a download-free three-profile/six-item report checked independently, shared macOS system parsers and native read-only macOS smoke on Darwin, plus a platform-neutral JSON validator and bounded Linux available-memory adapter model; no throughput, latency, direct GPU/power/thermal, or multi-OS native claim |
+| `tools/zig-with-ephemeral-cache.sh build native-metal-observation-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Hard native macOS Metal diagnostic-readiness gate: exactly one real GPU dispatch total for a fixed synthetic 37x64 INT4 matrix-vector operation, CPU-oracle correctness, completed command-buffer GPU timestamps, registry-bound device/placement identity, `currentAllocatedSize`, zero leaked ownership, explicit no fallback, composed observation/run/dispatch roots, and an independent live-output verifier; no throughput, latency, performance, utilization, residency, queue, thermal, frequency, power, energy, cryptographic-origin, broad-device, or multi-OS claim |
 | `zig build lane-publication-demo -Dmetal=false` | One-token prepare/commit/abort with KV, RNG, sampler, output, schedule, and resource roots |
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
 | `tools/zig-with-ephemeral-cache.sh build test -Doptimize=ReleaseSafe -Dmetal=false -j2` | Full retained suite, including receipt-funded prepared-text activation at sequence `N`, one uninterrupted/restored synthetic-model transition comparison, and target teardown to zero |
@@ -129,7 +130,7 @@ Its deterministic reference elapsed value verifies the host time metric's
 value-clock composition and report identity. The macOS capture separately
 proves that the bounded read-only adapter can classify directly observed,
 malformed, denied, and unsupported host fields. The portable contract declares
-accelerator metrics and fallback rules, but the current native adapter does not
+accelerator metrics and fallback rules, while the W5a host adapter does not
 directly measure device utilization, residency, timing, power, temperature, or
 energy. Cross-compiling the contract does not establish native observation on
 the foreign target. Stable source identity is the field used for source
@@ -139,6 +140,31 @@ readable reason and present records add neither. Logical CPU count must be
 positive;
 physical temperatures may be negative but not below absolute zero. See
 [Native Observation Contract](NATIVE_OBSERVATION.md).
+
+The first post-W5a Linux source is also conformance work, not benchmark
+evidence. Cross-host tests prove its strict bounded `MemAvailable` parser,
+adapter dispatch, source/provenance separation, and unavailable-state mapping.
+Only a required smoke executed on Linux can establish that the native
+`/proc/meminfo` source was observed; a skipped smoke or foreign-target compile
+cannot.
+
+The separate native Metal gate is readiness conformance, not a microbenchmark.
+It performs exactly one real GPU dispatch across the full gate for one fixed
+synthetic 37x64 INT4 matrix-vector operation. The CPU oracle, completed command
+buffer, GPU start/end timestamps, Metal registry identity,
+`currentAllocatedSize`, ownership closure, no-fallback receipt, and composed
+roots must all agree. The derived device duration remains internal diagnostic
+evidence and must not be reported as latency or used to calculate throughput.
+`recommendedMaxWorkingSetSize` is capacity context only. Accelerator
+utilization, committed/resident bytes, queue depth, temperature, frequency,
+power, and energy remain explicitly `unsupported`.
+
+The independent verifier checks bounded output plus composition and corruption
+of a self-asserted live capture. It provides no cryptographic authenticity or
+historical attestation. A passing invocation is native evidence for that exact
+host session, but no addressable Metal result is currently retained in the
+repository. Implementation evidence and retained native campaign evidence must
+therefore remain separate, and W5b remains open.
 
 All commands should normally use `-Doptimize=ReleaseSafe` when validating
 contracts. None requires a real credential. Portable evidence is

@@ -146,13 +146,41 @@ Stable source identity drives source matching independently of per-event
 provenance. Portable unavailable records retain a nonzero reason identity,
 while present records carry none; the macOS JSON adapter also retains a bounded
 human-readable reason for an unavailable observation.
+The focused conformance family now also includes the platform-neutral JSON
+record validator and a strict bounded Linux `MemAvailable` adapter model. It
+retains no Linux native result here; cross-host parser tests and a skipped smoke
+are not native machine evidence.
+
+The native macOS Metal readiness implementation likewise has no retained JSON
+result in this index. Its hard gate executes exactly one real GPU dispatch in
+total for a fixed synthetic 37x64 INT4 matrix-vector operation and requires
+CPU-oracle correctness, completed command-buffer GPU timestamps, Metal registry
+identity, `currentAllocatedSize`, zero leaked ownership, no fallback, and
+composed evidence roots. `recommendedMaxWorkingSetSize` is capacity context
+only. Utilization, committed/resident bytes, queue depth, temperature,
+frequency, power, and energy remain explicitly `unsupported`. The live report
+is diagnostic readiness evidence, not throughput, latency, or performance
+evidence. Its independent verifier checks composition and corruption of a
+self-asserted capture; it does not establish cryptographic authenticity.
+
+Run the fail-closed native gate on macOS with:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-metal-observation-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+A passing invocation applies only to that exact host session until its raw
+artifact is retained and indexed. Implementation evidence and retained native
+campaign evidence are therefore separate, and W5b remains open.
+
 The deterministic `1600`-nanosecond value checks report composition only; it
 is not a native latency sample. The complete 1,278-byte fixture SHA-256 is
 `f4e226b426379def5bd9817a1785a1afbe0f4f91b8d0511beaf2ead96c24d71c`;
 its semantic report root is
 `f9b9fd9618c66ba6ad76ea490ceeeef15724c22751a04a8934691891f3ec8156`.
 Verify the native runner, independent oracle, retained bytes, shared macOS
-observer tests, and paired-parser regressions together:
+observer tests, Linux adapter model, and paired-parser regressions together:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build native-observation-test \

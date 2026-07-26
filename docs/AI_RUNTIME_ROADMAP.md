@@ -444,8 +444,17 @@ fail-closed probe/pre-run admission, retained post-run contamination,
 correctness, zero-orphan, and accelerator-fallback evidence. Its canonical
 three-profile/six-item typed-perception reference needs no model download. A
 bounded macOS adapter supplies the first shared native host-observer seam and a
-bounded readable JSON reason only when unavailable; direct physical CPU/device
-telemetry and native multi-platform campaigns remain open.
+bounded readable JSON reason only when unavailable. The first follow-up
+introduces a platform-neutral JSON registry/validator and dispatcher plus a
+strict bounded Linux `/proc/meminfo` `MemAvailable` adapter; cross-host tests
+cover its parser and availability behavior, while native Linux retention
+remains open. A native macOS Metal readiness adapter now binds the runner to
+exactly one fixed synthetic 37x64 INT4 matrix-vector dispatch across its hard
+gate. It requires CPU-oracle correctness, completed command-buffer GPU
+timestamps, registry-bound device/placement identity, allocation context, zero
+leaked ownership, no fallback, and composed roots. This is diagnostic readiness
+evidence, not a throughput, latency, or performance claim. The remaining direct
+physical CPU/device telemetry and native multi-platform campaigns stay open.
 Contract validation requires a present logical CPU count of at least one and
 accepts signed physical temperatures down to, but never below, absolute zero.
 
@@ -521,10 +530,26 @@ reporting:
    contamination as nonpublishable evidence. The reference reuses three
    retained typed-perception profiles and six items without downloads. The
    macOS adapter and paired harness share strict system-field and
-   external-process CPU parsers. Accelerator metric IDs and fallback rules are
-   present, but direct device utilization, residency, timing, power, thermal,
-   and energy observers are not yet implemented. See
+   external-process CPU parsers. A platform-neutral JSON layer and bounded
+   Linux available-memory adapter are now implemented, but the required native
+   Linux smoke is not retained. Accelerator metric IDs and fallback rules are
+   present. The separate native macOS Metal readiness implementation runs one
+   fixed 37x64 INT4 dispatch exactly once across the hard gate and directly
+   records registry identity, `currentAllocatedSize`, and command-buffer
+   start/end timestamps while checking correctness, ownership, no fallback, and
+   root composition. `recommendedMaxWorkingSetSize` is capacity context only;
+   direct utilization, committed/resident bytes, queue depth, power, thermal,
+   frequency, and energy remain unsupported. See
    [Native Observation Contract](NATIVE_OBSERVATION.md).
+
+   **W5b readiness progress — implemented, milestone open.** A successful
+   native gate is diagnostic evidence for its exact macOS host session. Its
+   independent verifier checks bounded semantic composition and corruption of a
+   self-asserted live capture, not cryptographic authenticity. The repository
+   retains no addressable native Metal result yet, so implementation evidence
+   and retained native campaign evidence remain distinct. W5b still requires
+   the unsupported physical adapters, retained native artifacts, and broader
+   platform coverage.
 
 2. **Native workload** runs declared model-family mixes against a real CPU,
    accelerator, or provider adapter and records completed/rejected/cancelled

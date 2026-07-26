@@ -920,9 +920,31 @@ CPU busy, external-process CPU, idle, RSS, available memory, swap, power source,
 low-power mode, and thermal constraint with provenance and explicit
 availability. Its JSON output adds a bounded readable reason for unavailable
 metrics and no reason for present metrics. The paired harness shares its strict
-system-field parsers.
-Direct CPU/device temperature, frequency, power, energy, utilization,
-residency, and device timing remain separate adapters. See
+system-field parsers. A platform-neutral JSON registry and validation layer now
+keeps the fixed metric universe, source projection, reason/provenance bounds,
+and execution context outside individual adapters. The Linux implementation
+uses that seam to read only bounded `/proc/meminfo` bytes and strictly map one
+`MemAvailable` KiB value to checked bytes; native Linux retention remains a
+separate gate. Non-Darwin dispatch does not request a POSIX process-group ID,
+leaving the same seam usable by a future Windows adapter.
+
+The native macOS Metal readiness adapter binds a separate accelerator observer
+to this runner. Its hard gate makes exactly one real GPU dispatch in total for
+a fixed synthetic 37x64 INT4 matrix-vector operation, compares output with the
+CPU oracle, and requires a completed command buffer, registry-bound
+device/placement identity, `currentAllocatedSize`, GPU start/end timestamps,
+zero leaked ownership, explicit no fallback, and composed
+descriptor/plan/bundle/run/dispatch roots. The derived duration is diagnostic
+readiness evidence, not throughput, latency, or a performance result.
+`recommendedMaxWorkingSetSize` is capacity context only. Utilization,
+committed/resident bytes, queue depth, temperature, frequency, power, and energy
+remain explicit `unsupported` records.
+
+The independent Python verifier checks bounded semantic composition and
+corruption in the self-asserted live capture; it does not provide cryptographic
+authenticity. No addressable native Metal result is retained in the repository,
+so implementation, a passing local native invocation, and retained campaign
+evidence remain separate levels. W5b stays open. See
 [Native Observation Contract](NATIVE_OBSERVATION.md).
 
 ## Provider execution flow
@@ -1002,7 +1024,10 @@ x86_64/AArch64 Linux musl and x86_64 Windows GNU. Model conversion and runtime
 images share a bounded read-only mapping abstraction with POSIX and Windows
 implementations; fixture process IDs and hard termination are selected per OS.
 The W5a observation contract and family-neutral runner also cross-compile
-without importing a native observer into the portable core.
+without importing a native observer into the portable core. The focused
+macOS-only Metal readiness gate keeps device authority in the native adapter and
+fails rather than skipping when its one completed diagnostic dispatch cannot be
+observed.
 Execution, numerical, durable-recovery, and physical-resource validation still
 require real machines for each promoted platform.
 

@@ -117,16 +117,31 @@ three-profile/six-item reference. The bounded macOS observer and paired harness
 share strict system-field and external-process CPU parsers. See
 [Native Observation Contract](NATIVE_OBSERVATION.md).
 
+The first platform follow-up is also implemented: the JSON observer now has a
+platform-neutral registry/validator and injectable dispatcher, and the Linux
+adapter strictly parses one bounded `/proc/meminfo` `MemAvailable` source.
+Cross-host fixtures cover parser and availability behavior; native Linux
+retention remains open.
+
+The native macOS Metal readiness follow-up is implemented as a hard diagnostic
+gate. It makes exactly one real GPU dispatch in total for a fixed synthetic
+37x64 INT4 matrix-vector operation, checks the output against the CPU oracle,
+and binds command-buffer timestamps, `currentAllocatedSize`, registry-based
+device/placement identity, ownership, fallback, and composed evidence roots.
+It retains `recommendedMaxWorkingSetSize` only as capacity context and leaves
+utilization, committed/resident bytes, queue depth, temperature, frequency,
+power, and energy unsupported. The repository does not yet retain an
+addressable native result, so W5b remains open.
+
 Small next slices:
 
-- add one Linux host metric parser with fixed input/output bounds, then retain a
-  native Linux smoke;
+- retain the mandatory available-memory smoke on a native Linux host;
 - add one Windows or FreeBSD host adapter without adding OS calls to the
   portable contract;
 - add one trustworthy direct CPU power, thermal, frequency, or energy source,
   retaining signed temperature down to absolute zero;
-- add one device identity/placement/fallback/submit/sync timing source with an
-  explicit value-clock identity for device time; or
+- retain one native Metal readiness artifact for a named device and host under
+  the evidence policy; or
 - add one direct accelerator utilization or residency source without deriving
   it from logical accounting.
 
@@ -523,8 +538,19 @@ correctness, and zero-orphan evidence explicit. The canonical
 three-profile/six-item
 reference needs no model download and is checked independently. A shared
 bounded macOS host observer supplies the first native adapter seam. W5 remains
-open for direct physical CPU/device adapters, and W8 remains open for native
-multi-platform replication.
+open for direct physical CPU/device adapters. A platform-neutral JSON seam and
+strict bounded Linux available-memory source are implemented, but native Linux
+retention and W8 native multi-platform replication remain open.
+
+**Completed native Metal readiness implementation:** the macOS-only hard gate
+executes one fixed 37x64 INT4 matrix-vector command exactly once across the
+gate, checks CPU-oracle correctness, command-buffer completion and GPU
+timestamps, registry identity, allocation context, zero leaked ownership, no
+fallback, and evidence composition. This is diagnostic readiness evidence, not
+throughput, latency, or a performance claim. Its independent verifier detects
+composition errors and corruption in self-asserted live output; it does not
+authenticate origin. No native Metal JSON result is retained in the repository,
+so W5b and repeated native coverage remain open.
 
 These are deterministic conformance and named-host recovery fixtures, not
 throughput, wall-clock latency, physical-memory, energy, or soak results.
@@ -541,8 +567,9 @@ Small independent follow-up slices include:
 - build a read-only scenario/result inspector that exposes no authority;
 - add a bounded family-aware batch or safe-preemption profile with an explicit
   execution unit and cancellation boundary; or
-- add one direct CPU/device metric or one native Linux, Windows, or FreeBSD
-  observer behind W5a with all four availability states.
+- retain the Linux available-memory adapter on a native Linux host, add one
+  Windows or FreeBSD observer, retain a named-device Metal readiness result, or
+  add one direct CPU/device metric behind W5a with all four availability states.
 
 **Done when:** the slice fixes all bounds and summary rules before execution,
 retains malformed and semantic-substitution rejection, keeps logical and
