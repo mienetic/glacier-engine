@@ -2,9 +2,9 @@
 //!
 //! This test must run only in the explicitly native macOS/Metal build step.
 //! It creates real direct Shared MTLBuffers, observes each resource through
-//! MTLResource, composes them with the portable ChildLease coordinator, then
-//! proves release and generation-fenced reuse. It makes no residency,
-//! performance, or device-wide allocation-delta claim.
+//! MTLResource, composes them with both the ChildLease and LeaseTree
+//! coordinators, then proves rollback, release, and generation-fenced reuse.
+//! It makes no residency, performance, or device-wide allocation-delta claim.
 
 const std = @import("std");
 const engine = @import("engine");
@@ -12,6 +12,7 @@ const config = @import("config");
 
 const testing = std.testing;
 const allocation = engine.device_allocation_lease;
+const tree_allocation = engine.device_allocation_lease_tree;
 const device = engine.device_capability_contract;
 const resource = engine.resource_bank;
 const metal_allocation = engine.metal_allocation_adapter;
@@ -184,6 +185,85 @@ const NativeBufferWorker = struct {
                 return;
             };
         }
+    }
+};
+
+const NativeCancelAtBoundary = struct {
+    boundary: u64,
+
+    fn callback(context: *anyopaque, boundary: u64) bool {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        return boundary == self.boundary;
+    }
+
+    fn probe(self: *@This()) allocation.CancellationProbeV1 {
+        return .{
+            .context = self,
+            .cancelled_fn = callback,
+        };
+    }
+};
+
+const NativeTreeObserverAdapter = struct {
+    inner: allocation.AdapterV1,
+    bank: *resource.Bank,
+    expected_device_bytes: u64,
+    allocation_count: usize,
+    expect_free_authorized: bool = true,
+    ordering_violation: bool = false,
+    free_calls: u64 = 0,
+
+    fn interface(self: *@This()) allocation.AdapterV1 {
+        return .{
+            .context = self,
+            .authority = self.inner.authority,
+            .quote_fn = quoteCallback,
+            .allocate_fn = allocateCallback,
+            .free_fn = freeCallback,
+        };
+    }
+
+    fn quoteCallback(
+        context: *anyopaque,
+        binding_sha256: allocation.Digest,
+        requested_bytes: u64,
+    ) allocation.CallbackError!allocation.AllocationQuoteV1 {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        return self.inner.quote_fn(
+            self.inner.context,
+            binding_sha256,
+            requested_bytes,
+        );
+    }
+
+    fn allocateCallback(
+        context: *anyopaque,
+        call: allocation.AllocationCallV1,
+    ) allocation.CallbackError!allocation.BackendObjectV1 {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        return self.inner.allocate_fn(self.inner.context, call);
+    }
+
+    fn freeCallback(
+        context: *anyopaque,
+        object: allocation.BackendObjectV1,
+    ) allocation.CallbackError!void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        const snapshot = self.bank.snapshotV3() catch {
+            self.ordering_violation = true;
+            return allocation.CallbackError.Unavailable;
+        };
+        if (snapshot.used.device_bytes != self.expected_device_bytes)
+            self.ordering_violation = true;
+        if (self.expect_free_authorized) {
+            if (snapshot.free_authorized_allocations !=
+                self.allocation_count)
+                self.ordering_violation = true;
+        } else if (snapshot.reserved_unmaterialized_allocations !=
+            self.allocation_count)
+            self.ordering_violation = true;
+        try self.inner.free_fn(self.inner.context, object);
+        self.free_calls += 1;
     }
 };
 
@@ -391,6 +471,283 @@ test "real Metal buffers obey receipt charge release and generation reuse" {
     try testing.expectEqual(@as(u64, 6), final_snapshot.allocate_calls);
     try testing.expectEqual(@as(u64, 6), final_snapshot.free_calls);
     try testing.expectEqual(@as(u64, 6), final_snapshot.inspect_calls);
+    try bank.release(parent);
+    try testing.expect((try bank.snapshot()).used.isZero());
+}
+
+test "real Metal buffers compose with LeaseTree free permits" {
+    if (!config.metal_enabled)
+        return error.NativeMetalAllocationRequiresMetal;
+
+    var backend = try engine.MetalBackend.init(
+        engine.metal_library_path,
+    );
+    defer backend.deinit();
+    const inventory_entry =
+        try metal_allocation.makeAllocationInventoryEntryV1(
+            &backend,
+            111,
+            0,
+            1 * 1024 * 1024,
+        );
+    var native_slots =
+        [_]metal_allocation.MetalAllocationSlotV1{.{}} ** 3;
+    var adapter =
+        try metal_allocation.MetalAllocationAdapterV1.init(
+            &backend,
+            inventory_entry,
+            211,
+            0x4d65_7461_6c54_7265,
+            &native_slots,
+        );
+    const fixture = try makeFixture(&adapter, inventory_entry);
+    try testing.expectEqual(
+        @as(u64, 8_000),
+        fixture.manifest.total_charged_bytes,
+    );
+
+    var bank_slots = [_]resource.Slot{.{}};
+    var tree_roots = [_]resource.LeaseTreeRootSlot{.{}};
+    var tree_nodes = [_]resource.LeaseNodeSlot{.{}} ** 4;
+    var bank = try resource.Bank.initWithLeaseTreeStorage(
+        &bank_slots,
+        &tree_roots,
+        &tree_nodes,
+        .{
+            .host_bytes = 1_024,
+            .capsule_bytes = 1_024,
+            .device_bytes = fixture.manifest.total_charged_bytes,
+            .queue_slots = 1,
+        },
+        411,
+    );
+    const parent = try bank.commit(
+        try bank.reserve(511, .{
+            .capsule_bytes = 64,
+            .queue_slots = 1,
+        }),
+    );
+    const opened = try bank.openLeaseTree(
+        parent,
+        0x4d65_7461_6c54_7265,
+        0x4d65_7461_6c41_7574,
+        .{
+            .device_bytes = fixture.manifest.total_charged_bytes,
+        },
+    );
+    const scoped = try bank.openLeaseScope(
+        opened,
+        0x4d65_7461_6c53_636f,
+        0x4d65_7461_6c54_656e,
+        .{
+            .device_bytes = fixture.manifest.total_charged_bytes,
+        },
+    );
+    var tree = scoped.tree;
+    var session_byte: u8 = 0;
+    const session_id = @intFromPtr(&session_byte);
+    var publication_sequence: u64 = 0;
+    try bank.bindPublicationSessionWithLeaseTree(
+        tree,
+        301,
+        session_id,
+    );
+    var coordinator_objects =
+        [_]tree_allocation.CoordinatorObjectSlotV1{.{}} ** 3;
+    var coordinator: tree_allocation.CoordinatorV1 = .{};
+    try coordinator.init(
+        611,
+        &bank,
+        &tree,
+        scoped.scope,
+        301,
+        session_id,
+        &publication_sequence,
+        &coordinator_objects,
+    );
+    const request = try makeRequest(&adapter, parent, fixture);
+    var observed_adapter = NativeTreeObserverAdapter{
+        .inner = adapter.interface(),
+        .bank = &bank,
+        .expected_device_bytes = fixture.manifest.total_charged_bytes,
+        .allocation_count = fixture.entries.len,
+    };
+
+    var first_generations: [3]u64 = undefined;
+    var first_lease: tree_allocation.LeaseTreeDeviceAllocationLeaseV1 = undefined;
+    for (0..2) |cycle| {
+        const admission = try coordinator.admit(
+            observed_adapter.interface(),
+            request,
+            fixture.selection,
+            fixture.requirement,
+            &fixture.inventory,
+            parent,
+            fixture.manifest,
+            &fixture.entries,
+        );
+        try tree_allocation.validateAdmissionV1(admission);
+        var bank_snapshot = try bank.snapshotV3();
+        try testing.expectEqual(
+            fixture.manifest.total_charged_bytes,
+            bank_snapshot.used.device_bytes,
+        );
+        try testing.expectEqual(
+            @as(usize, 3),
+            bank_snapshot.reserved_unmaterialized_allocations,
+        );
+        try testing.expectEqual(
+            fixture.manifest.total_charged_bytes,
+            tree.current.device_bytes,
+        );
+        try testing.expectEqual(@as(u64, 0), backend.liveBufferCount());
+
+        const materialized = try coordinator.materialize(
+            admission,
+            observed_adapter.interface(),
+            .{},
+        );
+        const lease = switch (materialized) {
+            .active => |value| value,
+            else => return error.TestUnexpectedResult,
+        };
+        try tree_allocation.validateLeaseV1(lease);
+        if (cycle == 0) first_lease = lease;
+        bank_snapshot = try bank.snapshotV3();
+        try testing.expectEqual(
+            @as(usize, 0),
+            bank_snapshot.reserved_unmaterialized_allocations,
+        );
+        try testing.expectEqual(
+            @as(usize, 3),
+            bank_snapshot.live_allocations,
+        );
+        try testing.expectEqual(@as(u64, 3), backend.liveBufferCount());
+        try testing.expectEqual(
+            @as(u64, 3),
+            try backend.nativeLiveBufferCount(),
+        );
+
+        var observations =
+            [_]metal_allocation.MetalAllocationObservationV1{.{}} ** 3;
+        try testing.expectEqual(
+            @as(usize, 3),
+            try adapter.copyLiveObservations(&observations),
+        );
+        for (observations, 0..) |observation, ordinal| {
+            try testing.expectEqual(
+                fixture.entries[ordinal].requested_bytes,
+                observation.buffer_length_bytes,
+            );
+            try testing.expect(
+                observation.resource_allocated_size_bytes >=
+                    observation.buffer_length_bytes,
+            );
+            try testing.expectEqual(
+                adapter.snapshot().device_registry_id,
+                observation.device_registry_id,
+            );
+            if (cycle == 0) {
+                first_generations[ordinal] =
+                    observation.backend_object_generation;
+            } else {
+                try testing.expect(
+                    observation.backend_object_generation >
+                        first_generations[ordinal],
+                );
+            }
+        }
+
+        const released = try coordinator.release(
+            lease,
+            observed_adapter.interface(),
+        );
+        const terminal = switch (released) {
+            .terminal => |value| value,
+            else => return error.TestUnexpectedResult,
+        };
+        try tree_allocation.validateTerminalReceiptV1(terminal);
+        try testing.expectEqual(
+            allocation.TerminalOutcomeV1.released,
+            terminal.outcome,
+        );
+        try testing.expect(terminal.terminal_tree.current.isZero());
+        bank_snapshot = try bank.snapshotV3();
+        try testing.expectEqual(
+            @as(u64, 0),
+            bank_snapshot.used.device_bytes,
+        );
+        try testing.expectEqual(
+            @as(usize, 0),
+            bank_snapshot.free_authorized_allocations,
+        );
+        try testing.expectEqual(@as(u64, 0), backend.liveBufferCount());
+        try testing.expectEqual(
+            @as(u64, 0),
+            try backend.nativeLiveBufferCount(),
+        );
+        try adapter.validateEmpty();
+    }
+
+    const cancelled_admission = try coordinator.admit(
+        observed_adapter.interface(),
+        request,
+        fixture.selection,
+        fixture.requirement,
+        &fixture.inventory,
+        parent,
+        fixture.manifest,
+        &fixture.entries,
+    );
+    observed_adapter.expect_free_authorized = false;
+    var cancel = NativeCancelAtBoundary{ .boundary = 2 };
+    const cancelled = try coordinator.materialize(
+        cancelled_admission,
+        observed_adapter.interface(),
+        cancel.probe(),
+    );
+    const cancel_terminal = switch (cancelled) {
+        .terminal => |value| value,
+        else => return error.TestUnexpectedResult,
+    };
+    try tree_allocation.validateTerminalReceiptV1(
+        cancel_terminal,
+    );
+    try testing.expectEqual(
+        allocation.TerminalOutcomeV1.cancelled,
+        cancel_terminal.outcome,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        (try bank.snapshotV3()).used.device_bytes,
+    );
+    try testing.expectEqual(@as(u64, 0), backend.liveBufferCount());
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveBufferCount(),
+    );
+    try adapter.validateEmpty();
+    try testing.expectError(
+        tree_allocation.Error.InvalidTransition,
+        coordinator.release(
+            first_lease,
+            observed_adapter.interface(),
+        ),
+    );
+    const final_snapshot = adapter.snapshot();
+    try testing.expectEqual(@as(u64, 8), final_snapshot.allocate_calls);
+    try testing.expectEqual(@as(u64, 8), final_snapshot.free_calls);
+    // The cancellation wave is released without copying observations.
+    try testing.expectEqual(@as(u64, 6), final_snapshot.inspect_calls);
+    try testing.expectEqual(@as(u64, 8), observed_adapter.free_calls);
+    try testing.expect(!observed_adapter.ordering_violation);
+    try bank.closePublicationSession(
+        parent,
+        301,
+        session_id,
+        publication_sequence,
+    );
+    try bank.closeLeaseTree(tree);
     try bank.release(parent);
     try testing.expect((try bank.snapshot()).used.isZero());
 }

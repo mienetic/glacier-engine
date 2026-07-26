@@ -16,6 +16,8 @@ pub const device_capability_contract =
     core.device_capability_contract;
 pub const device_allocation_lease =
     core.device_allocation_lease;
+pub const device_allocation_lease_tree =
+    core.device_allocation_lease_tree;
 pub const lane_weave_qos = core.lane_weave_qos;
 pub const workload_pressure = core.workload_pressure;
 pub const workload_closed_loop = core.workload_closed_loop;
@@ -90,6 +92,8 @@ pub const DeviceCapabilityContract =
     core.DeviceCapabilityContract;
 pub const DeviceAllocationLease =
     core.DeviceAllocationLease;
+pub const DeviceAllocationLeaseTree =
+    core.DeviceAllocationLeaseTree;
 pub const LaneWeaveQoS = core.LaneWeaveQoS;
 pub const WorkloadPressure = core.WorkloadPressure;
 pub const WorkloadClosedLoop = core.WorkloadClosedLoop;

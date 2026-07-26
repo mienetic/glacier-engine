@@ -949,9 +949,29 @@ pub fn makeAllocationCallV1(
     ordinal: u64,
     entry: AllocationEntryV1,
 ) Error!AllocationCallV1 {
+    return makeAllocationCallForAdmissionRootV1(
+        authority,
+        admission.admission_sha256,
+        ordinal,
+        entry,
+    );
+}
+
+/// Seal a backend call for any versioned allocation admission whose canonical
+/// root is accepted by the bound coordinator. The original ChildLease
+/// constructor above remains unchanged; LeaseTree coordinators use this
+/// root-only boundary without repurposing ChildLease evidence.
+pub fn makeAllocationCallForAdmissionRootV1(
+    authority: AllocationAuthorityV1,
+    admission_sha256: Digest,
+    ordinal: u64,
+    entry: AllocationEntryV1,
+) Error!AllocationCallV1 {
+    if (digestIsZero(admission_sha256))
+        return Error.InvalidAllocationCall;
     var result: AllocationCallV1 = .{
         .authority_sha256 = authority.authority_sha256,
-        .admission_sha256 = admission.admission_sha256,
+        .admission_sha256 = admission_sha256,
         .ordinal = ordinal,
         .binding_sha256 = entry.binding_sha256,
         .requested_bytes = entry.requested_bytes,
@@ -1043,7 +1063,32 @@ pub fn makeObjectSetV1(
 ) Error!BackendObjectSetV1 {
     validateAdmissionV1(admission) catch
         return Error.InvalidObjectSet;
-    if (calls.len != objects.len)
+    return makeObjectSetForAdmissionRootV1(
+        admission.admission_sha256,
+        admission.authority_sha256,
+        admission.allocation_count,
+        admission.total_device_bytes,
+        calls,
+        objects,
+    );
+}
+
+/// Compose the existing backend-object-set ABI around a separately versioned
+/// admission root. Calls and objects remain byte-for-byte V1; only the
+/// higher-level ownership coordinator defines the admission semantics.
+pub fn makeObjectSetForAdmissionRootV1(
+    admission_sha256: Digest,
+    authority_sha256: Digest,
+    allocation_count: u64,
+    total_device_bytes: u64,
+    calls: []const AllocationCallV1,
+    objects: []const BackendObjectV1,
+) Error!BackendObjectSetV1 {
+    if (digestIsZero(admission_sha256) or
+        digestIsZero(authority_sha256) or allocation_count == 0 or
+        allocation_count > maximum_allocations or
+        total_device_bytes == 0 or calls.len != allocation_count or
+        calls.len != objects.len)
         return Error.InvalidObjectSet;
     var total: u64 = 0;
     for (objects, 0..) |object, index| {
@@ -1053,13 +1098,10 @@ pub fn makeObjectSetV1(
         validateBackendObjectV1(object, call) catch
             return Error.InvalidObjectSet;
         if (call.ordinal != index or
-            !digestEqual(
-                call.authority_sha256,
-                admission.authority_sha256,
-            ) or
+            !digestEqual(call.authority_sha256, authority_sha256) or
             !digestEqual(
                 call.admission_sha256,
-                admission.admission_sha256,
+                admission_sha256,
             ))
             return Error.InvalidObjectSet;
         total = std.math.add(
@@ -1077,12 +1119,20 @@ pub fn makeObjectSetV1(
         }
     }
     var result: BackendObjectSetV1 = .{
-        .admission_sha256 = admission.admission_sha256,
+        .admission_sha256 = admission_sha256,
         .allocation_count = @intCast(objects.len),
         .total_allocated_bytes = total,
     };
     result.object_set_sha256 = objectSetRootV1(result, objects);
-    try validateObjectSetV1(result, admission, calls, objects);
+    try validateObjectSetForAdmissionRootV1(
+        result,
+        admission_sha256,
+        authority_sha256,
+        allocation_count,
+        total_device_bytes,
+        calls,
+        objects,
+    );
     return result;
 }
 
@@ -1094,15 +1144,39 @@ pub fn validateObjectSetV1(
 ) Error!void {
     validateAdmissionV1(admission) catch
         return Error.InvalidObjectSet;
+    return validateObjectSetForAdmissionRootV1(
+        object_set,
+        admission.admission_sha256,
+        admission.authority_sha256,
+        admission.allocation_count,
+        admission.total_device_bytes,
+        calls,
+        objects,
+    );
+}
+
+pub fn validateObjectSetForAdmissionRootV1(
+    object_set: BackendObjectSetV1,
+    admission_sha256: Digest,
+    authority_sha256: Digest,
+    allocation_count: u64,
+    total_device_bytes: u64,
+    calls: []const AllocationCallV1,
+    objects: []const BackendObjectV1,
+) Error!void {
+    if (digestIsZero(admission_sha256) or
+        digestIsZero(authority_sha256) or allocation_count == 0 or
+        allocation_count > maximum_allocations or total_device_bytes == 0)
+        return Error.InvalidObjectSet;
     if (object_set.abi_version != object_set_abi or
         !digestEqual(
             object_set.admission_sha256,
-            admission.admission_sha256,
+            admission_sha256,
         ) or calls.len != objects.len or
         object_set.allocation_count != objects.len or
-        object_set.allocation_count != admission.allocation_count or
+        object_set.allocation_count != allocation_count or
         object_set.total_allocated_bytes !=
-            admission.total_device_bytes or
+            total_device_bytes or
         digestIsZero(object_set.object_set_sha256) or
         !digestEqual(
             object_set.object_set_sha256,
@@ -1117,13 +1191,10 @@ pub fn validateObjectSetV1(
         validateBackendObjectV1(object, call) catch
             return Error.InvalidObjectSet;
         if (call.ordinal != index or
-            !digestEqual(
-                call.authority_sha256,
-                admission.authority_sha256,
-            ) or
+            !digestEqual(call.authority_sha256, authority_sha256) or
             !digestEqual(
                 call.admission_sha256,
-                admission.admission_sha256,
+                admission_sha256,
             ))
             return Error.InvalidObjectSet;
         total = std.math.add(

@@ -20,6 +20,8 @@ pub const device_capability_contract =
     @import("device_capability_contract.zig");
 pub const device_allocation_lease =
     @import("device_allocation_lease.zig");
+pub const device_allocation_lease_tree =
+    @import("device_allocation_lease_tree.zig");
 pub const lane_weave_qos = @import("lane_weave_qos.zig");
 pub const workload_pressure = @import("workload_pressure.zig");
 pub const workload_closed_loop =
@@ -180,6 +182,8 @@ pub const PlatformCapabilities = platform_capabilities;
 pub const DeviceCapabilityContract =
     device_capability_contract;
 pub const DeviceAllocationLease = device_allocation_lease;
+pub const DeviceAllocationLeaseTree =
+    device_allocation_lease_tree;
 pub const LaneWeaveQoS = lane_weave_qos.Scheduler;
 pub const WorkloadPressure = workload_pressure;
 pub const WorkloadClosedLoop = workload_closed_loop;

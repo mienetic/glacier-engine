@@ -189,16 +189,24 @@ decision. The selection receipt itself does not establish:
 - native support on a cross-compiled target; or
 - latency, throughput, utilization, memory, power, thermal, or energy results.
 
-The separate
-[Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md) now consumes this
-decision through deterministic fake and real-Metal adapters. The fake path
-proves injected rollback/recovery; the Metal path proves real resource
-ownership, direct inspection, release, and generation reuse on the executing
-host. Neither turns the selection receipt into residency or LeaseTree
-execution authority.
+The separate [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md) and
+[LeaseTree Device Allocation](LEASE_TREE_DEVICE_ALLOCATION.md) contracts now
+consume this decision through deterministic fake and real-Metal adapters. The
+fake tests prove injected rollback/recovery. The native gate proves real
+resource ownership, direct inspection, release, and generation reuse on the
+executing host through both the receipt-bound ChildLease and execution-owned
+additive LeaseTree paths, plus cancellation cleanup on the LeaseTree path.
+This does not turn the selection receipt itself into allocation, residency, or
+publication authority: the LeaseTree coordinator obtains a distinct scoped
+execution authority before native creation.
 
-The next device-runtime slices are a dedicated LeaseTree allocation
-coordinator and native composition, explicit device-loss event and quarantine transition,
-deterministic repartition or fallback under a new selection receipt, separate
-residency authority, and a transactional stateless model path that publishes
-only after native candidate validation.
+That coordinator shares address-stable tree and publication-sequence pointers
+with the surrounding execution owner. The owner must externally serialize
+coordinator calls with every other mutation of those shared values; the
+contract does not make independent owners or unsynchronized threads safe.
+
+The next device-runtime slices bind dispatch and queue lifetime to the
+LeaseTree-owned object set, add an explicit device-loss event and quarantine
+transition, define deterministic repartition or fallback under a new selection
+receipt, add separate residency authority, and bind a transactional stateless
+model path that publishes only after native candidate validation.

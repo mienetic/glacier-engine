@@ -14,8 +14,10 @@ Two adapters now exercise the contract. The deterministic fake proves the
 portable lifecycle, injected failure, and recovery rules. The native Metal
 adapter creates and directly inspects real Shared `MTLBuffer` resources on the
 host running its hard gate. Neither adapter proves physical-page residency,
-dispatch ownership, performance, or integration with the LeaseTree-backed
-execution path.
+dispatch ownership, or performance. A separate
+[LeaseTree Device Allocation](LEASE_TREE_DEVICE_ALLOCATION.md) coordinator now
+reuses these adapter contracts under execution-owned allocation nodes without
+changing this ChildLease ABI.
 
 V1 accepts only a present accelerator selection with allocation capability and
 `fallback_used == 0`. “Backend-neutral” describes the portable contract shape;
@@ -280,31 +282,25 @@ V1 deliberately does not provide:
 - direct telemetry; or
 - latency, throughput, power, thermal, or energy evidence.
 
-`ResourceBank` currently opts into either the `ChildLease` sidecar or the
-`LeaseTree` sidecar. Both V1 adapters therefore compose with a non-tree parent.
-It must not be presented as the final integration path for an execution
-receipt that already owns a LeaseTree. The production follow-up must either:
-
-1. bind device objects to existing LeaseTree allocation nodes and their
-   reserve/materialize/free-permit lifecycle; or
-2. use a dedicated device receipt/tree whose lifetime is explicitly composed
-   with the execution receipt.
+`ResourceBank` opts into either the `ChildLease` sidecar or the `LeaseTree`
+sidecar. This coordinator remains the compact receipt-bound path. Execution
+owners use the separate LeaseTree coordinator, which has distinct
+admission/lease/recovery/terminal evidence and keeps Bank mutation permits
+private.
 
 ## Next slices
 
 The next accelerator-runtime work is intentionally split:
 
-1. add a dedicated LeaseTree allocation coordinator and prove its
-   reserve/materialize/free-permit recovery phases with the fake adapter;
-2. compose the native Metal adapter with that LeaseTree-backed execution path;
-3. add a reserve/materialize/settle ABI if the post-creation
+1. add a reserve/materialize/settle ABI if the post-creation
    `MTLResource.allocatedSize` observation must be charged rather than V1
    logical resource length;
-4. add device-loss events, quarantine, and mandatory fresh selection;
-5. add deterministic two-device partition planning before live multi-device
+2. bind dispatch/queue lifetime to the LeaseTree-owned object set;
+3. add device-loss events, quarantine, and mandatory fresh selection;
+4. add deterministic two-device partition planning before live multi-device
    execution;
-6. add residency as a separate optional authority and evidence contract; and
-7. replicate native lifecycle evidence on named OS/device/driver cells.
+5. add residency as a separate optional authority and evidence contract; and
+6. replicate native lifecycle evidence on named OS/device/driver cells.
 
 Allocation ownership can be proven before residency. Neither one should be
 inferred from a cross-build or from a device-wide dynamic memory sample.

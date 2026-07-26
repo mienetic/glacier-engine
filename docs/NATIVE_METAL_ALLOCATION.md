@@ -1,9 +1,10 @@
 # Native Metal Allocation Adapter
 
-The native Metal allocation adapter binds the portable
-`DeviceAllocationLeaseV1` lifecycle to real direct Shared `MTLBuffer`
-resources on macOS. It is a bounded allocation-ownership prototype, not a
-residency or performance subsystem.
+The native Metal allocation adapter binds the portable allocation-adapter
+contract to real direct Shared `MTLBuffer` resources on macOS through both the
+receipt-bound ChildLease coordinator and the execution-owned LeaseTree
+coordinator. It is a bounded allocation-ownership prototype, not a residency
+or performance subsystem.
 
 ## What is implemented
 
@@ -11,8 +12,9 @@ For one exact `MetalBackend` context, the adapter:
 
 1. revalidates the selected Metal device fingerprint and registry identity;
 2. replays a side-effect-free quote for every canonical allocation;
-3. lets `ResourceBank.ChildLease` charge the complete logical resource length
-   before the first native allocation;
+3. lets either `ResourceBank.ChildLease` or the execution-owned additive
+   LeaseTree charge the complete logical resource length before the first
+   native allocation;
 4. creates real buffers with
    `newBufferWithLength:options:`;
 5. validates the resource's device, requested length, storage mode, cache
@@ -20,13 +22,19 @@ For one exact `MetalBackend` context, the adapter:
 6. retains only a copyable pointer-free native token in a private
    fixed-capacity slot while the shim registry owns the Objective-C resource;
 7. exposes a pointer-free, generation-fenced backend object identity;
-8. releases every native object before returning the child charge; and
+8. releases every native object before returning the ChildLease charge or
+   committing a LeaseTree FreePermit; and
 9. rejects copied leases after release and reuses slots only under newer
    generations.
 
-The current coordinator still uses the `ChildLease` sidecar. LeaseTree-backed
-execution ownership is the next device-runtime slice and requires a distinct
-tree admission/lease/recovery ABI.
+The native hard gate now exercises both coordinators. The LeaseTree path uses
+distinct admission/lease/recovery/terminal evidence and keeps its allocation
+batch and FreePermit private. See
+[LeaseTree Device Allocation](LEASE_TREE_DEVICE_ALLOCATION.md).
+Its coordinator holds address-stable pointers to the execution owner's shared
+tree token and publication sequence. The owner must externally serialize
+coordinator calls with every other mutation of those shared values; the
+coordinator does not make unsynchronized owners or threads safe.
 
 ## Byte meanings
 
@@ -96,7 +104,12 @@ The native allocation hard gate is different. On the executing macOS host it:
   bytes;
 - reads `device`, `length`, `allocatedSize`, storage mode, and cache mode from
   each live resource;
-- verifies the complete `0 → 8,000 → 0` ChildLease device-byte lifecycle;
+- verifies complete `0 → 8,000 → 0` device-byte lifecycles through both
+  ChildLease and LeaseTree ownership;
+- verifies the LeaseTree transitions from `reserved_unmaterialized` to `live`
+  to `free_authorized` and finally an empty device scope;
+- cancels a separate LeaseTree wave after two real buffer creations and proves
+  that both buffers are released before the complete charge is returned;
 - verifies `0 → 3 → 0` through both adapter bookkeeping and the independent
   shim-owned live-resource registry;
 - repeats three buffers in a second cycle using the same private slots,
@@ -154,10 +167,10 @@ reuse on the host that executes the hard gate. It does not establish:
 - physical residency or reclaim completion;
 - heap allocation or fragmentation accounting;
 - dispatch-to-allocation lifetime pins;
+- queue or command-buffer ownership;
 - device-loss inspection or reconciliation;
 - asynchronous cleanup;
-- LeaseTree execution integration;
-- multiple simultaneous leases per adapter;
+- multiple simultaneously materialized coordinator leases per adapter context;
 - multi-device partitioning;
 - a supported device/OS range; or
 - latency, throughput, utilization, power, temperature, frequency, or energy.

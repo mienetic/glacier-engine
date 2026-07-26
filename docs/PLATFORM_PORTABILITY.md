@@ -70,28 +70,35 @@ epoch, and revalidates the selected fingerprint and registry identity against
 the same readiness device. See
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md).
 
-The follow-on [Device Allocation Lease](DEVICE_ALLOCATION_LEASE.md) adds the
-portable quote/charge/materialize/release/recovery lifecycle. Its
-[native Metal adapter](NATIVE_METAL_ALLOCATION.md) now creates and directly
-inspects real resources on the executing host, but does not broaden the
-supported platform/device classification or claim residency.
+The follow-on [Device Allocation Lease](DEVICE_ALLOCATION_LEASE.md) and
+[LeaseTree Device Allocation](LEASE_TREE_DEVICE_ALLOCATION.md) contracts add
+receipt-bound and execution-owned quote/charge/materialize/release/recovery
+lifecycles. Their
+[native Metal adapter](NATIVE_METAL_ALLOCATION.md) creates and directly
+inspects real resources on the executing host through both ownership paths,
+but does not broaden the supported platform/device classification or claim
+residency. The LeaseTree coordinator shares address-stable tree and publication
+sequence pointers with its execution owner; that owner must externally
+serialize coordinator calls with every other mutation of those shared values.
 
-That native hard gate still makes exactly one real GPU dispatch in total for a
-fixed synthetic 37x64 INT4 operation and requires CPU-oracle correctness,
-Metal registry identity, `currentAllocatedSize`, command-buffer GPU timestamps,
-ownership closure, no fallback, and composed roots. The corrected tiled FP16
-matmul path is separately CPU-oracle-tested on asymmetric partial-edge shapes
-and rejects zero, overflowing, short, or oversized buffer geometry without
-caller-output mutation. Both are correctness/readiness evidence, not
+The serialized native suite's readiness gate makes exactly one real GPU
+dispatch in total for a fixed synthetic 37x64 INT4 operation and requires
+CPU-oracle correctness, Metal registry identity, `currentAllocatedSize`,
+command-buffer GPU timestamps, ownership closure, no fallback, and composed
+roots. Its allocation gate creates, inspects, and releases real buffers but
+does not dispatch work. The corrected tiled FP16 matmul path is separately
+CPU-oracle-tested on asymmetric partial-edge shapes and rejects zero,
+overflowing, short, or oversized buffer geometry without caller-output
+mutation. These are bounded allocation/correctness/readiness results, not
 throughput, latency, or performance results.
 `recommendedMaxWorkingSetSize` is capacity context only; physical-page
 commitment/reclamation and residency authority, device-loss recovery,
 multi-GPU scheduling, utilization, committed/resident bytes, queue depth,
-temperature, frequency, power, and energy remain open or unsupported. The verifier checks
-composition/corruption of self-asserted live output, not cryptographic origin.
-No native result or device range is retained here, and cross-compilation remains
-source/build evidence rather than native OS or device support. W5b and
-non-macOS native observer coverage remain open.
+temperature, frequency, power, and energy remain open or unsupported. The
+verifier checks composition/corruption of self-asserted live output, not
+cryptographic origin. No native result or device range is retained here, and
+cross-compilation remains source/build evidence rather than native OS or device
+support. W5b and non-macOS native observer coverage remain open.
 
 Run the serialized native device suite on macOS with:
 
@@ -407,17 +414,27 @@ receipt with explicit fallback before admission. The receipt contains no
 pointer or backend handle and cannot allocate, submit, publish, or prove
 continued liveness.
 
-The first lifecycle layer now consumes that receipt through deterministic fake
-and native Metal adapters. Both replay exact quotes, charge a
-`ResourceBank.ChildLease` before allocation, bind opaque object generations,
-and release objects before uncharge. The fake path injects partial
-failure/cancellation and cleanup recovery. The Metal path creates and directly
-inspects real Shared buffers on the executing host. Residency, LeaseTree
-execution ownership, queue or stream ordering, synchronization,
-loss/quarantine, and multi-GPU partitioning/scheduling remain open. OS and
-accelerator support remain separate dimensions. See the
+The allocation layer now consumes that receipt through deterministic fake and
+native Metal adapters. Both ownership paths replay exact quotes and charge
+before allocation: the receipt-bound path uses a `ResourceBank.ChildLease`,
+while the execution-owned path atomically reserves a complete wave in one
+exclusive additive LeaseTree scope before materialization. Both bind opaque
+object generations and release objects before returning the charge. The fake
+tests inject partial failure, cancellation, and recovery at deterministic
+boundaries. The native Metal gate creates and directly inspects real Shared
+buffers on the executing host through both ownership paths, including
+LeaseTree FreePermit release and cancellation rollback.
+
+The LeaseTree coordinator is synchronous and address-stable. The surrounding
+execution owner must serialize coordinator calls with every other mutation of
+the shared tree token and publication sequence; cross-thread use without that
+external serialization is outside the contract. Queue or stream lifetime pins,
+physical residency, loss/quarantine reconciliation, and multi-GPU
+partitioning/scheduling remain open. OS and accelerator support remain separate
+dimensions. See the
 [device capability and selection contract](DEVICE_CAPABILITY_CONTRACT.md) and
-[device allocation lease](DEVICE_ALLOCATION_LEASE.md).
+[device allocation lease](DEVICE_ALLOCATION_LEASE.md), plus
+[LeaseTree device allocation](LEASE_TREE_DEVICE_ALLOCATION.md).
 
 Planned backend families may include:
 
@@ -603,8 +620,11 @@ not represented as partial support.
   resource-length accounting, direct per-object `allocatedSize` evidence,
   release ordering, and generation-fenced reuse;~~ complete on the native
   Metal hard gate;
-- compose native allocation with a new LeaseTree-backed execution
-  coordinator;
+- ~~compose native allocation with a dedicated additive LeaseTree execution
+  coordinator;~~ complete for whole-wave reserve/materialize/FreePermit
+  ownership, conservative recovery, sibling-scope isolation, real Metal reuse,
+  and synchronous cancellation rollback;
+- bind dispatch and queue/command lifetime to the LeaseTree-owned object set;
 - add physical residency as a separate optional authority and evidence layer;
 - add explicit device-loss events, quarantine, and recovery under a fresh
   selection receipt;
@@ -614,8 +634,8 @@ not represented as partial support.
   element type, and operation rather than by backend name alone.
 
 Exit: G5 and G6 evidence is retained for every advertised cell in the device
-matrix. The completed selection and fake-allocation slices do not satisfy this
-exit.
+matrix. The completed bounded selection, allocation-ownership, and readiness
+slices do not satisfy this exit.
 
 ## Claim boundary
 
@@ -623,12 +643,13 @@ The source-compilation probes above do not establish native execution,
 filesystem durability, mobile lifecycle safety, accelerator correctness,
 installation quality, physical telemetry, or performance. The W5a
 cross-compile gate likewise does not establish native observation. The
-portable selection contract, fake allocation lifecycle, one real-Metal
+portable selection contract, fake allocation lifecycles, one real-Metal
 allocation ownership gate, and one Metal readiness binding do not establish
-residency, LeaseTree execution ownership, device-loss recovery, multi-GPU
-behavior, telemetry, performance, or native support for any cross-compiled
-target. The fake lifecycle establishes deterministic failure/recovery
-semantics; the native allocation gate additionally establishes direct resource
-creation, inspection, release, and reuse on its executing host only. This document is an
-implementation plan and evidence ledger, not a declaration that every listed
-platform is currently supported.
+dispatch/queue lifetime ownership, physical residency, device-loss recovery,
+multi-GPU behavior, telemetry, performance, or native support for any
+cross-compiled target. The fake lifecycles establish deterministic
+failure/recovery semantics for both ChildLease and LeaseTree ownership. The
+native allocation gate additionally establishes direct resource creation,
+inspection, release, cancellation cleanup, and generation reuse on its
+executing host only. This document is an implementation plan and evidence
+ledger, not a declaration that every listed platform is currently supported.

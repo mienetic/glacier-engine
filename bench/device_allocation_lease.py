@@ -1142,9 +1142,32 @@ def make_allocation_call(
     ordinal: int,
     entry: AllocationEntryV1,
 ) -> AllocationCallV1:
+    return make_allocation_call_for_admission_root(
+        authority,
+        admission.admission_sha256,
+        ordinal,
+        entry,
+    )
+
+
+def make_allocation_call_for_admission_root(
+    authority: AllocationAuthorityV1,
+    admission_sha256: Digest,
+    ordinal: int,
+    entry: AllocationEntryV1,
+) -> AllocationCallV1:
+    """Seal a V1 backend call around any canonical admission root.
+
+    Higher-level ownership coordinators can reuse the byte-stable allocation
+    call ABI without pretending their admission has the ChildLease layout.
+    """
+
+    _digest(admission_sha256)
+    if admission_sha256 == ZERO_DIGEST:
+        raise ContractError("allocation admission root is zero")
     result = AllocationCallV1(
         authority_sha256=authority.authority_sha256,
-        admission_sha256=admission.admission_sha256,
+        admission_sha256=admission_sha256,
         ordinal=ordinal,
         binding_sha256=entry.binding_sha256,
         requested_bytes=entry.requested_bytes,
@@ -1278,8 +1301,40 @@ def make_object_set(
     calls: Sequence[AllocationCallV1],
     objects: Sequence[BackendObjectV1],
 ) -> BackendObjectSetV1:
-    if len(calls) != len(objects):
-        raise ContractError("call/object count mismatch")
+    validate_admission(admission)
+    return make_object_set_for_admission_root(
+        admission.admission_sha256,
+        admission.authority_sha256,
+        admission.allocation_count,
+        admission.total_device_bytes,
+        calls,
+        objects,
+    )
+
+
+def make_object_set_for_admission_root(
+    admission_sha256: Digest,
+    authority_sha256: Digest,
+    allocation_count: int,
+    total_device_bytes: int,
+    calls: Sequence[AllocationCallV1],
+    objects: Sequence[BackendObjectV1],
+) -> BackendObjectSetV1:
+    """Compose the V1 object-set ABI for a separately versioned admission."""
+
+    _digest(admission_sha256)
+    _digest(authority_sha256)
+    _u64s(allocation_count, total_device_bytes)
+    if (
+        admission_sha256 == ZERO_DIGEST
+        or authority_sha256 == ZERO_DIGEST
+        or allocation_count == 0
+        or allocation_count > MAXIMUM_ALLOCATIONS
+        or total_device_bytes == 0
+        or len(calls) != allocation_count
+        or len(calls) != len(objects)
+    ):
+        raise ContractError("invalid object-set admission boundary")
     total = 0
     identities = set()
     for index, item in enumerate(objects):
@@ -1288,8 +1343,8 @@ def make_object_set(
         validate_backend_object(item, call)
         if (
             call.ordinal != index
-            or call.authority_sha256 != admission.authority_sha256
-            or call.admission_sha256 != admission.admission_sha256
+            or call.authority_sha256 != authority_sha256
+            or call.admission_sha256 != admission_sha256
         ):
             raise ContractError("call is foreign to object-set admission")
         identity = (
@@ -1301,14 +1356,22 @@ def make_object_set(
         identities.add(identity)
         total = _add_u64(total, item.allocated_bytes)
     result = BackendObjectSetV1(
-        admission_sha256=admission.admission_sha256,
+        admission_sha256=admission_sha256,
         allocation_count=len(objects),
         total_allocated_bytes=total,
     )
     result = replace(
         result, object_set_sha256=object_set_root(result, objects)
     )
-    validate_object_set(result, admission, calls, objects)
+    validate_object_set_for_admission_root(
+        result,
+        admission_sha256,
+        authority_sha256,
+        allocation_count,
+        total_device_bytes,
+        calls,
+        objects,
+    )
     return result
 
 
@@ -1319,6 +1382,29 @@ def validate_object_set(
     objects: Sequence[BackendObjectV1],
 ) -> None:
     validate_admission(admission)
+    validate_object_set_for_admission_root(
+        value,
+        admission.admission_sha256,
+        admission.authority_sha256,
+        admission.allocation_count,
+        admission.total_device_bytes,
+        calls,
+        objects,
+    )
+
+
+def validate_object_set_for_admission_root(
+    value: BackendObjectSetV1,
+    admission_sha256: Digest,
+    authority_sha256: Digest,
+    allocation_count: int,
+    total_device_bytes: int,
+    calls: Sequence[AllocationCallV1],
+    objects: Sequence[BackendObjectV1],
+) -> None:
+    _digest(admission_sha256)
+    _digest(authority_sha256)
+    _u64s(allocation_count, total_device_bytes)
     _u64s(
         value.abi_version,
         value.allocation_count,
@@ -1326,8 +1412,15 @@ def validate_object_set(
     )
     _digest(value.admission_sha256)
     _digest(value.object_set_sha256)
-    if len(calls) != len(objects):
-        raise ContractError("call/object count mismatch")
+    if (
+        admission_sha256 == ZERO_DIGEST
+        or authority_sha256 == ZERO_DIGEST
+        or allocation_count == 0
+        or allocation_count > MAXIMUM_ALLOCATIONS
+        or total_device_bytes == 0
+        or len(calls) != len(objects)
+    ):
+        raise ContractError("invalid object-set admission boundary")
     total = 0
     identities = set()
     for index, item in enumerate(objects):
@@ -1340,8 +1433,8 @@ def validate_object_set(
         )
         if (
             call.ordinal != index
-            or call.authority_sha256 != admission.authority_sha256
-            or call.admission_sha256 != admission.admission_sha256
+            or call.authority_sha256 != authority_sha256
+            or call.admission_sha256 != admission_sha256
             or identity in identities
         ):
             raise ContractError("invalid call/object set member")
@@ -1349,11 +1442,11 @@ def validate_object_set(
         total = _add_u64(total, item.allocated_bytes)
     if (
         value.abi_version != OBJECT_SET_ABI
-        or value.admission_sha256 != admission.admission_sha256
+        or value.admission_sha256 != admission_sha256
         or len(calls) != len(objects)
         or value.allocation_count != len(objects)
-        or value.allocation_count != admission.allocation_count
-        or value.total_allocated_bytes != admission.total_device_bytes
+        or value.allocation_count != allocation_count
+        or value.total_allocated_bytes != total_device_bytes
         or value.total_allocated_bytes != total
         or value.object_set_sha256 == ZERO_DIGEST
         or value.object_set_sha256 != object_set_root(value, objects)

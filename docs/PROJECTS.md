@@ -142,11 +142,22 @@ inspection, release-before-uncharge, and generation-fenced reuse on its hard
 native gate. See [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md) and
 [Native Metal Allocation](NATIVE_METAL_ALLOCATION.md).
 
+The execution-owned follow-up is complete as a distinct additive LeaseTree
+coordinator. It atomically reserves the complete quoted wave in one exclusive
+device-only scope before the first allocation, materializes ordered leaves,
+authorizes reverse-order release with a private FreePermit, and retains the
+full charge across rollback, free, and settlement recovery. Portable fake
+tests cover deterministic cancellation/failure boundaries and sibling-scope
+isolation. The native gate composes the same coordinator with real direct
+Shared Metal buffers, cancellation rollback, FreePermit release, and
+generation reuse. The coordinator's address-stable tree and publication
+sequence pointers are shared with the surrounding execution owner, which must
+externally serialize coordinator calls with every other mutation of them. See
+[LeaseTree Device Allocation](LEASE_TREE_DEVICE_ALLOCATION.md).
+
 Small next slices:
 
-- add a dedicated LeaseTree allocation coordinator with explicit
-  reserve/materialize/free-permit recovery;
-- compose native Metal allocation with that LeaseTree-backed execution path;
+- bind dispatch and queue/command lifetime to the LeaseTree-owned object set;
 - prototype reserve/materialize/settle accounting if the post-creation
   `MTLResource.allocatedSize` observation, rather than logical resource length,
   must be charged;
@@ -159,15 +170,15 @@ Small next slices:
 - add a new native backend capability projection only with CPU-oracle and
   lifecycle evidence on the named device.
 
-**Done when:** the LeaseTree follow-up keeps stable capability facts separate
-from dynamic observations, consumes the exact selection explicitly, reserves
-every allocation node before native creation, and demonstrates
-free-before-uncharge recovery on the named device. Physical residency remains
-a separate later contract. Device-loss recovery,
-multi-GPU scheduling, telemetry, performance, retained device ranges, and
-native support remain unimplemented unless a slice supplies direct named
-evidence for that exact claim. Cross-compilation never counts as native
-support.
+**Current boundary:** the completed LeaseTree follow-up keeps stable capability
+facts separate from dynamic observations, consumes the exact selection,
+reserves every allocation node before native creation, and demonstrates
+free-before-uncharge recovery on the executing Metal host. It does not bind
+those objects to submitted command lifetime. Physical residency remains a
+separate later contract. Device-loss recovery, multi-GPU scheduling, telemetry,
+performance, retained device ranges, and native support remain unimplemented
+unless a slice supplies direct named evidence for that exact claim.
+Cross-compilation never counts as native support.
 
 ### Native observation adapters
 

@@ -360,7 +360,7 @@ formats, and independent verifiers.
   unsupported cross-product combinations. The
   receipt is decision evidence only: it grants no allocation, queue, dispatch,
   residency, or publication authority.
-- **Receipt-bound allocation contract.** A fixed-storage allocator boundary
+- **Device allocation ownership contracts.** A fixed-storage allocator boundary
   replays the complete selection and a live quote for every canonical buffer,
   charges exact replayed adapter-quoted bytes through a `ResourceBank.ChildLease`
   before allocation, and returns a generation-fenced opaque object-set lease
@@ -373,8 +373,13 @@ formats, and independent verifiers.
   exact resource device and logical length, retains direct per-object
   `allocatedSize` observations, releases ownership before returning the
   charge, and proves generation-fenced slot reuse in a hard native gate.
-  Logical resource length is not relabelled as physical residency, and
-  LeaseTree execution integration remains open.
+  A separate additive LeaseTree coordinator now reserves the full allocation
+  wave before native creation, retains the charge across rollback/recovery,
+  releases under a private FreePermit, and composes with that same Metal
+  adapter. The surrounding execution owner must externally serialize
+  coordinator calls with every other mutation of the shared tree and
+  publication sequence. Logical resource length is not relabelled as physical
+  residency.
 - **Native Metal execution readiness.** On a native macOS Metal device, the
   focused hard gate executes one fixed synthetic 37x64 INT4 matrix-vector
   operation, exactly once across the entire gate, and checks its output against
@@ -395,11 +400,12 @@ formats, and independent verifiers.
   partial-edge shapes and rejects zero, overflowing, short, or oversized
   buffers without mutating caller output.
 
-The device milestone does not yet provide physical residency authority,
-LeaseTree-backed native execution ownership, device-loss recovery, multi-GPU
-partitioning or scheduling, native support on a cross-compiled target,
-retained telemetry, or performance evidence. See the
+The device milestone does not yet bind dispatch or command-queue lifetime to
+the LeaseTree-owned objects, or provide physical residency authority,
+device-loss recovery, multi-GPU partitioning or scheduling, native support on
+a cross-compiled target, retained telemetry, or performance evidence. See the
 [device capability and selection contract](docs/DEVICE_CAPABILITY_CONTRACT.md)
+and [LeaseTree device-allocation contract](docs/LEASE_TREE_DEVICE_ALLOCATION.md),
 and [native Metal allocation adapter](docs/NATIVE_METAL_ALLOCATION.md).
 
 Run the fail-closed native readiness, allocation, and correctness gates
@@ -621,7 +627,7 @@ hardware-independent surface without those native backend dependencies.
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures with scheduler-owned final-result publication, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, one process-local typed tool transaction, a durable POSIX external-action handoff store, and a same-process generation-fenced fake dispatch/status authority for retained reference profiles | Generic embeddings/reranking/classification, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, OS-isolated real-credential adapters, live tools and agent loops, retrieval, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor evidence, receipt-funded restored activation with a global publication sequence base, and experimental durable prepared-text selection, exact source exit, exclusive fresh-process activation, three-generation terminal lineage, and semantic oracle comparison; plus capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Pre-generation-two source recovery, acknowledged target progress and idempotent external delivery, native Linux recovery, Win32 durable files, device-resident continuation, and durable lifecycle metadata |
 | Scheduling | Exact admission, deterministic weighted QoS, one fixed and 32 generated bounded mixed-media open-loop pressure cases, a separately versioned finite-source deterministic closed-loop campaign with FIFO next-step replacement and exact replay, final-quantum image/audio/video media transactions, deterministic exact-signature shrinking, one mixed typed vision/audio/temporal-video workload with typed result publication under the scheduler-owned receipt, and one atomic process-local typed tool transaction profile | Family-aware batching, preemption, multi-device placement, provider/stateful/live-tool workload profiles, and broader multi-tenant campaigns |
-| Device runtime | Portable capability selection, native Metal fingerprint revalidation, adapter-quoted fake and real-Metal multi-buffer allocation paths, exact adapter-quoted charge-before-allocate accounting (logical `MTLBuffer.length` for Metal V1), direct per-resource Metal length/`allocatedSize` observation, generation-fenced object sets and slot reuse, cancellation rollback, cleanup recovery, and corrected asymmetric Metal FP16 tiled matmul CPU-oracle tests | LeaseTree allocation coordinator and native execution composition; optional post-creation `MTLResource.allocatedSize`-based settlement and separate residency authority; device-loss quarantine/recovery; multi-device partitioning/scheduling; direct telemetry; retained performance evidence; and native support matrices |
+| Device runtime | Portable capability selection, native Metal fingerprint revalidation, adapter-quoted fake and real-Metal multi-buffer allocation paths, exact charge-before-allocate accounting (logical `MTLBuffer.length` for Metal V1), ChildLease and execution-owned additive LeaseTree coordinators, private reserve/materialize/FreePermit authority, direct per-resource Metal length/`allocatedSize` observation, generation-fenced object sets and slot reuse, cancellation rollback, conservative recovery, sibling-scope isolation, and asymmetric Metal FP16 tiled matmul CPU-oracle tests | Dispatch-to-allocation lifetime pins; optional post-creation `MTLResource.allocatedSize` settlement and separate residency authority; device-loss quarantine/recovery; multi-device partitioning/scheduling; direct telemetry; retained performance evidence; and native support matrices |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires, a read-only outer-envelope inspector, and a pointer-free ActionOutbox adapter contract exercised by a same-process fake authority whose portable values contain no credentials or payload bytes | Pluggable live adapters outside the credential-free core, OS-isolated credential handling, and optional caller-supplied full-composition inspection |
 | Evidence | Hash-chained events, independent Python verifiers, a scheduled-media execution sidecar with exact receipt/output replay, compact provider evidence join, an experimental read-only provider outer-envelope inspector, a generated-media inspector with exact optional format-sidecar validation, independent ActionOutbox dispatch/status model tests with live canonical Zig-report parity, a fixed native-observation contract with availability, stable source identity, per-event provenance, unavailable-reason identity, per-record sample-clock identity, and value-clock identity for present time metrics, plus native macOS Metal diagnostic-readiness and allocation-ownership gates | Token transaction inspector, provider nested-composition workflow, privacy-safe export and retention policy, direct CPU/GPU utilization, residency, thermal, frequency, power, and energy adapters, retained native reports, and native multi-OS evidence |
 | Multimodal | Shared identity/timeline, bounded decode/transforms, scheduler-coupled final-quantum image/audio/video transactions and typed perception results, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, typed producer/raw-output admission, host replay of exact deterministic source-model/materializer transitions, validated bounded PNG/WAVE/APNG profiles, and an integrated additive format-conformance sidecar with a maximum-entry repeated-modality composed oracle | External video-timeline normalization, production encoder/container adapters and broader profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, additional model/materializer profiles, and authorized physical playback/display and quality evidence |

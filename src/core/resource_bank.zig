@@ -1537,6 +1537,18 @@ pub const Bank = struct {
         return makeLeaseTree(batch.parent, root.*);
     }
 
+    /// Revalidate an outstanding allocation batch without changing Bank
+    /// state. Coordinators use this before accepting recovery evidence so the
+    /// token they replay names the exact authority that remains live now.
+    pub fn validateLeaseAllocationBatch(
+        self: *Bank,
+        batch: LeaseAllocationBatchV1,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        _ = try self.validateLeaseAllocationBatchLocked(batch);
+    }
+
     /// Atomically settle one complete receipt-funded allocation wave and make
     /// its already-bound restored publication namespace usable. This is the
     /// Bank linearization point consumed by LaneWeave adoption: before it,
@@ -1899,6 +1911,18 @@ pub const Bank = struct {
         return makeLeaseTree(permit.parent, root.*);
     }
 
+    /// Revalidate an outstanding allocator-free permit without settling it.
+    /// This keeps retry evidence bound to current Bank authority after an
+    /// earlier backend-free attempt partially or completely succeeded.
+    pub fn validateLeaseFreePermit(
+        self: *Bank,
+        permit: LeaseFreePermitV1,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        _ = try self.validateLeaseFreePermitLocked(permit);
+    }
+
     pub fn validateLeaseTree(
         self: *Bank,
         tree: LeaseTreeV1,
@@ -1906,6 +1930,19 @@ pub const Bank = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         _ = try self.validateLeaseTreeLocked(tree);
+    }
+
+    /// Read-only funding-policy check for ordinary additive coordinators.
+    pub fn validateAdditiveLeaseTree(
+        self: *Bank,
+        tree: LeaseTreeV1,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const root = try self.validateLeaseTreeLocked(tree);
+        if (root.funding_mode != .additive or
+            root.restored_publication_activated)
+            return Error.InvalidTransition;
     }
 
     /// Read-only mode/activation check for higher-level restored-admission
@@ -1932,6 +1969,25 @@ pub const Bank = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         _ = try self.validateLeaseNodeLocked(tree, node);
+    }
+
+    /// Validate the exact aggregate allocation claim directly owned by one
+    /// scope. This is a read-only exclusivity/preflight check for coordinators
+    /// whose reclaim operation retires the complete scope subtree.
+    pub fn validateLeaseScopeSubtreeClaim(
+        self: *Bank,
+        tree: LeaseTreeV1,
+        scope: LeaseNodeV1,
+        expected: Claim,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        _ = try self.validateLeaseTreeLocked(tree);
+        const scope_slot = try self.validateLeaseNodeLocked(tree, scope);
+        if (scope_slot.kind != .scope or scope_slot.state != .live or
+            !std.meta.eql(scope_slot.subtree_claim, expected))
+            return Error.InvalidTransition;
     }
 
     /// Remove an empty tree and all of its zero-charge scopes. Publication
@@ -2395,6 +2451,29 @@ pub const Bank = struct {
         const slot = try self.validateReceipt(receipt);
         if (try self.hasPendingLeaseTreeLocked(receipt.slot_index))
             return Error.InvalidTransition;
+        if (slot.state != .committed or
+            slot.publication_request_epoch != request_epoch or
+            slot.publication_session_id != session_id or
+            slot.publication_active or
+            slot.publication_next_sequence != expected_sequence)
+            return Error.InvalidTransition;
+    }
+
+    /// Read-only identity/sequence check that remains valid while a LeaseTree
+    /// structural decision is pending. Recovery coordinators use it to join a
+    /// caller-owned sequence cell to the Bank's current session without
+    /// falsely requiring the tree to be idle.
+    pub fn validatePublicationSessionBinding(
+        self: *Bank,
+        receipt: Receipt,
+        request_epoch: u64,
+        session_id: usize,
+        expected_sequence: u64,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const slot = try self.validateReceipt(receipt);
         if (slot.state != .committed or
             slot.publication_request_epoch != request_epoch or
             slot.publication_session_id != session_id or
