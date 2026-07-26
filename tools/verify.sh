@@ -4,20 +4,31 @@ set -eu
 
 usage() {
     cat <<'EOF'
-usage: tools/verify.sh [quick|full]
+usage: tools/verify.sh [quick|full|matrix]
+       tools/verify.sh affected --base REV
+       GLACIER_VERIFY_BASE=REV tools/verify.sh affected
+       GLACIER_VERIFY_REQUIRE_NATIVE=1 tools/verify.sh affected --base REV
 
 quick  Run bounded format, documentation-policy, package, and interop gates.
 full   Add the broad native ReleaseSafe and Python suites plus optional Rust.
+affected
+       Select the union of host and cross-target gates for every path changed
+       since the merge base with REV. --base overrides GLACIER_VERIFY_BASE.
+matrix Run full host gates plus every retained cross-target compile gate.
 EOF
 }
 
 profile=quick
+base_ref=${GLACIER_VERIFY_BASE:-}
 case "$#" in
     0) ;;
     1)
         case "$1" in
-            quick | full)
+            quick | full | matrix)
                 profile=$1
+                ;;
+            affected)
+                profile=affected
                 ;;
             -h | --help)
                 usage
@@ -29,8 +40,44 @@ case "$#" in
                 ;;
         esac
         ;;
+    2)
+        case "$1:$2" in
+            affected:--base=*)
+                profile=affected
+                base_ref=${2#--base=}
+                ;;
+            *)
+                usage >&2
+                exit 64
+                ;;
+        esac
+        ;;
+    3)
+        if [ "$1" = "affected" ] && [ "$2" = "--base" ]; then
+            profile=affected
+            base_ref=$3
+        else
+            usage >&2
+            exit 64
+        fi
+        ;;
     *)
         usage >&2
+        exit 64
+        ;;
+esac
+
+if [ "$profile" = "affected" ] && [ -z "$base_ref" ]; then
+    echo "FAIL  verifier/base: affected requires --base REV or GLACIER_VERIFY_BASE" >&2
+    usage >&2
+    exit 64
+fi
+
+require_native=${GLACIER_VERIFY_REQUIRE_NATIVE:-0}
+case "$require_native" in
+    0 | 1) ;;
+    *)
+        echo "FAIL  verifier/native-mode: GLACIER_VERIFY_REQUIRE_NATIVE must be 0 or 1" >&2
         exit 64
         ;;
 esac
@@ -83,11 +130,7 @@ cleanup_verification() {
     case "$verification_root" in
         "$cache_parent"/glacier-verify.*)
             if [ -d "$verification_root" ]; then
-                verification_size=$(
-                    du -sh "$verification_root" 2>/dev/null |
-                        awk '{print $1}'
-                ) || verification_size=unknown
-                echo "temporary verification data: $verification_size; removing $verification_root"
+                echo "removing temporary verification data: $verification_root"
                 rm -rf -- "$verification_root"
             fi
             ;;
@@ -112,6 +155,9 @@ mkdir "$verification_root/logs" || {
 ZIG_LOCAL_CACHE_DIR="$verification_root/zig-local"
 ZIG_GLOBAL_CACHE_DIR="$verification_root/zig-global"
 verification_prefix="$verification_root/prefix"
+affected_paths_file="$verification_root/affected.paths0"
+affected_flags_file="$verification_root/affected.flags"
+selected_targets_file="$verification_root/selected.targets"
 PYTHONDONTWRITEBYTECODE=1
 export ZIG_LOCAL_CACHE_DIR ZIG_GLOBAL_CACHE_DIR PYTHONDONTWRITEBYTECODE
 
@@ -161,7 +207,7 @@ run_gate() {
     gate_log="$verification_root/logs/$gate_slug.log"
     gate_started=$(date +%s)
 
-    "$@" >"$gate_log" 2>&1 &
+    "$@" </dev/null >"$gate_log" 2>&1 &
     active_pid=$!
     if wait "$active_pid"; then
         gate_status=0
@@ -192,6 +238,85 @@ run_zig_build() {
         --prefix "$verification_prefix"
 }
 
+run_zig_metal_build() {
+    zig build native-metal-observation-test \
+        -Doptimize=ReleaseSafe \
+        -Dmetal=true \
+        -j2 \
+        --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
+        --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" \
+        --prefix "$verification_root/prefix-metal"
+}
+
+run_zig_target_build() {
+    target_name=$1
+    shift
+    zig build "$@" \
+        -Dtarget="$target_name" \
+        -Doptimize=ReleaseSafe \
+        -Dmetal=false \
+        -j2 \
+        --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
+        --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" \
+        --prefix "$verification_root/prefix-$target_name"
+}
+
+plan_has() {
+    [ -f "$affected_flags_file" ] &&
+        grep -Fqx "$1" "$affected_flags_file"
+}
+
+run_target_gates() {
+    selected_target=$1
+    if [ "$has_zig" -eq 1 ]; then
+        run_gate "portability/$selected_target/build" \
+            run_zig_target_build "$selected_target"
+        run_gate "portability/$selected_target/test-compile" \
+            run_zig_target_build "$selected_target" test-compile
+    else
+        record_skip "portability/$selected_target/build" \
+            "requires a working zig executable"
+        record_skip "portability/$selected_target/test-compile" \
+            "requires a working zig executable"
+    fi
+}
+
+record_native_unavailable() {
+    if [ "$require_native" -eq 1 ]; then
+        record_fail "$1" "$2"
+    else
+        record_skip "$1" "$2"
+    fi
+}
+
+run_target_plan() {
+    selected_target_count=0
+    seen_targets="|"
+    if [ ! -f "$selected_targets_file" ]; then
+        record_fail "verifier/targets" "selected target plan is unavailable"
+        return
+    fi
+    while IFS= read -r selected_target || [ -n "$selected_target" ]; do
+        case "$selected_target" in
+            "" | -* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+-]*)
+                record_fail "verifier/targets" \
+                    "policy emitted an invalid target name"
+                continue
+                ;;
+        esac
+        case "$seen_targets" in
+            *"|$selected_target|"*)
+                record_fail "verifier/targets" \
+                    "policy emitted a duplicate target: $selected_target"
+                continue
+                ;;
+        esac
+        seen_targets="${seen_targets}${selected_target}|"
+        selected_target_count=$((selected_target_count + 1))
+        run_target_gates "$selected_target"
+    done <"$selected_targets_file"
+}
+
 printf 'Glacier local verification (%s)\n' "$profile"
 printf 'Temporary workspace: %s\n' "$verification_root"
 
@@ -217,6 +342,51 @@ if command -v python3 >/dev/null 2>&1; then
     fi
 else
     record_fail "toolchain/python" "python3 is not on PATH"
+fi
+
+affected_plan_ready=0
+target_plan_ready=0
+if [ "$profile" = "affected" ]; then
+    if ! command -v git >/dev/null 2>&1; then
+        record_fail "toolchain/git" "git is required by the affected profile"
+    elif ! base_commit=$(
+        git rev-parse --verify --end-of-options "${base_ref}^{commit}" 2>/dev/null
+    ); then
+        record_fail "verifier/base" "cannot resolve base revision: $base_ref"
+    elif ! merge_base=$(git merge-base HEAD "$base_commit" 2>/dev/null); then
+        record_fail "verifier/base" "cannot find a merge base with: $base_ref"
+    elif [ "$has_python" -ne 1 ]; then
+        record_fail "policy/affected-selection" \
+            "requires a working python3 executable"
+    elif ! python3 tools/verification_policy.py git-paths \
+        --merge-base "$merge_base" \
+        --paths0 "$affected_paths_file"; then
+        record_fail "verifier/paths" \
+            "cannot collect committed, staged, unstaged, and untracked paths"
+    else
+        printf 'Affected base: %s\n' "$base_ref"
+        printf 'Resolved merge base: %s\n' "$merge_base"
+        if python3 tools/verification_policy.py plan \
+            --paths0 "$affected_paths_file" \
+            --flags "$affected_flags_file" \
+            --targets "$selected_targets_file"; then
+            affected_plan_ready=1
+            target_plan_ready=1
+            record_pass "policy/affected-selection" "union plan created"
+        else
+            record_fail "policy/affected-selection" "cannot classify changed paths"
+        fi
+    fi
+elif [ "$profile" = "matrix" ]; then
+    if [ "$has_python" -eq 1 ] &&
+        python3 tools/verification_policy.py retained-targets \
+            --targets "$selected_targets_file"; then
+        target_plan_ready=1
+        record_pass "policy/target-selection" "retained target plan created"
+    else
+        record_fail "policy/target-selection" \
+            "cannot create the retained target plan"
+    fi
 fi
 
 if [ "$has_zig" -eq 1 ]; then
@@ -247,51 +417,186 @@ else
     record_skip "package/modules" "requires a working zig executable"
 fi
 
-if [ "$profile" = "full" ]; then
+if [ "$profile" = "affected" ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "python-changed"; then
+    if [ "$has_python" -eq 1 ]; then
+        run_gate "python/changed-syntax" \
+            python3 tools/verification_policy.py python-syntax \
+            --paths0 "$affected_paths_file"
+    else
+        record_skip "python/changed-syntax" "requires a working python3 executable"
+    fi
+fi
+
+if [ "$profile" = "affected" ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "shell-changed"; then
+    if [ "$has_python" -eq 1 ]; then
+        run_gate "shell/changed-syntax" \
+            python3 tools/verification_policy.py shell-syntax \
+            --paths0 "$affected_paths_file"
+    else
+        record_skip "shell/changed-syntax" "requires a working python3 executable"
+    fi
+fi
+
+run_native_full=0
+run_python_full=0
+case "$profile" in
+    full | matrix)
+        run_native_full=1
+        run_python_full=1
+        ;;
+    affected)
+        if [ "$affected_plan_ready" -eq 1 ] && plan_has "native-full"; then
+            run_native_full=1
+        fi
+        if [ "$affected_plan_ready" -eq 1 ] && plan_has "python-full"; then
+            run_python_full=1
+        fi
+        ;;
+esac
+
+if [ "$run_native_full" -eq 1 ]; then
     if [ "$has_zig" -eq 1 ]; then
         run_gate "native/releasesafe-suite" \
             run_zig_build test
     else
         record_skip "native/releasesafe-suite" "requires a working zig executable"
     fi
+elif [ "$profile" = "quick" ]; then
+    record_skip "native/releasesafe-suite" "quick profile; run tools/verify.sh full"
+else
+    record_skip "native/releasesafe-suite" "not selected by the affected policy"
+fi
 
+if [ "$run_python_full" -eq 1 ]; then
     if [ "$has_python" -eq 1 ]; then
         run_gate "python/full-suite" \
             python3 -m unittest discover -s bench/tests
     else
         record_skip "python/full-suite" "requires a working python3 executable"
     fi
+elif [ "$profile" = "quick" ]; then
+    record_skip "python/full-suite" "quick profile; run tools/verify.sh full"
+else
+    record_skip "python/full-suite" "not selected by the affected policy"
+fi
 
-    host_name=$(uname -s 2>/dev/null || printf unknown)
+host_name=$(uname -s 2>/dev/null || printf unknown)
+run_rust_gate=0
+require_rust_gate=0
+case "$profile" in
+    full | matrix)
+        run_rust_gate=1
+        ;;
+    quick)
+        record_skip "interop/rust" "quick profile; run tools/verify.sh full"
+        ;;
+    affected)
+        if [ "$affected_plan_ready" -eq 1 ] && plan_has "rust-native"; then
+            run_rust_gate=1
+            require_rust_gate=1
+        else
+            record_skip "interop/rust" "not selected by the affected policy"
+        fi
+        ;;
+esac
+
+if [ "$run_rust_gate" -eq 1 ]; then
     case "$host_name" in
         Darwin | Linux | FreeBSD)
-            if command -v rustc >/dev/null 2>&1; then
-                if [ "$has_zig" -eq 1 ]; then
-                    run_gate "interop/rust" \
-                        run_zig_build contract-rust-test
+            if ! command -v rustc >/dev/null 2>&1; then
+                if [ "$require_rust_gate" -eq 1 ]; then
+                    record_fail "interop/rust" \
+                        "changed Rust source requires rustc on PATH"
                 else
-                    record_skip "interop/rust" "requires a working zig executable"
+                    record_skip "interop/rust" "optional rustc is not on PATH"
                 fi
+            elif [ "$has_zig" -eq 1 ]; then
+                run_gate "interop/rust" \
+                    run_zig_build contract-rust-test
+            elif [ "$require_rust_gate" -eq 1 ]; then
+                record_fail "interop/rust" \
+                    "changed Rust source requires a working zig executable"
             else
-                record_skip "interop/rust" "optional rustc is not on PATH"
+                record_skip "interop/rust" \
+                    "requires a working zig executable"
             fi
             ;;
         *)
-            record_skip "interop/rust" "unsupported host for the retained native Rust gate"
+            if [ "$require_rust_gate" -eq 1 ]; then
+                record_fail "interop/rust" \
+                    "changed Rust source requires native macOS, Linux, or FreeBSD"
+            else
+                record_skip "interop/rust" \
+                    "unsupported host for the retained native Rust gate"
+            fi
             ;;
     esac
-else
-    record_skip "native/releasesafe-suite" "quick profile; run tools/verify.sh full"
-    record_skip "python/full-suite" "quick profile; run tools/verify.sh full"
-    record_skip "interop/rust" "quick profile; run tools/verify.sh full"
+fi
+
+if [ "$profile" = "affected" ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "darwin-native"; then
+    if [ "$host_name" != "Darwin" ]; then
+        record_native_unavailable "native/darwin" \
+            "requires native Darwin execution"
+    elif [ "$has_zig" -eq 1 ]; then
+        run_gate "native/darwin" run_zig_build test
+    else
+        record_native_unavailable "native/darwin" \
+            "requires a working zig executable"
+    fi
+fi
+
+if [ "$profile" = "affected" ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "metal-native"; then
+    if [ "$host_name" != "Darwin" ]; then
+        record_native_unavailable "native/metal" \
+            "requires native Darwin execution"
+    elif [ "$has_zig" -eq 1 ]; then
+        run_gate "native/metal" run_zig_metal_build
+    else
+        record_native_unavailable "native/metal" \
+            "requires a working zig executable"
+    fi
 fi
 
 record_skip "native/debug-releasefast" \
     "change-specific matrix; see docs/CONTRIBUTING.md"
 record_skip "concurrency/thread-sanitizer" \
     "run only on a supported host for concurrency changes"
-record_skip "portability/cross-target" \
-    "run the affected targets from docs/CONTRIBUTING.md"
+
+case "$profile" in
+    matrix)
+        selected_target_count=0
+        if [ "$target_plan_ready" -eq 1 ]; then
+            run_target_plan
+        fi
+        if [ "$selected_target_count" -eq 0 ]; then
+            record_fail "portability/cross-target" \
+                "matrix requires a nonempty validated target plan"
+        fi
+        ;;
+    affected)
+        selected_target_count=0
+        if [ "$affected_plan_ready" -eq 1 ] &&
+            [ "$target_plan_ready" -eq 1 ]; then
+            run_target_plan
+        fi
+        if [ "$selected_target_count" -eq 0 ]; then
+            record_skip "portability/cross-target" \
+                "no retained foreign target was selected"
+        fi
+        ;;
+    quick | full)
+        record_skip "portability/cross-target" \
+            "run the affected targets from docs/CONTRIBUTING.md"
+        ;;
+esac
 
 printf 'Summary: %s PASS, %s SKIP, %s FAIL\n' \
     "$pass_count" "$skip_count" "$fail_count"

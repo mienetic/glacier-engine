@@ -49,9 +49,7 @@ cleanup_cache() {
     case "$cache_root" in
         "$cache_parent"/glacier-zig-cache.*)
             if [ -d "$cache_root" ]; then
-                cache_size=$(du -sh "$cache_root" 2>/dev/null | awk '{print $1}') ||
-                    cache_size=unknown
-                echo "ephemeral Zig cache used: $cache_size; removing $cache_root" >&2
+                echo "removing ephemeral Zig cache: $cache_root" >&2
                 rm -rf -- "$cache_root"
             fi
             ;;
