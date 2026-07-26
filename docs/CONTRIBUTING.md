@@ -164,13 +164,13 @@ because Zig does not select its default step after another top-level step is
 named. The default install now contains only the production CLI; use
 `zig build install-benchmarks` to stage all benchmark and diagnostic
 executables. `zig build run` also builds only the CLI. Metal-only changes use
-one native Darwin Zig invocation containing the
-`native-metal-observation-test` hard gate, the focused
-`native-metal-correctness-test`, and the orthogonal device and host-tool compile
-profiles, so Metal assertions run and the production CLI plus diagnostics
-cannot escape compilation. The readiness sub-gate retains its one-dispatch
-contract and completes before the additional correctness dispatches begin; all
-roots share one shader-library build step.
+one native Darwin Zig invocation containing the serialized
+`native-metal-suite-test` plus the orthogonal device and host-tool compile
+profiles. The aggregate runs diagnostic readiness, real-resource allocation
+ownership, and focused correctness without overlap; the readiness sub-gate
+retains its one-dispatch contract. Metal assertions run, the production CLI
+plus diagnostics cannot escape compilation, and all roots share one
+shader-library build step.
 Verification uses one protected temporary workspace, shared private Zig cache
 directories, temporary target prefixes, `-j2`, and repository fixtures only.
 No persistent repository cache is needed. The quick profile intentionally

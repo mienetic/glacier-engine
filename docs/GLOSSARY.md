@@ -124,8 +124,10 @@ policy before execution begins.
 **DeviceAllocationLeaseV1** — A generation-fenced portable authority produced
 only after a replayed selection, live adapter quotes, exact
 `ResourceBank.ChildLease` charge, and complete backend object set agree. The
-current adapter is fake and proves ordering/accounting/recovery semantics, not
-native allocation or physical residency.
+deterministic fake adapter proves ordering/accounting/recovery semantics. The
+native macOS Metal adapter additionally creates and directly inspects real
+resources on its executing host. Neither path establishes physical residency
+or page-reclamation evidence.
 
 **StateAdapter** — A proposed family-specific contract for verifying,
 checkpointing, restoring, and releasing typed state such as KV, recurrent

@@ -133,15 +133,20 @@ AARCH64_CPU_SOURCE_PATHS = {
 }
 
 METAL_NATIVE_SOURCE_PATHS = {
-    "src/backends/metal/backend.zig",
     "src/backends/metal/native_observer.zig",
     "src/backends/metal/shaders/dequant.metal",
     "src/backends/metal/shaders/matmul.metal",
     "src/backends/metal/shim.m",
     "tests/metal_correctness.zig",
+    "tests/native_metal_allocation.zig",
     "tests/native_metal_observation.zig",
     "examples/native_metal_observation.zig",
     "bench/metal_kernel.zig",
+}
+
+METAL_PORTABLE_SOURCE_PATHS = {
+    "src/backends/metal/allocation_adapter.zig",
+    "src/backends/metal/backend.zig",
 }
 
 CORE_CONTRACT_PATHS = {
@@ -491,6 +496,16 @@ def _decision_for_path(path: str) -> PathDecision:
                 "profile-cpu-compile",
                 "profile-host-tool-compile",
             ),
+        )
+
+    if path in METAL_PORTABLE_SOURCE_PATHS:
+        return PathDecision(
+            path,
+            "portable Metal public surface changed; compile every retained target and run native Metal",
+            _compiled_flags(suffix) |
+            frozenset({"metal-native"}),
+            RETAINED_TARGETS,
+            ("profile-device-compile",),
         )
 
     if path in METAL_NATIVE_SOURCE_PATHS:

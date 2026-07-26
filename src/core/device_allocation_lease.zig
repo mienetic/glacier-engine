@@ -2,15 +2,16 @@
 //!
 //! Selection receipts remain decision evidence only. This module composes one
 //! replay-validated selection with a committed ResourceBank parent Receipt,
-//! an exact backend-quoted allocation manifest, and a generation-fenced fake
+//! an exact backend-quoted allocation manifest, and a generation-fenced
 //! allocator boundary. Device bytes are charged through a ChildLease before
 //! the first allocation callback and are returned only after every acquired
 //! backend object has been freed.
 //!
 //! V1 is a synchronous, same-process coordinator. Its fake adapter proves
-//! ordering, accounting, rollback, recovery, and stale-handle rejection. It
-//! does not prove native allocation, residency, asynchronous cancellation,
-//! dispatch, or device-loss recovery.
+//! deterministic failure/recovery semantics; a separate Metal adapter binds
+//! the same lifecycle to real direct Shared MTLBuffers while charging exact
+//! logical resource length. Neither path proves residency, asynchronous
+//! cancellation, dispatch ownership, or device-loss recovery.
 
 const std = @import("std");
 const device = @import("device_capability_contract.zig");

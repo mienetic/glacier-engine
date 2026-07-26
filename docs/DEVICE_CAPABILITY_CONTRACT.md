@@ -131,6 +131,15 @@ single-buffer value. That means this slice makes no per-buffer compatibility
 claim. `recommendedMaxWorkingSetSize` is used only as total capacity context,
 not as proof of allocation or residency.
 
+The separate native allocation adapter emits a distinct allocation-aware
+inventory entry. It uses `MTLDevice.maxBufferLength` as the hard requested
+length ceiling and a caller-selected logical total no larger than
+`recommendedMaxWorkingSetSize`. Allocation remains fallible. Its V1 quote and
+ChildLease charge are exact logical `MTLBuffer.length` bytes; the
+post-creation `MTLResource.allocatedSize` value is retained separately as
+direct per-resource observation rather than retrofitted into the selection
+capability or pre-allocation quote.
+
 ## Evidence
 
 Portable contract checks:
@@ -143,23 +152,24 @@ tools/zig-with-ephemeral-cache.sh build test \
 These portable Zig/Python and mutation-injection checks are deterministic
 contract tests. They do not emulate a Metal driver or claim hardware behavior.
 
-Native Metal correctness and readiness on a macOS Metal host:
+Native Metal readiness, allocation ownership, and correctness on a macOS
+Metal host:
 
 ```bash
 metal_dir="$(mktemp -d)"
 trap 'rm -rf "$metal_dir"' EXIT
 tools/zig-with-ephemeral-cache.sh build \
-  native-metal-observation-test \
-  native-metal-correctness-test \
+  native-metal-suite-test \
   profile-device-compile \
   -Doptimize=ReleaseSafe -Dmetal=true \
   -Dmetal-output-dir="$metal_dir" -j2
 ```
 
-That native command discovers the host's real `MTLDevice`, compiles the actual
-Metal shaders, allocates real Metal buffers, submits command buffers to the
-device, waits for completion, and compares output with CPU oracles. It is a
-bounded real-device correctness/readiness check, not a simulated GPU and not a
+That native command discovers the host's real `MTLDevice`, creates and directly
+inspects real lease-bound Metal buffers, compiles the actual Metal shaders,
+submits command buffers to the device, waits for completion, and compares
+output with CPU oracles. It is a bounded real-device
+allocation/correctness/readiness check, not a simulated GPU and not a
 performance or broad device-support result.
 
 The portable contract also participates in the retained foreign-target compile
@@ -181,12 +191,14 @@ decision. The selection receipt itself does not establish:
 
 The separate
 [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md) now consumes this
-decision through a deterministic fake adapter and proves quote/charge,
-rollback, recovery, and stale-handle semantics. It does not turn this selection
-receipt into native allocation or residency authority.
+decision through deterministic fake and real-Metal adapters. The fake path
+proves injected rollback/recovery; the Metal path proves real resource
+ownership, direct inspection, release, and generation reuse on the executing
+host. Neither turns the selection receipt into residency or LeaseTree
+execution authority.
 
-The next device-runtime slices are a native allocation adapter and LeaseTree
-composition, explicit device-loss event and quarantine transition,
+The next device-runtime slices are a dedicated LeaseTree allocation
+coordinator and native composition, explicit device-loss event and quarantine transition,
 deterministic repartition or fallback under a new selection receipt, separate
 residency authority, and a transactional stateless model path that publishes
 only after native candidate validation.

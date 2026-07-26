@@ -39,7 +39,7 @@ surface.
 
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
-| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | Portable deterministic capability selection binds one local discovery epoch and revalidates native Metal fingerprint/registry identity; one fixed 37x64 INT4 readiness dispatch and asymmetric FP16 tiled matmul shapes pass CPU-oracle checks, but no addressable result or device support range is retained | Development host, not a broad platform certification |
+| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | Portable deterministic capability selection binds one local discovery epoch and revalidates native Metal fingerprint/registry identity; the hard gates create and directly inspect real per-object Metal buffers, run one fixed 37x64 INT4 readiness dispatch, and check asymmetric FP16 tiled matmul shapes against CPU oracles, but no addressable result or device support range is retained | Development host, not a broad platform certification |
 | Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is implemented; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is architecture-neutral; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
@@ -70,10 +70,11 @@ epoch, and revalidates the selected fingerprint and registry identity against
 the same readiness device. See
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md).
 
-The follow-on [Device Allocation Lease](DEVICE_ALLOCATION_LEASE.md) adds a
-portable fake quote/charge/materialize/release/recovery lifecycle. It does not
-change any platform classification because no native allocator implements
-that lease yet.
+The follow-on [Device Allocation Lease](DEVICE_ALLOCATION_LEASE.md) adds the
+portable quote/charge/materialize/release/recovery lifecycle. Its
+[native Metal adapter](NATIVE_METAL_ALLOCATION.md) now creates and directly
+inspects real resources on the executing host, but does not broaden the
+supported platform/device classification or claim residency.
 
 That native hard gate still makes exactly one real GPU dispatch in total for a
 fixed synthetic 37x64 INT4 operation and requires CPU-oracle correctness,
@@ -83,21 +84,21 @@ matmul path is separately CPU-oracle-tested on asymmetric partial-edge shapes
 and rejects zero, overflowing, short, or oversized buffer geometry without
 caller-output mutation. Both are correctness/readiness evidence, not
 throughput, latency, or performance results.
-`recommendedMaxWorkingSetSize` is capacity context only; physical allocation
-and residency authority, device-loss recovery, multi-GPU scheduling,
-utilization, committed/resident bytes, queue depth, temperature, frequency,
-power, and energy remain open or unsupported. The verifier checks
+`recommendedMaxWorkingSetSize` is capacity context only; physical-page
+commitment/reclamation and residency authority, device-loss recovery,
+multi-GPU scheduling, utilization, committed/resident bytes, queue depth,
+temperature, frequency, power, and energy remain open or unsupported. The verifier checks
 composition/corruption of self-asserted live output, not cryptographic origin.
 No native result or device range is retained here, and cross-compilation remains
 source/build evidence rather than native OS or device support. W5b and
 non-macOS native observer coverage remain open.
 
-Run the native diagnostic gate on macOS with:
+Run the serialized native device suite on macOS with:
 
 ```sh
 metal_dir="$(mktemp -d)"
 tools/zig-with-ephemeral-cache.sh build \
-  native-metal-observation-test native-metal-correctness-test \
+  native-metal-suite-test \
   profile-device-compile -Dmetal=true -Doptimize=ReleaseSafe \
   -Dmetal-output-dir="$metal_dir" -j2
 ```
@@ -406,14 +407,15 @@ receipt with explicit fallback before admission. The receipt contains no
 pointer or backend handle and cannot allocate, submit, publish, or prove
 continued liveness.
 
-The first lifecycle layer now consumes that receipt through a deterministic
-fake allocator. It replays exact quotes, charges a `ResourceBank.ChildLease`
-before allocation, binds opaque object generations, rolls back partial
-failure/cancellation, and keeps the charge through cleanup recovery. This
-proves portable ownership semantics only. Native allocation, physical
-residency, queue or stream ordering, synchronization, loss/quarantine, and
-multi-GPU partitioning/scheduling remain open. OS and accelerator support
-remain separate dimensions. See the
+The first lifecycle layer now consumes that receipt through deterministic fake
+and native Metal adapters. Both replay exact quotes, charge a
+`ResourceBank.ChildLease` before allocation, bind opaque object generations,
+and release objects before uncharge. The fake path injects partial
+failure/cancellation and cleanup recovery. The Metal path creates and directly
+inspects real Shared buffers on the executing host. Residency, LeaseTree
+execution ownership, queue or stream ordering, synchronization,
+loss/quarantine, and multi-GPU partitioning/scheduling remain open. OS and
+accelerator support remain separate dimensions. See the
 [device capability and selection contract](DEVICE_CAPABILITY_CONTRACT.md) and
 [device allocation lease](DEVICE_ALLOCATION_LEASE.md).
 
@@ -595,10 +597,14 @@ not represented as partial support.
   decision contract;~~ complete for the tested readiness binding and corrected
   asymmetric FP16 tiled matmul CPU-oracle cases only;
 - ~~add a receipt-bound fake allocation lifecycle;~~ complete for portable
-  quote replay, exact logical charge, failure/cancellation rollback, recovery,
-  and stale-handle fencing only;
-- add a native allocation adapter with direct per-object allocated-byte
-  evidence and compose it with LeaseTree-backed execution;
+  quote replay, exact adapter-quoted charge, failure/cancellation rollback,
+  recovery, and stale-handle fencing only;
+- ~~add a native direct-buffer allocation adapter with exact logical
+  resource-length accounting, direct per-object `allocatedSize` evidence,
+  release ordering, and generation-fenced reuse;~~ complete on the native
+  Metal hard gate;
+- compose native allocation with a new LeaseTree-backed execution
+  coordinator;
 - add physical residency as a separate optional authority and evidence layer;
 - add explicit device-loss events, quarantine, and recovery under a fresh
   selection receipt;
@@ -617,10 +623,12 @@ The source-compilation probes above do not establish native execution,
 filesystem durability, mobile lifecycle safety, accelerator correctness,
 installation quality, physical telemetry, or performance. The W5a
 cross-compile gate likewise does not establish native observation. The
-portable selection contract, fake allocation lifecycle, and one Metal
-readiness binding do not establish native allocation or residency, device-loss
-recovery, multi-GPU behavior, telemetry, performance, or native support for
-any cross-compiled target. The fake lifecycle establishes ordering,
-accounting, recovery, and fencing semantics only. This document is an
+portable selection contract, fake allocation lifecycle, one real-Metal
+allocation ownership gate, and one Metal readiness binding do not establish
+residency, LeaseTree execution ownership, device-loss recovery, multi-GPU
+behavior, telemetry, performance, or native support for any cross-compiled
+target. The fake lifecycle establishes deterministic failure/recovery
+semantics; the native allocation gate additionally establishes direct resource
+creation, inspection, release, and reuse on its executing host only. This document is an
 implementation plan and evidence ledger, not a declaration that every listed
 platform is currently supported.

@@ -125,10 +125,10 @@ Promotion gate: the plan fully predicts memory and output ceilings, the backend
 confirms exact capability identity, and unsupported combinations fail before
 visible state or output changes.
 
-The selection receipt is decision evidence only. Physical allocation and
-residency authority, device-loss recovery, multi-GPU partitioning/scheduling,
-direct telemetry, performance evidence, native device ranges, and native
-support on cross-compiled targets remain open.
+The selection receipt is decision evidence only. Physical-page commitment,
+reclamation, and residency authority/evidence, device-loss recovery, multi-GPU
+partitioning/scheduling, direct telemetry, performance evidence, native device
+ranges, and native support on cross-compiled targets remain open.
 
 ### 3. Resource plane
 
@@ -475,11 +475,14 @@ revalidates its selected capability and registry identity against the same
 Metal device. Separately, the corrected tiled FP16 matmul
 matches its CPU oracle on asymmetric partial-edge shapes and rejects malformed
 exact buffer geometry before output mutation. This expands tested correctness,
-not advertised device range or performance. A separate receipt-bound fake
-allocation contract prototype now proves adapter quote replay, exact logical
-charge-before-allocate ordering, multi-buffer rollback, cleanup recovery, and
-stale ownership fencing. It is not native allocation or residency evidence.
-Native allocation, LeaseTree composition, physical residency, device-loss
+not advertised device range or performance. A separate receipt-bound
+allocation contract now uses a deterministic fake adapter to prove quote
+replay, exact adapter-quoted charge-before-allocate ordering, multi-buffer rollback,
+cleanup recovery, and stale ownership fencing. Its native Metal adapter
+creates and directly inspects real per-object resources, releases them before
+uncharge, and proves generation-fenced slot reuse on the executing host. It
+does not claim residency. LeaseTree composition, optional post-creation
+`MTLResource.allocatedSize`-based settlement, physical residency, device-loss
 recovery, multi-device scheduling, direct CPU/device telemetry, native
 multi-platform campaigns, and performance evidence stay open.
 Contract validation requires a present logical CPU count of at least one and
@@ -1344,9 +1347,10 @@ Contributors can work on the runtime without downloading a large model:
   generation with explicit crash boundaries;
 - one replicated non-macOS POSIX recovery campaign or bounded Win32
   durable-file adapter slice;
-- one native allocation, LeaseTree integration, residency, placement,
-  device-loss, or multi-device evidence slice that consumes a fresh selection
-  receipt, builds on the fake lifecycle, and rejects unsupported fallback;
+- one additional native-backend allocation, LeaseTree composition, residency,
+  placement, device-loss, or multi-device evidence slice that consumes a fresh
+  selection receipt, builds on the bounded lifecycle, and rejects unsupported
+  fallback;
 - one repeated-handoff, lease-contention, replay, disruption, or bounded-soak
   workload profile;
 - one read-only evidence inspector or validated renderer extension;

@@ -242,8 +242,7 @@ run_zig_build() {
 }
 
 run_zig_metal_build() {
-    zig build native-metal-observation-test \
-        native-metal-correctness-test \
+    zig build native-metal-suite-test \
         profile-device-compile \
         profile-host-tool-compile \
         -Dmetal-output-dir="$verification_root/metal" \

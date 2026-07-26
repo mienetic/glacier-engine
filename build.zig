@@ -1504,6 +1504,18 @@ pub fn build(b: *std.Build) void {
         "native-metal-observation-compile",
         "Compile the native macOS Metal readiness CLI without running it",
     );
+    const native_metal_allocation_test_step = b.step(
+        "native-metal-allocation-test",
+        "Run the hard native macOS Metal allocation ownership gate",
+    );
+    const native_metal_allocation_compile_step = b.step(
+        "native-metal-allocation-compile",
+        "Compile the native macOS Metal allocation ownership gate",
+    );
+    const native_metal_suite_test_step = b.step(
+        "native-metal-suite-test",
+        "Run serialized Metal readiness, allocation, and correctness gates",
+    );
     if (metal_shim != null and
         builtin.os.tag == .macos and
         target.result.cpu.arch == builtin.cpu.arch and
@@ -1608,6 +1620,59 @@ pub fn build(b: *std.Build) void {
         native_metal_observation_test_step.dependOn(
             &run_native_metal_observation_verifier.step,
         );
+
+        const native_metal_allocation_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "tests/native_metal_allocation.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+        native_metal_allocation_tests.root_module.addImport(
+            "engine",
+            engine_mod,
+        );
+        native_metal_allocation_tests.root_module.addImport(
+            "config",
+            config_mod,
+        );
+        native_metal_allocation_tests.linkLibC();
+        native_metal_allocation_tests.linkLibrary(shim);
+        native_metal_allocation_tests.linkFramework("Metal");
+        native_metal_allocation_tests.linkFramework("Foundation");
+        const run_native_metal_allocation_tests =
+            b.addRunArtifact(native_metal_allocation_tests);
+        run_native_metal_allocation_tests.step.dependOn(
+            &native_metal_lib.step,
+        );
+        const run_native_metal_allocation_suite =
+            b.addRunArtifact(native_metal_allocation_tests);
+        run_native_metal_allocation_suite.step.dependOn(
+            &native_metal_lib.step,
+        );
+        run_native_metal_allocation_suite.step.dependOn(
+            &run_native_metal_observation_verifier.step,
+        );
+        const run_native_metal_correctness_suite =
+            b.addRunArtifact(metal_tests);
+        run_native_metal_correctness_suite.step.dependOn(
+            &native_metal_lib.step,
+        );
+        run_native_metal_correctness_suite.step.dependOn(
+            &run_native_metal_allocation_suite.step,
+        );
+        native_metal_suite_test_step.dependOn(
+            &run_native_metal_correctness_suite.step,
+        );
+        native_metal_allocation_compile_step.dependOn(
+            &native_metal_allocation_tests.step,
+        );
+        native_metal_allocation_test_step.dependOn(
+            &run_native_metal_allocation_tests.step,
+        );
     } else {
         const native_metal_failure = b.addFail(
             "native Metal readiness requires a native macOS target and " ++
@@ -1623,6 +1688,15 @@ pub fn build(b: *std.Build) void {
             &native_metal_failure.step,
         );
         native_metal_correctness_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_allocation_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_allocation_compile_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_suite_test_step.dependOn(
             &native_metal_failure.step,
         );
     }

@@ -41,15 +41,22 @@ EXPECTED_AARCH64_CPU_SOURCE_PATHS = frozenset(
 
 EXPECTED_METAL_NATIVE_SOURCE_PATHS = frozenset(
     {
-        "src/backends/metal/backend.zig",
         "src/backends/metal/native_observer.zig",
         "src/backends/metal/shaders/dequant.metal",
         "src/backends/metal/shaders/matmul.metal",
         "src/backends/metal/shim.m",
         "tests/metal_correctness.zig",
+        "tests/native_metal_allocation.zig",
         "tests/native_metal_observation.zig",
         "examples/native_metal_observation.zig",
         "bench/metal_kernel.zig",
+    }
+)
+
+EXPECTED_METAL_PORTABLE_SOURCE_PATHS = frozenset(
+    {
+        "src/backends/metal/allocation_adapter.zig",
+        "src/backends/metal/backend.zig",
     }
 )
 
@@ -493,6 +500,35 @@ class VerificationPolicyTests(unittest.TestCase):
             EXPECTED_METAL_NATIVE_SOURCE_PATHS,
             policy.METAL_NATIVE_SOURCE_PATHS,
         )
+        self.assertEqual(
+            EXPECTED_METAL_PORTABLE_SOURCE_PATHS,
+            policy.METAL_PORTABLE_SOURCE_PATHS,
+        )
+        for changed_path in sorted(
+            EXPECTED_METAL_PORTABLE_SOURCE_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets(
+                    [changed_path],
+                    policy.RETAINED_TARGETS,
+                )
+                self.assertEqual(
+                    plan.flags,
+                    frozenset(
+                        {
+                            "metal-native",
+                            "native-full",
+                            "python-full",
+                        }
+                    ),
+                )
+                self.assertTrue(
+                    all(
+                        target_plan.steps ==
+                        ("profile-device-compile",)
+                        for target_plan in plan.target_plans
+                    )
+                )
         for changed_path in sorted(EXPECTED_METAL_NATIVE_SOURCE_PATHS):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
@@ -1176,8 +1212,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 .read_text(encoding="ascii")
                 .splitlines()
                 if line.startswith(
-                    "build native-metal-observation-test "
-                    "native-metal-correctness-test "
+                    "build native-metal-suite-test "
                     "profile-device-compile "
                     "profile-host-tool-compile "
                 )

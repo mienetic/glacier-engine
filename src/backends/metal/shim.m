@@ -18,6 +18,20 @@
 
 #define GLACIER_METAL_DEVICE_INFO_ABI 0x474d444900000001ULL
 #define GLACIER_METAL_DISPATCH_ABI 0x474d445200000001ULL
+#define GLACIER_METAL_ALLOCATION_LIMITS_ABI 0x474d414900000001ULL
+#define GLACIER_METAL_BUFFER_INFO_ABI 0x474d424900000001ULL
+#define GLACIER_METAL_ADAPTER_IDENTITY_ABI 0x474d414400000001ULL
+
+typedef struct GlacierMetalBufferAllocation
+    GlacierMetalBufferAllocation;
+
+// Copyable native token. It contains no pointer: the random context nonce
+// rejects foreign contexts and the never-reused generation rejects stale
+// copies after release.
+typedef struct {
+    uint64_t context_nonce[4];
+    uint64_t generation;
+} GlacierMetalBufferToken;
 
 // Opaque handle returned to Zig. The Zig side treats it as *anyopaque.
 typedef struct {
@@ -27,6 +41,11 @@ typedef struct {
     id<MTLComputePipelineState> dequant_pipeline;
     id<MTLComputePipelineState> matmul_pipeline;
     id<MTLComputePipelineState> int4_matvec_pipeline;
+    GlacierMetalBufferAllocation* buffer_allocations;
+    uint64_t allocation_context_nonce[4];
+    uint64_t next_allocation_adapter_instance;
+    uint64_t next_buffer_generation;
+    uint64_t live_buffer_allocations;
 } GlacierMetalContext;
 
 typedef struct {
@@ -39,6 +58,19 @@ typedef struct {
     uint32_t group_size;
     uint32_t group_shift;
 } GlacierMetalInt4Weight;
+
+// Private native ownership object. Its address never crosses into portable
+// evidence; the Zig adapter retains it only in a generation-fenced slot.
+struct GlacierMetalBufferAllocation {
+    GlacierMetalContext* owner;
+    GlacierMetalBufferAllocation* next;
+    GlacierMetalBufferToken token;
+    id<MTLBuffer> buffer;
+    uint64_t device_registry_id;
+    uint64_t requested_length;
+    uint64_t resource_length;
+    uint64_t allocated_size;
+};
 
 // Fixed-width, pointer-free facts used to derive the selected device and
 // placement identities. Capacity is retained as capability context only; it
@@ -71,6 +103,38 @@ typedef struct {
     uint32_t reserved;
 } GlacierMetalDispatchObservation;
 
+// Immutable policy facts for direct Shared MTLBuffer allocation. Resource
+// bytes use the exact MTLBuffer.length contract. allocatedSize is intentionally
+// absent because Metal exposes it only after a resource has been created.
+typedef struct {
+    uint64_t abi_version;
+    uint64_t device_registry_id;
+    uint64_t max_buffer_length;
+    uint64_t resource_granularity;
+    uint32_t storage_mode;
+    uint32_t cpu_cache_mode;
+} GlacierMetalAllocationLimits;
+
+// Direct facts from one live MTLBuffer. allocated_size is a per-resource
+// observation and is never inferred from MTLDevice.currentAllocatedSize.
+typedef struct {
+    uint64_t abi_version;
+    uint64_t device_registry_id;
+    uint64_t requested_length;
+    uint64_t resource_length;
+    uint64_t allocated_size;
+    uint32_t storage_mode;
+    uint32_t cpu_cache_mode;
+} GlacierMetalBufferInfo;
+
+// A random context nonce plus a monotonic per-context instance prevents two
+// adapters initialized with the same caller nonce from sharing an authority.
+typedef struct {
+    uint64_t abi_version;
+    uint64_t context_nonce[4];
+    uint64_t adapter_instance;
+} GlacierMetalAdapterIdentity;
+
 _Static_assert(sizeof(GlacierMetalDeviceInfo) == 88,
     "GlacierMetalDeviceInfo ABI size changed");
 _Static_assert(offsetof(GlacierMetalDeviceInfo, registry_id) == 8,
@@ -85,9 +149,40 @@ _Static_assert(offsetof(GlacierMetalDispatchObservation, gpu_start_time) == 24,
     "GlacierMetalDispatchObservation start offset changed");
 _Static_assert(offsetof(GlacierMetalDispatchObservation, command_status) == 40,
     "GlacierMetalDispatchObservation status offset changed");
+_Static_assert(sizeof(GlacierMetalAllocationLimits) == 40,
+    "GlacierMetalAllocationLimits ABI size changed");
+_Static_assert(offsetof(GlacierMetalAllocationLimits, storage_mode) == 32,
+    "GlacierMetalAllocationLimits mode offset changed");
+_Static_assert(sizeof(GlacierMetalBufferInfo) == 48,
+    "GlacierMetalBufferInfo ABI size changed");
+_Static_assert(offsetof(GlacierMetalBufferInfo, allocated_size) == 32,
+    "GlacierMetalBufferInfo allocation offset changed");
+_Static_assert(sizeof(GlacierMetalAdapterIdentity) == 48,
+    "GlacierMetalAdapterIdentity ABI size changed");
+_Static_assert(offsetof(GlacierMetalAdapterIdentity, adapter_instance) == 40,
+    "GlacierMetalAdapterIdentity instance offset changed");
+_Static_assert(sizeof(GlacierMetalBufferToken) == 40,
+    "GlacierMetalBufferToken ABI size changed");
+_Static_assert(offsetof(GlacierMetalBufferToken, generation) == 32,
+    "GlacierMetalBufferToken generation offset changed");
+
+static int glacier_metal_nonce_is_zero(const uint64_t nonce[4]) {
+    return nonce[0] == 0 && nonce[1] == 0 &&
+        nonce[2] == 0 && nonce[3] == 0;
+}
 
 static void glacier_metal_context_destroy(GlacierMetalContext* ctx) {
     if (!ctx) return;
+    while (ctx->buffer_allocations) {
+        GlacierMetalBufferAllocation* allocation =
+            ctx->buffer_allocations;
+        ctx->buffer_allocations = allocation->next;
+        allocation->owner = NULL;
+        allocation->next = NULL;
+        allocation->buffer = nil;
+        free(allocation);
+    }
+    ctx->live_buffer_allocations = 0;
     ctx->int4_matvec_pipeline = nil;
     ctx->matmul_pipeline = nil;
     ctx->dequant_pipeline = nil;
@@ -104,6 +199,31 @@ static void glacier_metal_weight_destroy(GlacierMetalInt4Weight* weight) {
     weight->input = nil;
     weight->output = nil;
     free(weight);
+}
+
+static void glacier_metal_buffer_destroy(
+    GlacierMetalBufferAllocation* allocation)
+{
+    if (!allocation) return;
+    allocation->owner = NULL;
+    allocation->next = NULL;
+    allocation->buffer = nil;
+    free(allocation);
+}
+
+// Find a handle by pointer identity without dereferencing the untrusted input.
+// Callers hold @synchronized(ctx->device) while traversing the owned list.
+static GlacierMetalBufferAllocation** glacier_metal_buffer_link_locked(
+    GlacierMetalContext* ctx,
+    const GlacierMetalBufferToken* token)
+{
+    GlacierMetalBufferAllocation** link = &ctx->buffer_allocations;
+    while (*link && memcmp(
+            &(*link)->token,
+            token,
+            sizeof(*token)) != 0)
+        link = &(*link)->next;
+    return *link ? link : NULL;
 }
 
 // Pipelines are independent operation capabilities. Resolve and cache each one
@@ -189,6 +309,14 @@ GlacierMetalContext* glacier_metal_init(const char* metallib_path) {
         glacier_metal_context_destroy(ctx);
         return NULL;
     }
+    do {
+        arc4random_buf(
+            ctx->allocation_context_nonce,
+            sizeof(ctx->allocation_context_nonce));
+    } while (glacier_metal_nonce_is_zero(
+        ctx->allocation_context_nonce));
+    ctx->next_allocation_adapter_instance = 1;
+    ctx->next_buffer_generation = 1;
     ctx->queue = [ctx->device newCommandQueue];
     if (!ctx->queue) {
         glacier_metal_context_destroy(ctx);
@@ -219,21 +347,262 @@ int glacier_metal_device_info(
 {
     if (!ctx || !ctx->device || !out) return 1;
     memset(out, 0, sizeof(*out));
-    out->abi_version = GLACIER_METAL_DEVICE_INFO_ABI;
-    out->registry_id = ctx->device.registryID;
-    out->current_allocated_size = ctx->device.currentAllocatedSize;
-    out->recommended_max_working_set_size =
-        ctx->device.recommendedMaxWorkingSetSize;
-    out->location = (uint64_t)ctx->device.location;
-    out->location_number = (uint64_t)ctx->device.locationNumber;
-    const MTLSize max_threads = ctx->device.maxThreadsPerThreadgroup;
-    out->max_threads_x = (uint64_t)max_threads.width;
-    out->max_threads_y = (uint64_t)max_threads.height;
-    out->max_threads_z = (uint64_t)max_threads.depth;
-    out->low_power = ctx->device.isLowPower ? 1U : 0U;
-    out->headless = ctx->device.isHeadless ? 1U : 0U;
-    out->removable = ctx->device.isRemovable ? 1U : 0U;
-    out->unified_memory = ctx->device.hasUnifiedMemory ? 1U : 0U;
+    if (![ctx->device respondsToSelector:@selector(registryID)] ||
+        ![ctx->device
+            respondsToSelector:@selector(currentAllocatedSize)] ||
+        ![ctx->device
+            respondsToSelector:
+                @selector(recommendedMaxWorkingSetSize)] ||
+        ![ctx->device respondsToSelector:@selector(location)] ||
+        ![ctx->device respondsToSelector:@selector(locationNumber)] ||
+        ![ctx->device respondsToSelector:@selector(hasUnifiedMemory)])
+        return 1;
+    @try {
+        out->abi_version = GLACIER_METAL_DEVICE_INFO_ABI;
+        out->registry_id = ctx->device.registryID;
+        out->current_allocated_size =
+            ctx->device.currentAllocatedSize;
+        out->recommended_max_working_set_size =
+            ctx->device.recommendedMaxWorkingSetSize;
+        out->location = (uint64_t)ctx->device.location;
+        out->location_number =
+            (uint64_t)ctx->device.locationNumber;
+        const MTLSize max_threads =
+            ctx->device.maxThreadsPerThreadgroup;
+        out->max_threads_x = (uint64_t)max_threads.width;
+        out->max_threads_y = (uint64_t)max_threads.height;
+        out->max_threads_z = (uint64_t)max_threads.depth;
+        out->low_power = ctx->device.isLowPower ? 1U : 0U;
+        out->headless = ctx->device.isHeadless ? 1U : 0U;
+        out->removable = ctx->device.isRemovable ? 1U : 0U;
+        out->unified_memory =
+            ctx->device.hasUnifiedMemory ? 1U : 0U;
+    } @catch (NSException* exception) {
+        (void)exception;
+        memset(out, 0, sizeof(*out));
+        return 2;
+    }
+    return 0;
+}
+
+int glacier_metal_allocation_limits(
+    GlacierMetalContext* ctx,
+    GlacierMetalAllocationLimits* out)
+{
+    if (!ctx || !ctx->device || !out) return 1;
+    memset(out, 0, sizeof(*out));
+    if (![ctx->device respondsToSelector:@selector(registryID)] ||
+        ![ctx->device respondsToSelector:@selector(maxBufferLength)])
+        return 1;
+    @try {
+        out->abi_version =
+            GLACIER_METAL_ALLOCATION_LIMITS_ABI;
+        out->device_registry_id = ctx->device.registryID;
+        out->max_buffer_length = ctx->device.maxBufferLength;
+        // Direct MTLBuffer.length preserves the caller's byte length
+        // exactly; it is not the heap alignment returned by
+        // heapBufferSizeAndAlign.
+        out->resource_granularity = 1;
+        out->storage_mode = (uint32_t)MTLStorageModeShared;
+        out->cpu_cache_mode =
+            (uint32_t)MTLCPUCacheModeDefaultCache;
+    } @catch (NSException* exception) {
+        (void)exception;
+        memset(out, 0, sizeof(*out));
+        return 2;
+    }
+    return 0;
+}
+
+int glacier_metal_claim_allocation_adapter(
+    GlacierMetalContext* ctx,
+    GlacierMetalAdapterIdentity* out)
+{
+    if (!ctx || !ctx->device || !out) return 1;
+    memset(out, 0, sizeof(*out));
+    @synchronized (ctx->device) {
+        if (glacier_metal_nonce_is_zero(
+                ctx->allocation_context_nonce) ||
+            ctx->next_allocation_adapter_instance == 0 ||
+            ctx->next_allocation_adapter_instance == UINT64_MAX)
+            return 2;
+        out->abi_version =
+            GLACIER_METAL_ADAPTER_IDENTITY_ABI;
+        memcpy(
+            out->context_nonce,
+            ctx->allocation_context_nonce,
+            sizeof(out->context_nonce));
+        out->adapter_instance =
+            ctx->next_allocation_adapter_instance;
+        ctx->next_allocation_adapter_instance += 1;
+    }
+    return 0;
+}
+
+int glacier_metal_buffer_create(
+    GlacierMetalContext* ctx,
+    uint64_t requested_length,
+    GlacierMetalBufferToken* out)
+{
+    if (out) memset(out, 0, sizeof(*out));
+    if (!ctx || !ctx->device ||
+        ![ctx->device respondsToSelector:@selector(maxBufferLength)] ||
+        !out ||
+        requested_length == 0 ||
+        requested_length > (uint64_t)SIZE_MAX)
+        return 1;
+
+    GlacierMetalBufferAllocation* allocation = NULL;
+    @try {
+        if (requested_length >
+            (uint64_t)ctx->device.maxBufferLength)
+            return 1;
+        allocation =
+            (GlacierMetalBufferAllocation*)calloc(
+                1,
+                sizeof(GlacierMetalBufferAllocation));
+        if (!allocation) return 2;
+
+        const MTLResourceOptions options =
+            MTLResourceStorageModeShared |
+            MTLResourceCPUCacheModeDefaultCache;
+        allocation->buffer = [ctx->device
+            newBufferWithLength:(NSUInteger)requested_length
+                         options:options];
+        if (!allocation->buffer ||
+            ![allocation->buffer
+                respondsToSelector:@selector(allocatedSize)]) {
+            glacier_metal_buffer_destroy(allocation);
+            return 2;
+        }
+
+        allocation->device_registry_id =
+            allocation->buffer.device.registryID;
+        allocation->requested_length = requested_length;
+        allocation->resource_length =
+            (uint64_t)allocation->buffer.length;
+        allocation->allocated_size =
+            (uint64_t)allocation->buffer.allocatedSize;
+        if (allocation->device_registry_id !=
+                ctx->device.registryID ||
+            allocation->resource_length != requested_length ||
+            allocation->allocated_size == 0 ||
+            allocation->allocated_size <
+                allocation->resource_length ||
+            allocation->buffer.storageMode != MTLStorageModeShared ||
+            allocation->buffer.cpuCacheMode !=
+                MTLCPUCacheModeDefaultCache)
+        {
+            glacier_metal_buffer_destroy(allocation);
+            return 2;
+        }
+    } @catch (NSException* exception) {
+        (void)exception;
+        glacier_metal_buffer_destroy(allocation);
+        return 2;
+    }
+    @synchronized (ctx->device) {
+        if (ctx->next_buffer_generation == 0 ||
+            ctx->next_buffer_generation == UINT64_MAX ||
+            ctx->live_buffer_allocations == UINT64_MAX) {
+            glacier_metal_buffer_destroy(allocation);
+            return 3;
+        }
+        allocation->owner = ctx;
+        memcpy(
+            allocation->token.context_nonce,
+            ctx->allocation_context_nonce,
+            sizeof(allocation->token.context_nonce));
+        allocation->token.generation =
+            ctx->next_buffer_generation;
+        ctx->next_buffer_generation += 1;
+        allocation->next = ctx->buffer_allocations;
+        ctx->buffer_allocations = allocation;
+        ctx->live_buffer_allocations += 1;
+        *out = allocation->token;
+    }
+    return 0;
+}
+
+int glacier_metal_buffer_info(
+    GlacierMetalContext* ctx,
+    const GlacierMetalBufferToken* token,
+    GlacierMetalBufferInfo* out)
+{
+    if (!ctx || !ctx->device || !token || !out ||
+        token->generation == 0)
+        return 1;
+    memset(out, 0, sizeof(*out));
+    @synchronized (ctx->device) {
+        GlacierMetalBufferAllocation** link =
+            glacier_metal_buffer_link_locked(ctx, token);
+        if (!link)
+            return 2;
+        GlacierMetalBufferAllocation* allocation = *link;
+        if (allocation->owner != ctx || !allocation->buffer)
+            return 2;
+        @try {
+            out->abi_version = GLACIER_METAL_BUFFER_INFO_ABI;
+            out->device_registry_id =
+                allocation->buffer.device.registryID;
+            out->requested_length =
+                allocation->requested_length;
+            out->resource_length =
+                (uint64_t)allocation->buffer.length;
+            out->allocated_size =
+                (uint64_t)allocation->buffer.allocatedSize;
+            out->storage_mode =
+                (uint32_t)allocation->buffer.storageMode;
+            out->cpu_cache_mode =
+                (uint32_t)allocation->buffer.cpuCacheMode;
+            if (out->device_registry_id !=
+                    allocation->device_registry_id ||
+                out->resource_length !=
+                    allocation->resource_length ||
+                out->allocated_size != allocation->allocated_size)
+                return 3;
+        } @catch (NSException* exception) {
+            (void)exception;
+            memset(out, 0, sizeof(*out));
+            return 4;
+        }
+    }
+    return 0;
+}
+
+int glacier_metal_buffer_release(
+    GlacierMetalContext* ctx,
+    const GlacierMetalBufferToken* token)
+{
+    if (!ctx || !ctx->device || !token ||
+        token->generation == 0)
+        return 1;
+    GlacierMetalBufferAllocation* allocation = NULL;
+    @synchronized (ctx->device) {
+        GlacierMetalBufferAllocation** link =
+            glacier_metal_buffer_link_locked(ctx, token);
+        if (!link || (*link)->owner != ctx)
+            return 2;
+        if (ctx->live_buffer_allocations == 0)
+            return 3;
+        allocation = *link;
+        *link = allocation->next;
+        allocation->owner = NULL;
+        allocation->next = NULL;
+        ctx->live_buffer_allocations -= 1;
+    }
+    glacier_metal_buffer_destroy(allocation);
+    return 0;
+}
+
+int glacier_metal_live_buffer_count(
+    GlacierMetalContext* ctx,
+    uint64_t* out)
+{
+    if (!ctx || !ctx->device || !out) return 1;
+    @synchronized (ctx->device) {
+        *out = ctx->live_buffer_allocations;
+    }
     return 0;
 }
 

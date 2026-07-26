@@ -7,13 +7,15 @@ generation-fenced backend object set.
 
 This contract answers a narrow question:
 
-> Was the exact backend-reported allocation charge admitted before allocation,
+> Was the exact replayed adapter-quoted accounting charge admitted before allocation,
 > and was that charge retained until every acquired object was freed?
 
-The current adapter is deterministic and fake. It proves the portable
-lifecycle and accounting rules. It does not prove native GPU allocation,
-physical-page residency, dispatch, performance, or integration with the
-LeaseTree-backed execution path.
+Two adapters now exercise the contract. The deterministic fake proves the
+portable lifecycle, injected failure, and recovery rules. The native Metal
+adapter creates and directly inspects real Shared `MTLBuffer` resources on the
+host running its hard gate. Neither adapter proves physical-page residency,
+dispatch ownership, performance, or integration with the LeaseTree-backed
+execution path.
 
 V1 accepts only a present accelerator selection with allocation capability and
 `fallback_used == 0`. “Backend-neutral” describes the portable contract shape;
@@ -45,20 +47,20 @@ Every manifest entry records two quantities:
 - `requested_bytes`: payload bytes requested by the plan;
 - `charged_bytes`: the exact quantity returned by the bound adapter quote.
 
-The fake V1 authority declares a power-of-two allocation granularity. Its quote
-rounds requested bytes upward with checked arithmetic, and every accepted
-charge must be a multiple of that granularity. Admission invokes the live quote
-callback again and requires byte-for-byte equality with the sealed quote before
-any Bank mutation. The quote callback is required to be side-effect-free and
-replayable.
+The fake V1 authority declares a power-of-two allocation granularity and rounds
+requested bytes upward with checked arithmetic. The native Metal V1 authority
+uses granularity one: its replayable charge is the exact logical
+`MTLBuffer.length`, equal to the requested length. Admission invokes the live
+quote callback again and requires byte-for-byte equality with the sealed quote
+before any Bank mutation. Every quote callback is required to be
+side-effect-free and replayable.
 
 The manifest records both requested and charged largest/total values.
 `DeviceRequirementV1.largest_single_allocation_bytes` and
 `total_device_bytes` must equal the charged values exactly, not merely bound
 them from above. Unknown zero ceilings reject.
 
-`charged_bytes` is an adapter accounting quantity. In the fake adapter it is
-not evidence of:
+`charged_bytes` is an adapter accounting quantity. It is not evidence of:
 
 - an operating-system physical page;
 - device residency;
@@ -66,8 +68,11 @@ not evidence of:
 - allocator metadata outside the quote policy; or
 - memory that remained resident for any duration.
 
-A native adapter must define and retain its own directly observed allocation
-quantity before making a stronger claim.
+The Metal adapter separately retains direct per-object `MTLResource.allocatedSize`
+in `MetalAllocationObservationV1`. Metal exposes that value only after
+creation, so it is not used as a V1 pre-allocation quote. Device-wide
+`currentAllocatedSize` is not used to infer object ownership. See
+[Native Metal Allocation Adapter](NATIVE_METAL_ALLOCATION.md).
 
 ## Admission and materialization
 
@@ -111,11 +116,11 @@ Opening the child happens before the first allocation callback. While the child
 is active, `ResourceBank.release(parent)` rejects, so a copied parent receipt
 cannot return the logical budget early.
 
-V1 permits exactly one materialized lease per adapter context. The fake backend
-enforces that limit and its live-object ceiling under its own mutex, including
-when multiple coordinators share the same adapter. Supporting concurrent
-materialized leases requires authority-wide collision quarantine plus an
-inspect/reconcile ABI and is intentionally deferred.
+V1 permits exactly one materialized lease per adapter context. Both adapters
+enforce that limit and their live-object ceilings under adapter-local mutexes,
+including when multiple coordinators share the same adapter. Supporting
+concurrent materialized leases requires authority-wide collision quarantine
+plus an inspect/reconcile ABI and is intentionally deferred.
 
 ## Cancellation
 
@@ -139,7 +144,7 @@ post-dispatch cancellation.
 
 ## Recovery
 
-The fake adapter contract gives callbacks strict failure semantics:
+The adapter contract gives callbacks strict failure semantics:
 
 - allocation error means no object was created;
 - free error means the named object remains live and can be retried.
@@ -207,7 +212,7 @@ cover:
 - allocation failure at every ordinal;
 - cancellation at every boundary;
 - partial-allocation rollback;
-- backend-reported byte drift;
+- adapter-reported byte drift;
 - zero and maximum malformed byte reports followed by cleanup failure;
 - self-consistent forged quotes rejected by live re-quote;
 - misaligned quotes rejected before admission;
@@ -238,10 +243,23 @@ The fake tests run as ordinary host unit tests. They do not simulate a GPU
 instruction set or driver. They exercise the portable state machine through a
 deterministic adapter.
 
-The existing macOS Metal readiness gate is separate and does use the host's
-real `MTLDevice`, Metal buffers, shader pipeline, command buffer, completion
-wait, and CPU oracle. It currently proves one bounded real-device correctness
-path, but it does not yet implement this allocation lease.
+The native macOS allocation hard gate uses the host's real `MTLDevice` and
+direct Shared buffers. It verifies per-resource device identity, logical
+length, `allocatedSize`, storage/cache modes, ChildLease accounting, release,
+generation-fenced reuse, foreign/stale-token rejection, distinct native
+adapter authorities, an independently counted shim registry, and concurrent
+registry balance. It does not submit a shader command or claim
+residency/performance. The separate Metal readiness gate uses real shader
+pipelines and command buffers and checks one bounded output against a CPU
+oracle.
+
+Focused native allocation check:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-allocation-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
 
 Foreign-target builds prove that the portable source and public types compile.
 They do not prove native allocator, driver, device, or operating-system
@@ -251,8 +269,8 @@ behavior.
 
 V1 deliberately does not provide:
 
-- a native Metal, portable-compute, or vendor allocation adapter;
-- physical allocation or residency evidence;
+- a portable-compute or additional vendor allocation adapter;
+- physical-page commitment/reclamation or residency evidence;
 - device-loss detection, quarantine, or migration;
 - queue, stream, dispatch, or publication authority;
 - asynchronous or cross-process cleanup;
@@ -263,7 +281,7 @@ V1 deliberately does not provide:
 - latency, throughput, power, thermal, or energy evidence.
 
 `ResourceBank` currently opts into either the `ChildLease` sidecar or the
-`LeaseTree` sidecar. This fake V1 therefore composes with a non-tree parent.
+`LeaseTree` sidecar. Both V1 adapters therefore compose with a non-tree parent.
 It must not be presented as the final integration path for an execution
 receipt that already owns a LeaseTree. The production follow-up must either:
 
@@ -276,15 +294,17 @@ receipt that already owns a LeaseTree. The production follow-up must either:
 
 The next accelerator-runtime work is intentionally split:
 
-1. add a native Metal allocation adapter with a new ABI, hard per-buffer
-   ceilings, adapter-private generation-fenced objects, and direct per-object
-   allocated-byte evidence;
-2. compose the native adapter with a LeaseTree-backed execution path;
-3. add device-loss events, quarantine, and mandatory fresh selection;
-4. add deterministic two-device partition planning before live multi-device
+1. add a dedicated LeaseTree allocation coordinator and prove its
+   reserve/materialize/free-permit recovery phases with the fake adapter;
+2. compose the native Metal adapter with that LeaseTree-backed execution path;
+3. add a reserve/materialize/settle ABI if the post-creation
+   `MTLResource.allocatedSize` observation must be charged rather than V1
+   logical resource length;
+4. add device-loss events, quarantine, and mandatory fresh selection;
+5. add deterministic two-device partition planning before live multi-device
    execution;
-5. add residency as a separate optional authority and evidence contract; and
-6. replicate native lifecycle evidence on named OS/device/driver cells.
+6. add residency as a separate optional authority and evidence contract; and
+7. replicate native lifecycle evidence on named OS/device/driver cells.
 
 Allocation ownership can be proven before residency. Neither one should be
 inferred from a cross-build or from a device-wide dynamic memory sample.

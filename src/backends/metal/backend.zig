@@ -20,7 +20,12 @@ pub const MetalInt4Weight = opaque {};
 
 pub const device_info_abi: u64 = 0x474d_4449_0000_0001;
 pub const dispatch_observation_abi: u64 = 0x474d_4452_0000_0001;
+pub const allocation_limits_abi: u64 = 0x474d_4149_0000_0001;
+pub const buffer_info_abi: u64 = 0x474d_4249_0000_0001;
+pub const adapter_identity_abi: u64 = 0x474d_4144_0000_0001;
 pub const completed_command_buffer_status: u32 = 4;
+pub const shared_storage_mode: u32 = 0;
+pub const default_cpu_cache_mode: u32 = 0;
 
 pub const MetalDeviceInfo = extern struct {
     abi_version: u64 = 0,
@@ -48,6 +53,44 @@ const RawDispatchObservation = extern struct {
     reserved: u32 = 0,
 };
 
+pub const MetalAllocationLimits = extern struct {
+    abi_version: u64 = 0,
+    device_registry_id: u64 = 0,
+    max_buffer_length: u64 = 0,
+    resource_granularity: u64 = 0,
+    storage_mode: u32 = 0,
+    cpu_cache_mode: u32 = 0,
+};
+
+pub const MetalBufferInfo = extern struct {
+    abi_version: u64 = 0,
+    device_registry_id: u64 = 0,
+    requested_length: u64 = 0,
+    resource_length: u64 = 0,
+    allocated_size: u64 = 0,
+    storage_mode: u32 = 0,
+    cpu_cache_mode: u32 = 0,
+};
+
+pub const MetalBufferToken = extern struct {
+    context_nonce: [4]u64 = [_]u64{0} ** 4,
+    generation: u64 = 0,
+
+    pub fn isZero(self: MetalBufferToken) bool {
+        return self.generation == 0 and
+            self.context_nonce[0] == 0 and
+            self.context_nonce[1] == 0 and
+            self.context_nonce[2] == 0 and
+            self.context_nonce[3] == 0;
+    }
+};
+
+pub const MetalAllocationAdapterIdentity = extern struct {
+    abi_version: u64 = 0,
+    context_nonce: [4]u64 = [_]u64{0} ** 4,
+    adapter_instance: u64 = 0,
+};
+
 comptime {
     if (@sizeOf(MetalDeviceInfo) != 88 or
         @offsetOf(MetalDeviceInfo, "registry_id") != 8 or
@@ -58,6 +101,21 @@ comptime {
         @offsetOf(RawDispatchObservation, "gpu_start_time") != 24 or
         @offsetOf(RawDispatchObservation, "command_status") != 40)
         @compileError("RawDispatchObservation ABI layout changed");
+    if (@sizeOf(MetalAllocationLimits) != 40 or
+        @offsetOf(MetalAllocationLimits, "storage_mode") != 32)
+        @compileError("MetalAllocationLimits ABI layout changed");
+    if (@sizeOf(MetalBufferInfo) != 48 or
+        @offsetOf(MetalBufferInfo, "allocated_size") != 32)
+        @compileError("MetalBufferInfo ABI layout changed");
+    if (@sizeOf(MetalBufferToken) != 40 or
+        @offsetOf(MetalBufferToken, "generation") != 32)
+        @compileError("MetalBufferToken ABI layout changed");
+    if (@sizeOf(MetalAllocationAdapterIdentity) != 48 or
+        @offsetOf(
+            MetalAllocationAdapterIdentity,
+            "adapter_instance",
+        ) != 40)
+        @compileError("MetalAllocationAdapterIdentity ABI layout changed");
 }
 
 pub const MetalDispatchTelemetry = struct {
@@ -74,6 +132,32 @@ extern "C" fn glacier_metal_deinit(ctx: *MetalContext) void;
 extern "C" fn glacier_metal_device_info(
     ctx: *MetalContext,
     out: *MetalDeviceInfo,
+) c_int;
+extern "C" fn glacier_metal_allocation_limits(
+    ctx: *MetalContext,
+    out: *MetalAllocationLimits,
+) c_int;
+extern "C" fn glacier_metal_claim_allocation_adapter(
+    ctx: *MetalContext,
+    out: *MetalAllocationAdapterIdentity,
+) c_int;
+extern "C" fn glacier_metal_buffer_create(
+    ctx: *MetalContext,
+    requested_length: u64,
+    out: *MetalBufferToken,
+) c_int;
+extern "C" fn glacier_metal_buffer_info(
+    ctx: *MetalContext,
+    token: *const MetalBufferToken,
+    out: *MetalBufferInfo,
+) c_int;
+extern "C" fn glacier_metal_buffer_release(
+    ctx: *MetalContext,
+    token: *const MetalBufferToken,
+) c_int;
+extern "C" fn glacier_metal_live_buffer_count(
+    ctx: *MetalContext,
+    out: *u64,
 ) c_int;
 extern "C" fn glacier_metal_require_int4_matvec_support(
     ctx: *MetalContext,
@@ -135,6 +219,7 @@ pub const MetalError = error{
     DispatchFailed,
     MatmulFailed,
     UploadFailed,
+    AllocationFailed,
     InvalidObservation,
 };
 
@@ -206,7 +291,9 @@ fn finalizeObservedDispatch(
 pub const MetalBackend = struct {
     ctx: *MetalContext,
     live_weight_count: u64 = 0,
+    live_buffer_count: u64 = 0,
     completed_dispatch_count: u64 = 0,
+    allocation_mutex: std.Thread.Mutex = .{},
 
     /// Initialize the Metal backend. `metallib_path` must point to a
     /// compiled .metallib (typically embedded next to the binary or built
@@ -217,6 +304,13 @@ pub const MetalBackend = struct {
     }
 
     pub fn deinit(self: *MetalBackend) void {
+        std.debug.assert(self.live_weight_count == 0);
+        self.allocation_mutex.lock();
+        std.debug.assert(self.live_buffer_count == 0);
+        const native_live = self.nativeLiveBufferCountUnlocked() catch
+            std.math.maxInt(u64);
+        std.debug.assert(native_live == 0);
+        self.allocation_mutex.unlock();
         glacier_metal_deinit(self.ctx);
     }
 
@@ -248,6 +342,160 @@ pub const MetalBackend = struct {
             result.unified_memory > 1)
             return MetalError.InvalidObservation;
         return result;
+    }
+
+    /// Return immutable policy facts for direct Shared MTLBuffer resources.
+    /// Resource bytes are exact `MTLBuffer.length` bytes. This does not
+    /// predict `MTLResource.allocatedSize`, which Metal exposes only after
+    /// creation.
+    pub fn allocationLimits(
+        self: *MetalBackend,
+    ) MetalError!MetalAllocationLimits {
+        var result: MetalAllocationLimits = .{};
+        if (glacier_metal_allocation_limits(self.ctx, &result) != 0)
+            return MetalError.InvalidObservation;
+        if (result.abi_version != allocation_limits_abi or
+            result.device_registry_id == 0 or
+            result.max_buffer_length == 0 or
+            result.resource_granularity != 1 or
+            result.storage_mode != shared_storage_mode or
+            result.cpu_cache_mode != default_cpu_cache_mode)
+            return MetalError.InvalidObservation;
+        return result;
+    }
+
+    /// Claim a collision-resistant context identity plus a never-reused
+    /// instance number for one allocation adapter authority.
+    pub fn claimAllocationAdapterIdentity(
+        self: *MetalBackend,
+    ) MetalError!MetalAllocationAdapterIdentity {
+        var result: MetalAllocationAdapterIdentity = .{};
+        if (glacier_metal_claim_allocation_adapter(
+            self.ctx,
+            &result,
+        ) != 0)
+            return MetalError.Unavailable;
+        if (result.abi_version != adapter_identity_abi or
+            result.adapter_instance == 0 or
+            (result.context_nonce[0] == 0 and
+                result.context_nonce[1] == 0 and
+                result.context_nonce[2] == 0 and
+                result.context_nonce[3] == 0))
+            return MetalError.InvalidObservation;
+        return result;
+    }
+
+    fn releaseCreatedBufferOrPanic(
+        self: *MetalBackend,
+        token: MetalBufferToken,
+    ) void {
+        if (glacier_metal_buffer_release(self.ctx, &token) != 0)
+            @panic(
+                "Metal shim rejected a token it just created",
+            );
+    }
+
+    /// Create one real direct Shared MTLBuffer. The opaque native handle must
+    /// remain private to the owning adapter and be released exactly once.
+    pub fn createBufferAllocation(
+        self: *MetalBackend,
+        requested_length: u64,
+    ) MetalError!MetalBufferToken {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        const limits = try self.allocationLimits();
+        if (requested_length == 0 or
+            requested_length > limits.max_buffer_length)
+            return MetalError.AllocationFailed;
+        var token: MetalBufferToken = .{};
+        if (glacier_metal_buffer_create(
+            self.ctx,
+            requested_length,
+            &token,
+        ) != 0)
+            return MetalError.AllocationFailed;
+        if (token.isZero())
+            @panic("Metal shim returned a zero successful token");
+        const info = self.inspectBufferAllocation(token) catch {
+            self.releaseCreatedBufferOrPanic(token);
+            return MetalError.AllocationFailed;
+        };
+        if (info.device_registry_id != limits.device_registry_id or
+            info.requested_length != requested_length or
+            info.resource_length != requested_length)
+        {
+            self.releaseCreatedBufferOrPanic(token);
+            return MetalError.AllocationFailed;
+        }
+        self.live_buffer_count = std.math.add(
+            u64,
+            self.live_buffer_count,
+            1,
+        ) catch {
+            self.releaseCreatedBufferOrPanic(token);
+            return MetalError.AllocationFailed;
+        };
+        return token;
+    }
+
+    /// Observe the exact live resource. `allocated_size` is per-object Metal
+    /// evidence, not a device-wide delta and not a residency claim.
+    pub fn inspectBufferAllocation(
+        self: *MetalBackend,
+        token: MetalBufferToken,
+    ) MetalError!MetalBufferInfo {
+        if (token.isZero()) return MetalError.InvalidObservation;
+        var result: MetalBufferInfo = .{};
+        if (glacier_metal_buffer_info(
+            self.ctx,
+            &token,
+            &result,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        if (result.abi_version != buffer_info_abi or
+            result.device_registry_id == 0 or
+            result.requested_length == 0 or
+            result.resource_length != result.requested_length or
+            result.allocated_size < result.resource_length or
+            result.storage_mode != shared_storage_mode or
+            result.cpu_cache_mode != default_cpu_cache_mode)
+            return MetalError.InvalidObservation;
+        return result;
+    }
+
+    pub fn destroyBufferAllocation(
+        self: *MetalBackend,
+        token: MetalBufferToken,
+    ) MetalError!void {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        if (token.isZero() or self.live_buffer_count == 0)
+            return MetalError.InvalidObservation;
+        if (glacier_metal_buffer_release(self.ctx, &token) != 0)
+            return MetalError.InvalidObservation;
+        self.live_buffer_count -= 1;
+    }
+
+    fn nativeLiveBufferCountUnlocked(
+        self: *MetalBackend,
+    ) MetalError!u64 {
+        var result: u64 = 0;
+        if (glacier_metal_live_buffer_count(
+            self.ctx,
+            &result,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        return result;
+    }
+
+    /// Native shim registry count, independent from Zig adapter slots and the
+    /// Zig-side bookkeeping counter.
+    pub fn nativeLiveBufferCount(
+        self: *MetalBackend,
+    ) MetalError!u64 {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        return self.nativeLiveBufferCountUnlocked();
     }
 
     /// Dispatch the INT4→FP16 dequant kernel. `out` must be at least
@@ -438,6 +686,12 @@ pub const MetalBackend = struct {
 
     pub fn liveWeightCount(self: MetalBackend) u64 {
         return self.live_weight_count;
+    }
+
+    pub fn liveBufferCount(self: *MetalBackend) u64 {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        return self.live_buffer_count;
     }
 
     pub fn completedDispatchCount(self: MetalBackend) u64 {
