@@ -19,9 +19,13 @@ descriptor-relative POSIX durable store and separates deterministic
 write/repair fault matrices from a real host process-death campaign.
 W4b-d now composes that store with pointer-free adapter values, a durable
 dispatch/status driver, and a bounded same-process fake authority with an
-opaque synthetic credential. Provider, stateful, streaming, batched,
+opaque synthetic credential. W5a now adds a portable native-observation
+contract, a family-neutral fail-closed runner, a download-free retained
+three-profile/six-item workload, and a shared bounded macOS host observer.
+Provider, stateful, streaming, batched,
 preemptible, device-backed, live-service, and OS-isolated real-credential
-profiles, native multi-request reports, and soak campaigns remain staged work.
+profiles, direct physical CPU/device adapters, native multi-request reports,
+soak campaigns, and native platform replication remain staged work.
 A logical driver step is never reported as a millisecond, and a logical
 resource claim is never reported as RSS, device residency, energy, or
 temperature.
@@ -149,10 +153,34 @@ Results from different modes are not merged into one headline number.
   authority without weakening W4a. See
   [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md) and
   [ActionOutbox Protocol](ACTION_OUTBOX.md).
-- [ ] **W5 — Native observation and machine comparability.** Add a
-  family-neutral runner plus CPU, GPU/accelerator, memory, power, and thermal
-  observers with explicit `present`, `missing`, `denied`, and `unsupported`
-  states.
+- [ ] **W5 — Native observation and machine comparability.**
+  - [x] **W5a — Portable observation and admission foundation.** Fixed-size,
+    pointer-free descriptor/rule/plan/observation/bundle contracts retain
+    explicit `present`, `missing`, `denied`, and `unsupported` states,
+    stable source identity, per-event provenance, nonzero unavailable-reason
+    identity, no present-reason identity, subject, unit, host/accelerator plane,
+    sample-clock identity on every observation, and value-clock identity only
+    on present time-valued metrics.
+    A family-neutral runner executes
+    `probe → pre_run → begin → workload → end → post_run`, rejects failed
+    pre-admission before starting the workload, retains post-run contamination,
+    and requires correctness, zero-orphan, and explicit accelerator-fallback
+    evidence. The canonical reference reuses three typed-perception profiles
+    and six fixed items without a model download. The bounded macOS observer
+    reads `pmset`, `top`, `vm_stat`, `sysctl`, and `ps`; the paired harness
+    delegates its `pmset`, `vm_stat`, `top`, and external-process CPU parsing
+    to that shared module. See
+    [Native Observation Contract](NATIVE_OBSERVATION.md).
+  - [ ] **W5b — Direct physical adapters.** Add trustworthy native CPU,
+    GPU/accelerator, memory-residency, power, thermal, frequency, utilization,
+    and energy sources while preserving explicit unavailability, per-record
+    sample-clock identities, and value-clock identities for present time
+    metrics. Logical CPU count must remain positive; signed physical
+    temperatures may not fall below absolute zero.
+  - [ ] **W5c — Native observer coverage.** Broaden retained native macOS
+    evidence and add Linux, Windows, and FreeBSD adapter evidence as each
+    platform becomes available. Cross-compilation remains source/build
+    evidence and does not complete this slice.
 - [ ] **W6 — Native workload reports.** Retain raw request observations and
   versioned throughput, latency, CPU, accelerator, memory, fairness, and
   outcome summaries.
@@ -191,23 +219,30 @@ gates; directly observable CPU/GPU power and thermal constraint state must
 remain stable; in-run external CPU and selected-device activity must stay
 within policy; and the post-run contamination check must pass.
 
-Every observer reports availability and provenance. Unavailable temperature,
-frequency, energy, or device-residency telemetry blocks claims about that
-metric but never becomes a zero value. External power is recorded context, not
-proof that two runs had equal CPU state.
+Every observer reports availability, stable source identity, and per-event
+provenance. `same_source` applies to the stable source identity; a new
+per-sample provenance identity does not imply source drift. Unavailable
+temperature, frequency, energy, or device-residency telemetry retains a
+nonzero reason identity, blocks claims about that metric, and never becomes a
+zero value. Present records carry no reason identity. External power is
+recorded context, not proof that two runs had equal CPU state.
 
 Failed or unmatched observations remain in the artifact with rejection
 reasons and are excluded by the versioned summary algorithm. They are never
 silently deleted.
 
-The existing macOS paired harness already demonstrates fail-closed admission
-using power source, low-power mode, thermal constraint signals, load, CPU idle,
-page and swap activity, adjacent-state matching, in-run external CPU activity,
-post-run contamination checks, wall time, and peak RSS. That observer must be
-extracted behind the family-neutral interface rather than duplicated. It does
-not directly observe CPU temperature, effective frequency, core residency,
-package energy, GPU utilization, command timing, device residency, or
-accelerator energy.
+The macOS paired harness already demonstrates fail-closed admission using power
+source, low-power mode, thermal constraint signals, load, CPU idle, page and
+swap activity, adjacent-state matching, in-run external CPU activity, post-run
+contamination checks, wall time, and peak RSS. W5a extracts the strict
+`pmset`, `vm_stat`, and `top` parser seam into the shared bounded host observer;
+the paired harness also delegates external-process CPU parsing while retaining
+its campaign policy. The W5a observer emits a fixed eleven-metric universe and
+labels malformed, permission-denied, and unimplemented observations
+separately, retaining a bounded readable JSON reason only when unavailable.
+It does not directly observe CPU temperature, effective frequency, core
+residency, package energy, GPU utilization, command timing, device residency,
+or accelerator energy.
 
 ## GPU and accelerator observation
 
@@ -233,8 +268,10 @@ CPU timing. A native accelerator run retains:
 
 An accelerator-labeled result is invalid if the selected execution silently
 falls back to CPU. Mixed CPU/GPU execution is valid only when the placement and
-work split are explicit. Device timestamps must name their clock domain and
-calibration method; they are not silently mixed with host monotonic timestamps.
+work split are explicit. Every device observation names the clock used to
+sample it; a present device time additionally names the clock that produced
+the value. Those fields do not claim calibration and are not silently mixed
+with host monotonic time values.
 
 Platform observers are adapters. A Metal observer on macOS, a vendor or OS
 observer on Linux or Windows, and a reduced mobile observer may expose
@@ -281,8 +318,9 @@ A versioned summary reports:
 - CPU and accelerator power, thermal, frequency, throttling, and energy only
   when their named observers are present and valid.
 
-The percentile algorithm, raw unrounded inputs, rejected observations, and
-observer provenance are part of report identity.
+The percentile algorithm, raw unrounded inputs, rejected observations, stable
+observer source identities, per-event provenance, and nonzero
+unavailable-reason identities are part of report identity.
 
 ## Promotion gate
 
@@ -305,16 +343,21 @@ Independent contributions can add:
 3. one real-service or OS-isolated dispatch/status adapter that preserves the
    driver ordering and generation-fence proof without weakening either tool
    proof;
-4. a family-neutral observer interface and one native OS implementation;
-5. a bounded Metal observer slice for device identity, host submit/sync timing,
-   fallback detection, and explicit availability states;
-6. the raw-request and native-summary report codecs plus independent verifier;
-7. one bounded fault injector with an explicit authority ceiling; or
-8. a native replication recipe for one supported backend.
+4. one Linux, Windows, or FreeBSD native host metric adapter behind the
+   completed W5a contract;
+5. one direct CPU power/thermal/frequency or device
+   identity/residency/utilization adapter with explicit availability and
+   metric-specific signed ranges;
+6. a bounded device observer slice for placement, host submit/sync timing,
+   fallback detection, and explicit device-time value-clock identity;
+7. the raw-request and native-summary report codecs plus independent verifier;
+8. one bounded fault injector with an explicit authority ceiling; or
+9. a native replication recipe for one supported backend.
 
 Each slice must retain its fixtures, failure cases, exact acceptance command,
 and nonclaims. See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md),
 [Generated Workload Corpus](GENERATED_WORKLOAD_CORPUS.md),
 [Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md), and
 [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md), plus the
+[Native Observation Contract](NATIVE_OBSERVATION.md) and
 [Benchmark and Evidence Guide](BENCHMARKS.md) for the existing foundations.

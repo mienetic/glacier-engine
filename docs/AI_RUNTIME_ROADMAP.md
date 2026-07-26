@@ -433,7 +433,21 @@ checks exclusive lease/grant behavior, selector generations, terminal-semantic
 equality, and zero final logical ownership. It uses a narrowly scoped POSIX
 durable-file adapter for the archive and selector while granting no general
 payload, device, or live resource authority. The inspection and evidence
-formats remain deterministic, versioned, and non-authoritative.
+formats remain deterministic, versioned, and non-authoritative. W5a now adds a
+separate portable native-observation descriptor/rule/plan/record/bundle ABI and
+a family-neutral runner. It preserves explicit
+`present`/`missing`/`denied`/`unsupported` states, host and accelerator planes,
+stable source identity distinct from per-event provenance, nonzero reason
+identity only for unavailable records, sample-clock identity on every
+observation, value-clock identity only on present time-valued metrics,
+fail-closed probe/pre-run admission, retained post-run contamination,
+correctness, zero-orphan, and accelerator-fallback evidence. Its canonical
+three-profile/six-item typed-perception reference needs no model download. A
+bounded macOS adapter supplies the first shared native host-observer seam and a
+bounded readable JSON reason only when unavailable; direct physical CPU/device
+telemetry and native multi-platform campaigns remain open.
+Contract validation requires a present logical CPU count of at least one and
+accepts signed physical temperatures down to, but never below, absolute zero.
 
 Promotion gate: every promoted claim names the workload, platform, numerical
 mode, baseline conditions, verifier, retained artifacts, and nonclaims.
@@ -444,7 +458,9 @@ Load evidence is a required runtime feature, not a single marketing number.
 The complete W0–W8 sequence and report contract are defined in the
 [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md). The track has three
 deliberately separate campaign classes; replicated execution is a higher
-evidence level applied to retained native campaigns:
+evidence level applied to retained native campaigns. W5a supplies the common
+observation and admission foundation between deterministic pressure and native
+reporting:
 
 1. **Deterministic pressure — W0 through W4a plus the W4b-a tool slice
    implemented.** V1 replays one bounded
@@ -492,6 +508,24 @@ evidence level applied to retained native campaigns:
    streaming, live external-tool dispatch, OS-isolated credential handling,
    batching, preemption, device execution, and real backpressure remain
    planned.
+
+   **W5a observation foundation — implemented.** Fixed portable observation
+   values bind workload, artifact, build, machine, backend, device, placement,
+   worker/queue counts, rules, units, subjects, stable source identity,
+   per-event provenance, per-record sample-clock identity, and value-clock
+   identity only for present time-valued metrics. Stable source identity drives
+   `same_source`; per-event provenance may change. Unavailable records retain a
+   nonzero reason identity while present records carry none.
+   The runner rejects probe or pre-run violations before starting a workload,
+   invokes work at most once, and retains a completed receipt plus post-run
+   contamination as nonpublishable evidence. The reference reuses three
+   retained typed-perception profiles and six items without downloads. The
+   macOS adapter and paired harness share strict system-field and
+   external-process CPU parsers. Accelerator metric IDs and fallback rules are
+   present, but direct device utilization, residency, timing, power, thermal,
+   and energy observers are not yet implemented. See
+   [Native Observation Contract](NATIVE_OBSERVATION.md).
+
 2. **Native workload** runs declared model-family mixes against a real CPU,
    accelerator, or provider adapter and records completed/rejected/cancelled
    work, throughput, p50/p95/p99 latency, queue delay, memory high-water,
@@ -1247,6 +1281,10 @@ Contributors can work on the runtime without downloading a large model:
 - one independent verifier or mutation campaign;
 - one experimental C ABI consumer or golden failure case in another language;
 - one platform capability probe;
+- one native-observer parser or adapter that preserves all four availability
+  states, separates stable source from per-event provenance, retains a nonzero
+  reason identity only when unavailable, names the sample clock for every
+  record, and names a value clock only for a present time-valued metric;
 - one retained generated-workload seed, exact shrink signature, deterministic
   closed-loop plan or lineage mutation, summary oracle, or native campaign
   adapter;

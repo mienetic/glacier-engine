@@ -1525,9 +1525,14 @@ def replay_tool_transactions(
     policy = reference_policy(descriptor)
     arguments = reference_arguments()
     proposals = reference_proposals(descriptor, arguments)
-    if len(plan["items"]) != len(proposals):
+    if not (
+        len(plan["items"])
+        == len(result["outcomes"])
+        == len(arguments)
+        == len(proposals)
+    ):
         raise TypedToolError("tool proposal count does not match plan")
-    for item, proposal in zip(plan["items"], proposals, strict=True):
+    for item, proposal in zip(plan["items"], proposals):
         if not hmac.compare_digest(
             item["input_binding_sha256"],
             proposal["proposal_sha256"],
@@ -1551,7 +1556,6 @@ def replay_tool_transactions(
         result["outcomes"],
         arguments,
         proposals,
-        strict=True,
     ):
         ordinal = item["ordinal"]
         before = 0
@@ -2069,11 +2073,16 @@ def _build_evidence_from_validated(
     policy = tool_result["policy"]
     service_roots = _completed_service_roots(result)
     evidence_items: list[Record] = []
+    if not (
+        len(plan["items"])
+        == len(result["outcomes"])
+        == len(tool_result["items"])
+    ):
+        raise TypedToolError("tool evidence item count mismatch")
     for item, outcome, tool_item in zip(
         plan["items"],
         result["outcomes"],
         tool_result["items"],
-        strict=True,
     ):
         completed = outcome["kind"] == workload.OUTCOME_COMPLETED
         resource = _reference_resource_evidence(plan, item, outcome)

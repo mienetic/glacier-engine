@@ -136,6 +136,29 @@ tools/zig-with-ephemeral-cache.sh build action-outbox-recovery-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
+`native-observation-conformance-v1.json` is the canonical W5a
+`glacier.native-observation-reference/v1` report, not a performance result.
+The fixed observer contract and family-neutral runner wrap the retained
+three-profile/six-item typed-perception workload with probe, pre-run,
+begin/end, post-run, correctness, zero-orphan, and availability evidence. Zig
+and the independent Python implementation reproduce every compact JSON byte.
+Stable source identity drives source matching independently of per-event
+provenance. Portable unavailable records retain a nonzero reason identity,
+while present records carry none; the macOS JSON adapter also retains a bounded
+human-readable reason for an unavailable observation.
+The deterministic `1600`-nanosecond value checks report composition only; it
+is not a native latency sample. The complete 1,278-byte fixture SHA-256 is
+`f4e226b426379def5bd9817a1785a1afbe0f4f91b8d0511beaf2ead96c24d71c`;
+its semantic report root is
+`f9b9fd9618c66ba6ad76ea490ceeeef15724c22751a04a8934691891f3ec8156`.
+Verify the native runner, independent oracle, retained bytes, shared macOS
+observer tests, and paired-parser regressions together:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-observation-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
 ## Adding a result
 
 1. Read [Benchmark and evidence guide](../../docs/BENCHMARKS.md) and

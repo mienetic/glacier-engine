@@ -15,7 +15,7 @@ import sys
 from copy import deepcopy
 from enum import IntEnum
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from bench import scheduled_media_pressure as scheduled
 from bench import workload_pressure as workload
@@ -803,7 +803,7 @@ def complexity(scenario: Record) -> tuple[int, ...]:
     )
 
 
-FailureProbe = Callable[[Record, Record], Record | None]
+FailureProbe = Callable[[Record, Record], Optional[Record]]
 
 
 class _ShrinkContext:

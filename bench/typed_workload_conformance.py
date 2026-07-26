@@ -2930,10 +2930,13 @@ def _reference_evidence_summary(
 ) -> Record:
     summary = result["summary"]
     completed_by_profile = [0] * len(plan["profiles"])
+    if len(plan["items"]) != len(result["outcomes"]):
+        raise TypedWorkloadError(
+            "reference evidence item count changed"
+        )
     for item, outcome in zip(
         plan["items"],
         result["outcomes"],
-        strict=True,
     ):
         if outcome["kind"] == OUTCOME_COMPLETED:
             completed_by_profile[item["profile_index"]] += 1

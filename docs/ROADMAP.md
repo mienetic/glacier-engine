@@ -36,8 +36,8 @@ evidence. The plane and model-family sequence is specified in the
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated; outer inspection prototype | Crash-recoverable journal, compact evidence join, and a deterministic read-only inspector for outer framing/checksum and self-asserted fields | Optional caller-supplied nested-composition inspection, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, full build and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Named core/CPU/durable/device/host-tool build profiles; native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; mobile lifecycle gates; and a reduced edge profile |
-| Benchmark evidence | Prototype | Paired harnesses, machine envelope, independent verification | More complete CPU/energy telemetry and reproducible machines |
-| Runtime Workload Lab | W0–W4a, W4b-a process-local tools, W4b-b ActionOutbox record recovery, W4b-c durable POSIX storage, and the bounded W4b-d same-process dispatch/status slice integrated | Portable open-loop, generated-corpus, scheduler-coupled media, finite-source closed-loop, mixed typed-perception, process-local typed tools, and external-action handoff contracts retain overload, fairness, timeout, cancellation, exact receipt/effect reuse, uncertainty, safe retry, typed publication, replay, deterministic storage-fault matrices, and real host process-death recovery; W4b-d additionally enforces durable intent before callback and generation-fenced retry in fixed storage without treating logical steps as native timing | Provider, stateful, streaming, batched, preemptible, device-backed, live provider-backed, and OS-isolated dispatch/status W4 profiles; native CPU/GPU reports and physical observers; bounded soak/disruption; and multi-OS replication |
+| Benchmark evidence | Prototype with W5a observation foundation integrated | Paired harnesses, machine envelope, fixed native-observation ABI, stable source identity separate from event provenance, nonzero unavailable-reason identity with no present-reason identity, fail-closed family-neutral runner, independent reference verification, and a shared bounded macOS host observer | Direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters plus reproducible native machines |
+| Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, and the W5a native-observation foundation integrated; W4b and W5 remain open | Portable pressure, typed workloads, external-action handoff, deterministic storage faults, real host process-death recovery, and a download-free three-profile/six-item observation reference now retain explicit machine-state availability, stable source and per-event provenance, nonzero unavailable-reason identity with no present-reason identity, host/device planes, per-record sample-clock identity, value-clock identity only for present time metrics, fail-closed pre-admission, post-run contamination, fallback, correctness, and zero-orphan evidence without relabeling logical steps as native timing | Remaining W4 profiles; direct physical CPU/GPU adapters; W6 native reports; W7 soak/disruption; and W8 native multi-OS replication |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
 ## P0 — Open-source usability
@@ -326,9 +326,22 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   and an independent standard-library Python model.
   The gate also compares a live canonical Zig report through the Python model;
   it adds no retained JSON fixture or new process-death matrix.
+- [x] Add W5a as a separately versioned native-observation foundation:
+  pointer-free descriptor/rule/plan/observation/bundle values, explicit
+  `present`/`missing`/`denied`/`unsupported`, host and accelerator planes,
+  stable source identity distinct from per-event provenance, nonzero reason
+  identity only for unavailable records and no reason identity when present,
+  sample-clock identity on every observation and value-clock identity only on
+  present time-valued metrics, a fail-closed family-neutral runner, retained
+  post-run contamination, explicit accelerator fallback, and the download-free
+  three-profile/six-item typed-perception reference. Extract the bounded macOS
+  host parsers into one shared observer used by the paired harness, and keep
+  foreign-target compilation distinct from native evidence.
 - [ ] Extend W4 through separately retained provider, stateful, streaming,
   batched, preemptible, device-backed, live provider-backed, and OS-isolated
   dispatch/status profiles.
+- [ ] Complete W5 with direct CPU, GPU/accelerator, memory-residency, power,
+  thermal, frequency, utilization, energy, and native per-OS observer adapters.
 - [ ] Retain native per-OS mixed-family load and bounded soak campaigns with
   CPU/GPU identity and placement, host/device timing, memory residency, power,
   thermal, backend, fault-schedule, memory-growth, recovery, and zero-orphan
@@ -353,6 +366,9 @@ See [ActionOutbox Protocol](ACTION_OUTBOX.md) for W4b-b/c stable request,
 uncertainty, reconciliation, compensation, durable POSIX publication, and
 explicit prefix repair plus the bounded W4b-d same-process adapter boundary,
 generation fence, and retry rules.
+See [Native Observation Contract](NATIVE_OBSERVATION.md) for W5a availability,
+admission, two-clock semantics, fallback, macOS-observer, verification, and
+nonclaim rules.
 See [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md) for the W0–W8 workload,
 native-observation, resilience, and platform-replication sequence.
 See [Platform Portability](PLATFORM_PORTABILITY.md) for the evidence matrix,
@@ -1062,17 +1078,26 @@ do not yet form a stable public ABI. See [Sealed DecodePlan](SEALED_DECODE_PLAN.
 
 ## Measurement roadmap
 
-The machine envelope currently captures useful host and run identity but does not
-directly prove CPU temperature, effective frequency, performance/efficiency core
-residency, or package energy on every platform.
+The W5a machine-observation foundation now retains fixed host metric records,
+explicit availability, stable source identity, per-event provenance, nonzero
+unavailable-reason identity and no present-reason identity, a sample-clock
+identity for every observation, a value-clock identity only for present
+time-valued metrics, fail-closed
+pre-admission, and post-run contamination. Its domain checks require logical
+CPU count at least one and allow physical temperature below zero only down to
+absolute zero. It does not directly
+prove CPU temperature, effective frequency, performance/efficiency core
+residency, package energy, or device telemetry on every platform.
 
 Priorities:
 
-1. read-only platform adapters with present/missing/denied states;
+1. direct read-only platform adapters preserving
+   present/missing/denied/unsupported;
 2. paired randomized execution with cooldown and load gates;
 3. physical memory and device-residency evidence;
 4. energy and thermal capture where trustworthy APIs exist;
-5. reproducible public artifact bundles with independent verification.
+5. native Linux, Windows, and FreeBSD observation campaigns; and
+6. reproducible public artifact bundles with independent verification.
 
 ### Fair paired campaign contract
 

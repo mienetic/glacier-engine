@@ -23,6 +23,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
 | Agent and tool action | `ToolActionContract`, fixed-storage tool harness, ActionOutbox record/recovery, POSIX file store, pointer-free adapter contract, dispatch driver, bounded fake authority | Keep model proposals separate from local authorization, publish bounded process-local effects atomically, durably retain external dispatch uncertainty, and allow retry only after status atomically fences the attempted generation |
 | Durability | settlement/cost wires, cost journal, ActionOutbox snapshot/lease/repair roots | Commit replayable cost and external-action evidence across process failure without granting external-effect authority |
+| Native observation | `NativeObservationContract`, `NativeObservationRunner`, host/device observer adapters | Bind workload and machine identity to explicit metric availability, admit before execution, keep per-record sample-clock identity distinct from time-metric value-clock identity, and retain contamination without granting portable records execution authority |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
 
 ## Local execution flow
@@ -846,6 +847,84 @@ cryptographic-origin, fake-service restart-persistence, process-death, native
 platform, performance, power, or external-exactly-once claim. The separate
 W4b-c 49-death store campaign remains unchanged.
 
+## Native observation flow
+
+W5a separates portable observation identity from process-local authority:
+
+```text
+descriptor + sealed observation plan
+                 │
+                 ▼
+              probe
+                 │ fail
+                 ├─────────────> rejected_pre_run; no workload invocation
+                 ▼
+             pre_run
+                 │ policy fail
+                 ├─────────────> rejected_pre_run; no workload invocation
+                 ▼
+              begin
+                 │
+                 ▼
+       family-neutral workload, at most once
+                 │
+                 ▼
+               end
+                 │
+                 ▼
+             post_run
+                 │
+        ┌────────┴─────────┐
+        ▼                  ▼
+   publishable      rejected_post_run
+                    receipt and reasons retained
+```
+
+`DescriptorV1`, `RuleV1`, `PlanV1`, `ObservationV1`, and
+`ObservationBundleV1` are fixed-size and pointer-free. Their canonical roots
+bind the workload profile, artifact, build, machine, backend, device,
+placement, execution plane, worker/queue counts, phase, metric, availability,
+unit, value, subject, stable source identity, per-event provenance,
+availability-reason identity, sample-clock identity, and the time-metric-only
+value-clock identity. Process handles, clocks, probe commands, and callback
+contexts stay in `ObserverV1` and `WorkloadV1`; they never enter the portable
+value.
+
+Every metric is `present`, `missing`, `denied`, or `unsupported`. Unavailable
+records have no measured value, cannot become numeric zero, and retain a
+nonzero reason identity; present records carry none and require an all-zero
+reason field. Rules can require presence or false, enforce ranges and pre/post
+deltas, and bind the same stable source or subject. Per-event provenance may
+change without failing `same_source`. Pre-run failures close before work
+starts. Once work begins, the
+runner attempts end and post-run collection even after a workload callback
+failure. A post-run threshold, source/subject drift, accelerator fallback, or
+clock regression retains the observation and receipt but makes the report
+nonpublishable.
+
+Host and accelerator metric spaces remain distinct. Every record carries the
+identity of the clock used for `observed_at_ticks`. Only a present
+nanosecond-valued metric additionally carries the identity of the clock that
+produced its value. A device time value therefore cannot be interpreted as a
+host monotonic value, and the two fields do not assert cross-clock calibration.
+Metric domains remain explicit: a present logical CPU count is at least one,
+while physical temperatures may be negative but never below absolute zero.
+The download-free reference composes the existing three-profile/six-item
+typed-perception fixture and checks correctness plus final zero-orphan
+ownership. Its deterministic elapsed value proves composition, not native
+performance.
+
+The first host adapter is a bounded read-only macOS module using named system
+commands with fixed output ceilings. It exposes host monotonic time, CPU count,
+CPU busy, external-process CPU, idle, RSS, available memory, swap, power source,
+low-power mode, and thermal constraint with provenance and explicit
+availability. Its JSON output adds a bounded readable reason for unavailable
+metrics and no reason for present metrics. The paired harness shares its strict
+system-field parsers.
+Direct CPU/device temperature, frequency, power, energy, utilization,
+residency, and device timing remain separate adapters. See
+[Native Observation Contract](NATIVE_OBSERVATION.md).
+
 ## Provider execution flow
 
 ```text
@@ -922,6 +1001,8 @@ Metal through a small Objective-C bridge. Full artifact cross-builds cover
 x86_64/AArch64 Linux musl and x86_64 Windows GNU. Model conversion and runtime
 images share a bounded read-only mapping abstraction with POSIX and Windows
 implementations; fixture process IDs and hard termination are selected per OS.
+The W5a observation contract and family-neutral runner also cross-compile
+without importing a native observer into the portable core.
 Execution, numerical, durable-recovery, and physical-resource validation still
 require real machines for each promoted platform.
 
@@ -1084,4 +1165,7 @@ targets remain gated until their named native adapters and evidence pass.
   timeline, transaction, image, audio, and video tracks.
 - [Glacier AI Runtime roadmap](AI_RUNTIME_ROADMAP.md): shared runtime planes,
   universal family adapters, coverage map, gates, and delivery sequence.
+- [Native observation](NATIVE_OBSERVATION.md): portable availability,
+  admission, sample-clock/value-clock identities, fallback, macOS adapter, and
+  claim boundaries.
 - [Evidence policy](EVIDENCE_POLICY.md): what results are allowed to claim.

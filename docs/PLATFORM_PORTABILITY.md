@@ -21,6 +21,10 @@ to promote additional operating systems without weakening runtime invariants.
   filesystem on the named OS.
 - **Accelerator-verified**: a device backend passes numerical, lifetime, and
   synchronization checks against a CPU oracle on real hardware.
+- **Observer-verified**: a named telemetry adapter runs on the real OS, retains
+  metric provenance and explicit status for every unavailable field, and
+  passes native admission/contamination fixtures. This does not by itself prove
+  workload performance.
 - **Supported**: the applicable compile, native, recovery, packaging, and
   backend gates are retained for a named OS/architecture/version range.
 
@@ -44,6 +48,17 @@ surface.
 | iOS / AArch64 | Core source-compilation probe passed | No device execution or application-lifecycle evidence | No iOS protection-class/background recovery campaign | No iOS backend has been verified; the macOS Metal bridge is not iOS evidence | Research target; not supported |
 | WASI / wasm32 | Core source-compilation currently fails | Not established | Durable local recovery is outside the current contract | None | Unsupported; requires a reduced edge profile |
 | Other edge systems | No named target matrix yet | Not established | Not established | None | Unscoped |
+
+W5a does not change a classification in this matrix. It adds one portable
+native-observation contract and runner plus a bounded macOS read-only host
+adapter. The focused gate includes a native macOS observer smoke on the
+development host. Portable records separate stable source identity from
+per-event provenance and retain a nonzero reason identity only when
+unavailable; present records carry none, and the macOS JSON adds a bounded
+readable reason only when unavailable. Direct CPU/device power,
+temperature, frequency, energy, utilization, residency, device timing, and any
+separate clock-calibration evidence remain unverified, and no other operating
+system has a retained native observer campaign yet.
 
 ### Probe record
 
@@ -156,6 +171,13 @@ portability only; it exercises no native filesystem recovery, mutex
 interleaving, credential backend, sandbox, service process, or external I/O on
 those targets.
 
+The build graph now also provides `native-observation-cross-compile` for
+Linux x86_64/AArch64 GNU, Windows x86_64 GNU, and FreeBSD x86_64. It compiles
+the portable observation contract, runner, and reference report without
+executing the foreign products. Passing this gate is G1 source/build evidence
+only. It cannot establish the behavior of a target's clock, CPU/load parser,
+memory source, power/thermal source, accelerator, permissions, or workload.
+
 ## Existing portability seams and blockers
 
 Useful seams already exist:
@@ -166,6 +188,8 @@ Useful seams already exist:
 - a compile-time adapter inventory reports read-only mapping, POSIX durable
   files, hard-termination fixture, and Metal source availability separately
   from native verification or support;
+- W5a keeps fixed observation records and policy evaluation in portable Zig
+  while read-only host probes and callback contexts remain outside core;
 - `src/core/` contains canonical state, admission, scheduling, media, provider,
   and recovery logic that is largely independent of an accelerator;
 - Metal enablement is a build-time option and is rejected for non-macOS
@@ -283,6 +307,21 @@ first process seam now normalizes fixture PIDs to `u32` and selects POSIX
 `SIGKILL` or Windows process termination at compile time. Logical runtime
 accounting remains portable even when physical telemetry is unavailable.
 
+The first W5a contract makes that absence explicit as `missing`, `denied`, or
+`unsupported` rather than zero. It separates host and accelerator metric
+planes, subjects, stable source identity, per-sample provenance, units, the
+nonzero reason identity present only when unavailable, the sample-clock
+identity present on every record, and the value-clock identity present only
+for a directly observed time value. Present records carry no reason identity.
+Neither clock field claims cross-clock calibration.
+The bounded macOS adapter directly supplies host monotonic time, logical CPU
+count, total CPU busy, external CPU, CPU idle, process RSS, available memory,
+swap, power source, low-power mode, and thermal constraint. Linux, Windows,
+FreeBSD, mobile, and direct physical CPU/device adapters remain independent
+platform work.
+Portable domain checks require a positive logical CPU count and allow signed
+physical temperatures only at or above absolute zero.
+
 A recovery test may use an OS-specific hard-termination mechanism, but the
 canonical recovery verifier must consume the same retained evidence on every
 platform. WASI and small edge targets need a declared single-threaded profile
@@ -383,6 +422,11 @@ Every promoted target must retain artifacts for the relevant gates.
 ### G6 — resource and performance evidence
 
 - monotonic timing and physical metrics come from the named adapter;
+- every metric retains present/missing/denied/unsupported, subject, stable
+  source identity, per-event provenance, unit, and sample-clock identity; only
+  a present time-valued metric carries a value-clock identity;
+  unavailable telemetry carries nonzero reason identity and never becomes
+  zero;
 - idle state, power mode, thermal state, affinity, and competing load are
   captured where available;
 - versioned open-loop arrival-rate and closed-loop concurrency campaigns report
@@ -414,6 +458,8 @@ Every promoted target must retain artifacts for the relevant gates.
 - split pure core tests from filesystem, process, thread, and device tests;
 - wrap virtual memory and durable storage behind narrow interfaces;
 - move telemetry and process-death injection out of canonical runtime modules;
+- ~~add a portable, pointer-free observation ABI and fail-closed runner;~~ W5a
+  complete, with direct native telemetry adapters still staged;
 - add checked conversions for every canonical `u64` used as `usize`.
 
 Exit: core-only compile gates are small, fast, and contain no OS imports.
@@ -464,6 +510,7 @@ matrix.
 
 The source-compilation probes above do not establish native execution,
 filesystem durability, mobile lifecycle safety, accelerator correctness,
-installation quality, or performance. This document is an implementation plan
-and evidence ledger, not a declaration that every listed platform is currently
-supported.
+installation quality, physical telemetry, or performance. The W5a
+cross-compile gate likewise does not establish native observation. This
+document is an implementation plan and evidence ledger, not a declaration that
+every listed platform is currently supported.

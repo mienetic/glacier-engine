@@ -27,7 +27,11 @@ intended reason.
 Add a read-only parser fixture for one Linux machine-envelope field. Do not turn
 missing telemetry into a false measurement.
 
-**Done when:** present, missing, denied, and malformed inputs have tests.
+**Done when:** present, missing, denied, unsupported, and malformed inputs have
+tests; every record names stable source identity, per-sample provenance, unit,
+subject, and sample-clock identity, while only a present time-valued metric
+names a value-clock identity. Unavailable records retain a nonzero reason
+identity and bounded readable diagnostic; present records retain neither.
 
 ### Add one cross-target core probe
 
@@ -100,6 +104,41 @@ implement another OS adapter.
 
 **First slice:** propose the interface and migrate one call site with unchanged
 golden fixtures and a focused test.
+
+### Native observation adapters
+
+The W5a foundation is complete: fixed portable descriptor, rule, plan,
+observation, and bundle values; all four availability states; separate
+host/accelerator planes plus sample-clock and time-metric value-clock
+identities; stable source identity distinct from event provenance; nonzero
+reason identity only when unavailable; a fail-closed family-neutral runner;
+retained post-run contamination; explicit fallback; and a download-free
+three-profile/six-item reference. The bounded macOS observer and paired harness
+share strict system-field and external-process CPU parsers. See
+[Native Observation Contract](NATIVE_OBSERVATION.md).
+
+Small next slices:
+
+- add one Linux host metric parser with fixed input/output bounds, then retain a
+  native Linux smoke;
+- add one Windows or FreeBSD host adapter without adding OS calls to the
+  portable contract;
+- add one trustworthy direct CPU power, thermal, frequency, or energy source,
+  retaining signed temperature down to absolute zero;
+- add one device identity/placement/fallback/submit/sync timing source with an
+  explicit value-clock identity for device time; or
+- add one direct accelerator utilization or residency source without deriving
+  it from logical accounting.
+
+**Done when:** present, missing, denied, unsupported, malformed, permission,
+overflow, source-substitution, sample-clock, and time-metric value-clock cases
+are retained; stable source identity is tested separately from per-event
+provenance; nonzero unavailable-reason identity, absent present-reason identity,
+and bounded readable unavailable diagnostics are covered; logical CPU count
+zero and temperature below absolute zero reject; the two clock fields are not
+treated as calibration; the acceptance command runs
+natively on the named platform; and cross-compilation is reported only as
+source/build evidence.
 
 ### LaneWeave trace visualizer
 
@@ -475,6 +514,18 @@ model has no retained JSON fixture; the gate separately validates a live
 canonical Zig report. This is not live dispatch, real credential handling,
 OS isolation, service-restart persistence, or external exactly-once evidence.
 
+**Completed W5a native-observation slice:** fixed pointer-free observation
+values and a family-neutral runner now gate probe and pre-run state before
+starting the workload, invoke work at most once, retain post-run contamination,
+and keep host/accelerator metrics, sample-clock and time-metric value-clock
+identities, stable source and event provenance, unavailable reasons, fallback,
+correctness, and zero-orphan evidence explicit. The canonical
+three-profile/six-item
+reference needs no model download and is checked independently. A shared
+bounded macOS host observer supplies the first native adapter seam. W5 remains
+open for direct physical CPU/device adapters, and W8 remains open for native
+multi-platform replication.
+
 These are deterministic conformance and named-host recovery fixtures, not
 throughput, wall-clock latency, physical-memory, energy, or soak results.
 
@@ -490,7 +541,8 @@ Small independent follow-up slices include:
 - build a read-only scenario/result inspector that exposes no authority;
 - add a bounded family-aware batch or safe-preemption profile with an explicit
   execution unit and cancellation boundary; or
-- add one native platform observer with explicit present/missing/denied states.
+- add one direct CPU/device metric or one native Linux, Windows, or FreeBSD
+  observer behind W5a with all four availability states.
 
 **Done when:** the slice fixes all bounds and summary rules before execution,
 retains malformed and semantic-substitution rejection, keeps logical and

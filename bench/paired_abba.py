@@ -34,6 +34,13 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+try:
+    from bench import native_observer as _native_observer
+except ModuleNotFoundError as exc:
+    if exc.name != "bench":
+        raise
+    import native_observer as _native_observer
+
 
 SCHEMA = "glacier.paired-bench/v1"
 CACHE_REGIME = "process-cold/os-warm"
@@ -3153,127 +3160,30 @@ def _probe_command(
 
 
 def parse_pmset_power(battery_text: str, custom_text: str) -> dict[str, Any]:
-    source_match = re.search(r"Now drawing from '([^']+)'", battery_text)
-    if source_match is None:
-        raise HarnessError("pmset did not report the active power source")
-    source = source_match.group(1).strip()
-
-    battery_match = re.search(
-        r"(?m)^\s*-[^\n]*?\s+(\d{1,3})%;\s*([^;\n]+);[^\n]*present:\s*(true|false)",
-        battery_text,
-        re.IGNORECASE,
-    )
-    if battery_match is None and "InternalBattery" in battery_text:
-        raise HarnessError(
-            "pmset reported an InternalBattery line that could not be parsed"
-        )
-    if battery_match is None:
-        battery_present = False
-        battery_percent: int | None = None
-        battery_status: str | None = None
-    else:
-        battery_present = battery_match.group(3).lower() == "true"
-        battery_percent = int(battery_match.group(1))
-        if not 0 <= battery_percent <= 100:
-            raise HarnessError("pmset reported an invalid battery percentage")
-        battery_status = battery_match.group(2).strip().lower()
-
-    active_section: str | None = None
-    active_settings: dict[str, str] = {}
-    for line in custom_text.splitlines():
-        section_match = re.fullmatch(r"([^\s].* Power):", line.rstrip())
-        if section_match is not None:
-            active_section = section_match.group(1)
-            continue
-        if active_section == source:
-            setting_match = re.fullmatch(r"\s*(\S+)\s+(.+?)\s*", line)
-            if setting_match is not None:
-                active_settings[setting_match.group(1).lower()] = setting_match.group(
-                    2
-                )
-    low_power_text = active_settings.get("lowpowermode")
-    if low_power_text is None or re.fullmatch(r"\d+", low_power_text) is None:
-        raise HarnessError(
-            f"pmset did not report lowpowermode for active source {source!r}"
-        )
-    low_power_mode = int(low_power_text)
-    normalized_settings = dict(sorted(active_settings.items()))
-    settings_bytes = json.dumps(
-        normalized_settings, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-    return {
-        "source": source,
-        "on_ac_power": source == "AC Power",
-        "battery_present": battery_present,
-        "battery_percent": battery_percent,
-        "battery_status": battery_status,
-        "battery_full": battery_percent == 100 if battery_present else None,
-        "low_power_mode": low_power_mode,
-        "active_settings": normalized_settings,
-        "active_settings_sha256": sha256_bytes(settings_bytes),
-    }
+    try:
+        return _native_observer.parse_pmset_power(battery_text, custom_text)
+    except _native_observer.ObservationError as exc:
+        raise HarnessError(str(exc)) from exc
 
 
 def parse_pmset_thermal(text: str, logical_cpu_count: int | None) -> dict[str, Any]:
     """Parse throttle signals from pmset; this deliberately does not infer temperature."""
 
-    values: dict[str, int] = {}
-    for name in ("CPU_Scheduler_Limit", "CPU_Available_CPUs", "CPU_Speed_Limit"):
-        match = re.search(rf"(?m)^\s*{name}\s*=\s*(\d+)\s*$", text)
-        if match is not None:
-            values[name] = int(match.group(1))
-    available = bool(values)
-    constrained = False
-    if available:
-        constrained = (
-            values.get("CPU_Scheduler_Limit", 100) < 100
-            or values.get("CPU_Speed_Limit", 100) < 100
-            or (
-                logical_cpu_count is not None
-                and "CPU_Available_CPUs" in values
-                and values["CPU_Available_CPUs"] < logical_cpu_count
-            )
-        )
-    return {
-        "signal_available": available,
-        "constrained": constrained if available else None,
-        "status": "constrained"
-        if constrained
-        else ("nominal" if available else "unavailable"),
-        "signals": values,
-        "temperature_measured": False,
-    }
+    return _native_observer.parse_pmset_thermal(text, logical_cpu_count)
 
 
 def parse_vm_stat(text: str) -> dict[str, int]:
-    result: dict[str, int] = {}
-    for output_name, source_name in (
-        ("pageouts", "Pageouts"),
-        ("swapins", "Swapins"),
-        ("swapouts", "Swapouts"),
-    ):
-        match = re.search(rf'(?m)^"?{source_name}"?:\s+(\d+)\.\s*$', text)
-        if match is None:
-            raise HarnessError(f"vm_stat did not report {source_name}")
-        result[output_name] = int(match.group(1))
-    return result
+    try:
+        return _native_observer.parse_vm_stat(text)
+    except _native_observer.ObservationError as exc:
+        raise HarnessError(str(exc)) from exc
 
 
 def parse_top_state(text: str) -> tuple[list[float], list[float]]:
-    load1 = [
-        float(match.group(1))
-        for match in re.finditer(r"(?m)^Load Avg:\s*([0-9]+(?:\.[0-9]+)?),", text)
-    ]
-    idle = [
-        float(match.group(1))
-        for match in re.finditer(
-            r"(?m)^CPU usage:\s*[^\n]*?([0-9]+(?:\.[0-9]+)?)% idle\s*$",
-            text,
-        )
-    ]
-    if not load1 or not idle or len(load1) != len(idle):
-        raise HarnessError("top did not report matched Load Avg and CPU usage samples")
-    return load1, idle
+    try:
+        return _native_observer.parse_top_state(text)
+    except _native_observer.ObservationError as exc:
+        raise HarnessError(str(exc)) from exc
 
 
 def parse_external_cpu_processes(
@@ -3292,64 +3202,16 @@ def parse_external_cpu_processes(
     attribution; publication mode pairs it with the pre-window load/idle gate.
     """
 
-    if logical_cpu_count <= 0:
-        raise HarnessError("external CPU monitor requires a positive logical CPU count")
-    external: list[dict[str, Any]] = []
-    parsed_rows = 0
-    excluded_rows = 0
-    for line_number, line in enumerate(text.splitlines(), start=1):
-        if not line.strip():
-            continue
-        match = re.fullmatch(
-            r"\s*(\d+)\s+(\d+)\s+(\d+)\s+([0-9]+(?:\.[0-9]+)?)\s+(.+?)\s*",
-            line,
+    try:
+        return _native_observer.parse_external_cpu_processes(
+            text,
+            benchmark_pgid=benchmark_pgid,
+            harness_pid=harness_pid,
+            sampler_pid=sampler_pid,
+            logical_cpu_count=logical_cpu_count,
         )
-        if match is None:
-            raise HarnessError(
-                f"external CPU ps row {line_number} could not be parsed"
-            )
-        parsed_rows += 1
-        pid = int(match.group(1))
-        ppid = int(match.group(2))
-        pgid = int(match.group(3))
-        cpu_percent = float(match.group(4))
-        if not math.isfinite(cpu_percent) or cpu_percent < 0.0:
-            raise HarnessError(
-                f"external CPU ps row {line_number} has invalid CPU percent"
-            )
-        if (
-            pgid == benchmark_pgid
-            or pid in (harness_pid, sampler_pid)
-            or ppid == harness_pid
-        ):
-            excluded_rows += 1
-            continue
-        if cpu_percent > 0.0:
-            external.append(
-                {
-                    "pid": pid,
-                    "ppid": ppid,
-                    "pgid": pgid,
-                    "cpu_percent_of_one_logical_cpu": cpu_percent,
-                    "command": match.group(5),
-                }
-            )
-    if parsed_rows == 0:
-        raise HarnessError("external CPU ps probe returned no process rows")
-    external.sort(
-        key=lambda row: float(row["cpu_percent_of_one_logical_cpu"]), reverse=True
-    )
-    external_sum = sum(
-        float(row["cpu_percent_of_one_logical_cpu"]) for row in external
-    )
-    return {
-        "parsed_process_rows": parsed_rows,
-        "excluded_process_rows": excluded_rows,
-        "external_active_process_rows": len(external),
-        "external_cpu_percent_of_one_logical_cpu_sum": external_sum,
-        "external_cpu_capacity_percent": external_sum / logical_cpu_count,
-        "top_external_processes": external[:8],
-    }
+    except _native_observer.ObservationError as exc:
+        raise HarnessError(str(exc)) from exc
 
 
 def _read_external_cpu_sample(

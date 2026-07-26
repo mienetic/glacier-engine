@@ -19,6 +19,10 @@ pub const typed_workload_contract = core.typed_workload_contract;
 pub const typed_workload_driver = core.typed_workload_driver;
 pub const typed_perception_workload = core.typed_perception_workload;
 pub const typed_tool_workload = core.typed_tool_workload;
+pub const native_observation_contract =
+    core.native_observation_contract;
+pub const native_observation_runner =
+    core.native_observation_runner;
 pub const tool_action_contract = core.tool_action_contract;
 pub const tool_action_harness = core.tool_action_harness;
 pub const tool_action_outbox_record =
@@ -85,6 +89,9 @@ pub const TypedWorkloadContract = core.TypedWorkloadContract;
 pub const TypedWorkloadDriver = core.TypedWorkloadDriver;
 pub const TypedPerceptionWorkload = core.TypedPerceptionWorkload;
 pub const TypedToolWorkload = core.TypedToolWorkload;
+pub const NativeObservationContract =
+    core.NativeObservationContract;
+pub const NativeObservationRunner = core.NativeObservationRunner;
 pub const ToolActionContract = core.ToolActionContract;
 pub const ToolActionHarness = core.ToolActionHarness;
 pub const ToolActionOutboxRecord = core.ToolActionOutboxRecord;

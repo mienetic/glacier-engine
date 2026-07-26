@@ -1303,6 +1303,157 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(typed_workload_test_step);
     test_compile_step.dependOn(typed_workload_compile_step);
 
+    // W5a binds the retained three-family/six-item workload to a portable,
+    // fixed-size native-observation contract. The observer admits before the
+    // workload starts, closes after every begun run, retains post-run
+    // contamination, and never treats unavailable telemetry as zero. The
+    // reference is download-free and is not a performance claim.
+    const native_observation_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/native_observation_runner.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_native_observation_tests = b.addRunArtifact(
+        native_observation_tests,
+    );
+    const native_observation_exe = b.addExecutable(.{
+        .name = "glacier-native-observation",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/native_observation.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    native_observation_exe.root_module.addImport("core", core_mod);
+    const run_native_observation = b.addRunArtifact(
+        native_observation_exe,
+    );
+    const native_observation_demo_step = b.step(
+        "native-observation-demo",
+        "Print the canonical native-observation reference report",
+    );
+    native_observation_demo_step.dependOn(
+        &run_native_observation.step,
+    );
+
+    const run_native_observation_model =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_native_observation_conformance",
+            "bench.tests.test_native_observer",
+            "bench.tests.test_paired_abba",
+        });
+    run_native_observation_model.setCwd(b.path("."));
+    run_native_observation_model.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_native_observation_model.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    const run_native_observation_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_native_observation_oracle.setCwd(b.path("."));
+    run_native_observation_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_native_observation_oracle.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_native_observation_oracle.addFileArg(
+        b.path("bench/native_observation_conformance.py"),
+    );
+    run_native_observation_oracle.addArg("--runner");
+    run_native_observation_oracle.addArtifactArg(
+        native_observation_exe,
+    );
+    run_native_observation_oracle.addArg("--fixture");
+    run_native_observation_oracle.addFileArg(
+        b.path(
+            "bench/results/native-observation-conformance-v1.json",
+        ),
+    );
+    const native_observation_test_step = b.step(
+        "native-observation-test",
+        "Run native observation, admission, oracle and macOS probe tests",
+    );
+    native_observation_test_step.dependOn(
+        &run_native_observation_tests.step,
+    );
+    native_observation_test_step.dependOn(
+        &run_native_observation_model.step,
+    );
+    native_observation_test_step.dependOn(
+        &run_native_observation_oracle.step,
+    );
+    const native_observation_compile_step = b.step(
+        "native-observation-compile",
+        "Compile portable native-observation tests and report",
+    );
+    native_observation_compile_step.dependOn(
+        &native_observation_tests.step,
+    );
+    native_observation_compile_step.dependOn(
+        &native_observation_exe.step,
+    );
+    const native_observation_cross_compile_step = b.step(
+        "native-observation-cross-compile",
+        "Cross-compile the observation contract for Linux, Windows and FreeBSD",
+    );
+    const native_observation_cross_targets = [_]std.Target.Query{
+        .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .gnu,
+        },
+        .{
+            .cpu_arch = .aarch64,
+            .os_tag = .linux,
+            .abi = .gnu,
+        },
+        .{
+            .cpu_arch = .x86_64,
+            .os_tag = .windows,
+            .abi = .gnu,
+        },
+        .{
+            .cpu_arch = .x86_64,
+            .os_tag = .freebsd,
+        },
+    };
+    for (native_observation_cross_targets) |cross_query| {
+        const cross_target = b.resolveTargetQuery(cross_query);
+        const cross_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "src/core/native_observation_runner.zig",
+                ),
+                .target = cross_target,
+                .optimize = optimize,
+            }),
+        });
+        native_observation_cross_compile_step.dependOn(
+            &cross_tests.step,
+        );
+    }
+    test_step.dependOn(native_observation_test_step);
+    test_compile_step.dependOn(
+        native_observation_compile_step,
+    );
+
     // W4b-a keeps pure tool execution separate from W4a. The retained
     // fixed-storage harness has no ambient I/O authority; its native report
     // must match the independent Python scheduler and tool replay exactly.

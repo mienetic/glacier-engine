@@ -27,6 +27,18 @@ test "package exports runtime and core modules independently of host tools" {
     try std.testing.expect(
         @hasDecl(glacier, "TypedToolWorkload"),
     );
+    try std.testing.expect(
+        @hasDecl(glacier, "native_observation_contract"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "native_observation_runner"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "NativeObservationContract"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "NativeObservationRunner"),
+    );
     try std.testing.expect(@hasDecl(glacier, "ToolActionContract"));
     try std.testing.expect(@hasDecl(glacier, "ToolActionHarness"));
     try std.testing.expect(
@@ -80,6 +92,18 @@ test "package exports runtime and core modules independently of host tools" {
         @hasDecl(glacier_core, "TypedToolWorkload"),
     );
     try std.testing.expect(
+        @hasDecl(glacier_core, "native_observation_contract"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "native_observation_runner"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "NativeObservationContract"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "NativeObservationRunner"),
+    );
+    try std.testing.expect(
         @hasDecl(glacier_core, "ToolActionContract"),
     );
     try std.testing.expect(
@@ -129,6 +153,22 @@ test "package exports runtime and core modules independently of host tools" {
     try std.testing.expect(
         glacier.TypedToolWorkload ==
             glacier_core.TypedToolWorkload,
+    );
+    try std.testing.expect(
+        glacier.native_observation_contract ==
+            glacier_core.native_observation_contract,
+    );
+    try std.testing.expect(
+        glacier.native_observation_runner ==
+            glacier_core.native_observation_runner,
+    );
+    try std.testing.expect(
+        glacier.NativeObservationContract ==
+            glacier_core.NativeObservationContract,
+    );
+    try std.testing.expect(
+        glacier.NativeObservationRunner ==
+            glacier_core.NativeObservationRunner,
     );
     try std.testing.expect(
         glacier.ToolActionContract ==

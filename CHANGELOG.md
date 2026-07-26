@@ -25,6 +25,31 @@ before the first stable release.
 
 ### Added
 
+- Added the first W5a native-observation slice. A pointer-free fixed-size
+  contract separates host and accelerator planes, binds every metric to an
+  explicit `present`, `missing`, `denied`, or `unsupported` state plus unit,
+  stable source identity, per-event provenance, subject, and sample-clock
+  identity, adds value-clock identity only to present time-valued metrics, and
+  hashes portable values field-by-field. Unavailable records retain a nonzero
+  reason identity; present records carry none and require an all-zero reason
+  field. The macOS JSON adapter separately retains a bounded readable reason
+  only when unavailable. Metric validation requires a
+  positive logical CPU count and permits signed physical temperatures down to,
+  but not below, absolute zero.
+  The family-neutral runner performs probe and pre-run
+  admission before invoking work, closes every begun run even when the
+  workload fails, retains post-run contamination as nonpublishable evidence,
+  and rejects accelerator receipts that do not prove CPU fallback absent. Its
+  download-free reference executes the retained three-profile/six-item typed
+  perception campaign, preserves correctness and zero-orphan roots, and is
+  checked by Zig plus an independent Python oracle. The existing macOS paired
+  harness now shares strict power, thermal, virtual-memory, CPU-busy, and
+  external-process CPU parsers with a bounded read-only observer; unavailable
+  telemetry remains explicit instead of becoming a numeric zero. A native
+  macOS smoke and focused Linux x86_64/AArch64, Windows x86_64, and FreeBSD
+  x86_64 cross-compiles are retained. This does not yet prove direct CPU/GPU
+  temperature, frequency, residency, utilization, power, energy, multi-OS
+  native execution, latency, throughput, or soak behavior.
 - Added the W4b-d generation-fenced ActionOutbox adapter slice without changing
   the W4b-b/c wire or store ABI. Pointer-free request/evidence values compose
   through a driver that commits intent before callback, protects one future
