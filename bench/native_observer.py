@@ -21,11 +21,21 @@ import threading
 import time
 from typing import Any, Callable, Mapping, Sequence
 
+try:
+    from bench import native_observation_common as _common
+    from bench import native_observer_linux as _linux
+except ImportError:  # pragma: no cover - direct script/import compatibility
+    import native_observation_common as _common
+    import native_observer_linux as _linux
 
+
+# Keep the historical public constant and Darwin wire value for compatibility.
 SCHEMA = "glacier.native-observation/macos-v1"
+HOST_SCHEMA = _common.SCHEMA
 ADAPTER = "macos-read-only-command-observer/v1"
-AVAILABILITIES = ("present", "missing", "denied", "unsupported")
-PHASES = ("probe", "pre_run", "post_run")
+BASELINE_ADAPTER = _common.BASELINE_ADAPTER
+AVAILABILITIES = _common.AVAILABILITIES
+PHASES = _common.PHASES
 PHASE_ALIASES = {
     "probe": "probe",
     "pre_run": "pre_run",
@@ -38,7 +48,7 @@ PHASE_ALIASES = {
 MAX_TOP_ITERATIONS = 64
 MAX_TOP_WINDOW_SECONDS = 60.0
 MAX_PROBE_OUTPUT_BYTES = 1 << 20
-I64_MAX = (1 << 63) - 1
+I64_MAX = _common.I64_MAX
 POWER_SOURCE_UNKNOWN = 0
 POWER_SOURCE_AC = 1
 POWER_SOURCE_BATTERY = 2
@@ -56,52 +66,9 @@ CommandRunner = Callable[
 ]
 
 
-class ObservationError(RuntimeError):
-    """A native observation request or strict parser failed."""
-
-
-# name, subject, unit, sample clock domain, time-value clock domain
-METRIC_SPECS = (
-    (
-        "host_monotonic_time",
-        "host",
-        "nanoseconds",
-        "host_monotonic",
-        "host_monotonic",
-    ),
-    ("host_logical_cpu_count", "host", "count", "host_monotonic", None),
-    ("host_cpu_busy_ppm", "host", "ppm", "host_monotonic", None),
-    ("host_external_cpu_ppm", "host", "ppm", "host_monotonic", None),
-    ("host_cpu_idle_ppm", "host", "ppm", "host_monotonic", None),
-    ("process_resident_bytes", "process", "bytes", "host_monotonic", None),
-    (
-        "host_available_memory_bytes",
-        "host",
-        "bytes",
-        "host_monotonic",
-        None,
-    ),
-    ("host_swap_used_bytes", "host", "bytes", "host_monotonic", None),
-    ("host_power_source", "host", "count", "host_monotonic", None),
-    ("host_low_power_mode", "host", "boolean", "host_monotonic", None),
-    (
-        "host_thermal_constraint",
-        "host",
-        "count",
-        "host_monotonic",
-        None,
-    ),
-)
-_METRIC_SPEC_BY_NAME = {
-    name: (subject, unit, sample_clock_domain, value_clock_domain)
-    for (
-        name,
-        subject,
-        unit,
-        sample_clock_domain,
-        value_clock_domain,
-    ) in METRIC_SPECS
-}
+ObservationError = _common.ObservationError
+METRIC_SPECS = _common.METRIC_SPECS
+_METRIC_SPEC_BY_NAME = _common.METRIC_SPEC_BY_NAME
 
 
 def _sha256(data: bytes) -> str:
@@ -221,10 +188,27 @@ def _probe_command(
     argv: Sequence[str],
     timeout_seconds: float,
     runner: CommandRunner,
+    *,
+    source_id_argv: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Run one fixed read-only command and retain bounded audit evidence."""
 
     command = list(argv)
+    identity_command = list(
+        command if source_id_argv is None else source_id_argv
+    )
+    if (
+        not command
+        or any(not isinstance(argument, str) or not argument for argument in command)
+        or not identity_command
+        or any(
+            not isinstance(argument, str) or not argument
+            for argument in identity_command
+        )
+    ):
+        raise ObservationError(
+            "command argv and source identity argv must contain nonempty strings"
+        )
     started_at_utc = _utc_now()
     started_ns = time.monotonic_ns()
     stdout = b""
@@ -280,6 +264,8 @@ def _probe_command(
         reason = f"probe failed: {exc}"
 
     finished_ns = time.monotonic_ns()
+    if reason is not None:
+        reason = _common.bounded_reason(reason)
     stdout_bytes = (
         int(getattr(completed, "glacier_stdout_bytes", len(stdout)))
         if completed is not None
@@ -306,6 +292,7 @@ def _probe_command(
             {
                 "kind": "command",
                 "argv": command,
+                "source_id_argv": identity_command,
                 "started_at_utc": started_at_utc,
                 "finished_at_utc": _utc_now(),
                 "started_monotonic_ns": started_ns,
@@ -615,67 +602,20 @@ def parse_external_cpu_processes(
     }
 
 
-def _runtime_provenance(system_name: str, api: str) -> dict[str, Any]:
-    return {
-        "adapter": ADAPTER,
-        "sources": [{"kind": "runtime-api", "api": api, "system": system_name}],
-    }
+def _runtime_provenance(
+    system_name: str,
+    api: str,
+    adapter_id: str = ADAPTER,
+) -> dict[str, Any]:
+    return _common.runtime_provenance(adapter_id, system_name, api)
 
 
 def _stable_source_descriptor(source: Mapping[str, Any]) -> dict[str, Any]:
-    kind = source.get("kind")
-    if kind == "command":
-        argv = source.get("argv")
-        if (
-            not isinstance(argv, (list, tuple))
-            or not argv
-            or any(not isinstance(argument, str) for argument in argv)
-        ):
-            raise ObservationError(
-                "command source identity requires nonempty string argv"
-            )
-        return {"kind": kind, "argv": list(argv)}
-    if kind == "runtime-api":
-        api = source.get("api")
-        system = source.get("system")
-        if (
-            not isinstance(api, str)
-            or not api
-            or not isinstance(system, str)
-            or not system
-        ):
-            raise ObservationError(
-                "runtime source identity requires api and system"
-            )
-        return {"kind": kind, "api": api, "system": system}
-    if kind == "deterministic-transform":
-        expression = source.get("expression")
-        if not isinstance(expression, str) or not expression:
-            raise ObservationError(
-                "transform source identity requires an expression"
-            )
-        return {"kind": kind, "expression": expression}
-    raise ObservationError(f"unsupported provenance source kind {kind!r}")
+    return _common.stable_source_descriptor(source)
 
 
 def _source_identity_sha256(provenance: Mapping[str, Any]) -> str:
-    adapter = provenance.get("adapter")
-    sources = provenance.get("sources")
-    if not isinstance(adapter, str) or not adapter:
-        raise ObservationError("source identity requires an adapter")
-    if not isinstance(sources, (list, tuple)) or not sources:
-        raise ObservationError("source identity requires at least one source")
-    descriptors = []
-    for source in sources:
-        if not isinstance(source, Mapping):
-            raise ObservationError("provenance sources must be mappings")
-        descriptors.append(_stable_source_descriptor(source))
-    canonical = json.dumps(
-        {"adapter": adapter, "sources": descriptors},
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return _sha256(canonical)
+    return _common.source_identity_sha256(provenance)
 
 
 def _derived_provenance(
@@ -706,7 +646,9 @@ def _combined_failure(*probes: Mapping[str, Any]) -> tuple[str, str]:
     reasons = [
         str(probe["reason"]) for probe in probes if probe.get("reason") is not None
     ]
-    return availability, "; ".join(reasons) or "observation source is unavailable"
+    return availability, _common.bounded_reason(
+        "; ".join(reasons) or "observation source is unavailable"
+    )
 
 
 def _metric(
@@ -717,70 +659,14 @@ def _metric(
     provenance: Mapping[str, Any],
     reason: str | None = None,
 ) -> dict[str, Any]:
-    if name not in _METRIC_SPEC_BY_NAME:
-        raise ObservationError(f"unknown metric {name!r}")
-    if availability not in AVAILABILITIES:
-        raise ObservationError(f"invalid availability {availability!r}")
-    if availability == "present" and value is None:
-        raise ObservationError(f"present metric {name} must have a value")
-    if availability != "present" and value is not None:
-        raise ObservationError(f"unavailable metric {name} must not have a value")
-    if availability == "present" and reason is not None:
-        raise ObservationError(f"present metric {name} must not have a reason")
-    if availability != "present" and (
-        not isinstance(reason, str) or not reason
-    ):
-        raise ObservationError(f"unavailable metric {name} must have a reason")
-    subject, unit, sample_clock_domain, value_clock_domain = (
-        _METRIC_SPEC_BY_NAME[name]
+    return _common.make_metric(
+        name,
+        phase,
+        availability,
+        value,
+        provenance,
+        reason,
     )
-    if availability == "present":
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ObservationError(f"present metric {name} must be an i64")
-        minimum_value = -273_150 if unit == "milli_celsius" else 0
-        if not minimum_value <= value <= I64_MAX:
-            raise ObservationError(
-                f"present metric {name} must be an i64 in "
-                f"[{minimum_value}, {I64_MAX}]"
-            )
-        if name == "host_logical_cpu_count" and value < 1:
-            raise ObservationError(
-                "host_logical_cpu_count must be at least 1"
-            )
-        if unit == "boolean" and value not in (0, 1):
-            raise ObservationError(
-                f"boolean metric {name} must be 0 or 1"
-            )
-        if unit == "ppm" and value > 1_000_000:
-            raise ObservationError(
-                f"ppm metric {name} must not exceed 1000000"
-            )
-    normalized_provenance = {
-        "adapter": provenance["adapter"],
-        "sources": [dict(source) for source in provenance["sources"]],
-    }
-    return {
-        "name": name,
-        "availability": availability,
-        "value": value,
-        "unit": unit,
-        "sample_clock_domain": sample_clock_domain,
-        "value_clock_domain": (
-            value_clock_domain if availability == "present" else None
-        ),
-        "phase": phase,
-        "subject": subject,
-        "source_identity_sha256": _source_identity_sha256(
-            normalized_provenance
-        ),
-        "provenance": normalized_provenance,
-        "reason": reason,
-        "reason_sha256": (
-            _sha256(reason.encode("utf-8"))
-            if availability != "present"
-            else None
-        ),
-    }
 
 
 def _unavailable_metric(
@@ -858,7 +744,16 @@ def _collect_darwin_metrics(
     vm_probe = _probe_command((VM_STAT,), 10.0, runner)
     swap_probe = _probe_command((SYSCTL, "-n", "vm.swapusage"), 10.0, runner)
     rss_probe = _probe_command(
-        (PS, "-o", "rss=", "-p", str(process_id)), 10.0, runner
+        (PS, "-o", "rss=", "-p", str(process_id)),
+        10.0,
+        runner,
+        source_id_argv=(
+            PS,
+            "-o",
+            "rss=",
+            "-p",
+            "<observed-process-id>",
+        ),
     )
     external_cpu_probe = _probe_command(
         (
@@ -883,6 +778,15 @@ def _collect_darwin_metrics(
         ),
         top_window + 30.0,
         runner,
+        source_id_argv=(
+            TOP,
+            "-l",
+            "<sample-iterations>",
+            "-s",
+            "<sample-interval-seconds>",
+            "-n",
+            "0",
+        ),
     )
     result: dict[str, dict[str, Any]] = {}
 
@@ -1155,6 +1059,7 @@ def capture_observation(
     *,
     runner: CommandRunner = _default_command_runner,
     system_name: str | None = None,
+    platform_adapter: _common.PlatformObserver | None = None,
     logical_cpu_count: int | None = None,
     process_id: int | None = None,
     process_group_id: int | None = None,
@@ -1166,7 +1071,65 @@ def capture_observation(
     phase = _validate_capture_bounds(
         phase, top_iterations, sample_interval_seconds
     )
-    system = system_name if system_name is not None else platform.system()
+    actual_system = platform.system()
+    if not isinstance(actual_system, str) or not actual_system:
+        raise ObservationError("runtime platform identity is unavailable")
+    system = (
+        system_name
+        if system_name is not None
+        else (
+            platform_adapter.system_name
+            if platform_adapter is not None
+            else actual_system
+        )
+    )
+    capture_mode = "native" if system == actual_system else "simulated"
+    selected_adapter = platform_adapter
+    if (
+        selected_adapter is None
+        and system == "Linux"
+        and actual_system == "Linux"
+    ):
+        selected_adapter = _linux.LinuxObserver()
+    builtin_darwin = selected_adapter is None and system == "Darwin"
+    if selected_adapter is not None:
+        if (
+            not isinstance(selected_adapter.system_name, str)
+            or selected_adapter.system_name != system
+            or not isinstance(selected_adapter.adapter_id, str)
+            or not selected_adapter.adapter_id
+        ):
+            raise ObservationError(
+                "platform adapter does not match the selected system"
+            )
+        adapter_id = selected_adapter.adapter_id
+    elif builtin_darwin:
+        adapter_id = ADAPTER
+    else:
+        adapter_id = BASELINE_ADAPTER
+    # ``system_name`` without an injected adapter is the historical parser-test
+    # seam. Cross-host results from it remain nonpublishable, while normal and
+    # adapter-backed captures must honor the strict native requirement.
+    required_platform = (
+        _common.enforce_native_requirement(
+            actual_system=actual_system,
+            observed_system=system,
+            capture_mode=capture_mode,
+        )
+        if platform_adapter is not None or system_name is None
+        else None
+    )
+    if required_platform is not None:
+        required_adapter_id = (
+            ADAPTER
+            if required_platform == "Darwin"
+            else _linux.ADAPTER
+        )
+        if adapter_id != required_adapter_id:
+            raise ObservationError(
+                "strict native observation requires the retained "
+                f"{required_platform} adapter"
+            )
     cpu_count = os.cpu_count() if logical_cpu_count is None else logical_cpu_count
     pid = os.getpid() if process_id is None else process_id
     if (
@@ -1176,13 +1139,16 @@ def capture_observation(
     ):
         raise ObservationError("process_id must be a positive 31-bit integer")
     if process_group_id is None:
-        try:
-            pgid = os.getpgid(pid)
-        except (OSError, ProcessLookupError):
-            pgid = pid
+        if builtin_darwin:
+            try:
+                pgid: int | None = os.getpgid(pid)
+            except (AttributeError, OSError, ProcessLookupError):
+                pgid = pid
+        else:
+            pgid = None
     else:
         pgid = process_group_id
-    if (
+    if pgid is not None and (
         isinstance(pgid, bool)
         or not isinstance(pgid, int)
         or not 1 <= pgid <= (1 << 31) - 1
@@ -1192,7 +1158,11 @@ def capture_observation(
         )
 
     started_ns = time.monotonic_ns()
-    default_provenance = _runtime_provenance(system, "adapter-capability")
+    default_provenance = _runtime_provenance(
+        system,
+        "adapter-capability",
+        adapter_id,
+    )
     records = {
         name: _metric(
             name,
@@ -1200,7 +1170,9 @@ def capture_observation(
             "unsupported",
             None,
             default_provenance,
-            f"{ADAPTER} does not directly observe this metric on {system}",
+            _common.bounded_reason(
+                f"{adapter_id} does not directly observe this metric on {system}"
+            ),
         )
         for (
             name,
@@ -1215,7 +1187,11 @@ def capture_observation(
         phase,
         "present",
         started_ns,
-        _runtime_provenance(system, "time.monotonic_ns"),
+        _runtime_provenance(
+            system,
+            "time.monotonic_ns",
+            adapter_id,
+        ),
     )
     if (
         isinstance(cpu_count, int)
@@ -1227,7 +1203,11 @@ def capture_observation(
             phase,
             "present",
             cpu_count,
-            _runtime_provenance(system, "os.cpu_count"),
+            _runtime_provenance(
+                system,
+                "os.cpu_count",
+                adapter_id,
+            ),
         )
     else:
         records["host_logical_cpu_count"] = _metric(
@@ -1235,11 +1215,16 @@ def capture_observation(
             phase,
             "missing",
             None,
-            _runtime_provenance(system, "os.cpu_count"),
+            _runtime_provenance(
+                system,
+                "os.cpu_count",
+                adapter_id,
+            ),
             "the runtime did not report a positive logical CPU count",
         )
 
-    if system == "Darwin":
+    if builtin_darwin:
+        assert pgid is not None
         records.update(
             _collect_darwin_metrics(
                 phase=phase,
@@ -1251,6 +1236,60 @@ def capture_observation(
                 runner=runner,
             )
         )
+    elif selected_adapter is not None:
+        declared = selected_adapter.direct_metric_names
+        if (
+            not isinstance(declared, (set, frozenset))
+            or any(
+                not isinstance(name, str)
+                or name not in _METRIC_SPEC_BY_NAME
+                for name in declared
+            )
+        ):
+            raise ObservationError(
+                "platform adapter direct metric declaration is invalid"
+            )
+        allowed = frozenset(declared)
+        context = _common.ObservationContext(
+            system_name=system,
+            process_id=pid,
+            process_group_id=pgid,
+            logical_cpu_count=(
+                cpu_count if isinstance(cpu_count, int) else None
+            ),
+        )
+        collected = selected_adapter.collect(phase, context)
+        if not isinstance(collected, Mapping):
+            raise ObservationError(
+                "platform adapter did not return a metric mapping"
+            )
+        if set(collected) != set(allowed):
+            raise ObservationError(
+                "platform adapter did not return its exact declared metrics"
+            )
+        for name, metric in collected.items():
+            if (
+                not isinstance(name, str)
+                or name not in allowed
+                or name not in _METRIC_SPEC_BY_NAME
+                or not isinstance(metric, Mapping)
+            ):
+                raise ObservationError(
+                    "platform adapter returned an undeclared metric"
+                )
+            canonical = _common.validate_metric_record(
+                metric,
+                expected_system=system,
+            )
+            if canonical["name"] != name or canonical["phase"] != phase:
+                raise ObservationError(
+                    "platform adapter metric binding is invalid"
+                )
+            if canonical["provenance"]["adapter"] != adapter_id:
+                raise ObservationError(
+                    "platform adapter metric has foreign provenance"
+                )
+            records[name] = canonical
 
     finished_ns = time.monotonic_ns()
     metrics = [
@@ -1269,11 +1308,25 @@ def capture_observation(
         )
         for availability in AVAILABILITIES
     }
+    retained_native_capture = capture_mode == "native" and (
+        builtin_darwin
+        or (system == "Linux" and adapter_id == _linux.ADAPTER)
+    )
+    host_identity = (
+        {}
+        if builtin_darwin and capture_mode == "native"
+        else {
+            "actual_system": actual_system,
+            "capture_mode": capture_mode,
+            "publication_eligible": retained_native_capture,
+        }
+    )
     return {
-        "schema": SCHEMA,
-        "adapter": ADAPTER,
+        "schema": SCHEMA if builtin_darwin else HOST_SCHEMA,
+        "adapter": adapter_id,
         "phase": phase,
         "system": system,
+        **host_identity,
         "observed_process_id": pid,
         "captured_at_utc": _utc_now(),
         "capture_interval": {
@@ -1283,7 +1336,11 @@ def capture_observation(
         },
         "availability_counts": availability_counts,
         "metrics": metrics,
-        "claim_scope": "native-observation-only",
+        "claim_scope": (
+            "native-observation-only"
+            if capture_mode == "native"
+            else "simulated-observation-only"
+        ),
     }
 
 

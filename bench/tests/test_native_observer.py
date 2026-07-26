@@ -98,7 +98,25 @@ class NativeObserverTests(unittest.TestCase):
         )
 
         self.assertEqual(snapshot["schema"], observer.SCHEMA)
-        self.assertEqual(snapshot["claim_scope"], "native-observation-only")
+        if platform.system() == "Darwin":
+            self.assertEqual(
+                snapshot["claim_scope"],
+                "native-observation-only",
+            )
+            self.assertNotIn("actual_system", snapshot)
+            self.assertNotIn("capture_mode", snapshot)
+            self.assertNotIn("publication_eligible", snapshot)
+        else:
+            self.assertEqual(
+                snapshot["claim_scope"],
+                "simulated-observation-only",
+            )
+            self.assertEqual(
+                snapshot["actual_system"],
+                platform.system(),
+            )
+            self.assertEqual(snapshot["capture_mode"], "simulated")
+            self.assertFalse(snapshot["publication_eligible"])
         self.assertEqual(
             len(snapshot["metrics"]),
             len(observer.METRIC_SPECS),
@@ -536,7 +554,7 @@ class NativeObserverTests(unittest.TestCase):
         snapshot = observer.capture_observation(
             "probe",
             runner=unexpected,
-            system_name="Linux",
+            system_name="FreeBSD",
             logical_cpu_count=4,
         )
         self.assertEqual(calls, [])
