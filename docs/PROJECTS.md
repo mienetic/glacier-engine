@@ -105,6 +105,51 @@ implement another OS adapter.
 **First slice:** propose the interface and migrate one call site with unchanged
 golden fixtures and a focused test.
 
+### Device capability and deterministic selection
+
+The first Stage-5 slice is complete. Portable pointer-free
+`DeviceCapabilityV1`, inventory-entry, requirement, and selection-receipt
+values bind stable backend/device facts, canonical tested
+operation/type/numerical profiles with derived aggregate bits, lifecycle
+policy, declared physical ceilings, the exact Common
+Model Contract execution-plan root, discovery epoch, and explicit fallback.
+Selection validates the complete inventory, canonicalizes discovery order,
+rejects duplicate or non-present entries, and chooses deterministically by
+policy rank then capability root before any resource or scheduler mutation.
+
+The native macOS Metal adapter now projects stable device information into the
+common contract, binds one bounded local discovery epoch, and revalidates the
+selected fingerprint and registry identity from a fresh query before the first
+Metal resource acquisition and again through post-run evidence. The
+corrected tiled FP16 matmul path also matches
+the CPU oracle for asymmetric partial-edge cases, keeps all edge threads
+through required barriers, and rejects malformed exact buffer geometry without
+caller-output mutation. These are bounded correctness and binding claims, not
+performance or device-range claims. See
+[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md).
+
+Small next slices:
+
+- add a receipt-bound fake allocation lease with exact physical-byte ceilings
+  and cancellation-safe release;
+- add explicit device-loss, quarantine, and stale-selection rejection before a
+  fresh selection receipt;
+- add deterministic two-device partition planning without live multi-GPU
+  execution;
+- bind one stateless native candidate transaction to a selection receipt while
+  keeping publication atomic; or
+- add a new native backend capability projection only with CPU-oracle and
+  lifecycle evidence on the named device.
+
+**Done when:** the new slice keeps stable capability facts separate from dynamic
+observations, consumes or replaces a selection receipt explicitly, rejects
+unknown ceilings and undeclared fallback, and preserves zero resource/scheduler
+mutation on selection failure. Physical allocation/residency, device-loss
+recovery, multi-GPU scheduling, telemetry, performance, retained device ranges,
+and native support remain unimplemented unless the slice supplies direct named
+evidence for that exact claim. Cross-compilation never counts as native
+support.
+
 ### Native observation adapters
 
 The W5a foundation is complete: fixed portable descriptor, rule, plan,
@@ -127,7 +172,10 @@ The native macOS Metal readiness follow-up is implemented as a hard diagnostic
 gate. It makes exactly one real GPU dispatch in total for a fixed synthetic
 37x64 INT4 matrix-vector operation, checks the output against the CPU oracle,
 and binds command-buffer timestamps, `currentAllocatedSize`, registry-based
-device/placement identity, ownership, fallback, and composed evidence roots.
+device/placement identity, ownership, fallback, composed evidence roots, and
+revalidation of the selected portable capability fingerprint and discovery
+epoch. Separately, asymmetric partial-edge FP16 tiled matmul shapes match their
+CPU oracle and malformed exact lengths reject without caller-output mutation.
 It retains `recommendedMaxWorkingSetSize` only as capacity context and leaves
 utilization, committed/resident bytes, queue depth, temperature, frequency,
 power, and energy unsupported. The repository does not yet retain an
@@ -546,11 +594,15 @@ retention and W8 native multi-platform replication remain open.
 executes one fixed 37x64 INT4 matrix-vector command exactly once across the
 gate, checks CPU-oracle correctness, command-buffer completion and GPU
 timestamps, registry identity, allocation context, zero leaked ownership, no
-fallback, and evidence composition. This is diagnostic readiness evidence, not
-throughput, latency, or a performance claim. Its independent verifier detects
+fallback, evidence composition, local discovery-epoch binding, and selected
+capability/registry revalidation. The separate corrected tiled FP16 matmul
+tests cover asymmetric
+partial-edge shapes against a CPU oracle and fail before output mutation on
+invalid geometry. These are diagnostic/correctness claims, not throughput,
+latency, or performance claims. The independent readiness verifier detects
 composition errors and corruption in self-asserted live output; it does not
-authenticate origin. No native Metal JSON result is retained in the repository,
-so W5b and repeated native coverage remain open.
+authenticate origin. No native Metal JSON result or device support range is
+retained in the repository, so W5b and repeated native coverage remain open.
 
 These are deterministic conformance and named-host recovery fixtures, not
 throughput, wall-clock latency, physical-memory, energy, or soak results.

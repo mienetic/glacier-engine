@@ -16,6 +16,8 @@ pub const tensor = @import("tensor.zig");
 pub const f16bits = @import("f16bits.zig");
 pub const resource_bank = @import("resource_bank.zig");
 pub const platform_capabilities = @import("platform_capabilities.zig");
+pub const device_capability_contract =
+    @import("device_capability_contract.zig");
 pub const lane_weave_qos = @import("lane_weave_qos.zig");
 pub const workload_pressure = @import("workload_pressure.zig");
 pub const workload_closed_loop =
@@ -173,6 +175,8 @@ pub const Backend = pager.Backend;
 pub const Scheduler = scheduler.Scheduler;
 pub const ResourceBank = resource_bank.Bank;
 pub const PlatformCapabilities = platform_capabilities;
+pub const DeviceCapabilityContract =
+    device_capability_contract;
 pub const LaneWeaveQoS = lane_weave_qos.Scheduler;
 pub const WorkloadPressure = workload_pressure;
 pub const WorkloadClosedLoop = workload_closed_loop;

@@ -13,6 +13,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Family adaptation | future `ModelFamilyAdapter`, operation registry, typed state/output adapters | Describe family-specific artifacts, planning, state, candidate validation, and publication units without expanding authority |
 | Model | `.glacier`, `.glrt`, loader, prepared model | Validate source and execution layouts before use |
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
+| Device selection | `DeviceCapabilityV1`, canonical inventory, plan-bound requirement, selection receipt | Choose one compatible present CPU or accelerator deterministically before admission without granting allocation, queue, dispatch, or publication authority |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b/W4b-c/W4b-d | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, uncertain external-action handoff, generation-fenced fake reconciliation, and durable storage faults without presenting logical steps as native performance |
@@ -29,10 +30,15 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 ## Local execution flow
 
 ```text
-validated model + request
+validated model + request + sealed execution plan
           │
           ▼
-   derive exact claim
+ device requirement + canonical capability inventory
+          │ incompatible / malformed
+          ├────────────────────> reject; no resource or scheduler mutation
+          │ selected receipt (decision evidence only)
+          ▼
+   derive exact logical claim
           │
           ▼
  ResourceBank admission ──reject──> no resource mutation
@@ -847,6 +853,67 @@ cryptographic-origin, fake-service restart-persistence, process-death, native
 platform, performance, power, or external-exactly-once claim. The separate
 W4b-c 49-death store campaign remains unchanged.
 
+## Device capability and selection flow
+
+The first Stage-5 device boundary separates portable compatibility decisions
+from live backend authority:
+
+```text
+Common Model Contract execution-plan root
+                 +
+       DeviceRequirementV1
+                 │
+                 ▼
+ canonical inventory of capability + discovery epoch + state
+                 │ malformed / duplicate / incompatible
+                 ├────────────────────> reject before admission
+                 │
+                 ▼
+ deterministic selected entry
+ rank, then capability root; explicit fallback only
+                 │
+                 ▼
+       SelectionReceiptV1
+       pointer-free decision evidence
+                 │
+                 ▼
+ native adapter revalidates fingerprint + registry identity
+                 │
+                 └─ future allocation/queue/dispatch authority
+                    remains a separate contract
+```
+
+`DeviceCapabilityV1` hashes stable backend and physical-device identity,
+canonical tested operation/type/numerical profiles, derived aggregate bits,
+lifecycle policy, declared
+single-allocation/total-byte/queue ceilings, optional driver/runtime identity,
+and placement identity. An adapter that cannot retain driver/runtime identity
+uses the all-zero digest. Dynamic allocated bytes, residency, utilization, queue
+depth, temperature, frequency, power, and energy never enter the fingerprint.
+The profile tuple is the compatibility key; aggregate sets cannot imply an
+operator/type pairing that no profile advertises.
+Canonical inventory validation rejects every malformed or duplicate entry
+before choosing a winner; discovery order cannot change the inventory root.
+Pinned capability requests never fall back, while CPU fallback is considered
+only when explicitly authorized.
+
+The native macOS Metal adapter projects a stable subset of `MetalDeviceInfo`
+into this portable contract, binds one local discovery epoch, and revalidates
+the selected fingerprint and registry identity from a fresh query immediately
+before the first Metal resource acquisition and again through post-run device
+evidence. The corrected tiled FP16
+matmul path separately fixes asymmetric/partial edge-tile
+loading and barrier participation, requires exact nonzero buffer geometry, and
+matches a CPU oracle for shapes on both sides of the 16x16 tile boundary without
+turning those tests into a performance result.
+
+The receipt grants no physical allocation, residency, queue, dispatch, or
+publication authority. Device-loss quarantine/recovery, asynchronous
+cancellation, multi-GPU partitioning/scheduling, telemetry, performance,
+retained driver/device ranges, and native support on cross-compiled targets
+remain open. See
+[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md).
+
 ## Native observation flow
 
 W5a separates portable observation identity from process-local authority:
@@ -1024,9 +1091,13 @@ x86_64/AArch64 Linux musl and x86_64 Windows GNU. Model conversion and runtime
 images share a bounded read-only mapping abstraction with POSIX and Windows
 implementations; fixture process IDs and hard termination are selected per OS.
 The W5a observation contract and family-neutral runner also cross-compile
-without importing a native observer into the portable core. The focused
-macOS-only Metal readiness gate keeps device authority in the native adapter and
-fails rather than skipping when its one completed diagnostic dispatch cannot be
+without importing a native observer into the portable core. The device
+capability fingerprint, inventory, requirement, and deterministic selector are
+portable decision values; compiling them for a target does not prove a native
+backend. The focused macOS-only Metal readiness gate keeps device authority in
+the native adapter, binds one local discovery epoch, revalidates its selected
+fingerprint and registry identity, and fails
+rather than skipping when its one completed diagnostic dispatch cannot be
 observed.
 Execution, numerical, durable-recovery, and physical-resource validation still
 require real machines for each promoted platform.
@@ -1042,6 +1113,9 @@ targets remain gated until their named native adapters and evidence pass.
 - [Paging](PAGING.md): weight and KV paging boundaries.
 - [Model format](FORMAT_SPEC.md): portable draft format.
 - [Native runtime image](RUNTIME_IMAGE.md): execution image ABI.
+- [Device capability and selection](DEVICE_CAPABILITY_CONTRACT.md): portable
+  capability fingerprints, deterministic selection, native Metal binding, and
+  the live-authority boundary.
 - [Prepared text session](PREPARED_TEXT_SESSION.md): exact prepared-image
   execution, publication, boundary, and terminal-result lifecycle.
 - [Prepared text checkpoint](PREPARED_TEXT_CHECKPOINT.md): canonical

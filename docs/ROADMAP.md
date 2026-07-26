@@ -30,6 +30,7 @@ evidence. The plane and model-family sequence is specified in the
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, two-process resume, and a three-generation prepared-text source-live/source-exited/terminal authority chain | Production model/tokenizer state, generation-one source recovery, acknowledged target progress, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes; R0 registry complete and R1a/R1b/R1c/R1d/R1e/R1f/R1g/R1h-a/R1h-b plus the durable handoff slice integrated experimentally | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, an exact-identity serial greedy prepared-text session with plan-derived atomic start, Common Model Contract request-profile binding, total-versus-request claim projection for shared read-only artifact residency, fixed-length terminal results, canonical non-terminal state, same-process rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, and a five-object canonical restart archive with exact source exit, exclusive POSIX lease, one-shot target activation, fresh-process resume, generation-three terminal selection, and terminal-semantic oracle comparison; plus admission, scheduling, continuation, provider, media, package, C verifier, and retained-reference inspector surfaces | Recover source death before generation-two publication; add an idempotent durable result sink and acknowledged progress generation for target-crash replay; complete request-shape accounting, raw-text tokenizer identity, variable-length results, non-blocking startup, stable APIs, production fixtures, native multi-OS validation, GPU/device continuation, physical resource integration, and distribution |
+| Device capability and selection | Integrated portable decision contract with one native Metal binding | Pointer-free capability fingerprints, canonical discovery-epoch inventory, execution-plan-bound requirements, deterministic allocation-free selection, explicit CPU-fallback evidence, and native Metal local-epoch binding plus fingerprint/registry-identity revalidation; asymmetric partial-edge FP16 tiled matmul shapes match the CPU oracle | Receipt-bound physical allocation/residency, device-loss quarantine and recovery, multi-GPU partitioning/scheduling, direct telemetry, performance evidence, retained device ranges, and native support beyond the tested host |
 | Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, validated bounded lossless delivery profiles for retained image/audio/video shapes, a typed pure-tool transaction fixture, a durable POSIX external-action handoff fixture, and a bounded same-process fake dispatch/status authority; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, tool-authorization, ActionOutbox, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, live provider-backed and OS-isolated dispatch/status adapters, production generative-media adapters and broader formats, additional replay profiles, agents/retrieval, and specialized families |
 | Multimodal execution | Model-free runtime, scheduler-coupled final-quantum transactions, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, deterministic source-model/materializer replay, and vision/audio/video fixtures integrated; bounded canonical PNG/WAVE/APNG profiles and their additive format sidecar integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, a canonical typed-admission construction path, transition and format-evidence sidecars, strict lossless emit-and-accept modules, real two-generation PNG/WAVE/APNG registry-transition-format fixtures, an independent composed Python oracle, and optional format-aware read-only inspection without changing earlier V1 wires | Production encoder/container adapters and broader profiles, additional model/materializer profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, and physical playback/display and quality evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
@@ -256,6 +257,20 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
 - [x] Centralize compile-time adapter availability for read-only mapping,
   POSIX durable files, forced-termination fixtures, and Metal without treating
   source selection as native verification or platform support.
+- [x] Add the portable Stage-5 device capability and selection contract:
+  pointer-free fingerprints, canonical operation/type/numerical profiles,
+  derived aggregate bits, canonical discovery-epoch inventory,
+  execution-plan-bound requirements, explicit fallback, and bounded
+  deterministic selection before resource or scheduler mutation.
+- [x] Bind stable native macOS Metal device information and one local discovery
+  epoch to the selection, then revalidate its fingerprint and registry identity
+  on the readiness device.
+  Correct the tiled FP16 matrix multiplication path for asymmetric and partial
+  edge tiles, with exact-length rejection and CPU-oracle correctness tests.
+- [ ] Add receipt-bound physical device allocation and residency, device-loss
+  quarantine/recovery, multi-GPU partitioning and scheduling, direct device
+  telemetry, retained performance evidence, and advertised native device
+  support matrices.
 - [ ] Split `core-contract`, CPU runtime, durable runtime, device runtime, CLI,
   mobile library, reduced edge profile, and host-only tools in the build graph.
 - [ ] Finish replacing direct durable-file calls with bounded recovery
@@ -796,13 +811,39 @@ events while no full eager representation remains.
 
 Goal: let a sealed plan select CPU and accelerator capabilities explicitly.
 
+Status: **portable capability fingerprint and deterministic selection
+integrated; native Metal binding integrated on the readiness path**.
+`DeviceCapabilityV1`, canonical inventory entries, plan-bound requirements, and
+selection receipts choose a compatible present entry without allocation or
+resource/scheduler mutation. Canonical profiles prevent independent aggregate
+sets from implying an untested operator/type pairing. The Metal adapter
+projects stable device facts into that contract, binds one bounded local
+discovery epoch, and revalidates the selected fingerprint and registry identity
+immediately before its first Metal resource acquisition and again after the
+diagnostic dispatch.
+See the
+[device capability and selection contract](DEVICE_CAPABILITY_CONTRACT.md).
+
+Completed slice:
+
+- ~~backend capability fingerprint and bounded deterministic selection;~~
+- ~~explicit pinned-device and opt-in CPU-fallback decisions;~~
+- ~~native Metal capability projection and dispatch-device revalidation.~~
+
 Next slices:
 
-- backend capability fingerprint;
+- receipt-bound physical allocation and residency;
+- device-loss events, quarantine, and recovery under a new receipt;
 - deterministic partition plan;
 - transfer ownership and cancellation;
 - per-backend numerical contract;
-- heterogeneous failure rollback.
+- heterogeneous failure rollback; and
+- multi-GPU scheduling, telemetry, native support ranges, and performance
+  evidence.
+
+The completed decision contract grants no allocation, queue, dispatch,
+residency, or publication authority. Cross-compilation remains source/build
+evidence rather than native device or operating-system support.
 
 ## P2 — Serving and isolation
 
@@ -1115,6 +1156,15 @@ utilization/residency/queue/thermal/frequency/power/energy metrics unsupported.
 No addressable native result is retained yet, and the self-asserted live report
 has composition/corruption verification rather than cryptographic
 authentication. W5b remains open.
+
+The Stage-5 device capability slice separately binds stable Metal facts to a
+portable capability fingerprint, one local discovery epoch, and the dispatch
+device registry identity. Dynamic allocation, residency, queue depth, and
+all utilization/thermal/frequency/power/energy fields remain observations and
+are not inferred from the fingerprint. The corrected asymmetric tiled FP16
+matmul path is CPU-oracle-tested correctness evidence only; it adds no latency,
+throughput, utilization, or native support claim. See
+[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md).
 
 Priorities:
 

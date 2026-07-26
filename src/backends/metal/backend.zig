@@ -75,6 +75,9 @@ extern "C" fn glacier_metal_device_info(
     ctx: *MetalContext,
     out: *MetalDeviceInfo,
 ) c_int;
+extern "C" fn glacier_metal_require_int4_matvec_support(
+    ctx: *MetalContext,
+) c_int;
 extern "C" fn glacier_metal_dequant_int4(
     ctx: *MetalContext,
     payload: [*]const u8,
@@ -103,7 +106,12 @@ extern "C" fn glacier_metal_int4_weight_create(
     out_features: u32,
 ) ?*MetalInt4Weight;
 extern "C" fn glacier_metal_int4_weight_destroy(weight: *MetalInt4Weight) void;
-extern "C" fn glacier_metal_int4_matvec(
+extern "C" fn glacier_metal_int4_weight_read_output(
+    weight: *MetalInt4Weight,
+    output: [*]f32,
+    output_count: u64,
+) c_int;
+extern "C" fn glacier_metal_int4_matvec_dispatch(
     ctx: *MetalContext,
     weight: *MetalInt4Weight,
     input: [*]const f32,
@@ -130,6 +138,71 @@ pub const MetalError = error{
     InvalidObservation,
 };
 
+fn recordPhysicalCompletion(
+    completed_dispatch_count: *u64,
+) MetalError!void {
+    completed_dispatch_count.* = std.math.add(
+        u64,
+        completed_dispatch_count.*,
+        1,
+    ) catch return MetalError.DispatchFailed;
+}
+
+/// Account for a command that the native bridge reports as physically
+/// completed before interpreting optional observation evidence. Keeping this
+/// helper independent of caller output makes it impossible for invalid
+/// telemetry to publish a candidate through this step.
+fn recordCompletedObservation(
+    completed_dispatch_count: *u64,
+    raw: RawDispatchObservation,
+) MetalError!MetalDispatchTelemetry {
+    try recordPhysicalCompletion(completed_dispatch_count);
+    if (raw.abi_version != dispatch_observation_abi or
+        raw.command_status != completed_command_buffer_status or
+        raw.reserved != 0 or
+        raw.current_allocated_before == 0 or
+        raw.current_allocated_after == 0 or
+        !std.math.isFinite(raw.gpu_start_time) or
+        !std.math.isFinite(raw.gpu_end_time) or
+        raw.gpu_start_time <= 0 or
+        raw.gpu_end_time <= raw.gpu_start_time)
+        return MetalError.InvalidObservation;
+    const duration_seconds = raw.gpu_end_time - raw.gpu_start_time;
+    const duration_nanoseconds_f64 =
+        duration_seconds * 1_000_000_000.0;
+    if (!std.math.isFinite(duration_nanoseconds_f64) or
+        duration_nanoseconds_f64 < 1 or
+        duration_nanoseconds_f64 >=
+            @as(f64, @floatFromInt(std.math.maxInt(u64))))
+        return MetalError.InvalidObservation;
+    return .{
+        .current_allocated_before = raw.current_allocated_before,
+        .current_allocated_after = raw.current_allocated_after,
+        .gpu_start_time_bits = @bitCast(raw.gpu_start_time),
+        .gpu_end_time_bits = @bitCast(raw.gpu_end_time),
+        .gpu_duration_nanoseconds = @intFromFloat(
+            duration_nanoseconds_f64,
+        ),
+        .command_status = raw.command_status,
+    };
+}
+
+fn finalizeObservedDispatch(
+    completed_dispatch_count: *u64,
+    raw: RawDispatchObservation,
+    weight: *MetalInt4Weight,
+    output: []f32,
+    comptime read_output: anytype,
+) MetalError!MetalDispatchTelemetry {
+    const telemetry = try recordCompletedObservation(
+        completed_dispatch_count,
+        raw,
+    );
+    if (read_output(weight, output.ptr, output.len) != 0)
+        return MetalError.DispatchFailed;
+    return telemetry;
+}
+
 pub const MetalBackend = struct {
     ctx: *MetalContext,
     live_weight_count: u64 = 0,
@@ -145,6 +218,16 @@ pub const MetalBackend = struct {
 
     pub fn deinit(self: *MetalBackend) void {
         glacier_metal_deinit(self.ctx);
+    }
+
+    /// Resolve the exact persistent INT4 matrix-vector pipeline without
+    /// allocating weights or dispatching work. Capability adapters call this
+    /// before advertising that operation and repeat it before acquisition.
+    pub fn requireInt4MatvecSupport(
+        self: *MetalBackend,
+    ) MetalError!void {
+        if (glacier_metal_require_int4_matvec_support(self.ctx) != 0)
+            return MetalError.ShaderLoadFailed;
     }
 
     /// Return bounded, fixed-width facts for the exact selected Metal device.
@@ -221,16 +304,29 @@ pub const MetalBackend = struct {
         k: u32,
         n: u32,
     ) MetalError!void {
-        const a_elements = std.math.mul(usize, m, k) catch return MetalError.MatmulFailed;
-        const b_elements = std.math.mul(usize, n, k) catch return MetalError.MatmulFailed;
-        const element_count = std.math.mul(usize, m, n) catch return MetalError.MatmulFailed;
+        if (m == 0 or k == 0 or n == 0)
+            return MetalError.MatmulFailed;
+        const m_size = std.math.cast(usize, m) orelse
+            return MetalError.MatmulFailed;
+        const k_size = std.math.cast(usize, k) orelse
+            return MetalError.MatmulFailed;
+        const n_size = std.math.cast(usize, n) orelse
+            return MetalError.MatmulFailed;
+        const a_elements = std.math.mul(usize, m_size, k_size) catch
+            return MetalError.MatmulFailed;
+        const b_elements = std.math.mul(usize, n_size, k_size) catch
+            return MetalError.MatmulFailed;
+        const element_count = std.math.mul(usize, m_size, n_size) catch
+            return MetalError.MatmulFailed;
         const expected_a = std.math.mul(usize, a_elements, @sizeOf(u16)) catch
             return MetalError.MatmulFailed;
         const expected_b = std.math.mul(usize, b_elements, @sizeOf(u16)) catch
             return MetalError.MatmulFailed;
         const expected_c = std.math.mul(usize, element_count, @sizeOf(u16)) catch
             return MetalError.MatmulFailed;
-        if (a.len < expected_a or b.len < expected_b or c.len < expected_c)
+        // Exact lengths keep shape mistakes fail-closed and guarantee that a
+        // rejected call cannot partially initialize a caller's output slice.
+        if (a.len != expected_a or b.len != expected_b or c.len != expected_c)
             return MetalError.MatmulFailed;
         const rc = glacier_metal_matmul(
             self.ctx,
@@ -289,7 +385,7 @@ pub const MetalBackend = struct {
         if (self.completed_dispatch_count ==
             std.math.maxInt(u64))
             return MetalError.DispatchFailed;
-        const rc = glacier_metal_int4_matvec(
+        const rc = glacier_metal_int4_matvec_dispatch(
             self.ctx,
             weight,
             input.ptr,
@@ -298,7 +394,15 @@ pub const MetalBackend = struct {
             output.len,
         );
         if (rc != 0) return MetalError.DispatchFailed;
-        self.completed_dispatch_count += 1;
+        try recordPhysicalCompletion(
+            &self.completed_dispatch_count,
+        );
+        if (glacier_metal_int4_weight_read_output(
+            weight,
+            output.ptr,
+            output.len,
+        ) != 0)
+            return MetalError.DispatchFailed;
     }
 
     /// Dispatch the same persistent INT4 path while retaining the command
@@ -323,35 +427,13 @@ pub const MetalBackend = struct {
             &raw,
         );
         if (rc != 0) return MetalError.DispatchFailed;
-        if (raw.abi_version != dispatch_observation_abi or
-            raw.command_status != completed_command_buffer_status or
-            raw.reserved != 0 or
-            raw.current_allocated_before == 0 or
-            raw.current_allocated_after == 0 or
-            !std.math.isFinite(raw.gpu_start_time) or
-            !std.math.isFinite(raw.gpu_end_time) or
-            raw.gpu_start_time <= 0 or
-            raw.gpu_end_time <= raw.gpu_start_time)
-            return MetalError.InvalidObservation;
-        const duration_seconds = raw.gpu_end_time - raw.gpu_start_time;
-        const duration_nanoseconds_f64 = duration_seconds * 1_000_000_000.0;
-        if (!std.math.isFinite(duration_nanoseconds_f64) or
-            duration_nanoseconds_f64 < 1 or
-            duration_nanoseconds_f64 >=
-                @as(f64, @floatFromInt(std.math.maxInt(u64))))
-            return MetalError.InvalidObservation;
-        const duration_nanoseconds: u64 = @intFromFloat(
-            duration_nanoseconds_f64,
+        return finalizeObservedDispatch(
+            &self.completed_dispatch_count,
+            raw,
+            weight,
+            output,
+            glacier_metal_int4_weight_read_output,
         );
-        self.completed_dispatch_count += 1;
-        return .{
-            .current_allocated_before = raw.current_allocated_before,
-            .current_allocated_after = raw.current_allocated_after,
-            .gpu_start_time_bits = @bitCast(raw.gpu_start_time),
-            .gpu_end_time_bits = @bitCast(raw.gpu_end_time),
-            .gpu_duration_nanoseconds = duration_nanoseconds,
-            .command_status = raw.command_status,
-        };
     }
 
     pub fn liveWeightCount(self: MetalBackend) u64 {
@@ -362,3 +444,44 @@ pub const MetalBackend = struct {
         return self.completed_dispatch_count;
     }
 };
+
+const MutatingOutputReader = struct {
+    fn read(
+        _: *MetalInt4Weight,
+        output: [*]f32,
+        _: u64,
+    ) c_int {
+        output[0] = 99.0;
+        return 0;
+    }
+};
+
+test "invalid completed observation is counted before output publication" {
+    var completed_dispatch_count: u64 = 0;
+    var output = [_]f32{ 11.0, -7.0, 3.5 };
+    const sentinel = output;
+    const invalid: RawDispatchObservation = .{
+        .abi_version = dispatch_observation_abi,
+        .current_allocated_before = 4096,
+        .current_allocated_after = 4096,
+        .gpu_start_time = 1.0,
+        .gpu_end_time = 1.0,
+        .command_status = completed_command_buffer_status,
+    };
+
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        finalizeObservedDispatch(
+            &completed_dispatch_count,
+            invalid,
+            @ptrFromInt(1),
+            &output,
+            MutatingOutputReader.read,
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        completed_dispatch_count,
+    );
+    try std.testing.expectEqualSlices(f32, &sentinel, &output);
+}

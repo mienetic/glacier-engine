@@ -25,6 +25,7 @@ typedef struct {
     id<MTLCommandQueue> queue;
     id<MTLLibrary>      library;
     id<MTLComputePipelineState> dequant_pipeline;
+    id<MTLComputePipelineState> matmul_pipeline;
     id<MTLComputePipelineState> int4_matvec_pipeline;
 } GlacierMetalContext;
 
@@ -88,6 +89,7 @@ _Static_assert(offsetof(GlacierMetalDispatchObservation, command_status) == 40,
 static void glacier_metal_context_destroy(GlacierMetalContext* ctx) {
     if (!ctx) return;
     ctx->int4_matvec_pipeline = nil;
+    ctx->matmul_pipeline = nil;
     ctx->dequant_pipeline = nil;
     ctx->library = nil;
     ctx->queue = nil;
@@ -102,6 +104,77 @@ static void glacier_metal_weight_destroy(GlacierMetalInt4Weight* weight) {
     weight->input = nil;
     weight->output = nil;
     free(weight);
+}
+
+// Pipelines are independent operation capabilities. Resolve and cache each one
+// only when requested so a context remains usable when unrelated functions are
+// absent from a valid metallib.
+static id<MTLComputePipelineState> glacier_metal_get_dequant_pipeline(
+    GlacierMetalContext* ctx)
+{
+    if (!ctx || !ctx->device || !ctx->library) return nil;
+    if (ctx->dequant_pipeline) return ctx->dequant_pipeline;
+
+    @synchronized (ctx->library) {
+        if (!ctx->dequant_pipeline) {
+            id<MTLFunction> function =
+                [ctx->library newFunctionWithName:@"dequant_int4_to_f16"];
+            if (function) {
+                NSError* error = nil;
+                ctx->dequant_pipeline =
+                    [ctx->device
+                        newComputePipelineStateWithFunction:function
+                                                     error:&error];
+            }
+        }
+    }
+    return ctx->dequant_pipeline;
+}
+
+static id<MTLComputePipelineState> glacier_metal_get_matmul_pipeline(
+    GlacierMetalContext* ctx)
+{
+    if (!ctx || !ctx->device || !ctx->library) return nil;
+    if (ctx->matmul_pipeline) return ctx->matmul_pipeline;
+
+    // MetalBackend is currently single-owner, but synchronizing lazy creation
+    // also prevents duplicate pipeline publication if callers race matmul.
+    @synchronized (ctx->library) {
+        if (!ctx->matmul_pipeline) {
+            id<MTLFunction> function =
+                [ctx->library newFunctionWithName:@"matmul_f16_tiled"];
+            if (function) {
+                NSError* error = nil;
+                ctx->matmul_pipeline =
+                    [ctx->device
+                        newComputePipelineStateWithFunction:function
+                                                     error:&error];
+            }
+        }
+    }
+    return ctx->matmul_pipeline;
+}
+
+static id<MTLComputePipelineState> glacier_metal_get_int4_matvec_pipeline(
+    GlacierMetalContext* ctx)
+{
+    if (!ctx || !ctx->device || !ctx->library) return nil;
+    if (ctx->int4_matvec_pipeline) return ctx->int4_matvec_pipeline;
+
+    @synchronized (ctx->library) {
+        if (!ctx->int4_matvec_pipeline) {
+            id<MTLFunction> function =
+                [ctx->library newFunctionWithName:@"matvec_int4_f32"];
+            if (function) {
+                NSError* error = nil;
+                ctx->int4_matvec_pipeline =
+                    [ctx->device
+                        newComputePipelineStateWithFunction:function
+                                                     error:&error];
+            }
+        }
+    }
+    return ctx->int4_matvec_pipeline;
 }
 
 // Create a Metal context. `metallib_path` is a UTF-8 path to a compiled
@@ -130,28 +203,6 @@ GlacierMetalContext* glacier_metal_init(const char* metallib_path) {
     NSError* err = nil;
     ctx->library = [ctx->device newLibraryWithURL:[NSURL fileURLWithPath:path] error:&err];
     if (!ctx->library) {
-        glacier_metal_context_destroy(ctx);
-        return NULL;
-    }
-
-    id<MTLFunction> fn = [ctx->library newFunctionWithName:@"dequant_int4_to_f16"];
-    if (!fn) {
-        glacier_metal_context_destroy(ctx);
-        return NULL;
-    }
-    ctx->dequant_pipeline = [ctx->device newComputePipelineStateWithFunction:fn error:&err];
-    if (!ctx->dequant_pipeline) {
-        glacier_metal_context_destroy(ctx);
-        return NULL;
-    }
-
-    id<MTLFunction> matvec_fn = [ctx->library newFunctionWithName:@"matvec_int4_f32"];
-    if (!matvec_fn) {
-        glacier_metal_context_destroy(ctx);
-        return NULL;
-    }
-    ctx->int4_matvec_pipeline = [ctx->device newComputePipelineStateWithFunction:matvec_fn error:&err];
-    if (!ctx->int4_matvec_pipeline) {
         glacier_metal_context_destroy(ctx);
         return NULL;
     }
@@ -186,6 +237,12 @@ int glacier_metal_device_info(
     return 0;
 }
 
+int glacier_metal_require_int4_matvec_support(
+    GlacierMetalContext* ctx)
+{
+    return glacier_metal_get_int4_matvec_pipeline(ctx) ? 0 : 1;
+}
+
 // Dispatch the INT4 → FP16 dequant kernel.
 //   payload: pointer to qio-encoded bytes (host memory)
 //   payload_bytes: length of payload
@@ -199,7 +256,12 @@ int glacier_metal_dequant_int4(
     void* out,
     uint32_t num_elements)
 {
-    if (!ctx || !payload || !out || payload_bytes < 16) return 1;
+    if (!ctx || !ctx->device || !ctx->queue || !ctx->library ||
+        !payload || !out || payload_bytes < 16)
+        return 1;
+    id<MTLComputePipelineState> pipeline =
+        glacier_metal_get_dequant_pipeline(ctx);
+    if (!pipeline) return 1;
 
     uint32_t payload_magic = 0;
     uint32_t payload_elements = 0;
@@ -233,22 +295,26 @@ int glacier_metal_dequant_int4(
     hdr.prec = payload_precision;
     id<MTLBuffer> hdr_buf = [ctx->device
         newBufferWithBytes:&hdr length:sizeof(hdr) options:MTLResourceStorageModeShared];
+    if (!hdr_buf) return 2;
 
     id<MTLCommandBuffer> cb = [ctx->queue commandBuffer];
+    if (!cb) return 2;
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:ctx->dequant_pipeline];
+    if (!enc) return 2;
+    [enc setComputePipelineState:pipeline];
     [enc setBuffer:payload_buf offset:0 atIndex:0];
     [enc setBuffer:out_buf    offset:0 atIndex:1];
     [enc setBuffer:hdr_buf    offset:0 atIndex:2];
 
-    const NSUInteger threads_per_group = ctx->dequant_pipeline.maxTotalThreadsPerThreadgroup;
+    const NSUInteger threads_per_group =
+        pipeline.maxTotalThreadsPerThreadgroup;
     MTLSize group_size = MTLSizeMake(threads_per_group, 1, 1);
     MTLSize grid_size   = MTLSizeMake(num_elements, 1, 1);
     [enc dispatchThreads:grid_size threadsPerThreadgroup:group_size];
     [enc endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
-    if (cb.status == MTLCommandBufferStatusError) return 3;
+    if (cb.status != MTLCommandBufferStatusCompleted) return 3;
 
     memcpy(out, out_buf.contents, num_elements * sizeof(uint16_t));
     return 0;
@@ -264,53 +330,69 @@ int glacier_metal_matmul(
     void* C_bytes,            // [M*N] half output
     uint32_t M, uint32_t K, uint32_t N)
 {
-    if (!ctx || !A_bytes || !B_bytes || !C_bytes) return 1;
+    if (!ctx || !ctx->device || !ctx->queue || !ctx->library ||
+        !A_bytes || !B_bytes || !C_bytes || M == 0 || K == 0 || N == 0)
+        return 1;
+
+    const uint64_t a_elements = (uint64_t)M * (uint64_t)K;
+    const uint64_t b_elements = (uint64_t)N * (uint64_t)K;
+    const uint64_t c_elements = (uint64_t)M * (uint64_t)N;
+    if (a_elements > SIZE_MAX / sizeof(uint16_t) ||
+        b_elements > SIZE_MAX / sizeof(uint16_t) ||
+        c_elements > SIZE_MAX / sizeof(uint16_t))
+        return 1;
+    const NSUInteger a_length =
+        (NSUInteger)(a_elements * sizeof(uint16_t));
+    const NSUInteger b_length =
+        (NSUInteger)(b_elements * sizeof(uint16_t));
+    const NSUInteger c_length =
+        (NSUInteger)(c_elements * sizeof(uint16_t));
+
+    id<MTLComputePipelineState> pipeline =
+        glacier_metal_get_matmul_pipeline(ctx);
+    if (!pipeline) return 2;
+
+    const NSUInteger TILE = 16;
+    if (pipeline.maxTotalThreadsPerThreadgroup < TILE * TILE)
+        return 2;
 
     id<MTLBuffer> a_buf = [ctx->device
-        newBufferWithBytes:A_bytes length:M*K*sizeof(uint16_t)
+        newBufferWithBytes:A_bytes length:a_length
                      options:MTLResourceStorageModeShared];
     id<MTLBuffer> b_buf = [ctx->device
-        newBufferWithBytes:B_bytes length:N*K*sizeof(uint16_t)
+        newBufferWithBytes:B_bytes length:b_length
                      options:MTLResourceStorageModeShared];
     id<MTLBuffer> c_buf = [ctx->device
-        newBufferWithLength:M*N*sizeof(uint16_t)
+        newBufferWithLength:c_length
                      options:MTLResourceStorageModeShared];
     if (!a_buf || !b_buf || !c_buf) return 2;
 
-    // Use the tiled kernel for better cache utilization.
-    id<MTLFunction> fn = [ctx->library newFunctionWithName:@"matmul_f16_tiled"];
-    if (!fn) return 3;
-    id<MTLComputePipelineState> pipeline =
-        [ctx->device newComputePipelineStateWithFunction:fn error:nil];
-    if (!pipeline) return 4;
-
-    // Pack M, K, N into a constant buffer.
+    // The shader consumes this exact struct at buffer index 3.
     struct { uint32_t M, K, N; } dims = {M, K, N};
-    id<MTLBuffer> dim_buf = [ctx->device
-        newBufferWithBytes:&dims length:sizeof(dims)
-                     options:MTLResourceStorageModeShared];
 
     id<MTLCommandBuffer> cb = [ctx->queue commandBuffer];
+    if (!cb) return 3;
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    if (!enc) return 3;
     [enc setComputePipelineState:pipeline];
     [enc setBuffer:a_buf offset:0 atIndex:0];
     [enc setBuffer:b_buf offset:0 atIndex:1];
     [enc setBuffer:c_buf offset:0 atIndex:2];
-    [enc setBuffer:dim_buf offset:0 atIndex:3];
+    [enc setBytes:&dims length:sizeof(dims) atIndex:3];
 
     // Thread grid: cover M×N with 16×16 tiles.
-    const NSUInteger TILE = 16;
     MTLSize group_size = MTLSizeMake(TILE, TILE, 1);
     MTLSize grid_size = MTLSizeMake(
-        ((M + TILE - 1) / TILE) * TILE,
-        ((N + TILE - 1) / TILE) * TILE,
+        (((NSUInteger)M + TILE - 1) / TILE) * TILE,
+        (((NSUInteger)N + TILE - 1) / TILE) * TILE,
         1);
     [enc dispatchThreads:grid_size threadsPerThreadgroup:group_size];
     [enc endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
+    if (cb.status != MTLCommandBufferStatusCompleted) return 4;
 
-    memcpy(C_bytes, c_buf.contents, M * N * sizeof(uint16_t));
+    memcpy(C_bytes, c_buf.contents, c_length);
     return 0;
 }
 
@@ -364,6 +446,22 @@ void glacier_metal_int4_weight_destroy(GlacierMetalInt4Weight* weight) {
     glacier_metal_weight_destroy(weight);
 }
 
+// Copy the last completed persistent-weight output into caller memory. The
+// observed Zig path invokes this only after validating command-buffer
+// telemetry, keeping invalid evidence from publishing candidate output.
+int glacier_metal_int4_weight_read_output(
+    GlacierMetalInt4Weight* weight,
+    float* output,
+    uint64_t output_count)
+{
+    if (!weight || !weight->output || !output ||
+        output_count < weight->out_features)
+        return 1;
+    memcpy(output, weight->output.contents,
+        (uint64_t)weight->out_features * sizeof(float));
+    return 0;
+}
+
 int glacier_metal_int4_matvec_observed(
     GlacierMetalContext* ctx,
     GlacierMetalInt4Weight* weight,
@@ -377,8 +475,15 @@ int glacier_metal_int4_matvec_observed(
         memset(observation, 0, sizeof(*observation));
         observation->abi_version = GLACIER_METAL_DISPATCH_ABI;
     }
-    if (!ctx || !weight || !input || !output ||
-        input_count < weight->in_features || output_count < weight->out_features) return 1;
+    if (!ctx || !ctx->device || !ctx->queue || !ctx->library ||
+        !weight || !weight->packed ||
+        !weight->scales || !weight->input || !weight->output || !input ||
+        !output || input_count < weight->in_features ||
+        output_count < weight->out_features)
+        return 1;
+    id<MTLComputePipelineState> pipeline =
+        glacier_metal_get_int4_matvec_pipeline(ctx);
+    if (!pipeline) return 1;
 
     if (observation) {
         observation->current_allocated_before =
@@ -392,14 +497,14 @@ int glacier_metal_int4_matvec_observed(
     id<MTLCommandBuffer> cb = [ctx->queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     if (!cb || !enc) return 2;
-    [enc setComputePipelineState:ctx->int4_matvec_pipeline];
+    [enc setComputePipelineState:pipeline];
     [enc setBuffer:weight->packed offset:0 atIndex:0];
     [enc setBuffer:weight->scales offset:0 atIndex:1];
     [enc setBuffer:weight->input offset:0 atIndex:2];
     [enc setBuffer:weight->output offset:0 atIndex:3];
     [enc setBytes:&dims length:sizeof(dims) atIndex:4];
 
-    const NSUInteger width = ctx->int4_matvec_pipeline.threadExecutionWidth;
+    const NSUInteger width = pipeline.threadExecutionWidth;
     [enc dispatchThreadgroups:MTLSizeMake(weight->out_features, 1, 1)
          threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
     [enc endEncoding];
@@ -413,13 +518,10 @@ int glacier_metal_int4_matvec_observed(
         observation->command_status = (uint32_t)cb.status;
     }
     if (cb.status != MTLCommandBufferStatusCompleted) return 3;
-
-    memcpy(output, weight->output.contents,
-        (uint64_t)weight->out_features * sizeof(float));
     return 0;
 }
 
-int glacier_metal_int4_matvec(
+int glacier_metal_int4_matvec_dispatch(
     GlacierMetalContext* ctx,
     GlacierMetalInt4Weight* weight,
     const float* input,

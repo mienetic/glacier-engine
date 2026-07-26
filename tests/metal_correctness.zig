@@ -85,6 +85,91 @@ test "Metal dispatch rejects malformed payload" {
     );
 }
 
+test "Metal tiled FP16 matmul matches CPU on asymmetric edge tiles" {
+    if (!config.metal_enabled) return error.SkipZigTest;
+
+    var backend = engine.MetalBackend.init(
+        engine.metal_library_path,
+    ) catch return error.SkipZigTest;
+    defer backend.deinit();
+
+    // The first case is a single partial 16x16 output tile with K>N. The
+    // second crosses both output-tile boundaries and has a partial K tile.
+    const cases = [_]struct { m: u32, k: u32, n: u32 }{
+        .{ .m = 3, .k = 19, .n = 5 },
+        .{ .m = 17, .k = 7, .n = 19 },
+    };
+    for (cases) |case| {
+        try expectMetalMatmulMatchesCpu(
+            &backend,
+            case.m,
+            case.k,
+            case.n,
+        );
+    }
+}
+
+test "Metal tiled FP16 matmul rejects malformed shapes without output mutation" {
+    if (!config.metal_enabled) return error.SkipZigTest;
+
+    var backend = engine.MetalBackend.init(
+        engine.metal_library_path,
+    ) catch return error.SkipZigTest;
+    defer backend.deinit();
+
+    const a: [8]u8 = @splat(0x11);
+    const b: [8]u8 = @splat(0x22);
+    var output: [8]u8 = @splat(0xA5);
+    const sentinel = output;
+    const matmul_failed = engine.metal_backend.MetalError.MatmulFailed;
+
+    // Zero dimensions reject before any Objective-C/Metal call.
+    try testing.expectError(
+        matmul_failed,
+        backend.matmulF16(&a, &b, &output, 0, 1, 1),
+    );
+    try testing.expectError(
+        matmul_failed,
+        backend.matmulF16(&a, &b, &output, 1, 0, 1),
+    );
+    try testing.expectError(
+        matmul_failed,
+        backend.matmulF16(&a, &b, &output, 1, 1, 0),
+    );
+
+    // For M=1,K=2,N=1 the exact byte lengths are A=4, B=4, C=2.
+    try testing.expectError(
+        matmul_failed,
+        backend.matmulF16(a[0..2], b[0..4], output[0..2], 1, 2, 1),
+    );
+    try testing.expectError(
+        matmul_failed,
+        backend.matmulF16(a[0..4], b[0..2], output[0..2], 1, 2, 1),
+    );
+    try testing.expectError(
+        matmul_failed,
+        backend.matmulF16(a[0..4], b[0..4], output[0..1], 1, 2, 1),
+    );
+    try testing.expectError(
+        matmul_failed,
+        backend.matmulF16(a[0..6], b[0..4], output[0..2], 1, 2, 1),
+    );
+
+    // Overflowing byte geometry must also reject entirely on the Zig side.
+    try testing.expectError(
+        matmul_failed,
+        backend.matmulF16(
+            &a,
+            &b,
+            &output,
+            std.math.maxInt(u32),
+            std.math.maxInt(u32),
+            1,
+        ),
+    );
+    try testing.expectEqualSlices(u8, &sentinel, &output);
+}
+
 test "Metal fused INT4 matvec matches CPU packed kernel" {
     if (!config.metal_enabled) return error.SkipZigTest;
 
@@ -128,6 +213,7 @@ test "Metal fused INT4 matvec matches CPU packed kernel" {
 
     var backend = engine.MetalBackend.init(engine.metal_library_path) catch return error.SkipZigTest;
     defer backend.deinit();
+    try backend.requireInt4MatvecSupport();
     const gpu_weight = try backend.createInt4Weight(
         quantized.packed_bytes,
         quantized.scales,
@@ -142,4 +228,73 @@ test "Metal fused INT4 matvec matches CPU packed kernel" {
     for (cpu_output.asF32(), gpu_output) |expected, actual| {
         try testing.expectApproxEqAbs(expected, actual, 2e-5);
     }
+}
+
+fn expectMetalMatmulMatchesCpu(
+    backend: *engine.MetalBackend,
+    m: u32,
+    k: u32,
+    n: u32,
+) !void {
+    const m_size: usize = @intCast(m);
+    const k_size: usize = @intCast(k);
+    const n_size: usize = @intCast(n);
+    const a_elements = try std.math.mul(usize, m_size, k_size);
+    const b_elements = try std.math.mul(usize, n_size, k_size);
+    const c_elements = try std.math.mul(usize, m_size, n_size);
+    const a = try testing.allocator.alloc(u8, a_elements * @sizeOf(u16));
+    defer testing.allocator.free(a);
+    const b = try testing.allocator.alloc(u8, b_elements * @sizeOf(u16));
+    defer testing.allocator.free(b);
+    const output = try testing.allocator.alloc(
+        u8,
+        c_elements * @sizeOf(u16),
+    );
+    defer testing.allocator.free(output);
+
+    for (0..a_elements) |index| {
+        writeF16(a, index, deterministicHalfValue(index, 3));
+    }
+    for (0..b_elements) |index| {
+        writeF16(b, index, deterministicHalfValue(index, 7));
+    }
+    @memset(output, 0xA5);
+
+    try backend.matmulF16(a, b, output, m, k, n);
+
+    for (0..m_size) |row| {
+        for (0..n_size) |column| {
+            var expected: f32 = 0;
+            for (0..k_size) |inner| {
+                expected += readF16(a, row * k_size + inner) *
+                    readF16(b, column * k_size + inner);
+            }
+            const actual = readF16(output, row * n_size + column);
+            try testing.expect(std.math.isFinite(actual));
+            try testing.expectApproxEqAbs(expected, actual, 0.02);
+        }
+    }
+}
+
+fn deterministicHalfValue(index: usize, salt: usize) f32 {
+    const residue: i32 = @intCast((index * 17 + salt) % 9);
+    return @as(f32, @floatFromInt(residue - 4)) * 0.25;
+}
+
+fn writeF16(bytes: []u8, index: usize, value: f32) void {
+    std.mem.writeInt(
+        u16,
+        bytes[index * @sizeOf(u16) ..][0..@sizeOf(u16)],
+        engine.core.f16bits.f32ToF16Bits(value),
+        .little,
+    );
+}
+
+fn readF16(bytes: []const u8, index: usize) f32 {
+    const bits = std.mem.readInt(
+        u16,
+        bytes[index * @sizeOf(u16) ..][0..@sizeOf(u16)],
+        .little,
+    );
+    return engine.core.f16bits.f16BitsToF32(bits);
 }

@@ -12,6 +12,7 @@ const cpu_int4 = @import("../cpu/int4_matmul.zig");
 
 pub const contract = core.native_observation_contract;
 pub const runner = core.native_observation_runner;
+pub const device_contract = core.device_capability_contract;
 pub const Digest = contract.Digest;
 
 pub const dispatch_receipt_abi: u64 = 0x474d_4450_0000_0001;
@@ -53,6 +54,13 @@ pub const in_features: usize = 64;
 pub const out_features: usize = 37;
 pub const group_size: u32 = 8;
 pub const maximum_abs_error: f32 = 0.00002;
+pub const readiness_discovery_epoch: u64 = 1;
+pub const readiness_device_bytes: u64 =
+    ((in_features * out_features + 1) / 2) +
+    (((in_features * out_features + group_size - 1) /
+        group_size) * @sizeOf(f32)) +
+    (in_features * @sizeOf(f32)) +
+    (out_features * @sizeOf(f32));
 
 pub const DispatchReceiptV1 = struct {
     abi_version: u64 = dispatch_receipt_abi,
@@ -115,9 +123,19 @@ pub const ReadinessArtifactV1 = struct {
     plan: contract.PlanV1,
     run: runner.RunArtifactV1,
     device: metal.MetalDeviceInfo,
+    device_decision: ReadinessDeviceDecisionV1,
     workload: WorkloadEvidenceV1,
     dispatch: DispatchReceiptV1,
     diagnostic: DiagnosticReportV1,
+};
+
+/// Portable, authority-free device selection composed into the native gate.
+/// The single entry is the exact default Metal device used by the dispatch.
+pub const ReadinessDeviceDecisionV1 = struct {
+    capability: device_contract.DeviceCapabilityV1,
+    inventory_entry: device_contract.DeviceInventoryEntryV1,
+    requirement: device_contract.DeviceRequirementV1,
+    selection: device_contract.DeviceSelectionReceiptV1,
 };
 
 pub const CanonicalIdentityV1 = struct {
@@ -477,6 +495,7 @@ pub const ReadinessWorkloadV1 = struct {
     allocator: std.mem.Allocator,
     backend: *metal.MetalBackend,
     observer: *MacOSMetalObserverV1,
+    device_decision: *const ReadinessDeviceDecisionV1,
     packed_weights: []const u8,
     scales: []const f32,
     input: *const [in_features]f32,
@@ -530,6 +549,17 @@ pub const ReadinessWorkloadV1 = struct {
             out_features,
             in_features,
             group_size,
+        );
+
+        // Re-query and bind the live device immediately before the first
+        // Metal resource acquisition. The later post-run validation remains
+        // a second fence against replacement during dispatch.
+        try self.backend.requireInt4MatvecSupport();
+        const current_device = try self.backend.deviceInfo();
+        try validateReadinessPreAcquisitionV1(
+            self.device_decision.*,
+            plan.*,
+            current_device,
         );
 
         const live_weights_before = self.backend.liveWeightCount();
@@ -793,6 +823,10 @@ pub fn runReadinessV1(
     if (backend.liveWeightCount() != 0 or
         backend.completedDispatchCount() != 0)
         return error.DirtyMetalBackend;
+    // Operation availability is independent of unrelated shader pipelines.
+    // Fail before emitting a capability decision if the exact readiness
+    // profile is absent from this library/device pair.
+    try backend.requireInt4MatvecSupport();
     var weights: [in_features * out_features]f32 = undefined;
     var input: [in_features]f32 = undefined;
     fillCanonicalFixture(&weights, &input);
@@ -823,10 +857,15 @@ pub fn runReadinessV1(
         ))
         return error.NonCanonicalFixture;
     const plan = try observer.makePlan(descriptor, canonical);
+    const device_decision = try makeReadinessDeviceDecisionV1(
+        plan,
+        observer.initial_device,
+    );
     var workload: ReadinessWorkloadV1 = .{
         .allocator = allocator,
         .backend = backend,
         .observer = &observer,
+        .device_decision = &device_decision,
         .packed_weights = quantized.packed_bytes,
         .scales = quantized.scales,
         .input = &input,
@@ -857,6 +896,7 @@ pub fn runReadinessV1(
         .plan = plan,
         .run = run,
         .device = observer.initial_device,
+        .device_decision = device_decision,
         .workload = workload_evidence,
         .dispatch = dispatch,
         .diagnostic = diagnostic,
@@ -1013,6 +1053,11 @@ pub fn validateReadinessArtifactV1(
         artifact.diagnostic.logical_cpu_count,
         artifact.device,
     );
+    const expected_device_decision =
+        makeReadinessDeviceDecisionV1(
+            artifact.plan,
+            artifact.device,
+        ) catch return error.InvalidReadinessArtifact;
     const expected_output_sha256 = outputIdentityV1(
         artifact.workload.gpu_output_bits,
     );
@@ -1035,6 +1080,10 @@ pub fn validateReadinessArtifactV1(
         return error.InvalidReadinessArtifact;
     if (!std.meta.eql(artifact.descriptor, expected_descriptor) or
         !std.meta.eql(artifact.plan, expected_plan) or
+        !std.meta.eql(
+            artifact.device_decision,
+            expected_device_decision,
+        ) or
         !contract.digestEqual(
             artifact.plan.workload_profile_sha256,
             canonical.workload_profile_sha256,
@@ -1137,6 +1186,15 @@ pub fn validateReadinessArtifactV1(
             ),
         ))
         return error.InvalidReadinessArtifact;
+
+    const decision_entries = [_]device_contract.DeviceInventoryEntryV1{
+        artifact.device_decision.inventory_entry,
+    };
+    device_contract.validateSelectionReceiptV1(
+        artifact.device_decision.selection,
+        artifact.device_decision.requirement,
+        &decision_entries,
+    ) catch return error.InvalidReadinessArtifact;
 
     if (!contract.digestEqual(
         artifact.diagnostic.descriptor_sha256,
@@ -1687,6 +1745,115 @@ pub fn deviceIdentityV1(info: metal.MetalDeviceInfo) Digest {
     hash.update(device_identity_domain);
     hashDeviceInfo(&hash, info);
     return finish(&hash);
+}
+
+/// Project the stable subset of one selected Metal device into the portable
+/// capability contract, then perform a fail-closed one-entry selection for
+/// the exact native readiness workload. Dynamic allocation samples stay in
+/// observations and never enter the capability fingerprint.
+pub fn makeReadinessDeviceDecisionV1(
+    plan: contract.PlanV1,
+    info: metal.MetalDeviceInfo,
+) !ReadinessDeviceDecisionV1 {
+    return makeReadinessDeviceDecisionAtEpochV1(
+        plan,
+        info,
+        readiness_discovery_epoch,
+    );
+}
+
+pub fn makeReadinessDeviceDecisionAtEpochV1(
+    plan: contract.PlanV1,
+    info: metal.MetalDeviceInfo,
+    discovery_epoch: u64,
+) !ReadinessDeviceDecisionV1 {
+    const required_features =
+        device_contract.FeatureBitsV1.allocation |
+        device_contract.FeatureBitsV1.dispatch |
+        device_contract.FeatureBitsV1.completion_fence |
+        device_contract.FeatureBitsV1.persistent_weights |
+        device_contract.FeatureBitsV1.command_buffer_time |
+        device_contract.FeatureBitsV1.allocated_bytes_observation;
+    const capability = try device_contract.sealCapabilityV1(.{
+        .backend_kind = .metal,
+        .device_class = .accelerator,
+        .operation_profile_bits = device_contract.OperationProfileBitsV1.matvec_int4_f32_bounded,
+        .operator_bits = device_contract.OperatorBitsV1.matvec_int4_f32,
+        .element_type_bits = device_contract.ElementTypeBitsV1.packed_int4 |
+            device_contract.ElementTypeBitsV1.float32,
+        .numerical_policy_bits = device_contract.NumericalPolicyBitsV1.bounded_float32,
+        .feature_bits = required_features,
+        // Metal exposes recommended working-set context, not a trustworthy
+        // maximum single-allocation value.
+        .max_single_allocation_bytes = 0,
+        .max_total_device_bytes = info.recommended_max_working_set_size,
+        .max_queue_slots = 1,
+        .backend_sha256 = contract.digestV1(
+            "Metal.framework backend/v1",
+        ),
+        .device_sha256 = deviceIdentityV1(info),
+        // This bounded adapter does not retain a driver/runtime version.
+        .driver_sha256 = device_contract.zero_digest,
+        .placement_sha256 = placementIdentityV1(info),
+    });
+    const inventory_entry =
+        try device_contract.sealInventoryEntryV1(.{
+            .discovery_epoch = discovery_epoch,
+            .policy_rank = 0,
+            .state = .present,
+            .capability = capability,
+        });
+    const requirement =
+        try device_contract.sealRequirementV1(.{
+            .plan_sha256 = plan.plan_sha256,
+            .required_device_class = .accelerator,
+            .required_operation_profile_bits = device_contract.OperationProfileBitsV1.matvec_int4_f32_bounded,
+            .required_operator_bits = device_contract.OperatorBitsV1.matvec_int4_f32,
+            .required_element_type_bits = device_contract.ElementTypeBitsV1.packed_int4 |
+                device_contract.ElementTypeBitsV1.float32,
+            .required_numerical_policy_bits = device_contract.NumericalPolicyBitsV1.bounded_float32,
+            .required_feature_bits = required_features,
+            .largest_single_allocation_bytes = 0,
+            .total_device_bytes = readiness_device_bytes,
+            .queue_slots = 1,
+            .fallback_policy = .forbidden,
+        });
+    const entries = [_]device_contract.DeviceInventoryEntryV1{
+        inventory_entry,
+    };
+    const selected = try device_contract.selectDeviceV1(
+        requirement,
+        &entries,
+    );
+    if (selected.selected_index != 0 or
+        selected.receipt.fallback_used != 0 or
+        !device_contract.digestEqual(
+            selected.receipt.selected_capability_sha256,
+            capability.capability_sha256,
+        ))
+        return error.InvalidReadinessDeviceSelection;
+    return .{
+        .capability = capability,
+        .inventory_entry = inventory_entry,
+        .requirement = requirement,
+        .selection = selected.receipt,
+    };
+}
+
+/// Reconstruct the bounded local inventory decision from a fresh device query
+/// immediately before allocation. The local epoch is intentionally not a
+/// device-liveness claim; a different epoch requires a fresh selection.
+pub fn validateReadinessPreAcquisitionV1(
+    decision: ReadinessDeviceDecisionV1,
+    plan: contract.PlanV1,
+    current_info: metal.MetalDeviceInfo,
+) !void {
+    const expected = makeReadinessDeviceDecisionV1(
+        plan,
+        current_info,
+    ) catch return error.InvalidReadinessDeviceAuthority;
+    if (!std.meta.eql(decision, expected))
+        return error.InvalidReadinessDeviceAuthority;
 }
 
 pub fn placementIdentityV1(info: metal.MetalDeviceInfo) Digest {

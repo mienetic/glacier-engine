@@ -39,7 +39,7 @@ surface.
 
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
-| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | A hard diagnostic-readiness gate runs one fixed 37x64 INT4 dispatch with CPU-oracle and command-buffer evidence; no addressable result or device support range is retained | Development host, not a broad platform certification |
+| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | Portable deterministic capability selection binds one local discovery epoch and revalidates native Metal fingerprint/registry identity; one fixed 37x64 INT4 readiness dispatch and asymmetric FP16 tiled matmul shapes pass CPU-oracle checks, but no addressable result or device support range is retained | Development host, not a broad platform certification |
 | Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is implemented; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is architecture-neutral; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
@@ -61,25 +61,40 @@ from per-event provenance and retain a nonzero reason identity only when
 unavailable; present records carry none, and host JSON adds a bounded readable
 reason only when unavailable.
 
-The native macOS Metal follow-up also does not certify a platform or device
-range. Its hard gate makes exactly one real GPU dispatch in total for a fixed
-synthetic 37x64 INT4 operation and requires CPU-oracle correctness, Metal
-registry identity, `currentAllocatedSize`, command-buffer GPU timestamps,
-ownership closure, no fallback, and composed roots. The duration is diagnostic,
-not a throughput, latency, or performance result.
-`recommendedMaxWorkingSetSize` is capacity context only; utilization,
-committed/resident bytes, queue depth, temperature, frequency, power, and energy
-remain unsupported. The verifier checks composition/corruption of self-asserted
-live output, not cryptographic origin. No native result is retained here, so a
-local pass and repository implementation evidence remain narrower than
-addressable native campaign evidence. W5b and non-macOS native observer
-coverage remain open.
+The portable Stage-5 device slice also does not change a classification in this
+matrix. `DeviceCapabilityV1`, canonical inventory entries, execution-plan-bound
+requirements, and selection receipts provide deterministic allocation-free
+selection before resource or scheduler mutation. The native macOS Metal adapter
+projects stable device facts into that contract, binds one local discovery
+epoch, and revalidates the selected fingerprint and registry identity against
+the same readiness device. See
+[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md).
+
+That native hard gate still makes exactly one real GPU dispatch in total for a
+fixed synthetic 37x64 INT4 operation and requires CPU-oracle correctness,
+Metal registry identity, `currentAllocatedSize`, command-buffer GPU timestamps,
+ownership closure, no fallback, and composed roots. The corrected tiled FP16
+matmul path is separately CPU-oracle-tested on asymmetric partial-edge shapes
+and rejects zero, overflowing, short, or oversized buffer geometry without
+caller-output mutation. Both are correctness/readiness evidence, not
+throughput, latency, or performance results.
+`recommendedMaxWorkingSetSize` is capacity context only; physical allocation
+and residency authority, device-loss recovery, multi-GPU scheduling,
+utilization, committed/resident bytes, queue depth, temperature, frequency,
+power, and energy remain open or unsupported. The verifier checks
+composition/corruption of self-asserted live output, not cryptographic origin.
+No native result or device range is retained here, and cross-compilation remains
+source/build evidence rather than native OS or device support. W5b and
+non-macOS native observer coverage remain open.
 
 Run the native diagnostic gate on macOS with:
 
 ```sh
-tools/zig-with-ephemeral-cache.sh build native-metal-observation-test \
-  -Dmetal=true -Doptimize=ReleaseSafe -j2
+metal_dir="$(mktemp -d)"
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-observation-test native-metal-correctness-test \
+  profile-device-compile -Dmetal=true -Doptimize=ReleaseSafe \
+  -Dmetal-output-dir="$metal_dir" -j2
 ```
 
 ### Probe record
@@ -220,14 +235,21 @@ Useful seams already exist:
 - a compile-time adapter inventory reports read-only mapping, POSIX durable
   files, hard-termination fixture, and Metal source availability separately
   from native verification or support;
+- the portable device contract records stable capability fingerprints,
+  adapter-defined discovery epochs, plan-bound requirements, explicit
+  fallback, and deterministic selection without importing native handles or
+  granting live authority;
 - W5a keeps fixed observation records and policy evaluation in portable Zig
   while read-only host probes and callback contexts remain outside core; the
   post-W5a JSON dispatcher now gives Linux, Windows, and FreeBSD adapters a
   platform-shaped context, and only Linux has the first bounded source
   implementation;
-- the macOS-only Metal readiness adapter binds one real command buffer to the
-  portable W5 runner while keeping native device authority and timestamps
-  outside core; its hard gate is diagnostic and fail-closed;
+- the macOS-only Metal readiness adapter binds one real command buffer and one
+  local discovery epoch to the portable W5 runner, revalidates the selected
+  fingerprint and registry identity, and keeps native device authority and
+  timestamps outside core; its hard gate
+  and asymmetric FP16 tiled-matmul oracle tests are diagnostic/correctness
+  evidence and fail closed;
 - `src/core/` contains canonical state, admission, scheduling, media, provider,
   and recovery logic that is largely independent of an accelerator;
 - Metal enablement is a build-time option and is rejected for non-macOS
@@ -369,9 +391,22 @@ instead of pretending to supply threads.
 
 ### Accelerator adapters
 
-The backend interface should describe capabilities, buffer ownership, queue or
-stream ordering, synchronization, supported element types, and deterministic
-fallback policy. OS and accelerator support are separate dimensions.
+The first common decision boundary is implemented. Portable
+`DeviceCapabilityV1` fingerprints describe stable backend/device identity,
+canonical tested operation/type/numerical profiles, derived aggregate bits,
+lifecycle policy, and declared physical ceilings. Canonical inventory entries
+add discovery epochs and state;
+an execution-plan-bound requirement produces one deterministic selection
+receipt with explicit fallback before admission. The receipt contains no
+pointer or backend handle and cannot allocate, submit, publish, or prove
+continued liveness.
+
+The next interface layer must consume that receipt while describing buffer
+ownership, physical allocation/residency, queue or stream ordering,
+synchronization, loss/quarantine, and cancellation. OS and accelerator support
+remain separate dimensions, and multi-GPU partitioning/scheduling remains open.
+See the
+[device capability and selection contract](DEVICE_CAPABILITY_CONTRACT.md).
 
 Planned backend families may include:
 
@@ -420,6 +455,8 @@ Every promoted target must retain artifacts for the relevant gates.
 ### G0 — capability truth
 
 - the build records target, architecture, ABI, enabled adapters, and backend;
+- portable inventory validation and deterministic selection bind the exact
+  execution-plan requirement, capability root, and discovery epoch;
 - unsupported requested capabilities fail at build or initialization;
 - fallback is explicit and observable.
 
@@ -454,6 +491,9 @@ Every promoted target must retain artifacts for the relevant gates.
 
 ### G5 — accelerator correctness
 
+- the adapter refreshes or validates its discovery view, then revalidates the
+  selected capability fingerprint and native device identity against the
+  device used for native work;
 - real-device discovery, allocation failure, dispatch, fence, teardown, and
   cancellation paths run;
 - outputs meet the declared numerical contract against the CPU oracle;
@@ -538,19 +578,32 @@ not represented as partial support.
 
 ### Stage 5 — accelerator matrix
 
-- retain the existing backend behind the common device contract;
+- ~~add a portable capability fingerprint, canonical inventory, plan-bound
+  requirement, and deterministic selection receipt;~~ complete, including
+  explicit CPU fallback, native Metal local-epoch binding, and
+  fingerprint/registry-identity revalidation;
+- ~~retain the existing Metal correctness path behind the common device
+  decision contract;~~ complete for the tested readiness binding and corrected
+  asymmetric FP16 tiled matmul CPU-oracle cases only;
+- add receipt-bound physical allocation and residency authority;
+- add explicit device-loss events, quarantine, and recovery under a fresh
+  selection receipt;
+- add deterministic multi-device partitioning and scheduling;
 - add backends only with CPU-oracle and lifecycle tests;
 - publish support by OS, architecture, device family, driver/runtime version,
   element type, and operation rather than by backend name alone.
 
 Exit: G5 and G6 evidence is retained for every advertised cell in the device
-matrix.
+matrix. The completed selection slice alone does not satisfy this exit.
 
 ## Claim boundary
 
 The source-compilation probes above do not establish native execution,
 filesystem durability, mobile lifecycle safety, accelerator correctness,
 installation quality, physical telemetry, or performance. The W5a
-cross-compile gate likewise does not establish native observation. This
-document is an implementation plan and evidence ledger, not a declaration that
-every listed platform is currently supported.
+cross-compile gate likewise does not establish native observation. The portable
+selection contract and one Metal binding do not establish physical allocation
+or residency, device-loss recovery, multi-GPU behavior, telemetry,
+performance, or native support for any cross-compiled target. This document is
+an implementation plan and evidence ledger, not a declaration that every
+listed platform is currently supported.

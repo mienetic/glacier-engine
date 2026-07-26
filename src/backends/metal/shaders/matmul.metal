@@ -16,26 +16,31 @@
 #include <metal_stdlib>
 using namespace metal;
 
+struct MatmulDims {
+    uint M;
+    uint K;
+    uint N;
+};
+
 // Simple GEMM: each thread computes C[row, col] = sum(A[row,k] * B[col,k]).
 // A: [M, K] row-major, B: [N, K] row-major, C: [M, N] row-major.
 kernel void matmul_f16(
     device const half*  A    [[buffer(0)]],  // [M, K]
     device const half*  B    [[buffer(1)]],  // [N, K] (weights, already transposed)
     device half*        C    [[buffer(2)]],  // [M, N]
-    constant uint&      M    [[buffer(3)]],
-    constant uint&      K    [[buffer(4)]],
-    constant uint&      N    [[buffer(5)]],
+    constant MatmulDims& dims [[buffer(3)]],
     uint2               tid  [[thread_position_in_grid]])
 {
     const uint row = tid.x;
     const uint col = tid.y;
-    if (row >= M || col >= N) return;
+    if (row >= dims.M || col >= dims.N) return;
 
     float acc = 0.0f;
-    for (uint k = 0; k < K; k++) {
-        acc += float(A[row * K + k]) * float(B[col * K + k]);
+    for (uint k = 0; k < dims.K; k++) {
+        acc += float(A[row * dims.K + k]) *
+            float(B[col * dims.K + k]);
     }
-    C[row * N + col] = half(acc);
+    C[row * dims.N + col] = half(acc);
 }
 
 // Tiled GEMM with threadgroup shared memory for better cache utilization.
@@ -44,10 +49,7 @@ kernel void matmul_f16_tiled(
     device const half*  A    [[buffer(0)]],
     device const half*  B    [[buffer(1)]],
     device half*        C    [[buffer(2)]],
-    constant uint&      M    [[buffer(3)]],
-    constant uint&      K    [[buffer(4)]],
-    constant uint&      N    [[buffer(5)]],
-    uint2               tid       [[thread_position_in_grid]],
+    constant MatmulDims& dims [[buffer(3)]],
     uint2               tg_pos    [[threadgroup_position_in_grid]],
     uint2               tid_in_tg [[thread_position_in_threadgroup]])
 {
@@ -55,29 +57,27 @@ kernel void matmul_f16_tiled(
 
     const uint row = tg_pos.x * TILE + tid_in_tg.x;
     const uint col = tg_pos.y * TILE + tid_in_tg.y;
-    if (row >= M || col >= N) return;
-
+    const bool active = row < dims.M && col < dims.N;
+    threadgroup half sA[TILE][TILE];
+    threadgroup half sB[TILE][TILE];
     float acc = 0.0f;
 
     // Process K in tiles of TILE.
-    for (uint kt = 0; kt < K; kt += TILE) {
-        // Load tiles of A and B into threadgroup memory.
-        threadgroup half sA[TILE][TILE];
-        threadgroup half sB[TILE][TILE];
+    for (uint kt = 0; kt < dims.K; kt += TILE) {
+        const uint a_col = kt + tid_in_tg.y;
+        const uint b_col = kt + tid_in_tg.x;
 
-        // Each thread loads one element (coalesced).
-        uint load_row = row;
-        uint load_col_a = kt + tid_in_tg.y;
-        uint load_col_b = col;
-        uint load_row_b = kt + tid_in_tg.x;
-
-        if (load_row < M && load_col_a < K)
-            sA[tid_in_tg.x][tid_in_tg.y] = A[load_row * K + load_col_a];
+        if (row < dims.M && a_col < dims.K)
+            sA[tid_in_tg.x][tid_in_tg.y] =
+                A[row * dims.K + a_col];
         else
             sA[tid_in_tg.x][tid_in_tg.y] = 0.0h;
 
-        if (load_row_b < K && load_col_b < N)
-            sB[tid_in_tg.x][tid_in_tg.y] = B[load_row_b * K + load_col_b];
+        // B is row-major [N,K]. sB's first index is the local K
+        // coordinate and its second index is the local output column.
+        if (col < dims.N && b_col < dims.K)
+            sB[tid_in_tg.x][tid_in_tg.y] =
+                B[col * dims.K + b_col];
         else
             sB[tid_in_tg.x][tid_in_tg.y] = 0.0h;
 
@@ -92,7 +92,9 @@ kernel void matmul_f16_tiled(
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-    C[row * N + col] = half(acc);
+    // Every thread must pass both barriers above, including threads outside
+    // an asymmetric edge tile. Only active threads publish an output.
+    if (active) C[row * dims.N + col] = half(acc);
 }
 
 // Fused decode projection: y[out] = dequant(INT4 W[out,in]) * x[in].

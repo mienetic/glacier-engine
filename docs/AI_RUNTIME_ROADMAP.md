@@ -98,6 +98,8 @@ Responsibilities:
 - sealed `ModelExecutionPlan` values derived before execution;
 - explicit operation, input/output schema, bounds, scratch, numerical mode,
   backend requirements, and fallback policy;
+- deterministic capability/inventory selection bound to the exact execution
+  plan before resource or scheduler mutation;
 - prefill, decode, encode, score, classify, retrieve, detect, segment,
   transcribe, synthesize, diffuse, and step operations;
 - prepared kernel/tensor layouts and backend-neutral candidate results;
@@ -107,12 +109,26 @@ Current state: **prototype**. `DecodePlan`, CPU/optional Metal paths, INT4
 experiments, sealed media decode plans, deterministic media transform plans,
 and the canonical Model Contract V1 execution-plan ABI exist. Retained family
 adapters and an experimental C boundary verify that common ABI, but the current
-text execution path does not consume it. Backend capability negotiation remains
-planned.
+text execution path does not consume it. The first device-negotiation slice is
+now integrated: portable pointer-free capability fingerprints, canonical
+discovery-epoch inventory, canonical operation/type/numerical profiles,
+plan-bound requirements, and allocation-free deterministic selection reject
+incompatible or malformed devices before resource or scheduler mutation.
+Derived aggregate bit sets cannot invent an untested cross-profile
+combination. The native macOS Metal adapter projects stable device information
+into that contract, binds one bounded local discovery epoch, and revalidates
+the selected fingerprint and registry identity before the first Metal resource
+acquisition and again through post-run evidence. See
+[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md).
 
 Promotion gate: the plan fully predicts memory and output ceilings, the backend
 confirms exact capability identity, and unsupported combinations fail before
 visible state or output changes.
+
+The selection receipt is decision evidence only. Physical allocation and
+residency authority, device-loss recovery, multi-GPU partitioning/scheduling,
+direct telemetry, performance evidence, native device ranges, and native
+support on cross-compiled targets remain open.
 
 ### 3. Resource plane
 
@@ -453,8 +469,15 @@ exactly one fixed synthetic 37x64 INT4 matrix-vector dispatch across its hard
 gate. It requires CPU-oracle correctness, completed command-buffer GPU
 timestamps, registry-bound device/placement identity, allocation context, zero
 leaked ownership, no fallback, and composed roots. This is diagnostic readiness
-evidence, not a throughput, latency, or performance claim. The remaining direct
-physical CPU/device telemetry and native multi-platform campaigns stay open.
+evidence, not a throughput, latency, or performance claim. That native adapter
+now also binds the portable selection to one local discovery epoch and
+revalidates its selected capability and registry identity against the same
+Metal device. Separately, the corrected tiled FP16 matmul
+matches its CPU oracle on asymmetric partial-edge shapes and rejects malformed
+exact buffer geometry before output mutation. This expands tested correctness,
+not advertised device range or performance. The remaining physical allocation,
+residency, device-loss recovery, multi-GPU scheduling, direct CPU/device
+telemetry, native multi-platform campaigns, and performance evidence stay open.
 Contract validation requires a present logical CPU count of at least one and
 accepts signed physical temperatures down to, but never below, absolute zero.
 
@@ -1317,8 +1340,9 @@ Contributors can work on the runtime without downloading a large model:
   generation with explicit crash boundaries;
 - one replicated non-macOS POSIX recovery campaign or bounded Win32
   durable-file adapter slice;
-- one CPU/GPU capability, residency, placement, or device-loss evidence slice
-  that rejects unsupported fallback;
+- one receipt-bound CPU/GPU allocation, residency, placement, device-loss, or
+  multi-device evidence slice that consumes a fresh selection receipt and
+  rejects unsupported fallback;
 - one repeated-handoff, lease-contention, replay, disruption, or bounded-soak
   workload profile;
 - one read-only evidence inspector or validated renderer extension;
@@ -1326,4 +1350,6 @@ Contributors can work on the runtime without downloading a large model:
 
 Every slice should state its accepted inputs, maximum resources, authority,
 rejection paths, evidence command, and nonclaims. See
-[Contributor Projects](PROJECTS.md) and [Evidence Policy](EVIDENCE_POLICY.md).
+[Contributor Projects](PROJECTS.md),
+[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md), and
+[Evidence Policy](EVIDENCE_POLICY.md).

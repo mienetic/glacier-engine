@@ -12,6 +12,26 @@ const contract = engine.native_observation_contract;
 const runner = engine.native_observation_runner;
 const native = engine.metal_native_observer;
 
+const SimulatedAcquisitionCounters = struct {
+    live_weights: u64 = 0,
+    completed_dispatches: u64 = 0,
+};
+
+fn simulateGuardedAcquisition(
+    counters: *SimulatedAcquisitionCounters,
+    decision: native.ReadinessDeviceDecisionV1,
+    plan: contract.PlanV1,
+    current_device: engine.metal_backend.MetalDeviceInfo,
+) !void {
+    try native.validateReadinessPreAcquisitionV1(
+        decision,
+        plan,
+        current_device,
+    );
+    counters.live_weights += 1;
+    counters.completed_dispatches += 1;
+}
+
 const SyntheticObserver = struct {
     device: engine.metal_backend.MetalDeviceInfo,
     dispatch: native.DispatchReceiptV1,
@@ -339,14 +359,118 @@ test "cross-root substitution is rejected after local rehash" {
 test "raw dynamic device allocation substitution is rejected" {
     var artifact = try syntheticArtifact();
     const stable_identity = native.deviceIdentityV1(artifact.device);
+    const stable_capability =
+        artifact.device_decision.capability.capability_sha256;
     artifact.device.current_allocated_size += 1;
     try testing.expect(contract.digestEqual(
         stable_identity,
         native.deviceIdentityV1(artifact.device),
     ));
+    const refreshed_decision =
+        try native.makeReadinessDeviceDecisionV1(
+            artifact.plan,
+            artifact.device,
+        );
+    try testing.expect(
+        native.device_contract.digestEqual(
+            stable_capability,
+            refreshed_decision.capability.capability_sha256,
+        ),
+    );
     try testing.expectError(
         error.InvalidReadinessArtifact,
         native.validateReadinessArtifactV1(artifact),
+    );
+}
+
+test "device capability substitution and unknown capacity fail closed" {
+    var artifact = try syntheticArtifact();
+    artifact.device_decision.capability.max_queue_slots += 1;
+    try testing.expectError(
+        error.InvalidReadinessArtifact,
+        native.validateReadinessArtifactV1(artifact),
+    );
+
+    artifact = try syntheticArtifact();
+    artifact.device.recommended_max_working_set_size = 0;
+    try testing.expectError(
+        error.NoCompatibleDevice,
+        native.makeReadinessDeviceDecisionV1(
+            artifact.plan,
+            artifact.device,
+        ),
+    );
+}
+
+test "pre-acquisition authority rejects device capability and epoch drift" {
+    const artifact = try syntheticArtifact();
+
+    var current_device = artifact.device;
+    current_device.current_allocated_size += 1;
+    var counters: SimulatedAcquisitionCounters = .{};
+    try simulateGuardedAcquisition(
+        &counters,
+        artifact.device_decision,
+        artifact.plan,
+        current_device,
+    );
+    try testing.expectEqual(@as(u64, 1), counters.live_weights);
+    try testing.expectEqual(
+        @as(u64, 1),
+        counters.completed_dispatches,
+    );
+
+    counters = .{};
+    current_device = artifact.device;
+    current_device.registry_id += 1;
+    try testing.expectError(
+        error.InvalidReadinessDeviceAuthority,
+        simulateGuardedAcquisition(
+            &counters,
+            artifact.device_decision,
+            artifact.plan,
+            current_device,
+        ),
+    );
+    try testing.expectEqual(
+        SimulatedAcquisitionCounters{},
+        counters,
+    );
+
+    current_device = artifact.device;
+    current_device.recommended_max_working_set_size += 1;
+    try testing.expectError(
+        error.InvalidReadinessDeviceAuthority,
+        simulateGuardedAcquisition(
+            &counters,
+            artifact.device_decision,
+            artifact.plan,
+            current_device,
+        ),
+    );
+    try testing.expectEqual(
+        SimulatedAcquisitionCounters{},
+        counters,
+    );
+
+    const foreign_epoch_decision =
+        try native.makeReadinessDeviceDecisionAtEpochV1(
+            artifact.plan,
+            artifact.device,
+            native.readiness_discovery_epoch + 1,
+        );
+    try testing.expectError(
+        error.InvalidReadinessDeviceAuthority,
+        simulateGuardedAcquisition(
+            &counters,
+            foreign_epoch_decision,
+            artifact.plan,
+            artifact.device,
+        ),
+    );
+    try testing.expectEqual(
+        SimulatedAcquisitionCounters{},
+        counters,
     );
 }
 
@@ -564,6 +688,10 @@ fn syntheticArtifact() !native.ReadinessArtifactV1 {
         8,
         device,
     );
+    const device_decision = try native.makeReadinessDeviceDecisionV1(
+        plan,
+        device,
+    );
     var observer: SyntheticObserver = .{
         .device = device,
         .dispatch = dispatch,
@@ -605,6 +733,7 @@ fn syntheticArtifact() !native.ReadinessArtifactV1 {
         .plan = plan,
         .run = run,
         .device = device,
+        .device_decision = device_decision,
         .workload = evidence,
         .dispatch = dispatch,
         .diagnostic = diagnostic,

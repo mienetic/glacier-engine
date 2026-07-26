@@ -8,6 +8,18 @@ before the first stable release.
 
 ### Changed
 
+- Observed Metal INT4 matrix-vector dispatch now keeps candidate output in
+  backend-owned storage until command telemetry validates. A physically
+  completed command increments dispatch accounting before later evidence or
+  caller-output publication can fail, so invalid telemetry preserves caller
+  output without hiding completed GPU work.
+- The native Metal tiled FP16 matrix multiplication path now binds `M/K/N`
+  through one shader-compatible dimension record, loads row-major `[N,K]`
+  weights correctly, keeps every thread through both barriers on asymmetric
+  edge tiles, and publishes only in-range outputs. Exact byte-length,
+  zero-dimension, and overflow checks reject before caller-output mutation;
+  CPU-oracle tests cover asymmetric partial tiles on both sides of the 16x16
+  boundary. This is correctness evidence, not a performance result.
 - Token-publication proposals and transcript snapshots now use ABI v2 and carry
   an explicit `sequence_base`. Fresh sessions retain base zero; restored
   sessions preserve the checkpoint's global token sequence while the target
@@ -25,6 +37,30 @@ before the first stable release.
 
 ### Added
 
+- Added the first Stage-5
+  [device capability and selection contract](docs/DEVICE_CAPABILITY_CONTRACT.md).
+  Portable pointer-free `DeviceCapabilityV1`, inventory-entry, requirement,
+  and selection-receipt values bind stable backend/device facts, tested
+  operation/type/numerical profiles with derived aggregate bits, lifecycle
+  policy, declared physical ceilings, an exact Common Model Contract
+  execution-plan root, discovery epoch, and explicit fallback. Profile
+  validation prevents independent bit sets from implying an untested
+  operator/type combination. Selection is allocation-free,
+  canonical across discovery order, deterministic by policy rank and capability
+  root, and fail-closed for malformed or duplicate inventory, missing features,
+  unknown required ceilings, non-present state, zero epoch, or undeclared CPU
+  fallback.
+  The native macOS
+  Metal readiness adapter projects stable `MetalDeviceInfo` fields into this
+  contract, binds one bounded local discovery epoch, and revalidates the
+  selected fingerprint and registry identity immediately before the first
+  Metal resource acquisition and again through post-run evidence. Metal
+  pipelines are resolved independently, so capability admission requires the
+  exact operation without coupling readiness to unrelated kernels.
+  This slice grants no physical allocation, residency, queue,
+  dispatch, or publication authority and does not establish device-loss
+  recovery, multi-GPU scheduling, direct telemetry, performance, retained
+  device ranges, or native support from cross-compilation.
 - Added the first W5a native-observation slice. A pointer-free fixed-size
   contract separates host and accelerator planes, binds every metric to an
   explicit `present`, `missing`, `denied`, or `unsupported` state plus unit,
