@@ -35,6 +35,15 @@ test "package exports runtime and core modules independently of host tools" {
     try std.testing.expect(
         @hasDecl(glacier, "ToolActionOutboxConformance"),
     );
+    try std.testing.expect(
+        @hasDecl(glacier, "ToolActionOutboxFile"),
+    );
+    try std.testing.expect(
+        @hasDecl(
+            glacier,
+            "ToolActionOutboxStoreConformance",
+        ),
+    );
     try std.testing.expect(@hasDecl(glacier, "prepared_text_successor"));
     try std.testing.expect(
         @hasDecl(glacier, "prepared_text_restore_admission"),
@@ -81,6 +90,15 @@ test "package exports runtime and core modules independently of host tools" {
     );
     try std.testing.expect(
         @hasDecl(glacier_core, "ToolActionOutboxConformance"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "ToolActionOutboxFile"),
+    );
+    try std.testing.expect(
+        @hasDecl(
+            glacier_core,
+            "ToolActionOutboxStoreConformance",
+        ),
     );
     try std.testing.expect(@hasDecl(glacier_core, "RuntimeSupportRegistry"));
     try std.testing.expectEqual(

@@ -35,6 +35,7 @@ thermal observations distinct.
 | `tools/zig-with-ephemeral-cache.sh build typed-workload-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_typed_workload_conformance` | Separate W4a profile/item/plan contract, generic scheduler lifecycle callbacks, retained exact-integer vision/audio-window/temporal-video execution under scheduler-owned receipts, independently replayed logical roots, native concrete-evidence mutation gates, semantic-substitution rejection, and final zero model/cache ownership |
 | `tools/zig-with-ephemeral-cache.sh build typed-tool-workload-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_typed_tool_conformance` | First W4b process-local tool transaction: separate proposal/policy authority, retained fixed-storage integrity, execute/reuse/deny/conflict semantics, scheduler-before-mutation precommit plus exact-event publish, independent replay, cancellation/timeout/rejection absence, and final zero authority |
 | `tools/zig-with-ephemeral-cache.sh build action-outbox-record-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_action_outbox_conformance` | W4b-b portable ActionOutbox protocol: canonical body/footer records, stable remote-request identity, uncertainty-preserving restart, a reconciliation record required before safe retry, separately authorized compensation, all 7,521 retained cuts from the complete header through the journal, and independent byte-for-byte replay; no authenticated provider truth, filesystem durability, or live external effect |
+| `tools/zig-with-ephemeral-cache.sh build action-outbox-recovery-test -Dmetal=false -Doptimize=ReleaseSafe -j2` | W4b-c descriptor-relative POSIX store: clean committed `320 + 752n` prefixes, semantic preflight, exclusive advisory lock and namespace/identity fences, ordered body/footer sync, exact snapshot/lease/repair roots, explicit repair/reacquisition, Zig/Python matrices covering 40 append phases + 754 section-prefix cases + 751 repair tails + 8 repair faults, and 49 host process deaths; no power-loss, live-dispatch, provider-truth, external exactly-once, Windows-durability, or performance claim |
 | `zig build lane-publication-demo -Dmetal=false` | One-token prepare/commit/abort with KV, RNG, sampler, output, schedule, and resource roots |
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
 | `tools/zig-with-ephemeral-cache.sh build test -Doptimize=ReleaseSafe -Dmetal=false -j2` | Full retained suite, including receipt-funded prepared-text activation at sequence `N`, one uninterrupted/restored synthetic-model transition comparison, and target teardown to zero |
@@ -92,6 +93,13 @@ thermal observations distinct.
 | `zig build provider-context-pack-demo -Dmetal=false` | Lossless exact-duplicate mapping and deterministic token fixture |
 | `zig build provider-context-reconciliation-demo -Dmetal=false` | Raw/packed full-wire token observations bound to one execution identity |
 | `zig build provider-context-adapter-demo -Dmetal=false` | Allocation-free renderer/token-counter adapter fixture |
+
+The ActionOutbox recovery gate deliberately separates two evidence classes.
+The Zig/Python matrices deterministically enumerate logical persistence
+outcomes without opening a real file. The native host campaign separately
+spawns and kills 49 workers—3 during initialization, 40 during append, and 6
+during repair—then requires fresh replay and convergence. Neither class is a
+latency benchmark or a storage-device power-cut test.
 
 All commands should normally use `-Doptimize=ReleaseSafe` when validating
 contracts. They are credential-free. Most are model-free; the vision adapter

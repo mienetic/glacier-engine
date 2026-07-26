@@ -25,6 +25,10 @@ pub const tool_action_outbox_record =
     core.tool_action_outbox_record;
 pub const tool_action_outbox_conformance =
     core.tool_action_outbox_conformance;
+pub const tool_action_outbox_file =
+    core.tool_action_outbox_file;
+pub const tool_action_outbox_store_conformance =
+    core.tool_action_outbox_store_conformance;
 pub const scheduled_media_pressure =
     core.scheduled_media_pressure;
 pub const workload_scenario_corpus =
@@ -78,6 +82,10 @@ pub const ToolActionHarness = core.ToolActionHarness;
 pub const ToolActionOutboxRecord = core.ToolActionOutboxRecord;
 pub const ToolActionOutboxConformance =
     core.ToolActionOutboxConformance;
+pub const ToolActionOutboxFile =
+    core.ToolActionOutboxFile;
+pub const ToolActionOutboxStoreConformance =
+    core.ToolActionOutboxStoreConformance;
 pub const ScheduledMediaPressure = core.ScheduledMediaPressure;
 pub const WorkloadScenarioCorpus = core.WorkloadScenarioCorpus;
 pub const ProviderTokenGateway = core.ProviderTokenGateway;

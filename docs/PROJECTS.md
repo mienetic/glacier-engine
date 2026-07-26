@@ -450,12 +450,23 @@ committed intent remains uncertain after restart, and only the
 `reconciled_not_applied` semantic record permits retry; authenticating that
 classification belongs to a future adapter. Compensation is a newly
 authorized child action. Native and independent Python replay cover all 7,521
-retained cuts from the complete header through the journal. This is a portable
-record protocol, not a synced file or live tool adapter. See
+retained cuts from the complete header through the journal.
+
+**Completed W4b-c durable-store slice:** the clean committed `320 + 752n`
+stream now
+has a descriptor-relative POSIX adapter with an exclusive advisory lock,
+no-follow/device+inode/one-link/private-mode/replacement fences, semantic
+preflight, ordered body/footer sync, exact content-snapshot/lease/repair roots,
+and explicit repair followed by mandatory fresh reacquisition. Zig/Python
+matrices cover `40 + 754 + 751 + 8` append/section-prefix/repair cases, and 49
+real host
+process deaths cover initialization, append, and repair. It is not a live
+dispatcher, provider-truth proof, external exactly-once mechanism, power-loss
+test, or Windows durable-file implementation. See
 [ActionOutbox Protocol](ACTION_OUTBOX.md).
 
-This is deterministic conformance, not a throughput, wall-clock latency,
-physical-memory, energy, or soak result.
+These are deterministic conformance and named-host recovery fixtures, not
+throughput, wall-clock latency, physical-memory, energy, or soak results.
 
 Small independent follow-up slices include:
 
@@ -463,8 +474,8 @@ Small independent follow-up slices include:
   generator/shrinker check while preserving every prior case root;
 - add one retained W3 plan, phase/lineage mutation, or independent decoder
   while preserving every existing V1 root;
-- add one provider, stateful, streaming, durable live-tool, or non-media W4
-  profile without
+- add one provider, stateful, streaming, credential-isolated live-tool, or
+  non-media W4 profile without
   weakening authoritative replay or receipt ownership;
 - build a read-only scenario/result inspector that exposes no authority;
 - add a bounded family-aware batch or safe-preemption profile with an explicit
@@ -687,12 +698,16 @@ tool-state lock through its bounded, non-failing publish callback.
 
 **Completed second slice:** the portable ActionOutbox record/recovery boundary
 defines acknowledgement, ambiguity reconciliation, safe retry, payload
-identity, and a separately authorized compensation child. It intentionally has
-no file or dispatcher authority.
+identity, and a separately authorized compensation child. That portable layer
+by itself grants no file or dispatcher authority.
 
-**Next slice:** add a descriptor-relative, locked durable-file adapter with
-body-sync/footer-sync, explicit incomplete-tail repair, and process-death
-fixtures before adding a credential-isolated fake dispatcher.
+**Completed third slice:** a descriptor-relative POSIX store adds ordered
+body-sync/footer-sync, advisory locking and namespace/identity fences,
+snapshot-bound incomplete-tail repair, mandatory close/reopen reacquisition,
+independent deterministic fault matrices, and 49 host process-death fixtures.
+
+**Next slice:** add a credential-isolated fake dispatcher and authoritative
+status adapter without changing the portable record or durable-store proofs.
 
 ### Production weight pager
 

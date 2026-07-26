@@ -35,7 +35,7 @@ surface.
 
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
-| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures exist | Optional Metal path exists; promotion still requires per-device retained gates | Development host, not a broad platform certification |
+| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | Optional Metal path exists; promotion still requires per-device retained gates | Development host, not a broad platform certification |
 | Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
 | Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Not established by cross-compilation | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build candidate |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
@@ -128,6 +128,14 @@ record/recovery tests and canonical report example. No foreign binary was
 executed, no filesystem adapter was exercised, and no external action was
 dispatched; this establishes source/compile portability only.
 
+The W4b-c durable store is implemented only for the declared POSIX durable-file
+capability. Its focused source gate compiles for the checked Linux, BSD,
+illumos, iOS, and Windows targets, but unsupported targets compile out the
+adapter and return `UnsupportedPlatform`; this is not native filesystem
+evidence. On the macOS development host, the separate recovery gate exercises
+3 initialization, 40 append, and 6 repair `SIGKILL` boundaries. No Windows
+durable-file implementation or native Windows recovery campaign exists.
+
 ## Existing portability seams and blockers
 
 Useful seams already exist:
@@ -149,8 +157,8 @@ Useful seams already exist:
 
 The main blockers are boundary violations rather than language choice:
 
-- durable state uses `openat`, `fstatat`, `flock`, `linkat`, `fsync`, Unix mode
-  bits, and POSIX open flags directly;
+- durable state, including ActionOutbox storage, uses `openat`, `fstatat`,
+  `flock`, `linkat`, `fsync`, Unix mode bits, and POSIX open flags directly;
 - read-only model-file mapping now has POSIX and Windows implementations, but
   native Windows mapping, corruption, replacement, and pressure tests remain;
 - restart fixtures now normalize process IDs and hard termination across POSIX

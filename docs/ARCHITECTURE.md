@@ -15,14 +15,14 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
-| Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, or uncertain external-action handoff without presenting logical steps as native performance |
+| Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b/W4b-c | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, uncertain external-action handoff, and durable storage faults without presenting logical steps as native performance |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
 | Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay`, `GeneratedMediaCheckpoint`, `GeneratedMediaPayloadArchive`, `GeneratedMediaOutputRegistry`, `GeneratedMediaProducerAdmission`, producer-transition replay/evidence | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, validate typed generated outputs and exact raw bytes, replay retained deterministic producer transitions, and publish only through explicit family and atomic visibility boundaries |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
-| Agent and tool action | `ToolActionContract`, fixed-storage tool harness, ActionOutbox record/recovery | Keep model proposals separate from local authorization, publish bounded process-local effects atomically, and retain external dispatch uncertainty until an acknowledgement or reconciliation record; live adapters remain responsible for external truth |
-| Durability | settlement/cost wires, cost journal | Commit replayable cost evidence across process failure |
+| Agent and tool action | `ToolActionContract`, fixed-storage tool harness, ActionOutbox record/recovery and POSIX file store | Keep model proposals separate from local authorization, publish bounded process-local effects atomically, durably retain external dispatch uncertainty, and require authenticated acknowledgement or reconciliation before a terminal decision or safe retry |
+| Durability | settlement/cost wires, cost journal, ActionOutbox snapshot/lease/repair roots | Commit replayable cost and external-action evidence across process failure without granting external-effect authority |
 | Evidence | event wires, join roots, Python verifiers | Reconstruct and reject malformed or substituted history |
 
 ## Local execution flow
@@ -752,6 +752,43 @@ previous or successor root, then another process resumes token publication.
 Device power loss, native Linux execution, and production-model numerical
 comparison remain outside this evidence.
 
+## Durable external-action flow
+
+```text
+proposal + local authorization
+              │
+              ▼
+      canonical ActionOutbox record
+              │ semantic ApplyPlan
+              ▼
+  body write ─> file sync ─> footer write ─> file sync
+              │
+              ▼
+ exact readback + namespace/identity fence
+              │
+              ▼
+ committed local state + durable receipt
+```
+
+The POSIX adapter opens one validated leaf beneath a caller-opened trusted
+directory, holds an exclusive advisory lock, and admits only the expected
+regular one-link private file. Device/inode equality, no-follow lookup,
+replacement checks, and exact readback bind the descriptor to the canonical
+clean committed `320 + 752n` stream. `ContentSnapshotV1`, `LeaseBindingV1`, and
+`RepairPlanV1`
+bind the observed bytes, process-local acquisition, and one classified
+incomplete suffix. Repair verifies the full observed snapshot, truncates and
+syncs only that suffix, then requires close and fresh replay before append.
+
+The deterministic Zig/Python store models cover 40 append phases, 754
+section-prefix
+writes, 751 repair tails, and 8 repair faults. A separate host campaign kills
+workers at 3 initialization, 40 append, and 6 repair boundaries. These are
+storage-ordering and process-death claims only: the adapter has no credentials,
+does not authenticate provider status, does not perform a live dispatch, does
+not provide external exactly-once delivery, and does not emulate device power
+loss. Windows durable storage remains a separate adapter.
+
 ## Provider execution flow
 
 ```text
@@ -906,8 +943,9 @@ targets remain gated until their named native adapters and evidence pass.
   independent replay, and explicit external-effect nonclaims.
 - [ActionOutbox protocol](ACTION_OUTBOX.md): stable external request identity,
   body/footer event records, uncertainty-preserving prefix recovery,
-  acknowledgement/reconciliation separation, safe retry, and separately
-  authorized compensation children without live I/O authority.
+  acknowledgement/reconciliation separation, safe retry, separately authorized
+  compensation children, and descriptor-relative POSIX durable storage without
+  live dispatch authority.
 - [Typed model-family contracts and vision adapter](MODEL_FAMILY_ADAPTER.md):
   canonical artifact/plan/result records, explicit support negotiation, and a
   cache-bound transactional embedding fixture with scheduler-owned

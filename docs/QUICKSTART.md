@@ -173,6 +173,15 @@ zig build lane-weave-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build lane-publication-demo -Doptimize=ReleaseSafe -Dmetal=false
 zig build lane-contiguous-demo -Doptimize=ReleaseSafe -Dmetal=false
 
+# Verify portable ActionOutbox records and all retained prefix cuts
+tools/zig-with-ephemeral-cache.sh build action-outbox-record-test \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+
+# Run the durable POSIX store model/oracle and 49-process-death campaign
+# (correctness evidence only; no live dispatch or device power-loss emulation)
+tools/zig-with-ephemeral-cache.sh build action-outbox-recovery-test \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+
 # Bind a committed checkpoint without embedding its external object payloads
 zig build continuation-capsule-demo -Doptimize=ReleaseSafe -Dmetal=false
 

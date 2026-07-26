@@ -775,19 +775,32 @@ pub const LedgerV1 = struct {
     failed_actions: u64 = 0,
 };
 
-pub fn applyRecordV1(
+pub const ApplyPlanV1 = struct {
+    state_index: usize,
+    next_state: ActionStateV1,
+    next_ledger: LedgerV1,
+    next_action_count: usize,
+    state_sha256: Digest,
+};
+
+/// Validates one complete lifecycle transition without mutating caller state.
+/// A durable adapter may perform all fallible semantic work here, publish and
+/// synchronize the canonical frame, then use `commitApplyPlanV1` as an
+/// infallible in-memory suffix.
+pub fn planApplyRecordV1(
     header: HeaderV1,
     record: RecordV1,
-    states: []ActionStateV1,
-    ledger: *LedgerV1,
-) Error!void {
+    states: []const ActionStateV1,
+    ledger: LedgerV1,
+) Error!ApplyPlanV1 {
     try validateRecordV1(header, record);
     const action_capacity: usize =
         @intCast(header.maximum_actions);
     if (states.len < action_capacity)
         return Error.CapacityExceeded;
     const bounded_states = states[0..action_capacity];
-    var next_ledger = ledger.*;
+    try validateCompactStates(bounded_states, ledger);
+    var next_ledger = ledger;
     clearPhaseCounts(&next_ledger);
     const expected_sequence =
         try checkedAdd(next_ledger.committed_records, 1);
@@ -797,8 +810,10 @@ pub fn applyRecordV1(
         return Error.CapacityExceeded;
     next_ledger.committed_records = expected_sequence;
 
+    var state_index: usize = undefined;
+    var next_state: ActionStateV1 = undefined;
     if (record.kind == .enqueued) {
-        if (findState(
+        if (findStateIndex(
             bounded_states,
             record.identity.action_sha256,
         ) != null)
@@ -824,10 +839,11 @@ pub fn applyRecordV1(
                 return Error.DuplicateCompensation;
         }
         if (record.identity.purpose == .compensation) {
-            const parent = findState(
+            const parent_index = findStateIndex(
                 bounded_states,
                 record.identity.parent_action_sha256,
             ) orelse return Error.MissingParent;
+            const parent = bounded_states[parent_index];
             if (parent.identity.purpose != .primary or
                 parent.phase != .succeeded)
                 return Error.ParentNotSucceeded;
@@ -837,120 +853,194 @@ pub fn applyRecordV1(
             next_ledger.primary_actions =
                 try checkedAdd(next_ledger.primary_actions, 1);
         }
-        const free = findFreeState(bounded_states) orelse
+        state_index = findFreeStateIndex(bounded_states) orelse
             return Error.CapacityExceeded;
         next_ledger.actions_enqueued =
             try checkedAdd(next_ledger.actions_enqueued, 1);
-        free.* = .{
+        next_state = .{
             .occupied = true,
             .identity = record.identity,
             .phase = .ready,
             .last_event_sha256 = record.record_sha256,
         };
-        ledger.* = next_ledger;
-        return;
-    }
+    } else {
+        state_index = findStateIndex(
+            bounded_states,
+            record.identity.action_sha256,
+        ) orelse return Error.InvalidLifecycle;
+        const state = bounded_states[state_index];
+        if (!std.meta.eql(state.identity, record.identity) or
+            !digestEqual(
+                state.last_event_sha256,
+                record.previous_action_event_sha256,
+            ))
+            return Error.InvalidLifecycle;
 
-    const state = findState(
-        bounded_states,
-        record.identity.action_sha256,
-    ) orelse return Error.InvalidLifecycle;
-    if (!std.meta.eql(state.identity, record.identity) or
-        !digestEqual(
-            state.last_event_sha256,
-            record.previous_action_event_sha256,
-        ))
-        return Error.InvalidLifecycle;
-
-    var next_state = state.*;
-    switch (record.kind) {
-        .enqueued => unreachable,
-        .dispatch_intent => {
-            if (state.phase != .ready or
-                record.attempt_generation !=
-                    try checkedAdd(state.attempt_generation, 1) or
-                !digestEqual(
-                    record.dispatch_request_sha256,
-                    dispatchRequestSha256V1(
-                        header,
-                        state.identity,
-                        record.attempt_generation,
-                    ),
-                ))
-                return Error.InvalidLifecycle;
-            if (state.attempt_generation != 0) {
-                next_ledger.safe_retry_dispatches = try checkedAdd(
-                    next_ledger.safe_retry_dispatches,
-                    1,
+        next_state = state;
+        switch (record.kind) {
+            .enqueued => unreachable,
+            .dispatch_intent => {
+                if (state.phase != .ready or
+                    record.attempt_generation !=
+                        try checkedAdd(
+                            state.attempt_generation,
+                            1,
+                        ) or
+                    !digestEqual(
+                        record.dispatch_request_sha256,
+                        dispatchRequestSha256V1(
+                            header,
+                            state.identity,
+                            record.attempt_generation,
+                        ),
+                    ))
+                    return Error.InvalidLifecycle;
+                if (state.attempt_generation != 0) {
+                    next_ledger.safe_retry_dispatches =
+                        try checkedAdd(
+                            next_ledger.safe_retry_dispatches,
+                            1,
+                        );
+                }
+                next_ledger.dispatch_intents =
+                    try checkedAdd(
+                        next_ledger.dispatch_intents,
+                        1,
+                    );
+                next_state.phase = .uncertain;
+                next_state.attempt_generation =
+                    record.attempt_generation;
+                next_state.dispatch_request_sha256 =
+                    record.dispatch_request_sha256;
+                next_state.observation_sha256 = zero_digest;
+                next_state.result_sha256 = zero_digest;
+            },
+            .ambiguity_observed => {
+                try requireCurrentAttempt(state, record);
+                next_ledger.ambiguity_observations =
+                    try checkedAdd(
+                        next_ledger.ambiguity_observations,
+                        1,
+                    );
+                next_state.observation_sha256 =
+                    record.observation_sha256;
+            },
+            .acknowledged_success => {
+                try requireCurrentAttempt(state, record);
+                next_ledger.acknowledged_successes =
+                    try checkedAdd(
+                        next_ledger.acknowledged_successes,
+                        1,
+                    );
+                closeAction(
+                    &next_state,
+                    record,
+                    .succeeded,
                 );
-            }
-            next_ledger.dispatch_intents =
-                try checkedAdd(next_ledger.dispatch_intents, 1);
-            next_state.phase = .uncertain;
-            next_state.attempt_generation =
-                record.attempt_generation;
-            next_state.dispatch_request_sha256 =
-                record.dispatch_request_sha256;
-            next_state.observation_sha256 = zero_digest;
-            next_state.result_sha256 = zero_digest;
-        },
-        .ambiguity_observed => {
-            try requireCurrentAttempt(state.*, record);
-            next_ledger.ambiguity_observations = try checkedAdd(
-                next_ledger.ambiguity_observations,
-                1,
-            );
-            next_state.observation_sha256 =
-                record.observation_sha256;
-        },
-        .acknowledged_success => {
-            try requireCurrentAttempt(state.*, record);
-            next_ledger.acknowledged_successes = try checkedAdd(
-                next_ledger.acknowledged_successes,
-                1,
-            );
-            closeAction(&next_state, record, .succeeded);
-        },
-        .acknowledged_failure => {
-            try requireCurrentAttempt(state.*, record);
-            next_ledger.acknowledged_failures = try checkedAdd(
-                next_ledger.acknowledged_failures,
-                1,
-            );
-            closeAction(&next_state, record, .failed);
-        },
-        .reconciled_not_applied => {
-            try requireCurrentAttempt(state.*, record);
-            next_ledger.reconciled_not_applied = try checkedAdd(
-                next_ledger.reconciled_not_applied,
-                1,
-            );
-            next_state.phase = .ready;
-            next_state.dispatch_request_sha256 = zero_digest;
-            next_state.observation_sha256 =
-                record.observation_sha256;
-            next_state.result_sha256 = zero_digest;
-        },
-        .reconciled_success => {
-            try requireCurrentAttempt(state.*, record);
-            next_ledger.reconciled_successes = try checkedAdd(
-                next_ledger.reconciled_successes,
-                1,
-            );
-            closeAction(&next_state, record, .succeeded);
-        },
-        .reconciled_failure => {
-            try requireCurrentAttempt(state.*, record);
-            next_ledger.reconciled_failures = try checkedAdd(
-                next_ledger.reconciled_failures,
-                1,
-            );
-            closeAction(&next_state, record, .failed);
-        },
+            },
+            .acknowledged_failure => {
+                try requireCurrentAttempt(state, record);
+                next_ledger.acknowledged_failures =
+                    try checkedAdd(
+                        next_ledger.acknowledged_failures,
+                        1,
+                    );
+                closeAction(&next_state, record, .failed);
+            },
+            .reconciled_not_applied => {
+                try requireCurrentAttempt(state, record);
+                next_ledger.reconciled_not_applied =
+                    try checkedAdd(
+                        next_ledger.reconciled_not_applied,
+                        1,
+                    );
+                next_state.phase = .ready;
+                next_state.dispatch_request_sha256 =
+                    zero_digest;
+                next_state.observation_sha256 =
+                    record.observation_sha256;
+                next_state.result_sha256 = zero_digest;
+            },
+            .reconciled_success => {
+                try requireCurrentAttempt(state, record);
+                next_ledger.reconciled_successes =
+                    try checkedAdd(
+                        next_ledger.reconciled_successes,
+                        1,
+                    );
+                closeAction(
+                    &next_state,
+                    record,
+                    .succeeded,
+                );
+            },
+            .reconciled_failure => {
+                try requireCurrentAttempt(state, record);
+                next_ledger.reconciled_failures =
+                    try checkedAdd(
+                        next_ledger.reconciled_failures,
+                        1,
+                    );
+                closeAction(&next_state, record, .failed);
+            },
+        }
+        next_state.last_event_sha256 = record.record_sha256;
     }
-    next_state.last_event_sha256 = record.record_sha256;
-    state.* = next_state;
-    ledger.* = next_ledger;
+
+    try finalizeLedgerWithReplacement(
+        bounded_states,
+        state_index,
+        next_state,
+        &next_ledger,
+    );
+    const next_action_count = std.math.cast(
+        usize,
+        next_ledger.actions_enqueued,
+    ) orelse return Error.InvalidLifecycle;
+    if (next_action_count == 0 or
+        next_action_count > action_capacity or
+        state_index >= next_action_count)
+        return Error.InvalidLifecycle;
+    return .{
+        .state_index = state_index,
+        .next_state = next_state,
+        .next_ledger = next_ledger,
+        .next_action_count = next_action_count,
+        .state_sha256 = stateSha256WithReplacement(
+            header,
+            bounded_states[0..next_action_count],
+            state_index,
+            next_state,
+            next_ledger,
+        ),
+    };
+}
+
+/// Commits a plan returned for the same bounded state slice. All bounds and
+/// lifecycle work has already succeeded, so this operation has no error path.
+pub fn commitApplyPlanV1(
+    states: []ActionStateV1,
+    ledger: *LedgerV1,
+    plan: ApplyPlanV1,
+) void {
+    std.debug.assert(plan.state_index < states.len);
+    states[plan.state_index] = plan.next_state;
+    ledger.* = plan.next_ledger;
+}
+
+pub fn applyRecordV1(
+    header: HeaderV1,
+    record: RecordV1,
+    states: []ActionStateV1,
+    ledger: *LedgerV1,
+) Error!void {
+    const plan = try planApplyRecordV1(
+        header,
+        record,
+        states,
+        ledger.*,
+    );
+    commitApplyPlanV1(states, ledger, plan);
 }
 
 fn requireCurrentAttempt(
@@ -1104,6 +1194,80 @@ pub fn finalizeLedgerV1(
         return Error.InvalidLifecycle;
 }
 
+fn finalizeLedgerWithReplacement(
+    states: []const ActionStateV1,
+    state_index: usize,
+    next_state: ActionStateV1,
+    ledger: *LedgerV1,
+) Error!void {
+    if (state_index >= states.len or !next_state.occupied)
+        return Error.InvalidLifecycle;
+    clearPhaseCounts(ledger);
+    for (states, 0..) |current, index| {
+        const state =
+            if (index == state_index) next_state else current;
+        if (!state.occupied) continue;
+        switch (state.phase) {
+            .free => return Error.InvalidLifecycle,
+            .ready => ledger.ready_actions =
+                try checkedAdd(ledger.ready_actions, 1),
+            .uncertain => ledger.uncertain_actions =
+                try checkedAdd(ledger.uncertain_actions, 1),
+            .succeeded => ledger.succeeded_actions =
+                try checkedAdd(ledger.succeeded_actions, 1),
+            .failed => ledger.failed_actions =
+                try checkedAdd(ledger.failed_actions, 1),
+        }
+    }
+    const purpose_total = try checkedAdd(
+        ledger.primary_actions,
+        ledger.compensation_actions,
+    );
+    const open_total = try checkedAdd(
+        ledger.ready_actions,
+        ledger.uncertain_actions,
+    );
+    const terminal_total = try checkedAdd(
+        ledger.succeeded_actions,
+        ledger.failed_actions,
+    );
+    const phase_total = try checkedAdd(
+        open_total,
+        terminal_total,
+    );
+    if (ledger.actions_enqueued != purpose_total or
+        ledger.actions_enqueued != phase_total)
+        return Error.InvalidLifecycle;
+}
+
+fn stateSha256WithReplacement(
+    header: HeaderV1,
+    states: []const ActionStateV1,
+    state_index: usize,
+    next_state: ActionStateV1,
+    ledger: LedgerV1,
+) Digest {
+    std.debug.assert(state_index < states.len);
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(state_domain);
+    hash.update(&header.header_sha256);
+    hashU64(&hash, states.len);
+    for (states, 0..) |current, index| {
+        const state =
+            if (index == state_index) next_state else current;
+        hashU8(&hash, @intFromBool(state.occupied));
+        hashIdentity(&hash, state.identity);
+        hashU8(&hash, @intFromEnum(state.phase));
+        hashU64(&hash, state.attempt_generation);
+        hash.update(&state.dispatch_request_sha256);
+        hash.update(&state.observation_sha256);
+        hash.update(&state.result_sha256);
+        hash.update(&state.last_event_sha256);
+    }
+    hashLedger(&hash, ledger);
+    return finish(&hash);
+}
+
 pub fn stateSha256V1(
     header: HeaderV1,
     states: []const ActionStateV1,
@@ -1206,9 +1370,33 @@ fn findState(
     return null;
 }
 
+fn findStateIndex(
+    states: []const ActionStateV1,
+    action_sha256: Digest,
+) ?usize {
+    for (states, 0..) |state, index| {
+        if (state.occupied and
+            digestEqual(
+                state.identity.action_sha256,
+                action_sha256,
+            ))
+            return index;
+    }
+    return null;
+}
+
 fn findFreeState(states: []ActionStateV1) ?*ActionStateV1 {
     for (states) |*state| {
         if (!state.occupied) return state;
+    }
+    return null;
+}
+
+fn findFreeStateIndex(
+    states: []const ActionStateV1,
+) ?usize {
+    for (states, 0..) |state, index| {
+        if (!state.occupied) return index;
     }
     return null;
 }
@@ -1219,6 +1407,25 @@ fn occupiedStateCount(states: []const ActionStateV1) usize {
         if (state.occupied) result += 1;
     }
     return result;
+}
+
+fn validateCompactStates(
+    states: []const ActionStateV1,
+    ledger: LedgerV1,
+) Error!void {
+    var occupied: usize = 0;
+    var found_free = false;
+    for (states) |state| {
+        if (!state.occupied) {
+            found_free = true;
+            continue;
+        }
+        if (found_free or state.phase == .free)
+            return Error.InvalidLifecycle;
+        occupied += 1;
+    }
+    if (ledger.actions_enqueued != occupied)
+        return Error.InvalidLifecycle;
 }
 
 fn clearPhaseCounts(ledger: *LedgerV1) void {

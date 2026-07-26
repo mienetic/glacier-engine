@@ -1,7 +1,7 @@
 # ActionOutbox Record and Recovery Protocol
 
-Status: W4b-b portable record contract. This is a canonical record and
-recovery boundary, not a live dispatcher or durable file adapter.
+Status: W4b-c portable record contract plus descriptor-relative POSIX durable
+store. This is not a live dispatcher or an external-truth adapter.
 
 ## Purpose
 
@@ -71,9 +71,9 @@ request, observation, result, and record root. Different magic, ABI, pinned
 length, chain, or reserved bytes are invalid. Version 1 never guesses a newer
 layout.
 
-## Body-first commit
+## Body-first durable commit
 
-A future store appends a frame in two observable phases:
+The durable store appends a frame in two observable phases:
 
 1. append the complete canonical body;
 2. append the fixed-size commit footer for exactly those bytes.
@@ -81,9 +81,54 @@ A future store appends a frame in two observable phases:
 The footer repeats the sequence and record root. Only a complete, matching
 footer commits the body.
 
-The portable core exposes the body and footer as a two-slice append plan. It
-does not write or sync either slice. Poisoned-writer, repair authority,
-file-lock, and sync rules belong to the next store-adapter slice.
+The portable core exposes the body and footer as a two-slice append plan. Before
+I/O, `ApplyPlanV1` validates the complete lifecycle transition without mutating
+caller state. The POSIX store then writes the body, synchronizes the file,
+writes the footer, synchronizes again, verifies the namespace and exact bytes,
+and only then applies the infallible in-memory plan. Any uncertain append error
+poisons the local store and blocks journal, record, and state views until close
+and fresh reopen.
+
+A clean committed file or committed prefix remains exactly:
+
+```text
+320-byte HeaderV1 + N × 752-byte RecordV1
+```
+
+There is no filesystem envelope, mutable sidecar, or hidden trailer.
+During body-first append or incomplete-tail recovery, the observed file may
+temporarily include an additional uncommitted suffix of 1–751 bytes.
+
+## Descriptor-relative POSIX store
+
+The caller supplies an already opened trusted directory and one validated leaf
+name. The adapter:
+
+- opens relative to that directory with no-follow and close-on-exec behavior;
+- acquires one exclusive advisory file lock;
+- accepts only a regular, one-link file and, by default, private permissions;
+- compares descriptor and directory-entry device/inode identity;
+- rejects namespace replacement, size drift, and exact-byte drift around
+  publication and repair;
+- synchronizes a new header before synchronizing the containing directory; and
+- reads and replays the complete bounded stream through caller-provided
+  storage.
+
+`ContentSnapshotV1` binds the exact observed stream, declared capacity, recovery
+classification, committed prefix, state, and ledger. `LeaseBindingV1` binds one
+process-local lease generation to that snapshot and outbox epoch.
+`RepairPlanV1` binds repair authority to one classified incomplete suffix.
+These SHA-256 roots are integrity commitments, not authenticated bearer
+credentials.
+
+The live `StoreV1` value owns its file descriptor and is a single-owner,
+single-mutator handle. Callers must not copy it or use concurrent copies.
+
+Repair is explicit and truncate-only. It is available only for the three
+incomplete-tail classifications, verifies the complete observed snapshot before
+truncation, synchronizes and verifies the committed prefix, then leaves the
+store in `repair_complete`. Append authority returns only after close, fresh
+exclusive reacquisition, and full replay.
 
 ## Record kinds
 
@@ -197,15 +242,15 @@ Complete frames with invalid encoding, footer, digest, sequence, chain, or
 lifecycle are errors rather than tail classifications. Recovery never searches
 ahead for magic or resynchronizes. Bytes after the first fault are untrusted.
 
-Recovery reports the exact committed boundary and discarded suffix. This core
-does not truncate. A future store may grant explicit repair only for the three
-incomplete-tail classes, then require close, reopen, and full recovery before
-append. Complete invalid frames, chain mismatches, and invalid transitions
-must never receive repair authority.
+Recovery reports the exact committed boundary and discarded suffix. The
+portable core never truncates. The POSIX store grants explicit repair only for
+the three incomplete-tail classes, then requires close, reopen, and full
+recovery before append. Complete invalid frames, chain mismatches, and invalid
+transitions never receive repair authority.
 
 ## Required invariants
 
-The record tests must prove:
+The record and durable-store gates must prove:
 
 1. native and independent oracle bytes and roots match on the development host;
 2. proposal/auth mismatch never produces `ready`;
@@ -218,42 +263,50 @@ The record tests must prove:
 8. attempt generation cannot alter the stable remote request;
 9. payload identity substitution or an out-of-bounds length fails before intent;
 10. compensation is a separately authorized child action;
-11. recovery exposes the exact boundary required by explicit repair; and
-12. terminal actions cannot reopen.
+11. recovery exposes the exact boundary required by explicit repair;
+12. terminal actions cannot reopen;
+13. all 40 ordered append-phase cases, 754 section-prefix cases, 751
+    incomplete tails, and 8 repair-fault outcomes agree between Zig and the
+    independent Python model; and
+14. 49 real host process deaths—3 initialization, 40 append, and 6 repair
+    deaths—reopen to the exact committed prefix and converge to the same final
+    semantic state.
 
 ## Nonclaims
 
-W4b-b provides no live network, process, filesystem, device, credentials,
-sandbox, provider integration, or provider truth. It performs no external
+W4b-c provides no live network dispatcher, credentials, sandbox, provider
+integration, or authenticated provider truth. It performs no external
 reconciliation or compensation and provides no external exactly-once delivery.
+The next adapter slice is a credential-isolated fake dispatcher and status
+adapter.
 
-It also provides no `fsync`, actual durable file adapter, truncation authority,
-cross-machine consensus, distributed lease, credential store, or live I/O.
-Hashes prove byte identity and ordering, not that a reported external effect
-occurred.
+The current durable adapter is POSIX-only; a Windows durable-file adapter is
+not implemented. Its locks are advisory and coordinate cooperating processes,
+not distributed or hostile writers. The retained `SIGKILL` campaign proves
+ordered host filesystem calls and fresh-process recovery on the development
+host. It does not emulate storage-device power loss, establish native behavior
+on another operating system, or claim filesystem latency, throughput, energy,
+or production reliability. Hashes prove byte identity and ordering, not that a
+reported external effect occurred.
 
 ## Verification
 
-The record implementation exposes:
+The ActionOutbox gates are:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build action-outbox-record-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
-```
 
-Later slices should add separate gates:
-
-```sh
-# planned: durable adapter and recovery
+# Durable model/oracle plus the 49-process-death POSIX campaign
 tools/zig-with-ephemeral-cache.sh build action-outbox-recovery-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 
-# planned: credential-free fake dispatcher
-tools/zig-with-ephemeral-cache.sh build action-outbox-dispatch-harness-test \
-  -Dmetal=false -Doptimize=ReleaseSafe -j2
+# Independent deterministic storage-model tests
+python3 -m unittest bench.tests.test_action_outbox_store_conformance
 ```
 
-The record gate lands before any live adapter. See
+The recovery command is correctness evidence and may take longer because it
+spawns and terminates 49 workers. See
 [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md),
 [Architecture](ARCHITECTURE.md), and [Roadmap](ROADMAP.md) for the surrounding
 boundaries and contributor order.

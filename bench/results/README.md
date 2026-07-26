@@ -41,6 +41,8 @@ The repository's strongest checked-in evidence is deterministic conformance:
 - W4a mixed typed-perception lifecycle and publication conformance;
 - first W4b typed-tool authorization, transaction, replay, and cleanup
   conformance;
+- portable ActionOutbox record recovery and deterministic durable-store
+  conformance, kept separate from host process-death observations;
 - prepared runtime-image integrity;
 - provider gateway, transport, settlement, cost, and journal replay;
 - lossless context mapping and token reconciliation;
@@ -114,6 +116,23 @@ runner output together:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build action-outbox-record-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
+`action-outbox-store-conformance-v1.json` is the canonical
+`glacier.action-outbox-store-conformance/v1` logical storage report, not a
+performance or host-filesystem result. Native Zig and independent Python
+models derive the same content snapshots, lease/repair roots, 40 ordered
+append checkpoints, 754 section-prefix cases, 751 repairable tails, and eight
+uncertain repair outcomes. The complete 2,217-byte fixture SHA-256 is
+`5b5f411ffe8279d7bb3a5b7c0422c2d572f4fd3472a22f916dd1e031101294a6`;
+its semantic report root is
+`b515db64838895ed41380ae846b173750ba873ea2505d2d20f69ec71c3609688`.
+The same gate separately runs the descriptor-relative adapter through 49 real
+process deaths without presenting those observations as power-loss evidence:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build action-outbox-recovery-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 

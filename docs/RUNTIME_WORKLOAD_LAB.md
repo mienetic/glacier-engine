@@ -14,11 +14,13 @@ It separates four kinds of evidence:
 The deterministic open-loop, generated deterministic open-loop,
 scheduler-coupled media, finite-source deterministic closed-loop, mixed
 typed-perception, first process-local typed tool, and portable ActionOutbox
-record/recovery layers are integrated.
-Provider, stateful, streaming, batched, preemptible, device-backed, and durable
-file/live-dispatch tool profiles, native multi-request reports, and soak
-campaigns remain staged work. A logical driver step is never reported as a
-millisecond, and a logical resource claim is never reported as RSS, device
+record/recovery layers are integrated. W4b-c also integrates a
+descriptor-relative POSIX durable store and separates deterministic
+write/repair fault matrices from a real host process-death campaign.
+Provider, stateful, streaming, batched, preemptible, device-backed, and
+credential-isolated dispatch/status profiles, native multi-request reports, and
+soak campaigns remain staged work. A logical driver step is never reported as
+a millisecond, and a logical resource claim is never reported as RSS, device
 residency, energy, or temperature.
 
 ## Why this belongs in the runtime
@@ -106,13 +108,22 @@ Results from different modes are not merged into one headline number.
   only after a scheduler-locked precommit accepts retained tool state, and
   closes cancellation, timeout, rejection, and ownership to zero. Provider,
   stateful, streaming, batched, preemptible, and device-backed profiles remain.
-  W4b-b now adds a portable ActionOutbox record campaign: unresolved dispatch
+  W4b-b adds a portable ActionOutbox record campaign: unresolved dispatch
   intent remains uncertain, only a `reconciled_not_applied` semantic record
   permits retry, and compensation is a separate authorized child. A future
-  adapter must authenticate reconciliation evidence. Synced storage and live
-  dispatch remain staged. Each profile must name its execution unit, exact
-  claim, cancellation/preemption boundary, correctness gate, and publication
-  authority without weakening W4a. See
+  adapter must authenticate reconciliation evidence. W4b-c adds the canonical
+  clean committed `320 + 752n` descriptor-relative POSIX stream with advisory
+  locking,
+  no-follow/identity/private-mode fences, semantic preflight, ordered
+  body/footer sync, exact snapshot/lease/repair roots, explicit repair, and
+  mandatory fresh reacquisition. Zig and Python cover 40 append phases, 754
+  section-prefix cases, 751 incomplete tails, and 8 repair-fault outcomes; 49
+  host
+  `SIGKILL` deaths cover 3 initialization, 40 append, and 6 repair boundaries.
+  Live dispatch, authenticated status, power-loss behavior, and Windows
+  durable files remain staged. Each profile must name its execution unit,
+  exact claim, cancellation/preemption boundary, correctness gate, and
+  publication authority without weakening W4a. See
   [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md) and
   [ActionOutbox Protocol](ACTION_OUTBOX.md).
 - [ ] **W5 — Native observation and machine comparability.** Add a
@@ -268,7 +279,7 @@ Independent contributions can add:
    generator/shrinker check;
 2. one retained deterministic closed-loop plan, phase/lineage mutation, or
    independent decoder while preserving every existing V1 root;
-3. one typed workload-driver profile, durable ActionOutbox storage adapter, or
+3. one typed workload-driver profile or credential-isolated
    reconciliation/dispatch harness that does not weaken either tool proof;
 4. a family-neutral observer interface and one native OS implementation;
 5. a bounded Metal observer slice for device identity, host submit/sync timing,

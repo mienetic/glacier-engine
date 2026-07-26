@@ -1474,6 +1474,133 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(action_outbox_record_test_step);
     test_compile_step.dependOn(action_outbox_record_compile_step);
 
+    // W4b-c binds the portable ActionOutbox protocol to an exclusively locked,
+    // descriptor-relative POSIX file. Deterministic native/Python matrices
+    // remain separate from the real 49-process-death filesystem campaign.
+    const action_outbox_store_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/tool_action_outbox_store_conformance.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_action_outbox_store_tests = b.addRunArtifact(
+        action_outbox_store_tests,
+    );
+    const action_outbox_store_exe = b.addExecutable(.{
+        .name = "glacier-action-outbox-store",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/action_outbox_store.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    action_outbox_store_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    const run_action_outbox_store_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_action_outbox_store_oracle.setCwd(b.path("."));
+    run_action_outbox_store_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_action_outbox_store_oracle.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_action_outbox_store_oracle.addFileArg(
+        b.path("bench/action_outbox_store_conformance.py"),
+    );
+    run_action_outbox_store_oracle.addArg("--runner");
+    run_action_outbox_store_oracle.addArtifactArg(
+        action_outbox_store_exe,
+    );
+    run_action_outbox_store_oracle.addArg("--fixture");
+    run_action_outbox_store_oracle.addFileArg(
+        b.path(
+            "bench/results/action-outbox-store-conformance-v1.json",
+        ),
+    );
+
+    const action_outbox_file_worker_exe = b.addExecutable(.{
+        .name = "glacier-action-outbox-file-worker",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "bench/action_outbox_file_worker.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    action_outbox_file_worker_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    const action_outbox_file_recovery_exe =
+        b.addExecutable(.{
+            .name = "glacier-action-outbox-file-recovery",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/action_outbox_file_recovery.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    action_outbox_file_recovery_exe.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    const run_action_outbox_file_recovery =
+        b.addRunArtifact(action_outbox_file_recovery_exe);
+    run_action_outbox_file_recovery.addArtifactArg(
+        action_outbox_file_worker_exe,
+    );
+
+    const action_outbox_recovery_test_step = b.step(
+        "action-outbox-recovery-test",
+        "Run durable ActionOutbox model and process-death recovery",
+    );
+    action_outbox_recovery_test_step.dependOn(
+        &run_action_outbox_store_tests.step,
+    );
+    action_outbox_recovery_test_step.dependOn(
+        &run_action_outbox_store_oracle.step,
+    );
+    action_outbox_recovery_test_step.dependOn(
+        &run_action_outbox_file_recovery.step,
+    );
+    const action_outbox_recovery_compile_step = b.step(
+        "action-outbox-recovery-compile",
+        "Compile durable ActionOutbox tests, runner and worker",
+    );
+    action_outbox_recovery_compile_step.dependOn(
+        &action_outbox_store_tests.step,
+    );
+    action_outbox_recovery_compile_step.dependOn(
+        &action_outbox_store_exe.step,
+    );
+    action_outbox_recovery_compile_step.dependOn(
+        &action_outbox_file_worker_exe.step,
+    );
+    action_outbox_recovery_compile_step.dependOn(
+        &action_outbox_file_recovery_exe.step,
+    );
+    test_step.dependOn(action_outbox_recovery_test_step);
+    test_compile_step.dependOn(
+        action_outbox_recovery_compile_step,
+    );
+
     // Model-free deterministic QoS conformance demo. Native tests execute it,
     // cross-target gates compile it, and it is never installed as a production
     // or benchmark binary.
