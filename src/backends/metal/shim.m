@@ -11,7 +11,13 @@
 // lightest-weight path that works on every macOS version we target.
 
 #import <Metal/Metal.h>
+#include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define GLACIER_METAL_DEVICE_INFO_ABI 0x474d444900000001ULL
+#define GLACIER_METAL_DISPATCH_ABI 0x474d445200000001ULL
 
 // Opaque handle returned to Zig. The Zig side treats it as *anyopaque.
 typedef struct {
@@ -33,38 +39,151 @@ typedef struct {
     uint32_t group_shift;
 } GlacierMetalInt4Weight;
 
+// Fixed-width, pointer-free facts used to derive the selected device and
+// placement identities. Capacity is retained as capability context only; it
+// is never relabelled as allocated or resident memory.
+typedef struct {
+    uint64_t abi_version;
+    uint64_t registry_id;
+    uint64_t current_allocated_size;
+    uint64_t recommended_max_working_set_size;
+    uint64_t location;
+    uint64_t location_number;
+    uint64_t max_threads_x;
+    uint64_t max_threads_y;
+    uint64_t max_threads_z;
+    uint32_t low_power;
+    uint32_t headless;
+    uint32_t removable;
+    uint32_t unified_memory;
+} GlacierMetalDeviceInfo;
+
+// One completed command-buffer observation. GPU timestamps are retained as
+// their exact IEEE-754 bit patterns by the Zig wrapper before hashing.
+typedef struct {
+    uint64_t abi_version;
+    uint64_t current_allocated_before;
+    uint64_t current_allocated_after;
+    double gpu_start_time;
+    double gpu_end_time;
+    uint32_t command_status;
+    uint32_t reserved;
+} GlacierMetalDispatchObservation;
+
+_Static_assert(sizeof(GlacierMetalDeviceInfo) == 88,
+    "GlacierMetalDeviceInfo ABI size changed");
+_Static_assert(offsetof(GlacierMetalDeviceInfo, registry_id) == 8,
+    "GlacierMetalDeviceInfo registry offset changed");
+_Static_assert(offsetof(GlacierMetalDeviceInfo, current_allocated_size) == 16,
+    "GlacierMetalDeviceInfo allocation offset changed");
+_Static_assert(offsetof(GlacierMetalDeviceInfo, low_power) == 72,
+    "GlacierMetalDeviceInfo flag offset changed");
+_Static_assert(sizeof(GlacierMetalDispatchObservation) == 48,
+    "GlacierMetalDispatchObservation ABI size changed");
+_Static_assert(offsetof(GlacierMetalDispatchObservation, gpu_start_time) == 24,
+    "GlacierMetalDispatchObservation start offset changed");
+_Static_assert(offsetof(GlacierMetalDispatchObservation, command_status) == 40,
+    "GlacierMetalDispatchObservation status offset changed");
+
+static void glacier_metal_context_destroy(GlacierMetalContext* ctx) {
+    if (!ctx) return;
+    ctx->int4_matvec_pipeline = nil;
+    ctx->dequant_pipeline = nil;
+    ctx->library = nil;
+    ctx->queue = nil;
+    ctx->device = nil;
+    free(ctx);
+}
+
+static void glacier_metal_weight_destroy(GlacierMetalInt4Weight* weight) {
+    if (!weight) return;
+    weight->packed = nil;
+    weight->scales = nil;
+    weight->input = nil;
+    weight->output = nil;
+    free(weight);
+}
+
 // Create a Metal context. `metallib_path` is a UTF-8 path to a compiled
 // .metallib (produced by `xcrun -sdk macosx metallib`). Returns NULL on
 // failure (Metal unavailable, file missing, etc.).
 GlacierMetalContext* glacier_metal_init(const char* metallib_path) {
-    GlacierMetalContext* ctx = (GlacierMetalContext*)malloc(sizeof(GlacierMetalContext));
+    GlacierMetalContext* ctx =
+        (GlacierMetalContext*)calloc(1, sizeof(GlacierMetalContext));
     if (!ctx) return NULL;
     ctx->device = MTLCreateSystemDefaultDevice();
-    if (!ctx->device) { free(ctx); return NULL; }
+    if (!ctx->device) {
+        glacier_metal_context_destroy(ctx);
+        return NULL;
+    }
     ctx->queue = [ctx->device newCommandQueue];
+    if (!ctx->queue) {
+        glacier_metal_context_destroy(ctx);
+        return NULL;
+    }
 
     NSString* path = [NSString stringWithUTF8String:metallib_path];
+    if (!path) {
+        glacier_metal_context_destroy(ctx);
+        return NULL;
+    }
     NSError* err = nil;
     ctx->library = [ctx->device newLibraryWithURL:[NSURL fileURLWithPath:path] error:&err];
-    if (!ctx->library) { free(ctx); return NULL; }
+    if (!ctx->library) {
+        glacier_metal_context_destroy(ctx);
+        return NULL;
+    }
 
     id<MTLFunction> fn = [ctx->library newFunctionWithName:@"dequant_int4_to_f16"];
-    if (!fn) { free(ctx); return NULL; }
+    if (!fn) {
+        glacier_metal_context_destroy(ctx);
+        return NULL;
+    }
     ctx->dequant_pipeline = [ctx->device newComputePipelineStateWithFunction:fn error:&err];
-    if (!ctx->dequant_pipeline) { free(ctx); return NULL; }
+    if (!ctx->dequant_pipeline) {
+        glacier_metal_context_destroy(ctx);
+        return NULL;
+    }
 
     id<MTLFunction> matvec_fn = [ctx->library newFunctionWithName:@"matvec_int4_f32"];
-    if (!matvec_fn) { free(ctx); return NULL; }
+    if (!matvec_fn) {
+        glacier_metal_context_destroy(ctx);
+        return NULL;
+    }
     ctx->int4_matvec_pipeline = [ctx->device newComputePipelineStateWithFunction:matvec_fn error:&err];
-    if (!ctx->int4_matvec_pipeline) { free(ctx); return NULL; }
+    if (!ctx->int4_matvec_pipeline) {
+        glacier_metal_context_destroy(ctx);
+        return NULL;
+    }
     return ctx;
 }
 
 void glacier_metal_deinit(GlacierMetalContext* ctx) {
-    if (!ctx) return;
-    // ARC under Obj-C GC handles release; for non-ARC build these are
-    // bridging-retained. We assume ARC is enabled for this file.
-    free(ctx);
+    glacier_metal_context_destroy(ctx);
+}
+
+int glacier_metal_device_info(
+    GlacierMetalContext* ctx,
+    GlacierMetalDeviceInfo* out)
+{
+    if (!ctx || !ctx->device || !out) return 1;
+    memset(out, 0, sizeof(*out));
+    out->abi_version = GLACIER_METAL_DEVICE_INFO_ABI;
+    out->registry_id = ctx->device.registryID;
+    out->current_allocated_size = ctx->device.currentAllocatedSize;
+    out->recommended_max_working_set_size =
+        ctx->device.recommendedMaxWorkingSetSize;
+    out->location = (uint64_t)ctx->device.location;
+    out->location_number = (uint64_t)ctx->device.locationNumber;
+    const MTLSize max_threads = ctx->device.maxThreadsPerThreadgroup;
+    out->max_threads_x = (uint64_t)max_threads.width;
+    out->max_threads_y = (uint64_t)max_threads.height;
+    out->max_threads_z = (uint64_t)max_threads.depth;
+    out->low_power = ctx->device.isLowPower ? 1U : 0U;
+    out->headless = ctx->device.isHeadless ? 1U : 0U;
+    out->removable = ctx->device.isRemovable ? 1U : 0U;
+    out->unified_memory = ctx->device.hasUnifiedMemory ? 1U : 0U;
+    return 0;
 }
 
 // Dispatch the INT4 → FP16 dequant kernel.
@@ -231,7 +350,7 @@ GlacierMetalInt4Weight* glacier_metal_int4_weight_create(
     weight->output = [ctx->device newBufferWithLength:(uint64_t)out_features * sizeof(float)
                                                options:MTLResourceStorageModeShared];
     if (!weight->packed || !weight->scales || !weight->input || !weight->output) {
-        free(weight);
+        glacier_metal_weight_destroy(weight);
         return NULL;
     }
     weight->in_features = in_features;
@@ -242,25 +361,29 @@ GlacierMetalInt4Weight* glacier_metal_int4_weight_create(
 }
 
 void glacier_metal_int4_weight_destroy(GlacierMetalInt4Weight* weight) {
-    if (!weight) return;
-    weight->packed = nil;
-    weight->scales = nil;
-    weight->input = nil;
-    weight->output = nil;
-    free(weight);
+    glacier_metal_weight_destroy(weight);
 }
 
-int glacier_metal_int4_matvec(
+int glacier_metal_int4_matvec_observed(
     GlacierMetalContext* ctx,
     GlacierMetalInt4Weight* weight,
     const float* input,
     uint64_t input_count,
     float* output,
-    uint64_t output_count)
+    uint64_t output_count,
+    GlacierMetalDispatchObservation* observation)
 {
+    if (observation) {
+        memset(observation, 0, sizeof(*observation));
+        observation->abi_version = GLACIER_METAL_DISPATCH_ABI;
+    }
     if (!ctx || !weight || !input || !output ||
         input_count < weight->in_features || output_count < weight->out_features) return 1;
 
+    if (observation) {
+        observation->current_allocated_before =
+            ctx->device.currentAllocatedSize;
+    }
     memcpy(weight->input.contents, input, (uint64_t)weight->in_features * sizeof(float));
     struct { uint32_t in_features, out_features, group_size, group_shift; } dims = {
         weight->in_features, weight->out_features, weight->group_size, weight->group_shift
@@ -282,9 +405,34 @@ int glacier_metal_int4_matvec(
     [enc endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
-    if (cb.status == MTLCommandBufferStatusError) return 3;
+    if (observation) {
+        observation->current_allocated_after =
+            ctx->device.currentAllocatedSize;
+        observation->gpu_start_time = cb.GPUStartTime;
+        observation->gpu_end_time = cb.GPUEndTime;
+        observation->command_status = (uint32_t)cb.status;
+    }
+    if (cb.status != MTLCommandBufferStatusCompleted) return 3;
 
     memcpy(output, weight->output.contents,
         (uint64_t)weight->out_features * sizeof(float));
     return 0;
+}
+
+int glacier_metal_int4_matvec(
+    GlacierMetalContext* ctx,
+    GlacierMetalInt4Weight* weight,
+    const float* input,
+    uint64_t input_count,
+    float* output,
+    uint64_t output_count)
+{
+    return glacier_metal_int4_matvec_observed(
+        ctx,
+        weight,
+        input,
+        input_count,
+        output,
+        output_count,
+        NULL);
 }

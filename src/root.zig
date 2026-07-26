@@ -143,9 +143,12 @@ pub const ContinuationObjectSweepFile =
 pub const cpu_backend = @import("backends/cpu/backend.zig");
 pub const int4_matmul = @import("backends/cpu/int4_matmul.zig");
 pub const metal_backend = @import("backends/metal/backend.zig");
+pub const metal_native_observer =
+    @import("backends/metal/native_observer.zig");
 
 pub const CpuBackend = cpu_backend.CpuBackend;
 pub const MetalBackend = metal_backend.MetalBackend;
+pub const MetalNativeObserver = metal_native_observer;
 
 /// Build-time flag from build.zig. When false, the Metal bindings are still
 /// compiled (so the API surface stays stable) but tests that need a real

@@ -1351,6 +1351,7 @@ pub fn build(b: *std.Build) void {
             "unittest",
             "bench.tests.test_native_observation_conformance",
             "bench.tests.test_native_observer",
+            "bench.tests.test_native_observer_linux",
             "bench.tests.test_paired_abba",
         });
     run_native_observation_model.setCwd(b.path("."));
@@ -1388,7 +1389,7 @@ pub fn build(b: *std.Build) void {
     );
     const native_observation_test_step = b.step(
         "native-observation-test",
-        "Run native observation, admission, oracle and macOS probe tests",
+        "Run native observation, oracle and host-adapter tests",
     );
     native_observation_test_step.dependOn(
         &run_native_observation_tests.step,
@@ -1453,6 +1454,139 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(
         native_observation_compile_step,
     );
+
+    // W5b-a is an explicitly invoked native macOS gate. Its Python verifier
+    // launches the only real fixed-input Metal dispatch after all pure Zig
+    // and Python mutation tests finish. Unlike the broad test suite, this
+    // gate fails rather than skipping when native Metal evidence is absent.
+    const native_metal_observation_test_step = b.step(
+        "native-metal-observation-test",
+        "Run the hard native macOS Metal readiness gate",
+    );
+    const native_metal_observation_pure_test_step = b.step(
+        "native-metal-observation-pure-test",
+        "Run pure Metal readiness composition tests without a GPU dispatch",
+    );
+    const native_metal_observation_compile_step = b.step(
+        "native-metal-observation-compile",
+        "Compile the native macOS Metal readiness CLI without running it",
+    );
+    if (metal_shim != null and
+        builtin.os.tag == .macos and
+        target.result.cpu.arch == builtin.cpu.arch and
+        target.result.os.tag == builtin.os.tag and
+        target.result.abi == builtin.abi)
+    {
+        const shim = metal_shim.?;
+        const native_metal_lib = buildMetalLib(b);
+        const native_metal_observation_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "tests/native_metal_observation.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+        native_metal_observation_tests.root_module.addImport(
+            "engine",
+            engine_mod,
+        );
+        const run_native_metal_observation_tests =
+            b.addRunArtifact(native_metal_observation_tests);
+
+        const native_metal_observation_exe = b.addExecutable(.{
+            .name = "glacier-native-metal-observation",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_metal_observation.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+        native_metal_observation_exe.root_module.addImport(
+            "engine",
+            engine_mod,
+        );
+        native_metal_observation_exe.linkLibC();
+        native_metal_observation_exe.linkLibrary(shim);
+        native_metal_observation_exe.linkFramework("Metal");
+        native_metal_observation_exe.linkFramework("Foundation");
+        native_metal_observation_compile_step.dependOn(
+            &native_metal_observation_exe.step,
+        );
+
+        const run_native_metal_observation_model =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "unittest",
+                "bench.tests.test_native_metal_readiness",
+            });
+        run_native_metal_observation_model.setCwd(b.path("."));
+        run_native_metal_observation_model.setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_native_metal_observation_model.setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+
+        const run_native_metal_observation_verifier =
+            b.addSystemCommand(&.{"python3"});
+        run_native_metal_observation_verifier.setCwd(b.path("."));
+        run_native_metal_observation_verifier.setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_native_metal_observation_verifier.setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+        run_native_metal_observation_verifier.addFileArg(
+            b.path("bench/native_metal_readiness.py"),
+        );
+        run_native_metal_observation_verifier.addArg("--runner");
+        run_native_metal_observation_verifier.addArtifactArg(
+            native_metal_observation_exe,
+        );
+        run_native_metal_observation_verifier.step.dependOn(
+            &native_metal_lib.step,
+        );
+        run_native_metal_observation_verifier.step.dependOn(
+            &run_native_metal_observation_tests.step,
+        );
+        run_native_metal_observation_verifier.step.dependOn(
+            &run_native_metal_observation_model.step,
+        );
+        native_metal_observation_pure_test_step.dependOn(
+            &run_native_metal_observation_tests.step,
+        );
+        native_metal_observation_pure_test_step.dependOn(
+            &run_native_metal_observation_model.step,
+        );
+        native_metal_observation_test_step.dependOn(
+            &run_native_metal_observation_verifier.step,
+        );
+    } else {
+        const native_metal_failure = b.addFail(
+            "native Metal readiness requires a native macOS target and " ++
+                "Metal enabled (omit -Dmetal=false)",
+        );
+        native_metal_observation_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_observation_pure_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_observation_compile_step.dependOn(
+            &native_metal_failure.step,
+        );
+    }
 
     // W4b-a keeps pure tool execution separate from W4a. The retained
     // fixed-storage harness has no ambient I/O authority; its native report
