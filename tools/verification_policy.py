@@ -9,7 +9,6 @@ import os
 import re
 import subprocess
 import sys
-import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 from typing import FrozenSet, Iterable, Optional, Sequence, Tuple, Union
@@ -522,8 +521,12 @@ def check_changed_python(paths: Sequence[str]) -> None:
     for path in paths:
         if Path(path).suffix.lower() != ".py" or not Path(path).is_file():
             continue
-        with tokenize.open(path) as source:
-            compile(source.read(), path, "exec", dont_inherit=True)
+        # Compile bytes directly so Python honors PEP 263 encoding cookies
+        # without importing the stdlib ``tokenize`` module. Executing this
+        # policy as ``tools/verification_policy.py`` puts ``tools/`` first on
+        # sys.path, where the repository's tokenizer CLI would otherwise
+        # shadow that stdlib module.
+        compile(Path(path).read_bytes(), path, "exec", dont_inherit=True)
 
 
 def _shell_syntax_command(path: Path) -> Tuple[str, ...]:

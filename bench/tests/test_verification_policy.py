@@ -257,6 +257,19 @@ class VerificationPolicyTests(unittest.TestCase):
         policy.check_changed_python(["bench/tests/deleted.py"])
         policy.check_changed_shell(["tools/deleted.sh"])
 
+    def test_changed_python_compiles_bytes_without_tokenize_import(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            valid = root / "valid.py"
+            invalid = root / "invalid.py"
+            valid.write_bytes(
+                b"# -*- coding: latin-1 -*-\nlabel = 'caf\\xe9'\n"
+            )
+            invalid.write_bytes(b"if True print('broken')\n")
+            policy.check_changed_python([str(valid)])
+            with self.assertRaises(SyntaxError):
+                policy.check_changed_python([str(invalid)])
+
     def test_shell_syntax_uses_the_declared_retained_interpreter(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
