@@ -5,8 +5,9 @@ contract to real direct Shared `MTLBuffer` resources on macOS through both the
 receipt-bound ChildLease coordinator and the execution-owned LeaseTree
 coordinator. It is a bounded allocation-ownership prototype, not a residency
 or performance subsystem. Its optional dispatch path adds per-adapter
-**single-flight Metal async completion delivery**; it is neither a global
-native queue-depth limit nor a general queue scheduler.
+**bounded two-slot Metal async completion delivery**; it is neither a global
+native queue-depth limit, physical-parallel execution claim, nor a general
+queue scheduler.
 
 ## What is implemented
 
@@ -27,7 +28,9 @@ For one exact `MetalBackend` context, the adapter:
 8. releases every native object before returning the ChildLease charge or
    committing a LeaseTree FreePermit; and
 9. rejects copied leases after release and reuses slots only under newer
-   generations.
+   generations; and
+10. routes two independently fenced async dispatch lanes with exact replay,
+    capacity rejection, and out-of-order settlement.
 
 ## Device lifecycle observation
 
@@ -117,21 +120,34 @@ hardware removal callback or prove physical reclamation. See
 
 ## Dispatch pin and async completion
 
-For the bounded LeaseTree dispatch profile, the same adapter also binds four
-exact live objects to packed weights, scales, input, and output roles. One
-adapter-owned slot retains one exact request and a pointer-free,
-generation-fenced `MetalAsyncDispatchTicketV1`. Submit is separate from
-non-blocking poll and blocking wait; an exact submit replay returns the same
-ticket without uploading or committing twice. The underlying native backend
-may own commands for distinct buffer sets concurrently, so the single-flight
-claim is deliberately scoped to this adapter.
+For the bounded LeaseTree dispatch profile, the same adapter binds four exact
+live objects to packed weights, scales, input, and output roles for each
+command. Two fixed adapter-local lanes may retain independent requests and
+pointer-free, generation-fenced `MetalAsyncDispatchTicketV1` values. The
+ticket's `queue_slot` is part of its integrity root and routes poll, wait,
+quarantine, terminal validation, settlement, loss reconciliation, and replay
+to the exact lane. Submit is separate from non-blocking poll and blocking wait;
+an exact replay returns the same ticket without uploading or committing twice.
+A distinct request selects the lowest free canonical lane, while a third
+distinct request rejects before native upload or commit when both are
+occupied. This bounded capacity does not assert that the device executes two
+commands physically in parallel.
 
 The native command registry strongly retains the command buffer and the exact
 four registered buffers until exact finalization. Pending completion is
 nonterminal, leaves caller output unchanged, and preserves the allocation pin
 and charge. Output copying requires the exact command token, submission
-binding, immutable completed snapshot, and output-role token while both native
-records remain live.
+binding, immutable completed snapshot, and output-role token. One lane can
+complete and settle before its sibling without clearing or mutating the
+sibling's request, pin, command, quarantine, terminal, or tombstone state.
+
+`ResourceBank.snapshotV4()` is the additive pin-aware observation boundary. It
+reports fixed pin-slot capacity and metadata bytes, current and peak active
+slots, acquisitions, completions, queue-capacity and physical-slot rejections,
+and reserved completion headroom. Snapshots V1–V3 retain their prior layouts
+and meanings. Every accepted pin reserves one future LeaseTree generation and
+one structural revision on its exact root. Other mutations cannot consume that
+tail, so out-of-order releases remain monotonic even near counter exhaustion.
 
 The Metal INT4 profile also has an adapter-authorized pre-submit rejection
 path. `MetalMatvecPreSubmitAttemptV1` seals raw geometry, host
@@ -292,6 +308,20 @@ exposes the bounded plan/facts ABI. Fault plans are context-local and one-shot,
 with no environment-variable or process-global control. Two host threads race
 to arm one context, and synchronization at the native device admits exactly one
 winner while the loser receives `PlanAlreadyArmed`.
+
+The same isolated artifact contains a bounded two-slot pressure proof that is
+separate from loss classification. One adapter materializes an eight-object
+lease containing two disjoint four-buffer INT4 role sets, then prepares, pins,
+and submits both commands. The native registry reaches two live command records
+before either is settled; replaying A or B does not create a third record, and
+a third distinct request is rejected before native mutation. After both native
+commands complete and match their CPU oracles, the gate consumes B's Bank pin
+and finalizes B while A's completed record and pin remain live, then settles A.
+SnapshotV4 records the exact `0 → 2 → 1 → 0` pin lifecycle, and the final gate
+requires zero live commands, pins, and buffers. The result proves bounded
+coexistence and out-of-order settlement isolation, not physical GPU parallel
+execution, command-completion order, throughput, or a production queue-depth
+measurement.
 
 The admitted plan does not make Metal fail physically. It submits one real
 four-buffer command, waits for the native command buffer to complete
@@ -534,22 +564,27 @@ native Metal, OS, driver, or device evidence.
 
 The allocation-aware inventory helper validates the
 `matvec_int4_f32_bounded` pipeline and publishes that operation profile. The
-native allocation gate now includes one correctness-only pinned dispatch for
-that exact profile; it is not yet a generic allocation-only Metal profile or a
-performance gate.
+native allocation gates include the ordinary correctness-only pinned dispatch
+and the isolated two-slot out-of-order pressure proof for that exact profile;
+they are not yet a generic allocation-only Metal profile or a performance
+gate.
 
 ## Claim boundary
 
 This slice establishes direct Metal resource creation, per-object inspection,
 adapter ownership, logical precharge, release ordering, and generation-fenced
-reuse plus per-adapter single-flight async completion delivery on the host that
-executes the hard gates. It establishes the pointer-free authorization and
-pre-settlement retention contract for exact terminal command errors through
-pure Zig and independent Python mirror tests. The build-isolated native gate
-then exercises that reconciliation path after a real command physically
-completes successfully, using a separately recorded test-only publication
-overlay and exact coordinator retry. Phase A additionally binds only the exact
-native `5/1/11` lifecycle transition to the retained active pin through fixed
+reuse plus per-adapter bounded two-slot async completion delivery on the host
+that executes the hard gates. The native pressure proof retains two real
+commands over disjoint buffers, settles them out of order, rejects a third
+request without native mutation, and closes every command, pin, and buffer. It
+establishes bounded slot isolation, not physical parallel execution or
+performance. The slice also establishes pointer-free authorization and
+pre-settlement retention for exact terminal command errors through pure Zig
+and independent Python mirror tests. The build-isolated native gate exercises
+that reconciliation path after a real command physically completes
+successfully, using a separately recorded test-only publication overlay and
+exact coordinator retry. Phase A additionally binds only the exact native
+`5/1/11` lifecycle transition to the retained active pin through fixed
 pointer-free retention, plan, and receipt evidence, a native-only production
 gate, Bank-first finalization, and separate later allocation retirement.
 Phase B additionally binds the four retained nonterminal ownership states to
@@ -574,8 +609,8 @@ explicitly synthetic test-only loss permit. It does not establish:
 - a physical removal-callback campaign;
 - an additional-backend Phase B implementation;
 - fresh selection or automatic migration;
-- multi-slot queue scheduling, a global native queue-depth limit, queue-depth
-  evidence, or transfer ownership;
+- dynamic or unbounded queue scheduling beyond two slots, a global native
+  queue-depth limit, physical queue-depth evidence, or transfer ownership;
 - inferred terminal state or quarantine reconciliation after ambiguous queue
   ownership or unknown completion;
 - multiple simultaneously materialized coordinator leases per adapter context;

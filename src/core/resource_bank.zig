@@ -35,6 +35,10 @@ pub const maximum_lease_pin_nodes: usize = 64;
 /// Snapshot v3 adds LeaseTree state and operation counters. Snapshot v1/v2
 /// layouts and meanings remain unchanged.
 pub const snapshot_v3_abi: u64 = 0x4752_4253_0000_0003;
+/// Snapshot v4 adds bounded command-pin capacity, activity, operation, and
+/// completion-headroom telemetry. Snapshot v1/v2/v3 layouts and meanings
+/// remain unchanged.
+pub const snapshot_v4_abi: u64 = 0x4752_4253_0000_0004;
 
 pub const Error = error{
     InvalidConfiguration,
@@ -744,6 +748,69 @@ pub const SnapshotV3 = struct {
     rejected_lease_nodes: u64,
 };
 
+/// Pin-aware LeaseTree telemetry. Pin counts describe logical Bank ownership
+/// and caller-owned registry capacity, not native queue depth or accelerator
+/// utilization. Each active pin reserves one future global LeaseTree
+/// generation and one structural revision on its exact active root so an
+/// accepted pin can always publish a monotone completion tree.
+pub const SnapshotV4 = struct {
+    abi_version: u64,
+    bank_epoch: u64,
+    limits: Limits,
+    used: Claim,
+    peak: Claim,
+    peak_host_bytes: u64,
+    active_reservations: usize,
+    committed_receipts: usize,
+    active_child_leases: usize,
+    active_lease_trees: usize,
+    active_lease_scopes: usize,
+    active_lease_nodes: usize,
+    lease_root_pool_bytes: usize,
+    lease_node_pool_bytes: usize,
+    lease_metadata_bytes: usize,
+    reserved_unmaterialized_allocations: usize,
+    live_allocations: usize,
+    quiescing_allocations: usize,
+    free_authorized_allocations: usize,
+    successful_reservations: u64,
+    successful_commits: u64,
+    cancellations: u64,
+    releases: u64,
+    rejected_capacity: u64,
+    rejected_slots: u64,
+    child_opens: u64,
+    child_grows: u64,
+    child_shrinks: u64,
+    child_closes: u64,
+    rejected_child_capacity: u64,
+    lease_tree_opens: u64,
+    lease_scope_opens: u64,
+    lease_allocation_reserves: u64,
+    lease_allocation_materializations: u64,
+    lease_allocation_aborts: u64,
+    lease_reclaim_prepares: u64,
+    lease_reclaim_authorizations: u64,
+    lease_reclaim_cancels: u64,
+    lease_reclaim_commits: u64,
+    lease_tree_closes: u64,
+    rejected_lease_capacity: u64,
+    rejected_lease_nodes: u64,
+    lease_pin_slot_capacity: usize,
+    lease_pin_pool_bytes: usize,
+    lease_metadata_with_pins_bytes: usize,
+    active_lease_pin_slots: usize,
+    peak_active_lease_pin_slots: usize,
+    lease_pin_acquisitions: u64,
+    lease_pin_completions: u64,
+    rejected_lease_pin_queue_capacity: u64,
+    rejected_lease_pin_slots: u64,
+    rejected_lease_pin_generation_headroom: u64,
+    rejected_lease_pin_structural_headroom: u64,
+    reserved_lease_pin_completion_generations: u64,
+    reserved_lease_pin_completion_structural_revisions: u64,
+};
+
 /// Source-level Zig coordinator, not a stable C binary layout. Receipt-v1
 /// tokens and the legacy Slot/Snapshot footprints remain their declared ABI;
 /// callers embedding `Bank` itself must rebuild from the same source revision.
@@ -783,6 +850,15 @@ pub const Bank = struct {
     lease_tree_closes: u64 = 0,
     rejected_lease_capacity: u64 = 0,
     rejected_lease_nodes: u64 = 0,
+    active_lease_pin_slots: usize = 0,
+    peak_active_lease_pin_slots: usize = 0,
+    lease_pin_acquisitions: u64 = 0,
+    lease_pin_completions: u64 = 0,
+    rejected_lease_pin_queue_capacity: u64 = 0,
+    rejected_lease_pin_slots: u64 = 0,
+    rejected_lease_pin_generation_headroom: u64 = 0,
+    rejected_lease_pin_structural_headroom: u64 = 0,
+    reserved_lease_pin_completion_generations: u64 = 0,
 
     /// The returned value may move until its first method call. Afterwards the
     /// Bank address and caller-owned slot slice must remain stable, and callers
@@ -1402,9 +1478,14 @@ pub const Bank = struct {
             self.rejected_lease_nodes +|= 1;
             return Error.LeaseNodesExhausted;
         };
-        if (root.structural_revision == std.math.maxInt(u64) or
-            root.active_nodes == std.math.maxInt(u32))
+        if (root.active_nodes == std.math.maxInt(u32))
             return Error.InvalidConfiguration;
+        try self.ensureLeaseTreeStructuralRevisionHeadroomLocked(
+            root.*,
+            tree.parent.slot_index,
+            1,
+            0,
+        );
         const generations = try self.reserveLeaseGenerations(2);
         var node: LeaseNodeSlot = .{
             .active = true,
@@ -1589,6 +1670,12 @@ pub const Bank = struct {
                 return Error.CapacityExceeded;
             }
         }
+        try self.ensureLeaseTreeStructuralRevisionHeadroomLocked(
+            root.*,
+            tree.parent.slot_index,
+            2,
+            0,
+        );
 
         // Batch, each node, reserve-tree, and settle/abort-tree generations
         // are preallocated before caller-side allocation can begin.
@@ -1706,6 +1793,12 @@ pub const Bank = struct {
         if (root.funding_mode != .additive)
             return Error.InvalidTransition;
         const storage = try self.leaseTreeStorage();
+        try self.ensureLeaseTreeStructuralRevisionHeadroomLocked(
+            root.*,
+            batch.parent.slot_index,
+            1,
+            0,
+        );
         for (storage.nodes) |*node| {
             if (node.active and
                 node.receipt_slot_index == batch.parent.slot_index and
@@ -1782,6 +1875,12 @@ pub const Bank = struct {
             return Error.InvalidTransition;
 
         const storage = try self.leaseTreeStorage();
+        try self.ensureLeaseTreeStructuralRevisionHeadroomLocked(
+            root.*,
+            batch.parent.slot_index,
+            1,
+            0,
+        );
         for (storage.nodes) |*node| {
             if (node.active and
                 node.receipt_slot_index == batch.parent.slot_index and
@@ -1821,6 +1920,12 @@ pub const Bank = struct {
             self.used
         else
             try subtractClaims(self.used, batch.claim);
+        try self.ensureLeaseTreeStructuralRevisionHeadroomLocked(
+            root.*,
+            batch.parent.slot_index,
+            1,
+            0,
+        );
         for (storage.nodes) |*node| {
             if (!node.active or node.receipt_slot_index != batch.parent.slot_index or
                 node.tree_identity_generation != batch.tree_identity_generation or
@@ -1897,10 +2002,14 @@ pub const Bank = struct {
                     1,
                 ) catch return Error.InvalidConfiguration;
         }
-        if (active_pins >= tree.parent.claim.queue_slots)
+        if (active_pins >= tree.parent.claim.queue_slots) {
+            self.rejected_lease_pin_queue_capacity +|= 1;
             return Error.CapacityExceeded;
-        const pin_index = free_pin_index orelse
+        }
+        const pin_index = free_pin_index orelse {
+            self.rejected_lease_pin_slots +|= 1;
             return Error.LeasePinSlotsExhausted;
+        };
 
         var members =
             [_]LeasePinMemberV1{.{}} ** maximum_lease_pin_nodes;
@@ -1937,8 +2046,27 @@ pub const Bank = struct {
         // Permit, acquired-tree, and completion-evidence generations are
         // reserved before mutation. The eventual release tree takes a fresh
         // generation so overlapping permits may complete in any order without
-        // regressing the current tree generation.
-        const generations = try self.reserveLeaseGenerations(3);
+        // regressing the current tree generation. One additional future
+        // generation and structural revision are reserved for that release;
+        // ordinary LeaseTree mutations cannot consume either tail.
+        self.ensureLeaseTreeStructuralRevisionHeadroomLocked(
+            root.*,
+            tree.parent.slot_index,
+            1,
+            1,
+        ) catch |err| return err;
+        const next_active_pin_slots = std.math.add(
+            usize,
+            self.active_lease_pin_slots,
+            1,
+        ) catch {
+            self.rejected_lease_pin_slots +|= 1;
+            return Error.InvalidConfiguration;
+        };
+        const generations = self.reserveLeasePinGenerations(3) catch |err| {
+            self.rejected_lease_pin_generation_headroom +|= 1;
+            return err;
+        };
         const permit_generation = generations;
         const acquired_tree_generation = generations + 1;
         const completion_generation = generations + 2;
@@ -1973,6 +2101,12 @@ pub const Bank = struct {
         root.generation = acquired_tree_generation;
         root.structural_revision += 1;
         self.refreshLeaseTreeRootLocked(tree.parent, root);
+        self.active_lease_pin_slots = next_active_pin_slots;
+        self.peak_active_lease_pin_slots = @max(
+            self.peak_active_lease_pin_slots,
+            next_active_pin_slots,
+        );
+        self.lease_pin_acquisitions +|= 1;
 
         var permit: LeasePinPermitV1 = .{
             .parent = tree.parent,
@@ -2033,8 +2167,6 @@ pub const Bank = struct {
             root.structural_revision == std.math.maxInt(u64))
             return Error.InvalidTransition;
 
-        const completion_tree_generation =
-            try self.reserveLeaseGenerations(1);
         const source = validated.pin_slot.*;
         const storage = try self.leaseTreeStorage();
         const member_count: usize = @intCast(source.node_count);
@@ -2043,12 +2175,19 @@ pub const Bank = struct {
             if (node.state != .live or node.pin_count == 0)
                 return Error.InvalidTransition;
         }
+        if (self.active_lease_pin_slots == 0)
+            return Error.InvalidTransition;
+        const next_active_pin_slots = self.active_lease_pin_slots - 1;
+        const completion_tree_generation =
+            try self.takeReservedLeasePinCompletionGeneration();
         for (source.members[0..member_count]) |member|
             storage.nodes[member.node_index].pin_count -= 1;
         validated.pin_slot.* = .{};
         root.generation = completion_tree_generation;
         root.structural_revision += 1;
         self.refreshLeaseTreeRootLocked(permit.parent, root);
+        self.active_lease_pin_slots = next_active_pin_slots;
+        self.lease_pin_completions +|= 1;
         const completion_tree = makeLeaseTree(permit.parent, root.*);
 
         var completion: LeasePinCompletionV1 = .{
@@ -2131,6 +2270,12 @@ pub const Bank = struct {
             !std.meta.eql(claim, scope_slot.subtree_claim))
             return Error.InvalidTransition;
 
+        try self.ensureLeaseTreeStructuralRevisionHeadroomLocked(
+            root.*,
+            tree.parent.slot_index,
+            3,
+            0,
+        );
         // Ticket, begin-tree, cancel/authorize-tree, irreversible free permit,
         // and free-completion-tree generations are reserved before quiescing.
         const generations = try self.reserveLeaseGenerations(5);
@@ -2206,6 +2351,12 @@ pub const Bank = struct {
 
         const root = try self.validateLeaseRetireTicketLocked(ticket);
         const storage = try self.leaseTreeStorage();
+        try self.ensureLeaseTreeStructuralRevisionHeadroomLocked(
+            root.*,
+            ticket.parent.slot_index,
+            1,
+            0,
+        );
         for (storage.nodes) |*node| {
             if (node.active and
                 node.receipt_slot_index == ticket.parent.slot_index and
@@ -2238,6 +2389,12 @@ pub const Bank = struct {
 
         const root = try self.validateLeaseRetireTicketLocked(ticket);
         const storage = try self.leaseTreeStorage();
+        try self.ensureLeaseTreeStructuralRevisionHeadroomLocked(
+            root.*,
+            ticket.parent.slot_index,
+            2,
+            0,
+        );
         for (storage.nodes) |*node| {
             if (node.active and
                 node.receipt_slot_index == ticket.parent.slot_index and
@@ -2312,6 +2469,12 @@ pub const Bank = struct {
         const next_scope_claim = try subtractClaims(
             scope.subtree_claim,
             permit.claim,
+        );
+        try self.ensureLeaseTreeStructuralRevisionHeadroomLocked(
+            root.*,
+            permit.parent.slot_index,
+            1,
+            0,
         );
         for (storage.nodes) |*node| {
             if (!node.active or node.receipt_slot_index != permit.parent.slot_index or
@@ -3056,6 +3219,10 @@ pub const Bank = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
+        return self.snapshotV3Locked();
+    }
+
+    fn snapshotV3Locked(self: *Bank) Error!SnapshotV3 {
         const base = try self.snapshotV2Locked();
         var derived_used: Claim = .{};
         for (self.slots) |slot| {
@@ -3238,6 +3405,96 @@ pub const Bank = struct {
         };
     }
 
+    pub fn snapshotV4(self: *Bank) Error!SnapshotV4 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const base = try self.snapshotV3Locked();
+        var pin_capacity: usize = 0;
+        var pin_pool_bytes: usize = 0;
+        var active_pins: usize = 0;
+        if (self.lease_tree_storage) |storage| {
+            pin_capacity = storage.pin_slots.len;
+            pin_pool_bytes = std.math.mul(
+                usize,
+                pin_capacity,
+                @sizeOf(LeasePinSlotV1),
+            ) catch return Error.ClaimOverflow;
+            for (storage.pin_slots) |pin_slot| {
+                if (pin_slot.active) active_pins += 1;
+            }
+        }
+        const active_pins_u64 = std.math.cast(u64, active_pins) orelse
+            return Error.InvalidTransition;
+        if (active_pins != self.active_lease_pin_slots or
+            self.peak_active_lease_pin_slots < active_pins or
+            self.reserved_lease_pin_completion_generations != active_pins_u64)
+            return Error.InvalidTransition;
+        const metadata_with_pins = std.math.add(
+            usize,
+            base.lease_metadata_bytes,
+            pin_pool_bytes,
+        ) catch return Error.ClaimOverflow;
+
+        return .{
+            .abi_version = snapshot_v4_abi,
+            .bank_epoch = base.bank_epoch,
+            .limits = base.limits,
+            .used = base.used,
+            .peak = base.peak,
+            .peak_host_bytes = base.peak_host_bytes,
+            .active_reservations = base.active_reservations,
+            .committed_receipts = base.committed_receipts,
+            .active_child_leases = base.active_child_leases,
+            .active_lease_trees = base.active_lease_trees,
+            .active_lease_scopes = base.active_lease_scopes,
+            .active_lease_nodes = base.active_lease_nodes,
+            .lease_root_pool_bytes = base.lease_root_pool_bytes,
+            .lease_node_pool_bytes = base.lease_node_pool_bytes,
+            .lease_metadata_bytes = base.lease_metadata_bytes,
+            .reserved_unmaterialized_allocations = base.reserved_unmaterialized_allocations,
+            .live_allocations = base.live_allocations,
+            .quiescing_allocations = base.quiescing_allocations,
+            .free_authorized_allocations = base.free_authorized_allocations,
+            .successful_reservations = base.successful_reservations,
+            .successful_commits = base.successful_commits,
+            .cancellations = base.cancellations,
+            .releases = base.releases,
+            .rejected_capacity = base.rejected_capacity,
+            .rejected_slots = base.rejected_slots,
+            .child_opens = base.child_opens,
+            .child_grows = base.child_grows,
+            .child_shrinks = base.child_shrinks,
+            .child_closes = base.child_closes,
+            .rejected_child_capacity = base.rejected_child_capacity,
+            .lease_tree_opens = base.lease_tree_opens,
+            .lease_scope_opens = base.lease_scope_opens,
+            .lease_allocation_reserves = base.lease_allocation_reserves,
+            .lease_allocation_materializations = base.lease_allocation_materializations,
+            .lease_allocation_aborts = base.lease_allocation_aborts,
+            .lease_reclaim_prepares = base.lease_reclaim_prepares,
+            .lease_reclaim_authorizations = base.lease_reclaim_authorizations,
+            .lease_reclaim_cancels = base.lease_reclaim_cancels,
+            .lease_reclaim_commits = base.lease_reclaim_commits,
+            .lease_tree_closes = base.lease_tree_closes,
+            .rejected_lease_capacity = base.rejected_lease_capacity,
+            .rejected_lease_nodes = base.rejected_lease_nodes,
+            .lease_pin_slot_capacity = pin_capacity,
+            .lease_pin_pool_bytes = pin_pool_bytes,
+            .lease_metadata_with_pins_bytes = metadata_with_pins,
+            .active_lease_pin_slots = active_pins,
+            .peak_active_lease_pin_slots = self.peak_active_lease_pin_slots,
+            .lease_pin_acquisitions = self.lease_pin_acquisitions,
+            .lease_pin_completions = self.lease_pin_completions,
+            .rejected_lease_pin_queue_capacity = self.rejected_lease_pin_queue_capacity,
+            .rejected_lease_pin_slots = self.rejected_lease_pin_slots,
+            .rejected_lease_pin_generation_headroom = self.rejected_lease_pin_generation_headroom,
+            .rejected_lease_pin_structural_headroom = self.rejected_lease_pin_structural_headroom,
+            .reserved_lease_pin_completion_generations = self.reserved_lease_pin_completion_generations,
+            .reserved_lease_pin_completion_structural_revisions = active_pins_u64,
+        };
+    }
+
     fn snapshotV2Locked(self: *Bank) Error!SnapshotV2 {
         var active: usize = 0;
         var committed: usize = 0;
@@ -3343,14 +3600,124 @@ pub const Bank = struct {
                     root.restored_publication_activated));
     }
 
-    fn reserveLeaseGenerations(self: *Bank, count: u64) Error!u64 {
+    fn leaseGenerationReservationFits(
+        self: *Bank,
+        count: u64,
+        additional_pin_completion_headroom: u64,
+    ) bool {
         if (count == 0 or self.next_lease_generation == 0 or
-            self.next_lease_generation == std.math.maxInt(u64) or
-            count >= std.math.maxInt(u64) - self.next_lease_generation)
+            self.next_lease_generation == std.math.maxInt(u64))
+            return false;
+        const reserved_headroom = std.math.add(
+            u64,
+            self.reserved_lease_pin_completion_generations,
+            additional_pin_completion_headroom,
+        ) catch return false;
+        const required = std.math.add(
+            u64,
+            count,
+            reserved_headroom,
+        ) catch return false;
+        return required <
+            std.math.maxInt(u64) - self.next_lease_generation;
+    }
+
+    fn reserveLeaseGenerations(self: *Bank, count: u64) Error!u64 {
+        if (!self.leaseGenerationReservationFits(count, 0)) {
+            if (count != 0 and self.next_lease_generation != 0 and
+                self.next_lease_generation != std.math.maxInt(u64) and
+                count < std.math.maxInt(u64) -
+                    self.next_lease_generation and
+                self.reserved_lease_pin_completion_generations != 0)
+                self.rejected_lease_pin_generation_headroom +|= 1;
             return Error.InvalidConfiguration;
+        }
         const first = self.next_lease_generation;
         self.next_lease_generation += count;
         return first;
+    }
+
+    fn reserveLeasePinGenerations(
+        self: *Bank,
+        count: u64,
+    ) Error!u64 {
+        if (!self.leaseGenerationReservationFits(count, 1))
+            return Error.InvalidConfiguration;
+        const reserved_headroom = std.math.add(
+            u64,
+            self.reserved_lease_pin_completion_generations,
+            1,
+        ) catch return Error.InvalidConfiguration;
+        const first = self.next_lease_generation;
+        self.next_lease_generation += count;
+        self.reserved_lease_pin_completion_generations =
+            reserved_headroom;
+        return first;
+    }
+
+    fn takeReservedLeasePinCompletionGeneration(
+        self: *Bank,
+    ) Error!u64 {
+        if (self.reserved_lease_pin_completion_generations == 0 or
+            self.next_lease_generation == 0 or
+            self.next_lease_generation == std.math.maxInt(u64))
+            return Error.InvalidConfiguration;
+        const generation = self.next_lease_generation;
+        self.next_lease_generation += 1;
+        self.reserved_lease_pin_completion_generations -= 1;
+        return generation;
+    }
+
+    fn activeLeasePinsForRootLocked(
+        self: *Bank,
+        root: LeaseTreeRootSlot,
+        receipt_slot_index: u32,
+    ) Error!u64 {
+        const storage = try self.leaseTreeStorage();
+        var active: u64 = 0;
+        for (storage.pin_slots) |pin_slot| {
+            if (!pin_slot.active or
+                pin_slot.receipt_slot_index != receipt_slot_index)
+                continue;
+            if (!root.active or pin_slot.tree_key != root.tree_key or
+                pin_slot.tree_identity_generation != root.identity_generation)
+                return Error.InvalidTransition;
+            active = std.math.add(u64, active, 1) catch
+                return Error.InvalidTransition;
+        }
+        return active;
+    }
+
+    fn ensureLeaseTreeStructuralRevisionHeadroomLocked(
+        self: *Bank,
+        root: LeaseTreeRootSlot,
+        receipt_slot_index: u32,
+        revisions: u64,
+        additional_pin_completion_headroom: u64,
+    ) Error!void {
+        if (!root.active or revisions == 0)
+            return Error.InvalidConfiguration;
+        const active_pins = try self.activeLeasePinsForRootLocked(
+            root,
+            receipt_slot_index,
+        );
+        const reserved_after = std.math.add(
+            u64,
+            active_pins,
+            additional_pin_completion_headroom,
+        ) catch return Error.InvalidConfiguration;
+        const required = std.math.add(
+            u64,
+            revisions,
+            reserved_after,
+        ) catch return Error.InvalidConfiguration;
+        if (required >
+            std.math.maxInt(u64) - root.structural_revision)
+        {
+            if (reserved_after != 0)
+                self.rejected_lease_pin_structural_headroom +|= 1;
+            return Error.InvalidConfiguration;
+        }
     }
 
     fn refreshLeaseTreeRootLocked(
@@ -7102,6 +7469,265 @@ test "copied funded allocation activation and abort linearize one outcome" {
     try std.testing.expectEqual(@as(usize, 0), snapshot.active_lease_trees);
 }
 
+test "SnapshotV4 is additive and preserves legacy snapshot ABIs" {
+    var slots = [_]Slot{.{}} ** 1;
+    var bank = try Bank.init(
+        &slots,
+        .{ .host_bytes = 64, .queue_slots = 2 },
+        0x534e_4150_5634,
+    );
+    const receipt = try bank.commit(try bank.reserve(
+        1,
+        .{ .kv_bytes = 32, .queue_slots = 2 },
+    ));
+
+    const legacy_v1 = try bank.snapshot();
+    const legacy_v2 = try bank.snapshotV2();
+    const legacy_v3 = try bank.snapshotV3();
+    const pin_aware = try bank.snapshotV4();
+    try std.testing.expectEqual(
+        @as(u64, 0x4752_424b_0000_0001),
+        legacy_v1.abi_version,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0x4752_4253_0000_0002),
+        legacy_v2.abi_version,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0x4752_4253_0000_0003),
+        legacy_v3.abi_version,
+    );
+    try std.testing.expectEqual(snapshot_v4_abi, pin_aware.abi_version);
+    try std.testing.expectEqualDeep(
+        legacy_v3,
+        try bank.snapshotV3(),
+    );
+    try std.testing.expectEqualDeep(legacy_v3.used, pin_aware.used);
+    try std.testing.expectEqual(
+        legacy_v3.committed_receipts,
+        pin_aware.committed_receipts,
+    );
+    try std.testing.expectEqual(@as(usize, 0), pin_aware.lease_pin_slot_capacity);
+    try std.testing.expectEqual(@as(usize, 0), pin_aware.lease_pin_pool_bytes);
+    try std.testing.expectEqual(@as(usize, 0), pin_aware.active_lease_pin_slots);
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        pin_aware.reserved_lease_pin_completion_generations,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        pin_aware.reserved_lease_pin_completion_structural_revisions,
+    );
+
+    try bank.release(receipt);
+}
+
+test "SnapshotV4 proves two live pins and protects completion headroom" {
+    var slots = [_]Slot{.{}} ** 1;
+    var roots = [_]LeaseTreeRootSlot{.{}} ** slots.len;
+    var nodes = [_]LeaseNodeSlot{.{}} ** 3;
+    var pin_slots = [_]LeasePinSlotV1{.{}} ** 2;
+    var bank = try Bank.initWithLeaseTreePinStorage(
+        &slots,
+        &roots,
+        &nodes,
+        &pin_slots,
+        .{
+            .host_bytes = 64,
+            .kv_bytes = 64,
+            .queue_slots = 2,
+        },
+        0x534e_4150_5049_4e34,
+    );
+    const receipt = try bank.commit(try bank.reserve(
+        2,
+        .{ .queue_slots = 2 },
+    ));
+    var tree = try bank.openLeaseTree(
+        receipt,
+        3,
+        4,
+        .{ .kv_bytes = 64 },
+    );
+    const scoped = try bank.openLeaseScope(
+        tree,
+        5,
+        6,
+        .{ .kv_bytes = 64 },
+    );
+    tree = scoped.tree;
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    try bank.bindPublicationSessionWithTree(tree, 7, session_id);
+    const specs = [_]LeaseAllocationSpecV1{.{
+        .scope = scoped.scope,
+        .node_key = 8,
+        .binding_key = 9,
+        .claim = .{ .kv_bytes = 32 },
+    }};
+    var leaves: [1]LeaseNodeV1 = undefined;
+    const reserved = try bank.reserveAllocationsForSession(
+        tree,
+        7,
+        session_id,
+        0,
+        &specs,
+        &leaves,
+    );
+    tree = try bank.commitAllocationsAfterAllocate(reserved.batch);
+
+    var telemetry = try bank.snapshotV4();
+    try std.testing.expectEqual(@as(usize, 2), telemetry.lease_pin_slot_capacity);
+    try std.testing.expectEqual(
+        @as(usize, 2 * @sizeOf(LeasePinSlotV1)),
+        telemetry.lease_pin_pool_bytes,
+    );
+    try std.testing.expectEqual(
+        telemetry.lease_metadata_bytes + telemetry.lease_pin_pool_bytes,
+        telemetry.lease_metadata_with_pins_bytes,
+    );
+    try std.testing.expectEqual(@as(usize, 0), telemetry.active_lease_pin_slots);
+    try std.testing.expectEqual(@as(usize, 0), telemetry.peak_active_lease_pin_slots);
+
+    const first = try bank.acquireLeasePinsForSession(
+        tree,
+        scoped.scope,
+        7,
+        session_id,
+        0,
+        10,
+        &leaves,
+    );
+    telemetry = try bank.snapshotV4();
+    try std.testing.expectEqual(@as(usize, 1), telemetry.active_lease_pin_slots);
+    try std.testing.expectEqual(@as(usize, 1), telemetry.peak_active_lease_pin_slots);
+    try std.testing.expectEqual(@as(u64, 1), telemetry.lease_pin_acquisitions);
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        telemetry.reserved_lease_pin_completion_generations,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        telemetry.reserved_lease_pin_completion_structural_revisions,
+    );
+
+    const second = try bank.acquireLeasePinsForSession(
+        first.tree,
+        scoped.scope,
+        7,
+        session_id,
+        0,
+        11,
+        &leaves,
+    );
+    telemetry = try bank.snapshotV4();
+    try std.testing.expectEqual(@as(usize, 2), telemetry.active_lease_pin_slots);
+    try std.testing.expectEqual(@as(usize, 2), telemetry.peak_active_lease_pin_slots);
+    try std.testing.expectEqual(@as(u64, 2), telemetry.lease_pin_acquisitions);
+    try std.testing.expectEqual(
+        @as(u64, 2),
+        telemetry.reserved_lease_pin_completion_generations,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 2),
+        telemetry.reserved_lease_pin_completion_structural_revisions,
+    );
+    try std.testing.expectError(
+        Error.CapacityExceeded,
+        bank.acquireLeasePinsForSession(
+            second.tree,
+            scoped.scope,
+            7,
+            session_id,
+            0,
+            12,
+            &leaves,
+        ),
+    );
+
+    // Leave exactly the two reserved completion generations plus one sentinel
+    // generation. An ordinary reservation must not consume either completion.
+    bank.next_lease_generation = std.math.maxInt(u64) - 3;
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        bank.reserveLeaseGenerations(1),
+    );
+    try std.testing.expectEqual(
+        std.math.maxInt(u64) - 3,
+        bank.next_lease_generation,
+    );
+
+    // Two live pins reserve two revisions on this exact root. A normal
+    // allocation wave needs two revisions and therefore cannot consume the
+    // three-revision tail. Both accepted pins must still complete out of
+    // acquisition order.
+    roots[0].structural_revision = std.math.maxInt(u64) - 3;
+    bank.refreshLeaseTreeRootLocked(receipt, &roots[0]);
+    const near_exhaustion_tree = makeLeaseTree(receipt, roots[0]);
+    const extra_specs = [_]LeaseAllocationSpecV1{.{
+        .scope = scoped.scope,
+        .node_key = 13,
+        .binding_key = 14,
+        .claim = .{ .kv_bytes = 32 },
+    }};
+    var extra_leaves: [1]LeaseNodeV1 = undefined;
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        bank.reserveAllocationsForSession(
+            near_exhaustion_tree,
+            7,
+            session_id,
+            0,
+            &extra_specs,
+            &extra_leaves,
+        ),
+    );
+    telemetry = try bank.snapshotV4();
+    try std.testing.expectEqual(@as(u64, 1), telemetry.rejected_lease_pin_queue_capacity);
+    try std.testing.expectEqual(@as(u64, 0), telemetry.rejected_lease_pin_slots);
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        telemetry.rejected_lease_pin_generation_headroom,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        telemetry.rejected_lease_pin_structural_headroom,
+    );
+
+    const second_released = try bank.releaseLeasePins(second.permit);
+    telemetry = try bank.snapshotV4();
+    try std.testing.expectEqual(@as(usize, 1), telemetry.active_lease_pin_slots);
+    try std.testing.expectEqual(@as(usize, 2), telemetry.peak_active_lease_pin_slots);
+    try std.testing.expectEqual(@as(u64, 1), telemetry.lease_pin_completions);
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        telemetry.reserved_lease_pin_completion_generations,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        telemetry.reserved_lease_pin_completion_structural_revisions,
+    );
+
+    const first_released = try bank.releaseLeasePins(first.permit);
+    try std.testing.expect(
+        first_released.tree.generation >
+            second_released.tree.generation,
+    );
+    telemetry = try bank.snapshotV4();
+    try std.testing.expectEqual(@as(usize, 0), telemetry.active_lease_pin_slots);
+    try std.testing.expectEqual(@as(usize, 2), telemetry.peak_active_lease_pin_slots);
+    try std.testing.expectEqual(@as(u64, 2), telemetry.lease_pin_acquisitions);
+    try std.testing.expectEqual(@as(u64, 2), telemetry.lease_pin_completions);
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        telemetry.reserved_lease_pin_completion_generations,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        telemetry.reserved_lease_pin_completion_structural_revisions,
+    );
+}
+
 test "LeaseTree exact pins overlap release out of order and reject ABA" {
     var slots = [_]Slot{.{}} ** 1;
     var roots = [_]LeaseTreeRootSlot{.{}} ** slots.len;
@@ -7697,6 +8323,19 @@ test "LeaseTree pin storage is opt in and registry corruption fails closed" {
             48,
             &leaves,
         ),
+    );
+    const slot_rejection_snapshot = try bank.snapshotV4();
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        slot_rejection_snapshot.rejected_lease_pin_queue_capacity,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        slot_rejection_snapshot.rejected_lease_pin_slots,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        slot_rejection_snapshot.active_lease_pin_slots,
     );
     var forged = acquired.permit;
     forged.owner_key ^= 1;

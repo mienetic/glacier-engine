@@ -63,14 +63,26 @@ LeaseTreeDispatchPinV1
 
 `Bank.initWithLeaseTreePinStorage` opts one Bank into caller-owned,
 fixed-capacity pin storage. Existing Bank, Receipt, LeaseTree, node, and
-Snapshot layouts remain unchanged. A deployment chooses the maximum number of
-simultaneously live pins by sizing `LeasePinSlotV1` storage.
+Snapshot V1/V2/V3 layouts and meanings remain unchanged. A deployment chooses
+the maximum number of simultaneously live pins by sizing `LeasePinSlotV1`
+storage.
 
 Because Snapshot V3 predates this optional registry, its metadata-byte total
 and counters intentionally exclude pin-slot capacity and active-pin telemetry.
-Deployments must account for the caller-owned pin array separately. An
-additive snapshot version can expose that capacity and activity without
-silently changing the established V3 meaning.
+Deployments that consume V3 must account for the caller-owned pin array
+separately. The additive `Bank.snapshotV4` reports the registry capacity and
+bytes, metadata including pins, active and peak slots, acquisitions,
+completions, distinct queue-capacity and pin-registry-slot rejections,
+generation and structural-headroom rejections, and the completion headroom
+currently reserved for accepted pins.
+
+Each accepted pin reserves one future global LeaseTree generation and one
+structural revision on its exact root. Ordinary generation reservations and
+root mutations cannot consume those tails. Releases consume the reserved
+headroom with a fresh tree generation, so two live pins can settle in either
+order without regressing the current tree token. Snapshot V4 reuses one V3
+validation pass and adds one bounded pin-slot scan rather than repeating the
+full LeaseTree validation.
 
 One active slot retains:
 
@@ -176,20 +188,20 @@ dispatch remain blocked until private settlement succeeds. Repeating the
 identical rejection or cancellation before completion returns the identical
 terminal evidence. A consumed pin cannot authorize another terminal.
 
-### Single-flight Metal async completion delivery
+### Bounded two-slot Metal async completion delivery
 
-The bounded Metal INT4 adapter now implements **single-flight Metal async
-completion delivery**. Single-flight is an adapter contract: one adapter-owned
-queue slot can retain one live request and ticket. The lower native backend may
-own commands for distinct buffer sets concurrently, so this is not a global
-Metal queue-depth limit.
+The bounded Metal INT4 adapter implements two fixed adapter-owned completion
+lanes. Each lane can retain one exact request, ticket, terminal state, and
+settlement lineage. This is a bounded evidence and ownership contract, not a
+claim that the device executes two command buffers physically in parallel.
 
 `submitMatvecInt4AsyncObserved` submits without waiting and returns
 `MetalAsyncDispatchTicketV1`. The pointer-free ticket contains no native handle;
-it seals queue slot zero, a monotonic ticket generation, the prepared request,
-dispatch pin, authorities, and submission root. An exact replay returns the
-same ticket without uploading or committing a second command. A different
-request fails before native mutation while the slot is occupied.
+it seals queue slot zero or one, a monotonic ticket generation, the prepared
+request, dispatch pin, authorities, and submission root. A distinct request
+uses the lowest canonical free lane. An exact replay returns the same ticket
+without uploading or committing another command. Once both lanes are occupied,
+a third distinct request is capacity-rejected before native mutation.
 
 The native registry retains the command buffer and strong references to the
 exact packed-weight, scale, input, and output buffers. Its private command token
@@ -485,8 +497,9 @@ The contract prefers a retained allocation over an unsafe release:
 - Bank settlement conflict leaves the pin active;
 - a private post-Bank settlement-callback failure retains exact
   `settlement_pending` evidence for retry rather than clearing adapter state;
-- generation or structural-revision exhaustion fails closed and may retain the
-  pin rather than regress a tree token;
+- generation or structural-revision exhaustion is rejected before pin
+  acquisition, while reserved completion headroom prevents ordinary mutations
+  from stranding an accepted pin;
 - an unavailable pin registry fails before coordinator mutation; and
 - allocation `release` returns `DispatchInFlight` before issuing a FreePermit
   or invoking a backend free callback.
@@ -573,6 +586,15 @@ device:
    callback/record ownership evidence, not physical removal, driver or hardware
    failure, output recovery, performance, residency, migration, reset, or
    physical-reclaim evidence.
+   The same build-isolated artifact runs the bounded two-slot M1 gate: two
+   disjoint four-buffer role sets share one eight-object allocation lease. Two
+   native command records and two Bank pins are live at the high-water mark;
+   exact A/B submit replay creates no third native record, and a third distinct
+   request is capacity-rejected before submission. Both commands and CPU
+   oracles complete, then B is deliberately settled before A. Final native
+   commands, buffers, pins, dispatch slots, and logical ownership return to
+   zero. These are real native ownership and out-of-order-settlement facts, not
+   evidence of physical parallel execution, completion order, or performance.
 
 Cross-compilation proves source and build portability only. It is never
 reported as native operating-system, driver, or accelerator evidence.
@@ -636,8 +658,8 @@ Contributor-ready extensions include:
 - retain physical removal-requested and removed callbacks on removable
   hardware;
 - add fresh device selection and explicit migration policy;
-- bounded multi-slot completion scheduling without weakening adapter identity;
-- additive snapshot capacity and active-pin telemetry;
+- dynamic or unbounded completion scheduling beyond the fixed two-lane profile
+  without weakening adapter identity or replay fencing;
 - separate published-reference authority for outputs retained after dispatch;
 - post-creation allocated-size settlement under a new accounting ABI;
 - physical residency and eviction evidence;

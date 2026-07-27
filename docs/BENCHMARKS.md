@@ -220,10 +220,16 @@ and use the same private settlement callback as submission. Core
 consumes the private Bank pin before that callback clears adapter state and
 records the replay tombstone; public acknowledgement only verifies it.
 
-These native checks establish ownership and per-adapter single-flight async
-completion delivery for that successful host run. Separate portable Zig/Python
-checks authorize one exact quarantined command-buffer `.error` as core
-`terminal_failure`, reject substitutions, and retain ownership before
+These native checks establish ownership and per-adapter bounded two-slot async
+completion delivery for that successful host run. The build-isolated pressure
+case uses one eight-object lease with two disjoint four-buffer role sets,
+observes two live native records, completes both commands, deliberately settles
+B before A, rejects a third distinct request before native mutation, checks
+both outputs against CPU oracles, and returns commands, pins, and buffers to
+zero. This establishes bounded ownership isolation, not physical GPU
+parallelism, command-completion order, or performance. Separate portable
+Zig/Python checks authorize one exact quarantined command-buffer `.error` as
+core `terminal_failure`, reject substitutions, and retain ownership before
 settlement; they are deterministic contract models and execute no GPU work.
 
 The build-isolated native fault gate adds a real successful Metal execution
@@ -253,8 +259,8 @@ ownership is retired separately.
 The overlay, state seams, and injected loss do not induce or prove a physical
 command-buffer, driver, hardware, or device-loss fault. None of these
 conformance layers measures throughput or latency or establishes residency,
-multi-slot queue scheduling, physical device-loss recovery, automatic
-migration, reset, or physical reclaim behavior. The bounded
+dynamic queue scheduling beyond the fixed two slots, physical device-loss
+recovery, automatic migration, reset, or physical reclaim behavior. The bounded
 allocation-retirement branch proves only quiesced reference and
 logical-ownership cleanup; the Phase B matrix proves only dispatch
 callback/record ownership retirement for the four retained states.

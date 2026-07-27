@@ -110,6 +110,12 @@ current bounded adapter does not retain a driver/runtime version, so that
 identity is explicitly all-zero. `currentAllocatedSize` remains a dynamic
 observation and is never hashed into the capability fingerprint.
 
+The allocation-aware Metal capability advertises `max_queue_slots = 2`. This
+is an exact bound on the adapter's independently fenced async evidence lanes,
+not a device-wide queue-depth measurement or a promise of physical parallel
+execution. A requirement may request one or two slots; more than two is
+incompatible before admission.
+
 The native readiness gate binds one local discovery epoch and revalidates the
 selected fingerprint and registry identity from a fresh device query
 immediately before its first Metal resource acquisition, then checks the
@@ -168,12 +174,16 @@ tools/zig-with-ephemeral-cache.sh build \
 That native command discovers the host's real `MTLDevice`, creates and directly
 inspects real lease-bound Metal buffers, compiles the actual Metal shaders,
 submits command buffers to the device, waits for completion, and compares
-output with CPU oracles. The build-isolated fault stage lets a real command
-complete physically before applying a separate test-only published-error
-overlay; it does not simulate the GPU and does not claim a physical device,
-driver, or hardware failure. This is bounded real-device
-allocation/correctness/readiness and reconciliation evidence, not a performance
-or broad device-support result.
+output with CPU oracles. Its bounded-pressure case submits two commands over
+disjoint buffers, observes two live native records, rejects a third request
+before native mutation, waits for both commands, deliberately settles B before
+A, and closes all ownership. This proves the advertised adapter bound and
+settlement isolation, not physical GPU parallelism or completion order. The build-isolated fault
+stage also lets a real command complete physically before applying a separate
+test-only published-error overlay; it does not simulate the GPU and does not
+claim a physical device, driver, or hardware failure. This is bounded
+real-device allocation/correctness/readiness and reconciliation evidence, not
+a performance or broad device-support result.
 
 The portable contract also participates in the retained foreign-target compile
 profiles. Those builds prove source and ABI portability, not native driver,

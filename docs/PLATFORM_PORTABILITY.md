@@ -39,7 +39,7 @@ surface.
 
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
-| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | Portable Zig fake/state tests and an independent Python oracle model deterministic device contracts without a GPU; the native gates use a real `MTLDevice` and real `MTLBuffer` resources, submit and verify one fixed 37x64 INT4 valid branch, and retain zero-command reject/cancel branches, but no device support range is declared | Development host, not a broad platform certification |
+| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | Portable Zig fake/state tests and an independent Python oracle model deterministic device contracts without a GPU; the native gates use a real `MTLDevice` and real `MTLBuffer` resources, submit and verify one fixed 37x64 INT4 readiness branch, retain zero-command reject/cancel branches, and exercise two disjoint native commands with deliberate out-of-order settlement after both complete, but no device support range is declared | Development host, not a broad platform certification |
 | Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is implemented; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is architecture-neutral; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
@@ -94,9 +94,14 @@ before Bank mutation, aborts exactly on atomic acquisition failure, and
 validates callback/source identity before binding the lease, request, intent,
 and pin. Valid preflight submits one real INT4 command into an adapter-owned
 async slot and returns a generation-fenced `MetalAsyncDispatchTicketV1`.
-Exact replay does not commit again; poll/wait separately authenticate the
-retained command and buffers, pending preserves output and ownership, and exact
-completed output is checked against the CPU oracle. A pure
+The adapter now has two fixed slot-local lanes: exact replay does not commit
+again, a third distinct request rejects before native mutation, poll/wait
+authenticate the selected command and buffers, and either slot may settle
+first. The isolated native pressure proof submits both slots, observes two live
+native records, waits for both commands, deliberately settles B before A,
+checks both CPU oracles, and closes every record, pin, and buffer. This is
+bounded coexistence and settlement isolation, not physical GPU parallelism or
+command-completion-order evidence. A pure
 `cancelled_before_submit` or malformed `rejected_before_submit` branch uses
 zero submission, backend-completion, and output roots and the same settlement:
 core consumes the private Bank pin, then a private callback finalizes the exact
@@ -456,9 +461,10 @@ The LeaseTree coordinator is synchronous and address-stable. The surrounding
 execution owner must serialize coordinator calls with every other mutation of
 the shared tree token and publication sequence; cross-thread use without that
 external serialization is outside the contract. Bounded exact object-set
-dispatch pins are implemented; multi-slot queue/stream scheduling, physical
-residency, device-loss reconciliation, quarantine clearing, and multi-GPU
-partitioning/scheduling remain open. For the bounded Metal INT4 path, an
+dispatch pins, pin-aware SnapshotV4 telemetry, reserved completion headroom,
+and two fixed Metal lanes are implemented; dynamic queue/stream scheduling,
+physical residency, and multi-GPU partitioning/scheduling remain open. For the
+bounded Metal INT4 path, an
 adapter-issued, generation-fenced `MetalMatvecDispatchRequestV1` root is the pin
 dispatch-request root. Core seals the intent and reserves before Bank mutation;
 if that reserve succeeds but source validation drifts, or atomic Bank pin
@@ -683,11 +689,13 @@ not represented as partial support.
   validation, zero submission/backend-completion/output roots for rejection
   and cancellation, private settlement and replay tombstone, and
   compatibility-only public acknowledgement;
-- ~~add per-adapter single-flight async completion delivery;~~ complete with
-  generation-fenced tickets, exact submit replay, separate poll/wait, pending
-  ownership retention, exact completed-output binding, post-Bank native
-  finalization, and sticky nonterminal quarantine detection;
-- add multi-slot queue scheduling and multi-device partitioning;
+- ~~add per-adapter bounded two-slot async completion delivery;~~ complete with
+  slot-bound generation-fenced tickets, exact submit replay, third-request
+  capacity rejection, separate poll/wait, pending ownership retention,
+  out-of-order settlement, exact completed-output binding, post-Bank native
+  finalization, sticky nonterminal quarantine, and native two-record evidence;
+- add dynamic queue scheduling beyond the fixed two slots and multi-device
+  partitioning;
 - add explicit device-loss inspection and safe reconciliation, quarantine
   clearing, and fresh selection under a new receipt;
 - add physical residency and direct device telemetry as separate authorities;
@@ -706,13 +714,13 @@ installation quality, physical telemetry, or performance. The W5a
 cross-compile gate likewise does not establish native observation. The
 portable selection contract, fake allocation lifecycles, one real-Metal
 allocation/pinned-dispatch ownership gate, and one Metal readiness binding do
-not establish multi-slot queue scheduling, physical residency, device-loss
-reconciliation, multi-GPU behavior, telemetry, performance, or native support
-for any cross-compiled target. The fake lifecycles establish deterministic
+not establish dynamic queue scheduling beyond two slots, physical residency,
+multi-GPU behavior, physical telemetry, performance, or native support for any
+cross-compiled target. The fake lifecycles establish deterministic
 failure/recovery semantics for both ChildLease and LeaseTree ownership. The
 native allocation gate additionally establishes direct resource creation,
 inspection, release, cancellation cleanup, generation reuse, and per-adapter
-single-flight async completion delivery on its executing host only. It also
+bounded two-slot async completion delivery on its executing host only. It also
 establishes exact zero-command rejection and pure cancellation before
 submission for the bounded Metal profile. Portable Zig fake/state tests and
 the Python oracle are contract models without a GPU; only the native macOS

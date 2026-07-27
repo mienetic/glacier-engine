@@ -152,29 +152,33 @@ before the first stable release.
   test-fault symbol in the production archive. This is deterministic injected
   publication after physical success, not a physical hardware, driver, or
   device-loss failure and not performance evidence.
-- Added **single-flight Metal async completion delivery** per allocation
-  adapter. `MetalAsyncDispatchTicketV1` is a pointer-free, generation-fenced
-  handoff from one exact submit to separate poll/wait observation. The native
-  registry retains the command and its four exact buffers; pending remains
-  nonterminal and preserves caller output, the allocation pin, and its charge.
-  Exact completed output is bound to the command, submission, snapshot, and
-  output role, and the native record is finalized only from the private
-  callback after core Bank settlement. Ambiguous submission, unknown or
-  invalid completion, and terminal command errors first produce sticky
-  nonterminal `MetalAsyncDispatchQuarantineV1` evidence rather than a
-  manufactured core terminal. An exact retained command-buffer `.error` may
-  now authorize `MetalAsyncDispatchTerminalFailureV1` plus core
-  `terminal_failure` with no output root. Quarantine, pin, charge, buffers, and
-  command remain live through Bank settlement; the private callback then
-  exact-finalizes that same native `.error` before clearing state. Ambiguous,
-  unknown, and invalid completion remain sticky until the separate
-  loss-authorized Phase B protocol succeeds. Pure Zig and independent
-  Python tests cover roots, mutation rejection, replay, and pre-settlement
-  retention; the ordinary allocation gate remains a successful-command
-  regression, while the separate private fault build supplies controlled
-  error-path coverage. This does not impose a global native
-  queue-depth limit or provide physical device-loss recovery, general
-  quarantine clearing, fresh selection, migration, or a multi-slot scheduler.
+- Added **bounded two-slot Metal async completion delivery** per allocation
+  adapter. `MetalAsyncDispatchTicketV1` is a pointer-free,
+  generation-and-slot-fenced handoff from an exact submit to separate poll/wait
+  observation. Exact replay returns the retained ticket without another native
+  submit, a distinct request uses the lowest free adapter lane, and a third
+  distinct request is rejected before native mutation. Each lane independently
+  retains its command, four exact buffers, pending/quarantine state, terminal
+  authorization, Bank settlement, and replay tombstone, so either lane can
+  settle first without clearing its sibling. Exact completed output is bound to
+  the command, submission, snapshot, and output role; native finalization occurs
+  only from the private callback after core Bank settlement. Ambiguous,
+  unknown, invalid, and command-error paths preserve their fail-closed Phase
+  A/Phase B behavior. A build-isolated M1 gate uses one eight-object lease with
+  disjoint four-buffer role sets, observes two live native records, verifies
+  replay and third-request rejection, waits for both real commands, checks both
+  CPU oracles, deliberately settles B before A, and returns commands, pins, and
+  buffers to zero. This proves bounded ownership and settlement isolation, not
+  physical GPU parallelism, command-completion order, a global native queue
+  depth, or performance.
+- Added additive `ResourceBank.snapshotV4()` pin-registry observation without
+  changing Snapshot V1/V2/V3 layouts or meanings. V4 reports fixed slot
+  capacity, pin metadata bytes, active and peak pins, acquisitions,
+  completions, distinct queue-capacity and physical-slot rejections,
+  generation/structural-headroom rejections, and reserved completion headroom.
+  Every accepted pin reserves one future global LeaseTree generation and one
+  structural revision on its exact root, preventing intervening mutations from
+  stranding out-of-order completion near counter exhaustion.
 - Added the first Stage-5
   [device capability and selection contract](docs/DEVICE_CAPABILITY_CONTRACT.md).
   Portable pointer-free `DeviceCapabilityV1`, inventory-entry, requirement,

@@ -1765,6 +1765,7 @@ pub fn build(b: *std.Build) void {
                 "fault-only synthetic loss retires real Metal references with recovery",
                 "retirement binds exact consumed native loss snapshot",
                 "held Metal callback permits retirement and wait releases allocation mutex",
+                "bounded two-slot Metal dispatch settles out of order without native replay",
                 "Phase-B callback retirement settles native submission-ambiguous dispatch",
                 "Phase-B callback retirement settles native completion-unknown dispatch",
                 "Phase-B callback retirement settles native invalid-completion dispatch",

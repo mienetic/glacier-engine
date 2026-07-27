@@ -19,7 +19,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Device-loss dispatch callback retirement Phase B | `LossDispatchCallbackRetentionV1`, `LossDispatchCallbackRetirementPlanV1`, `LossDispatchCallbackFenceV1`, `LossDispatchCallbackRetirementReceiptV1`, ARC-owned native callback gate | Detach the exact callback target without waiting for callback exit while retaining the native command record, authorize only zero-output ownership retirement, settle the Bank pin before exact native unlink, and preserve replay while leaving allocation retirement separate |
 | Phase B retirement diagnostics | `MetalDispatchRetirementTelemetryV1`, production native snapshot | Directly observe successful native prepare/commit transitions and replay, frozen native facts, detachment, live/retired ownership, tombstones, generations, and saturation without becoming lifecycle, retirement, completion, output, release, or migration authority |
 | Device-loss retirement | `LossRetirementPlanV1`, private native permit, ordinary LeaseTree release, `LossRetirementReceiptV1` | Bind one exact lost source and quiesced allocation, drop retained native references before logical Bank uncharge without post-loss property reads, and grant no physical-reclaim, output, migration, reset, or residency authority |
-| Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, async ticket/quarantine/failure evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, bind per-adapter single-flight Metal completion to exact Bank settlement, and authorize one exact quarantined native `.error` as core `terminal_failure` without releasing ownership early; native gates create, dispatch through, and directly inspect real buffers, while production-symbol-isolated fault gates keep physical success or real resources separate from test-only overlays and prove exact settlement retry without claiming residency, physical device failure, general scheduling, or performance |
+| Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, pin-aware `SnapshotV4`, bounded async ticket/quarantine/failure evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, reserve completion headroom, bind two isolated adapter-local Metal completion lanes to exact Bank settlement, and authorize one exact quarantined native `.error` as core `terminal_failure` without releasing ownership early; native gates create, dispatch through, and directly inspect real buffers, while production-symbol-isolated fault gates keep physical success or real resources separate from test-only overlays and prove exact settlement retry without claiming residency, physical device failure, physical parallelism, general scheduling, or performance |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b/W4b-c/W4b-d | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, uncertain external-action handoff, generation-fenced fake reconciliation, and durable storage faults without presenting logical steps as native performance |
@@ -961,20 +961,30 @@ real Shared buffers, retaining logical `length` and separately observed
 per-resource `allocatedSize` without inferring either from device-wide memory
 samples. Receipt-bound `ChildLease` ownership and execution-owned additive
 `LeaseTree` ownership are both integrated. Exact object-set pins fence release,
-and the bounded INT4 path provides per-adapter single-flight async completion:
-`MetalAsyncDispatchTicketV1`, exact submit replay, separate poll/wait, pending
-ownership retention, exact completed-output binding, and native finalization
-only after Bank settlement. Ambiguous, unknown, invalid, or command-error
-observations first retain sticky nonterminal quarantine rather than
-manufacturing a terminal. The exact retained command-buffer `.error` case has
-a separate pointer-free sidecar that can authorize core `terminal_failure`
-with no output root; quarantine, pin, charge, buffers, and native command stay
-live through Bank settlement, then the private callback exact-finalizes the
-same `.error` before private clearing. Ambiguity and unknown completion remain
-sticky. Portable Zig and independent Python tests model the error contract
-without GPU work; the ordinary native macOS gate uses a real `MTLDevice`, real
-`MTLBuffer` resources, and a CPU output oracle as a successful-command
-regression.
+and the bounded INT4 path provides two adapter-local async completion lanes.
+`MetalAsyncDispatchTicketV1` binds the selected lane; exact submit replay,
+separate poll/wait, pending ownership retention, exact completed-output
+binding, quarantine, terminal validation, and replay tombstones remain
+slot-local. A third distinct request rejects before native mutation while both
+lanes are occupied, and either lane can settle first. Native finalization still
+occurs only after the matching Bank settlement. `ResourceBank.snapshotV4()`
+adds pin-storage capacity and byte cost, current/peak activity, operation and
+rejection counters, and reserved completion headroom while leaving V1–V3
+unchanged. Generation and per-root structural-revision reservations ensure an
+accepted pin can complete even near exhaustion and preserve monotonic
+out-of-order release. Ambiguous, unknown, invalid, or command-error observations
+first retain sticky nonterminal quarantine rather than manufacturing a
+terminal. The exact retained command-buffer `.error` case has a separate
+pointer-free sidecar that can authorize core `terminal_failure` with no output
+root; quarantine, pin, charge, buffers, and native command stay live through
+Bank settlement, then the private callback exact-finalizes the same `.error`
+before private clearing. Portable Zig and independent Python tests model the
+error contract without GPU work. The native macOS suite additionally submits
+two real commands over disjoint buffers, retains both records through native
+completion, and deliberately settles the second before the first, with both
+outputs checked against CPU oracles. Two retained native records prove bounded
+coexistence and settlement isolation, not physical GPU parallelism or command
+completion order.
 
 Device-loss Dispatch Reconciliation V1 composes the lifecycle and dispatch
 layers only for the exact command-specific native status/domain/code
@@ -1057,10 +1067,10 @@ Portable transition and error-path tests are deterministic synthetic/model
 evidence rather than physical-removal evidence. The isolated native retirement
 gate uses real buffers under an explicitly synthetic test-only loss permit; it
 proves reference cleanup, not physical removal or reclaim.
-Physical residency, fresh selection and migration, multi-slot and multi-device
-scheduling, physical device telemetry, performance, retained driver/device
-ranges, removable hardware campaigns, and native support on cross-compiled
-targets remain open.
+Physical residency, fresh selection and migration, dynamic scheduling beyond
+the fixed two-slot adapter, multi-device placement, physical device telemetry,
+performance, retained driver/device ranges, removable hardware campaigns, and
+native support on cross-compiled targets remain open.
 Cross-target builds are compile evidence only. See
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md),
 [Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md),

@@ -187,14 +187,20 @@ paths return ownership to zero. The scheduled-media path additionally adopts
 the exact admission receipt instead of reserving again, then performs one
 failure-atomic bound close and release. The device path now reserves complete
 adapter-quoted waves before allocation, retains private FreePermit recovery,
-and can pin the exact live object set across a bounded dispatch. One native
-Metal gate creates four real buffers and exercises per-adapter single-flight
-async completion over only those pinned resources. Submit returns a
-pointer-free, generation-fenced `MetalAsyncDispatchTicketV1`; exact replay does
-not commit again, poll/wait are separate, and pending preserves output, the pin,
-and its charge. Exact completed output is bound to the command, submission,
-snapshot, and output role, checked against a CPU oracle, and retained until
-Bank settlement authorizes native finalization. For the bounded INT4 profile,
+and can pin the exact live object set across a bounded dispatch. The Metal
+adapter now exposes two fixed async lanes. Each pointer-free,
+generation-fenced `MetalAsyncDispatchTicketV1` binds its adapter-local slot;
+exact replay does not commit again, a third distinct request rejects before
+native submission, poll/wait are separate, and pending preserves output, its
+pin, and its charge. Either slot may complete and settle first without
+mutating its sibling. Exact completed output is bound to the command,
+submission, snapshot, and output role, checked against a CPU oracle, and
+retained until Bank settlement authorizes that slot's native finalization.
+`ResourceBank.snapshotV4()` adds exact pin capacity, metadata, current/peak
+activity, operation/rejection counters, and reserved completion headroom while
+preserving earlier snapshot ABIs. Accepted pins reserve generation and
+structural-revision headroom so out-of-order completion cannot be stranded near
+exhaustion. For the bounded INT4 profile,
 the adapter issues a
 generation-fenced `MetalMatvecDispatchRequestV1`; that sealed request root,
 never the raw attempt root, is the pin's dispatch-request root. Core seals
@@ -266,9 +272,10 @@ only: these logical/native ownership counters are not physical residency,
 utilization, queue, power, thermal, frequency, energy, performance, callback
 exit, completion, output, release, or migration evidence.
 
-Physical residency, fresh selection, multi-slot and multi-device scheduling,
-production weight paging, direct physical device telemetry, additional GPU
-backends, and native OS matrices remain planned.
+Physical residency, fresh selection, dynamic scheduling beyond the fixed
+two-slot adapter, multi-device placement, production weight paging, direct
+physical device telemetry, additional GPU backends, and native OS matrices
+remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
 cancellation returns the declared delta, and measured physical counters are
@@ -604,16 +611,18 @@ adapter-issued, generation-fenced `MetalMatvecDispatchRequestV1` root through a
 core-sealed `DispatchPinIntentV1`. Core reserves before Bank mutation and
 aborts exactly on atomic acquisition failure. Callback/source validation
 precedes the exact lease/request/intent/pin binding. Valid preflight can submit
-into one adapter-owned async slot or produce pure
+into either of two bounded adapter-owned async slots or produce pure
 `cancelled_before_submit`; malformed input can produce exact
 `rejected_before_submit`. Submit returns `MetalAsyncDispatchTicketV1`; exact
 replay does not recommit, pending preserves output and ownership, and poll/wait
-authenticate the retained command and four exact buffers. Exact completed
-output is bound to the submission, immutable snapshot, and output role. Core
-consumes the private Bank pin before the private callback finalizes that exact
-native record, clears adapter state, and records a replay tombstone. Both
-no-submit terminals carry zero submission, backend-completion, and output
-roots and use the same settlement without a native record. Public
+authenticate the retained command and four exact buffers. A third distinct
+request rejects before native mutation while both slots are occupied. Exact
+completed output is bound to the submission, immutable snapshot, and output
+role. Core consumes the matching private Bank pin before the private callback
+finalizes that exact native record, clears only its slot, and records a replay
+tombstone. Both no-submit terminals carry zero submission,
+backend-completion, and output roots and use the same settlement without a
+native record. Public
 `acknowledgeDispatchCompletion` is compatibility verification only. Rejection
 may inspect the native device and resources but creates and submits no command
 buffer; cancellation is native-free after the sealed binding. Ambiguous
@@ -629,7 +638,13 @@ failure roots, mutations, and pre-settlement retention contract without GPU
 work. The native
 macOS gate opens a real `MTLDevice`, creates real `MTLBuffer` resources, and
 executes the valid command on the device as a success regression; it does not
-induce or claim a hardware error. The same native lifecycle surface installs a
+induce or claim a hardware error. Its isolated two-slot pressure case uses one
+eight-object lease with two disjoint four-buffer role sets, submits both
+commands, observes two live native records, waits for both completions, and
+deliberately settles the second before the first. Both outputs match CPU
+oracles and all records, pins, and buffers close. This proves bounded
+coexistence and settlement isolation on the executing M1, not physical GPU
+parallelism, command-completion order, or throughput. The same native lifecycle surface installs a
 real observer and fails new work closed after removal-requested, removed, or an
 exact native command-buffer code `11`, which is fenced before any test-only
 overlay. Admission is linearized by a native lease, so already-admitted work
@@ -654,9 +669,9 @@ replay; the held case additionally proves detach-before-exit and later handler
 release. It is not a physical removal, driver-failure, output-recovery,
 performance, residency, migration, reset, or physical-reclaim campaign. A
 removable-hardware callback campaign, fresh selection and migration,
-multi-slot and multi-device scheduling,
-physical residency and device telemetry, additional GPU backends, and broader
-native OS/device matrices stay open.
+dynamic scheduling beyond two slots, multi-device placement, physical
+residency and device telemetry, additional GPU backends, and broader native
+OS/device matrices stay open.
 Contract validation requires a present logical CPU count of at least one and
 accepts signed physical temperatures down to, but never below, absolute zero.
 

@@ -50,6 +50,10 @@ pub const async_dispatch_quarantine_abi: u64 =
     0x474d_4151_0000_0001;
 pub const async_dispatch_terminal_failure_abi: u64 =
     0x474d_4146_0000_0001;
+/// Bounded native queue capacity advertised by this adapter revision.
+/// Queue slots are adapter-local evidence lanes, not a claim that the device
+/// executes two command buffers physically in parallel.
+pub const maximum_async_dispatch_slots: u64 = 2;
 
 const authority_domain =
     "glacier-metal-allocation-authority-v1\x00";
@@ -237,7 +241,7 @@ pub const MetalLeaseTreeDispatchResultV1 = struct {
     terminal: lease_tree.DispatchTerminalEvidenceV1,
 };
 
-/// Level-triggered observation of one exact single-flight async dispatch.
+/// Level-triggered observation of one exact bounded-slot async dispatch.
 /// `pending` and `quarantined` are deliberately nonterminal and grant no
 /// Bank-release or native-finalization authority.
 pub const MetalAsyncDispatchPollV1 = union(enum) {
@@ -288,9 +292,9 @@ pub const MetalMatvecDispatchRequestV1 = struct {
 };
 
 /// Pointer-free evidence that one exact prepared request and dispatch pin
-/// were handed to the adapter's single native queue slot. The ticket is not
+/// were handed to one bounded native queue slot. The ticket is not
 /// terminal evidence, grants no Bank mutation authority, and contains no
-/// native handle. `ticket_generation` fences reuse of queue slot zero.
+/// native handle. `queue_slot` and `ticket_generation` jointly fence reuse.
 pub const MetalAsyncDispatchTicketV1 = struct {
     abi_version: u64 = async_dispatch_ticket_abi,
     ticket_generation: u64 = 0,
@@ -713,6 +717,29 @@ const ValidatedLossDispatchReconciliationSourceV1 = struct {
     result: MetalAsyncDispatchTerminalFailureResultV1,
 };
 
+/// Private storage for the adapter's second dispatch evidence lane. The
+/// primary lane remains inline in `MetalAllocationAdapterV1` to preserve its
+/// existing validation paths. Operations temporarily exchange this state
+/// with the primary lane while holding `mutex`, so each transition sees one
+/// exact lane and restores the canonical layout before releasing the lock.
+const MetalSecondaryDispatchLaneV1 = struct {
+    prepared_matvec_request: ?MetalMatvecDispatchRequestV1 = null,
+    reserved_dispatch_intent: ?lease_tree.DispatchPinIntentV1 = null,
+    aborted_dispatch_intent: ?lease_tree.DispatchPinIntentV1 = null,
+    bound_dispatch_pin: ?lease_tree.LeaseTreeDispatchPinV1 = null,
+    cancelled_prepared_request: ?MetalMatvecDispatchRequestV1 = null,
+    dispatch_unresolved: bool = false,
+    async_dispatch: ?PendingMetalAsyncDispatchV1 = null,
+    async_quarantine: ?MetalAsyncDispatchQuarantineV1 = null,
+    authorized_terminal: ?AuthorizedDispatchTerminalV1 = null,
+    terminal_validation_observed: bool = false,
+    settlement_tombstone: ?DispatchSettlementTombstoneV1 = null,
+    loss_dispatch_reconciliation_permit: ?MetalLossDispatchReconciliationPermitV1 = null,
+    loss_dispatch_reconciliation_tombstone: ?MetalLossDispatchReconciliationTombstoneV1 = null,
+    loss_dispatch_callback_retirement_permit: ?MetalLossDispatchCallbackRetirementPermitV1 = null,
+    loss_dispatch_callback_retirement_tombstone: ?MetalLossDispatchCallbackRetirementTombstoneV1 = null,
+};
+
 fn expectedAllocationCapabilityV1(
     info: metal.MetalDeviceInfo,
     limits: metal.MetalAllocationLimits,
@@ -742,7 +769,7 @@ fn expectedAllocationCapabilityV1(
         .feature_bits = supported_features,
         .max_single_allocation_bytes = maximum_single,
         .max_total_device_bytes = max_total_resource_bytes,
-        .max_queue_slots = 1,
+        .max_queue_slots = maximum_async_dispatch_slots,
         .backend_sha256 = native.contract.digestV1(
             "Metal.framework direct Shared allocation backend/v1",
         ),
@@ -819,6 +846,7 @@ pub const MetalAllocationAdapterV1 = struct {
     loss_dispatch_reconciliation_tombstone: ?MetalLossDispatchReconciliationTombstoneV1 = null,
     loss_dispatch_callback_retirement_permit: ?MetalLossDispatchCallbackRetirementPermitV1 = null,
     loss_dispatch_callback_retirement_tombstone: ?MetalLossDispatchCallbackRetirementTombstoneV1 = null,
+    secondary_dispatch_lane: MetalSecondaryDispatchLaneV1 = .{},
     loss_retirement_permit: ?MetalLossRetirementPermitV1 = null,
     loss_retirement_tombstone: ?MetalLossRetirementTombstoneV1 = null,
     allocate_calls: u64 = 0,
@@ -918,6 +946,454 @@ pub const MetalAllocationAdapterV1 = struct {
             .dispatch_authority_sha256 = dispatch_authority_sha256,
             .queue_authority_sha256 = queue_authority_sha256,
         };
+    }
+
+    /// Exchange the fixed adapter slot 1 with the inline slot-0 state. This is
+    /// called only while `mutex` is held and is always paired with a deferred
+    /// second exchange before the lock is released.
+    fn swapSecondaryDispatchLaneUnlocked(
+        self: *MetalAllocationAdapterV1,
+    ) void {
+        std.mem.swap(
+            ?MetalMatvecDispatchRequestV1,
+            &self.prepared_matvec_request,
+            &self.secondary_dispatch_lane.prepared_matvec_request,
+        );
+        std.mem.swap(
+            ?lease_tree.DispatchPinIntentV1,
+            &self.reserved_dispatch_intent,
+            &self.secondary_dispatch_lane.reserved_dispatch_intent,
+        );
+        std.mem.swap(
+            ?lease_tree.DispatchPinIntentV1,
+            &self.aborted_dispatch_intent,
+            &self.secondary_dispatch_lane.aborted_dispatch_intent,
+        );
+        std.mem.swap(
+            ?lease_tree.LeaseTreeDispatchPinV1,
+            &self.bound_dispatch_pin,
+            &self.secondary_dispatch_lane.bound_dispatch_pin,
+        );
+        std.mem.swap(
+            ?MetalMatvecDispatchRequestV1,
+            &self.cancelled_prepared_request,
+            &self.secondary_dispatch_lane.cancelled_prepared_request,
+        );
+        std.mem.swap(
+            bool,
+            &self.dispatch_unresolved,
+            &self.secondary_dispatch_lane.dispatch_unresolved,
+        );
+        std.mem.swap(
+            ?PendingMetalAsyncDispatchV1,
+            &self.async_dispatch,
+            &self.secondary_dispatch_lane.async_dispatch,
+        );
+        std.mem.swap(
+            ?MetalAsyncDispatchQuarantineV1,
+            &self.async_quarantine,
+            &self.secondary_dispatch_lane.async_quarantine,
+        );
+        std.mem.swap(
+            ?AuthorizedDispatchTerminalV1,
+            &self.authorized_terminal,
+            &self.secondary_dispatch_lane.authorized_terminal,
+        );
+        std.mem.swap(
+            bool,
+            &self.terminal_validation_observed,
+            &self.secondary_dispatch_lane.terminal_validation_observed,
+        );
+        std.mem.swap(
+            ?DispatchSettlementTombstoneV1,
+            &self.settlement_tombstone,
+            &self.secondary_dispatch_lane.settlement_tombstone,
+        );
+        std.mem.swap(
+            ?MetalLossDispatchReconciliationPermitV1,
+            &self.loss_dispatch_reconciliation_permit,
+            &self.secondary_dispatch_lane.loss_dispatch_reconciliation_permit,
+        );
+        std.mem.swap(
+            ?MetalLossDispatchReconciliationTombstoneV1,
+            &self.loss_dispatch_reconciliation_tombstone,
+            &self.secondary_dispatch_lane.loss_dispatch_reconciliation_tombstone,
+        );
+        std.mem.swap(
+            ?MetalLossDispatchCallbackRetirementPermitV1,
+            &self.loss_dispatch_callback_retirement_permit,
+            &self.secondary_dispatch_lane.loss_dispatch_callback_retirement_permit,
+        );
+        std.mem.swap(
+            ?MetalLossDispatchCallbackRetirementTombstoneV1,
+            &self.loss_dispatch_callback_retirement_tombstone,
+            &self.secondary_dispatch_lane.loss_dispatch_callback_retirement_tombstone,
+        );
+    }
+
+    fn activateDispatchQueueSlotUnlocked(
+        self: *MetalAllocationAdapterV1,
+        queue_slot: u64,
+    ) Error!void {
+        if (queue_slot >= maximum_async_dispatch_slots)
+            return Error.InvalidDispatchEvidence;
+        if (queue_slot == 1)
+            self.swapSecondaryDispatchLaneUnlocked();
+    }
+
+    fn restoreDispatchQueueSlotUnlocked(
+        self: *MetalAllocationAdapterV1,
+        queue_slot: u64,
+    ) void {
+        if (queue_slot == 1)
+            self.swapSecondaryDispatchLaneUnlocked();
+    }
+
+    fn primaryDispatchLaneOccupiedUnlocked(
+        self: *const MetalAllocationAdapterV1,
+    ) bool {
+        return self.prepared_matvec_request != null or
+            self.reserved_dispatch_intent != null or
+            self.bound_dispatch_pin != null or
+            self.dispatch_unresolved or
+            self.async_dispatch != null or
+            self.async_quarantine != null or
+            self.authorized_terminal != null or
+            self.terminal_validation_observed or
+            self.loss_dispatch_reconciliation_permit != null or
+            self.loss_dispatch_callback_retirement_permit != null;
+    }
+
+    fn secondaryDispatchLaneOccupiedUnlocked(
+        self: *const MetalAllocationAdapterV1,
+    ) bool {
+        const lane = self.secondary_dispatch_lane;
+        return lane.prepared_matvec_request != null or
+            lane.reserved_dispatch_intent != null or
+            lane.bound_dispatch_pin != null or
+            lane.dispatch_unresolved or
+            lane.async_dispatch != null or
+            lane.async_quarantine != null or
+            lane.authorized_terminal != null or
+            lane.terminal_validation_observed or
+            lane.loss_dispatch_reconciliation_permit != null or
+            lane.loss_dispatch_callback_retirement_permit != null;
+    }
+
+    fn anyDispatchLaneOccupiedUnlocked(
+        self: *const MetalAllocationAdapterV1,
+    ) bool {
+        return self.primaryDispatchLaneOccupiedUnlocked() or
+            self.secondaryDispatchLaneOccupiedUnlocked();
+    }
+
+    fn anyDispatchLossStateUnlocked(
+        self: *const MetalAllocationAdapterV1,
+    ) bool {
+        return self.loss_dispatch_reconciliation_permit != null or
+            self.loss_dispatch_reconciliation_tombstone != null or
+            self.loss_dispatch_callback_retirement_permit != null or
+            self.loss_dispatch_callback_retirement_tombstone != null or
+            self.secondary_dispatch_lane
+                .loss_dispatch_reconciliation_permit != null or
+            self.secondary_dispatch_lane
+                .loss_dispatch_reconciliation_tombstone != null or
+            self.secondary_dispatch_lane
+                .loss_dispatch_callback_retirement_permit != null or
+            self.secondary_dispatch_lane
+                .loss_dispatch_callback_retirement_tombstone != null;
+    }
+
+    fn anyDispatchCallbackRetirementTombstoneUnlocked(
+        self: *const MetalAllocationAdapterV1,
+    ) bool {
+        return self.loss_dispatch_callback_retirement_tombstone != null or
+            self.secondary_dispatch_lane
+                .loss_dispatch_callback_retirement_tombstone != null;
+    }
+
+    fn dispatchLaneForPreparedAttemptUnlocked(
+        self: *const MetalAllocationAdapterV1,
+        attempt: MetalMatvecPreSubmitAttemptV1,
+    ) ?u64 {
+        if (self.prepared_matvec_request) |request| {
+            if (std.meta.eql(request.attempt, attempt))
+                return 0;
+        }
+        if (self.secondary_dispatch_lane.prepared_matvec_request) |request| {
+            if (std.meta.eql(request.attempt, attempt))
+                return 1;
+        }
+        return null;
+    }
+
+    fn dispatchLaneForRequestUnlocked(
+        self: *const MetalAllocationAdapterV1,
+        request: MetalMatvecDispatchRequestV1,
+    ) ?u64 {
+        if (self.prepared_matvec_request) |prepared| {
+            if (std.meta.eql(prepared, request))
+                return 0;
+        }
+        if (self.cancelled_prepared_request) |cancelled| {
+            if (std.meta.eql(cancelled, request))
+                return 0;
+        }
+        const lane = self.secondary_dispatch_lane;
+        if (lane.prepared_matvec_request) |prepared| {
+            if (std.meta.eql(prepared, request))
+                return 1;
+        }
+        if (lane.cancelled_prepared_request) |cancelled| {
+            if (std.meta.eql(cancelled, request))
+                return 1;
+        }
+        return null;
+    }
+
+    fn dispatchLaneForIntentUnlocked(
+        self: *const MetalAllocationAdapterV1,
+        intent: lease_tree.DispatchPinIntentV1,
+    ) ?u64 {
+        if (self.reserved_dispatch_intent) |reserved| {
+            if (std.meta.eql(reserved, intent))
+                return 0;
+        }
+        if (self.aborted_dispatch_intent) |aborted| {
+            if (std.meta.eql(aborted, intent))
+                return 0;
+        }
+        if (self.prepared_matvec_request) |prepared| {
+            if (device.digestEqual(
+                prepared.request_sha256,
+                intent.dispatch_request_sha256,
+            )) return 0;
+        }
+        const lane = self.secondary_dispatch_lane;
+        if (lane.reserved_dispatch_intent) |reserved| {
+            if (std.meta.eql(reserved, intent))
+                return 1;
+        }
+        if (lane.aborted_dispatch_intent) |aborted| {
+            if (std.meta.eql(aborted, intent))
+                return 1;
+        }
+        if (lane.prepared_matvec_request) |prepared| {
+            if (device.digestEqual(
+                prepared.request_sha256,
+                intent.dispatch_request_sha256,
+            )) return 1;
+        }
+        return null;
+    }
+
+    fn dispatchLaneForPinUnlocked(
+        self: *const MetalAllocationAdapterV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+    ) ?u64 {
+        if (self.prepared_matvec_request) |prepared| {
+            if (device.digestEqual(
+                prepared.request_sha256,
+                pin.dispatch_request_sha256,
+            )) return 0;
+        }
+        if (self.bound_dispatch_pin) |bound| {
+            if (std.meta.eql(bound, pin))
+                return 0;
+        }
+        if (self.async_dispatch) |pending| {
+            if (std.meta.eql(pending.pin, pin))
+                return 0;
+        }
+        if (self.authorized_terminal) |authorized| {
+            if (std.meta.eql(authorized.pin, pin))
+                return 0;
+        }
+        if (self.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.pin, pin))
+                return 0;
+        }
+        const lane = self.secondary_dispatch_lane;
+        if (lane.prepared_matvec_request) |prepared| {
+            if (device.digestEqual(
+                prepared.request_sha256,
+                pin.dispatch_request_sha256,
+            )) return 1;
+        }
+        if (lane.bound_dispatch_pin) |bound| {
+            if (std.meta.eql(bound, pin))
+                return 1;
+        }
+        if (lane.async_dispatch) |pending| {
+            if (std.meta.eql(pending.pin, pin))
+                return 1;
+        }
+        if (lane.authorized_terminal) |authorized| {
+            if (std.meta.eql(authorized.pin, pin))
+                return 1;
+        }
+        if (lane.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.pin, pin))
+                return 1;
+        }
+        return null;
+    }
+
+    fn matchingPendingDispatchTicketUnlocked(
+        self: *const MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        attempt: MetalMatvecPreSubmitAttemptV1,
+        packed_input_sha256: Digest,
+        scales_input_sha256: Digest,
+        vector_input_sha256: Digest,
+    ) Error!?MetalAsyncDispatchTicketV1 {
+        const primary: ?PendingMetalAsyncDispatchV1 =
+            self.async_dispatch;
+        const secondary: ?PendingMetalAsyncDispatchV1 =
+            self.secondary_dispatch_lane.async_dispatch;
+        const candidates = [_]?PendingMetalAsyncDispatchV1{
+            primary,
+            secondary,
+        };
+        for (candidates, 0..) |candidate, queue_slot| {
+            const pending = candidate orelse continue;
+            try validateMetalAsyncDispatchTicketForDispatchV1(
+                pending.ticket,
+                pending.ticket.ticket_generation,
+                pending.request,
+                pending.pin,
+                pending.draft,
+            );
+            if (pending.ticket.queue_slot !=
+                @as(u64, @intCast(queue_slot)))
+                return Error.InvalidDispatchEvidence;
+            if (std.meta.eql(pending.lease, lease) and
+                std.meta.eql(pending.pin, pin) and
+                std.meta.eql(pending.request.attempt, attempt) and
+                device.digestEqual(
+                    pending.draft.packed_weights_input_sha256,
+                    packed_input_sha256,
+                ) and device.digestEqual(
+                pending.draft.scales_input_sha256,
+                scales_input_sha256,
+            ) and device.digestEqual(
+                pending.draft.vector_input_sha256,
+                vector_input_sha256,
+            ))
+                return pending.ticket;
+        }
+        return null;
+    }
+
+    fn dispatchLaneForTerminalUnlocked(
+        self: *const MetalAllocationAdapterV1,
+        terminal: lease_tree.DispatchTerminalEvidenceV1,
+    ) ?u64 {
+        if (self.authorized_terminal) |authorized| {
+            if (std.meta.eql(authorized.terminal, terminal))
+                return 0;
+        }
+        if (self.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.terminal, terminal))
+                return 0;
+        }
+        const lane = self.secondary_dispatch_lane;
+        if (lane.authorized_terminal) |authorized| {
+            if (std.meta.eql(authorized.terminal, terminal))
+                return 1;
+        }
+        if (lane.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.terminal, terminal))
+                return 1;
+        }
+        return null;
+    }
+
+    fn dispatchLaneForCompletionUnlocked(
+        self: *const MetalAllocationAdapterV1,
+        completion: lease_tree.LeaseTreeDispatchCompletionV1,
+    ) ?u64 {
+        if (self.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.completion, completion))
+                return 0;
+        }
+        if (self.secondary_dispatch_lane.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.completion, completion))
+                return 1;
+        }
+        return null;
+    }
+
+    fn dispatchLaneForLossReconciliationTombstoneUnlocked(
+        self: *const MetalAllocationAdapterV1,
+        plan: loss_dispatch_reconciliation.LossDispatchReconciliationPlanV1,
+        retention: loss_dispatch_reconciliation.LossDispatchRetentionV1,
+    ) ?u64 {
+        if (self.loss_dispatch_reconciliation_tombstone) |value| {
+            if (std.meta.eql(value.plan, plan) and
+                std.meta.eql(value.retention, retention))
+                return 0;
+        }
+        if (self.secondary_dispatch_lane
+            .loss_dispatch_reconciliation_tombstone) |value|
+        {
+            if (std.meta.eql(value.plan, plan) and
+                std.meta.eql(value.retention, retention))
+                return 1;
+        }
+        if (self.loss_dispatch_reconciliation_tombstone != null)
+            return 0;
+        if (self.secondary_dispatch_lane
+            .loss_dispatch_reconciliation_tombstone != null)
+            return 1;
+        return null;
+    }
+
+    fn dispatchLaneForLossCallbackRetirementTombstoneUnlocked(
+        self: *const MetalAllocationAdapterV1,
+        plan: loss_dispatch_callback_retirement.LossDispatchCallbackRetirementPlanV1,
+        retention: loss_dispatch_callback_retirement.LossDispatchCallbackRetentionV1,
+    ) ?u64 {
+        if (self.loss_dispatch_callback_retirement_tombstone) |value| {
+            if (std.meta.eql(value.plan, plan) and
+                std.meta.eql(value.retention, retention))
+                return 0;
+        }
+        if (self.secondary_dispatch_lane
+            .loss_dispatch_callback_retirement_tombstone) |value|
+        {
+            if (std.meta.eql(value.plan, plan) and
+                std.meta.eql(value.retention, retention))
+                return 1;
+        }
+        if (self.loss_dispatch_callback_retirement_tombstone != null)
+            return 0;
+        if (self.secondary_dispatch_lane
+            .loss_dispatch_callback_retirement_tombstone != null)
+            return 1;
+        return null;
+    }
+
+    fn lowestAvailableDispatchLaneUnlocked(
+        self: *const MetalAllocationAdapterV1,
+    ) ?u64 {
+        if (!self.primaryDispatchLaneOccupiedUnlocked())
+            return 0;
+        if (!self.secondaryDispatchLaneOccupiedUnlocked())
+            return 1;
+        return null;
+    }
+
+    fn liveAllocationCountUnlocked(
+        self: *const MetalAllocationAdapterV1,
+    ) u64 {
+        var count: u64 = 0;
+        for (self.slots) |slot| {
+            if (slot.live)
+                count += 1;
+        }
+        return count;
     }
 
     pub fn interface(
@@ -1190,16 +1666,7 @@ pub const MetalAllocationAdapterV1 = struct {
     fn requireLossRetirementQuiescedUnlocked(
         self: *MetalAllocationAdapterV1,
     ) Error!void {
-        if (self.dispatch_unresolved or
-            self.async_dispatch != null or
-            self.async_quarantine != null or
-            self.authorized_terminal != null or
-            self.terminal_validation_observed or
-            self.loss_dispatch_reconciliation_permit != null or
-            self.loss_dispatch_callback_retirement_permit != null or
-            self.prepared_matvec_request != null or
-            self.reserved_dispatch_intent != null or
-            self.bound_dispatch_pin != null or
+        if (self.anyDispatchLaneOccupiedUnlocked() or
             try self.backend.nativeLiveCommandCount() != 0)
             return Error.DispatchBusy;
     }
@@ -1480,8 +1947,9 @@ pub const MetalAllocationAdapterV1 = struct {
             return Error.InvalidConfiguration;
     }
 
-    /// Bind a LeaseTree dispatch pin to this exact native adapter and its
-    /// single serial Metal queue. Terminal validation alone never clears the
+    /// Bind LeaseTree dispatch pins to this exact native adapter and its two
+    /// bounded Metal evidence slots. This is queue capacity, not a claim of
+    /// physical parallel execution. Terminal validation alone never clears
     /// private authorization; only the post-Bank settlement callback does.
     pub fn dispatchInterface(
         self: *MetalAllocationAdapterV1,
@@ -1760,6 +2228,14 @@ pub const MetalAllocationAdapterV1 = struct {
         try self.validateAddress();
         self.mutex.lock();
         defer self.mutex.unlock();
+        const queue_slot =
+            self.dispatchLaneForLossReconciliationTombstoneUnlocked(
+                plan,
+                retention,
+            ) orelse
+            return null;
+        try self.activateDispatchQueueSlotUnlocked(queue_slot);
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
         const retained =
             self.loss_dispatch_reconciliation_tombstone orelse
             return null;
@@ -2032,6 +2508,14 @@ pub const MetalAllocationAdapterV1 = struct {
         try self.validateAddress();
         self.mutex.lock();
         defer self.mutex.unlock();
+        const queue_slot =
+            self.dispatchLaneForLossCallbackRetirementTombstoneUnlocked(
+                plan,
+                retention,
+            ) orelse
+            return null;
+        try self.activateDispatchQueueSlotUnlocked(queue_slot);
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
         const retained =
             self.loss_dispatch_callback_retirement_tombstone orelse
             return null;
@@ -2949,8 +3433,9 @@ pub const MetalAllocationAdapterV1 = struct {
 
     /// Prepare one replay-fenced request before acquiring a coordinator pin.
     /// Repeating the exact attempt in prepared-only state returns the same
-    /// request. A different attempt or any intent/pin/terminal fence is
-    /// rejected without mutation.
+    /// request. A distinct attempt uses the lowest canonical free slot; an
+    /// intent/pin/terminal fence blocks only its exact selected slot, while
+    /// full two-slot capacity rejects without mutation.
     pub fn prepareMatvecDispatchRequestV1(
         self: *MetalAllocationAdapterV1,
         attempt: MetalMatvecPreSubmitAttemptV1,
@@ -2984,6 +3469,11 @@ pub const MetalAllocationAdapterV1 = struct {
         request: MetalMatvecDispatchRequestV1,
     ) Error!void {
         try validateMetalMatvecDispatchRequestV1(request);
+        const queue_slot =
+            self.dispatchLaneForRequestUnlocked(request) orelse
+            return Error.StaleObject;
+        try self.activateDispatchQueueSlotUnlocked(queue_slot);
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
@@ -3023,8 +3513,9 @@ pub const MetalAllocationAdapterV1 = struct {
     /// Submit one exact INT4 matvec without waiting for GPU completion.
     /// Successful replay of the same lease, pin, request, payload roots, and
     /// geometry returns the same ticket and never uploads or commits twice.
-    /// A different request is rejected before native mutation while the one
-    /// queue slot is occupied.
+    /// A distinct request uses the lowest canonical free queue slot. Once both
+    /// bounded slots are occupied, capacity rejection occurs before native
+    /// upload or commit.
     pub fn submitMatvecInt4AsyncObserved(
         self: *MetalAllocationAdapterV1,
         lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
@@ -3064,37 +3555,28 @@ pub const MetalAllocationAdapterV1 = struct {
             digestIsZero(vector_input_sha256))
             return Error.InvalidDispatchEvidence;
 
-        if (self.loss_dispatch_callback_retirement_permit != null or
-            self.loss_dispatch_callback_retirement_tombstone != null or
+        if (self.anyDispatchLossStateUnlocked() or
             self.loss_retirement_permit != null or
             self.loss_retirement_tombstone != null)
             return Error.DispatchBusy;
-        if (self.async_dispatch) |pending| {
-            try validateMetalAsyncDispatchTicketForDispatchV1(
-                pending.ticket,
-                pending.ticket.ticket_generation,
-                pending.request,
-                pending.pin,
-                pending.draft,
-            );
-            if (!std.meta.eql(pending.lease, lease) or
-                !std.meta.eql(pending.pin, pin) or
-                !std.meta.eql(
-                    pending.request.attempt,
-                    attempt,
-                ) or !device.digestEqual(
-                pending.draft.packed_weights_input_sha256,
-                packed_input_sha256,
-            ) or !device.digestEqual(
-                pending.draft.scales_input_sha256,
-                scales_input_sha256,
-            ) or !device.digestEqual(
-                pending.draft.vector_input_sha256,
-                vector_input_sha256,
-            ))
-                return Error.DispatchBusy;
-            return pending.ticket;
-        }
+        if (try self.matchingPendingDispatchTicketUnlocked(
+            lease,
+            pin,
+            attempt,
+            packed_input_sha256,
+            scales_input_sha256,
+            vector_input_sha256,
+        )) |replayed| return replayed;
+        const queue_slot =
+            self.dispatchLaneForPinUnlocked(pin) orelse {
+                if (self.lowestAvailableDispatchLaneUnlocked() == null)
+                    return Error.DispatchBusy;
+                return Error.InvalidDispatchEvidence;
+            };
+        try self.activateDispatchQueueSlotUnlocked(queue_slot);
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
+        if (self.async_dispatch != null)
+            return Error.DispatchBusy;
         if (self.dispatch_unresolved or
             self.async_quarantine != null or
             self.authorized_terminal != null or
@@ -3162,7 +3644,8 @@ pub const MetalAllocationAdapterV1 = struct {
             self.next_async_ticket_generation ==
                 std.math.maxInt(u64))
             return Error.GenerationExhausted;
-        const ticket = try makeMetalAsyncDispatchTicketV1(
+        const ticket = try makeMetalAsyncDispatchTicketForSlotV1(
+            queue_slot,
             self.next_async_ticket_generation,
             request,
             pin,
@@ -3250,6 +3733,13 @@ pub const MetalAllocationAdapterV1 = struct {
             return metal.MetalError.Unavailable;
         self.mutex.lock();
         defer self.mutex.unlock();
+        try validateMetalAsyncDispatchTicketV1(ticket);
+        try self.activateDispatchQueueSlotUnlocked(
+            ticket.queue_slot,
+        );
+        defer self.restoreDispatchQueueSlotUnlocked(
+            ticket.queue_slot,
+        );
         return self.observeMatvecInt4AsyncUnlocked(
             lease,
             pin,
@@ -3288,6 +3778,13 @@ pub const MetalAllocationAdapterV1 = struct {
 
         self.mutex.lock();
         defer self.mutex.unlock();
+        try validateMetalAsyncDispatchTicketV1(ticket);
+        try self.activateDispatchQueueSlotUnlocked(
+            ticket.queue_slot,
+        );
+        defer self.restoreDispatchQueueSlotUnlocked(
+            ticket.queue_slot,
+        );
         if (self.loss_dispatch_callback_retirement_permit != null)
             return Error.DispatchUnresolved;
         if (self.loss_dispatch_callback_retirement_tombstone != null) {
@@ -3340,6 +3837,13 @@ pub const MetalAllocationAdapterV1 = struct {
     ) Error!MetalAsyncWaitPreparationV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
+        try validateMetalAsyncDispatchTicketV1(ticket);
+        try self.activateDispatchQueueSlotUnlocked(
+            ticket.queue_slot,
+        );
+        defer self.restoreDispatchQueueSlotUnlocked(
+            ticket.queue_slot,
+        );
         const observed = try self.observeMatvecInt4AsyncUnlocked(
             lease,
             pin,
@@ -3373,7 +3877,27 @@ pub const MetalAllocationAdapterV1 = struct {
     ) ?MetalAsyncDispatchTicketV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        return if (self.async_dispatch) |pending|
+        if (self.async_dispatch) |pending|
+            return pending.ticket;
+        if (self.secondary_dispatch_lane.async_dispatch) |pending|
+            return pending.ticket;
+        return null;
+    }
+
+    pub fn currentAsyncDispatchTicketForQueueSlotV1(
+        self: *MetalAllocationAdapterV1,
+        queue_slot: u64,
+    ) ?MetalAsyncDispatchTicketV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (queue_slot >= maximum_async_dispatch_slots)
+            return null;
+        return if (queue_slot == 0)
+            if (self.async_dispatch) |pending|
+                pending.ticket
+            else
+                null
+        else if (self.secondary_dispatch_lane.async_dispatch) |pending|
             pending.ticket
         else
             null;
@@ -3384,7 +3908,23 @@ pub const MetalAllocationAdapterV1 = struct {
     ) ?MetalAsyncDispatchQuarantineV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        return self.async_quarantine;
+        if (self.async_quarantine) |quarantine|
+            return quarantine;
+        return self.secondary_dispatch_lane.async_quarantine;
+    }
+
+    pub fn currentAsyncDispatchQuarantineForQueueSlotV1(
+        self: *MetalAllocationAdapterV1,
+        queue_slot: u64,
+    ) ?MetalAsyncDispatchQuarantineV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (queue_slot >= maximum_async_dispatch_slots)
+            return null;
+        return if (queue_slot == 0)
+            self.async_quarantine
+        else
+            self.secondary_dispatch_lane.async_quarantine;
     }
 
     /// Convert one exact retained command-buffer error into core
@@ -3405,6 +3945,13 @@ pub const MetalAllocationAdapterV1 = struct {
             return metal.MetalError.Unavailable;
         self.mutex.lock();
         defer self.mutex.unlock();
+        try validateMetalAsyncDispatchTicketV1(ticket);
+        try self.activateDispatchQueueSlotUnlocked(
+            ticket.queue_slot,
+        );
+        defer self.restoreDispatchQueueSlotUnlocked(
+            ticket.queue_slot,
+        );
 
         const pending = self.async_dispatch orelse {
             if (self.settlement_tombstone) |settled| {
@@ -3488,7 +4035,7 @@ pub const MetalAllocationAdapterV1 = struct {
         return result;
     }
 
-    /// Synchronous compatibility wrapper over the single native async path.
+    /// Synchronous compatibility wrapper over one selected native async slot.
     /// Native ownership still remains live after this method returns success;
     /// only the coordinator's private post-Bank callback finalizes it.
     pub fn dispatchMatvecInt4Observed(
@@ -3967,6 +4514,11 @@ pub const MetalAllocationAdapterV1 = struct {
             return metal.MetalError.Unavailable;
         self.mutex.lock();
         defer self.mutex.unlock();
+        const queue_slot =
+            self.dispatchLaneForPinUnlocked(pin) orelse
+            return Error.InvalidDispatchEvidence;
+        try self.activateDispatchQueueSlotUnlocked(queue_slot);
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
 
         if (self.authorized_terminal) |authorized| {
             switch (authorized.evidence) {
@@ -4083,6 +4635,11 @@ pub const MetalAllocationAdapterV1 = struct {
             return metal.MetalError.Unavailable;
         self.mutex.lock();
         defer self.mutex.unlock();
+        const queue_slot =
+            self.dispatchLaneForPinUnlocked(pin) orelse
+            return Error.InvalidDispatchEvidence;
+        try self.activateDispatchQueueSlotUnlocked(queue_slot);
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
 
         const attempt = try makeMetalMatvecPreSubmitAttemptV1(
             roles,
@@ -4206,6 +4763,11 @@ pub const MetalAllocationAdapterV1 = struct {
         lease_tree.validateDispatchCompletionV1(
             completion,
         ) catch return Error.InvalidDispatchEvidence;
+        const queue_slot =
+            self.dispatchLaneForCompletionUnlocked(completion) orelse
+            return Error.DispatchUnresolved;
+        try self.activateDispatchQueueSlotUnlocked(queue_slot);
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
         const settled = self.settlement_tombstone orelse
             return Error.DispatchUnresolved;
         if (!std.meta.eql(settled.completion, completion))
@@ -4247,8 +4809,7 @@ pub const MetalAllocationAdapterV1 = struct {
             return metal.MetalError.Unavailable;
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (self.loss_dispatch_callback_retirement_permit != null or
-            self.loss_dispatch_callback_retirement_tombstone != null or
+        if (self.anyDispatchLossStateUnlocked() or
             self.loss_retirement_permit != null or
             self.loss_retirement_tombstone != null)
             return Error.DispatchBusy;
@@ -4293,6 +4854,16 @@ pub const MetalAllocationAdapterV1 = struct {
         attempt: MetalMatvecPreSubmitAttemptV1,
     ) Error!MetalMatvecDispatchRequestV1 {
         try validateMetalMatvecPreSubmitAttemptV1(attempt);
+        if (self.loss_retirement_permit != null or
+            self.loss_retirement_tombstone != null or
+            self.anyDispatchLossStateUnlocked())
+            return Error.DispatchBusy;
+        const queue_slot =
+            self.dispatchLaneForPreparedAttemptUnlocked(attempt) orelse
+            self.lowestAvailableDispatchLaneUnlocked() orelse
+            return Error.DispatchBusy;
+        try self.activateDispatchQueueSlotUnlocked(queue_slot);
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
@@ -4411,8 +4982,9 @@ pub const MetalAllocationAdapterV1 = struct {
     ) Error!void {
         try lease_tree.validateLeaseV1(lease);
         try lease_tree.validateDispatchPinV1(pin);
-        if (lease.allocation_count != 4 or
-            pin.allocation_count != 4 or
+        if (lease.allocation_count < 4 or
+            pin.allocation_count < 4 or
+            lease.allocation_count != pin.allocation_count or
             !device.digestEqual(
                 lease.authority_sha256,
                 self.authority.authority_sha256,
@@ -4469,8 +5041,9 @@ pub const MetalAllocationAdapterV1 = struct {
             return metal.MetalError.Unavailable;
         try lease_tree.validateLeaseV1(lease);
         try lease_tree.validateDispatchPinV1(pin);
-        if (lease.allocation_count != 4 or
-            pin.allocation_count != 4 or
+        if (lease.allocation_count < 4 or
+            pin.allocation_count < 4 or
+            lease.allocation_count != pin.allocation_count or
             !device.digestEqual(
                 lease.authority_sha256,
                 self.authority.authority_sha256,
@@ -4709,17 +5282,8 @@ pub const MetalAllocationAdapterV1 = struct {
         if (self.used_resource_bytes != 0 or
             self.observed_allocated_size_bytes != 0 or
             !digestIsZero(self.active_admission_sha256) or
-            self.loss_dispatch_reconciliation_permit != null or
-            self.loss_dispatch_callback_retirement_permit != null or
             self.loss_retirement_permit != null or
-            self.dispatch_unresolved or
-            self.async_dispatch != null or
-            self.async_quarantine != null or
-            self.authorized_terminal != null or
-            self.terminal_validation_observed or
-            self.prepared_matvec_request != null or
-            self.reserved_dispatch_intent != null or
-            self.bound_dispatch_pin != null)
+            self.anyDispatchLaneOccupiedUnlocked())
             return Error.InvalidConfiguration;
         for (self.slots) |slot| if (slot.live or
             !slot.native_token.isZero())
@@ -4740,6 +5304,14 @@ pub const MetalAllocationAdapterV1 = struct {
             intent,
         ) catch return lease_tree.DispatchCallbackError
             .InvalidDispatchIntent;
+        const queue_slot =
+            self.dispatchLaneForIntentUnlocked(intent) orelse
+            return lease_tree.DispatchCallbackError
+                .InvalidDispatchIntent;
+        self.activateDispatchQueueSlotUnlocked(queue_slot) catch
+            return lease_tree.DispatchCallbackError
+                .InvalidDispatchIntent;
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
         const prepared = self.prepared_matvec_request orelse
             return lease_tree.DispatchCallbackError
                 .InvalidDispatchIntent;
@@ -4776,7 +5348,9 @@ pub const MetalAllocationAdapterV1 = struct {
         ) or !device.digestEqual(
             self.active_admission_sha256,
             intent.admission_sha256,
-        ) or intent.allocation_count != 4 or
+        ) or intent.allocation_count < 4 or
+            intent.allocation_count !=
+                self.liveAllocationCountUnlocked() or
             intent.pinned_device_bytes != self.used_resource_bytes)
             return lease_tree.DispatchCallbackError
                 .InvalidDispatchIntent;
@@ -4801,6 +5375,14 @@ pub const MetalAllocationAdapterV1 = struct {
             intent,
         ) catch return lease_tree.DispatchCallbackError
             .InvalidDispatchIntent;
+        const queue_slot =
+            self.dispatchLaneForIntentUnlocked(intent) orelse
+            return lease_tree.DispatchCallbackError
+                .InvalidDispatchIntent;
+        self.activateDispatchQueueSlotUnlocked(queue_slot) catch
+            return lease_tree.DispatchCallbackError
+                .InvalidDispatchIntent;
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
@@ -4831,6 +5413,14 @@ pub const MetalAllocationAdapterV1 = struct {
             @ptrCast(@alignCast(context));
         self.mutex.lock();
         defer self.mutex.unlock();
+        const queue_slot =
+            self.dispatchLaneForTerminalUnlocked(terminal) orelse
+            return lease_tree.DispatchCallbackError
+                .InvalidTerminalEvidence;
+        self.activateDispatchQueueSlotUnlocked(queue_slot) catch
+            return lease_tree.DispatchCallbackError
+                .InvalidTerminalEvidence;
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
         const authorized = self.authorized_terminal orelse
             return lease_tree.DispatchCallbackError
                 .InvalidTerminalEvidence;
@@ -5011,6 +5601,14 @@ pub const MetalAllocationAdapterV1 = struct {
             @ptrCast(@alignCast(context));
         self.mutex.lock();
         defer self.mutex.unlock();
+        const queue_slot =
+            self.dispatchLaneForPinUnlocked(pin) orelse
+            return lease_tree.DispatchCallbackError
+                .InvalidSettlementEvidence;
+        self.activateDispatchQueueSlotUnlocked(queue_slot) catch
+            return lease_tree.DispatchCallbackError
+                .InvalidSettlementEvidence;
+        defer self.restoreDispatchQueueSlotUnlocked(queue_slot);
         if (self.settlement_tombstone) |settled| {
             if (std.meta.eql(settled.pin, pin) and
                 std.meta.eql(settled.terminal, terminal) and
@@ -5467,16 +6065,10 @@ pub const MetalAllocationAdapterV1 = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        if (self.dispatch_unresolved or
-            self.authorized_terminal != null or
-            self.terminal_validation_observed or
-            self.loss_dispatch_callback_retirement_permit != null or
-            self.loss_dispatch_callback_retirement_tombstone != null or
+        if (self.anyDispatchLaneOccupiedUnlocked() or
+            self.anyDispatchCallbackRetirementTombstoneUnlocked() or
             self.loss_retirement_permit != null or
-            self.loss_retirement_tombstone != null or
-            self.prepared_matvec_request != null or
-            self.reserved_dispatch_intent != null or
-            self.bound_dispatch_pin != null)
+            self.loss_retirement_tombstone != null)
             return allocation.CallbackError.Unavailable;
         allocation.validateAllocationCallV1(call) catch
             return allocation.CallbackError.InvalidRequest;
@@ -5618,12 +6210,7 @@ pub const MetalAllocationAdapterV1 = struct {
         // private settlement callback clears it atomically with exact Bank
         // completion validation, so no caller-controlled handoff window can
         // free a command buffer's registered resources.
-        if (self.dispatch_unresolved or
-            self.authorized_terminal != null or
-            self.terminal_validation_observed or
-            self.prepared_matvec_request != null or
-            self.reserved_dispatch_intent != null or
-            self.bound_dispatch_pin != null)
+        if (self.anyDispatchLaneOccupiedUnlocked())
             return allocation.CallbackError.Unavailable;
         self.free_calls +|= 1;
 
@@ -5734,6 +6321,15 @@ fn lossDispatchReconciliationChallengeCallback(
     const self = context.adapter;
     self.mutex.lock();
     defer self.mutex.unlock();
+    validateMetalAsyncDispatchTicketV1(
+        context.ticket,
+    ) catch return error.InvalidReconciliationBinding;
+    self.activateDispatchQueueSlotUnlocked(
+        context.ticket.queue_slot,
+    ) catch return error.InvalidReconciliationBinding;
+    defer self.restoreDispatchQueueSlotUnlocked(
+        context.ticket.queue_slot,
+    );
     const challenge =
         self.lossDispatchReconciliationChallengeUnlocked(
             context.observation,
@@ -5763,6 +6359,15 @@ fn lossDispatchReconciliationArmCallback(
     const self = context.adapter;
     self.mutex.lock();
     defer self.mutex.unlock();
+    validateMetalAsyncDispatchTicketV1(
+        context.ticket,
+    ) catch return error.InvalidReconciliationBinding;
+    self.activateDispatchQueueSlotUnlocked(
+        context.ticket.queue_slot,
+    ) catch return error.InvalidReconciliationBinding;
+    defer self.restoreDispatchQueueSlotUnlocked(
+        context.ticket.queue_slot,
+    );
     const result =
         self.armLossDispatchReconciliationFromCoordinatorUnlocked(
             context.*,
@@ -5791,6 +6396,15 @@ fn lossDispatchCallbackRetirementChallengeCallback(
     const self = context.adapter;
     self.mutex.lock();
     defer self.mutex.unlock();
+    validateMetalAsyncDispatchTicketV1(
+        context.ticket,
+    ) catch return error.InvalidReconciliationBinding;
+    self.activateDispatchQueueSlotUnlocked(
+        context.ticket.queue_slot,
+    ) catch return error.InvalidReconciliationBinding;
+    defer self.restoreDispatchQueueSlotUnlocked(
+        context.ticket.queue_slot,
+    );
     const challenge =
         self.lossDispatchCallbackRetirementChallengeUnlocked(
             context.observation,
@@ -5820,6 +6434,15 @@ fn lossDispatchCallbackRetirementArmCallback(
     const self = context.adapter;
     self.mutex.lock();
     defer self.mutex.unlock();
+    validateMetalAsyncDispatchTicketV1(
+        context.ticket,
+    ) catch return error.InvalidReconciliationBinding;
+    self.activateDispatchQueueSlotUnlocked(
+        context.ticket.queue_slot,
+    ) catch return error.InvalidReconciliationBinding;
+    defer self.restoreDispatchQueueSlotUnlocked(
+        context.ticket.queue_slot,
+    );
     const result =
         self.armLossDispatchCallbackRetirementFromCoordinatorUnlocked(
             context.*,
@@ -5870,7 +6493,7 @@ fn lossRetirementChallengeCallback(
     defer self.mutex.unlock();
     self.validateAddress() catch
         return error.InvalidRetirementBinding;
-    if (self.loss_dispatch_callback_retirement_permit != null or
+    if (self.anyDispatchLaneOccupiedUnlocked() or
         self.loss_retirement_permit != null or
         self.loss_retirement_tombstone != null)
         return error.Busy;
@@ -6103,9 +6726,9 @@ pub fn validateMetalAsyncDispatchDraftForPinV1(
     if (draft.abi_version != dispatch_observation_abi or
         draft.outcome != .succeeded or
         draft.dispatch_generation != pin.dispatch_generation or
-        draft.allocation_count != 4 or
+        draft.allocation_count < 4 or
         draft.allocation_count != pin.allocation_count or
-        draft.materialized_bytes != total_bytes or
+        draft.materialized_bytes < total_bytes or
         draft.materialized_bytes != pin.pinned_device_bytes or
         !device.digestEqual(
             draft.authority_sha256,
@@ -6185,16 +6808,36 @@ pub fn makeMetalAsyncDispatchTicketV1(
     pin: lease_tree.LeaseTreeDispatchPinV1,
     draft: MetalLeaseTreeDispatchObservationV1,
 ) Error!MetalAsyncDispatchTicketV1 {
+    return makeMetalAsyncDispatchTicketForSlotV1(
+        0,
+        ticket_generation,
+        request,
+        pin,
+        draft,
+    );
+}
+
+/// Slot-aware constructor used by the bounded adapter. Keeping the original
+/// constructor as a slot-0 wrapper preserves every existing V1 ticket hash.
+pub fn makeMetalAsyncDispatchTicketForSlotV1(
+    queue_slot: u64,
+    ticket_generation: u64,
+    request: MetalMatvecDispatchRequestV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    draft: MetalLeaseTreeDispatchObservationV1,
+) Error!MetalAsyncDispatchTicketV1 {
     try validateMetalAsyncDispatchDraftForPinV1(
         draft,
         request,
         pin,
     );
-    if (ticket_generation == 0 or
+    if (queue_slot >= maximum_async_dispatch_slots or
+        ticket_generation == 0 or
         ticket_generation == std.math.maxInt(u64))
         return Error.InvalidDispatchEvidence;
     var result: MetalAsyncDispatchTicketV1 = .{
         .ticket_generation = ticket_generation,
+        .queue_slot = queue_slot,
         .dispatch_generation = pin.dispatch_generation,
         .dispatch_authority_sha256 = pin.dispatch_authority_sha256,
         .queue_authority_sha256 = pin.queue_authority_sha256,
@@ -6240,7 +6883,7 @@ pub fn validateMetalAsyncDispatchTicketV1(
     if (ticket.abi_version != async_dispatch_ticket_abi or
         ticket.ticket_generation == 0 or
         ticket.ticket_generation == std.math.maxInt(u64) or
-        ticket.queue_slot != 0 or
+        ticket.queue_slot >= maximum_async_dispatch_slots or
         ticket.dispatch_generation == 0 or
         digestIsZero(ticket.dispatch_authority_sha256) or
         digestIsZero(ticket.queue_authority_sha256) or
@@ -6623,7 +7266,7 @@ pub fn validateMetalAsyncDispatchTerminalFailureV1(
         value.dispatch_generation == 0 or
         value.dispatch_generation !=
             value.quarantine.ticket.dispatch_generation or
-        value.allocation_count != 4 or
+        value.allocation_count < 4 or
         value.materialized_bytes <
             value.allocation_count or
         digestIsZero(value.pin_sha256) or
@@ -7010,7 +7653,7 @@ pub fn validateMetalMatvecPreSubmitRejectionV1(
             (static_reason == null or
                 static_reason.? != rejection.reason)) or
         rejection.dispatch_generation == 0 or
-        rejection.allocation_count != 4 or
+        rejection.allocation_count < 4 or
         rejection.materialized_bytes <
             rejection.allocation_count or
         digestIsZero(rejection.pin_sha256) or
@@ -7389,8 +8032,8 @@ pub fn validateMetalLeaseTreeDispatchObservationV1(
         dispatch_observation_abi or
         observation.outcome != .succeeded or
         observation.dispatch_generation == 0 or
-        observation.allocation_count != 4 or
-        observation.materialized_bytes != total_bytes or
+        observation.allocation_count < 4 or
+        observation.materialized_bytes < total_bytes or
         digestIsZero(observation.authority_sha256) or
         digestIsZero(observation.admission_sha256) or
         digestIsZero(observation.lease_sha256) or
@@ -8717,9 +9360,18 @@ test "Metal async ticket binds exact request pin draft and live generation" {
     var nonzero_slot = fixture.ticket;
     nonzero_slot.queue_slot = 1;
     resealTestAsyncTicket(&nonzero_slot);
+    try validateMetalAsyncDispatchTicketV1(nonzero_slot);
+    try std.testing.expect(!device.digestEqual(
+        fixture.ticket.ticket_sha256,
+        nonzero_slot.ticket_sha256,
+    ));
+    var out_of_range_slot = fixture.ticket;
+    out_of_range_slot.queue_slot =
+        maximum_async_dispatch_slots;
+    resealTestAsyncTicket(&out_of_range_slot);
     try std.testing.expectError(
         Error.InvalidDispatchEvidence,
-        validateMetalAsyncDispatchTicketV1(nonzero_slot),
+        validateMetalAsyncDispatchTicketV1(out_of_range_slot),
     );
 
     var coherent_submission = fixture.ticket;
@@ -8857,6 +9509,214 @@ test "Metal async ticket binds exact request pin draft and live generation" {
             fixture.draft,
         ),
     );
+}
+
+test "Metal bounded dispatch lanes route exact replay and isolate capacity state" {
+    const primary = try makeTestAsyncEvidenceFixture(41);
+    const secondary_request =
+        try makeMetalMatvecDispatchRequestV1(
+            primary.request.request_generation + 1,
+            primary.request.dispatch_authority_sha256,
+            primary.request.queue_authority_sha256,
+            primary.request.attempt,
+        );
+    var secondary_pin = primary.pin;
+    secondary_pin.dispatch_generation += 1;
+    secondary_pin.dispatch_request_sha256 =
+        secondary_request.request_sha256;
+    secondary_pin.pin_sha256 =
+        lease_tree.dispatchPinRootV1(secondary_pin);
+    try lease_tree.validateDispatchPinV1(secondary_pin);
+
+    var secondary_draft = primary.draft;
+    secondary_draft.dispatch_generation =
+        secondary_pin.dispatch_generation;
+    secondary_draft.pin_sha256 = secondary_pin.pin_sha256;
+    secondary_draft.dispatch_request_sha256 =
+        secondary_request.request_sha256;
+    secondary_draft.submission_sha256 =
+        dispatchSubmissionRootV1(secondary_draft);
+    try validateMetalAsyncDispatchDraftForPinV1(
+        secondary_draft,
+        secondary_request,
+        secondary_pin,
+    );
+    const secondary_ticket =
+        try makeMetalAsyncDispatchTicketForSlotV1(
+            1,
+            42,
+            secondary_request,
+            secondary_pin,
+            secondary_draft,
+        );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        primary.ticket.queue_slot,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        secondary_ticket.queue_slot,
+    );
+
+    const lease = std.mem.zeroes(
+        lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    );
+    const primary_pending: PendingMetalAsyncDispatchV1 = .{
+        .lease = lease,
+        .pin = primary.pin,
+        .request = primary.request,
+        .ticket = primary.ticket,
+        .draft = primary.draft,
+        .selected = .{
+            .tokens = [_]metal.MetalBufferToken{.{}} ** 4,
+            .evidence = primary.draft.roles,
+        },
+        .native_submission = .{
+            .submission_binding = primary.ticket.ticket_sha256,
+            .disposition = .submitted,
+        },
+    };
+    const secondary_pending: PendingMetalAsyncDispatchV1 = .{
+        .lease = lease,
+        .pin = secondary_pin,
+        .request = secondary_request,
+        .ticket = secondary_ticket,
+        .draft = secondary_draft,
+        .selected = .{
+            .tokens = [_]metal.MetalBufferToken{.{}} ** 4,
+            .evidence = secondary_draft.roles,
+        },
+        .native_submission = .{
+            .submission_binding = secondary_ticket.ticket_sha256,
+            .disposition = .submitted,
+        },
+    };
+    var allocation_slots = [_]MetalAllocationSlotV1{.{}};
+    var adapter: MetalAllocationAdapterV1 = .{
+        .backend = @ptrFromInt(0x1000),
+        .authority = .{},
+        .slots = &allocation_slots,
+        .limits = .{},
+        .device_sha256 = primary.device_sha256,
+        .placement_sha256 = primary.placement_sha256,
+        .adapter_nonce = 1,
+        .adapter_identity = .{},
+        .dispatch_authority_sha256 = primary.request.dispatch_authority_sha256,
+        .queue_authority_sha256 = primary.request.queue_authority_sha256,
+        .dispatch_unresolved = true,
+        .async_dispatch = primary_pending,
+        .secondary_dispatch_lane = .{
+            .dispatch_unresolved = true,
+            .async_dispatch = secondary_pending,
+        },
+    };
+
+    try std.testing.expect(
+        adapter.lowestAvailableDispatchLaneUnlocked() == null,
+    );
+    try std.testing.expectEqualDeep(
+        primary.ticket,
+        (try adapter.matchingPendingDispatchTicketUnlocked(
+            lease,
+            primary.pin,
+            primary.request.attempt,
+            primary.draft.packed_weights_input_sha256,
+            primary.draft.scales_input_sha256,
+            primary.draft.vector_input_sha256,
+        )).?,
+    );
+    try std.testing.expectEqualDeep(
+        secondary_ticket,
+        (try adapter.matchingPendingDispatchTicketUnlocked(
+            lease,
+            secondary_pin,
+            secondary_request.attempt,
+            secondary_draft.packed_weights_input_sha256,
+            secondary_draft.scales_input_sha256,
+            secondary_draft.vector_input_sha256,
+        )).?,
+    );
+    try std.testing.expectEqualDeep(
+        primary.ticket,
+        adapter.currentAsyncDispatchTicketForQueueSlotV1(0).?,
+    );
+    try std.testing.expectEqualDeep(
+        secondary_ticket,
+        adapter.currentAsyncDispatchTicketForQueueSlotV1(1).?,
+    );
+
+    const secondary_quarantine =
+        try makeMetalAsyncDispatchQuarantineV1(
+            secondary_ticket,
+            primary.device_sha256,
+            primary.placement_sha256,
+            .completion_unknown,
+            .submitted,
+            async_native_command_status_unobserved,
+            0,
+            .native_bridge,
+            99,
+        );
+    try adapter.activateDispatchQueueSlotUnlocked(1);
+    adapter.async_quarantine = secondary_quarantine;
+    adapter.restoreDispatchQueueSlotUnlocked(1);
+    try std.testing.expect(adapter.async_quarantine == null);
+    try std.testing.expectEqualDeep(
+        secondary_quarantine,
+        adapter.secondary_dispatch_lane.async_quarantine.?,
+    );
+
+    adapter.async_dispatch = null;
+    adapter.dispatch_unresolved = false;
+    try std.testing.expectEqualDeep(
+        secondary_pending,
+        adapter.secondary_dispatch_lane.async_dispatch.?,
+    );
+    try std.testing.expectEqual(
+        @as(?u64, 0),
+        adapter.lowestAvailableDispatchLaneUnlocked(),
+    );
+}
+
+test "Metal secondary callback retirement tombstone fences allocate but not quiescence" {
+    var allocation_slots = [_]MetalAllocationSlotV1{.{}};
+    var adapter: MetalAllocationAdapterV1 = .{
+        .backend = @ptrFromInt(0x1000),
+        .authority = .{},
+        .slots = &allocation_slots,
+        .limits = .{},
+        .device_sha256 = std.mem.zeroes(Digest),
+        .placement_sha256 = std.mem.zeroes(Digest),
+        .adapter_nonce = 1,
+        .adapter_identity = .{},
+        .dispatch_authority_sha256 = std.mem.zeroes(Digest),
+        .queue_authority_sha256 = std.mem.zeroes(Digest),
+        .secondary_dispatch_lane = .{
+            .loss_dispatch_callback_retirement_tombstone = std.mem.zeroes(
+                MetalLossDispatchCallbackRetirementTombstoneV1,
+            ),
+        },
+    };
+
+    try std.testing.expect(
+        adapter.anyDispatchCallbackRetirementTombstoneUnlocked(),
+    );
+    try std.testing.expect(
+        !adapter.anyDispatchLaneOccupiedUnlocked(),
+    );
+    if (comptime metal_enabled) {
+        try std.testing.expectError(
+            allocation.CallbackError.Unavailable,
+            MetalAllocationAdapterV1.allocateCallback(
+                &adapter,
+                std.mem.zeroes(allocation.AllocationCallV1),
+            ),
+        );
+    }
+
+    // The tombstone is replay-only after retirement: it fences fresh
+    // allocation but does not keep cleanup/quiescence artificially live.
+    try adapter.validateEmpty();
 }
 
 test "Metal async draft is canonical and completion-free" {
@@ -10021,7 +10881,7 @@ test "Metal dispatch observation seals exact geometry roles telemetry and data" 
     );
 
     var byte_total_drift = observation;
-    byte_total_drift.materialized_bytes += 1;
+    byte_total_drift.materialized_bytes -= 1;
     resealTestDispatchObservation(&byte_total_drift);
     try std.testing.expectError(
         Error.InvalidDispatchEvidence,
@@ -10560,15 +11420,41 @@ test "Metal prepared matvec request is idempotent and generation fenced" {
         16,
         32,
     );
+    const different_lane =
+        try adapter.prepareMatvecDispatchRequestUnlocked(
+            different,
+        );
+    try std.testing.expectEqual(
+        @as(u64, 2),
+        different_lane.request_generation,
+    );
+    try std.testing.expectEqualDeep(
+        different_lane,
+        adapter.secondary_dispatch_lane
+            .prepared_matvec_request.?,
+    );
+    const saturated = try makeMetalMatvecPreSubmitAttemptV1(
+        .{},
+        1,
+        2,
+        3,
+        6,
+        8,
+        16,
+        32,
+    );
     try std.testing.expectError(
         Error.DispatchBusy,
         adapter.prepareMatvecDispatchRequestUnlocked(
-            different,
+            saturated,
         ),
     );
     try std.testing.expectEqualDeep(
         first,
         adapter.prepared_matvec_request.?,
+    );
+    try adapter.cancelPreparedMatvecDispatchRequestUnlocked(
+        different_lane,
     );
 
     try adapter.cancelPreparedMatvecDispatchRequestUnlocked(
@@ -10584,7 +11470,7 @@ test "Metal prepared matvec request is idempotent and generation fenced" {
         try adapter.prepareMatvecDispatchRequestUnlocked(
             attempt,
         );
-    try std.testing.expectEqual(@as(u64, 2), second.request_generation);
+    try std.testing.expectEqual(@as(u64, 3), second.request_generation);
     try std.testing.expect(!device.digestEqual(
         first.request_sha256,
         second.request_sha256,
@@ -10614,11 +11500,17 @@ test "Metal prepared matvec request is idempotent and generation fenced" {
         second,
     );
     adapter.dispatch_unresolved = true;
-    try std.testing.expectError(
-        Error.DispatchBusy,
-        adapter.prepareMatvecDispatchRequestUnlocked(
+    const secondary_while_primary_busy =
+        try adapter.prepareMatvecDispatchRequestUnlocked(
             attempt,
-        ),
+        );
+    try std.testing.expectEqualDeep(
+        secondary_while_primary_busy,
+        adapter.secondary_dispatch_lane
+            .prepared_matvec_request.?,
+    );
+    try adapter.cancelPreparedMatvecDispatchRequestUnlocked(
+        secondary_while_primary_busy,
     );
     adapter.dispatch_unresolved = false;
     adapter.next_matvec_request_generation =
@@ -10636,7 +11528,8 @@ test "Metal dispatch intent reservation and abort are exact and replay safe" {
         testDispatchDigest("intent allocation authority");
     const admission_sha256 =
         testDispatchDigest("intent admission");
-    var slots = [_]MetalAllocationSlotV1{.{}};
+    var slots = [_]MetalAllocationSlotV1{.{}} ** 4;
+    for (&slots) |*slot| slot.live = true;
     var adapter: MetalAllocationAdapterV1 = .{
         .backend = @ptrFromInt(0x1000),
         .authority = .{

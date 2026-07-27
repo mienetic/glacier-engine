@@ -199,7 +199,8 @@ The following remain separate roadmap work:
 - retain native removal-requested and removed callback artifacts on suitable
   removable hardware;
 - create a fresh inventory, fresh selection, and explicit migration policy;
-- add bounded multi-slot and multi-device scheduling;
+- add dynamic scheduling beyond the fixed two-slot adapter and multi-device
+  scheduling;
 - implement additional GPU backends with equivalent callback-lifetime gates;
 - add physical residency and reclaim evidence under separate authorities;
 - retain native OS/device/driver matrices; and

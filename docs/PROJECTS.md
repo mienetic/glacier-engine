@@ -179,14 +179,17 @@ callback atomically clears adapter state and records a replay tombstone. Public
 `acknowledgeDispatchCompletion` only verifies compatibility; it grants no
 authority and clears no state.
 
-The **single-flight Metal async completion delivery** follow-up is now complete
-per adapter. One exact submit returns pointer-free, generation-fenced
-`MetalAsyncDispatchTicketV1`; exact replay does not upload or commit again, and
-poll/wait are separate completion operations. The native registry retains the
-command and its four exact buffers. Pending is nonterminal, leaves output
-unchanged, and keeps the pin and charge. Exact completed output is bound to the
-command, submission binding, immutable snapshot, and output role; only the
-private callback after core Bank settlement finalizes the native record.
+The **bounded two-slot Metal async completion delivery** follow-up is now
+complete per adapter. Each exact submit returns a pointer-free,
+generation-fenced `MetalAsyncDispatchTicketV1` bound to slot zero or one; exact
+replay does not upload or commit again, a third distinct request is rejected
+before native mutation while both slots are occupied, and poll/wait are
+separate completion operations. The native registry retains each command and
+its four exact buffers. Pending is nonterminal, leaves output unchanged, and
+keeps the corresponding pin and charge. Either slot may settle first. Exact
+completed output is bound to the command, submission binding, immutable
+snapshot, and output role; only the private callback after core Bank settlement
+finalizes that native record.
 Ambiguous submission, unknown or invalid completion, and terminal command
 errors first retain sticky nonterminal `MetalAsyncDispatchQuarantineV1`
 instead of manufacturing core terminal evidence. One exact retained native
@@ -196,8 +199,16 @@ pin, charge, buffers, and command stay live through Bank settlement, then the
 private callback exact-finalizes that same `.error` before clearing private
 state. Ambiguity, unknown, and invalid completion remain sticky until the
 separate loss-authorized Phase B callback-retirement protocol succeeds. The
-native backend may own distinct buffer sets concurrently, so this is not a
-global queue-depth-one claim.
+native M1 pressure gate retains two real commands over disjoint buffer sets and
+settles B before A, but that proves bounded ownership isolation rather than
+physical GPU parallelism, performance, or a global native queue depth.
+
+The additive `ResourceBank.snapshotV4()` boundary reports the optional pin
+registry's capacity and bytes, active and peak pins, operation and distinct
+rejection counters, and reserved completion headroom while preserving Snapshot
+V1/V2/V3 layouts and meanings. Accepted pins reserve their future global
+generation and per-root structural revision so out-of-order completion cannot
+be stranded by intervening mutations.
 
 The **exact terminal-command-error reconciliation** follow-up is complete at
 the contract boundary. Its pointer-free sidecar binds the original quarantine,
@@ -303,7 +314,8 @@ Small next slices:
 - exercise removal-requested and removed callbacks on removable hardware;
 - port Phase B to an additional GPU backend with the same portable evidence;
 - add fresh selection under a new receipt and explicit migration policy;
-- add multi-slot queue scheduling and multi-device partitioning;
+- add dynamic scheduling beyond the fixed two slots and multi-device
+  partitioning;
 - add physical residency and direct physical device telemetry as separate
   authorities;
 - add more GPU backends with CPU-oracle/lifecycle gates and expand native
@@ -320,8 +332,8 @@ stays separate; and no test relabels timeout or device loss as completion.
 **Current boundary:** the completed LeaseTree follow-up keeps stable capability
 facts separate from dynamic observations, consumes the exact selection,
 reserves every allocation node before native creation, demonstrates
-free-before-uncharge recovery, binds one exact object set to a per-adapter
-single-flight async ticket, and safely settles deterministic malformed
+free-before-uncharge recovery, binds exact object sets to two fixed
+adapter-local async tickets, and safely settles deterministic malformed
 pre-submit attempts or pure pre-submit cancellation on the executing Metal
 host. Portable Zig fake/state tests and the independent Python oracle are
 deterministic contract models and use no GPU. The native macOS gate uses a real

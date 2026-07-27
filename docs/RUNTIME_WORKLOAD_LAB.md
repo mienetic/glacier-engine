@@ -187,7 +187,14 @@ Results from different modes are not merged into one headline number.
     Metal gate performs exactly one real GPU dispatch in total. Logical CPU
     count must remain positive; signed physical temperatures may not fall below
     absolute zero. W5b remains open for the unsupported physical metrics and
-    retained native campaign evidence.
+    retained native campaign evidence. Separately, the native allocation suite
+    now includes a bounded two-slot pressure proof over real commands and
+    disjoint buffers: two native command records coexist, exact replay adds no
+    record, a third request rejects before native mutation, both commands and
+    CPU oracles complete, and B is deliberately settled before A before
+    ownership returns to zero. That test establishes runtime capacity and
+    settlement isolation, not a physical utilization, completion-order, or
+    performance metric.
   - [ ] **W5c — Native observer coverage.** Broaden retained native macOS
     evidence by retaining an addressable Metal readiness result, run the
     required Linux available-memory smoke on a native Linux host, and add
@@ -197,7 +204,10 @@ Results from different modes are not merged into one headline number.
     not complete this slice.
 - [ ] **W6 — Native workload reports.** Retain raw request observations and
   versioned throughput, latency, CPU, accelerator, memory, fairness, and
-  outcome summaries.
+  outcome summaries. The fixed two-slot Metal path is now the first native
+  accelerator target for an open/closed pressure report; the report must keep
+  queue occupancy, utilization, power, residency, and physical parallelism
+  unsupported unless a named observer supplies them.
 - [ ] **W7 — Soak and disruption.** Run bounded campaigns under a fixed fault
   schedule and prove recovery, bounded growth, exact publication, and zero
   leaked ownership.
@@ -307,6 +317,16 @@ operation on a native Metal device. Its hard gate makes exactly one real GPU
 dispatch, requires a completed command buffer, checks output correctness and
 zero leaked ownership, rejects CPU fallback, and composes device/placement,
 observation, workload, run, dispatch, and output roots.
+
+The allocation/lifetime gate separately proves bounded two-slot coexistence on
+the built-in M1. One eight-object lease provides disjoint four-buffer roles for
+two real commands. Both commands submit and complete, pass their CPU oracles,
+and remain retained until B is deliberately settled before A. The native
+registry reaches two records, replay stays at two, a third request is
+capacity-rejected before native mutation, and final command, pin, and buffer
+counts are zero. This is the runtime foundation for W6 load reports; it is not
+a latency, throughput, utilization, queue-depth, physical-parallel, or
+completion-order result.
 
 The readiness report records Metal registry identity, pre/post
 `currentAllocatedSize`, and command-buffer GPU timestamps.
