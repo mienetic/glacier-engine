@@ -239,6 +239,12 @@ Results from different modes are not merged into one headline number.
     residency. Physical queue depth, utilization, power, residency, thermal,
     frequency, energy, and parallelism remain unsupported unless a named
     native observer supplies them.
+    The first retained machine result is the
+    [2026-07-28 macOS arm64 wire](../bench/results/native-metal-workload-report-macos-arm64-2026-07-28.bin)
+    and its
+    [capture manifest](../bench/results/native-metal-workload-report-macos-arm64-2026-07-28.manifest.json);
+    it remains one diagnostic capture rather than performance or replication
+    evidence.
 - [ ] **W7 — Soak and disruption.** Run bounded campaigns under a fixed fault
   schedule and prove recovery, bounded growth, exact publication, and zero
   leaked ownership.

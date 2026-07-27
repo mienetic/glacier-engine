@@ -341,9 +341,9 @@ and availability rules:
    preserving diagnostic-only claim scope;
 5. add direct accelerator utilization or memory-residency evidence without
    deriving it from logical resource claims; or
-6. connect the completed W6a raw-record/summary/closure contract to one bounded
-   production-native workload producer while preserving every rejected
-   observation and explicit unavailable metric.
+6. replicate the bounded W6b production workload on another native
+   operating-system/backend pair while preserving every rejected observation,
+   explicit unavailable metric, and machine-scoped claim.
 
 A contribution should name its source, unit, subject, sample-clock identity,
 bounds, permission behavior, native acceptance command, and nonclaims. A

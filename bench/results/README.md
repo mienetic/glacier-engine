@@ -7,7 +7,9 @@ artifact store and referenced by digest.
 ## Status vocabulary
 
 - `fixture`: deterministic contract input; not a performance result.
-- `diagnostic`: useful observation that has not passed campaign gates.
+- `diagnostic`: bounded machine observation that may pass its own
+  correctness/evidence gate but is not a paired or replicated performance
+  result.
 - `paired`: same-machine paired experiment with validity decisions retained.
 - `replicated`: repeated across the named machine/workload matrix.
 - `stopped`: negative or inconclusive result retained to guide architecture.
@@ -31,7 +33,7 @@ and independent verifier command.
 
 ## Current architecture checkpoints
 
-The repository's strongest checked-in evidence is deterministic conformance:
+Most checked-in evidence is deterministic conformance:
 
 - contiguous and paged token publication;
 - LeaseTree-backed KV ownership and retirement;
@@ -50,6 +52,45 @@ The repository's strongest checked-in evidence is deterministic conformance:
 
 These checkpoints establish contract behavior. They do not establish a broad
 throughput or resource advantage.
+
+## Retained native Metal machine result
+
+[`native-metal-workload-report-macos-arm64-2026-07-28.bin`](native-metal-workload-report-macos-arm64-2026-07-28.bin)
+is the first retained W6b production-native Metal report. Its companion
+[`manifest`](native-metal-workload-report-macos-arm64-2026-07-28.manifest.json)
+binds the capture to source commit
+`36011d4973a7d41c13b9dcf2c64de96726784aa4`, a clean source tree, an Apple M1
+host on AC power, the exact runner and `shaders.metallib` hashes, toolchain
+versions, all scenario identities, raw supported observations, terminal
+closure, and explicit nonclaims.
+
+The 17,996-byte wire has SHA-256
+`933d0eb3ffdffacfe0e49a95467d5d781133caadd9c9814d3b90fc19f042fa2b`;
+its semantic report root is
+`df7c8e20c5e682410d9bd92ff207bc180b5ef9a6b94767a4a24e9fdc60d719ec`.
+It retains 4 warmup and 16 measured requests from 20 real production-adapter
+Metal commands. Every output passed its precomputed CPU oracle and the campaign
+closed with zero Bank, pin, dispatch, command, or native-buffer ownership.
+
+This is one diagnostic machine result, not a benchmark. Two logical slots do
+not prove physical GPU parallelism; `currentAllocatedSize` is not residency;
+and utilization, physical queue depth, power, energy, thermal, frequency, and
+cross-machine behavior remain unmeasured. Verify the retained wire and manifest
+offline with:
+
+```sh
+python3 -m unittest \
+  bench.tests.test_native_metal_workload_report.NativeMetalWorkloadReportTests.test_retained_native_capture_matches_manifest
+```
+
+Re-run the same hard gate with a new output path to create a separately
+challenged capture:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-metal-workload-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2 \
+  -Dnative-metal-report-output=PATH
+```
 
 ## Retained logical fixtures
 
@@ -170,9 +211,11 @@ tools/zig-with-ephemeral-cache.sh build native-metal-observation-test \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 ```
 
-A passing invocation applies only to that exact host session until its raw
-artifact is retained and indexed. Implementation evidence and retained native
-campaign evidence are therefore separate, and W5b remains open.
+A passing readiness invocation applies only to that exact host session because
+no readiness artifact is retained here. The separate retained W6b workload
+report above does not replace the W5 readiness-observer campaign, so
+implementation evidence and retained readiness evidence remain distinct and
+W5b remains open.
 
 The deterministic `1600`-nanosecond value checks report composition only; it
 is not a native latency sample. The complete 1,278-byte fixture SHA-256 is

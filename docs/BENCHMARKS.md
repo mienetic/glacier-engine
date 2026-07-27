@@ -207,6 +207,17 @@ residency. Utilization, physical queue depth, residency, power, energy,
 temperature, frequency, and physical parallelism remain unsupported. See
 [Native Workload Report](NATIVE_WORKLOAD_REPORT.md).
 
+The first retained production-native capture is the
+[17,996-byte raw wire](../bench/results/native-metal-workload-report-macos-arm64-2026-07-28.bin)
+plus its
+[machine and claim manifest](../bench/results/native-metal-workload-report-macos-arm64-2026-07-28.manifest.json).
+It was captured from clean source commit `36011d4` on an Apple M1 macOS host
+connected to AC power. Its wire SHA-256 is
+`933d0eb3ffdffacfe0e49a95467d5d781133caadd9c9814d3b90fc19f042fa2b`
+and its report root is
+`df7c8e20c5e682410d9bd92ff207bc180b5ef9a6b94767a4a24e9fdc60d719ec`.
+It is one diagnostic machine result, not a performance or replication claim.
+
 The separate native Metal gate is readiness conformance, not a microbenchmark.
 It performs exactly one real GPU dispatch across the full gate for one fixed
 synthetic 37x64 INT4 matrix-vector operation. The CPU oracle, completed command
@@ -243,9 +254,10 @@ authenticity or attestation.
 The independent verifier checks bounded output plus composition and corruption
 of a self-asserted live capture. It provides no cryptographic authenticity or
 historical attestation. A passing invocation is native evidence for that exact
-host session, but no addressable Metal result is currently retained in the
-repository. Implementation evidence and retained native campaign evidence must
-therefore remain separate, and W5b remains open.
+host session, but no addressable readiness result is currently retained in the
+repository. The separate retained W6b workload campaign does not substitute for
+a W5 readiness-observer artifact. Implementation evidence and retained
+readiness evidence must therefore remain separate, and W5b remains open.
 
 The W6b hard gate also supplies a fresh 256-bit challenge through a dedicated,
 sanitized environment variable and accepts no runner arguments. The runner

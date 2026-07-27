@@ -773,10 +773,10 @@ reporting:
    native gate is diagnostic evidence for its exact macOS host session. Its
    independent verifier checks bounded semantic composition and corruption of a
    self-asserted live capture, not cryptographic authenticity. The repository
-   retains no addressable native Metal result yet, so implementation evidence
-   and retained native campaign evidence remain distinct. W5b still requires
-   the unsupported physical adapters, retained native artifacts, and broader
-   platform coverage.
+   retains no addressable W5 readiness result yet; the separate retained W6b
+   production-workload wire and manifest do not substitute for readiness
+   observation. W5b still requires the unsupported physical adapters, a
+   retained readiness artifact, and broader platform coverage.
 
 2. **Native workload** runs declared model-family mixes against a real CPU,
    accelerator, or provider adapter and records completed/rejected/cancelled

@@ -1,0 +1,335 @@
+{
+  "schema": "glacier.native-metal-workload-capture/v1",
+  "evidence_status": "diagnostic",
+  "claim_class": "machine_result",
+  "performance_claim": false,
+  "source": {
+    "repository": "https://github.com/mienetic/glacier-engine",
+    "commit": "36011d4973a7d41c13b9dcf2c64de96726784aa4",
+    "branch": "main",
+    "head_matched_origin_main_before_capture": true,
+    "tree_clean_before_capture": true,
+    "tree_clean_after_capture_except_artifact": true
+  },
+  "capture": {
+    "local_date": "2026-07-28",
+    "timezone": "Asia/Bangkok",
+    "started_at_utc": "2026-07-27T22:27:59Z",
+    "completed_at_utc": "2026-07-27T22:28:19Z",
+    "validity": "pass",
+    "command": "tools/zig-with-ephemeral-cache.sh build native-metal-workload-report-test -Dmetal=true -Doptimize=ReleaseSafe -j2 -Dnative-metal-report-output=bench/results/native-metal-workload-report-macos-arm64-2026-07-28.bin",
+    "verifier_stdout": "ok native-metal-workload-report-v1 records=20 warmup=4 measured=16 wire_sha256=933d0eb3ffdffacfe0e49a95467d5d781133caadd9c9814d3b90fc19f042fa2b report_sha256=df7c8e20c5e682410d9bd92ff207bc180b5ef9a6b94767a4a24e9fdc60d719ec runner_sha256=f89e9c8f5b913ff3857becab493401a35d1500e10e469607280b86547305056b metallib_sha256=6c2a89513612a85e29a7a209da79a61213a358eb3bde67f7d7b20acf4d6912a0 retained=bench/results/native-metal-workload-report-macos-arm64-2026-07-28.bin"
+  },
+  "artifact": {
+    "path": "bench/results/native-metal-workload-report-macos-arm64-2026-07-28.bin",
+    "media_type": "application/octet-stream",
+    "bytes": 17996,
+    "wire_abi": "0x4757365700000001",
+    "wire_sha256": "933d0eb3ffdffacfe0e49a95467d5d781133caadd9c9814d3b90fc19f042fa2b",
+    "report_sha256": "df7c8e20c5e682410d9bd92ff207bc180b5ef9a6b94767a4a24e9fdc60d719ec",
+    "scenario_sha256": "d55af1f8303f66ca3ac94fa6beda36cddfb19ad743117754f6002203e1c58af5",
+    "record_chain_tail_sha256": "27f941ad2e55ca27a61d43a94e4eeb91a338e5c9c87279f09314b6950f090c1c",
+    "summary_sha256": "491a24f050e8c3e983c21da6280506eed4d855f43c421a05da6897999c6dd970",
+    "closure_sha256": "8154d536e969b12466bd1d1af7d6035794201cece4f619528502f25147d72668",
+    "body_wire_sha256": "473670bdbd5559f25361b84b88176b2592c55bf656cbea16b02a35b73d2a2757",
+    "footer_wire_sha256": "1945be2187cd27e225ea793b532424931095ef44acf4c77ab039b62200b69271"
+  },
+  "verifier": {
+    "result": "pass",
+    "layers": [
+      "portable wire decode and complete summary/root recomputation",
+      "fixed production-native Metal campaign profile",
+      "bounded zero-argument process capture with fresh challenge",
+      "runner and Metal-library pre/post execution identity checks"
+    ],
+    "portable_path": "bench/native_workload_report.py",
+    "portable_source_sha256": "0e9d12fb2e3f969988cf18ecd1ecb1749d0b147e8d70ac5b52dcf82d750a813a",
+    "native_profile_path": "bench/native_metal_workload_report.py",
+    "native_profile_source_sha256": "b44ae4b54e556e78c51d634e2a61488b605a63852ac5098bd5dece44ecca1b4b",
+    "producer_path": "src/backends/metal/native_workload_report.zig",
+    "producer_source_sha256": "40ade03f2f11dcb9e5ec48f7f897540d8ac270f45462b294b494d2a15a6e7a86",
+    "runner_source_path": "examples/native_metal_workload_report.zig",
+    "runner_source_sha256": "8965e6b00e66de39161369c221287dfe7b0c0afc902f58139df328d4127a7460",
+    "freshness_scope": "The live verifier generated the 256-bit challenge and checked exact scenario equality. Offline re-verification proves integrity and profile conformance, not historical freshness."
+  },
+  "build": {
+    "target": "native-macos-arm64",
+    "optimize": "ReleaseSafe",
+    "metal": true,
+    "jobs": 2,
+    "zig_version": "0.15.2",
+    "xcode_version": "16.4",
+    "xcode_build": "16F6",
+    "macos_sdk_version": "15.5",
+    "macos_sdk_build": "24F74",
+    "producer_abi": "0x4757364d00000001",
+    "build_identity_sha256": "56ccd92452989634627d62b1a01ca0da8037ee09f354c01f6d4de5dffd37a65a",
+    "build_identity_domain": "glacier-w6-metal-native-build-v1\\0",
+    "build_identity_derivation": [
+      "domain bytes",
+      "little-endian producer ABI",
+      "runner SHA-256",
+      "Metal-library SHA-256"
+    ],
+    "runner": {
+      "sha256": "f89e9c8f5b913ff3857becab493401a35d1500e10e469607280b86547305056b",
+      "retained_in_repository": false,
+      "note": "The ephemeral-cache gate removed the executable after its pre/post hashes passed; its identity remains wire-bound and recorded here."
+    },
+    "metallib": {
+      "build_path": "zig-out/metal/shaders.metallib",
+      "bytes": 18212,
+      "sha256": "6c2a89513612a85e29a7a209da79a61213a358eb3bde67f7d7b20acf4d6912a0",
+      "retained_in_repository": false,
+      "wire_bound": true,
+      "sources": [
+        {
+          "path": "src/backends/metal/shaders/dequant.metal",
+          "sha256": "8abf65ab352aa4a6f1944fe9f26387ed864f51110dcd66a6ff8f72374646bb95"
+        },
+        {
+          "path": "src/backends/metal/shaders/matmul.metal",
+          "sha256": "b7ecea1c115a333a2589db342d8f0e527ebd5332368711649f0c1402bdad2bfe"
+        }
+      ]
+    }
+  },
+  "campaign": {
+    "producer_abi": "0x4757364d00000001",
+    "mode": "closed_loop",
+    "evidence": "production_native",
+    "operation": "INT4 matrix-vector",
+    "matrix_rows": 37,
+    "matrix_columns": 64,
+    "quantization_group_size": 8,
+    "records": 20,
+    "warmup_records": 4,
+    "measured_records": 16,
+    "warmup_pairs": 2,
+    "measured_pairs": 8,
+    "flows": 2,
+    "logical_adapter_slots": 2,
+    "work_units_per_request": 2368,
+    "measured_completed_work_units": 37888,
+    "persistent_lease_charged_bytes": 5544,
+    "submit_order_per_pair": [
+      0,
+      1
+    ],
+    "settle_order_per_pair": [
+      1,
+      0
+    ],
+    "reuse_after_both_settle": true,
+    "cooldown": "none; this is a correctness/evidence gate, not a performance campaign",
+    "all_completed": true,
+    "fallback_count": 0,
+    "correctness_oracle": "precomputed CPU f32 oracle",
+    "maximum_abs_error_limit": 0.00002,
+    "maximum_abs_error_observed": 1.4901161193847656e-08,
+    "logical_in_flight_high_water": 2,
+    "flow_completion_min": 8,
+    "flow_completion_max": 8
+  },
+  "scenario_identities": {
+    "workload": "7b258fa194438f68599b914db1834f0d1827cf5ed0a57e9521558ea66087f49c",
+    "profile": "9228da3be93268c51e851c29e363db217b6529ff7e5f5a0de897a8ae57ce3ac0",
+    "artifact": "caaac942fa939e74b4e5bdc6015b9155358470c10beaa611e298a3797105303c",
+    "build": "56ccd92452989634627d62b1a01ca0da8037ee09f354c01f6d4de5dffd37a65a",
+    "machine": "0d70b476d05d7ef1688c050a332da6d9673fdb8891fc2e61afdd76fb447372fd",
+    "backend": "a212cdf78d1f9740c5695364627dc8436daa2ad90e505fcade6cf1905600b145",
+    "device": "2c7ab03f035b0d789a59f5f7e2ab070a824e6ebdc37d8e138de865d929777c17",
+    "placement": "ed5a60d9e829087c734bcedd732c98fa5ea563c65fb3e4ffd3024fa33fb118fd",
+    "host_source": "5496c2dbb20ef726674508a3b1e205313c432f72099e0fccfb408e85be9c94d6",
+    "host_clock": "26b1c71a4c5733fc08025e793ae7f6ad34748126c2f9753a176b433b854e7b55",
+    "device_source": "4783c938625c73a9a2f1ce21183abf5aee4f231872ebb47bd34bbb34fa5a2eec",
+    "device_clock": "e255afc1018ef0e85c4743054fbd694985d97eecbb0d80aff821ce139e6bc6ff",
+    "challenge": "52052328539cd00391a44fc83d0471982afe96daed93e4e0329b925f083b5190"
+  },
+  "machine": {
+    "hardware_model": "MacBookAir10,1",
+    "chip": "Apple M1",
+    "architecture": "arm64",
+    "physical_cpu_count": 8,
+    "logical_cpu_count": 8,
+    "memory_bytes": 17179869184,
+    "gpu": {
+      "name": "Apple M1",
+      "type": "GPU",
+      "bus": "Built-In",
+      "cores": 8,
+      "metal_support": "Metal 3"
+    },
+    "os_name": "macOS",
+    "os_version": "15.5",
+    "os_build": "24F74",
+    "kernel_release": "24.5.0",
+    "power_before": {
+      "source": "AC Power",
+      "battery_percent": 100,
+      "battery_state": "charged"
+    },
+    "power_after": {
+      "source": "AC Power",
+      "battery_percent": 100,
+      "battery_state": "charged"
+    },
+    "load_average_before_1m_5m_15m": [
+      1.75,
+      2.07,
+      2.79
+    ],
+    "load_average_after_1m_5m_15m": [
+      2.04,
+      2.1,
+      2.77
+    ],
+    "process_priority_policy": "default; the harness requested no elevation",
+    "cpu_affinity_policy": "not pinned",
+    "background_processes": "not controlled by the harness"
+  },
+  "telemetry": {
+    "present": {
+      "same_command_device_duration": {
+        "unit": "nanoseconds",
+        "measured_total": 160490,
+        "measured_samples": [
+          9625,
+          9749,
+          9749,
+          10124,
+          9708,
+          9999,
+          9749,
+          9708,
+          9749,
+          9749,
+          9625,
+          9791,
+          9666,
+          9750,
+          9750,
+          13999
+        ],
+        "p50": 9749,
+        "p95": 13999,
+        "p99": 13999,
+        "max": 13999,
+        "note": "GPUStartTime and GPUEndTime belong to the same Metal command buffer. They are not correlated with host monotonic timestamps."
+      },
+      "current_allocated_size": {
+        "unit": "bytes",
+        "measured_max": 393216,
+        "measured_before_samples": [
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216
+        ],
+        "measured_after_samples": [
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216,
+          393216
+        ],
+        "note": "MTLDevice.currentAllocatedSize is allocation context, not physical residency."
+      }
+    },
+    "host_timing_diagnostic_only": {
+      "measurement_window_ns": 17585708,
+      "admission_p50_p95_p99_max_ns": [
+        290041,
+        415791,
+        415791,
+        415791
+      ],
+      "queue_p50_p95_p99_max_ns": [
+        9750,
+        12042,
+        12042,
+        12042
+      ],
+      "first_output_p50_p95_p99_max_ns": [
+        795917,
+        978375,
+        978375,
+        978375
+      ],
+      "service_p50_p95_p99_max_ns": [
+        424167,
+        691833,
+        691833,
+        691833
+      ],
+      "end_to_end_p50_p95_p99_max_ns": [
+        1463916,
+        2372291,
+        2372291,
+        2372291
+      ],
+      "claim_allowed": false
+    },
+    "unsupported": [
+      "direct CPU time",
+      "process RSS",
+      "GPU utilization",
+      "physical hardware queue depth",
+      "resident bytes",
+      "power",
+      "energy",
+      "temperature",
+      "frequency",
+      "physical parallelism"
+    ]
+  },
+  "closure": {
+    "bank_count": 0,
+    "pin_count": 0,
+    "dispatch_count": 0,
+    "native_command_count": 0,
+    "native_buffer_count": 0,
+    "acquisitions": 20,
+    "completions": 20,
+    "zero_orphan": true
+  },
+  "claim": {
+    "permitted": [
+      "This exact native macOS session submitted 20 production-adapter Metal commands and retained all 20 records.",
+      "All outputs passed the precomputed CPU oracle within the declared error bound.",
+      "The campaign reached two live logical adapter slots and closed with zero retained logical or native ownership.",
+      "The live verifier bound the report to a fresh challenge and to the exact runner and Metal-library files observed before and after execution."
+    ],
+    "exclusions": [
+      "throughput, latency, or comparative performance",
+      "physical GPU parallelism, occupancy, or hardware queue depth",
+      "CPU or GPU utilization, residency, power, energy, thermal, or frequency behavior",
+      "support or behavior on another machine, operating system, or GPU backend",
+      "cryptographic code attestation or authentication of the capture operator",
+      "physical device-loss, driver-failure, or power-loss behavior"
+    ]
+  }
+}

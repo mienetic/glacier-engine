@@ -397,7 +397,8 @@ CPU oracle and malformed exact lengths reject without caller-output mutation.
 It retains `recommendedMaxWorkingSetSize` only as capacity context and leaves
 utilization, committed/resident bytes, queue depth, temperature, frequency,
 power, and energy unsupported. The repository does not yet retain an
-addressable native result, so W5b remains open.
+addressable W5 readiness result; the separate retained W6b production-workload
+wire does not close that observer milestone, so W5b remains open.
 
 Small next slices:
 

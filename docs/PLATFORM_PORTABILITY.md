@@ -128,9 +128,10 @@ commitment/reclamation and residency authority, device-loss recovery,
 multi-GPU scheduling, utilization, committed/resident bytes, queue depth,
 temperature, frequency, power, and energy remain open or unsupported. The
 verifier checks composition/corruption of self-asserted live output, not
-cryptographic origin. No native result or device range is retained here, and
-cross-compilation remains source/build evidence rather than native OS or device
-support. W5b and non-macOS native observer coverage remain open.
+cryptographic origin. No W5 readiness result or device range is retained here;
+the separate W6b production-workload wire covers one exact Apple M1 session
+only. Cross-compilation remains source/build evidence rather than native OS or
+device support. W5b and non-macOS native observer coverage remain open.
 
 Run the serialized native device suite on macOS with:
 

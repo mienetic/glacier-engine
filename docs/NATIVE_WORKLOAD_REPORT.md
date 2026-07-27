@@ -268,6 +268,24 @@ campaign but intentionally retains no file. The serialized
 options are mutually exclusive in one build invocation so independent
 campaigns cannot race to replace one artifact.
 
+## Retained production-native capture
+
+The first retained W6b machine result is the
+[17,996-byte raw report](../bench/results/native-metal-workload-report-macos-arm64-2026-07-28.bin)
+with its
+[capture manifest](../bench/results/native-metal-workload-report-macos-arm64-2026-07-28.manifest.json).
+It references clean source commit `36011d4`, records the Apple M1/macOS/AC-power
+machine envelope, binds the exact runner and Metal-library identities, and
+publishes the supported raw observations and explicit nonclaims. The wire
+SHA-256 is
+`933d0eb3ffdffacfe0e49a95467d5d781133caadd9c9814d3b90fc19f042fa2b`;
+the semantic report root is
+`df7c8e20c5e682410d9bd92ff207bc180b5ef9a6b94767a4a24e9fdc60d719ec`.
+
+This single diagnostic capture proves neither performance nor replication.
+Future native runs retain distinct challenges and machine envelopes rather
+than replacing or averaging this artifact.
+
 ## Normative V1 wire
 
 The V1 wire is independent of Zig struct layout. All integers are unsigned

@@ -1203,10 +1203,12 @@ sanitized environment variable to a zero-argument runner and derives the
 scenario build identity from the producer ABI, exact runner SHA-256, and
 external `shaders.metallib` SHA-256. Both files are hashed before and after
 execution. Stale replay and host/GPU program replacement are rejected, but this
-remains execution binding rather than code attestation. No addressable native
-Metal result is retained in the repository, so implementation, a passing local
-native invocation, and retained campaign evidence remain separate levels. W5b
-stays open. See
+remains execution binding rather than code attestation. One addressable W6b
+production workload report and its machine/claim manifest are retained in
+`bench/results/`; they reference the clean implementation commit used for
+capture. That diagnostic result does not supply the still-missing direct
+physical telemetry or W5 readiness artifact, so W5b stays open. See
+[Native Workload Report](NATIVE_WORKLOAD_REPORT.md) and
 [Native Observation Contract](NATIVE_OBSERVATION.md).
 
 ## Provider execution flow

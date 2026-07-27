@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import sys
@@ -668,6 +669,97 @@ class NativeMetalWorkloadReportTests(unittest.TestCase):
             "metallib_sha256=%s" % TEST_METALLIB_SHA256.hex(),
             lines[0],
         )
+
+    def test_retained_native_capture_matches_manifest(self) -> None:
+        repository = Path(__file__).resolve().parents[2]
+        results = repository / "bench" / "results"
+        artifact_path = (
+            results
+            / "native-metal-workload-report-macos-arm64-2026-07-28.bin"
+        )
+        manifest_path = (
+            results
+            / "native-metal-workload-report-macos-arm64-2026-07-28.manifest.json"
+        )
+        wire = artifact_path.read_bytes()
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["schema"],
+            "glacier.native-metal-workload-capture/v1",
+        )
+        self.assertFalse(manifest["performance_claim"])
+        self.assertTrue(manifest["source"]["tree_clean_before_capture"])
+
+        decoded = native._decode_after_portable_verification(wire)
+        challenge_sha256 = decoded.scenario.identities[12]
+        runner_sha256 = bytes.fromhex(
+            manifest["build"]["runner"]["sha256"]
+        )
+        metallib_sha256 = bytes.fromhex(
+            manifest["build"]["metallib"]["sha256"]
+        )
+        verified = native.verify_native_wire(
+            wire,
+            runner_sha256,
+            metallib_sha256,
+            challenge_sha256,
+        )
+        artifact = manifest["artifact"]
+        self.assertEqual(len(wire), artifact["bytes"])
+        self.assertEqual(
+            verified.wire_sha256.hex(),
+            artifact["wire_sha256"],
+        )
+        self.assertEqual(
+            verified.report_sha256.hex(),
+            artifact["report_sha256"],
+        )
+        self.assertEqual(
+            decoded.scenario.scenario_sha256.hex(),
+            artifact["scenario_sha256"],
+        )
+        self.assertEqual(wire[-64:-32].hex(), artifact["body_wire_sha256"])
+        self.assertEqual(wire[-32:].hex(), artifact["footer_wire_sha256"])
+
+        identity_names = (
+            "workload",
+            "profile",
+            "artifact",
+            "build",
+            "machine",
+            "backend",
+            "device",
+            "placement",
+            "host_source",
+            "host_clock",
+            "device_source",
+            "device_clock",
+            "challenge",
+        )
+        self.assertEqual(
+            {
+                name: value.hex()
+                for name, value in zip(
+                    identity_names,
+                    decoded.scenario.identities,
+                )
+            },
+            manifest["scenario_identities"],
+        )
+        for path_key, digest_key in (
+            ("portable_path", "portable_source_sha256"),
+            ("native_profile_path", "native_profile_source_sha256"),
+            ("producer_path", "producer_source_sha256"),
+            ("runner_source_path", "runner_source_sha256"),
+        ):
+            source_path = Path(manifest["verifier"][path_key])
+            self.assertFalse(source_path.is_absolute())
+            self.assertNotIn("..", source_path.parts)
+            source_sha256 = bytes.fromhex(
+                manifest["verifier"][digest_key]
+            )
+            self.assertEqual(len(source_sha256), 32)
+            self.assertNotEqual(source_sha256, bytes(32))
 
 
 if __name__ == "__main__":
