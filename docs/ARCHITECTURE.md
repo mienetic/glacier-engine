@@ -15,6 +15,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Device selection | `DeviceCapabilityV1`, canonical inventory, plan-bound requirement, selection receipt | Choose one compatible present CPU or accelerator deterministically before admission without granting allocation, queue, dispatch, or publication authority |
 | Device lifecycle observation | `ObservationV1`, `TransitionReceiptV1`, native Metal lifecycle snapshot | Bind a source-specific native or synthetic fact to one exact prior present inventory and derive only a capability- and policy-preserving newer `unavailable` or `lost` entry; fail new native work closed without granting release, quarantine-clear, fresh-selection, recovery, or migration authority |
+| Device-loss dispatch reconciliation | `LossDispatchRetentionV1`, `LossDispatchReconciliationPlanV1`, exact terminal/completion settlement, `LossDispatchReconciliationReceiptV1` | Join one exact command-specific native `5/1/11` loss to its retained dispatch, settle the Bank pin before exact native-command finalization, and preserve every resource for pending or ambiguous work without granting output, retry, migration, reset, or reclaim authority |
 | Device-loss retirement | `LossRetirementPlanV1`, private native permit, ordinary LeaseTree release, `LossRetirementReceiptV1` | Bind one exact lost source and quiesced allocation, drop retained native references before logical Bank uncharge without post-loss property reads, and grant no physical-reclaim, output, migration, reset, or residency authority |
 | Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, async ticket/quarantine/failure evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, bind per-adapter single-flight Metal completion to exact Bank settlement, and authorize one exact quarantined native `.error` as core `terminal_failure` without releasing ownership early; native gates create, dispatch through, and directly inspect real buffers, while production-symbol-isolated fault gates keep physical success or real resources separate from test-only overlays and prove exact settlement retry without claiming residency, physical device failure, general scheduling, or performance |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
@@ -973,6 +974,21 @@ without GPU work; the ordinary native macOS gate uses a real `MTLDevice`, real
 `MTLBuffer` resources, and a CPU output oracle as a successful-command
 regression.
 
+Device-loss Dispatch Reconciliation V1 composes the lifecycle and dispatch
+layers only for the exact command-specific native status/domain/code
+`5/1/11`. A 440-byte retention record binds the selected capability, active
+lease and pin, request, submission, quarantine, and private adapter challenge.
+A 240-byte plan binds that retention to one accepted `present -> lost`
+transition. Production authorization requires the same sticky native loss and
+retained `.error`; synthetic observations remain test-only. Core consumes the
+Bank pin before the adapter exact-finalizes the target native record, and a
+448-byte receipt binds the terminal failure, successful completion, Bank
+settlement, and adapter settlement tombstone. A lost outer acknowledgement
+keeps the Coordinator slot `settlement_pending`, while exact retry confirms the
+same tombstone without a second Bank release or native finalization. Device
+loss alone is never terminal: pending, ambiguous, unknown, and invalid
+commands retain their pin, charge, command, buffers, and quarantine.
+
 Device-loss Retirement V1 composes these previously separate layers only for
 an already quiesced allocation. A pointer-free plan binds an exact accepted
 `lost` transition to the historical selection, allocation authority, live
@@ -1007,12 +1023,13 @@ Portable transition and error-path tests are deterministic synthetic/model
 evidence rather than physical-removal evidence. The isolated native retirement
 gate uses real buffers under an explicitly synthetic test-only loss permit; it
 proves reference cleanup, not physical removal or reclaim.
-Physical residency, in-flight/quarantine reconciliation,
+Physical residency, callback-safe pending/ambiguous/unknown reconciliation,
 fresh selection and migration, multi-slot and multi-device scheduling,
 telemetry, performance, retained driver/device ranges, and native support on
 cross-compiled targets remain open. See
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md),
 [Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md),
+[Device-Loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md),
 [Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md), and
 [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md).
 

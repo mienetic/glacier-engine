@@ -160,8 +160,9 @@ identity, and unsupported combinations fail before visible state or output
 changes.
 
 The selection receipt is decision evidence only. Physical-page commitment,
-reclamation, and residency authority/evidence, in-flight/quarantine
-reconciliation, fresh selection/migration, multi-GPU
+reclamation, and residency authority/evidence, callback-safe Phase B
+retirement for pending, ambiguous, unknown, or invalid commands, fresh
+selection/migration, multi-GPU
 partitioning/scheduling, direct telemetry, performance evidence, native device
 ranges, and native support on cross-compiled targets remain open.
 
@@ -218,10 +219,26 @@ device loss or migrate work on its own. The separate lifecycle layer observes
 source-bound removal signals and fails new work closed without making this
 dispatch path a recovery authority. A separate retirement path can now close
 an already quiesced loss-bound allocation through ordinary FreePermit
-settlement, but cannot terminalize retained work. Physical residency,
-in-flight/quarantine reconciliation and fresh selection, multi-slot and
-multi-device scheduling, production weight paging, additional GPU backends,
-and native OS matrices remain planned.
+settlement, but cannot terminalize retained work.
+
+Device-loss Dispatch Reconciliation Phase A covers one narrower retained case:
+an active command with exact native Metal status/domain/code `5/1/11`. Its
+pointer-free 440-byte retention, 240-byte plan, and 448-byte receipt replay the
+lifecycle transition, deterministic selection, live lease and pin, terminal
+failure, dispatch completion, and Bank completion. The production gate is
+native-only. Core retains the private Bank permit and settles it before the
+adapter exact-finalizes the same native command; a settlement tombstone makes
+lost confirmation retryable without another Bank release or native
+finalization. Allocation retirement remains a separate operation after the
+dispatch slot is gone. The real-GPU fault gate reaches this flow through an
+explicitly synthetic published-error overlay, so it is not physical
+device-loss evidence. See
+[Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md).
+
+Physical residency, callback-safe Phase B retirement for pending, ambiguous,
+unknown, or invalid commands, fresh selection, multi-slot and multi-device
+scheduling, production weight paging, additional GPU backends, and native OS
+matrices remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
 cancellation returns the declared delta, and measured physical counters are
@@ -593,9 +610,14 @@ required one consumed result and one stale result while leaving the snapshot
 readable. None of those loss sources occurred. Transition and error paths are
 covered by deterministic synthetic/model tests. The isolated native retirement
 gate separately releases real buffers under an explicitly synthetic test-only
-loss permit; it proves ownership cleanup, not physical removal. A
-removable-hardware callback campaign, in-flight/quarantine reconciliation,
-fresh selection and migration,
+loss permit; it proves ownership cleanup, not physical removal. The same
+isolated configuration exercises command-specific Phase A reconciliation
+after a real GPU command succeeds by publishing a separate synthetic
+code-`11`-shaped error overlay. That proves exact retention, Bank-first
+settlement, tombstone replay, and native finalization on the test path, not a
+physical failure. A removable-hardware callback campaign, callback-safe Phase B
+retirement for pending, ambiguous, unknown, or invalid commands, fresh
+selection and migration,
 multi-slot and multi-device scheduling,
 physical residency and device telemetry, additional GPU backends, and broader
 native OS/device matrices stay open.
@@ -1475,6 +1497,9 @@ Contributors can work on the runtime without downloading a large model:
   placement, device-loss, or multi-device evidence slice that consumes a fresh
   selection receipt, builds on the bounded lifecycle, and rejects unsupported
   fallback;
+- one Phase B callback-safe command-lifetime fixture that keeps pending,
+  ambiguous, unknown, and invalid work pinned until a backend proves a safe
+  retirement boundary;
 - one repeated-handoff, lease-contention, replay, disruption, or bounded-soak
   workload profile;
 - one read-only evidence inspector or validated renderer extension;
@@ -1485,5 +1510,7 @@ rejection paths, evidence command, and nonclaims. See
 [Contributor Projects](PROJECTS.md),
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md),
 [Device Allocation Lease](DEVICE_ALLOCATION_LEASE.md),
-[Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md), and
+[Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md),
+[Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md),
+and
 [Evidence Policy](EVIDENCE_POLICY.md).

@@ -233,6 +233,23 @@ is deterministic; the isolated native test uses real buffers with an
 explicitly synthetic test-only loss permit and does not claim hardware
 removal.
 
+The **Device-loss Dispatch Reconciliation Phase A** follow-up is complete for
+one exact active native command-specific loss. Fixed pointer-free
+`LossDispatchRetentionV1` (440 bytes),
+`LossDispatchReconciliationPlanV1` (240 bytes), and
+`LossDispatchReconciliationReceiptV1` (448 bytes) replay the selected
+capability, lifecycle transition, live lease and pin, terminal failure,
+dispatch completion, Bank completion, and adapter settlement. Production
+accepts only native `command_buffer_device_removed` evidence with exact
+status/domain/code `5/1/11`; synthetic evidence is structurally valid but
+production-ineligible. The Coordinator validates the exact active pin and
+already-bound adapter without exposing its private Bank permit. Quarantine,
+charge, buffers, and native command stay owned until Bank-first settlement and
+exact native finalization; a tombstone makes lost confirmation retryable
+without a second release or finalization. Allocation retirement is a separate
+operation after the dispatch slot is gone. See
+[Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md).
+
 The **build-isolated native Metal fault/race gate** is complete. A second,
 non-installed shim build contains the test-only controls, while the production
 shim exports no fault-control symbols. Two threads race a context-local
@@ -248,7 +265,8 @@ pin or finalizing the native record twice.
 Small next slices:
 
 - exercise removal-requested and removed callbacks on removable hardware;
-- reconcile retained in-flight/quarantined work after loss without inferring a
+- add Phase B callback-safe native retirement or loss-fenced polling for
+  pending, ambiguous, unknown, and invalid commands without inferring a
   terminal or output;
 - add fresh selection under a new receipt and explicit migration policy;
 - add multi-slot queue scheduling and multi-device partitioning;
@@ -256,6 +274,14 @@ Small next slices:
 - add more GPU backends with CPU-oracle/lifecycle gates and expand native
   OS/device matrices;
 - retain performance evidence under declared campaigns.
+
+**Phase B first slice:** add a deterministic backend fixture that can retain
+one pending or ambiguous native-command record across a loss fence and later
+prove a callback-safe retirement decision. Done when the exact lease, pin,
+Bank permit custody, callback identity, and native record remain unchanged
+until that decision; unknown, stale, substituted, and premature retirement
+attempts leave ownership live; and no test relabels timeout or device loss as
+completion.
 
 **Current boundary:** the completed LeaseTree follow-up keeps stable capability
 facts separate from dynamic observations, consumes the exact selection,
@@ -274,16 +300,19 @@ pre-settlement retention are covered by pure Zig and independent Python mirror
 contracts. The build-isolated native fault gate additionally runs a real,
 physically successful Metal command and overlays only its test-published result
 as `.error`; it keeps those fact planes separate and exports no fault controls
-from the production shim. The race and settlement retry are real host-thread
-and coordinator transitions, but the published error is deliberately injected.
+from the production shim. The synthetic path exercises Phase A exact
+retention, active-pin replay, Bank-first settlement, receipt/tombstone storage,
+and confirmation retry; it cannot pass the native-only production gate. The
+race and settlement retry are real host-thread and coordinator transitions,
+but the published error is deliberately injected.
 It is not a physical driver, hardware, or device-loss failure and is not
 performance evidence. Separately, the built-in M1 development-host lifecycle
 gate proves observer installation, initial selected-device membership, and an
 unchanged no-event snapshot around one real successful Metal command. It did
 not exercise a physical removal callback. Quiesced-allocation retirement now
 releases real references in the isolated native gate under synthetic loss;
-physical-callback evidence, in-flight/quarantine reconciliation, fresh
-selection and migration, multi-slot scheduling,
+physical-callback evidence, Phase B retirement for pending, ambiguous, unknown,
+and invalid commands, fresh selection and migration, multi-slot scheduling,
 physical residency, direct device telemetry, additional GPU backends,
 performance evidence, and broader native OS/device matrices remain
 unimplemented unless a slice supplies direct named evidence. Cross-compilation

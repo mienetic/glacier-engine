@@ -40,7 +40,7 @@ LeaseTreeDispatchPinV1
                                 ├── ambiguity / unknown ── sticky       │
                                 │                         quarantine    │
                                 ├── exact .error ── quarantine          │
-                                │       └── exact reconciliation ──────┤
+                                │       └── exact 5/1/11 Phase A ──────┤
                                 │                   terminal_failure   │
                                 └── exact .completed ── succeeded ─────┤
                                                                        ▼
@@ -223,6 +223,56 @@ while the core terminal has no output root. This authorization does not clear
 quarantine or release ownership. Ambiguous submission, unknown completion, and
 invalid completion cannot use this path and remain sticky.
 
+### Device-loss dispatch reconciliation Phase A
+
+Phase A composes the command-error terminal machinery with one exact
+source-bound device-loss transition. It is intentionally limited to native
+Metal command-buffer status `5`, command-buffer error domain `1`, and
+device-removed code `11`; a device-loss observation by itself is not terminal
+authority.
+
+The portable contract adds three pointer-free values:
+
+- `LossDispatchRetentionV1` is 440 bytes and binds the selected capability,
+  live allocation lease, leaf/object sets, active dispatch pin, request,
+  submission, quarantine, exact `5/1/11` projection, and adapter challenge.
+- `LossDispatchReconciliationPlanV1` is 240 bytes and binds that retention to
+  the exact `present → lost` lifecycle transition, source sequence, and
+  reconciliation generation after replaying deterministic selection.
+- `LossDispatchReconciliationReceiptV1` is 448 bytes and composes the exact
+  terminal failure, dispatch completion, Bank completion, adapter settlement,
+  and one finalized native command. Its output, migration, reset, and
+  physical-reclaim authority roots must remain zero.
+
+The production gate accepts only native
+`command_buffer_device_removed` evidence with the exact `5/1/11` fields and
+the same retained backend loss. `test_injected` remains valid for structural
+tests but cannot pass production authorization. The Coordinator's
+`withActiveDispatchReconciliationBindingV1` path validates the exact active
+lease, `.pinned` slot, intent, object set, calls, adapter identity, and live
+Bank pin before invoking the already-bound adapter. It never exposes the
+private Bank permit.
+
+Authorization retains the quarantine, pin, logical charge, buffers, and native
+command. Ordinary `completeDispatchPin` then consumes the Bank pin before its
+private callback exact-finalizes that same command and records the adapter
+settlement receipt and replay tombstone. A lost outer acknowledgement leaves
+the Coordinator in `settlement_pending`; exact retry reuses the completion and
+tombstone without another Bank release or native finalization.
+Finalization targets the exact registered command token rather than requiring a
+global native-command count of zero, so unrelated sibling commands remain
+owned. Public receipt retrieval must replay the exact plan, retention, and
+successful Coordinator completion stored in the tombstone.
+
+Dispatch settlement does not release the allocation lease. Only after the
+dispatch slot is gone may the separate
+[Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md) flow drop
+allocation-owned native references and return logical device bytes. Phase B
+remains open for callback-safe native retirement or polling of pending,
+ambiguous, unknown, and invalid command states; none may be inferred terminal
+in Phase A. See
+[Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md).
+
 ### Complete
 
 `completeDispatchPin` accepts the original pin, the exact adapter instance, and
@@ -318,10 +368,12 @@ the advanced cursor, and the adapter claims each exact native snapshot at most
 once. Source mismatch fails closed; fresh adoption requires a new inventory
 and exact initial sequence 1. Normal
 selection excludes the resulting newer `unavailable` or `lost` successor.
-Hashes verify composition and integrity, not authenticity or attestation. This
-does not terminalize an
-in-flight dispatch, release its pin or charge, clear quarantine, create a fresh
-selection, or migrate work. See
+Hashes verify composition and integrity, not authenticity or attestation. The
+observation alone does not terminalize an in-flight dispatch, release its pin
+or charge, clear quarantine, create a fresh selection, or migrate work.
+Command-specific Phase A reconciliation must separately replay the exact
+lifecycle, selection, lease, pin, quarantine, terminal, and completion
+bindings. See
 [Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md).
 
 The separate [Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md) path now
@@ -330,7 +382,8 @@ accepted loss to the selected allocation lease, refuses every retained
 dispatch/command/quarantine state, and uses the ordinary coordinator release
 so native references drop before Bank uncharge. It does not invent a terminal
 for an in-flight dispatch and therefore does not weaken the pin rules in this
-document.
+document. Phase A must remove the exact dispatch slot first; retirement then
+uses its separate allocation authority.
 
 The actual built-in M1 development-host gate proved initial membership and an
 unchanged no-event lifecycle snapshot around one real successful Metal
@@ -394,12 +447,13 @@ records sticky quarantine. One exact retained native command-buffer `.error`
 may now be authorized as core `terminal_failure` and settled without publishing
 output; it remains pinned until Bank settlement and exact native error
 finalization both succeed. Source-bound device-loss observation and
-loss-bound retirement of an already quiesced allocation now exist, but
-in-flight/quarantine reconciliation, fresh selection, and automatic migration
-remain later authorities. This contract does not
-manufacture a successful completion from missing evidence. Ambiguous
-submissions, invalid or unknown completion, timeouts, and device loss remain
-pinned until a separate reconciliation authority proves a safe terminal state.
+loss-bound retirement of an already quiesced allocation now exist, and Phase A
+settles the exact command-specific native `5/1/11` case. Callback-safe
+retirement of pending, ambiguous, unknown, invalid, or timed-out commands
+remains Phase B, alongside fresh selection and automatic migration. This
+contract does not manufacture a successful completion from missing evidence.
+Those unresolved states remain pinned until a separate backend authority proves
+a safe terminal state.
 Other adapters that cannot prove a safe pre-submit rejection must likewise
 retain the pin rather than infer one.
 
@@ -415,13 +469,16 @@ device:
    the pointer-free async ticket/quarantine shapes and exact terminal-error
    reconciliation roots. The separate lifecycle contract tests cover every
    source/state mapping, exact code `11` classification, native/synthetic
-   separation, and mutation/replay/substitution rejection. They call no Metal
-   API and execute no GPU work.
+   separation, and mutation/replay/substitution rejection. The Phase A tests
+   additionally replay the fixed retention/plan/receipt bindings and require
+   native-only production eligibility. They call no Metal API and execute no
+   GPU work.
 2. **Host integration tests** exercise the real ResourceBank, LeaseTree,
    mutexes, fixed storage, publication fences, and thread scheduling without
    claiming accelerator execution. The independent Python oracle separately
    rebuilds the exact error-sidecar, backend-completion, and core-terminal roots
-   plus substitution checks; it also executes no GPU work.
+   plus the Phase A retention/plan/receipt roots and substitution checks; it
+   also executes no GPU work.
 3. **Native Metal tests** open a real `MTLDevice`, create and inspect real Shared
    `MTLBuffer` resources, dispatch the exact registry-owned buffers on the
    selected device, separate submit from completion observation, authenticate
@@ -447,7 +504,8 @@ device:
    their native strong references through the ordinary LeaseTree release under
    an explicitly synthetic test-only loss permit. That proves ownership
    cleanup and logical settlement, not a reproduced removal or physical
-   reclamation.
+   reclamation. Its code-`11`-shaped publication is likewise a synthetic Phase
+   A overlay and cannot satisfy the native-only production gate.
 
 Cross-compilation proves source and build portability only. It is never
 reported as native operating-system, driver, or accelerator evidence.
@@ -463,6 +521,12 @@ tools/zig-with-ephemeral-cache.sh test \
 
 python3 -m unittest \
   bench.tests.test_device_allocation_lease_tree
+
+tools/zig-with-ephemeral-cache.sh test \
+  src/core/device_loss_dispatch_reconciliation.zig -OReleaseSafe
+
+python3 -m unittest \
+  bench.tests.test_device_loss_dispatch_reconciliation
 ```
 
 Run the hardware-backed gate on macOS with Metal enabled:
@@ -498,7 +562,8 @@ Contributor-ready extensions include:
 
 - retain physical removal-requested and removed callbacks on removable
   hardware;
-- reconcile retained in-flight/quarantined work after device loss without
+- implement Phase B callback-safe native command retirement or loss-fenced
+  polling for pending, ambiguous, unknown, and invalid states without
   inferring output or completion;
 - add fresh device selection and explicit migration policy;
 - bounded multi-slot completion scheduling without weakening adapter identity;

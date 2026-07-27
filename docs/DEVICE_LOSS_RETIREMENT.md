@@ -34,6 +34,31 @@ Only native `removed_notification` or exact native
 `test_injected` evidence remains structurally valid for deterministic tests but
 is always production-ineligible.
 
+## Relationship to dispatch reconciliation
+
+Allocation retirement and dispatch reconciliation are separate authorities.
+This retirement contract deliberately rejects an active dispatch, native
+command, or quarantine. It cannot use a loss observation to infer command
+completion or bypass the ResourceBank pin.
+
+[Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md)
+Phase A handles one narrower command-specific case first. Its pointer-free
+440-byte retention and 240-byte plan bind the exact active pin to a native
+`command_buffer_device_removed` transition with status/domain/code `5/1/11`.
+Its 448-byte receipt composes terminal failure, dispatch completion, Bank
+completion, and exact native finalization while forcing output, migration,
+reset, and physical-reclaim authorities to zero. Core keeps the Bank permit
+private and consumes it before native finalization; a retained tombstone makes
+lost settlement confirmation retryable without another release or
+finalization.
+
+Only after that dispatch slot is gone may this retirement protocol drop the
+allocation-owned native references and return logical device bytes through its
+separate FreePermit flow. Synthetic Phase A evidence is structurally testable
+but cannot pass production authorization. Pending, ambiguous, unknown, and
+invalid commands still require a callback-safe Phase B retirement primitive or
+loss-fenced poll and must remain pinned.
+
 ## Authority and settlement
 
 The cleanup sequence is:
@@ -106,7 +131,9 @@ The tests intentionally make different claims:
    `MTLBuffer` objects, and exercises the real LeaseTree release and
    strong-reference-drop path under an explicitly synthetic, test-only loss
    permit. It proves native ownership cleanup and logical settlement on that
-   host; it does not reproduce physical device removal.
+   host. The same isolated configuration can first exercise the synthetic
+   command-specific Phase A flow after a real GPU command succeeds. Neither
+   path reproduces physical device removal.
 4. The production path accepts only a live same-source native sticky loss. A
    retained physical-removal callback campaign still requires removable
    hardware and remains separate work.
@@ -137,7 +164,8 @@ tools/zig-with-ephemeral-cache.sh build \
 ## Open follow-up work
 
 - retain a real removal callback artifact on removable hardware;
-- classify and reconcile retained in-flight/quarantined work after device loss;
+- add callback-safe Phase B retirement or loss-fenced polling for pending,
+  ambiguous, unknown, and invalid commands after device loss;
 - create a fresh inventory and deterministic replacement selection;
 - define explicit retry, restart, and migration policy;
 - add separate physical residency and reclaim evidence;

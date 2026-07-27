@@ -69,6 +69,13 @@ raw native command fields, so it cannot be presented as a physical failure.
 
 Neither contract grants allocation, dispatch, free, unpin, quarantine-clear,
 context-reset, fresh-selection, migration, or output-publication authority.
+The separate
+[Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md)
+Phase A protocol can consume the exact native
+`command_buffer_device_removed` `5/1/11` transition only after replaying the
+selected capability, live lease, active pin, retained quarantine, terminal
+failure, and completion. Its production gate rejects `test_injected`; the
+lifecycle observation alone still grants no terminal authority.
 The separate [Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md) protocol
 may consume an exact `lost` transition as one input to a private,
 quiescence-checked release flow; the observation alone remains
@@ -152,8 +159,11 @@ execution, admission, and at-most-once consumption on that no-event host
 session.
 
 The build-isolated fault gate is a different evidence layer. Its published
-command error is deliberately injected after a real command succeeds. It is
-not a physical command-buffer, driver, hardware, or device-loss failure.
+command error is deliberately injected after a real command succeeds. It can
+exercise the structurally valid synthetic Phase A flow, including retention,
+Bank-first settlement, tombstone replay, and native finalization, but cannot
+pass the native-only production gate. It is not a physical command-buffer,
+driver, hardware, or device-loss failure.
 
 ## Current boundary and next work
 
@@ -166,18 +176,27 @@ real buffers under an explicitly synthetic test-only permit. That proves
 reference release and logical settlement, not a physical removal event,
 residency change, or complete recovery campaign.
 
+Device-loss Dispatch Reconciliation Phase A separately covers one exact active
+command-specific native `5/1/11` transition. Its 440-byte retention, 240-byte
+plan, and 448-byte receipt keep the dispatch pin and native command owned
+through Bank-first settlement and exact native finalization. Allocation
+retirement remains a later, separate operation after the dispatch slot is
+gone.
+
 Still open:
 
 - retain removal-requested and removed callbacks on suitable removable
   hardware;
-- reconcile or clear retained in-flight/quarantined work without releasing
-  ownership early;
+- add callback-safe Phase B retirement or loss-fenced polling for pending,
+  ambiguous, unknown, and invalid command states without releasing ownership
+  early;
 - create and validate a fresh inventory and selection receipt;
 - create a fresh backend context and rehydrate model/input state; and
 - authorize explicit migration without reusing stale device authority.
 
 See [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md),
 [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md),
+[Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md),
 [Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md),
 [Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md), and
 [Native Metal Allocation Adapter](NATIVE_METAL_ALLOCATION.md).

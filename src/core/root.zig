@@ -22,6 +22,8 @@ pub const device_lifecycle_contract =
     @import("device_lifecycle_contract.zig");
 pub const device_loss_retirement =
     @import("device_loss_retirement.zig");
+pub const device_loss_dispatch_reconciliation =
+    @import("device_loss_dispatch_reconciliation.zig");
 pub const device_allocation_lease =
     @import("device_allocation_lease.zig");
 pub const device_allocation_lease_tree =
@@ -188,6 +190,8 @@ pub const DeviceCapabilityContract =
 pub const DeviceLifecycleContract =
     device_lifecycle_contract;
 pub const DeviceLossRetirement = device_loss_retirement;
+pub const DeviceLossDispatchReconciliation =
+    device_loss_dispatch_reconciliation;
 pub const DeviceAllocationLease = device_allocation_lease;
 pub const DeviceAllocationLeaseTree =
     device_allocation_lease_tree;

@@ -86,6 +86,9 @@ pub const Error =
         InvalidDispatchPin,
         InvalidDispatchTerminal,
         InvalidDispatchCompletion,
+        InvalidDispatchReconciliationBinding,
+        DispatchReconciliationAdapterBusy,
+        DispatchReconciliationAdapterUnavailable,
         InvalidRetirementBinding,
         RetirementAdapterBusy,
         RetirementAdapterUnavailable,
@@ -106,6 +109,12 @@ pub const DispatchCallbackError = error{
 
 pub const RetirementBindingCallbackError = error{
     InvalidRetirementBinding,
+    Busy,
+    Unavailable,
+};
+
+pub const ActiveDispatchReconciliationBindingCallbackError = error{
+    InvalidReconciliationBinding,
     Busy,
     Unavailable,
 };
@@ -217,6 +226,24 @@ pub const RetirementBindingAdapterV1 = struct {
         retained_calls: []const allocation.AllocationCallV1,
         retained_objects: []const allocation.BackendObjectV1,
     ) RetirementBindingCallbackError!void,
+};
+
+/// Same-process callback through which the coordinator presents the exact
+/// retained evidence for one currently pinned dispatch. The Bank permit stays
+/// private to the coordinator. The call/object slices borrow coordinator stack
+/// storage only for the callback duration and must not be retained.
+pub const ActiveDispatchReconciliationBindingV1 = struct {
+    context: *anyopaque,
+    dispatch_adapter: DispatchAdapterV1,
+    reconcile_fn: *const fn (
+        context: *anyopaque,
+        retained_lease: LeaseTreeDeviceAllocationLeaseV1,
+        retained_pin: LeaseTreeDispatchPinV1,
+        retained_intent: DispatchPinIntentV1,
+        retained_object_set: allocation.BackendObjectSetV1,
+        retained_calls: []const allocation.AllocationCallV1,
+        retained_objects: []const allocation.BackendObjectV1,
+    ) ActiveDispatchReconciliationBindingCallbackError!void,
 };
 
 /// Reservation evidence returned only after ResourceBank has atomically
@@ -1475,6 +1502,100 @@ pub const CoordinatorV1 = struct {
             return Error.InvalidDispatchCompletion;
         self.dispatches[restored_slot_index] = .{};
         return completion;
+    }
+
+    /// Invoke one narrow reconciliation callback for an exact retained active
+    /// dispatch pin. The target must still be in the pre-terminal `.pinned`
+    /// phase and remain backed by its live private Bank pin. Terminal,
+    /// completion, and Bank permit authority are never exposed.
+    ///
+    /// The callback runs under the coordinator mutex and must not re-enter the
+    /// coordinator or Bank. Lock order is coordinator then adapter, matching
+    /// the other allocation and dispatch callbacks.
+    pub fn withActiveDispatchReconciliationBindingV1(
+        self: *CoordinatorV1,
+        lease: LeaseTreeDeviceAllocationLeaseV1,
+        pin: LeaseTreeDispatchPinV1,
+        binding: ActiveDispatchReconciliationBindingV1,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.validateLease(lease);
+        try validateDispatchPinV1(pin);
+        const slot_index = self.findDispatchSlot(pin) orelse
+            return Error.InvalidDispatchPin;
+        const slot = self.dispatches[slot_index];
+        try validateBoundDispatchAdapter(
+            slot,
+            binding.dispatch_adapter,
+        );
+        if (slot.state != .pinned)
+            return Error.InvalidDispatchReconciliationBinding;
+        const retained_intent = slot.intent orelse
+            return Error.InvalidDispatchReconciliationBinding;
+        const retained_pin = slot.pin orelse
+            return Error.InvalidDispatchReconciliationBinding;
+        const bank_permit = slot.bank_permit orelse
+            return Error.InvalidDispatchReconciliationBinding;
+        if (!std.meta.eql(retained_pin, pin) or
+            slot.terminal != null or
+            slot.completion != null or
+            slot.bank_completion != null)
+            return Error.InvalidDispatchReconciliationBinding;
+        try validateDispatchPinForIntentV1(
+            retained_pin,
+            retained_intent,
+        );
+        if (!bankPermitForDispatchPinValid(
+            bank_permit,
+            retained_pin,
+        ))
+            return Error.InvalidDispatchReconciliationBinding;
+        try self.bank.validateLeasePin(bank_permit);
+        try self.bank.validateAdditiveLeaseTree(self.tree.*);
+        try self.bank.validatePublicationSessionBinding(
+            self.tree.parent,
+            self.bound_request_epoch,
+            self.bound_session_id,
+            self.publication_sequence.*,
+        );
+        try self.validateLiveObjectSet();
+        try self.validateLiveAdmissionStorage();
+        try self.bank.validateLeaseScopeSubtreeClaim(
+            self.tree.*,
+            self.scope,
+            .{ .device_bytes = lease.materialized_bytes },
+        );
+        for (self.objects[0..@intCast(lease.allocation_count)]) |object|
+            try self.bank.validateLeaseNode(self.tree.*, object.leaf);
+
+        var retained_calls: [allocation.maximum_allocations]allocation.AllocationCallV1 =
+            undefined;
+        var retained_objects: [allocation.maximum_allocations]allocation.BackendObjectV1 =
+            undefined;
+        const count: usize = @intCast(lease.allocation_count);
+        try self.copyLiveObjectsInOrder(
+            retained_calls[0..count],
+            retained_objects[0..count],
+        );
+
+        const source = try self.captureDispatchValidationSource();
+        const callback_result = binding.reconcile_fn(
+            binding.context,
+            self.lease,
+            retained_pin,
+            retained_intent,
+            self.object_set,
+            retained_calls[0..count],
+            retained_objects[0..count],
+        );
+        self.restoreDispatchValidationSourceAfterCallback(source);
+        try self.validateDispatchValidationSource(source);
+        callback_result catch |err| return switch (err) {
+            error.InvalidReconciliationBinding => Error.InvalidDispatchReconciliationBinding,
+            error.Busy => Error.DispatchReconciliationAdapterBusy,
+            error.Unavailable => Error.DispatchReconciliationAdapterUnavailable,
+        };
     }
 
     /// Invoke one narrow adapter callback with the coordinator's exact private
@@ -5059,6 +5180,275 @@ const TestRetirementBindingObserver = struct {
         self.callback_count += 1;
     }
 };
+
+const TestActiveDispatchReconciliationObserver = struct {
+    const Failure = enum {
+        none,
+        invalid,
+        busy,
+        unavailable,
+    };
+
+    expected_lease: LeaseTreeDeviceAllocationLeaseV1,
+    expected_pin: LeaseTreeDispatchPinV1,
+    expected_intent: DispatchPinIntentV1,
+    expected_object_set: allocation.BackendObjectSetV1,
+    callback_count: u64 = 0,
+    failure: Failure = .none,
+    coordinator_to_mutate: ?*CoordinatorV1 = null,
+
+    fn interface(
+        self: *@This(),
+        dispatch_adapter: DispatchAdapterV1,
+    ) ActiveDispatchReconciliationBindingV1 {
+        return .{
+            .context = self,
+            .dispatch_adapter = dispatch_adapter,
+            .reconcile_fn = callback,
+        };
+    }
+
+    fn callback(
+        context: *anyopaque,
+        retained_lease: LeaseTreeDeviceAllocationLeaseV1,
+        retained_pin: LeaseTreeDispatchPinV1,
+        retained_intent: DispatchPinIntentV1,
+        retained_object_set: allocation.BackendObjectSetV1,
+        retained_calls: []const allocation.AllocationCallV1,
+        retained_objects: []const allocation.BackendObjectV1,
+    ) ActiveDispatchReconciliationBindingCallbackError!void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        validateDispatchPinForIntentV1(
+            retained_pin,
+            retained_intent,
+        ) catch return error.InvalidReconciliationBinding;
+        allocation.validateObjectSetForAdmissionRootV1(
+            retained_object_set,
+            retained_lease.admission_sha256,
+            retained_lease.authority_sha256,
+            retained_lease.allocation_count,
+            retained_lease.materialized_bytes,
+            retained_calls,
+            retained_objects,
+        ) catch return error.InvalidReconciliationBinding;
+        if (!std.meta.eql(retained_lease, self.expected_lease) or
+            !std.meta.eql(retained_pin, self.expected_pin) or
+            !std.meta.eql(retained_intent, self.expected_intent) or
+            !std.meta.eql(
+                retained_object_set,
+                self.expected_object_set,
+            ))
+            return error.InvalidReconciliationBinding;
+        self.callback_count += 1;
+        if (self.coordinator_to_mutate) |coordinator|
+            coordinator.next_dispatch_generation += 7;
+        return switch (self.failure) {
+            .none => {},
+            .invalid => error.InvalidReconciliationBinding,
+            .busy => error.Busy,
+            .unavailable => error.Unavailable,
+        };
+    }
+};
+
+test "active dispatch reconciliation binds exact retained pin without permit authority" {
+    var harness: TestHarness = .{};
+    try harness.initDispatchOne();
+    const lease = try materializeTestLease(&harness);
+    var dispatch: TestDispatchAdapter = .{};
+    const pin = try harness.coordinator.acquireDispatchPin(
+        lease,
+        dispatch.interface(),
+        testDigest("active reconciliation request"),
+    );
+    const retained_intent =
+        harness.coordinator_dispatches[0].intent.?;
+    const permit =
+        harness.coordinator_dispatches[0].bank_permit.?;
+    var observer: TestActiveDispatchReconciliationObserver = .{
+        .expected_lease = lease,
+        .expected_pin = pin,
+        .expected_intent = retained_intent,
+        .expected_object_set = harness.coordinator.object_set,
+    };
+
+    try harness.coordinator
+        .withActiveDispatchReconciliationBindingV1(
+        lease,
+        pin,
+        observer.interface(dispatch.interface()),
+    );
+    try std.testing.expectEqual(@as(u64, 1), observer.callback_count);
+    try harness.bank.validateLeasePin(permit);
+    try std.testing.expectEqual(
+        DispatchSlotStateV1.pinned,
+        harness.coordinator_dispatches[0].state,
+    );
+    try std.testing.expect(
+        harness.coordinator_dispatches[0].terminal == null,
+    );
+    try std.testing.expect(
+        harness.coordinator_dispatches[0].completion == null,
+    );
+    try std.testing.expect(
+        harness.coordinator_dispatches[0].bank_completion == null,
+    );
+
+    var resealed_pin = pin;
+    resealed_pin.dispatch_request_sha256 =
+        testDigest("foreign resealed reconciliation request");
+    resealed_pin.pin_sha256 = dispatchPinRootV1(resealed_pin);
+    try validateDispatchPinV1(resealed_pin);
+    try std.testing.expectError(
+        Error.InvalidDispatchPin,
+        harness.coordinator
+            .withActiveDispatchReconciliationBindingV1(
+            lease,
+            resealed_pin,
+            observer.interface(dispatch.interface()),
+        ),
+    );
+
+    var foreign_dispatch: TestDispatchAdapter = .{};
+    try std.testing.expectError(
+        Error.InvalidDispatchAdapter,
+        harness.coordinator
+            .withActiveDispatchReconciliationBindingV1(
+            lease,
+            pin,
+            observer.interface(foreign_dispatch.interface()),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 1), observer.callback_count);
+
+    const slot_before_failure =
+        harness.coordinator_dispatches[0];
+    const tree_before_failure = harness.tree;
+    const bank_before_failure = try harness.bank.snapshotV3();
+    const next_dispatch_generation_before_failure =
+        harness.coordinator.next_dispatch_generation;
+    observer.failure = .invalid;
+    observer.coordinator_to_mutate = &harness.coordinator;
+    try std.testing.expectError(
+        Error.InvalidDispatchReconciliationBinding,
+        harness.coordinator
+            .withActiveDispatchReconciliationBindingV1(
+            lease,
+            pin,
+            observer.interface(dispatch.interface()),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 2), observer.callback_count);
+    try std.testing.expectEqualDeep(
+        slot_before_failure,
+        harness.coordinator_dispatches[0],
+    );
+    try std.testing.expectEqualDeep(
+        tree_before_failure,
+        harness.tree,
+    );
+    try std.testing.expectEqualDeep(
+        bank_before_failure,
+        try harness.bank.snapshotV3(),
+    );
+    try std.testing.expectEqual(
+        next_dispatch_generation_before_failure,
+        harness.coordinator.next_dispatch_generation,
+    );
+    try harness.bank.validateLeasePin(permit);
+
+    observer.coordinator_to_mutate = null;
+    const terminal = try makeDispatchTerminalV1(
+        pin,
+        .succeeded,
+        testDigest("active reconciliation submission"),
+        testDigest("active reconciliation completion"),
+        testDigest("active reconciliation output"),
+    );
+    dispatch.expect(terminal);
+    _ = try harness.coordinator.completeDispatchPin(
+        pin,
+        dispatch.interface(),
+        terminal,
+    );
+    _ = try harness.coordinator.release(
+        lease,
+        harness.backend.adapter(),
+    );
+    try harness.close();
+}
+
+test "active dispatch reconciliation rejects settlement pending without callback" {
+    var harness: TestHarness = .{};
+    try harness.initDispatchOne();
+    const lease = try materializeTestLease(&harness);
+    var dispatch: TestDispatchAdapter = .{};
+    const pin = try harness.coordinator.acquireDispatchPin(
+        lease,
+        dispatch.interface(),
+        testDigest("settlement pending reconciliation request"),
+    );
+    const retained_intent =
+        harness.coordinator_dispatches[0].intent.?;
+    const terminal = try makeDispatchTerminalV1(
+        pin,
+        .terminal_failure,
+        testDigest("settlement pending submission"),
+        testDigest("settlement pending completion"),
+        zero_digest,
+    );
+    dispatch.expect(terminal);
+    dispatch.reject_settlement = true;
+    try std.testing.expectError(
+        Error.InvalidDispatchCompletion,
+        harness.coordinator.completeDispatchPin(
+            pin,
+            dispatch.interface(),
+            terminal,
+        ),
+    );
+    var observer: TestActiveDispatchReconciliationObserver = .{
+        .expected_lease = lease,
+        .expected_pin = pin,
+        .expected_intent = retained_intent,
+        .expected_object_set = harness.coordinator.object_set,
+    };
+    const slot_before =
+        harness.coordinator_dispatches[0];
+    const tree_before = harness.tree;
+    const bank_before = try harness.bank.snapshotV3();
+    try std.testing.expectError(
+        Error.InvalidDispatchReconciliationBinding,
+        harness.coordinator
+            .withActiveDispatchReconciliationBindingV1(
+            lease,
+            pin,
+            observer.interface(dispatch.interface()),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 0), observer.callback_count);
+    try std.testing.expectEqualDeep(
+        slot_before,
+        harness.coordinator_dispatches[0],
+    );
+    try std.testing.expectEqualDeep(tree_before, harness.tree);
+    try std.testing.expectEqualDeep(
+        bank_before,
+        try harness.bank.snapshotV3(),
+    );
+
+    dispatch.reject_settlement = false;
+    _ = try harness.coordinator.completeDispatchPin(
+        pin,
+        dispatch.interface(),
+        terminal,
+    );
+    _ = try harness.coordinator.release(
+        lease,
+        harness.backend.adapter(),
+    );
+    try harness.close();
+}
 
 test "quiesced retirement binding uses exact coordinator lease and adapter" {
     var harness: TestHarness = .{};

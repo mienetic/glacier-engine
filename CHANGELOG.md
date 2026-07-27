@@ -37,6 +37,24 @@ before the first stable release.
 
 ### Added
 
+- Added **Device-loss Dispatch Reconciliation Phase A** for one exact active
+  command whose native Metal command-buffer status/domain/code is `5/1/11`.
+  Fixed pointer-free 440-byte retention, 240-byte plan, and 448-byte receipt
+  values replay the lifecycle transition, deterministic selection, live
+  LeaseTree lease and pin, terminal failure, dispatch completion, and Bank
+  completion. Production authorization accepts only the native
+  `command_buffer_device_removed` source; synthetic evidence remains
+  structurally testable but production-ineligible. The Coordinator presents
+  the exact retained active dispatch to its already-bound adapter without
+  exposing the private Bank permit. Quarantine, charge, buffers, and command
+  remain owned until Bank-first settlement and exact native finalization;
+  settlement acknowledgement can replay from a tombstone without releasing
+  the Bank pin or finalizing twice. Allocation retirement remains a separate
+  quiesced-release protocol. The native fault gate runs a real successful GPU
+  command and then publishes a test-only code-`11`-shaped overlay; it verifies
+  the synthetic flow but is not physical device-loss, driver-failure, or
+  performance evidence. Callback-safe retirement of pending, ambiguous,
+  unknown, or invalid commands is reserved for Phase B.
 - Added **Device-loss Retirement V1**. A fixed 544-byte plan composes one exact
   `lost` observation and transition with the selected inventory entry,
   allocation authority, live LeaseTree lease, leaf/object sets, recovery
@@ -77,8 +95,9 @@ before the first stable release.
   work. A real native two-thread consumption race requires one consumed and one
   stale result while the snapshot remains readable; it does not reproduce
   physical removal. Hashes verify composition and integrity, not authenticity
-  or attestation. Physical callback campaigns, retained in-flight/quarantine
-  reconciliation, fresh selection, and migration remain open.
+  or attestation. Physical callback campaigns, callback-safe Phase B
+  retirement of pending, ambiguous, unknown, or invalid commands, fresh
+  selection, and migration remain open.
 - Added a build-isolated native Metal fault/race gate. A real four-buffer INT4
   command completes physically on the executing GPU before the private shim
   publishes a one-shot command-buffer error overlay. The gate retains separate

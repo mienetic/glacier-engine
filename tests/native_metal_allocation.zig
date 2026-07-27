@@ -16,6 +16,8 @@ const allocation = engine.device_allocation_lease;
 const tree_allocation = engine.device_allocation_lease_tree;
 const device = engine.device_capability_contract;
 const lifecycle = engine.device_lifecycle_contract;
+const loss_dispatch_reconciliation =
+    engine.device_loss_dispatch_reconciliation;
 const retirement = engine.device_loss_retirement;
 const resource = engine.resource_bank;
 const metal_allocation = engine.metal_allocation_adapter;
@@ -405,6 +407,16 @@ const MetalFaultArmWorker = struct {
                 self.arm_error = err;
                 return;
             };
+    }
+};
+
+/// Keep cleanup bound to the live mutable backend rather than a deferred
+/// receiver value.
+const MetalBackendCleanup = struct {
+    backend: *engine.MetalBackend,
+
+    fn run(self: @This()) void {
+        self.backend.deinit();
     }
 };
 
@@ -1615,7 +1627,10 @@ fn runRealMetalDispatchLifecycle(
     var backend = try engine.MetalBackend.init(
         engine.metal_library_path,
     );
-    defer backend.deinit();
+    const backend_cleanup: MetalBackendCleanup = .{
+        .backend = &backend,
+    };
+    defer backend_cleanup.run();
     const inventory_entry =
         try metal_allocation.makeAllocationInventoryEntryV1(
             &backend,
@@ -2591,8 +2606,14 @@ fn runRealMetalDispatchLifecycle(
         dispatch_result.terminal,
     );
     try adapter.acknowledgeDispatchCompletion(completion);
+    try testing.expect(
+        backend.compatibilityUnresolvedSubmission() == null,
+    );
 
+    var armed_loss_retirement_plan: ?retirement.LossRetirementPlanV1 = null;
     if (comptime include_injected_fault) {
+        const lifecycle_snapshot_before_fault =
+            try backend.deviceLifecycleSnapshot();
         const fault_request =
             try adapter.prepareMatvecDispatchRequestV1(
                 dispatch_attempt,
@@ -2749,6 +2770,12 @@ fn runRealMetalDispatchLifecycle(
             completion_facts.injected_error_code,
         );
         try testing.expectEqual(
+            lifecycle.command_buffer_device_removed_error,
+            @as(u64, @bitCast(
+                completion_facts.injected_error_code,
+            )),
+        );
+        try testing.expectEqual(
             @as(u32, 1),
             completion_facts.fault_applied,
         );
@@ -2757,6 +2784,10 @@ fn runRealMetalDispatchLifecycle(
         );
         try testing.expect(
             completion_facts.published.state == .@"error",
+        );
+        try testing.expectEqualDeep(
+            lifecycle_snapshot_before_fault,
+            try backend.deviceLifecycleSnapshot(),
         );
         try testing.expectEqual(
             @as(u64, 1),
@@ -2778,9 +2809,113 @@ fn runRealMetalDispatchLifecycle(
             ),
         );
 
+        const loss_source_cursor: lifecycle.SourceCursorV1 = .{
+            .source_instance_sha256 = digest(
+                "fault dispatch loss source instance",
+            ),
+            .last_sequence = 0,
+        };
+        const loss_observation = try lifecycle.makeObservationV1(
+            inventory_entry,
+            &fixture.inventory,
+            loss_source_cursor.source_instance_sha256,
+            1,
+            .test_injected,
+            digest("fault dispatch loss evidence"),
+            0,
+            0,
+            0,
+        );
+        const loss_successor =
+            try lifecycle.makeSuccessorEntryV1(
+                loss_observation,
+                inventory_entry,
+                &fixture.inventory,
+                loss_source_cursor,
+                inventory_entry.discovery_epoch + 1,
+            );
+        const loss_transition =
+            try lifecycle.makeTransitionReceiptV1(
+                loss_observation,
+                inventory_entry,
+                &fixture.inventory,
+                loss_successor,
+                loss_source_cursor,
+            );
+        const reconciliation_challenge =
+            try adapter
+                .lossDispatchReconciliationAdapterChallengeV1(
+                &coordinator,
+                fault_dispatch_interface,
+                loss_observation,
+                lease,
+                fault_pin,
+                fault_ticket,
+            );
+        const reconciliation_retention =
+            try loss_dispatch_reconciliation
+                .makeLossDispatchRetentionV1(
+                loss_observation.source,
+                loss_observation.evidence_class,
+                inventory_entry,
+                lease,
+                fault_pin,
+                fault_ticket.submission_sha256,
+                quarantine.quarantine_sha256,
+                reconciliation_challenge,
+            );
+        const reconciliation_plan =
+            try loss_dispatch_reconciliation
+                .makeLossDispatchReconciliationPlanV1(
+                loss_observation,
+                loss_transition,
+                loss_source_cursor,
+                fixture.requirement,
+                fixture.selection,
+                &fixture.inventory,
+                inventory_entry,
+                loss_successor,
+                reconciliation_retention,
+                lease,
+                fault_pin,
+                1,
+            );
+        try testing.expectError(
+            loss_dispatch_reconciliation
+                .Error.ProductionEvidenceRequired,
+            adapter.armLossDispatchReconciliationV1(
+                &coordinator,
+                fault_dispatch_interface,
+                reconciliation_plan,
+                reconciliation_retention,
+                loss_observation,
+                loss_transition,
+                loss_source_cursor,
+                fixture.requirement,
+                fixture.selection,
+                &fixture.inventory,
+                inventory_entry,
+                loss_successor,
+                lease,
+                fault_pin,
+                fault_ticket,
+            ),
+        );
         const fault_terminal =
             try adapter
-                .reconcileTerminalCommandFailureObserved(
+                .armSyntheticLossDispatchReconciliationForTestV1(
+                &coordinator,
+                fault_dispatch_interface,
+                reconciliation_plan,
+                reconciliation_retention,
+                loss_observation,
+                loss_transition,
+                loss_source_cursor,
+                fixture.requirement,
+                fixture.selection,
+                &fixture.inventory,
+                inventory_entry,
+                loss_successor,
                 lease,
                 fault_pin,
                 fault_ticket,
@@ -2788,7 +2923,19 @@ fn runRealMetalDispatchLifecycle(
         try testing.expectEqualDeep(
             fault_terminal,
             try adapter
-                .reconcileTerminalCommandFailureObserved(
+                .armSyntheticLossDispatchReconciliationForTestV1(
+                &coordinator,
+                fault_dispatch_interface,
+                reconciliation_plan,
+                reconciliation_retention,
+                loss_observation,
+                loss_transition,
+                loss_source_cursor,
+                fixture.requirement,
+                fixture.selection,
+                &fixture.inventory,
+                inventory_entry,
+                loss_successor,
                 lease,
                 fault_pin,
                 fault_ticket,
@@ -2865,6 +3012,9 @@ fn runRealMetalDispatchLifecycle(
             @as(u64, 0),
             try backend.nativeLiveCommandCount(),
         );
+        try testing.expect(
+            backend.compatibilityUnresolvedSubmission() == null,
+        );
         try testing.expectEqual(
             @as(usize, 1),
             (try coordinator.snapshot()).active_dispatches,
@@ -2875,6 +3025,14 @@ fn runRealMetalDispatchLifecycle(
         );
         try testing.expect(
             adapter.currentAsyncDispatchQuarantine() == null,
+        );
+        try testing.expectError(
+            metal_allocation.Error.StaleObject,
+            adapter.completeLossDispatchReconciliationV1(
+                reconciliation_plan,
+                reconciliation_retention,
+                .{},
+            ),
         );
         try testing.expectError(
             tree_allocation.Error.DispatchInFlight,
@@ -2923,6 +3081,40 @@ fn runRealMetalDispatchLifecycle(
         try testing.expect(
             adapter.currentAsyncDispatchQuarantine() == null,
         );
+        const reconciliation_receipt =
+            try adapter.completeLossDispatchReconciliationV1(
+                reconciliation_plan,
+                reconciliation_retention,
+                fault_completion,
+            );
+        try loss_dispatch_reconciliation
+            .validateLossDispatchReconciliationReceiptV1(
+            reconciliation_receipt,
+            reconciliation_plan,
+            reconciliation_retention,
+            inventory_entry,
+            lease,
+            fault_pin,
+            fault_terminal.terminal,
+            fault_completion,
+        );
+        try testing.expectEqualDeep(
+            reconciliation_receipt,
+            try adapter.completeLossDispatchReconciliationV1(
+                reconciliation_plan,
+                reconciliation_retention,
+                fault_completion,
+            ),
+        );
+        try testing.expectEqualDeep(
+            reconciliation_receipt,
+            (try adapter
+                .currentLossDispatchReconciliationReceiptV1(
+                reconciliation_plan,
+                reconciliation_retention,
+                fault_completion,
+            )).?,
+        );
         try testing.expectError(
             metal_fault_control.Error.FactsUnavailable,
             metal_fault_control
@@ -2962,6 +3154,44 @@ fn runRealMetalDispatchLifecycle(
                 fault_terminal.terminal,
             ),
         );
+
+        const retirement_challenge =
+            try adapter.lossRetirementAdapterChallengeV1(
+                &coordinator,
+                adapter.interface(),
+                loss_observation,
+                lease,
+            );
+        const retirement_plan =
+            try retirement.makeLossRetirementPlanV1(
+                loss_observation,
+                loss_transition,
+                loss_source_cursor,
+                fixture.requirement,
+                fixture.selection,
+                &fixture.inventory,
+                inventory_entry,
+                loss_successor,
+                adapter.authority,
+                lease,
+                1,
+                retirement_challenge,
+            );
+        try adapter.armSyntheticLossRetirementForTestV1(
+            &coordinator,
+            adapter.interface(),
+            retirement_plan,
+            loss_observation,
+            loss_transition,
+            loss_source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            loss_successor,
+            lease,
+        );
+        armed_loss_retirement_plan = retirement_plan;
     }
 
     const released = try coordinator.release(
@@ -2974,6 +3204,22 @@ fn runRealMetalDispatchLifecycle(
     };
     try tree_allocation.validateTerminalReceiptV1(terminal);
     try testing.expect(terminal.terminal_tree.current.isZero());
+    if (armed_loss_retirement_plan) |plan| {
+        const retirement_receipt =
+            try adapter.completeLossRetirementV1(
+                plan,
+                terminal,
+            );
+        try retirement.validateLossRetirementReceiptV1(
+            retirement_receipt,
+            plan,
+            terminal,
+        );
+        try testing.expectEqual(
+            plan.allocation_count,
+            retirement_receipt.reference_release_count,
+        );
+    }
     try testing.expectEqual(
         @as(u64, 0),
         (try bank.snapshotV3()).used.device_bytes,
@@ -2982,6 +3228,13 @@ fn runRealMetalDispatchLifecycle(
     try testing.expectEqual(
         @as(u64, 0),
         try backend.nativeLiveBufferCount(),
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expect(
+        backend.compatibilityUnresolvedSubmission() == null,
     );
     try adapter.validateEmpty();
 
@@ -2994,6 +3247,18 @@ fn runRealMetalDispatchLifecycle(
     try bank.closeLeaseTree(tree);
     try bank.release(parent);
     try testing.expect((try bank.snapshot()).used.isZero());
+    try testing.expectEqual(@as(u64, 0), backend.liveBufferCount());
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveBufferCount(),
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expect(
+        backend.compatibilityUnresolvedSubmission() == null,
+    );
 }
 
 test "real Metal dispatch pins exact LeaseTree buffers until completion" {

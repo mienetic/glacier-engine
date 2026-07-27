@@ -18,6 +18,8 @@ pub const device_lifecycle_contract =
     core.device_lifecycle_contract;
 pub const device_loss_retirement =
     core.device_loss_retirement;
+pub const device_loss_dispatch_reconciliation =
+    core.device_loss_dispatch_reconciliation;
 pub const device_allocation_lease =
     core.device_allocation_lease;
 pub const device_allocation_lease_tree =
@@ -97,6 +99,8 @@ pub const DeviceCapabilityContract =
 pub const DeviceLifecycleContract =
     core.DeviceLifecycleContract;
 pub const DeviceLossRetirement = core.DeviceLossRetirement;
+pub const DeviceLossDispatchReconciliation =
+    core.DeviceLossDispatchReconciliation;
 pub const DeviceAllocationLease =
     core.DeviceAllocationLease;
 pub const DeviceAllocationLeaseTree =

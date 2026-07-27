@@ -1602,7 +1602,7 @@ glacier_metal_test_arm_next_completed_as_command_error_v1_admitted(
             ctx->next_test_fault_plan_generation == 0 ||
             ctx->next_test_fault_plan_generation ==
                 UINT64_MAX ||
-            (int64_t)MTLCommandBufferErrorInternal == 0)
+            (int64_t)MTLCommandBufferErrorDeviceRemoved == 0)
         {
             result = 3;
         } else {
@@ -1614,8 +1614,13 @@ glacier_metal_test_arm_next_completed_as_command_error_v1_admitted(
                 ctx->next_test_fault_plan_generation;
             plan.kind =
                 GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR;
+            // Publish the exact command-specific 5/1/11 shape required by
+            // the loss-dispatch reconciliation contract. This fault-only
+            // overlay is applied after a real physical success and after
+            // lifecycle classification, so it must never be treated as a
+            // native removal event.
             plan.injected_error_code =
-                (int64_t)MTLCommandBufferErrorInternal;
+                (int64_t)MTLCommandBufferErrorDeviceRemoved;
             ctx->next_test_fault_plan_generation += 1;
             ctx->armed_test_fault_plan = plan;
             ctx->test_fault_plan_armed = 1;
