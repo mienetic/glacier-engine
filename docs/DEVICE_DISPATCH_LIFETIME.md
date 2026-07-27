@@ -548,13 +548,18 @@ device:
    cleanup and logical settlement, not a reproduced removal or physical
    reclamation. Its code-`11`-shaped publication is likewise a synthetic Phase
    A overlay and cannot satisfy the native-only production gate. A separate
-   branch submits a real command, holds its completion handler before the
-   ARC-owned callback gate, and uses synthetic injected loss to exercise
-   pending Phase B callback detachment before handler exit, Bank-first exact
-   native unlink, tombstone replay, unchanged caller output, and safe later
-   handler release.
-   This is real command/resource and callback-lifetime evidence, not physical
-   removal, driver failure, output recovery, or performance evidence.
+   four-state Phase B matrix submits real commands over real resources. Its
+   pending case holds the completion handler before the ARC-owned callback
+   gate. The other cases retain a post-commit ambiguous disposition
+   authenticated by the native record, a valid unknown projection over
+   independently verified physical success, or an exact completed-output-read
+   rejection before caller memory is written. Synthetic loss then exercises
+   Bank-first exact native unlink, tombstone replay, and unchanged caller
+   output for every state; the held case additionally proves detachment before
+   handler exit and safe later release. This is native command/resource and
+   callback/record ownership evidence, not physical removal, driver or hardware
+   failure, output recovery, performance, residency, migration, reset, or
+   physical-reclaim evidence.
 
 Cross-compilation proves source and build portability only. It is never
 reported as native operating-system, driver, or accelerator evidence.

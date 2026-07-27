@@ -63,9 +63,14 @@
     GLACIER_METAL_TEST_FAULTS == 1
 #define GLACIER_METAL_TEST_FAULT_PLAN_ABI 0x474d465000000001ULL
 #define GLACIER_METAL_TEST_COMPLETION_FACTS_ABI 0x474d464300000001ULL
+#define GLACIER_METAL_TEST_COMPLETION_FACTS_V2_ABI \
+    0x474d464300000002ULL
 #define GLACIER_METAL_TEST_RETIREMENT_COMMIT_FACTS_ABI \
     0x474d524600000001ULL
 #define GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR 1U
+#define GLACIER_METAL_TEST_REAL_COMMIT_AS_AMBIGUOUS 2U
+#define GLACIER_METAL_TEST_COMPLETED_AS_UNKNOWN 3U
+#define GLACIER_METAL_TEST_COMPLETED_OUTPUT_READ_REJECTION 4U
 #endif
 
 #define GLACIER_METAL_SUBMIT_SUBMITTED 1U
@@ -243,8 +248,8 @@ typedef struct {
     int64_t injected_error_code;
 } GlacierMetalTestFaultPlanV1;
 
-// Physical Metal facts and the separately published injected overlay for one
-// exact command. Both snapshots retain the same native token and binding.
+// Original completion-only fault facts retained byte-for-byte for the V1
+// test ABI.
 typedef struct {
     uint64_t abi_version;
     uint64_t plan_generation;
@@ -254,6 +259,28 @@ typedef struct {
     GlacierMetalAsyncCompletion physical;
     GlacierMetalAsyncCompletion published;
 } GlacierMetalTestCompletionFactsV1;
+
+// V2 adds physical/published submission facts and explicit staged fault
+// actions. Submission facts are ready when the native commit boundary
+// returns; completion facts remain zero until callback publication.
+typedef struct {
+    uint64_t abi_version;
+    uint64_t plan_generation;
+    uint32_t kind;
+    uint32_t fault_applied;
+    int64_t injected_error_code;
+    GlacierMetalAsyncCompletion physical;
+    GlacierMetalAsyncCompletion published;
+    GlacierMetalAsyncSubmission physical_submission;
+    GlacierMetalAsyncSubmission published_submission;
+    uint32_t commit_returned_normally;
+    uint32_t commit_exception_observed;
+    uint32_t submission_overlay_applied;
+    uint32_t callback_snapshot_observed;
+    uint32_t completion_overlay_applied;
+    uint32_t output_read_rejection_applied;
+    uint64_t output_read_rejection_count;
+} GlacierMetalTestCompletionFactsV2;
 
 // Test-only counters for the exact pre-unlink retirement commit boundary.
 // The one-shot fault is consumed only after all fallible validation and
@@ -359,6 +386,9 @@ struct GlacierMetalCommandRecord {
     GlacierMetalCommandRecord* next;
     GlacierMetalCommandToken token;
     uint8_t submission_binding[32];
+    // Native-retained publication state. Retirement authenticates this field
+    // instead of trusting a caller-supplied disposition for the same token.
+    uint32_t submission_disposition;
     id<MTLCommandBuffer> command_buffer;
     id<MTLBuffer> packed;
     id<MTLBuffer> scales;
@@ -383,7 +413,7 @@ struct GlacierMetalCommandRecord {
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
     GlacierMetalTestFaultPlanV1 test_fault_plan;
-    GlacierMetalTestCompletionFactsV1 test_completion_facts;
+    GlacierMetalTestCompletionFactsV2 test_completion_facts;
     uint32_t test_completion_facts_ready;
     GlacierMetalTestCallbackHold* test_callback_hold;
 #endif
@@ -393,6 +423,11 @@ struct GlacierMetalCommandRetirementTombstone {
     GlacierMetalCommandRetirementTombstone* next;
     GlacierMetalDispatchRetirementPermit permit;
     GlacierMetalDispatchRetirementReceipt receipt;
+#if defined(GLACIER_METAL_TEST_FAULTS) && \
+    GLACIER_METAL_TEST_FAULTS == 1
+    GlacierMetalTestCompletionFactsV2 test_completion_facts;
+    uint32_t test_completion_facts_ready;
+#endif
 };
 
 // Fixed-width, pointer-free facts used to derive the selected device and
@@ -581,6 +616,28 @@ _Static_assert(offsetof(
         GlacierMetalTestCompletionFactsV1,
         published) == 176,
     "GlacierMetalTestCompletionFactsV1 published offset changed");
+_Static_assert(sizeof(GlacierMetalTestCompletionFactsV2) == 528,
+    "GlacierMetalTestCompletionFactsV2 ABI size changed");
+_Static_assert(offsetof(
+        GlacierMetalTestCompletionFactsV2,
+        physical) == 32,
+    "GlacierMetalTestCompletionFactsV2 physical offset changed");
+_Static_assert(offsetof(
+        GlacierMetalTestCompletionFactsV2,
+        published) == 176,
+    "GlacierMetalTestCompletionFactsV2 published offset changed");
+_Static_assert(offsetof(
+        GlacierMetalTestCompletionFactsV2,
+        physical_submission) == 320,
+    "GlacierMetalTestCompletionFactsV2 submission offset changed");
+_Static_assert(offsetof(
+        GlacierMetalTestCompletionFactsV2,
+        commit_returned_normally) == 496,
+    "GlacierMetalTestCompletionFactsV2 stage offset changed");
+_Static_assert(offsetof(
+        GlacierMetalTestCompletionFactsV2,
+        output_read_rejection_count) == 520,
+    "GlacierMetalTestCompletionFactsV2 rejection offset changed");
 _Static_assert(sizeof(GlacierMetalTestRetirementCommitFactsV1) == 48,
     "GlacierMetalTestRetirementCommitFactsV1 ABI size changed");
 _Static_assert(offsetof(
@@ -691,6 +748,14 @@ static int glacier_metal_command_token_valid(
         !glacier_metal_nonce_is_zero(token->context_nonce);
 }
 
+static int glacier_metal_submission_disposition_valid(
+    uint32_t disposition)
+{
+    return disposition == GLACIER_METAL_SUBMIT_SUBMITTED ||
+        disposition ==
+            GLACIER_METAL_SUBMIT_SUBMITTED_OR_AMBIGUOUS;
+}
+
 static int glacier_metal_async_submission_valid(
     const GlacierMetalAsyncSubmission* submission)
 {
@@ -700,10 +765,8 @@ static int glacier_metal_async_submission_valid(
         glacier_metal_command_token_valid(&submission->token) &&
         !glacier_metal_binding_is_zero(
             submission->submission_binding) &&
-        (submission->disposition ==
-                GLACIER_METAL_SUBMIT_SUBMITTED ||
-            submission->disposition ==
-                GLACIER_METAL_SUBMIT_SUBMITTED_OR_AMBIGUOUS) &&
+        glacier_metal_submission_disposition_valid(
+            submission->disposition) &&
         submission->reserved == 0;
 }
 
@@ -1462,6 +1525,8 @@ static int glacier_metal_command_matches_locked(
         record->owner == ctx &&
         record->command_buffer &&
         record->completion_publication &&
+        glacier_metal_submission_disposition_valid(
+            record->submission_disposition) &&
         !glacier_metal_binding_is_zero(submission_binding) &&
         memcmp(
             record->submission_binding,
@@ -1516,7 +1581,6 @@ static void glacier_metal_fill_completion_locked(
 
 static void glacier_metal_fill_dispatch_retirement_permit_locked(
     const GlacierMetalCommandRecord* record,
-    const GlacierMetalAsyncSubmission* submission,
     uint64_t retirement_generation,
     uint32_t authorization_kind,
     const GlacierMetalDeviceLifecycleSourceIdentity* source,
@@ -1537,7 +1601,8 @@ static void glacier_metal_fill_dispatch_retirement_permit_locked(
     out->minimum_event_sequence = minimum_event_sequence;
     out->error_code = record->error_code;
     out->authorization_kind = authorization_kind;
-    out->submission_disposition = submission->disposition;
+    out->submission_disposition =
+        record->submission_disposition;
     out->native_state = glacier_metal_command_state_locked(
         record,
         record->completion_observed);
@@ -1605,6 +1670,102 @@ static void glacier_metal_fill_dispatch_retirement_receipt_locked(
 
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
+static int glacier_metal_test_fault_plan_valid(
+    const GlacierMetalTestFaultPlanV1* plan)
+{
+    if (!plan ||
+        plan->abi_version != GLACIER_METAL_TEST_FAULT_PLAN_ABI ||
+        plan->plan_generation == 0 ||
+        plan->plan_generation == UINT64_MAX ||
+        plan->reserved != 0)
+        return 0;
+    switch (plan->kind) {
+        case GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR:
+            return plan->injected_error_code != 0;
+        case GLACIER_METAL_TEST_REAL_COMMIT_AS_AMBIGUOUS:
+        case GLACIER_METAL_TEST_COMPLETED_AS_UNKNOWN:
+        case GLACIER_METAL_TEST_COMPLETED_OUTPUT_READ_REJECTION:
+            return plan->injected_error_code == 0;
+        default:
+            return 0;
+    }
+}
+
+static void glacier_metal_test_initialize_completion_facts_locked(
+    GlacierMetalCommandRecord* record)
+{
+    if (!record ||
+        !glacier_metal_test_fault_plan_valid(
+            &record->test_fault_plan))
+        return;
+    memset(
+        &record->test_completion_facts,
+        0,
+        sizeof(record->test_completion_facts));
+    record->test_completion_facts.abi_version =
+        GLACIER_METAL_TEST_COMPLETION_FACTS_V2_ABI;
+    record->test_completion_facts.plan_generation =
+        record->test_fault_plan.plan_generation;
+    record->test_completion_facts.kind =
+        record->test_fault_plan.kind;
+    record->test_completion_facts.injected_error_code =
+        record->test_fault_plan.injected_error_code;
+    record->test_completion_facts_ready = 0;
+}
+
+// Publish the real commit outcome before applying a test-only outward
+// disposition. The record retains the published disposition, so retirement
+// cannot authenticate a caller-manufactured ambiguous copy.
+static void glacier_metal_test_publish_submission_facts_locked(
+    GlacierMetalCommandRecord* record,
+    GlacierMetalAsyncSubmission* submission,
+    uint32_t commit_returned_normally)
+{
+    if (!record || !submission ||
+        !glacier_metal_test_fault_plan_valid(
+            &record->test_fault_plan))
+        return;
+    if (commit_returned_normally > 1 ||
+        !glacier_metal_async_submission_valid(submission) ||
+        memcmp(
+            &record->token,
+            &submission->token,
+            sizeof(record->token)) != 0 ||
+        memcmp(
+            record->submission_binding,
+            submission->submission_binding,
+            sizeof(record->submission_binding)) != 0)
+        abort();
+
+    GlacierMetalTestCompletionFactsV2* facts =
+        &record->test_completion_facts;
+    facts->physical_submission = *submission;
+    facts->published_submission = *submission;
+    facts->commit_returned_normally =
+        commit_returned_normally;
+    facts->commit_exception_observed =
+        1U - commit_returned_normally;
+
+    if (record->test_fault_plan.kind ==
+            GLACIER_METAL_TEST_REAL_COMMIT_AS_AMBIGUOUS &&
+        commit_returned_normally == 1 &&
+        submission->disposition ==
+            GLACIER_METAL_SUBMIT_SUBMITTED)
+    {
+        facts->published_submission.disposition =
+            GLACIER_METAL_SUBMIT_SUBMITTED_OR_AMBIGUOUS;
+        facts->submission_overlay_applied = 1;
+        facts->fault_applied = 1;
+    }
+    record->submission_disposition =
+        facts->published_submission.disposition;
+    *submission = facts->published_submission;
+    // Submission facts are useful while a callback is deliberately held.
+    // Completion structs remain canonical zero values until the callback
+    // snapshot stage flips callback_snapshot_observed.
+    record->test_completion_facts_ready = 1;
+}
+
 static int glacier_metal_test_exact_physical_success(
     const GlacierMetalAsyncCompletion* completion)
 {
@@ -1775,50 +1936,53 @@ static void glacier_metal_snapshot_completion_locked(
     }
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
-    if (record->test_fault_plan.abi_version ==
-            GLACIER_METAL_TEST_FAULT_PLAN_ABI &&
-        record->test_fault_plan.plan_generation != 0 &&
-        record->test_fault_plan.kind ==
-            GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR &&
-        record->test_fault_plan.reserved == 0 &&
-        record->test_fault_plan.injected_error_code != 0)
+    if (glacier_metal_test_fault_plan_valid(
+            &record->test_fault_plan))
     {
-        GlacierMetalTestCompletionFactsV1 facts;
-        memset(&facts, 0, sizeof(facts));
-        facts.abi_version =
-            GLACIER_METAL_TEST_COMPLETION_FACTS_ABI;
-        facts.plan_generation =
-            record->test_fault_plan.plan_generation;
-        facts.kind = record->test_fault_plan.kind;
-        facts.injected_error_code =
-            record->test_fault_plan.injected_error_code;
+        GlacierMetalTestCompletionFactsV2* facts =
+            &record->test_completion_facts;
         glacier_metal_fill_completion_locked(
             record,
             1,
-            &facts.physical);
+            &facts->physical);
+        facts->callback_snapshot_observed = 1;
 
         // Never relabel a physical error, unknown state, or malformed
-        // completion as an injected command error. The overlay is eligible
-        // only after an independently valid physical success exists.
+        // completion. Every callback overlay is eligible only after an
+        // independently valid physical success exists.
         if (glacier_metal_test_exact_physical_success(
-                &facts.physical))
+                &facts->physical))
         {
-            record->command_status =
-                MTLCommandBufferStatusError;
-            record->error_code =
-                record->test_fault_plan.injected_error_code;
-            record->error_domain_kind =
-                GLACIER_METAL_ERROR_DOMAIN_COMMAND_BUFFER;
-            record->error_present = 1;
-            record->callback_fault = 0;
-            facts.fault_applied = 1;
+            switch (record->test_fault_plan.kind) {
+                case GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR:
+                    record->command_status =
+                        MTLCommandBufferStatusError;
+                    record->error_code =
+                        record->test_fault_plan.injected_error_code;
+                    record->error_domain_kind =
+                        GLACIER_METAL_ERROR_DOMAIN_COMMAND_BUFFER;
+                    record->error_present = 1;
+                    record->callback_fault = 0;
+                    facts->fault_applied = 1;
+                    facts->completion_overlay_applied = 1;
+                    break;
+                case GLACIER_METAL_TEST_COMPLETED_AS_UNKNOWN:
+                    // Keep the real completed status and telemetry, but mark
+                    // the callback projection as unauthenticated. The public
+                    // state derivation is therefore UNKNOWN rather than a
+                    // manufactured terminal.
+                    record->callback_fault = 1;
+                    facts->fault_applied = 1;
+                    facts->completion_overlay_applied = 1;
+                    break;
+                default:
+                    break;
+            }
         }
         glacier_metal_fill_completion_locked(
             record,
             1,
-            &facts.published);
-        record->test_completion_facts = facts;
-        record->test_completion_facts_ready = 1;
+            &facts->published);
     }
 #endif
     // Publish last. Readers currently hold the same Objective-C monitor, and
@@ -2126,8 +2290,9 @@ int glacier_metal_device_lifecycle_consume(
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
 static int
-glacier_metal_test_arm_next_completed_as_command_error_v1_admitted(
+glacier_metal_test_arm_next_fault_plan_v1_admitted(
     GlacierMetalContext* ctx,
+    uint32_t kind,
     GlacierMetalTestFaultPlanV1* out)
 {
     if (out) {
@@ -2135,7 +2300,12 @@ glacier_metal_test_arm_next_completed_as_command_error_v1_admitted(
         out->abi_version =
             GLACIER_METAL_TEST_FAULT_PLAN_ABI;
     }
-    if (!ctx || !ctx->device || !out)
+    if (!ctx || !ctx->device || !out ||
+        (kind != GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR &&
+            kind != GLACIER_METAL_TEST_REAL_COMMIT_AS_AMBIGUOUS &&
+            kind != GLACIER_METAL_TEST_COMPLETED_AS_UNKNOWN &&
+            kind !=
+                GLACIER_METAL_TEST_COMPLETED_OUTPUT_READ_REJECTION))
         return 1;
 
     int result = 0;
@@ -2149,7 +2319,9 @@ glacier_metal_test_arm_next_completed_as_command_error_v1_admitted(
             ctx->next_test_fault_plan_generation == 0 ||
             ctx->next_test_fault_plan_generation ==
                 UINT64_MAX ||
-            (int64_t)MTLCommandBufferErrorDeviceRemoved == 0)
+            (kind ==
+                    GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR &&
+                (int64_t)MTLCommandBufferErrorDeviceRemoved == 0))
         {
             result = 3;
         } else {
@@ -2159,15 +2331,16 @@ glacier_metal_test_arm_next_completed_as_command_error_v1_admitted(
                 GLACIER_METAL_TEST_FAULT_PLAN_ABI;
             plan.plan_generation =
                 ctx->next_test_fault_plan_generation;
-            plan.kind =
-                GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR;
-            // Publish the exact command-specific 5/1/11 shape required by
-            // the loss-dispatch reconciliation contract. This fault-only
-            // overlay is applied after a real physical success and after
-            // lifecycle classification, so it must never be treated as a
-            // native removal event.
-            plan.injected_error_code =
-                (int64_t)MTLCommandBufferErrorDeviceRemoved;
+            plan.kind = kind;
+            if (kind ==
+                GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR)
+            {
+                // Publish the exact command-specific 5/1/11 shape required
+                // by the reconciliation contract. Lifecycle classification
+                // occurs before this fault-only overlay.
+                plan.injected_error_code =
+                    (int64_t)MTLCommandBufferErrorDeviceRemoved;
+            }
             ctx->next_test_fault_plan_generation += 1;
             ctx->armed_test_fault_plan = plan;
             ctx->test_fault_plan_armed = 1;
@@ -2177,8 +2350,9 @@ glacier_metal_test_arm_next_completed_as_command_error_v1_admitted(
     return result;
 }
 
-int glacier_metal_test_arm_next_completed_as_command_error_v1(
+static int glacier_metal_test_arm_next_fault_plan_v1(
     GlacierMetalContext* ctx,
+    uint32_t kind,
     GlacierMetalTestFaultPlanV1* out)
 {
     if (out) {
@@ -2191,8 +2365,9 @@ int glacier_metal_test_arm_next_completed_as_command_error_v1(
         return 5;
     @try {
         return
-            glacier_metal_test_arm_next_completed_as_command_error_v1_admitted(
+            glacier_metal_test_arm_next_fault_plan_v1_admitted(
                 ctx,
+                kind,
                 out);
     } @catch (NSException* exception) {
         (void)exception;
@@ -2200,6 +2375,106 @@ int glacier_metal_test_arm_next_completed_as_command_error_v1(
     } @finally {
         glacier_metal_device_lifecycle_end_admission(ctx);
     }
+}
+
+int glacier_metal_test_arm_next_completed_as_command_error_v1(
+    GlacierMetalContext* ctx,
+    GlacierMetalTestFaultPlanV1* out)
+{
+    return glacier_metal_test_arm_next_fault_plan_v1(
+        ctx,
+        GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR,
+        out);
+}
+
+int glacier_metal_test_arm_next_real_commit_as_ambiguous_v1(
+    GlacierMetalContext* ctx,
+    GlacierMetalTestFaultPlanV1* out)
+{
+    return glacier_metal_test_arm_next_fault_plan_v1(
+        ctx,
+        GLACIER_METAL_TEST_REAL_COMMIT_AS_AMBIGUOUS,
+        out);
+}
+
+int glacier_metal_test_arm_next_completed_as_unknown_v1(
+    GlacierMetalContext* ctx,
+    GlacierMetalTestFaultPlanV1* out)
+{
+    return glacier_metal_test_arm_next_fault_plan_v1(
+        ctx,
+        GLACIER_METAL_TEST_COMPLETED_AS_UNKNOWN,
+        out);
+}
+
+int glacier_metal_test_arm_next_completed_output_read_rejection_v1(
+    GlacierMetalContext* ctx,
+    GlacierMetalTestFaultPlanV1* out)
+{
+    return glacier_metal_test_arm_next_fault_plan_v1(
+        ctx,
+        GLACIER_METAL_TEST_COMPLETED_OUTPUT_READ_REJECTION,
+        out);
+}
+
+// Caller holds the native device monitor. Return codes retain the original
+// unavailable/ambiguous/pending contract.
+static int glacier_metal_test_completion_facts_lookup_locked(
+    GlacierMetalContext* ctx,
+    const uint8_t submission_binding[32],
+    const GlacierMetalTestCompletionFactsV2** out)
+{
+    if (out) *out = NULL;
+    if (!ctx || !submission_binding ||
+        glacier_metal_binding_is_zero(submission_binding) || !out)
+        return 1;
+
+    int result = 0;
+    const GlacierMetalTestCompletionFactsV2* match = NULL;
+    uint32_t match_ready = 0;
+    for (GlacierMetalCommandRecord* record =
+            ctx->command_records;
+         record;
+         record = record->next)
+    {
+        if (memcmp(
+                record->submission_binding,
+                submission_binding,
+                sizeof(record->submission_binding)) != 0)
+            continue;
+        if (match) {
+            result = 3;
+            break;
+        }
+        match = &record->test_completion_facts;
+        match_ready =
+            record->test_completion_facts_ready;
+    }
+    for (GlacierMetalCommandRetirementTombstone* tombstone =
+            ctx->command_retirement_tombstones;
+         result == 0 && tombstone;
+         tombstone = tombstone->next)
+    {
+        if (memcmp(
+                tombstone->permit.submission_binding,
+                submission_binding,
+                sizeof(tombstone->permit.submission_binding)) != 0)
+            continue;
+        if (match) {
+            result = 3;
+            break;
+        }
+        match = &tombstone->test_completion_facts;
+        match_ready =
+            tombstone->test_completion_facts_ready;
+    }
+    if (result == 0 && !match)
+        result = 2;
+    if (result == 0 && match_ready == 0)
+        result = 4;
+    if (result == 0)
+        *out = match;
+    return result;
 }
 
 int glacier_metal_test_completion_facts_for_binding_v1(
@@ -2213,36 +2488,60 @@ int glacier_metal_test_completion_facts_for_binding_v1(
             GLACIER_METAL_TEST_COMPLETION_FACTS_ABI;
     }
     if (!ctx || !ctx->device || !submission_binding ||
-        glacier_metal_binding_is_zero(submission_binding) ||
-        !out)
+        glacier_metal_binding_is_zero(submission_binding) || !out)
         return 1;
 
     int result = 0;
     @synchronized (ctx->device) {
-        GlacierMetalCommandRecord* match = NULL;
-        for (GlacierMetalCommandRecord* record =
-                ctx->command_records;
-             record;
-             record = record->next)
-        {
-            if (memcmp(
-                    record->submission_binding,
-                    submission_binding,
-                    sizeof(record->submission_binding)) != 0)
-                continue;
-            if (match) {
-                result = 3;
-                break;
-            }
-            match = record;
-        }
-        if (result == 0 && !match)
-            result = 2;
+        const GlacierMetalTestCompletionFactsV2* match = NULL;
+        result = glacier_metal_test_completion_facts_lookup_locked(
+            ctx,
+            submission_binding,
+            &match);
+        // V1 remains the original completion-only command-error campaign.
         if (result == 0 &&
-            match->test_completion_facts_ready == 0)
+            (match->kind !=
+                    GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR ||
+                match->callback_snapshot_observed != 1))
+        {
             result = 4;
+        }
+        if (result == 0) {
+            out->plan_generation = match->plan_generation;
+            out->kind = match->kind;
+            out->fault_applied = match->fault_applied;
+            out->injected_error_code =
+                match->injected_error_code;
+            out->physical = match->physical;
+            out->published = match->published;
+        }
+    }
+    return result;
+}
+
+int glacier_metal_test_completion_facts_for_binding_v2(
+    GlacierMetalContext* ctx,
+    const uint8_t submission_binding[32],
+    GlacierMetalTestCompletionFactsV2* out)
+{
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        out->abi_version =
+            GLACIER_METAL_TEST_COMPLETION_FACTS_V2_ABI;
+    }
+    if (!ctx || !ctx->device || !submission_binding ||
+        glacier_metal_binding_is_zero(submission_binding) || !out)
+        return 1;
+
+    int result = 0;
+    @synchronized (ctx->device) {
+        const GlacierMetalTestCompletionFactsV2* match = NULL;
+        result = glacier_metal_test_completion_facts_lookup_locked(
+            ctx,
+            submission_binding,
+            &match);
         if (result == 0)
-            *out = match->test_completion_facts;
+            *out = *match;
     }
     return result;
 }
@@ -3416,6 +3715,9 @@ glacier_metal_int4_registered_buffers_submit_async_admitted(
             record->token.generation =
                 ctx->next_command_generation;
             ctx->next_command_generation += 1;
+            // Conservative until the native commit outcome is published.
+            record->submission_disposition =
+                GLACIER_METAL_SUBMIT_SUBMITTED_OR_AMBIGUOUS;
             record->next = ctx->command_records;
             ctx->command_records = record;
             ctx->live_command_records += 1;
@@ -3442,6 +3744,8 @@ glacier_metal_int4_registered_buffers_submit_async_admitted(
                     0,
                     sizeof(ctx->armed_test_fault_plan));
                 ctx->test_fault_plan_armed = 0;
+                glacier_metal_test_initialize_completion_facts_locked(
+                    record);
             }
 #endif
 
@@ -3573,8 +3877,10 @@ glacier_metal_int4_registered_buffers_submit_async_admitted(
     @synchronized (ctx->device) {
         record->commit_invoked = 1;
     }
+    uint32_t commit_returned_normally = 0;
     @try {
         [cb commit];
+        commit_returned_normally = 1;
         submission->disposition =
             GLACIER_METAL_SUBMIT_SUBMITTED;
     } @catch (NSException* exception) {
@@ -3583,6 +3889,25 @@ glacier_metal_int4_registered_buffers_submit_async_admitted(
         // references remain live for poll/wait or later quarantine.
         submission->disposition =
             GLACIER_METAL_SUBMIT_SUBMITTED_OR_AMBIGUOUS;
+    }
+    @synchronized (ctx->device) {
+        GlacierMetalCommandRecord** exact =
+            glacier_metal_command_link_locked(
+                ctx,
+                &record->token);
+        if (!exact || *exact != record ||
+            record->owner != ctx ||
+            record->commit_invoked != 1)
+            abort();
+        record->submission_disposition =
+            submission->disposition;
+#if defined(GLACIER_METAL_TEST_FAULTS) && \
+    GLACIER_METAL_TEST_FAULTS == 1
+        glacier_metal_test_publish_submission_facts_locked(
+            record,
+            submission,
+            commit_returned_normally);
+#endif
     }
     return 0;
 }
@@ -3910,7 +4235,9 @@ glacier_metal_registered_dispatch_retirement_prepare_internal(
         if (!link || !glacier_metal_command_matches_locked(
                 ctx,
                 *link,
-                submission->submission_binding))
+                submission->submission_binding) ||
+            (*link)->submission_disposition !=
+                submission->disposition)
             return 2;
         callback_gate = (*link)->callback_gate;
         if (!callback_gate)
@@ -3927,7 +4254,9 @@ glacier_metal_registered_dispatch_retirement_prepare_internal(
                     ctx,
                     *link,
                     submission->submission_binding) ||
-                (*link)->callback_gate != callback_gate)
+                (*link)->callback_gate != callback_gate ||
+                (*link)->submission_disposition !=
+                    submission->disposition)
             {
                 GlacierMetalCommandRetirementTombstone** retired =
                     glacier_metal_command_retirement_tombstone_link_locked(
@@ -3980,7 +4309,6 @@ glacier_metal_registered_dispatch_retirement_prepare_internal(
             GlacierMetalDispatchRetirementPermit prepared;
             glacier_metal_fill_dispatch_retirement_permit_locked(
                 record,
-                submission,
                 ctx->next_command_retirement_generation,
                 authorization_kind,
                 source,
@@ -4181,6 +4509,10 @@ int glacier_metal_registered_dispatch_retirement_commit(
 
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
+            candidate->test_completion_facts =
+                record->test_completion_facts;
+            candidate->test_completion_facts_ready =
+                record->test_completion_facts_ready;
             if (ctx->test_retirement_commit_failure_armed != 0) {
                 // Consume the one-shot only at the last fallible boundary.
                 // No registry link, allocation reference, or tombstone has
@@ -4295,6 +4627,37 @@ int glacier_metal_int4_registered_output_read(
                     sizeof(*output_token)) != 0 ||
                 allocation->resource_length != output_bytes)
                 return 4;
+#if defined(GLACIER_METAL_TEST_FAULTS) && \
+    GLACIER_METAL_TEST_FAULTS == 1
+            GlacierMetalCommandRecord* record = *link;
+            GlacierMetalTestCompletionFactsV2* facts =
+                &record->test_completion_facts;
+            if (record->test_completion_facts_ready == 1 &&
+                glacier_metal_test_fault_plan_valid(
+                    &record->test_fault_plan) &&
+                record->test_fault_plan.kind ==
+                    GLACIER_METAL_TEST_COMPLETED_OUTPUT_READ_REJECTION &&
+                facts->callback_snapshot_observed == 1 &&
+                facts->completion_overlay_applied == 0 &&
+                glacier_metal_test_exact_physical_success(
+                    &facts->physical) &&
+                memcmp(
+                    &facts->physical,
+                    &facts->published,
+                    sizeof(facts->physical)) == 0)
+            {
+                // The exact output role and completion have been
+                // authenticated, but no pointer has been copied and caller
+                // output remains untouched. Rejection stays sticky for this
+                // command so an accidental retry cannot manufacture output
+                // authority after the adapter quarantines it.
+                facts->fault_applied = 1;
+                facts->output_read_rejection_applied = 1;
+                if (facts->output_read_rejection_count != UINT64_MAX)
+                    facts->output_read_rejection_count += 1;
+                return 6;
+            }
+#endif
             output_buffer = allocation->buffer;
             output_contents = output_buffer.contents;
             if (!output_contents)

@@ -87,19 +87,27 @@ all four retained states plus mutation, substitution, replay, duplicate,
 foreign, and late-settlement rejection.
 
 The build-isolated native Metal gate is different. It creates real
-`MTLDevice`/`MTLBuffer` resources and submits a real command. A test-only hold
-stops the completion handler before it enters the callback gate, so the
-adapter still owns an exact pending dispatch. The synthetic loss path then
-proves callback detachment without waiting for callback exit, Bank-first
-settlement, exact native unlink, replay, unchanged caller output, and separate
-later allocation release. Releasing the held handler afterward exercises the
-detached path safely.
+`MTLDevice`/`MTLBuffer` resources and submits real commands for all four retained
+states. The pending case stops its completion handler before the callback gate
+and later releases that handler safely. Separate one-shot test seams retain a
+post-commit ambiguous disposition authenticated by the native record; after
+independently verified physical success, publish a valid unknown projection by
+changing only `callback_fault`; or reject one exact completed output read
+before caller memory is written, which the adapter retains as completion
+validation code `6`. Those paths make the adapter retain
+`submission_ambiguous`, `completion_unknown`, and `invalid_completion`
+respectively; they do not construct portable retention evidence by hand.
+Synthetic loss then authorizes callback detachment, Bank-first settlement,
+exact native unlink, replay, unchanged caller output, and separate later
+allocation release for each state.
 
-That gate injects the lifecycle loss used to authorize retirement. It does not
-reproduce a physical device removal, driver fault, hardware fault, or native
-removal callback. It also establishes no successful output, migration, reset,
-physical reclaim, residency, queue-depth, latency, throughput, utilization,
-power, thermal, or energy claim.
+The state-producing seams and lifecycle loss are synthetic, context-local,
+one-shot, and compiled only into the non-installed fault shim. The production
+shim exports no fault controls. This matrix does not reproduce a physical
+device removal, driver fault, hardware fault, or native removal callback. It
+also establishes no successful output, migration, reset, physical reclaim,
+residency, queue-depth, latency, throughput, utilization, power, thermal, or
+energy claim.
 
 Cross-target builds are compile evidence only. They do not establish native
 Metal, operating-system, driver, or device behavior on the target.
@@ -123,11 +131,11 @@ tools/zig-with-ephemeral-cache.sh build \
 ## Open follow-up work
 
 Phase B is integrated for the current portable contracts, independent oracle,
-Metal adapter, ARC-owned callback gate, and build-isolated held-callback path.
-The native end-to-end path currently covers the exact `pending` state. The
-submission-ambiguous, completion-unknown, and invalid-completion states have
-portable structural evidence and adapter handling, but not a retained native
-fault campaign.
+Metal adapter, ARC-owned callback gate, and the build-isolated native
+four-state retained-state matrix. All four states traverse the real Metal
+command/resource registry, adapter-derived retention, synthetic-loss
+authorization, callback detachment, Bank-first settlement, native unlink, and
+receipt replay.
 
 The following remain separate roadmap work:
 

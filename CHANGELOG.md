@@ -52,13 +52,15 @@ before the first stable release.
   `removed_notification` or `command_buffer_device_removed` evidence plus
   same-source sticky backend revalidation. Portable Zig and
   Python tests are deterministic structural models. The build-isolated native
-  gate instead runs a real Metal command over real buffers, holds its
-  completion handler before the callback gate, and uses synthetic injected
-  loss to exercise the pending state, detach-before-exit, and later safe
-  handler release. The other three states currently have portable structural
-  and adapter coverage, not a retained native fault campaign. This does not
-  reproduce physical removal, driver or hardware failure, output recovery,
-  migration, reset, physical reclaim, residency, or performance.
+  matrix instead runs real Metal commands over real buffers for all four
+  retained states. It combines a held pending handler, a post-commit ambiguous
+  disposition authenticated by the native record, a valid unknown projection
+  over independently verified physical success, and an exact completed-output
+  read rejection before caller memory is written. Synthetic injected loss
+  authorizes retirement; the held case additionally proves detach-before-exit
+  and later safe handler release. This does not reproduce physical removal,
+  driver or hardware failure, output recovery, migration, reset, physical
+  reclaim, residency, or performance.
 - Added **Device-loss Dispatch Reconciliation Phase A** for one exact active
   command whose native Metal command-buffer status/domain/code is `5/1/11`.
   Fixed pointer-free 440-byte retention, 240-byte plan, and 448-byte receipt

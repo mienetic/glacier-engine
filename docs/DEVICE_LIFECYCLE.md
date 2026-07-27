@@ -172,12 +172,16 @@ Bank-first settlement, tombstone replay, and native finalization, but cannot
 pass the native-only production gate. It is not a physical command-buffer,
 driver, hardware, or device-loss failure.
 
-The same isolated build has a distinct Phase B held-callback path. It submits
-a real command over real buffers, stops the completion handler before its
-ARC-owned callback gate, and injects synthetic loss. That path proves
-detach-before-callback-exit, Bank-first exact native unlink, replay, and later
-safe handler release. It still does not exercise a native removal callback or
-reproduce physical loss.
+The same isolated build has a distinct Phase B four-state matrix. Every case
+submits a real command over real buffers. The pending case stops the completion
+handler before its ARC-owned callback gate; separate one-shot test seams retain
+a post-commit ambiguous disposition authenticated by the native record,
+publish a valid unknown projection over independently verified physical
+success by changing only `callback_fault`, or reject an exact completed output
+read before caller memory is written. Synthetic loss authorizes
+detach-before-callback-exit where applicable, Bank-first exact native unlink,
+replay, and later safe handler release. It still does not exercise a native
+removal callback or reproduce physical loss.
 
 ## Current boundary and next work
 
@@ -201,13 +205,14 @@ Device-loss Dispatch Callback Retirement Phase B covers exact pending,
 submission-ambiguous, completion-unknown, and invalid-completion ownership.
 Its 464-byte retention, 240-byte plan, 408-byte callback fence, and 504-byte
 receipt bind callback detachment without waiting for callback exit,
-Bank-first settlement, exact native unlink, and replay. The native gate uses a
-real command and buffers with a build-isolated held callback and synthetic
-injected loss for pending retirement; that is not a reproduced physical loss
-event or driver failure. The other three states currently have portable and
-adapter evidence but no retained native fault campaign.
-The dedicated terminal has zero output authority, and allocation retirement
-remains separate.
+Bank-first settlement, exact native unlink, and replay. The native gate now
+runs every retained state through real commands and buffers with build-isolated
+synthetic state seams and injected loss. This proves the native callback/record
+ownership and settlement paths for the four-state matrix; it is not a
+reproduced physical loss event, driver or hardware failure, successful-output
+recovery, performance, residency, migration, reset, or physical reclaim. The
+dedicated terminal has zero output authority, and allocation retirement remains
+separate.
 
 Still open:
 

@@ -339,12 +339,16 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   zero-output ownership-retired terminal; consume the Bank pin before exact
   native unlink; and retain a replayable 504-byte receipt. Production requires
   exact native `removed_notification` or `command_buffer_device_removed`
-  evidence plus sticky same-source revalidation. Portable
-  and Python gates are structural models; the isolated native gate combines a
-  real Metal command and buffers with a held callback and synthetic injected
-  loss for the pending state, not physical removal or driver failure. The
-  other three states have portable/adapter coverage but no retained native
-  fault campaign. Allocation retirement remains separate.
+  evidence plus sticky same-source revalidation. Portable and Python gates are
+  structural models. The isolated native matrix runs real Metal commands and
+  buffers for all four states: a held pending handler; a post-commit ambiguous
+  disposition authenticated by the native record; a valid unknown projection
+  that changes only `callback_fault` after independently verified physical
+  success; and an exact completed-output read rejection before caller memory is
+  written. Synthetic injected loss authorizes each retirement. This is not
+  physical removal, driver or hardware failure, output recovery, performance,
+  residency, migration, reset, or physical-reclaim evidence. Allocation
+  retirement remains separate.
 - [ ] Add residency as a separate authority, a removable-hardware callback
   campaign, fresh selection and migration policy, multi-slot and multi-device
   partitioning/scheduling, additional GPU backends, direct device telemetry,
@@ -971,9 +975,10 @@ Completed slices:
   while a test-only published `.error` overlay remains separately recorded;
   Bank-first settlement, exact native finalization/state clearing, and
   `settlement_pending` confirmation retry occur without a second Bank release or
-  native finalization; a separate real command is held before its callback gate
-  to prove Phase B detach-before-exit and later safe handler release under
-  synthetic loss.~~
+  native finalization; the Phase B matrix runs real commands and resources
+  through pending, submission-ambiguous, completion-unknown, and
+  invalid-completion ownership under build-isolated state/loss seams, including
+  detach-before-exit and later safe handler release for the held pending case.~~
 
 Next slices:
 
@@ -1093,10 +1098,12 @@ rejection and cancellation branches keep the same real context and resources
 but intentionally submit zero GPU commands. These are correctness and lifetime
 results, not performance claims. Exact terminal-error roots, mutation
 rejection, and pre-settlement retention are covered by pure Zig and independent
-Python mirror tests. The build-isolated native fault gate adds a real physically
-successful command, separate physical and test-published facts, and real
-arm-race/settlement-retry transitions; its published `.error` is injected and
-does not claim a physical hardware, driver, or device-loss failure.
+Python mirror tests. The build-isolated native fault gate adds real commands,
+separate physical and test-published facts, real arm-race/settlement-retry
+transitions, and an all-four-state Phase B ownership matrix. Its error,
+retained-state, and loss seams are injected and do not claim a physical
+hardware, driver, or device-loss failure, output recovery, performance,
+residency, migration, reset, or physical reclaim.
 
 ## P2 — Serving and isolation
 

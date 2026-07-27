@@ -305,22 +305,29 @@ finalization, so the coordinator retains `settlement_pending`. Repeating
 the coordinator slot, and performs neither a second Bank release nor a second
 native finalization.
 
-The same isolated build has a separate Phase B branch. It submits a real Metal
-command over four real buffers, then a test-only hold stops the completion
-handler before it enters the ARC-owned callback gate. While the adapter still
-reports an exact pending dispatch, synthetic injected loss authorizes native
-prepare. The gate proves detachment without waiting for handler exit,
+The same isolated build has a separate Phase B four-state matrix. Every case
+submits a real Metal command over four real buffers. A test-only hold stops the
+pending completion handler before it enters the ARC-owned callback gate.
+Context-local one-shot seams separately preserve a post-commit ambiguous
+disposition authenticated by the native record; after independently verified
+physical success, publish a valid unknown projection by changing only
+`callback_fault`; or reject one exact completed output read before caller
+memory is written, which the adapter retains as completion validation code `6`.
+The adapter derives `submission_ambiguous`, `completion_unknown`, and
+`invalid_completion` from those live paths. Synthetic injected loss authorizes
+native prepare for each state. The matrix proves callback detachment,
 Bank-first settlement while the command record is live, exact native unlink,
-zero caller-output mutation, replay, and safe handler release afterward.
+zero caller-output mutation, replay, and safe held-handler release afterward.
 Allocation-owned references and logical charge remain live until the separate
 allocation release.
 
 This gate is native conformance evidence for production-symbol isolation,
-host-thread arm racing, real successful GPU execution, and the exact
-reconciliation/settlement lifecycle plus the held-callback Phase B boundary.
-The published error and injected loss are test-only. They are not evidence of
-a physical driver, hardware, or device-loss fault, device-loss recovery, or
-performance.
+host-thread arm racing, real GPU commands/resources, and the exact
+reconciliation/settlement lifecycle plus all four Phase B retained states. The
+published error, retained-state seams, and injected loss are test-only. They
+are not evidence of a physical driver, hardware, or device-loss fault,
+device-loss recovery, successful-output recovery, residency, migration, reset,
+physical reclaim, or performance.
 
 ## Byte meanings
 
@@ -537,8 +544,10 @@ gate, Bank-first finalization, and separate later allocation retirement.
 Phase B additionally binds the four retained nonterminal ownership states to
 callback detachment, a dedicated zero-output ownership terminal, Bank-first
 exact native unlink, and replay through fixed 464/240/408/504-byte evidence.
-Its isolated native branch holds a real command callback and uses synthetic
-loss for pending retirement; it does not reproduce a physical device failure.
+Its isolated native matrix runs real commands/resources for all four states
+under build-isolated one-shot state seams and synthetic loss; it does not
+reproduce a physical device failure or prove successful-output recovery,
+residency, migration, reset, physical reclaim, or performance.
 Separately, the lifecycle slice
 establishes real observer installation, initial selected-device membership,
 source-specific sticky removal facts, exact code `11` classification, and

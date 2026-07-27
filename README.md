@@ -424,12 +424,17 @@ formats, and independent verifiers.
   not success, terminal failure, cancellation, migration, reset, physical
   reclaim, or allocation retirement. Production requires exact native
   `removed_notification` or `command_buffer_device_removed` evidence and
-  revalidates the same sticky source. The native test uses a real Metal command
-  and real buffers with a build-isolated held callback and synthetic injected
-  loss. It validates pending retirement end to end but does not reproduce
-  physical removal or a driver fault. The other three states currently have
-  portable structural and adapter coverage, not a retained native fault
-  campaign. See
+  revalidates the same sticky source. The build-isolated native matrix runs all
+  four retained states through real Metal commands and real buffers. Its
+  pending case holds the completion handler before the callback gate; the other
+  cases use a post-commit ambiguous disposition authenticated by the native
+  record, a physical-success completion overlay that changes only
+  `callback_fault` to publish a valid unknown projection, and an exact completed
+  output-read rejection before caller memory is written.
+  Synthetic injected loss authorizes each retirement. This is native
+  ownership/lifetime conformance, not a reproduced physical removal, driver or
+  hardware fault, successful-output recovery, performance, residency,
+  migration, reset, or physical-reclaim result. See
   [Device-loss Dispatch Callback Retirement](docs/DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md).
 - **Loss-bound GPU resource retirement.** A 544-byte pointer-free
   `LossRetirementPlanV1` binds one exact lost transition to the selected

@@ -10,7 +10,11 @@ production_shim=$1
 fault_shim=$2
 symbol_prefix='_glacier_metal_test_'
 arm_symbol='_glacier_metal_test_arm_next_completed_as_command_error_v1'
+ambiguous_symbol='_glacier_metal_test_arm_next_real_commit_as_ambiguous_v1'
+unknown_symbol='_glacier_metal_test_arm_next_completed_as_unknown_v1'
+output_rejection_symbol='_glacier_metal_test_arm_next_completed_output_read_rejection_v1'
 facts_symbol='_glacier_metal_test_completion_facts_for_binding_v1'
+facts_v2_symbol='_glacier_metal_test_completion_facts_for_binding_v2'
 retirement_symbol='_glacier_metal_test_registered_dispatch_retirement_prepare'
 hold_arm_symbol='_glacier_metal_test_arm_next_completion_callback_hold'
 hold_wait_symbol='_glacier_metal_test_wait_for_held_completion_callback'
@@ -29,7 +33,11 @@ fi
 fault_symbols=$(/usr/bin/nm -gU "$fault_shim")
 for required_symbol in \
     "$arm_symbol" \
+    "$ambiguous_symbol" \
+    "$unknown_symbol" \
+    "$output_rejection_symbol" \
     "$facts_symbol" \
+    "$facts_v2_symbol" \
     "$retirement_symbol" \
     "$hold_arm_symbol" \
     "$hold_wait_symbol" \

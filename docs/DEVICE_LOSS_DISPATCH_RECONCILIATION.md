@@ -104,11 +104,13 @@ settles the Bank pin before exact native unlink, and stores a replay tombstone.
 It never converts loss, timeout, or missing completion into successful output.
 Allocation retirement remains separate.
 
-The current native gate combines real Metal commands and resources with a
-build-isolated held callback and synthetic injected loss; it is not evidence of
-physical removal or driver failure. That end-to-end branch currently covers
-pending retirement; the other three states have portable structural and
-adapter coverage without a retained native fault campaign. Later work includes
-removable-hardware callback campaigns, direct telemetry, fresh-device
-selection, explicit migration policy, multiple queue slots, multi-device
-scheduling, additional GPU backends, and retained native OS/device matrices.
+The current native gate combines real Metal commands and resources with
+build-isolated, one-shot state seams and synthetic injected loss. It exercises
+pending, submission-ambiguous, completion-unknown, and invalid-completion
+retirement end to end without constructing the adapter retention by hand. This
+is not evidence of physical removal, driver or hardware failure, recovered
+output, performance, residency, migration, reset, or physical reclaim. Later
+work includes removable-hardware callback campaigns, direct telemetry,
+fresh-device selection, explicit migration policy, multiple queue slots,
+multi-device scheduling, additional GPU backends, and retained native
+OS/device matrices.

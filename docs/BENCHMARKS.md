@@ -46,7 +46,7 @@ thermal observations distinct.
 | `tools/zig-with-ephemeral-cache.sh build native-metal-observation-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Hard native macOS Metal diagnostic-readiness gate: exactly one real GPU dispatch total for a fixed synthetic 37x64 INT4 matrix-vector operation, CPU-oracle correctness, completed command-buffer GPU timestamps, registry-bound device/placement identity, `currentAllocatedSize`, zero leaked ownership, explicit no fallback, composed observation/run/dispatch roots, and an independent live-output verifier; no throughput, latency, performance, utilization, residency, queue, thermal, frequency, power, energy, cryptographic-origin, broad-device, or multi-OS claim |
 | `tools/zig-with-ephemeral-cache.sh build native-metal-correctness-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Native Metal correctness and lifecycle no-event gate: installs the real per-context device observer, confirms selected-device initial membership, runs one real GPU command, and requires the lifecycle snapshot to remain unchanged around that successful command. The completed development-host run used a built-in M1 GPU; it did not exercise removal-requested, removed, or exact code `11`, and proves no safe recovery or migration. |
 | `tools/zig-with-ephemeral-cache.sh build native-metal-allocation-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Hard native macOS Metal allocation and dispatch-lifetime gate: opens a real `MTLDevice` and creates/inspects real Shared `MTLBuffer` resources through ChildLease and LeaseTree coordinators; verifies exact logical precharge/reserve/release, private FreePermit settlement, partial-allocation cancellation, per-object device/length/`allocatedSize`, foreign/stale-token rejection, distinct adapter authorities, registry balance, and generation-fenced reuse. Its four-buffer profile uses an adapter-issued generation-fenced `MetalMatvecDispatchRequestV1` root plus sealed pre-Bank `DispatchPinIntentV1`; the valid branch separately submits, polls or waits, validates exact completed output, settles Bank ownership, finalizes the retained native command, and checks a CPU oracle. Malformed attempts may inspect the real context/resources but construct and submit no command buffer; the valid pure-cancellation branch performs no native inspection. Both no-submit branches produce zero submission/backend/output roots, execute zero GPU commands, and share the private Bank-pin/adapter settlement and replay tombstone. Public acknowledgement only verifies the settled tombstone. Sticky quarantine detects ambiguous/unknown/invalid/error outcomes but does not reconcile or clear them. No device-loss recovery, multi-slot scheduling, residency, heap, performance, broad-device, or multi-OS claim. |
-| `tools/zig-with-ephemeral-cache.sh build native-metal-fault-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Build-isolated native macOS Metal fault/reconciliation/retirement conformance: verifies production-symbol isolation; races the Phase A one-shot overlay with exactly one winner; keeps physical success separate from a synthetic code-`11`-shaped publication; proves Bank-first Phase A finalization and confirmation retry; and separately releases a real-buffer allocation under synthetic loss. The pending Phase B branch submits a real command over four real buffers, holds its completion handler before the ARC-owned callback gate, detaches that gate without waiting for callback exit, consumes the Bank pin before exact native unlink, replays the tombstone, preserves caller output, releases the held handler safely, and performs allocation release separately. The loss/error controls are synthetic and test-only: this gate does not reproduce physical removal or driver/hardware failure and is not output-recovery, migration, reset, physical-reclaim, residency, or performance evidence. |
+| `tools/zig-with-ephemeral-cache.sh build native-metal-fault-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Build-isolated native macOS Metal fault/reconciliation/retirement conformance: verifies production-symbol isolation; races the Phase A one-shot overlay with exactly one winner; keeps physical success separate from a synthetic code-`11`-shaped publication; proves Bank-first Phase A finalization and confirmation retry; and separately releases a real-buffer allocation under synthetic loss. The Phase B matrix submits real commands over four real buffers for pending, submission-ambiguous, completion-unknown, and invalid-completion ownership. It combines a held handler, a post-commit ambiguous disposition authenticated by the native record, a valid unknown projection that changes only `callback_fault` after independently verified physical success, and an exact completed-output-read rejection before caller memory is written. It derives retention through the adapter, consumes each Bank pin before exact native unlink, replays each tombstone, preserves caller output, and performs allocation release separately. The seams and loss/error controls are synthetic and test-only: this gate does not reproduce physical removal or driver/hardware failure and is not output-recovery, migration, reset, physical-reclaim, residency, or performance evidence. |
 | `tools/zig-with-ephemeral-cache.sh build native-metal-suite-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Serialized native macOS device suite: readiness → allocation ownership → fault/reconciliation → focused correctness and lifecycle no-event validation, with no overlap between those device gates; it combines their evidence boundaries and does not create a benchmark or retained native artifact |
 | `zig build lane-publication-demo -Dmetal=false` | One-token prepare/commit/abort with KV, RNG, sampler, output, schedule, and resource roots |
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
@@ -235,21 +235,29 @@ retry to prove one winner, Bank-first release, exact native finalization/state
 clearing, and no double release or finalization after the first confirmation is
 deliberately rejected. Production artifacts expose no fault controls.
 
-A separate pending Phase B branch uses another real Metal command and four real
-buffers. A test-only hold stops the completion handler before the ARC-owned
-callback gate, then synthetic injected loss exercises detachment while the
-handler has not exited. Coordinator settlement consumes the Bank pin before
-exact native unlink and tombstone storage; caller output stays unchanged, the
-held handler is released safely afterward, and allocation ownership is retired
-separately.
+A separate Phase B matrix uses real Metal commands and four real buffers for
+all four retained states. A test-only hold stops the pending completion handler
+before the ARC-owned callback gate. Context-local one-shot seams separately
+retain a post-commit ambiguous disposition authenticated by the native record;
+after independently verified physical success, publish a valid unknown
+projection by changing only `callback_fault`; and reject one exact completed
+output read before caller memory is written. The adapter therefore derives the
+matching submission-ambiguous, completion-unknown, and invalid-completion
+retention from its live state rather than accepting hand-built evidence.
+Synthetic injected loss then exercises
+detachment and settlement for every state. Coordinator settlement consumes
+each Bank pin before exact native unlink and tombstone storage; caller output
+stays unchanged, held handlers are released safely afterward, and allocation
+ownership is retired separately.
 
-The overlay and injected loss do not induce or prove a physical command-buffer,
-driver, hardware, or device-loss fault. None of these conformance layers
-measures throughput or latency or establishes residency, multi-slot queue
-scheduling, physical device-loss recovery, automatic migration, reset, or
-physical reclaim behavior. The bounded allocation-retirement branch proves
-only quiesced reference and logical-ownership cleanup; the Phase B branch
-proves only dispatch callback/record ownership retirement.
+The overlay, state seams, and injected loss do not induce or prove a physical
+command-buffer, driver, hardware, or device-loss fault. None of these
+conformance layers measures throughput or latency or establishes residency,
+multi-slot queue scheduling, physical device-loss recovery, automatic
+migration, reset, or physical reclaim behavior. The bounded
+allocation-retirement branch proves only quiesced reference and
+logical-ownership cleanup; the Phase B matrix proves only dispatch
+callback/record ownership retirement for the four retained states.
 
 All commands should normally use `-Doptimize=ReleaseSafe` when validating
 contracts. None requires a real credential. Portable evidence is

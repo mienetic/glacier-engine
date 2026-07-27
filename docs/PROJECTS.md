@@ -253,7 +253,7 @@ operation after the dispatch slot is gone. See
 
 The **Device-loss Dispatch Callback Retirement Phase B** follow-up is complete
 for the current portable contract, Metal adapter, ARC-owned callback gate, and
-build-isolated held-callback path. Fixed pointer-free
+build-isolated native four-state retained-state matrix. Fixed pointer-free
 `LossDispatchCallbackRetentionV1` (464 bytes),
 `LossDispatchCallbackRetirementPlanV1` (240 bytes),
 `LossDispatchCallbackFenceV1` (408 bytes), and
@@ -264,12 +264,16 @@ while retaining the command record and four command-held references. Core
 consumes the Bank pin before exact native unlink, and the receipt replays from
 a tombstone with zero output authority. Production requires exact native
 `removed_notification` or `command_buffer_device_removed` evidence plus
-same-source sticky revalidation. The native gate uses a real Metal
-command/resources, a held callback, and synthetic injected loss; it
-validates pending retirement end to end but does not reproduce physical
-removal or driver failure. The other three states have portable/adapter
-coverage without a retained native fault campaign. Allocation retirement
-remains separate. See
+same-source sticky revalidation. The native matrix uses real Metal commands
+and resources for all four states. It combines a held callback, a post-commit
+ambiguous disposition authenticated by the native record, a valid unknown
+projection that changes only `callback_fault` after independently verified
+physical success, and an exact completed-output-read rejection before caller
+memory is written. These produce the retained states through the adapter;
+synthetic injected loss authorizes their retirement. This does not reproduce
+physical removal, driver or hardware failure and provides no successful-output
+recovery, performance, residency, migration, reset, or physical-reclaim
+evidence. Allocation retirement remains separate. See
 [Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md).
 
 The **build-isolated native Metal fault/race gate** is complete. A second,
@@ -331,15 +335,17 @@ performance evidence. Separately, the built-in M1 development-host lifecycle
 gate proves observer installation, initial selected-device membership, and an
 unchanged no-event snapshot around one real successful Metal command. It did
 not exercise a physical removal callback. Quiesced-allocation retirement now
-releases real references in the isolated native gate under synthetic loss;
-the Phase B branch separately holds a real command's completion handler before
-its ARC-owned gate and proves detach-before-exit, Bank-first native unlink,
-replay, and later handler release under synthetic injected loss. That is native
-callback-lifetime evidence, not physical loss. Physical-callback evidence,
-fresh selection and migration, multi-slot scheduling, physical residency,
-direct device telemetry, additional GPU backends, performance evidence, and
-broader native OS/device matrices remain unimplemented unless a slice supplies
-direct named evidence. Cross-compilation never counts as native support.
+releases real references in the isolated native gate under synthetic loss. The
+Phase B matrix separately runs all four retained states over real commands and
+resources, including detach-before-exit for the held pending handler,
+Bank-first native unlink, replay, and later handler release under synthetic
+state/loss controls. That is native callback/record ownership evidence, not
+physical loss, output recovery, residency, migration, reclaim, or performance
+evidence. Physical-callback evidence, fresh selection and migration, multi-slot
+scheduling, physical residency, direct device telemetry, additional GPU
+backends, performance evidence, and broader native OS/device matrices remain
+unimplemented unless a slice supplies direct named evidence. Cross-compilation
+never counts as native support.
 
 ### Native observation adapters
 

@@ -1000,12 +1000,15 @@ authorizes only `ownership_retired_after_device_loss` with zero output; core
 consumes the Bank pin before the private settlement callback unlinks the exact
 native record and records its replay tombstone. Production requires an exact
 native `removed_notification` or `command_buffer_device_removed` source and
-same-source sticky revalidation. The build-isolated gate exercises the path
-with real Metal commands/resources, a held completion
-handler, and synthetic injected loss for pending retirement; it does not prove
-physical removal, driver failure, output recovery, migration, reset, physical
-reclaim, residency, or performance. The other three states currently lack a
-retained native fault campaign.
+same-source sticky revalidation. The build-isolated native matrix exercises all
+four retained states with real Metal commands/resources. It combines a held
+completion handler for pending with a post-commit disposition authenticated by
+the native record, a physical-success completion overlay that changes only
+`callback_fault`, and an exact completed-output-read rejection before caller
+memory is written, then uses synthetic injected loss to authorize retirement.
+It does not prove
+physical removal, driver or hardware failure, output recovery, migration,
+reset, physical reclaim, residency, or performance.
 
 Device-loss Retirement V1 composes these previously separate layers only for
 an already quiesced allocation. A pointer-free plan binds an exact accepted

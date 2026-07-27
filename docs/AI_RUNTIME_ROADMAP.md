@@ -244,11 +244,14 @@ Bank-first settlement, exact native unlink, and replay tombstone. Callback exit
 is not a fence prerequisite, and allocation retirement remains separate.
 Production requires exact native `removed_notification` or
 `command_buffer_device_removed` evidence plus same-source sticky revalidation.
-Portable Zig/Python coverage is structural; the native gate uses
-real Metal commands/resources with a build-isolated held callback and
-synthetic injected loss for pending retirement, not physical removal or driver
-failure. The other three states do not yet have a retained native fault
-campaign. See
+Portable Zig/Python coverage is structural; the build-isolated native matrix
+runs real Metal commands/resources for all four states. It combines a held
+pending handler, a post-commit ambiguous disposition authenticated by the
+native record, a valid unknown projection over independently verified physical
+success, and an exact completed-output-read rejection before caller memory is
+written. Synthetic injected loss authorizes retirement. This is not physical
+removal, driver or hardware failure, output recovery, performance, residency,
+migration, reset, or physical reclaim. See
 [Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md).
 
 Physical residency, fresh selection, multi-slot and multi-device scheduling,
@@ -631,12 +634,14 @@ isolated configuration exercises command-specific Phase A reconciliation
 after a real GPU command succeeds by publishing a separate synthetic
 code-`11`-shaped error overlay. That proves exact retention, Bank-first
 settlement, tombstone replay, and native finalization on the test path, not a
-physical failure. The same build-isolated native configuration now holds a
-real command's completion handler before its ARC-owned callback gate and
-exercises Phase B detach-before-exit, Bank-first native unlink, replay, and
-later handler release under synthetic injected loss. It is not a physical
-removal or driver-failure campaign. A removable-hardware callback campaign,
-fresh selection and migration,
+physical failure. The same build-isolated native configuration now runs all
+four Phase B retained states over real commands/resources. It combines a held
+pending handler with synthetic disposition, physical-success completion, and
+completed-output-read seams, then exercises Bank-first native unlink and
+replay; the held case additionally proves detach-before-exit and later handler
+release. It is not a physical removal, driver-failure, output-recovery,
+performance, residency, migration, reset, or physical-reclaim campaign. A
+removable-hardware callback campaign, fresh selection and migration,
 multi-slot and multi-device scheduling,
 physical residency and device telemetry, additional GPU backends, and broader
 native OS/device matrices stay open.
