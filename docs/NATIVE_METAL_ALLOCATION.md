@@ -4,7 +4,8 @@ The native Metal allocation adapter binds the portable allocation-adapter
 contract to real direct Shared `MTLBuffer` resources on macOS through both the
 receipt-bound ChildLease coordinator and the execution-owned LeaseTree
 coordinator. It is a bounded allocation-ownership prototype, not a residency
-or performance subsystem.
+or performance subsystem. Its optional dispatch path adds a synchronous
+lifetime fence; it is not a general queue scheduler.
 
 ## What is implemented
 
@@ -27,10 +28,23 @@ For one exact `MetalBackend` context, the adapter:
 9. rejects copied leases after release and reuses slots only under newer
    generations.
 
+For the bounded LeaseTree dispatch profile, the same adapter also binds four
+exact live objects to packed weights, scales, input, and output roles. It
+uploads and submits only those registry-owned buffers, waits for the real
+command buffer to complete, retains terminal evidence until the coordinator
+consumes its private Bank pin, and rejects allocation or free callbacks until
+that completion is acknowledged.
+
+Callers must run the public geometry, role, and host-length preflight before
+acquiring the pin. This version does not synthesize a
+`rejected_before_submit` terminal when a caller supplies malformed dispatch
+arguments after acquisition; the safe result is a retained pin.
+
 The native hard gate now exercises both coordinators. The LeaseTree path uses
 distinct admission/lease/recovery/terminal evidence and keeps its allocation
 batch and FreePermit private. See
-[LeaseTree Device Allocation](LEASE_TREE_DEVICE_ALLOCATION.md).
+[LeaseTree Device Allocation](LEASE_TREE_DEVICE_ALLOCATION.md) and
+[Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md).
 Its coordinator holds address-stable pointers to the execution owner's shared
 tree token and publication sequence. The owner must externally serialize
 coordinator calls with every other mutation of those shared values; the
@@ -108,6 +122,11 @@ The native allocation hard gate is different. On the executing macOS host it:
   ChildLease and LeaseTree ownership;
 - verifies the LeaseTree transitions from `reserved_unmaterialized` to `live`
   to `free_authorized` and finally an empty device scope;
+- creates a separate exact four-buffer 37x64 INT4 allocation wave, acquires a
+  ResourceBank dispatch pin, proves release is rejected while pinned, submits
+  those four real registry-owned buffers, waits for Metal completion, compares
+  output with the CPU oracle, consumes the pin, acknowledges the adapter
+  terminal, and then returns all ownership to zero;
 - cancels a separate LeaseTree wave after two real buffer creations and proves
   that both buffers are released before the complete charge is returned;
 - verifies `0 → 3 → 0` through both adapter bookkeeping and the independent
@@ -153,10 +172,11 @@ tools/zig-with-ephemeral-cache.sh build \
 Foreign-target profiles compile the portable public surface only. They are not
 native Metal, OS, driver, or device evidence.
 
-The allocation-aware inventory helper currently validates the
+The allocation-aware inventory helper validates the
 `matvec_int4_f32_bounded` pipeline and publishes that operation profile. The
-allocation gate itself performs no dispatch, but this V1 inventory helper is
-not yet a generic allocation-only Metal profile.
+native allocation gate now includes one correctness-only pinned dispatch for
+that exact profile; it is not yet a generic allocation-only Metal profile or a
+performance gate.
 
 ## Claim boundary
 
@@ -166,10 +186,10 @@ reuse on the host that executes the hard gate. It does not establish:
 
 - physical residency or reclaim completion;
 - heap allocation or fragmentation accounting;
-- dispatch-to-allocation lifetime pins;
-- queue or command-buffer ownership;
 - device-loss inspection or reconciliation;
 - asynchronous cleanup;
+- asynchronous queue scheduling, queue-depth evidence, or transfer ownership;
+- automatic pre-submit rejection completion for malformed post-pin arguments;
 - multiple simultaneously materialized coordinator leases per adapter context;
 - multi-device partitioning;
 - a supported device/OS range; or

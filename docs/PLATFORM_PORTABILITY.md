@@ -86,11 +86,13 @@ dispatch in total for a fixed synthetic 37x64 INT4 operation and requires
 CPU-oracle correctness, Metal registry identity, `currentAllocatedSize`,
 command-buffer GPU timestamps, ownership closure, no fallback, and composed
 roots. Its allocation gate creates, inspects, and releases real buffers but
-does not dispatch work. The corrected tiled FP16 matmul path is separately
-CPU-oracle-tested on asymmetric partial-edge shapes and rejects zero,
-overflowing, short, or oversized buffer geometry without caller-output
-mutation. These are bounded allocation/correctness/readiness results, not
-throughput, latency, or performance results.
+also contains a separate four-buffer LeaseTree case that pins the exact object
+set, submits one real INT4 command, checks the CPU oracle, consumes completion,
+and returns ownership to zero. The corrected tiled FP16 matmul path is
+separately CPU-oracle-tested on asymmetric partial-edge shapes and rejects
+zero, overflowing, short, or oversized buffer geometry without caller-output
+mutation. These are bounded allocation/lifetime/correctness/readiness results,
+not throughput, latency, or performance results.
 `recommendedMaxWorkingSetSize` is capacity context only; physical-page
 commitment/reclamation and residency authority, device-loss recovery,
 multi-GPU scheduling, utilization, committed/resident bytes, queue depth,
@@ -428,13 +430,15 @@ LeaseTree FreePermit release and cancellation rollback.
 The LeaseTree coordinator is synchronous and address-stable. The surrounding
 execution owner must serialize coordinator calls with every other mutation of
 the shared tree token and publication sequence; cross-thread use without that
-external serialization is outside the contract. Queue or stream lifetime pins,
-physical residency, loss/quarantine reconciliation, and multi-GPU
-partitioning/scheduling remain open. OS and accelerator support remain separate
-dimensions. See the
-[device capability and selection contract](DEVICE_CAPABILITY_CONTRACT.md) and
-[device allocation lease](DEVICE_ALLOCATION_LEASE.md), plus
-[LeaseTree device allocation](LEASE_TREE_DEVICE_ALLOCATION.md).
+external serialization is outside the contract. Bounded exact object-set
+dispatch pins are implemented; asynchronous queue/stream scheduling, physical
+residency, loss/quarantine reconciliation, and multi-GPU
+partitioning/scheduling remain open. OS and accelerator support remain
+separate dimensions. See the
+[device capability and selection contract](DEVICE_CAPABILITY_CONTRACT.md),
+[device allocation lease](DEVICE_ALLOCATION_LEASE.md),
+[LeaseTree device allocation](LEASE_TREE_DEVICE_ALLOCATION.md), and
+[device dispatch lifetime](DEVICE_DISPATCH_LIFETIME.md).
 
 Planned backend families may include:
 
@@ -624,7 +628,10 @@ not represented as partial support.
   coordinator;~~ complete for whole-wave reserve/materialize/FreePermit
   ownership, conservative recovery, sibling-scope isolation, real Metal reuse,
   and synchronous cancellation rollback;
-- bind dispatch and queue/command lifetime to the LeaseTree-owned object set;
+- ~~bind bounded dispatch lifetime to the exact LeaseTree-owned object set;~~
+  complete with fixed Bank pin storage, private permit custody, terminal
+  completion evidence, release fencing, and one real four-buffer Metal
+  dispatch; general asynchronous queue scheduling remains open;
 - add physical residency as a separate optional authority and evidence layer;
 - add explicit device-loss events, quarantine, and recovery under a fresh
   selection receipt;
@@ -644,12 +651,13 @@ filesystem durability, mobile lifecycle safety, accelerator correctness,
 installation quality, physical telemetry, or performance. The W5a
 cross-compile gate likewise does not establish native observation. The
 portable selection contract, fake allocation lifecycles, one real-Metal
-allocation ownership gate, and one Metal readiness binding do not establish
-dispatch/queue lifetime ownership, physical residency, device-loss recovery,
-multi-GPU behavior, telemetry, performance, or native support for any
-cross-compiled target. The fake lifecycles establish deterministic
+allocation/pinned-dispatch ownership gate, and one Metal readiness binding do
+not establish general asynchronous queue scheduling, physical residency,
+device-loss recovery, multi-GPU behavior, telemetry, performance, or native
+support for any cross-compiled target. The fake lifecycles establish deterministic
 failure/recovery semantics for both ChildLease and LeaseTree ownership. The
 native allocation gate additionally establishes direct resource creation,
-inspection, release, cancellation cleanup, and generation reuse on its
-executing host only. This document is an implementation plan and evidence
-ledger, not a declaration that every listed platform is currently supported.
+inspection, release, cancellation cleanup, generation reuse, and one bounded
+synchronous dispatch-lifetime fence on its executing host only. This document
+is an implementation plan and evidence ledger, not a declaration that every
+listed platform is currently supported.

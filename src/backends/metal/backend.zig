@@ -212,6 +212,29 @@ extern "C" fn glacier_metal_int4_matvec_observed(
     output_count: u64,
     observation: *RawDispatchObservation,
 ) c_int;
+extern "C" fn glacier_metal_int4_registered_buffers_observed(
+    ctx: *MetalContext,
+    packed_token: *const MetalBufferToken,
+    scales_token: *const MetalBufferToken,
+    input_token: *const MetalBufferToken,
+    output_token: *const MetalBufferToken,
+    packed_weights: [*]const u8,
+    packed_bytes: u64,
+    scales: [*]const f32,
+    scale_count: u64,
+    input: [*]const f32,
+    input_count: u64,
+    group_size: u32,
+    in_features: u32,
+    out_features: u32,
+    observation: *RawDispatchObservation,
+) c_int;
+extern "C" fn glacier_metal_int4_registered_output_read(
+    ctx: *MetalContext,
+    output_token: *const MetalBufferToken,
+    output: [*]f32,
+    output_count: u64,
+) c_int;
 
 pub const MetalError = error{
     Unavailable,
@@ -286,6 +309,68 @@ fn finalizeObservedDispatch(
     if (read_output(weight, output.ptr, output.len) != 0)
         return MetalError.DispatchFailed;
     return telemetry;
+}
+
+const RegisteredMatvecGeometry = struct {
+    packed_bytes: u64,
+    scale_count: u64,
+    scales_bytes: u64,
+    input_count: u64,
+    input_bytes: u64,
+    output_count: u64,
+    output_bytes: u64,
+};
+
+fn registeredMatvecGeometry(
+    group_size: u32,
+    in_features: u32,
+    out_features: u32,
+) MetalError!RegisteredMatvecGeometry {
+    if (group_size == 0 or
+        !std.math.isPowerOfTwo(group_size) or
+        in_features == 0 or
+        out_features == 0)
+        return MetalError.DispatchFailed;
+
+    const elements =
+        @as(u64, in_features) * @as(u64, out_features);
+    if (elements > std.math.maxInt(u32))
+        return MetalError.DispatchFailed;
+    const scale_count =
+        (elements + @as(u64, group_size) - 1) /
+        @as(u64, group_size);
+    return .{
+        .packed_bytes = (elements + 1) / 2,
+        .scale_count = scale_count,
+        .scales_bytes = scale_count * @sizeOf(f32),
+        .input_count = in_features,
+        .input_bytes = @as(u64, in_features) * @sizeOf(f32),
+        .output_count = out_features,
+        .output_bytes = @as(u64, out_features) * @sizeOf(f32),
+    };
+}
+
+fn validateRegisteredMatvecTokens(
+    tokens: [4]MetalBufferToken,
+) MetalError!void {
+    for (tokens, 0..) |token, index| {
+        if (token.generation == 0 or
+            (token.context_nonce[0] == 0 and
+                token.context_nonce[1] == 0 and
+                token.context_nonce[2] == 0 and
+                token.context_nonce[3] == 0))
+            return MetalError.InvalidObservation;
+        if (!std.mem.eql(
+            u64,
+            &tokens[0].context_nonce,
+            &token.context_nonce,
+        ))
+            return MetalError.InvalidObservation;
+        for (tokens[0..index]) |prior| {
+            if (std.meta.eql(prior, token))
+                return MetalError.InvalidObservation;
+        }
+    }
 }
 
 pub const MetalBackend = struct {
@@ -684,6 +769,107 @@ pub const MetalBackend = struct {
         );
     }
 
+    /// Upload and dispatch through four exact live registry allocations.
+    /// Every shape, host length, token identity, and native resource length
+    /// is validated before command creation. Caller output is published only
+    /// after Metal reports completion and the observation passes validation.
+    pub fn matvecInt4RegisteredBuffersObserved(
+        self: *MetalBackend,
+        packed_token: MetalBufferToken,
+        scales_token: MetalBufferToken,
+        input_token: MetalBufferToken,
+        output_token: MetalBufferToken,
+        packed_weights: []const u8,
+        scales: []const f32,
+        input: []const f32,
+        output: []f32,
+        group_size: u32,
+        in_features: u32,
+        out_features: u32,
+    ) MetalError!MetalDispatchTelemetry {
+        const geometry = try registeredMatvecGeometry(
+            group_size,
+            in_features,
+            out_features,
+        );
+        if (@as(u64, @intCast(packed_weights.len)) !=
+            geometry.packed_bytes or
+            @as(u64, @intCast(scales.len)) !=
+                geometry.scale_count or
+            @as(u64, @intCast(input.len)) !=
+                geometry.input_count or
+            @as(u64, @intCast(output.len)) !=
+                geometry.output_count)
+            return MetalError.DispatchFailed;
+
+        const tokens = [4]MetalBufferToken{
+            packed_token,
+            scales_token,
+            input_token,
+            output_token,
+        };
+        try validateRegisteredMatvecTokens(tokens);
+
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        if (self.completed_dispatch_count ==
+            std.math.maxInt(u64))
+            return MetalError.DispatchFailed;
+
+        const infos = [4]MetalBufferInfo{
+            try self.inspectBufferAllocation(packed_token),
+            try self.inspectBufferAllocation(scales_token),
+            try self.inspectBufferAllocation(input_token),
+            try self.inspectBufferAllocation(output_token),
+        };
+        const expected_lengths = [4]u64{
+            geometry.packed_bytes,
+            geometry.scales_bytes,
+            geometry.input_bytes,
+            geometry.output_bytes,
+        };
+        for (infos, expected_lengths) |info, expected_length| {
+            if (info.device_registry_id !=
+                infos[0].device_registry_id)
+                return MetalError.InvalidObservation;
+            if (info.resource_length != expected_length)
+                return MetalError.DispatchFailed;
+        }
+
+        var raw: RawDispatchObservation = .{};
+        if (glacier_metal_int4_registered_buffers_observed(
+            self.ctx,
+            &packed_token,
+            &scales_token,
+            &input_token,
+            &output_token,
+            packed_weights.ptr,
+            geometry.packed_bytes,
+            scales.ptr,
+            geometry.scale_count,
+            input.ptr,
+            geometry.input_count,
+            group_size,
+            in_features,
+            out_features,
+            &raw,
+        ) != 0)
+            return MetalError.DispatchFailed;
+
+        const telemetry = try recordCompletedObservation(
+            &self.completed_dispatch_count,
+            raw,
+        );
+        if (glacier_metal_int4_registered_output_read(
+            self.ctx,
+            &output_token,
+            output.ptr,
+            geometry.output_count,
+        ) != 0)
+            return MetalError.DispatchFailed;
+        return telemetry;
+    }
+
     pub fn liveWeightCount(self: MetalBackend) u64 {
         return self.live_weight_count;
     }
@@ -738,4 +924,70 @@ test "invalid completed observation is counted before output publication" {
         completed_dispatch_count,
     );
     try std.testing.expectEqualSlices(f32, &sentinel, &output);
+}
+
+test "registered matvec geometry requires exact shader-safe dimensions" {
+    const geometry = try registeredMatvecGeometry(64, 37, 5);
+    try std.testing.expectEqual(@as(u64, 93), geometry.packed_bytes);
+    try std.testing.expectEqual(@as(u64, 3), geometry.scale_count);
+    try std.testing.expectEqual(@as(u64, 12), geometry.scales_bytes);
+    try std.testing.expectEqual(@as(u64, 148), geometry.input_bytes);
+    try std.testing.expectEqual(@as(u64, 20), geometry.output_bytes);
+
+    try std.testing.expectError(
+        MetalError.DispatchFailed,
+        registeredMatvecGeometry(0, 37, 5),
+    );
+    try std.testing.expectError(
+        MetalError.DispatchFailed,
+        registeredMatvecGeometry(63, 37, 5),
+    );
+    try std.testing.expectError(
+        MetalError.DispatchFailed,
+        registeredMatvecGeometry(
+            64,
+            std.math.maxInt(u32),
+            2,
+        ),
+    );
+}
+
+test "registered matvec roles reject zero foreign and duplicate tokens" {
+    const nonce = [4]u64{ 1, 2, 3, 4 };
+    try validateRegisteredMatvecTokens(.{
+        .{ .context_nonce = nonce, .generation = 1 },
+        .{ .context_nonce = nonce, .generation = 2 },
+        .{ .context_nonce = nonce, .generation = 3 },
+        .{ .context_nonce = nonce, .generation = 4 },
+    });
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateRegisteredMatvecTokens(.{
+            .{},
+            .{ .context_nonce = nonce, .generation = 2 },
+            .{ .context_nonce = nonce, .generation = 3 },
+            .{ .context_nonce = nonce, .generation = 4 },
+        }),
+    );
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateRegisteredMatvecTokens(.{
+            .{ .context_nonce = nonce, .generation = 1 },
+            .{ .context_nonce = nonce, .generation = 1 },
+            .{ .context_nonce = nonce, .generation = 3 },
+            .{ .context_nonce = nonce, .generation = 4 },
+        }),
+    );
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateRegisteredMatvecTokens(.{
+            .{ .context_nonce = nonce, .generation = 1 },
+            .{ .context_nonce = nonce, .generation = 2 },
+            .{
+                .context_nonce = .{ 9, 8, 7, 6 },
+                .generation = 3,
+            },
+            .{ .context_nonce = nonce, .generation = 4 },
+        }),
+    );
 }

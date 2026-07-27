@@ -5,16 +5,20 @@ device-allocation path. It binds the existing device selection, request,
 adapter quote, backend object, and object-set contracts to
 `ResourceBank.LeaseTreeV1` without changing the earlier `ChildLease` ABI.
 
-The coordinator answers two lifecycle questions:
+The coordinator answers three lifecycle questions:
 
 1. Was the complete adapter-quoted device charge reserved in the execution
    ownership tree before the first backend allocation?
 2. Was that charge retained until every object was definitely freed under an
    irreversible `LeaseFreePermitV1`?
+3. When a queue used those objects, did an exact ResourceBank pin prevent
+   reclamation until the bound backend reported a safe terminal state?
 
 The portable fake adapter proves the state machine and injected failures. The
 native Metal gate runs the same coordinator against real direct Shared
-`MTLBuffer` resources.
+`MTLBuffer` resources and submits one exact four-buffer INT4 dispatch while
+the allocation set is pinned. The dispatch authority is described in
+[Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md).
 
 ## Binding requirements
 
@@ -169,6 +173,12 @@ The new public values are distinct from the ChildLease evidence family:
 - `LeaseTreeAllocationRecoveryV1`; and
 - `LeaseTreeAllocationTerminalReceiptV1`.
 
+The optional dispatch phase adds:
+
+- `LeaseTreeDispatchPinV1`;
+- `DispatchTerminalEvidenceV1`; and
+- `LeaseTreeDispatchCompletionV1`.
+
 They bind canonical SHA-256 roots for the exact parent, reservation or
 materialization tree observation, scope, private batch or permit authority,
 ordered allocation-leaf set, publication binding, adapter authority, request,
@@ -207,6 +217,12 @@ The portable tests cover:
 - two coordinators racing after the same empty-scope preflight, with exactly
   one full-wave reservation admitted;
 - sibling-scope isolation;
+- overlapping exact object-set pins completed out of order;
+- allocation release rejected while any dispatch pin remains active;
+- copied, swapped, stale, foreign-adapter, and slot-reuse pin authority
+  rejected without consuming either live Bank pin;
+- re-sealed publication, authority, ceiling, generation, revision, and
+  active-node substitutions rejected at completion composition;
 - stale lease and recovery rejection; and
 - receipt-funded rejection.
 
@@ -234,22 +250,27 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 ```
 
-On the executing macOS host, the LeaseTree case proves three direct buffers,
+On the executing macOS host, the ownership cases prove three direct buffers,
 exact logical `0 → 8,000 → 0` device-byte accounting, direct length and
 `allocatedSize` observations, independent shim-registry balance, release under
-a FreePermit, and newer generations on reuse. A separate native cancellation
-wave stops after two real buffers and proves both are freed before the complete
-charge is returned. Cross-target compilation proves only source portability.
+a FreePermit, and newer generations on reuse. A separate cancellation wave
+stops after two real buffers and proves both are freed before the complete
+charge is returned. The pinned-dispatch case creates four exact buffers for a
+37x64 INT4 matrix-vector operation, rejects release while the command pin is
+live, submits those registry-owned resources to Metal, waits for completion,
+checks the output against a CPU oracle, consumes the pin, and only then frees
+the buffers. Cross-target compilation proves only source portability.
 
 ## Current boundary
 
-This slice establishes allocation ownership inside the execution LeaseTree. It
-does not yet establish:
+This slice establishes allocation ownership and an exact synchronous
+dispatch-to-allocation lifetime fence inside the execution LeaseTree. It does
+not yet establish:
 
-- dispatch-to-allocation pinning or queue/command ownership;
 - physical residency or reclaim completion;
 - post-creation `allocatedSize` settlement;
 - ambiguous device-loss reconciliation and quarantine;
+- asynchronous queue scheduling, transfer ownership, or queue-depth evidence;
 - concurrent materialized leases in one adapter context;
 - multi-device partitioning and scheduling;
 - direct utilization, power, thermal, frequency, or energy telemetry;

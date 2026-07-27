@@ -250,10 +250,13 @@ direct Shared buffers. It verifies per-resource device identity, logical
 length, `allocatedSize`, storage/cache modes, ChildLease accounting, release,
 generation-fenced reuse, foreign/stale-token rejection, distinct native
 adapter authorities, an independently counted shim registry, and concurrent
-registry balance. It does not submit a shader command or claim
-residency/performance. The separate Metal readiness gate uses real shader
-pipelines and command buffers and checks one bounded output against a CPU
-oracle.
+registry balance. A separate LeaseTree case in the same gate acquires an exact
+object-set pin, submits one four-buffer shader command, checks it against a CPU
+oracle, consumes completion, and proves final zero ownership. That case
+validates the execution-owned path rather than adding dispatch authority to
+this compact ChildLease V1. Neither case claims residency or performance. The
+separate Metal readiness gate also uses a real shader pipeline and command
+buffer for its bounded diagnostic profile.
 
 Focused native allocation check:
 
@@ -295,12 +298,15 @@ The next accelerator-runtime work is intentionally split:
 1. add a reserve/materialize/settle ABI if the post-creation
    `MTLResource.allocatedSize` observation must be charged rather than V1
    logical resource length;
-2. bind dispatch/queue lifetime to the LeaseTree-owned object set;
-3. add device-loss events, quarantine, and mandatory fresh selection;
-4. add deterministic two-device partition planning before live multi-device
+2. add device-loss events, quarantine, and mandatory fresh selection;
+3. add deterministic two-device partition planning before live multi-device
    execution;
-5. add residency as a separate optional authority and evidence contract; and
+4. add residency as a separate optional authority and evidence contract;
+5. add asynchronous queue scheduling above the completed bounded LeaseTree
+   dispatch-lifetime pin; and
 6. replicate native lifecycle evidence on named OS/device/driver cells.
 
 Allocation ownership can be proven before residency. Neither one should be
 inferred from a cross-build or from a device-wide dynamic memory sample.
+See [Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md) for the distinct
+execution-owned pin contract.

@@ -9,6 +9,10 @@ SHA-256 evidence transcripts are reproduced as separate algorithms.
 materialization, free-authorized recovery, settlement recovery, and release.
 Its session identifier is a stable integer rather than a process address, so
 all roots are reproducible across processes and languages.
+
+``make_dispatch_campaign`` takes an independent branch from that campaign's
+materialized lease through ordered allocation pinning, backend terminal
+evidence, pin release, and pointer-free completion evidence.
 """
 
 from __future__ import annotations
@@ -38,16 +42,26 @@ LEASE_TREE_ABI = 0x4752_4C54_0000_0001
 LEASE_NODE_ABI = 0x4752_4C4E_0000_0001
 LEASE_ALLOCATION_BATCH_ABI = 0x4752_4C41_0000_0001
 LEASE_FREE_PERMIT_ABI = 0x4752_4C46_0000_0001
+LEASE_PIN_PERMIT_ABI = 0x4752_4C50_0000_0001
+LEASE_PIN_COMPLETION_ABI = 0x4752_5043_0000_0001
+MAXIMUM_LEASE_PIN_NODES = 64
 
 ADMISSION_ABI = 0x4744_5441_0000_0001
 LEASE_ABI = 0x4744_544C_0000_0001
 RECOVERY_ABI = 0x4744_5452_0000_0001
 TERMINAL_ABI = 0x4744_5454_0000_0001
+DISPATCH_PIN_ABI = 0x4744_5450_0000_0001
+DISPATCH_TERMINAL_ABI = 0x4744_5444_0000_0001
+DISPATCH_COMPLETION_ABI = 0x4744_5443_0000_0001
 
 TREE_DOMAIN = b"glacier-resource-lease-tree-v1\x00"
 NODE_DOMAIN = b"glacier-resource-lease-node-v1\x00"
 BATCH_DOMAIN = b"glacier-resource-lease-allocation-batch-v1\x00"
 PERMIT_DOMAIN = b"glacier-resource-lease-free-permit-v1\x00"
+BANK_PIN_DOMAIN = b"glacier-resource-lease-pin-permit-v1\x00"
+BANK_PIN_COMPLETION_DOMAIN = (
+    b"glacier-resource-lease-pin-completion-v1\x00"
+)
 LEAF_SET_DOMAIN = b"glacier-device-tree-allocation-leaf-set-v1\x00"
 PUBLICATION_BINDING_DOMAIN = (
     b"glacier-device-tree-publication-binding-v1\x00"
@@ -63,6 +77,17 @@ NODE_KEY_DOMAIN = b"glacier-device-tree-allocation-node-key-v1\x00"
 BINDING_KEY_DOMAIN = (
     b"glacier-device-tree-allocation-binding-key-v1\x00"
 )
+DISPATCH_PIN_DOMAIN = b"glacier-device-tree-dispatch-pin-v1\x00"
+DISPATCH_TERMINAL_DOMAIN = (
+    b"glacier-device-tree-dispatch-terminal-v1\x00"
+)
+DISPATCH_COMPLETION_DOMAIN = (
+    b"glacier-device-tree-dispatch-completion-v1\x00"
+)
+DISPATCH_OWNER_DOMAIN = b"glacier-device-tree-dispatch-owner-v1\x00"
+DISPATCH_PUBLICATION_DOMAIN = (
+    b"glacier-device-tree-dispatch-publication-v1\x00"
+)
 
 LEASE_TREE_INTEGRITY_DOMAIN = 0x6C65_6173_6574_7231
 LEASE_TREE_STATE_DOMAIN = 0x6C65_6173_6573_7431
@@ -70,6 +95,11 @@ LEASE_NODE_INTEGRITY_DOMAIN = 0x6C65_6173_656E_6431
 LEASE_PENDING_DOMAIN = 0x6C65_6173_6570_6431
 LEASE_BATCH_INTEGRITY_DOMAIN = 0x6C65_6173_6562_6131
 LEASE_FREE_INTEGRITY_DOMAIN = 0x6C65_6173_6566_7231
+LEASE_PIN_STATE_DOMAIN = 0x6C65_6173_6570_7331
+LEASE_PIN_MEMBER_DOMAIN = 0x6C65_6173_6570_6D31
+LEASE_PIN_SLOT_DOMAIN = 0x6C65_6173_6570_6C31
+LEASE_PIN_PERMIT_INTEGRITY_DOMAIN = 0x6C65_6173_6570_7031
+LEASE_PIN_COMPLETION_INTEGRITY_DOMAIN = 0x6C65_6173_6570_6331
 
 NODE_SCOPE = 0
 NODE_ALLOCATION = 1
@@ -88,6 +118,21 @@ PENDING_FREE = 3
 PHASE_ROLLBACK_RESERVED = 1
 PHASE_FREE_AUTHORIZED = 2
 PHASE_SETTLEMENT_REQUIRED = 3
+
+DISPATCH_SUCCEEDED = 1
+DISPATCH_TERMINAL_FAILURE = 2
+DISPATCH_CANCELLED_BEFORE_SUBMIT = 3
+DISPATCH_CANCELLED_AFTER_SUBMIT = 4
+DISPATCH_REJECTED_BEFORE_SUBMIT = 5
+VALID_DISPATCH_OUTCOMES = frozenset(
+    (
+        DISPATCH_SUCCEEDED,
+        DISPATCH_TERMINAL_FAILURE,
+        DISPATCH_CANCELLED_BEFORE_SUBMIT,
+        DISPATCH_CANCELLED_AFTER_SUBMIT,
+        DISPATCH_REJECTED_BEFORE_SUBMIT,
+    )
+)
 
 OUTCOME_CANCELLED = allocation.OUTCOME_CANCELLED
 OUTCOME_ALLOCATION_FAILED = allocation.OUTCOME_ALLOCATION_FAILED
@@ -185,6 +230,88 @@ class LeaseFreePermitV1:
 
 
 @dataclass(frozen=True)
+class LeasePinMemberV1:
+    node_index: int = NO_LEASE_NODE
+    reserved: int = 0
+    node_generation: int = 0
+    node_integrity: int = 0
+
+
+@dataclass(frozen=True)
+class LeasePinSlotV1:
+    active: bool = False
+    receipt_slot_index: int = 0
+    tree_key: int = 0
+    tree_identity_generation: int = 0
+    tree_generation: int = 0
+    structural_revision: int = 0
+    generation: int = 0
+    completion_generation: int = 0
+    request_epoch: int = 0
+    session_id: int = 0
+    sequence: int = 0
+    owner_key: int = 0
+    scope_index: int = NO_LEASE_NODE
+    scope_generation: int = 0
+    node_count: int = 0
+    claim: ClaimV1 = ClaimV1()
+    node_set_digest: int = 0
+    integrity: int = 0
+    members: Tuple[LeasePinMemberV1, ...] = ()
+
+
+@dataclass(frozen=True)
+class LeasePinPermitV1:
+    abi_version: int = LEASE_PIN_PERMIT_ABI
+    parent: Optional[ResourceReceiptV1] = None
+    tree_key: int = 0
+    tree_identity_generation: int = 0
+    tree_generation: int = 0
+    structural_revision: int = 0
+    pin_slot_index: int = 0
+    reserved: int = 0
+    generation: int = 0
+    completion_generation: int = 0
+    request_epoch: int = 0
+    session_id: int = 0
+    sequence: int = 0
+    owner_key: int = 0
+    scope_index: int = 0
+    scope_generation: int = 0
+    node_count: int = 0
+    claim: ClaimV1 = ClaimV1()
+    node_set_digest: int = 0
+    integrity: int = 0
+
+
+@dataclass(frozen=True)
+class LeasePinCompletionV1:
+    abi_version: int = LEASE_PIN_COMPLETION_ABI
+    parent: Optional[ResourceReceiptV1] = None
+    tree_key: int = 0
+    tree_identity_generation: int = 0
+    pin_slot_index: int = 0
+    reserved: int = 0
+    permit_generation: int = 0
+    completion_generation: int = 0
+    request_epoch: int = 0
+    session_id: int = 0
+    sequence: int = 0
+    owner_key: int = 0
+    scope_index: int = 0
+    scope_generation: int = 0
+    node_count: int = 0
+    claim: ClaimV1 = ClaimV1()
+    node_set_digest: int = 0
+    permit_integrity: int = 0
+    completion_tree_generation: int = 0
+    completion_structural_revision: int = 0
+    completion_state_digest: int = 0
+    completion_tree_integrity: int = 0
+    integrity: int = 0
+
+
+@dataclass(frozen=True)
 class LeaseTreeAllocationAdmissionV1:
     abi_version: int = ADMISSION_ABI
     coordinator_epoch: int = 0
@@ -268,6 +395,65 @@ class LeaseTreeAllocationTerminalReceiptV1:
     terminal_tree: LeaseTreeV1 = LeaseTreeV1()
     scope: LeaseNodeV1 = LeaseNodeV1()
     terminal_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
+class LeaseTreeDispatchPinV1:
+    abi_version: int = DISPATCH_PIN_ABI
+    coordinator_epoch: int = 0
+    allocation_generation: int = 0
+    dispatch_generation: int = 0
+    authority_sha256: Digest = ZERO_DIGEST
+    dispatch_authority_sha256: Digest = ZERO_DIGEST
+    queue_authority_sha256: Digest = ZERO_DIGEST
+    request_sha256: Digest = ZERO_DIGEST
+    admission_sha256: Digest = ZERO_DIGEST
+    lease_sha256: Digest = ZERO_DIGEST
+    parent_receipt_sha256: Digest = ZERO_DIGEST
+    allocation_leaf_set_sha256: Digest = ZERO_DIGEST
+    backend_object_set_sha256: Digest = ZERO_DIGEST
+    dispatch_request_sha256: Digest = ZERO_DIGEST
+    publication_binding_sha256: Digest = ZERO_DIGEST
+    bank_pin_sha256: Digest = ZERO_DIGEST
+    pinned_tree: LeaseTreeV1 = LeaseTreeV1()
+    scope: LeaseNodeV1 = LeaseNodeV1()
+    allocation_count: int = 0
+    pinned_device_bytes: int = 0
+    pin_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
+class DispatchTerminalEvidenceV1:
+    abi_version: int = DISPATCH_TERMINAL_ABI
+    outcome: int = DISPATCH_REJECTED_BEFORE_SUBMIT
+    dispatch_generation: int = 0
+    dispatch_authority_sha256: Digest = ZERO_DIGEST
+    queue_authority_sha256: Digest = ZERO_DIGEST
+    pin_sha256: Digest = ZERO_DIGEST
+    dispatch_request_sha256: Digest = ZERO_DIGEST
+    submission_sha256: Digest = ZERO_DIGEST
+    backend_completion_sha256: Digest = ZERO_DIGEST
+    output_sha256: Digest = ZERO_DIGEST
+    terminal_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
+class LeaseTreeDispatchCompletionV1:
+    abi_version: int = DISPATCH_COMPLETION_ABI
+    outcome: int = DISPATCH_REJECTED_BEFORE_SUBMIT
+    coordinator_epoch: int = 0
+    allocation_generation: int = 0
+    dispatch_generation: int = 0
+    pin_sha256: Digest = ZERO_DIGEST
+    dispatch_terminal_sha256: Digest = ZERO_DIGEST
+    submission_sha256: Digest = ZERO_DIGEST
+    backend_completion_sha256: Digest = ZERO_DIGEST
+    output_sha256: Digest = ZERO_DIGEST
+    bank_completion_sha256: Digest = ZERO_DIGEST
+    completion_publication_binding_sha256: Digest = ZERO_DIGEST
+    completed_tree: LeaseTreeV1 = LeaseTreeV1()
+    scope: LeaseNodeV1 = LeaseNodeV1()
+    completion_sha256: Digest = ZERO_DIGEST
 
 
 def _u64(value: int) -> int:
@@ -620,6 +806,420 @@ def validate_lease_free_permit(value: LeaseFreePermitV1) -> None:
         raise ContractError("invalid LeaseTree free permit")
 
 
+def lease_pin_node_set_digest_v1(
+    tree_key: int,
+    tree_identity_generation: int,
+    scope_index: int,
+    scope_generation: int,
+    members: Sequence[LeasePinMemberV1],
+) -> int:
+    _u32(scope_index)
+    _u64s(
+        tree_key,
+        tree_identity_generation,
+        scope_generation,
+    )
+    if (
+        tree_key == 0
+        or tree_identity_generation == 0
+        or scope_index == NO_LEASE_NODE
+        or scope_generation == 0
+        or len(members) == 0
+        or len(members) > MAXIMUM_LEASE_PIN_NODES
+    ):
+        raise ContractError("invalid LeaseTree pin member set")
+    result = _mix64(LEASE_PIN_MEMBER_DOMAIN ^ tree_key)
+    for scalar in (
+        tree_identity_generation,
+        scope_index,
+        scope_generation,
+        len(members),
+    ):
+        result = _mix64(result ^ scalar)
+    seen = set()
+    for ordinal, member in enumerate(members):
+        _u32(member.node_index)
+        _u32(member.reserved)
+        _u64s(member.node_generation, member.node_integrity)
+        identity = (member.node_index, member.node_generation)
+        if (
+            member.node_index == NO_LEASE_NODE
+            or member.reserved != 0
+            or member.node_generation == 0
+            or member.node_integrity == 0
+            or identity in seen
+        ):
+            raise ContractError("invalid LeaseTree pin member")
+        seen.add(identity)
+        for scalar in (
+            ordinal,
+            member.node_index,
+            member.reserved,
+            member.node_generation,
+            member.node_integrity,
+        ):
+            result = _mix64(result ^ scalar)
+    return result
+
+
+def _lease_pin_slot_integrity(
+    parent: ResourceReceiptV1,
+    pin_slot_index: int,
+    value: LeasePinSlotV1,
+) -> int:
+    allocation.validate_resource_receipt(parent)
+    _u32(pin_slot_index)
+    _u32(value.receipt_slot_index)
+    _u32(value.scope_index)
+    _u32(value.node_count)
+    _u64s(
+        value.tree_key,
+        value.tree_identity_generation,
+        value.tree_generation,
+        value.structural_revision,
+        value.generation,
+        value.completion_generation,
+        value.request_epoch,
+        value.session_id,
+        value.sequence,
+        value.owner_key,
+        value.scope_generation,
+        value.node_set_digest,
+        *value.claim.values(),
+    )
+    if value.node_count != len(value.members):
+        raise ContractError("pin slot member count mismatch")
+    result = _mix64(
+        LEASE_PIN_SLOT_DOMAIN ^ parent.integrity
+    )
+    for scalar in (
+        int(value.active),
+        pin_slot_index,
+        value.receipt_slot_index,
+        value.tree_key,
+        value.tree_identity_generation,
+        value.tree_generation,
+        value.structural_revision,
+        value.generation,
+        value.completion_generation,
+        value.request_epoch,
+        value.session_id,
+        value.sequence,
+        value.owner_key,
+        value.scope_index,
+        value.scope_generation,
+        value.node_count,
+    ) + value.claim.values() + (value.node_set_digest,):
+        result = _mix64(result ^ scalar)
+    for ordinal, member in enumerate(value.members):
+        for scalar in (
+            ordinal,
+            member.node_index,
+            member.reserved,
+            member.node_generation,
+            member.node_integrity,
+        ):
+            result = _mix64(result ^ scalar)
+    return result
+
+
+def seal_lease_pin_slot(
+    parent: ResourceReceiptV1,
+    pin_slot_index: int,
+    value: LeasePinSlotV1,
+) -> LeasePinSlotV1:
+    if value.integrity != 0:
+        raise ContractError("LeaseTree pin slot is already sealed")
+    result = replace(
+        value,
+        integrity=_lease_pin_slot_integrity(
+            parent,
+            pin_slot_index,
+            value,
+        ),
+    )
+    validate_lease_pin_slot(parent, pin_slot_index, result)
+    return result
+
+
+def validate_lease_pin_slot(
+    parent: ResourceReceiptV1,
+    pin_slot_index: int,
+    value: LeasePinSlotV1,
+) -> None:
+    allocation.validate_resource_receipt(parent)
+    _u32(pin_slot_index)
+    _u32(value.receipt_slot_index)
+    _u32(value.scope_index)
+    _u32(value.node_count)
+    _u64s(
+        value.tree_key,
+        value.tree_identity_generation,
+        value.tree_generation,
+        value.structural_revision,
+        value.generation,
+        value.completion_generation,
+        value.request_epoch,
+        value.session_id,
+        value.sequence,
+        value.owner_key,
+        value.scope_generation,
+        value.node_set_digest,
+        value.integrity,
+        *value.claim.values(),
+    )
+    if (
+        not value.active
+        or pin_slot_index == NO_LEASE_NODE
+        or value.receipt_slot_index != parent.slot_index
+        or value.tree_key == 0
+        or value.tree_identity_generation == 0
+        or value.tree_generation == 0
+        or value.structural_revision == 0
+        or value.generation == 0
+        or value.generation > U64_MAX - 2
+        or value.tree_generation != value.generation + 1
+        or value.completion_generation != value.generation + 2
+        or value.request_epoch == 0
+        or value.session_id == 0
+        or value.owner_key == 0
+        or value.scope_index == NO_LEASE_NODE
+        or value.scope_generation == 0
+        or value.node_count == 0
+        or value.node_count > MAXIMUM_LEASE_PIN_NODES
+        or value.node_count != len(value.members)
+        or len({member.node_index for member in value.members})
+        != value.node_count
+        or _claim_is_zero(value.claim)
+        or value.node_set_digest == 0
+        or value.node_set_digest
+        != lease_pin_node_set_digest_v1(
+            value.tree_key,
+            value.tree_identity_generation,
+            value.scope_index,
+            value.scope_generation,
+            value.members,
+        )
+        or value.integrity
+        != _lease_pin_slot_integrity(
+            parent,
+            pin_slot_index,
+            value,
+        )
+    ):
+        raise ContractError("invalid LeaseTree pin slot")
+
+
+def _lease_pin_permit_integrity(
+    value: LeasePinPermitV1,
+) -> int:
+    if value.parent is None:
+        raise ContractError("pin permit parent is missing")
+    allocation.validate_resource_receipt(value.parent)
+    result = _mix64(
+        LEASE_PIN_PERMIT_INTEGRITY_DOMAIN
+        ^ value.parent.integrity
+    )
+    for scalar in (
+        value.tree_key,
+        value.tree_identity_generation,
+        value.tree_generation,
+        value.structural_revision,
+        value.pin_slot_index,
+        value.reserved,
+        value.generation,
+        value.completion_generation,
+        value.request_epoch,
+        value.session_id,
+        value.sequence,
+        value.owner_key,
+        value.scope_index,
+        value.scope_generation,
+        value.node_count,
+    ) + value.claim.values() + (value.node_set_digest,):
+        result = _mix64(result ^ _u64(scalar))
+    return result
+
+
+def seal_lease_pin_permit(
+    value: LeasePinPermitV1,
+) -> LeasePinPermitV1:
+    if value.integrity != 0:
+        raise ContractError("pin permit is already sealed")
+    result = replace(value, abi_version=LEASE_PIN_PERMIT_ABI)
+    result = replace(
+        result,
+        integrity=_lease_pin_permit_integrity(result),
+    )
+    validate_lease_pin_permit(result)
+    return result
+
+
+def validate_lease_pin_permit(
+    value: LeasePinPermitV1,
+) -> None:
+    if value.parent is None:
+        raise ContractError("pin permit parent is missing")
+    allocation.validate_resource_receipt(value.parent)
+    _u32(value.pin_slot_index)
+    _u32(value.reserved)
+    _u32(value.scope_index)
+    _u32(value.node_count)
+    _u64s(
+        value.abi_version,
+        value.tree_key,
+        value.tree_identity_generation,
+        value.tree_generation,
+        value.structural_revision,
+        value.generation,
+        value.completion_generation,
+        value.request_epoch,
+        value.session_id,
+        value.sequence,
+        value.owner_key,
+        value.scope_generation,
+        value.node_set_digest,
+        value.integrity,
+        *value.claim.values(),
+    )
+    if (
+        value.abi_version != LEASE_PIN_PERMIT_ABI
+        or value.tree_key == 0
+        or value.tree_identity_generation == 0
+        or value.tree_generation == 0
+        or value.structural_revision == 0
+        or value.pin_slot_index == NO_LEASE_NODE
+        or value.reserved != 0
+        or value.generation == 0
+        or value.generation > U64_MAX - 2
+        or value.tree_generation != value.generation + 1
+        or value.completion_generation != value.generation + 2
+        or value.request_epoch == 0
+        or value.session_id == 0
+        or value.owner_key == 0
+        or value.scope_index == NO_LEASE_NODE
+        or value.scope_generation == 0
+        or value.node_count == 0
+        or value.node_count > MAXIMUM_LEASE_PIN_NODES
+        or _claim_is_zero(value.claim)
+        or value.node_set_digest == 0
+        or value.integrity != _lease_pin_permit_integrity(value)
+    ):
+        raise ContractError("invalid LeaseTree pin permit")
+
+
+def _lease_pin_completion_integrity(
+    value: LeasePinCompletionV1,
+) -> int:
+    if value.parent is None:
+        raise ContractError("pin completion parent is missing")
+    allocation.validate_resource_receipt(value.parent)
+    result = _mix64(
+        LEASE_PIN_COMPLETION_INTEGRITY_DOMAIN
+        ^ value.parent.integrity
+    )
+    for scalar in (
+        value.tree_key,
+        value.tree_identity_generation,
+        value.pin_slot_index,
+        value.reserved,
+        value.permit_generation,
+        value.completion_generation,
+        value.request_epoch,
+        value.session_id,
+        value.sequence,
+        value.owner_key,
+        value.scope_index,
+        value.scope_generation,
+        value.node_count,
+    ) + value.claim.values() + (
+        value.node_set_digest,
+        value.permit_integrity,
+        value.completion_tree_generation,
+        value.completion_structural_revision,
+        value.completion_state_digest,
+        value.completion_tree_integrity,
+    ):
+        result = _mix64(result ^ _u64(scalar))
+    return result
+
+
+def seal_lease_pin_completion(
+    value: LeasePinCompletionV1,
+) -> LeasePinCompletionV1:
+    if value.integrity != 0:
+        raise ContractError("pin completion is already sealed")
+    result = replace(value, abi_version=LEASE_PIN_COMPLETION_ABI)
+    result = replace(
+        result,
+        integrity=_lease_pin_completion_integrity(result),
+    )
+    validate_lease_pin_completion(result)
+    return result
+
+
+def validate_lease_pin_completion(
+    value: LeasePinCompletionV1,
+) -> None:
+    if value.parent is None:
+        raise ContractError("pin completion parent is missing")
+    allocation.validate_resource_receipt(value.parent)
+    _u32(value.pin_slot_index)
+    _u32(value.reserved)
+    _u32(value.scope_index)
+    _u32(value.node_count)
+    _u64s(
+        value.abi_version,
+        value.tree_key,
+        value.tree_identity_generation,
+        value.permit_generation,
+        value.completion_generation,
+        value.request_epoch,
+        value.session_id,
+        value.sequence,
+        value.owner_key,
+        value.scope_generation,
+        value.node_set_digest,
+        value.permit_integrity,
+        value.completion_tree_generation,
+        value.completion_structural_revision,
+        value.completion_state_digest,
+        value.completion_tree_integrity,
+        value.integrity,
+        *value.claim.values(),
+    )
+    if (
+        value.abi_version != LEASE_PIN_COMPLETION_ABI
+        or value.tree_key == 0
+        or value.tree_identity_generation == 0
+        or value.pin_slot_index == NO_LEASE_NODE
+        or value.reserved != 0
+        or value.permit_generation == 0
+        or value.permit_generation > U64_MAX - 2
+        or value.completion_generation
+        != value.permit_generation + 2
+        or value.request_epoch == 0
+        or value.session_id == 0
+        or value.owner_key == 0
+        or value.scope_index == NO_LEASE_NODE
+        or value.scope_generation == 0
+        or value.node_count == 0
+        or value.node_count > MAXIMUM_LEASE_PIN_NODES
+        or _claim_is_zero(value.claim)
+        or value.node_set_digest == 0
+        or value.permit_integrity == 0
+        or value.completion_tree_generation == 0
+        or value.completion_tree_generation
+        <= value.completion_generation
+        or value.completion_structural_revision == 0
+        or value.completion_state_digest == 0
+        or value.completion_tree_integrity == 0
+        or value.integrity
+        != _lease_pin_completion_integrity(value)
+    ):
+        raise ContractError("invalid LeaseTree pin completion")
+
+
 def lease_tree_sha256_v1(value: LeaseTreeV1) -> Digest:
     if value.parent is None:
         raise ContractError("LeaseTree parent is missing")
@@ -723,6 +1323,78 @@ def lease_free_permit_sha256_v1(
             ),
             _claim_bytes(value.claim),
             _le(value.node_set_digest, value.integrity),
+        ),
+    )
+
+
+def lease_pin_permit_sha256_v1(
+    value: LeasePinPermitV1,
+) -> Digest:
+    if value.parent is None:
+        raise ContractError("pin permit parent is missing")
+    return _hash(
+        BANK_PIN_DOMAIN,
+        (
+            _le(value.abi_version),
+            allocation.resource_receipt_root(value.parent),
+            _le(
+                value.tree_key,
+                value.tree_identity_generation,
+                value.tree_generation,
+                value.structural_revision,
+                value.pin_slot_index,
+                value.reserved,
+                value.generation,
+                value.completion_generation,
+                value.request_epoch,
+                value.session_id,
+                value.sequence,
+                value.owner_key,
+                value.scope_index,
+                value.scope_generation,
+                value.node_count,
+            ),
+            _claim_bytes(value.claim),
+            _le(value.node_set_digest, value.integrity),
+        ),
+    )
+
+
+def lease_pin_completion_sha256_v1(
+    value: LeasePinCompletionV1,
+) -> Digest:
+    if value.parent is None:
+        raise ContractError("pin completion parent is missing")
+    return _hash(
+        BANK_PIN_COMPLETION_DOMAIN,
+        (
+            _le(value.abi_version),
+            allocation.resource_receipt_root(value.parent),
+            _le(
+                value.tree_key,
+                value.tree_identity_generation,
+                value.pin_slot_index,
+                value.reserved,
+                value.permit_generation,
+                value.completion_generation,
+                value.request_epoch,
+                value.session_id,
+                value.sequence,
+                value.owner_key,
+                value.scope_index,
+                value.scope_generation,
+                value.node_count,
+            ),
+            _claim_bytes(value.claim),
+            _le(
+                value.node_set_digest,
+                value.permit_integrity,
+                value.completion_tree_generation,
+                value.completion_structural_revision,
+                value.completion_state_digest,
+                value.completion_tree_integrity,
+                value.integrity,
+            ),
         ),
     )
 
@@ -1477,6 +2149,766 @@ def validate_terminal_v1(
         raise ContractError("invalid LeaseTree allocation terminal")
 
 
+def dispatch_owner_key_v1(
+    coordinator_epoch: int,
+    allocation_generation: int,
+    dispatch_generation: int,
+    dispatch_request_sha256: Digest,
+) -> int:
+    root = _hash(
+        DISPATCH_OWNER_DOMAIN,
+        (
+            _le(
+                coordinator_epoch,
+                allocation_generation,
+                dispatch_generation,
+            ),
+            _digest(dispatch_request_sha256),
+        ),
+    )
+    value = struct.unpack("<Q", root[:8])[0]
+    return 1 if value == 0 else value
+
+
+def dispatch_publication_binding_sha256_v1(
+    parent: ResourceReceiptV1,
+    request_epoch: int,
+    session_id: int,
+    sequence: int,
+) -> Digest:
+    allocation.validate_resource_receipt(parent)
+    return _hash(
+        DISPATCH_PUBLICATION_DOMAIN,
+        (
+            allocation.resource_receipt_root(parent),
+            _le(request_epoch, session_id, sequence),
+        ),
+    )
+
+
+def dispatch_pin_root_v1(
+    value: LeaseTreeDispatchPinV1,
+) -> Digest:
+    return _hash(
+        DISPATCH_PIN_DOMAIN,
+        (
+            _le(
+                value.abi_version,
+                value.coordinator_epoch,
+                value.allocation_generation,
+                value.dispatch_generation,
+            ),
+            _digest(value.authority_sha256),
+            _digest(value.dispatch_authority_sha256),
+            _digest(value.queue_authority_sha256),
+            _digest(value.request_sha256),
+            _digest(value.admission_sha256),
+            _digest(value.lease_sha256),
+            _digest(value.parent_receipt_sha256),
+            _digest(value.allocation_leaf_set_sha256),
+            _digest(value.backend_object_set_sha256),
+            _digest(value.dispatch_request_sha256),
+            _digest(value.publication_binding_sha256),
+            _digest(value.bank_pin_sha256),
+            lease_tree_sha256_v1(value.pinned_tree),
+            lease_node_sha256_v1(value.scope),
+            _le(value.allocation_count, value.pinned_device_bytes),
+        ),
+    )
+
+
+def validate_dispatch_pin_v1(
+    value: LeaseTreeDispatchPinV1,
+) -> None:
+    _u64s(
+        value.abi_version,
+        value.coordinator_epoch,
+        value.allocation_generation,
+        value.dispatch_generation,
+        value.allocation_count,
+        value.pinned_device_bytes,
+    )
+    roots = (
+        value.authority_sha256,
+        value.dispatch_authority_sha256,
+        value.queue_authority_sha256,
+        value.request_sha256,
+        value.admission_sha256,
+        value.lease_sha256,
+        value.parent_receipt_sha256,
+        value.allocation_leaf_set_sha256,
+        value.backend_object_set_sha256,
+        value.dispatch_request_sha256,
+        value.publication_binding_sha256,
+        value.bank_pin_sha256,
+        value.pin_sha256,
+    )
+    for root in roots:
+        _digest(root)
+    validate_lease_tree(value.pinned_tree)
+    if (
+        value.abi_version != DISPATCH_PIN_ABI
+        or value.coordinator_epoch == 0
+        or value.allocation_generation == 0
+        or value.dispatch_generation == 0
+        or any(root == ZERO_DIGEST for root in roots)
+        or value.dispatch_authority_sha256
+        == value.queue_authority_sha256
+        or not _tree_scope_binding_valid(
+            value.pinned_tree,
+            value.scope,
+            value.parent_receipt_sha256,
+        )
+        or value.allocation_count == 0
+        or value.allocation_count > MAXIMUM_ALLOCATIONS
+        or value.pinned_device_bytes == 0
+        or value.pinned_device_bytes < value.allocation_count
+        or value.pinned_device_bytes
+        != value.scope.ceiling.device_bytes
+        or value.pinned_tree.active_nodes
+        < value.allocation_count + 1
+        or value.pinned_tree.current.device_bytes
+        < value.pinned_device_bytes
+        or value.pin_sha256 != dispatch_pin_root_v1(value)
+    ):
+        raise ContractError("invalid LeaseTree dispatch pin")
+
+
+def _dispatch_terminal_root_pair_valid(
+    outcome: int,
+    submission_sha256: Digest,
+    backend_completion_sha256: Digest,
+    output_sha256: Digest,
+) -> bool:
+    if outcome == DISPATCH_SUCCEEDED:
+        return (
+            submission_sha256 != ZERO_DIGEST
+            and backend_completion_sha256 != ZERO_DIGEST
+            and output_sha256 != ZERO_DIGEST
+        )
+    if outcome in (
+        DISPATCH_TERMINAL_FAILURE,
+        DISPATCH_CANCELLED_AFTER_SUBMIT,
+    ):
+        return (
+            submission_sha256 != ZERO_DIGEST
+            and backend_completion_sha256 != ZERO_DIGEST
+            and output_sha256 == ZERO_DIGEST
+        )
+    if outcome in (
+        DISPATCH_CANCELLED_BEFORE_SUBMIT,
+        DISPATCH_REJECTED_BEFORE_SUBMIT,
+    ):
+        return (
+            submission_sha256 == ZERO_DIGEST
+            and backend_completion_sha256 == ZERO_DIGEST
+            and output_sha256 == ZERO_DIGEST
+        )
+    return False
+
+
+def dispatch_terminal_root_v1(
+    value: DispatchTerminalEvidenceV1,
+) -> Digest:
+    return _hash(
+        DISPATCH_TERMINAL_DOMAIN,
+        (
+            _le(
+                value.abi_version,
+                value.outcome,
+                value.dispatch_generation,
+            ),
+            _digest(value.dispatch_authority_sha256),
+            _digest(value.queue_authority_sha256),
+            _digest(value.pin_sha256),
+            _digest(value.dispatch_request_sha256),
+            _digest(value.submission_sha256),
+            _digest(value.backend_completion_sha256),
+            _digest(value.output_sha256),
+        ),
+    )
+
+
+def make_dispatch_terminal_v1(
+    pin: LeaseTreeDispatchPinV1,
+    outcome: int,
+    submission_sha256: Digest,
+    backend_completion_sha256: Digest,
+    output_sha256: Digest,
+) -> DispatchTerminalEvidenceV1:
+    validate_dispatch_pin_v1(pin)
+    result = DispatchTerminalEvidenceV1(
+        outcome=outcome,
+        dispatch_generation=pin.dispatch_generation,
+        dispatch_authority_sha256=pin.dispatch_authority_sha256,
+        queue_authority_sha256=pin.queue_authority_sha256,
+        pin_sha256=pin.pin_sha256,
+        dispatch_request_sha256=pin.dispatch_request_sha256,
+        submission_sha256=_digest(submission_sha256),
+        backend_completion_sha256=_digest(
+            backend_completion_sha256
+        ),
+        output_sha256=_digest(output_sha256),
+    )
+    result = replace(
+        result,
+        terminal_sha256=dispatch_terminal_root_v1(result),
+    )
+    validate_dispatch_terminal_v1(result)
+    return result
+
+
+def validate_dispatch_terminal_v1(
+    value: DispatchTerminalEvidenceV1,
+) -> None:
+    _u64s(
+        value.abi_version,
+        value.outcome,
+        value.dispatch_generation,
+    )
+    roots = (
+        value.dispatch_authority_sha256,
+        value.queue_authority_sha256,
+        value.pin_sha256,
+        value.dispatch_request_sha256,
+        value.submission_sha256,
+        value.backend_completion_sha256,
+        value.output_sha256,
+        value.terminal_sha256,
+    )
+    for root in roots:
+        _digest(root)
+    if (
+        value.abi_version != DISPATCH_TERMINAL_ABI
+        or value.outcome not in VALID_DISPATCH_OUTCOMES
+        or value.dispatch_generation == 0
+        or value.dispatch_authority_sha256 == ZERO_DIGEST
+        or value.queue_authority_sha256 == ZERO_DIGEST
+        or value.dispatch_authority_sha256
+        == value.queue_authority_sha256
+        or value.pin_sha256 == ZERO_DIGEST
+        or value.dispatch_request_sha256 == ZERO_DIGEST
+        or not _dispatch_terminal_root_pair_valid(
+            value.outcome,
+            value.submission_sha256,
+            value.backend_completion_sha256,
+            value.output_sha256,
+        )
+        or value.terminal_sha256 == ZERO_DIGEST
+        or value.terminal_sha256
+        != dispatch_terminal_root_v1(value)
+    ):
+        raise ContractError("invalid dispatch terminal evidence")
+
+
+def validate_dispatch_terminal_for_pin_v1(
+    terminal: DispatchTerminalEvidenceV1,
+    pin: LeaseTreeDispatchPinV1,
+) -> None:
+    validate_dispatch_terminal_v1(terminal)
+    validate_dispatch_pin_v1(pin)
+    if (
+        terminal.dispatch_generation != pin.dispatch_generation
+        or terminal.dispatch_authority_sha256
+        != pin.dispatch_authority_sha256
+        or terminal.queue_authority_sha256
+        != pin.queue_authority_sha256
+        or terminal.pin_sha256 != pin.pin_sha256
+        or terminal.dispatch_request_sha256
+        != pin.dispatch_request_sha256
+    ):
+        raise ContractError("dispatch terminal does not bind pin")
+
+
+def dispatch_completion_root_v1(
+    value: LeaseTreeDispatchCompletionV1,
+) -> Digest:
+    return _hash(
+        DISPATCH_COMPLETION_DOMAIN,
+        (
+            _le(
+                value.abi_version,
+                value.outcome,
+                value.coordinator_epoch,
+                value.allocation_generation,
+                value.dispatch_generation,
+            ),
+            _digest(value.pin_sha256),
+            _digest(value.dispatch_terminal_sha256),
+            _digest(value.submission_sha256),
+            _digest(value.backend_completion_sha256),
+            _digest(value.output_sha256),
+            _digest(value.bank_completion_sha256),
+            _digest(
+                value.completion_publication_binding_sha256
+            ),
+            lease_tree_sha256_v1(value.completed_tree),
+            lease_node_sha256_v1(value.scope),
+        ),
+    )
+
+
+def validate_dispatch_completion_v1(
+    value: LeaseTreeDispatchCompletionV1,
+) -> None:
+    _u64s(
+        value.abi_version,
+        value.outcome,
+        value.coordinator_epoch,
+        value.allocation_generation,
+        value.dispatch_generation,
+    )
+    roots = (
+        value.pin_sha256,
+        value.dispatch_terminal_sha256,
+        value.submission_sha256,
+        value.backend_completion_sha256,
+        value.output_sha256,
+        value.bank_completion_sha256,
+        value.completion_publication_binding_sha256,
+        value.completion_sha256,
+    )
+    for root in roots:
+        _digest(root)
+    validate_lease_tree(value.completed_tree)
+    parent_sha256 = (
+        allocation.resource_receipt_root(value.completed_tree.parent)
+        if value.completed_tree.parent is not None
+        else ZERO_DIGEST
+    )
+    if (
+        value.abi_version != DISPATCH_COMPLETION_ABI
+        or value.outcome not in VALID_DISPATCH_OUTCOMES
+        or value.coordinator_epoch == 0
+        or value.allocation_generation == 0
+        or value.dispatch_generation == 0
+        or value.pin_sha256 == ZERO_DIGEST
+        or value.dispatch_terminal_sha256 == ZERO_DIGEST
+        or not _dispatch_terminal_root_pair_valid(
+            value.outcome,
+            value.submission_sha256,
+            value.backend_completion_sha256,
+            value.output_sha256,
+        )
+        or value.bank_completion_sha256 == ZERO_DIGEST
+        or value.completion_publication_binding_sha256
+        == ZERO_DIGEST
+        or not _tree_scope_binding_valid(
+            value.completed_tree,
+            value.scope,
+            parent_sha256,
+        )
+        or value.completed_tree.current.device_bytes
+        < value.scope.ceiling.device_bytes
+        or value.completion_sha256 == ZERO_DIGEST
+        or value.completion_sha256
+        != dispatch_completion_root_v1(value)
+    ):
+        raise ContractError("invalid LeaseTree dispatch completion")
+
+
+def validate_dispatch_completion_for_pin_v1(
+    completion: LeaseTreeDispatchCompletionV1,
+    pin: LeaseTreeDispatchPinV1,
+    terminal: DispatchTerminalEvidenceV1,
+) -> None:
+    validate_dispatch_completion_v1(completion)
+    validate_dispatch_terminal_for_pin_v1(terminal, pin)
+    if (
+        completion.outcome != terminal.outcome
+        or completion.coordinator_epoch != pin.coordinator_epoch
+        or completion.allocation_generation
+        != pin.allocation_generation
+        or completion.dispatch_generation != pin.dispatch_generation
+        or completion.pin_sha256 != pin.pin_sha256
+        or completion.dispatch_terminal_sha256
+        != terminal.terminal_sha256
+        or completion.submission_sha256
+        != terminal.submission_sha256
+        or completion.backend_completion_sha256
+        != terminal.backend_completion_sha256
+        or completion.output_sha256 != terminal.output_sha256
+        or completion.completion_publication_binding_sha256
+        != pin.publication_binding_sha256
+        or completion.scope != pin.scope
+        or completion.completed_tree.parent
+        != pin.pinned_tree.parent
+        or completion.completed_tree.tree_key
+        != pin.pinned_tree.tree_key
+        or completion.completed_tree.identity_generation
+        != pin.pinned_tree.identity_generation
+        or completion.completed_tree.authority_key
+        != pin.pinned_tree.authority_key
+        or completion.completed_tree.ceiling
+        != pin.pinned_tree.ceiling
+        or completion.completed_tree.generation
+        <= pin.pinned_tree.generation
+        or completion.completed_tree.structural_revision
+        <= pin.pinned_tree.structural_revision
+        or completion.completed_tree.active_nodes
+        < pin.allocation_count + 1
+    ):
+        raise ContractError("dispatch completion does not bind pin")
+
+
+def validate_lease_pin_slot_for_permit_v1(
+    slot: LeasePinSlotV1,
+    permit: LeasePinPermitV1,
+) -> None:
+    if permit.parent is None:
+        raise ContractError("pin permit parent is missing")
+    validate_lease_pin_permit(permit)
+    validate_lease_pin_slot(
+        permit.parent,
+        permit.pin_slot_index,
+        slot,
+    )
+    if (
+        slot.receipt_slot_index != permit.parent.slot_index
+        or slot.tree_key != permit.tree_key
+        or slot.tree_identity_generation
+        != permit.tree_identity_generation
+        or slot.tree_generation != permit.tree_generation
+        or slot.structural_revision != permit.structural_revision
+        or slot.generation != permit.generation
+        or slot.completion_generation
+        != permit.completion_generation
+        or slot.request_epoch != permit.request_epoch
+        or slot.session_id != permit.session_id
+        or slot.sequence != permit.sequence
+        or slot.owner_key != permit.owner_key
+        or slot.scope_index != permit.scope_index
+        or slot.scope_generation != permit.scope_generation
+        or slot.node_count != permit.node_count
+        or slot.claim != permit.claim
+        or slot.node_set_digest != permit.node_set_digest
+    ):
+        raise ContractError("pin registry slot does not bind permit")
+
+
+def validate_bank_pin_binding_v1(
+    pinned_tree: LeaseTreeV1,
+    permit: LeasePinPermitV1,
+    admission: LeaseTreeAllocationAdmissionV1,
+    lease: LeaseTreeDeviceAllocationLeaseV1,
+) -> None:
+    validate_lease_pin_permit(permit)
+    validate_lease_tree(pinned_tree)
+    validate_admission_v1(admission)
+    validate_lease_v1(lease)
+    source = lease.materialized_tree
+    exact_claim = ClaimV1(device_bytes=lease.materialized_bytes)
+    if (
+        permit.parent != pinned_tree.parent
+        or pinned_tree.parent != source.parent
+        or pinned_tree.tree_key != permit.tree_key
+        or pinned_tree.tree_key != source.tree_key
+        or pinned_tree.authority_key != source.authority_key
+        or pinned_tree.identity_generation
+        != permit.tree_identity_generation
+        or pinned_tree.identity_generation
+        != source.identity_generation
+        or pinned_tree.generation != permit.tree_generation
+        or pinned_tree.generation <= source.generation
+        or pinned_tree.structural_revision
+        != permit.structural_revision
+        or pinned_tree.structural_revision
+        <= source.structural_revision
+        or pinned_tree.ceiling != source.ceiling
+        or admission.parent_receipt_sha256
+        != allocation.resource_receipt_root(permit.parent)
+        or permit.scope_index != admission.scope.node_index
+        or permit.scope_generation != admission.scope.generation
+        or permit.node_count != lease.allocation_count
+        or permit.claim != exact_claim
+    ):
+        raise ContractError("Bank pin does not bind allocation lease")
+
+
+def validate_dispatch_pin_for_lease_v1(
+    pin: LeaseTreeDispatchPinV1,
+    admission: LeaseTreeAllocationAdmissionV1,
+    lease: LeaseTreeDeviceAllocationLeaseV1,
+    permit: LeasePinPermitV1,
+) -> None:
+    validate_dispatch_pin_v1(pin)
+    validate_bank_pin_binding_v1(
+        pin.pinned_tree,
+        permit,
+        admission,
+        lease,
+    )
+    if (
+        lease.coordinator_epoch != admission.coordinator_epoch
+        or lease.generation != admission.generation
+        or lease.authority_sha256 != admission.authority_sha256
+        or lease.request_sha256 != admission.request_sha256
+        or lease.admission_sha256 != admission.admission_sha256
+        or lease.parent_receipt_sha256
+        != admission.parent_receipt_sha256
+        or lease.allocation_leaf_set_sha256
+        != admission.allocation_leaf_set_sha256
+        or pin.coordinator_epoch != admission.coordinator_epoch
+        or pin.allocation_generation != admission.generation
+        or pin.authority_sha256 != admission.authority_sha256
+        or pin.request_sha256 != admission.request_sha256
+        or pin.admission_sha256 != admission.admission_sha256
+        or pin.lease_sha256 != lease.lease_sha256
+        or pin.parent_receipt_sha256
+        != admission.parent_receipt_sha256
+        or pin.allocation_leaf_set_sha256
+        != admission.allocation_leaf_set_sha256
+        or pin.backend_object_set_sha256
+        != lease.backend_object_set_sha256
+        or pin.scope != admission.scope
+        or pin.allocation_count != lease.allocation_count
+        or pin.pinned_device_bytes != lease.materialized_bytes
+        or permit.owner_key
+        != dispatch_owner_key_v1(
+            pin.coordinator_epoch,
+            pin.allocation_generation,
+            pin.dispatch_generation,
+            pin.dispatch_request_sha256,
+        )
+        or pin.publication_binding_sha256
+        != dispatch_publication_binding_sha256_v1(
+            permit.parent,
+            permit.request_epoch,
+            permit.session_id,
+            permit.sequence,
+        )
+        or pin.bank_pin_sha256
+        != lease_pin_permit_sha256_v1(permit)
+    ):
+        raise ContractError("dispatch pin does not bind allocation lease")
+
+
+def validate_bank_completion_binding_v1(
+    completed_tree: LeaseTreeV1,
+    bank_completion: LeasePinCompletionV1,
+    pin: LeaseTreeDispatchPinV1,
+    permit: LeasePinPermitV1,
+) -> None:
+    validate_lease_pin_completion(bank_completion)
+    validate_lease_pin_permit(permit)
+    validate_dispatch_pin_v1(pin)
+    validate_lease_tree(completed_tree)
+    source = pin.pinned_tree
+    exact_claim = ClaimV1(device_bytes=pin.pinned_device_bytes)
+    if (
+        bank_completion.parent != completed_tree.parent
+        or bank_completion.parent != permit.parent
+        or completed_tree.parent != source.parent
+        or permit.parent != source.parent
+        or completed_tree.tree_key != bank_completion.tree_key
+        or bank_completion.tree_key != permit.tree_key
+        or completed_tree.tree_key != source.tree_key
+        or permit.tree_key != source.tree_key
+        or completed_tree.authority_key != source.authority_key
+        or completed_tree.identity_generation
+        != bank_completion.tree_identity_generation
+        or bank_completion.tree_identity_generation
+        != permit.tree_identity_generation
+        or completed_tree.identity_generation
+        != source.identity_generation
+        or permit.tree_identity_generation
+        != source.identity_generation
+        or permit.tree_generation != source.generation
+        or permit.structural_revision
+        != source.structural_revision
+        or completed_tree.generation
+        != bank_completion.completion_tree_generation
+        or completed_tree.generation <= source.generation
+        or completed_tree.structural_revision
+        <= source.structural_revision
+        or completed_tree.structural_revision
+        != bank_completion.completion_structural_revision
+        or completed_tree.ceiling != source.ceiling
+        or completed_tree.state_digest
+        != bank_completion.completion_state_digest
+        or completed_tree.integrity
+        != bank_completion.completion_tree_integrity
+        or pin.parent_receipt_sha256
+        != allocation.resource_receipt_root(bank_completion.parent)
+        or pin.bank_pin_sha256
+        != lease_pin_permit_sha256_v1(permit)
+        or pin.publication_binding_sha256
+        != dispatch_publication_binding_sha256_v1(
+            permit.parent,
+            permit.request_epoch,
+            permit.session_id,
+            permit.sequence,
+        )
+        or permit.owner_key
+        != dispatch_owner_key_v1(
+            pin.coordinator_epoch,
+            pin.allocation_generation,
+            pin.dispatch_generation,
+            pin.dispatch_request_sha256,
+        )
+        or bank_completion.pin_slot_index
+        != permit.pin_slot_index
+        or bank_completion.reserved != permit.reserved
+        or bank_completion.permit_generation != permit.generation
+        or bank_completion.completion_generation
+        != permit.completion_generation
+        or bank_completion.request_epoch != permit.request_epoch
+        or bank_completion.session_id != permit.session_id
+        or bank_completion.sequence != permit.sequence
+        or bank_completion.owner_key != permit.owner_key
+        or bank_completion.scope_index != permit.scope_index
+        or bank_completion.scope_generation
+        != permit.scope_generation
+        or bank_completion.node_count != permit.node_count
+        or bank_completion.claim != permit.claim
+        or bank_completion.node_set_digest
+        != permit.node_set_digest
+        or bank_completion.permit_integrity != permit.integrity
+        or bank_completion.scope_index != pin.scope.node_index
+        or bank_completion.scope_generation != pin.scope.generation
+        or bank_completion.node_count != pin.allocation_count
+        or bank_completion.claim != exact_claim
+    ):
+        raise ContractError("Bank completion does not bind dispatch pin")
+
+
+def validate_dispatch_completion_for_bank_v1(
+    completion: LeaseTreeDispatchCompletionV1,
+    pin: LeaseTreeDispatchPinV1,
+    terminal: DispatchTerminalEvidenceV1,
+    permit: LeasePinPermitV1,
+    bank_completion: LeasePinCompletionV1,
+) -> None:
+    validate_dispatch_completion_for_pin_v1(
+        completion,
+        pin,
+        terminal,
+    )
+    validate_bank_completion_binding_v1(
+        completion.completed_tree,
+        bank_completion,
+        pin,
+        permit,
+    )
+    if (
+        completion.bank_completion_sha256
+        != lease_pin_completion_sha256_v1(bank_completion)
+        or completion.completion_publication_binding_sha256
+        != dispatch_publication_binding_sha256_v1(
+            bank_completion.parent,
+            bank_completion.request_epoch,
+            bank_completion.session_id,
+            bank_completion.sequence,
+        )
+    ):
+        raise ContractError("dispatch completion does not bind Bank")
+
+
+def make_dispatch_pin_v1(
+    admission: LeaseTreeAllocationAdmissionV1,
+    lease: LeaseTreeDeviceAllocationLeaseV1,
+    pinned_tree: LeaseTreeV1,
+    permit: LeasePinPermitV1,
+    dispatch_generation: int,
+    dispatch_authority_sha256: Digest,
+    queue_authority_sha256: Digest,
+    dispatch_request_sha256: Digest,
+) -> LeaseTreeDispatchPinV1:
+    result = LeaseTreeDispatchPinV1(
+        coordinator_epoch=admission.coordinator_epoch,
+        allocation_generation=admission.generation,
+        dispatch_generation=dispatch_generation,
+        authority_sha256=admission.authority_sha256,
+        dispatch_authority_sha256=_digest(
+            dispatch_authority_sha256
+        ),
+        queue_authority_sha256=_digest(queue_authority_sha256),
+        request_sha256=admission.request_sha256,
+        admission_sha256=admission.admission_sha256,
+        lease_sha256=lease.lease_sha256,
+        parent_receipt_sha256=admission.parent_receipt_sha256,
+        allocation_leaf_set_sha256=(
+            admission.allocation_leaf_set_sha256
+        ),
+        backend_object_set_sha256=lease.backend_object_set_sha256,
+        dispatch_request_sha256=_digest(
+            dispatch_request_sha256
+        ),
+        publication_binding_sha256=(
+            dispatch_publication_binding_sha256_v1(
+                permit.parent,
+                permit.request_epoch,
+                permit.session_id,
+                permit.sequence,
+            )
+            if permit.parent is not None
+            else ZERO_DIGEST
+        ),
+        bank_pin_sha256=lease_pin_permit_sha256_v1(permit),
+        pinned_tree=pinned_tree,
+        scope=admission.scope,
+        allocation_count=lease.allocation_count,
+        pinned_device_bytes=lease.materialized_bytes,
+    )
+    result = replace(result, pin_sha256=dispatch_pin_root_v1(result))
+    validate_dispatch_pin_for_lease_v1(
+        result,
+        admission,
+        lease,
+        permit,
+    )
+    return result
+
+
+def make_dispatch_completion_v1(
+    pin: LeaseTreeDispatchPinV1,
+    terminal: DispatchTerminalEvidenceV1,
+    completed_tree: LeaseTreeV1,
+    permit: LeasePinPermitV1,
+    bank_completion: LeasePinCompletionV1,
+) -> LeaseTreeDispatchCompletionV1:
+    result = LeaseTreeDispatchCompletionV1(
+        outcome=terminal.outcome,
+        coordinator_epoch=pin.coordinator_epoch,
+        allocation_generation=pin.allocation_generation,
+        dispatch_generation=pin.dispatch_generation,
+        pin_sha256=pin.pin_sha256,
+        dispatch_terminal_sha256=terminal.terminal_sha256,
+        submission_sha256=terminal.submission_sha256,
+        backend_completion_sha256=(
+            terminal.backend_completion_sha256
+        ),
+        output_sha256=terminal.output_sha256,
+        bank_completion_sha256=(
+            lease_pin_completion_sha256_v1(bank_completion)
+        ),
+        completion_publication_binding_sha256=(
+            dispatch_publication_binding_sha256_v1(
+                bank_completion.parent,
+                bank_completion.request_epoch,
+                bank_completion.session_id,
+                bank_completion.sequence,
+            )
+            if bank_completion.parent is not None
+            else ZERO_DIGEST
+        ),
+        completed_tree=completed_tree,
+        scope=pin.scope,
+    )
+    result = replace(
+        result,
+        completion_sha256=dispatch_completion_root_v1(result),
+    )
+    validate_dispatch_completion_for_bank_v1(
+        result,
+        pin,
+        terminal,
+        permit,
+        bank_completion,
+    )
+    return result
+
+
 @dataclass(frozen=True)
 class _RuntimeNode:
     node: LeaseNodeV1
@@ -1527,6 +2959,7 @@ def _tree_state_digest(
     pending_claim: ClaimV1,
     pending_digest: int,
     nodes: Sequence[_RuntimeNode],
+    pin_slots: Sequence[Tuple[int, LeasePinSlotV1]] = (),
 ) -> int:
     result = _mix64(LEASE_TREE_STATE_DOMAIN ^ tree_key)
     for scalar in (
@@ -1557,6 +2990,29 @@ def _tree_state_digest(
         result = _mix64(result ^ runtime.published_references)
         for scalar in runtime.subtree_claim.values():
             result = _mix64(result ^ scalar)
+    prior_pin_index = None
+    has_active_pins = False
+    for pin_index, pin_slot in pin_slots:
+        _u32(pin_index)
+        if prior_pin_index is not None and pin_index <= prior_pin_index:
+            raise ContractError("pin slots are not physically ordered")
+        prior_pin_index = pin_index
+        if (
+            not pin_slot.active
+            or pin_slot.tree_identity_generation
+            != identity_generation
+        ):
+            continue
+        if not has_active_pins:
+            result = _mix64(result ^ LEASE_PIN_STATE_DOMAIN)
+            has_active_pins = True
+        for scalar in (
+            pin_index,
+            pin_slot.generation,
+            pin_slot.node_set_digest,
+            pin_slot.integrity,
+        ):
+            result = _mix64(result ^ scalar)
     return result
 
 
@@ -1579,7 +3035,13 @@ def _make_tree_state(
     pending_claim: ClaimV1,
     pending_digest: int,
     nodes: Sequence[_RuntimeNode],
+    pin_slots: Sequence[Tuple[int, LeasePinSlotV1]] = (),
 ) -> LeaseTreeV1:
+    matching_pin_slots = tuple(
+        (pin_index, pin_slot)
+        for pin_index, pin_slot in pin_slots
+        if pin_slot.receipt_slot_index == parent.slot_index
+    )
     state_digest = _tree_state_digest(
         tree_key,
         identity_generation,
@@ -1596,6 +3058,7 @@ def _make_tree_state(
         pending_claim,
         pending_digest,
         nodes,
+        matching_pin_slots,
     )
     return seal_lease_tree(
         LeaseTreeV1(
@@ -2073,4 +3536,288 @@ def make_campaign() -> LeaseTreeCampaignV1:
         recovery_free_2=recovery_free_2,
         recovery_settlement_2=recovery_settlement_2,
         terminal_release_2=terminal_release_2,
+    )
+
+
+@dataclass(frozen=True)
+class LeaseTreeDispatchCampaignV1:
+    allocation_campaign: LeaseTreeCampaignV1
+    dispatch_generation: int
+    dispatch_authority_sha256: Digest
+    queue_authority_sha256: Digest
+    dispatch_request_sha256: Digest
+    submission_sha256: Digest
+    backend_completion_sha256: Digest
+    output_sha256: Digest
+    owner_key: int
+    members: Tuple[LeasePinMemberV1, ...]
+    pin_slot: LeasePinSlotV1
+    permit: LeasePinPermitV1
+    pinned_tree: LeaseTreeV1
+    pin: LeaseTreeDispatchPinV1
+    terminal: DispatchTerminalEvidenceV1
+    completed_tree: LeaseTreeV1
+    bank_completion: LeasePinCompletionV1
+    completion: LeaseTreeDispatchCompletionV1
+
+
+def make_dispatch_campaign() -> LeaseTreeDispatchCampaignV1:
+    """Branch from the materialized lease into one pinned queue dispatch."""
+
+    campaign = make_campaign()
+    fixture = campaign.allocation_fixture
+    parent = fixture.parent
+    lease = campaign.lease_2
+    source_tree = campaign.materialized_tree_2
+    scope = campaign.scope
+    leaves = campaign.leaves_2
+    claim = ClaimV1(device_bytes=lease.materialized_bytes)
+    dispatch_generation = 1
+    dispatch_authority_sha256 = allocation.digest_v1(
+        b"LeaseTree dispatch authority"
+    )
+    queue_authority_sha256 = allocation.digest_v1(
+        b"LeaseTree queue authority"
+    )
+    dispatch_request_sha256 = allocation.digest_v1(
+        b"LeaseTree dispatch request"
+    )
+    submission_sha256 = allocation.digest_v1(
+        b"LeaseTree dispatch submission"
+    )
+    backend_completion_sha256 = allocation.digest_v1(
+        b"LeaseTree dispatch backend completion"
+    )
+    output_sha256 = allocation.digest_v1(
+        b"LeaseTree dispatch output"
+    )
+    owner_key = dispatch_owner_key_v1(
+        campaign.coordinator_epoch,
+        lease.generation,
+        dispatch_generation,
+        dispatch_request_sha256,
+    )
+    members = tuple(
+        LeasePinMemberV1(
+            node_index=leaf.node_index,
+            node_generation=leaf.generation,
+            node_integrity=leaf.integrity,
+        )
+        for leaf in leaves
+    )
+    node_set_digest = lease_pin_node_set_digest_v1(
+        source_tree.tree_key,
+        source_tree.identity_generation,
+        scope.node_index,
+        scope.generation,
+        members,
+    )
+
+    permit_generation = 17
+    acquired_tree_generation = 18
+    completion_generation = 19
+    pin_slot_index = 0
+    acquired_structural_revision = (
+        source_tree.structural_revision + 1
+    )
+    pin_slot = seal_lease_pin_slot(
+        parent,
+        pin_slot_index,
+        LeasePinSlotV1(
+            active=True,
+            receipt_slot_index=parent.slot_index,
+            tree_key=source_tree.tree_key,
+            tree_identity_generation=(
+                source_tree.identity_generation
+            ),
+            tree_generation=acquired_tree_generation,
+            structural_revision=acquired_structural_revision,
+            generation=permit_generation,
+            completion_generation=completion_generation,
+            request_epoch=fixture.request.request_epoch,
+            session_id=campaign.session_id,
+            sequence=campaign.publication_sequence,
+            owner_key=owner_key,
+            scope_index=scope.node_index,
+            scope_generation=scope.generation,
+            node_count=len(members),
+            claim=claim,
+            node_set_digest=node_set_digest,
+            members=members,
+        ),
+    )
+    pinned_nodes = (
+        _RuntimeNode(
+            node=scope,
+            state=NODE_STATE_LIVE,
+            pending_generation=0,
+            subtree_claim=claim,
+        ),
+    ) + tuple(
+        _RuntimeNode(
+            node=leaf,
+            state=NODE_STATE_LIVE,
+            pending_generation=0,
+            subtree_claim=leaf.claim,
+            pin_count=1,
+        )
+        for leaf in leaves
+    )
+    pinned_tree = _make_tree_state(
+        parent,
+        source_tree.tree_key,
+        source_tree.authority_key,
+        source_tree.identity_generation,
+        acquired_tree_generation,
+        acquired_structural_revision,
+        source_tree.ceiling,
+        source_tree.current,
+        PENDING_NONE,
+        0,
+        0,
+        0,
+        0,
+        NO_LEASE_NODE,
+        0,
+        ClaimV1(),
+        0,
+        pinned_nodes,
+        ((pin_slot_index, pin_slot),),
+    )
+    permit = seal_lease_pin_permit(
+        LeasePinPermitV1(
+            parent=parent,
+            tree_key=pinned_tree.tree_key,
+            tree_identity_generation=(
+                pinned_tree.identity_generation
+            ),
+            tree_generation=pinned_tree.generation,
+            structural_revision=pinned_tree.structural_revision,
+            pin_slot_index=pin_slot_index,
+            generation=permit_generation,
+            completion_generation=completion_generation,
+            request_epoch=fixture.request.request_epoch,
+            session_id=campaign.session_id,
+            sequence=campaign.publication_sequence,
+            owner_key=owner_key,
+            scope_index=scope.node_index,
+            scope_generation=scope.generation,
+            node_count=len(members),
+            claim=claim,
+            node_set_digest=node_set_digest,
+        )
+    )
+    validate_lease_pin_slot_for_permit_v1(pin_slot, permit)
+    pin = make_dispatch_pin_v1(
+        campaign.admission_2,
+        lease,
+        pinned_tree,
+        permit,
+        dispatch_generation,
+        dispatch_authority_sha256,
+        queue_authority_sha256,
+        dispatch_request_sha256,
+    )
+    terminal = make_dispatch_terminal_v1(
+        pin,
+        DISPATCH_SUCCEEDED,
+        submission_sha256,
+        backend_completion_sha256,
+        output_sha256,
+    )
+
+    completed_structural_revision = (
+        pinned_tree.structural_revision + 1
+    )
+    completed_tree_generation = 20
+    completed_nodes = (
+        _RuntimeNode(
+            node=scope,
+            state=NODE_STATE_LIVE,
+            pending_generation=0,
+            subtree_claim=claim,
+        ),
+    ) + tuple(
+        _RuntimeNode(
+            node=leaf,
+            state=NODE_STATE_LIVE,
+            pending_generation=0,
+            subtree_claim=leaf.claim,
+        )
+        for leaf in leaves
+    )
+    completed_tree = _make_tree_state(
+        parent,
+        pinned_tree.tree_key,
+        pinned_tree.authority_key,
+        pinned_tree.identity_generation,
+        completed_tree_generation,
+        completed_structural_revision,
+        pinned_tree.ceiling,
+        pinned_tree.current,
+        PENDING_NONE,
+        0,
+        0,
+        0,
+        0,
+        NO_LEASE_NODE,
+        0,
+        ClaimV1(),
+        0,
+        completed_nodes,
+    )
+    bank_completion = seal_lease_pin_completion(
+        LeasePinCompletionV1(
+            parent=parent,
+            tree_key=permit.tree_key,
+            tree_identity_generation=(
+                permit.tree_identity_generation
+            ),
+            pin_slot_index=permit.pin_slot_index,
+            permit_generation=permit.generation,
+            completion_generation=permit.completion_generation,
+            request_epoch=permit.request_epoch,
+            session_id=permit.session_id,
+            sequence=permit.sequence,
+            owner_key=permit.owner_key,
+            scope_index=permit.scope_index,
+            scope_generation=permit.scope_generation,
+            node_count=permit.node_count,
+            claim=permit.claim,
+            node_set_digest=permit.node_set_digest,
+            permit_integrity=permit.integrity,
+            completion_tree_generation=completed_tree.generation,
+            completion_structural_revision=(
+                completed_tree.structural_revision
+            ),
+            completion_state_digest=completed_tree.state_digest,
+            completion_tree_integrity=completed_tree.integrity,
+        )
+    )
+    completion = make_dispatch_completion_v1(
+        pin,
+        terminal,
+        completed_tree,
+        permit,
+        bank_completion,
+    )
+    return LeaseTreeDispatchCampaignV1(
+        allocation_campaign=campaign,
+        dispatch_generation=dispatch_generation,
+        dispatch_authority_sha256=dispatch_authority_sha256,
+        queue_authority_sha256=queue_authority_sha256,
+        dispatch_request_sha256=dispatch_request_sha256,
+        submission_sha256=submission_sha256,
+        backend_completion_sha256=backend_completion_sha256,
+        output_sha256=output_sha256,
+        owner_key=owner_key,
+        members=members,
+        pin_slot=pin_slot,
+        permit=permit,
+        pinned_tree=pinned_tree,
+        pin=pin,
+        terminal=terminal,
+        completed_tree=completed_tree,
+        bank_completion=bank_completion,
+        completion=completion,
     )

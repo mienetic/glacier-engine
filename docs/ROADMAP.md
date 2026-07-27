@@ -30,15 +30,15 @@ evidence. The plane and model-family sequence is specified in the
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, two-process resume, and a three-generation prepared-text source-live/source-exited/terminal authority chain | Production model/tokenizer state, generation-one source recovery, acknowledged target progress, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes; R0 registry complete and R1a/R1b/R1c/R1d/R1e/R1f/R1g/R1h-a/R1h-b plus the durable handoff slice integrated experimentally | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, an exact-identity serial greedy prepared-text session with plan-derived atomic start, Common Model Contract request-profile binding, total-versus-request claim projection for shared read-only artifact residency, fixed-length terminal results, canonical non-terminal state, same-process rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, and a five-object canonical restart archive with exact source exit, exclusive POSIX lease, one-shot target activation, fresh-process resume, generation-three terminal selection, and terminal-semantic oracle comparison; plus admission, scheduling, continuation, provider, media, package, C verifier, and retained-reference inspector surfaces | Recover source death before generation-two publication; add an idempotent durable result sink and acknowledged progress generation for target-crash replay; complete request-shape accounting, raw-text tokenizer identity, variable-length results, non-blocking startup, stable APIs, production fixtures, native multi-OS validation, GPU/device continuation, physical resource integration, and distribution |
-| Device runtime | Portable selection integrated; fake and native Metal allocation ownership implemented through receipt-bound ChildLease and execution-owned LeaseTree paths; one native Metal readiness binding | Pointer-free capability selection; adapter-quoted multi-buffer manifests; exact adapter-quoted charge-before-allocate accounting (logical `MTLBuffer.length` for Metal V1); additive LeaseTree reserve/materialize/FreePermit lifecycle with conservative phase-specific recovery and sibling-scope isolation; generation-fenced fake and real-Metal object sets; direct per-resource Metal length/`allocatedSize` observation; native Metal fingerprint revalidation; and asymmetric partial-edge FP16 tiled matmul CPU-oracle correctness | Dispatch-to-allocation lifetime pins; optional post-creation `MTLResource.allocatedSize` settlement and separate residency authority; device-loss quarantine/recovery; multi-device partitioning/scheduling; direct telemetry; performance evidence; retained device ranges; and native support beyond the tested host |
+| Device runtime | Portable selection, fake/native allocation ownership, and bounded dispatch-to-allocation lifetime fencing integrated; native Metal readiness and pinned-dispatch bindings implemented | Pointer-free capability selection; adapter-quoted multi-buffer manifests; exact logical charge-before-allocate accounting; additive LeaseTree reserve/materialize/FreePermit recovery; fixed-capacity exact object-set pins; terminal-evidence completion fencing; out-of-order pin completion; real four-buffer Metal dispatch under a live pin with CPU-oracle correctness; generation-fenced object sets; per-resource length/`allocatedSize` observation; and native fingerprint revalidation | Optional post-creation `MTLResource.allocatedSize` settlement and separate residency authority; device-loss quarantine/recovery; asynchronous and multi-device partitioning/scheduling; direct telemetry; performance evidence; retained device ranges; and native support beyond the tested host |
 | Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, validated bounded lossless delivery profiles for retained image/audio/video shapes, a typed pure-tool transaction fixture, a durable POSIX external-action handoff fixture, and a bounded same-process fake dispatch/status authority; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, tool-authorization, ActionOutbox, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, live provider-backed and OS-isolated dispatch/status adapters, production generative-media adapters and broader formats, additional replay profiles, agents/retrieval, and specialized families |
 | Multimodal execution | Model-free runtime, scheduler-coupled final-quantum transactions, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, deterministic source-model/materializer replay, and vision/audio/video fixtures integrated; bounded canonical PNG/WAVE/APNG profiles and their additive format sidecar integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, a canonical typed-admission construction path, transition and format-evidence sidecars, strict lossless emit-and-accept modules, real two-generation PNG/WAVE/APNG registry-transition-format fixtures, an independent composed Python oracle, and optional format-aware read-only inspection without changing earlier V1 wires | Production encoder/container adapters and broader profiles, additional model/materializer profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, and physical playback/display and quality evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated; outer inspection prototype | Crash-recoverable journal, compact evidence join, and a deterministic read-only inspector for outer framing/checksum and self-asserted fields | Optional caller-supplied nested-composition inspection, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, target-specific affected-path selection with named core/CPU/durable/device/host-tool profiles, a complete consumer compile closure, and full per-target fallback, one shared DAG per selected target, a CLI-only default install with opt-in benchmarks, full production/benchmark/test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Separate durable POSIX authority from the transitional core; promote verification profiles into distributable products; add native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; then add mobile lifecycle gates and a reduced edge profile |
-| Benchmark evidence | Prototype with W5a, a bounded Linux host source, native macOS Metal diagnostic readiness, and native allocation ownership integrated | Paired harnesses, machine envelope, fixed native-observation ABI, stable source identity separate from event provenance, nonzero unavailable-reason identity with no present-reason identity, fail-closed family-neutral runner, independent reference verification, a shared bounded macOS host observer, a strict bounded Linux `MemAvailable` adapter with cross-host parser/model tests, one fixed correctness-gated Metal dispatch with command-buffer timestamps and explicit unsupported telemetry, and a separate real-buffer ownership gate with context/stale-token fencing and an independent shim registry | Retained native Linux and Metal artifacts; direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters; plus reproducible native machines |
-| Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, W5a, and bounded W5b Linux-source and macOS Metal readiness implementations integrated; W4b and W5 remain open | Portable pressure, typed workloads, external-action handoff, deterministic storage faults, real host process-death recovery, and a download-free three-profile/six-item observation reference now retain explicit machine-state availability, stable source and per-event provenance, nonzero unavailable-reason identity with no present-reason identity, host/device planes, per-record sample-clock identity, value-clock identity only for present time metrics, fail-closed pre-admission, post-run contamination, fallback, correctness, and zero-orphan evidence without relabeling logical steps as native timing; the host JSON seam adds checked bounded Linux available-memory parsing, the native Metal readiness gate performs exactly one fixed 37x64 INT4 dispatch, and a separately serialized ownership gate exercises real direct buffers without making a dispatch or performance claim | Remaining W4 profiles; retained native Linux and Metal observer evidence; direct physical CPU/GPU adapters; W6 native reports; W7 soak/disruption; and W8 native multi-OS replication |
+| Benchmark evidence | Prototype with W5a, a bounded Linux host source, native macOS Metal diagnostic readiness, and native allocation/pinned-dispatch ownership integrated | Paired harnesses, machine envelope, fixed native-observation ABI, stable source identity separate from event provenance, nonzero unavailable-reason identity with no present-reason identity, fail-closed family-neutral runner, independent reference verification, a shared bounded macOS host observer, a strict bounded Linux `MemAvailable` adapter with cross-host parser/model tests, one fixed readiness Metal dispatch with command-buffer timestamps and explicit unsupported telemetry, and a separate real-buffer ownership gate with exact dispatch pins, CPU-oracle correctness, context/stale-token fencing, and an independent shim registry | Retained native Linux and Metal artifacts; direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters; plus reproducible native machines |
+| Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, W5a, and bounded W5b Linux-source and macOS Metal readiness implementations integrated; W4b and W5 remain open | Portable pressure, typed workloads, external-action handoff, deterministic storage faults, real host process-death recovery, and a download-free three-profile/six-item observation reference now retain explicit machine-state availability, stable source and per-event provenance, nonzero unavailable-reason identity with no present-reason identity, host/device planes, per-record sample-clock identity, value-clock identity only for present time metrics, fail-closed pre-admission, post-run contamination, fallback, correctness, and zero-orphan evidence without relabeling logical steps as native timing; the host JSON seam adds checked bounded Linux available-memory parsing, the native Metal readiness gate performs exactly one fixed 37x64 INT4 dispatch, and a separately serialized ownership gate performs one exact four-buffer pinned dispatch without making a performance claim | Remaining W4 profiles; retained native Linux and Metal observer evidence; direct physical CPU/GPU adapters; W6 native reports; W7 soak/disruption; and W8 native multi-OS replication |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
 ## P0 — Open-source usability
@@ -278,10 +278,20 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
 - [x] Add a dedicated additive LeaseTree allocation coordinator with exact
   reserve/materialize/FreePermit recovery, shared-tree/session fencing,
   exclusive-scope validation, sibling isolation, and native Metal composition.
-- [ ] Bind dispatch/queue lifetime to the LeaseTree-owned object set, then add
-  residency as a separate authority, device-loss quarantine/recovery,
-  multi-device partitioning and scheduling, direct device telemetry, retained
-  performance evidence, and advertised native device support matrices.
+- [x] Bind dispatch lifetime to the exact LeaseTree-owned object set with
+  bounded Bank pin storage, private permit custody, terminal-evidence
+  completion, release fencing, overlapping out-of-order completion, an
+  independent Python oracle, and one real four-buffer Metal dispatch.
+- [ ] Add residency as a separate authority, device-loss
+  quarantine/recovery, asynchronous and multi-device partitioning/scheduling,
+  direct device telemetry, retained performance evidence, and advertised
+  native device support matrices.
+- [ ] Add pin-aware Snapshot V4 capacity/activity telemetry, reduce repeated
+  full-tree validation inside the Bank lock, and reserve explicit completion
+  headroom before generation or structural-revision exhaustion.
+- [ ] Add a bounded pre-submit validation/rejection transition so
+  backend-specific malformed geometry can consume a newly acquired pin without
+  entering native submission or requiring device-loss reconciliation.
 - [ ] Split `core-contract`, CPU runtime, durable runtime, device runtime, CLI,
   mobile library, reduced edge profile, and host-only tools in the build graph.
 - [ ] Finish replacing direct durable-file calls with bounded recovery
@@ -824,7 +834,8 @@ Goal: let a sealed plan select CPU and accelerator capabilities explicitly.
 
 Status: **portable capability fingerprint and deterministic selection
 integrated; native Metal binding integrated for readiness and for both
-ChildLease and LeaseTree allocation ownership**.
+ChildLease and LeaseTree allocation ownership; exact dispatch-lifetime pinning
+integrated through one hardware-backed Metal composition gate**.
 `DeviceCapabilityV1`, canonical inventory entries, plan-bound requirements, and
 selection receipts choose a compatible present entry without allocation or
 resource/scheduler mutation. Canonical profiles prevent independent aggregate
@@ -850,11 +861,12 @@ Completed slices:
 - ~~dedicated additive LeaseTree allocation ownership with whole-wave reserve,
   ordered materialization, private FreePermit recovery, sibling-scope
   isolation, native Metal composition, and cancellation rollback.~~
+- ~~bounded exact object-set dispatch pins with private Bank permits,
+  terminal-evidence completion, release fencing, out-of-order settlement, and
+  a real four-buffer Metal dispatch checked against a CPU oracle.~~
 
 Next slices:
 
-- dispatch and queue/command lifetime binding for the LeaseTree-owned object
-  set;
 - optional reserve/materialize/settle accounting when the post-creation
   `MTLResource.allocatedSize` observation rather than logical resource length
   must be charged;
@@ -871,15 +883,18 @@ The selection receipt still grants no allocation, queue, dispatch, residency,
 or publication authority. The fake coordinator tests prove deterministic
 lifecycle/accounting semantics. The Metal gate owns real resources through
 both the receipt-bound ChildLease and execution-owned additive LeaseTree paths
-inside its exact adapter context, but does not bind a dispatch or command queue
-to those resources and does not establish residency. The LeaseTree coordinator
-shares address-stable tree and publication-sequence pointers with its
-surrounding owner; that owner must externally serialize coordinator calls with
-every other mutation of those shared values.
+inside its exact adapter context. Its pinned-dispatch case binds four exact
+objects to one synchronous command and prevents release until terminal
+completion is consumed; it does not establish residency, general asynchronous
+queue scheduling, or transfer ownership. The LeaseTree coordinator shares
+address-stable tree and publication-sequence pointers with its surrounding
+owner; that owner must externally serialize coordinator calls with every other
+mutation of those shared values.
 Cross-compilation remains source/build evidence rather than native device or
 operating-system support. See
 [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md),
-[LeaseTree Device Allocation](LEASE_TREE_DEVICE_ALLOCATION.md), and the
+[LeaseTree Device Allocation](LEASE_TREE_DEVICE_ALLOCATION.md),
+[Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md), and the
 [native Metal adapter](NATIVE_METAL_ALLOCATION.md).
 
 ## P2 — Serving and isolation

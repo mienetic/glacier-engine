@@ -226,6 +226,41 @@ static GlacierMetalBufferAllocation** glacier_metal_buffer_link_locked(
     return *link ? link : NULL;
 }
 
+// Validate one exact registry resource while the device registry lock is held.
+// Returning the allocation is safe only until the caller leaves the lock; a
+// copied strong MTLBuffer reference remains valid independently afterward.
+static GlacierMetalBufferAllocation*
+glacier_metal_buffer_exact_locked(
+    GlacierMetalContext* ctx,
+    const GlacierMetalBufferToken* token,
+    uint64_t required_length)
+{
+    if (!ctx || !token || token->generation == 0 ||
+        required_length == 0)
+        return NULL;
+    GlacierMetalBufferAllocation** link =
+        glacier_metal_buffer_link_locked(ctx, token);
+    if (!link)
+        return NULL;
+    GlacierMetalBufferAllocation* allocation = *link;
+    if (allocation->owner != ctx || !allocation->buffer ||
+        allocation->device_registry_id != ctx->device.registryID ||
+        allocation->requested_length != required_length ||
+        allocation->resource_length != required_length ||
+        allocation->allocated_size < required_length ||
+        allocation->buffer.device.registryID !=
+            allocation->device_registry_id ||
+        (uint64_t)allocation->buffer.length !=
+            allocation->resource_length ||
+        (uint64_t)allocation->buffer.allocatedSize !=
+            allocation->allocated_size ||
+        allocation->buffer.storageMode != MTLStorageModeShared ||
+        allocation->buffer.cpuCacheMode !=
+            MTLCPUCacheModeDefaultCache)
+        return NULL;
+    return allocation;
+}
+
 // Pipelines are independent operation capabilities. Resolve and cache each one
 // only when requested so a context remains usable when unrelated functions are
 // absent from a valid metallib.
@@ -828,6 +863,210 @@ int glacier_metal_int4_weight_read_output(
         return 1;
     memcpy(output, weight->output.contents,
         (uint64_t)weight->out_features * sizeof(float));
+    return 0;
+}
+
+// Dispatch using four exact resources owned by the native allocation registry.
+// Host output is intentionally absent: Zig validates the completed observation
+// before invoking glacier_metal_int4_registered_output_read.
+int glacier_metal_int4_registered_buffers_observed(
+    GlacierMetalContext* ctx,
+    const GlacierMetalBufferToken* packed_token,
+    const GlacierMetalBufferToken* scales_token,
+    const GlacierMetalBufferToken* input_token,
+    const GlacierMetalBufferToken* output_token,
+    const uint8_t* packed,
+    uint64_t packed_bytes,
+    const float* scales,
+    uint64_t scale_count,
+    const float* input,
+    uint64_t input_count,
+    uint32_t group_size,
+    uint32_t in_features,
+    uint32_t out_features,
+    GlacierMetalDispatchObservation* observation)
+{
+    if (observation) {
+        memset(observation, 0, sizeof(*observation));
+        observation->abi_version = GLACIER_METAL_DISPATCH_ABI;
+    }
+    if (!ctx || !ctx->device || !ctx->queue || !ctx->library ||
+        !packed_token || !scales_token || !input_token ||
+        !output_token || !packed || !scales || !input ||
+        !observation || group_size == 0 ||
+        (group_size & (group_size - 1)) != 0 ||
+        in_features == 0 || out_features == 0 ||
+        packed_token->generation == 0 ||
+        scales_token->generation == 0 ||
+        input_token->generation == 0 ||
+        output_token->generation == 0)
+        return 1;
+    if (glacier_metal_nonce_is_zero(packed_token->context_nonce) ||
+        memcmp(
+            packed_token->context_nonce,
+            scales_token->context_nonce,
+            sizeof(packed_token->context_nonce)) != 0 ||
+        memcmp(
+            packed_token->context_nonce,
+            input_token->context_nonce,
+            sizeof(packed_token->context_nonce)) != 0 ||
+        memcmp(
+            packed_token->context_nonce,
+            output_token->context_nonce,
+            sizeof(packed_token->context_nonce)) != 0)
+        return 1;
+    if (memcmp(packed_token, scales_token, sizeof(*packed_token)) == 0 ||
+        memcmp(packed_token, input_token, sizeof(*packed_token)) == 0 ||
+        memcmp(packed_token, output_token, sizeof(*packed_token)) == 0 ||
+        memcmp(scales_token, input_token, sizeof(*packed_token)) == 0 ||
+        memcmp(scales_token, output_token, sizeof(*packed_token)) == 0 ||
+        memcmp(input_token, output_token, sizeof(*packed_token)) == 0)
+        return 1;
+
+    const uint64_t elements =
+        (uint64_t)in_features * (uint64_t)out_features;
+    if (elements > UINT32_MAX)
+        return 1;
+    const uint64_t required_packed = (elements + 1) / 2;
+    const uint64_t required_scales =
+        (elements + group_size - 1) / group_size;
+    const uint64_t scales_bytes =
+        required_scales * sizeof(float);
+    const uint64_t input_bytes =
+        (uint64_t)in_features * sizeof(float);
+    const uint64_t output_bytes =
+        (uint64_t)out_features * sizeof(float);
+    if (packed_bytes != required_packed ||
+        scale_count != required_scales ||
+        input_count != in_features)
+        return 1;
+
+    id<MTLBuffer> packed_buffer = nil;
+    id<MTLBuffer> scales_buffer = nil;
+    id<MTLBuffer> input_buffer = nil;
+    id<MTLBuffer> output_buffer = nil;
+    void* packed_contents = NULL;
+    void* scales_contents = NULL;
+    void* input_contents = NULL;
+    @try {
+        @synchronized (ctx->device) {
+            GlacierMetalBufferAllocation* packed_allocation =
+                glacier_metal_buffer_exact_locked(
+                    ctx, packed_token, required_packed);
+            GlacierMetalBufferAllocation* scales_allocation =
+                glacier_metal_buffer_exact_locked(
+                    ctx, scales_token, scales_bytes);
+            GlacierMetalBufferAllocation* input_allocation =
+                glacier_metal_buffer_exact_locked(
+                    ctx, input_token, input_bytes);
+            GlacierMetalBufferAllocation* output_allocation =
+                glacier_metal_buffer_exact_locked(
+                    ctx, output_token, output_bytes);
+            if (!packed_allocation || !scales_allocation ||
+                !input_allocation || !output_allocation)
+                return 2;
+            packed_buffer = packed_allocation->buffer;
+            scales_buffer = scales_allocation->buffer;
+            input_buffer = input_allocation->buffer;
+            output_buffer = output_allocation->buffer;
+            packed_contents = packed_buffer.contents;
+            scales_contents = scales_buffer.contents;
+            input_contents = input_buffer.contents;
+            if (!packed_contents || !scales_contents ||
+                !input_contents || !output_buffer.contents)
+                return 2;
+        }
+    } @catch (NSException* exception) {
+        (void)exception;
+        return 2;
+    }
+
+    id<MTLComputePipelineState> pipeline =
+        glacier_metal_get_int4_matvec_pipeline(ctx);
+    if (!pipeline || pipeline.threadExecutionWidth == 0)
+        return 3;
+
+    observation->current_allocated_before =
+        ctx->device.currentAllocatedSize;
+    memcpy(packed_contents, packed, required_packed);
+    memcpy(scales_contents, scales, scales_bytes);
+    memcpy(input_contents, input, input_bytes);
+    struct {
+        uint32_t in_features;
+        uint32_t out_features;
+        uint32_t group_size;
+        uint32_t group_shift;
+    } dims = {
+        in_features,
+        out_features,
+        group_size,
+        __builtin_ctz(group_size),
+    };
+
+    id<MTLCommandBuffer> cb = [ctx->queue commandBuffer];
+    if (!cb)
+        return 4;
+    id<MTLComputeCommandEncoder> enc =
+        [cb computeCommandEncoder];
+    if (!enc)
+        return 4;
+    [enc setComputePipelineState:pipeline];
+    [enc setBuffer:packed_buffer offset:0 atIndex:0];
+    [enc setBuffer:scales_buffer offset:0 atIndex:1];
+    [enc setBuffer:input_buffer offset:0 atIndex:2];
+    [enc setBuffer:output_buffer offset:0 atIndex:3];
+    [enc setBytes:&dims length:sizeof(dims) atIndex:4];
+
+    const NSUInteger width = pipeline.threadExecutionWidth;
+    [enc dispatchThreadgroups:MTLSizeMake(out_features, 1, 1)
+         threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
+    [enc endEncoding];
+    [cb commit];
+    [cb waitUntilCompleted];
+    observation->current_allocated_after =
+        ctx->device.currentAllocatedSize;
+    observation->gpu_start_time = cb.GPUStartTime;
+    observation->gpu_end_time = cb.GPUEndTime;
+    observation->command_status = (uint32_t)cb.status;
+    if (cb.status != MTLCommandBufferStatusCompleted)
+        return 5;
+    return 0;
+}
+
+int glacier_metal_int4_registered_output_read(
+    GlacierMetalContext* ctx,
+    const GlacierMetalBufferToken* output_token,
+    float* output,
+    uint64_t output_count)
+{
+    if (!ctx || !ctx->device || !output_token || !output ||
+        output_count == 0 ||
+        output_count > UINT64_MAX / sizeof(float))
+        return 1;
+    const uint64_t output_bytes =
+        output_count * sizeof(float);
+    if (output_bytes > SIZE_MAX)
+        return 1;
+
+    id<MTLBuffer> output_buffer = nil;
+    void* output_contents = NULL;
+    @try {
+        @synchronized (ctx->device) {
+            GlacierMetalBufferAllocation* allocation =
+                glacier_metal_buffer_exact_locked(
+                    ctx, output_token, output_bytes);
+            if (!allocation)
+                return 2;
+            output_buffer = allocation->buffer;
+            output_contents = output_buffer.contents;
+            if (!output_contents)
+                return 2;
+        }
+    } @catch (NSException* exception) {
+        (void)exception;
+        return 2;
+    }
+    memcpy(output, output_contents, (size_t)output_bytes);
     return 0;
 }
 

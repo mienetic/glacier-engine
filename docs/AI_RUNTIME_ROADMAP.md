@@ -149,8 +149,13 @@ source, mapping, optional scratch, and output regions now receive distinct
 `LeaseTree` allocations; provisional regions retire early after commit and all
 paths return ownership to zero. The scheduled-media path additionally adopts
 the exact admission receipt instead of reserving again, then performs one
-failure-atomic bound close and release. Production weight paging and complete
-device/network accounting remain planned.
+failure-atomic bound close and release. The device path now reserves complete
+adapter-quoted waves before allocation, retains private FreePermit recovery,
+and can pin the exact live object set across a bounded dispatch. One native
+Metal gate creates four real buffers, submits only those pinned resources,
+checks output against a CPU oracle, and releases them only after terminal
+completion. Physical residency, device-loss recovery, and production weight
+paging remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
 cancellation returns the declared delta, and measured physical counters are
@@ -569,7 +574,10 @@ reporting:
    start/end timestamps while checking correctness, ownership, no fallback, and
    root composition. `recommendedMaxWorkingSetSize` is capacity context only;
    direct utilization, committed/resident bytes, queue depth, power, thermal,
-   frequency, and energy remain unsupported. See
+   frequency, and energy remain unsupported. A separate native allocation gate
+   performs one four-buffer hardware-backed dispatch while an exact LeaseTree
+   pin fences release, then compares output with a CPU oracle and closes all
+   ownership. Neither native gate is a performance benchmark. See
    [Native Observation Contract](NATIVE_OBSERVATION.md).
 
    **W5b readiness progress — implemented, milestone open.** A successful
@@ -1360,5 +1368,6 @@ Every slice should state its accepted inputs, maximum resources, authority,
 rejection paths, evidence command, and nonclaims. See
 [Contributor Projects](PROJECTS.md),
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md),
-[Device Allocation Lease](DEVICE_ALLOCATION_LEASE.md), and
+[Device Allocation Lease](DEVICE_ALLOCATION_LEASE.md),
+[Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md), and
 [Evidence Policy](EVIDENCE_POLICY.md).

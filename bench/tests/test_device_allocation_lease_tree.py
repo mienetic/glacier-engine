@@ -10,6 +10,7 @@ from bench import device_allocation_lease_tree as tree
 class DeviceAllocationLeaseTreeOracleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.campaign = tree.make_campaign()
+        self.dispatch = tree.make_dispatch_campaign()
 
     def test_literal_golden_roots_cover_complete_tree_composition(
         self,
@@ -779,6 +780,1423 @@ class DeviceAllocationLeaseTreeOracleTests(unittest.TestCase):
         tree.validate_recovery_v1(campaign.recovery_settlement_2)
         tree.validate_terminal_v1(campaign.terminal_cancel_1)
         tree.validate_terminal_v1(campaign.terminal_release_2)
+
+    def test_dispatch_literal_goldens_cover_private_and_public_layers(
+        self,
+    ) -> None:
+        campaign = self.dispatch
+        actual = {
+            "owner_key": f"{campaign.owner_key:016x}",
+            "node_set_digest": (
+                f"{campaign.permit.node_set_digest:016x}"
+            ),
+            "pin_slot_integrity": (
+                f"{campaign.pin_slot.integrity:016x}"
+            ),
+            "permit_integrity": (
+                f"{campaign.permit.integrity:016x}"
+            ),
+            "permit_sha256": tree.lease_pin_permit_sha256_v1(
+                campaign.permit
+            ).hex(),
+            "pinned_state_digest": (
+                f"{campaign.pinned_tree.state_digest:016x}"
+            ),
+            "pinned_tree_integrity": (
+                f"{campaign.pinned_tree.integrity:016x}"
+            ),
+            "pinned_tree_sha256": tree.lease_tree_sha256_v1(
+                campaign.pinned_tree
+            ).hex(),
+            "dispatch_publication": (
+                campaign.pin.publication_binding_sha256.hex()
+            ),
+            "pin_sha256": campaign.pin.pin_sha256.hex(),
+            "terminal_sha256": campaign.terminal.terminal_sha256.hex(),
+            "completed_state_digest": (
+                f"{campaign.completed_tree.state_digest:016x}"
+            ),
+            "completed_tree_integrity": (
+                f"{campaign.completed_tree.integrity:016x}"
+            ),
+            "completed_tree_sha256": tree.lease_tree_sha256_v1(
+                campaign.completed_tree
+            ).hex(),
+            "bank_completion_integrity": (
+                f"{campaign.bank_completion.integrity:016x}"
+            ),
+            "bank_completion_sha256": (
+                tree.lease_pin_completion_sha256_v1(
+                    campaign.bank_completion
+                ).hex()
+            ),
+            "completion_publication": (
+                campaign.completion
+                .completion_publication_binding_sha256.hex()
+            ),
+            "completion_sha256": (
+                campaign.completion.completion_sha256.hex()
+            ),
+        }
+        expected = {
+            "owner_key": "1c07aa9dc5188257",
+            "node_set_digest": "02b67c2b909cd08a",
+            "pin_slot_integrity": "9ceb6915a74db67d",
+            "permit_integrity": "596b83b5db4cac13",
+            "permit_sha256": (
+                "c5564e2a5c384045114415840ebd066f"
+                "5f02722832a2cd913a76e09c47bf6ffd"
+            ),
+            "pinned_state_digest": "26641bdd59211036",
+            "pinned_tree_integrity": "534f1bde6edcc150",
+            "pinned_tree_sha256": (
+                "1c1eaf56f228ba78a22fc63efd4c0d90"
+                "7341f6956c53ca2a0a848e73b2752412"
+            ),
+            "dispatch_publication": (
+                "1248e6c72b4450976473bff890f6e3eb"
+                "4a0a5f4ffa42474e84b0d03072080b3f"
+            ),
+            "pin_sha256": (
+                "2d9b5c285f548afcc5d94c74c2cd8bb8"
+                "20ef9735a1b3023ac0f43b896ea93dcc"
+            ),
+            "terminal_sha256": (
+                "d2beeff27770569cd4d3b95cae39431a"
+                "d092f7a99ba35f75ab5ed7c2073f9e2a"
+            ),
+            "completed_state_digest": "758b1f6f12e2814b",
+            "completed_tree_integrity": "37e1404800691921",
+            "completed_tree_sha256": (
+                "cbfe82c46465013a683fd0306e592cb0"
+                "21fc75bad5c1a4c0849824f37b6a58af"
+            ),
+            "bank_completion_integrity": "85bedbfca0b4309b",
+            "bank_completion_sha256": (
+                "c8db4b240da276a4574d5e1086a81742"
+                "86a74510f7d60e07f8cb12a3f07f0cae"
+            ),
+            "completion_publication": (
+                "1248e6c72b4450976473bff890f6e3eb"
+                "4a0a5f4ffa42474e84b0d03072080b3f"
+            ),
+            "completion_sha256": (
+                "66c2c7cf87a0a05ec6fd7605179ffc06"
+                "95b479880340e73381cdb1f048f2205d"
+            ),
+        }
+        self.assertEqual(expected, actual)
+
+    def test_dispatch_campaign_validates_and_preserves_legacy_roots(
+        self,
+    ) -> None:
+        campaign = self.dispatch
+        self.assertEqual(
+            self.campaign,
+            campaign.allocation_campaign,
+        )
+        tree.validate_lease_pin_slot(
+            campaign.permit.parent,
+            campaign.permit.pin_slot_index,
+            campaign.pin_slot,
+        )
+        tree.validate_lease_pin_slot_for_permit_v1(
+            campaign.pin_slot,
+            campaign.permit,
+        )
+        tree.validate_lease_pin_permit(campaign.permit)
+        tree.validate_dispatch_pin_v1(campaign.pin)
+        tree.validate_dispatch_pin_for_lease_v1(
+            campaign.pin,
+            campaign.allocation_campaign.admission_2,
+            campaign.allocation_campaign.lease_2,
+            campaign.permit,
+        )
+        tree.validate_dispatch_terminal_for_pin_v1(
+            campaign.terminal,
+            campaign.pin,
+        )
+        tree.validate_lease_pin_completion(
+            campaign.bank_completion
+        )
+        tree.validate_dispatch_completion_for_bank_v1(
+            campaign.completion,
+            campaign.pin,
+            campaign.terminal,
+            campaign.permit,
+            campaign.bank_completion,
+        )
+        self.assertNotEqual(
+            campaign.allocation_campaign.materialized_tree_2.state_digest,
+            campaign.pinned_tree.state_digest,
+        )
+        self.assertNotEqual(
+            campaign.permit.node_set_digest,
+            tree.lease_pin_node_set_digest_v1(
+                campaign.pinned_tree.tree_key,
+                campaign.pinned_tree.identity_generation,
+                campaign.pin.scope.node_index,
+                campaign.pin.scope.generation,
+                tuple(reversed(campaign.members)),
+            ),
+        )
+
+    def test_dispatch_unsealed_field_tampers_fail_closed(self) -> None:
+        campaign = self.dispatch
+        parent = campaign.permit.parent
+        self.assertIsNotNone(parent)
+        assert parent is not None
+
+        slot_tampers = {
+            name: value
+            for name, value in (
+                ("active", False),
+                (
+                    "receipt_slot_index",
+                    campaign.pin_slot.receipt_slot_index + 1,
+                ),
+                ("tree_key", campaign.pin_slot.tree_key + 1),
+                (
+                    "tree_identity_generation",
+                    campaign.pin_slot.tree_identity_generation + 1,
+                ),
+                (
+                    "tree_generation",
+                    campaign.pin_slot.tree_generation + 1,
+                ),
+                (
+                    "structural_revision",
+                    campaign.pin_slot.structural_revision + 1,
+                ),
+                ("generation", campaign.pin_slot.generation + 1),
+                (
+                    "completion_generation",
+                    campaign.pin_slot.completion_generation + 1,
+                ),
+                (
+                    "request_epoch",
+                    campaign.pin_slot.request_epoch + 1,
+                ),
+                ("session_id", campaign.pin_slot.session_id + 1),
+                ("sequence", campaign.pin_slot.sequence + 1),
+                ("owner_key", campaign.pin_slot.owner_key + 1),
+                ("scope_index", campaign.pin_slot.scope_index + 1),
+                (
+                    "scope_generation",
+                    campaign.pin_slot.scope_generation + 1,
+                ),
+                ("node_count", campaign.pin_slot.node_count + 1),
+                (
+                    "claim",
+                    replace(
+                        campaign.pin_slot.claim,
+                        device_bytes=(
+                            campaign.pin_slot.claim.device_bytes + 1
+                        ),
+                    ),
+                ),
+                (
+                    "node_set_digest",
+                    campaign.pin_slot.node_set_digest ^ 1,
+                ),
+                ("integrity", campaign.pin_slot.integrity ^ 1),
+                ("members", tuple(reversed(campaign.members))),
+            )
+        }
+        self.assertEqual(
+            set(campaign.pin_slot.__dataclass_fields__),
+            set(slot_tampers),
+        )
+        for field, value in slot_tampers.items():
+            with self.subTest(pin_slot_field=field):
+                candidate = replace(
+                    campaign.pin_slot,
+                    **{field: value},
+                )
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_lease_pin_slot(
+                        parent,
+                        campaign.permit.pin_slot_index,
+                        candidate,
+                    )
+        member = campaign.members[0]
+        member_tampers = {
+            "node_index": member.node_index + 1,
+            "reserved": member.reserved + 1,
+            "node_generation": member.node_generation + 1,
+            "node_integrity": member.node_integrity ^ 1,
+        }
+        self.assertEqual(
+            set(member.__dataclass_fields__),
+            set(member_tampers),
+        )
+        for field, value in member_tampers.items():
+            with self.subTest(pin_member_field=field):
+                candidate_member = replace(
+                    member,
+                    **{field: value},
+                )
+                candidate = replace(
+                    campaign.pin_slot,
+                    members=(
+                        candidate_member,
+                        *campaign.members[1:],
+                    ),
+                )
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_lease_pin_slot(
+                        parent,
+                        campaign.permit.pin_slot_index,
+                        candidate,
+                    )
+
+        permit_tampers = {
+            "abi_version": campaign.permit.abi_version + 1,
+            "parent": replace(parent, integrity=parent.integrity ^ 1),
+            "tree_key": campaign.permit.tree_key + 1,
+            "tree_identity_generation": (
+                campaign.permit.tree_identity_generation + 1
+            ),
+            "tree_generation": campaign.permit.tree_generation + 1,
+            "structural_revision": (
+                campaign.permit.structural_revision + 1
+            ),
+            "pin_slot_index": campaign.permit.pin_slot_index + 1,
+            "reserved": campaign.permit.reserved + 1,
+            "generation": campaign.permit.generation + 1,
+            "completion_generation": (
+                campaign.permit.completion_generation + 1
+            ),
+            "request_epoch": campaign.permit.request_epoch + 1,
+            "session_id": campaign.permit.session_id + 1,
+            "sequence": campaign.permit.sequence + 1,
+            "owner_key": campaign.permit.owner_key + 1,
+            "scope_index": campaign.permit.scope_index + 1,
+            "scope_generation": (
+                campaign.permit.scope_generation + 1
+            ),
+            "node_count": campaign.permit.node_count + 1,
+            "claim": replace(
+                campaign.permit.claim,
+                device_bytes=campaign.permit.claim.device_bytes + 1,
+            ),
+            "node_set_digest": campaign.permit.node_set_digest ^ 1,
+            "integrity": campaign.permit.integrity ^ 1,
+        }
+        self.assertEqual(
+            set(campaign.permit.__dataclass_fields__),
+            set(permit_tampers),
+        )
+        for field, value in permit_tampers.items():
+            with self.subTest(permit_field=field):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_lease_pin_permit(
+                        replace(
+                            campaign.permit,
+                            **{field: value},
+                        )
+                    )
+
+        bank_completion_tampers = {
+            "abi_version": campaign.bank_completion.abi_version + 1,
+            "parent": replace(parent, integrity=parent.integrity ^ 1),
+            "tree_key": campaign.bank_completion.tree_key + 1,
+            "tree_identity_generation": (
+                campaign.bank_completion.tree_identity_generation + 1
+            ),
+            "pin_slot_index": (
+                campaign.bank_completion.pin_slot_index + 1
+            ),
+            "reserved": campaign.bank_completion.reserved + 1,
+            "permit_generation": (
+                campaign.bank_completion.permit_generation + 1
+            ),
+            "completion_generation": (
+                campaign.bank_completion.completion_generation + 1
+            ),
+            "request_epoch": (
+                campaign.bank_completion.request_epoch + 1
+            ),
+            "session_id": campaign.bank_completion.session_id + 1,
+            "sequence": campaign.bank_completion.sequence + 1,
+            "owner_key": campaign.bank_completion.owner_key + 1,
+            "scope_index": campaign.bank_completion.scope_index + 1,
+            "scope_generation": (
+                campaign.bank_completion.scope_generation + 1
+            ),
+            "node_count": campaign.bank_completion.node_count + 1,
+            "claim": replace(
+                campaign.bank_completion.claim,
+                device_bytes=(
+                    campaign.bank_completion.claim.device_bytes + 1
+                ),
+            ),
+            "node_set_digest": (
+                campaign.bank_completion.node_set_digest ^ 1
+            ),
+            "permit_integrity": (
+                campaign.bank_completion.permit_integrity ^ 1
+            ),
+            "completion_tree_generation": (
+                campaign.bank_completion.completion_tree_generation
+                + 1
+            ),
+            "completion_structural_revision": (
+                campaign.bank_completion
+                .completion_structural_revision
+                + 1
+            ),
+            "completion_state_digest": (
+                campaign.bank_completion.completion_state_digest ^ 1
+            ),
+            "completion_tree_integrity": (
+                campaign.bank_completion.completion_tree_integrity ^ 1
+            ),
+            "integrity": campaign.bank_completion.integrity ^ 1,
+        }
+        self.assertEqual(
+            set(campaign.bank_completion.__dataclass_fields__),
+            set(bank_completion_tampers),
+        )
+        for field, value in bank_completion_tampers.items():
+            with self.subTest(bank_completion_field=field):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_lease_pin_completion(
+                        replace(
+                            campaign.bank_completion,
+                            **{field: value},
+                        )
+                    )
+
+        foreign = allocation.digest_v1(b"dispatch field tamper")
+        pin_tampers = {
+            "abi_version": campaign.pin.abi_version + 1,
+            "coordinator_epoch": campaign.pin.coordinator_epoch + 1,
+            "allocation_generation": (
+                campaign.pin.allocation_generation + 1
+            ),
+            "dispatch_generation": (
+                campaign.pin.dispatch_generation + 1
+            ),
+            **{
+                field: foreign
+                for field in (
+                    "authority_sha256",
+                    "dispatch_authority_sha256",
+                    "queue_authority_sha256",
+                    "request_sha256",
+                    "admission_sha256",
+                    "lease_sha256",
+                    "parent_receipt_sha256",
+                    "allocation_leaf_set_sha256",
+                    "backend_object_set_sha256",
+                    "dispatch_request_sha256",
+                    "publication_binding_sha256",
+                    "bank_pin_sha256",
+                    "pin_sha256",
+                )
+            },
+            "pinned_tree": replace(
+                campaign.pinned_tree,
+                generation=campaign.pinned_tree.generation + 1,
+            ),
+            "scope": replace(
+                campaign.pin.scope,
+                generation=campaign.pin.scope.generation + 1,
+            ),
+            "allocation_count": campaign.pin.allocation_count + 1,
+            "pinned_device_bytes": (
+                campaign.pin.pinned_device_bytes + 1
+            ),
+        }
+        self.assertEqual(
+            set(campaign.pin.__dataclass_fields__),
+            set(pin_tampers),
+        )
+        for field, value in pin_tampers.items():
+            with self.subTest(dispatch_pin_field=field):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_dispatch_pin_v1(
+                        replace(campaign.pin, **{field: value})
+                    )
+
+        terminal_tampers = {
+            "abi_version": campaign.terminal.abi_version + 1,
+            "outcome": campaign.terminal.outcome + 1,
+            "dispatch_generation": (
+                campaign.terminal.dispatch_generation + 1
+            ),
+            **{
+                field: foreign
+                for field in (
+                    "dispatch_authority_sha256",
+                    "queue_authority_sha256",
+                    "pin_sha256",
+                    "dispatch_request_sha256",
+                    "submission_sha256",
+                    "backend_completion_sha256",
+                    "output_sha256",
+                    "terminal_sha256",
+                )
+            },
+        }
+        self.assertEqual(
+            set(campaign.terminal.__dataclass_fields__),
+            set(terminal_tampers),
+        )
+        for field, value in terminal_tampers.items():
+            with self.subTest(dispatch_terminal_field=field):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_dispatch_terminal_v1(
+                        replace(
+                            campaign.terminal,
+                            **{field: value},
+                        )
+                    )
+
+        completion_tampers = {
+            "abi_version": campaign.completion.abi_version + 1,
+            "outcome": campaign.completion.outcome + 1,
+            "coordinator_epoch": (
+                campaign.completion.coordinator_epoch + 1
+            ),
+            "allocation_generation": (
+                campaign.completion.allocation_generation + 1
+            ),
+            "dispatch_generation": (
+                campaign.completion.dispatch_generation + 1
+            ),
+            **{
+                field: foreign
+                for field in (
+                    "pin_sha256",
+                    "dispatch_terminal_sha256",
+                    "submission_sha256",
+                    "backend_completion_sha256",
+                    "output_sha256",
+                    "bank_completion_sha256",
+                    "completion_publication_binding_sha256",
+                    "completion_sha256",
+                )
+            },
+            "completed_tree": replace(
+                campaign.completed_tree,
+                generation=campaign.completed_tree.generation + 1,
+            ),
+            "scope": replace(
+                campaign.completion.scope,
+                generation=campaign.completion.scope.generation + 1,
+            ),
+        }
+        self.assertEqual(
+            set(campaign.completion.__dataclass_fields__),
+            set(completion_tampers),
+        )
+        for field, value in completion_tampers.items():
+            with self.subTest(dispatch_completion_field=field):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_dispatch_completion_v1(
+                        replace(
+                            campaign.completion,
+                            **{field: value},
+                        )
+                    )
+
+    def test_dispatch_resealed_substitutions_fail_composition(
+        self,
+    ) -> None:
+        campaign = self.dispatch
+        allocation_campaign = campaign.allocation_campaign
+        foreign = allocation.digest_v1(
+            b"resealed dispatch substitution"
+        )
+
+        def reseal_pin(**changes):
+            draft = replace(
+                campaign.pin,
+                **changes,
+                pin_sha256=tree.ZERO_DIGEST,
+            )
+            return replace(
+                draft,
+                pin_sha256=tree.dispatch_pin_root_v1(draft),
+            )
+
+        pin_substitutions = (
+            reseal_pin(admission_sha256=foreign),
+            reseal_pin(dispatch_request_sha256=foreign),
+            reseal_pin(bank_pin_sha256=foreign),
+            reseal_pin(allocation_count=2),
+        )
+        foreign_pinned_tree = tree.seal_lease_tree(
+            replace(
+                campaign.pinned_tree,
+                authority_key=(
+                    campaign.pinned_tree.authority_key + 1
+                ),
+                integrity=0,
+            )
+        )
+        pin_substitutions += (
+            reseal_pin(pinned_tree=foreign_pinned_tree),
+        )
+        short_scope = tree.seal_lease_node(
+            replace(
+                campaign.pin.scope,
+                ceiling=tree.ClaimV1(device_bytes=8_191),
+                integrity=0,
+            )
+        )
+        pin_substitutions += (
+            reseal_pin(
+                scope=short_scope,
+                pinned_device_bytes=8_191,
+            ),
+        )
+        for candidate in pin_substitutions:
+            tree.validate_dispatch_pin_v1(candidate)
+            with self.assertRaises(tree.ContractError):
+                tree.validate_dispatch_pin_for_lease_v1(
+                    candidate,
+                    allocation_campaign.admission_2,
+                    allocation_campaign.lease_2,
+                    campaign.permit,
+                )
+
+        foreign_permit = tree.seal_lease_pin_permit(
+            replace(
+                campaign.permit,
+                owner_key=campaign.permit.owner_key + 1,
+                integrity=0,
+            )
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_dispatch_pin_for_lease_v1(
+                campaign.pin,
+                allocation_campaign.admission_2,
+                allocation_campaign.lease_2,
+                foreign_permit,
+            )
+
+        foreign_terminal_draft = replace(
+            campaign.terminal,
+            pin_sha256=foreign,
+            terminal_sha256=tree.ZERO_DIGEST,
+        )
+        foreign_terminal = replace(
+            foreign_terminal_draft,
+            terminal_sha256=tree.dispatch_terminal_root_v1(
+                foreign_terminal_draft
+            ),
+        )
+        tree.validate_dispatch_terminal_v1(foreign_terminal)
+        with self.assertRaises(tree.ContractError):
+            tree.validate_dispatch_terminal_for_pin_v1(
+                foreign_terminal,
+                campaign.pin,
+            )
+
+        def reseal_completion(**changes):
+            draft = replace(
+                campaign.completion,
+                **changes,
+                completion_sha256=tree.ZERO_DIGEST,
+            )
+            return replace(
+                draft,
+                completion_sha256=(
+                    tree.dispatch_completion_root_v1(draft)
+                ),
+            )
+
+        foreign_terminal_completion = reseal_completion(
+            dispatch_terminal_sha256=foreign
+        )
+        tree.validate_dispatch_completion_v1(
+            foreign_terminal_completion
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_dispatch_completion_for_pin_v1(
+                foreign_terminal_completion,
+                campaign.pin,
+                campaign.terminal,
+            )
+
+        foreign_bank_completion = reseal_completion(
+            bank_completion_sha256=foreign
+        )
+        tree.validate_dispatch_completion_for_pin_v1(
+            foreign_bank_completion,
+            campaign.pin,
+            campaign.terminal,
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_dispatch_completion_for_bank_v1(
+                foreign_bank_completion,
+                campaign.pin,
+                campaign.terminal,
+                campaign.permit,
+                campaign.bank_completion,
+            )
+
+        foreign_completed_tree = tree.seal_lease_tree(
+            replace(
+                campaign.completed_tree,
+                authority_key=(
+                    campaign.completed_tree.authority_key + 1
+                ),
+                integrity=0,
+            )
+        )
+        foreign_tree_completion = reseal_completion(
+            completed_tree=foreign_completed_tree
+        )
+        tree.validate_dispatch_completion_v1(
+            foreign_tree_completion
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_dispatch_completion_for_pin_v1(
+                foreign_tree_completion,
+                campaign.pin,
+                campaign.terminal,
+            )
+
+        public_completion_tampers = (
+            reseal_completion(
+                completion_publication_binding_sha256=foreign
+            ),
+            reseal_completion(
+                completed_tree=tree.seal_lease_tree(
+                    replace(
+                        campaign.completed_tree,
+                        ceiling=tree.ClaimV1(
+                            capsule_bytes=1,
+                            device_bytes=8_192,
+                        ),
+                        integrity=0,
+                    )
+                )
+            ),
+            reseal_completion(
+                completed_tree=tree.seal_lease_tree(
+                    replace(
+                        campaign.completed_tree,
+                        generation=campaign.pinned_tree.generation,
+                        integrity=0,
+                    )
+                )
+            ),
+            reseal_completion(
+                completed_tree=tree.seal_lease_tree(
+                    replace(
+                        campaign.completed_tree,
+                        structural_revision=(
+                            campaign.pinned_tree
+                            .structural_revision
+                        ),
+                        integrity=0,
+                    )
+                )
+            ),
+            reseal_completion(
+                completed_tree=tree.seal_lease_tree(
+                    replace(
+                        campaign.completed_tree,
+                        active_nodes=campaign.pin.allocation_count,
+                        integrity=0,
+                    )
+                )
+            ),
+        )
+        for candidate in public_completion_tampers:
+            tree.validate_dispatch_completion_v1(candidate)
+            with self.assertRaises(tree.ContractError):
+                tree.validate_dispatch_completion_for_pin_v1(
+                    candidate,
+                    campaign.pin,
+                    campaign.terminal,
+                )
+
+        mismatched_outcome = reseal_completion(
+            outcome=tree.DISPATCH_TERMINAL_FAILURE,
+            output_sha256=tree.ZERO_DIGEST,
+        )
+        tree.validate_dispatch_completion_v1(mismatched_outcome)
+        with self.assertRaises(tree.ContractError):
+            tree.validate_dispatch_completion_for_pin_v1(
+                mismatched_outcome,
+                campaign.pin,
+                campaign.terminal,
+            )
+
+        foreign_evidence = tree.seal_lease_pin_completion(
+            replace(
+                campaign.bank_completion,
+                owner_key=campaign.bank_completion.owner_key + 1,
+                integrity=0,
+            )
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_dispatch_completion_for_bank_v1(
+                campaign.completion,
+                campaign.pin,
+                campaign.terminal,
+                campaign.permit,
+                foreign_evidence,
+            )
+
+    def test_resealed_pin_generation_constraints_fail_closed(
+        self,
+    ) -> None:
+        campaign = self.dispatch
+        permit_tampers = (
+            {
+                "tree_generation": (
+                    campaign.permit.tree_generation + 1
+                ),
+            },
+            {
+                "completion_generation": (
+                    campaign.permit.completion_generation + 1
+                ),
+            },
+            {
+                "generation": tree.U64_MAX - 1,
+                "tree_generation": tree.U64_MAX,
+                "completion_generation": tree.U64_MAX,
+            },
+        )
+        for changes in permit_tampers:
+            with self.subTest(permit_generation_tamper=changes):
+                with self.assertRaises(tree.ContractError):
+                    tree.seal_lease_pin_permit(
+                        replace(
+                            campaign.permit,
+                            **changes,
+                            integrity=0,
+                        )
+                    )
+
+        completion_tampers = (
+            {
+                "completion_generation": (
+                    campaign.bank_completion
+                    .completion_generation
+                    + 1
+                ),
+            },
+            {
+                "completion_tree_generation": (
+                    campaign.bank_completion
+                    .completion_generation
+                ),
+            },
+            {
+                "permit_generation": tree.U64_MAX - 1,
+                "completion_generation": tree.U64_MAX,
+                "completion_tree_generation": tree.U64_MAX,
+            },
+        )
+        for changes in completion_tampers:
+            with self.subTest(completion_generation_tamper=changes):
+                with self.assertRaises(tree.ContractError):
+                    tree.seal_lease_pin_completion(
+                        replace(
+                            campaign.bank_completion,
+                            **changes,
+                            integrity=0,
+                        )
+                    )
+
+    def test_dispatch_completion_allows_sibling_state_changes(
+        self,
+    ) -> None:
+        campaign = self.dispatch
+        wide_ceiling = tree.ClaimV1(
+            capsule_bytes=128,
+            device_bytes=8_192,
+        )
+        wide_pinned_tree = tree.seal_lease_tree(
+            replace(
+                campaign.pinned_tree,
+                ceiling=wide_ceiling,
+                integrity=0,
+            )
+        )
+        wide_pin_draft = replace(
+            campaign.pin,
+            pinned_tree=wide_pinned_tree,
+            pin_sha256=tree.ZERO_DIGEST,
+        )
+        wide_pin = replace(
+            wide_pin_draft,
+            pin_sha256=tree.dispatch_pin_root_v1(
+                wide_pin_draft
+            ),
+        )
+        tree.validate_dispatch_pin_v1(wide_pin)
+        terminal = tree.make_dispatch_terminal_v1(
+            wide_pin,
+            tree.DISPATCH_SUCCEEDED,
+            campaign.submission_sha256,
+            campaign.backend_completion_sha256,
+            campaign.output_sha256,
+        )
+        sibling_tree = tree.seal_lease_tree(
+            replace(
+                campaign.completed_tree,
+                ceiling=wide_ceiling,
+                current=tree.ClaimV1(
+                    capsule_bytes=64,
+                    device_bytes=8_192,
+                ),
+                active_nodes=campaign.completed_tree.active_nodes + 1,
+                state_digest=(
+                    campaign.completed_tree.state_digest ^ 0x5151
+                ),
+                integrity=0,
+            )
+        )
+        sibling_bank_completion = tree.seal_lease_pin_completion(
+            replace(
+                campaign.bank_completion,
+                completion_state_digest=sibling_tree.state_digest,
+                completion_tree_integrity=sibling_tree.integrity,
+                integrity=0,
+            )
+        )
+        completion = tree.make_dispatch_completion_v1(
+            wide_pin,
+            terminal,
+            sibling_tree,
+            campaign.permit,
+            sibling_bank_completion,
+        )
+        tree.validate_dispatch_completion_for_bank_v1(
+            completion,
+            wide_pin,
+            terminal,
+            campaign.permit,
+            sibling_bank_completion,
+        )
+        self.assertNotEqual(
+            wide_pin.pinned_tree.current,
+            completion.completed_tree.current,
+        )
+        self.assertNotEqual(
+            wide_pin.pinned_tree.active_nodes,
+            completion.completed_tree.active_nodes,
+        )
+
+    def test_overlapping_pins_complete_in_reverse_order(self) -> None:
+        base = self.dispatch.allocation_campaign
+        parent = allocation.seal_resource_receipt(
+            bank_epoch=43,
+            slot_index=1,
+            generation=1,
+            owner_key=9_002,
+            claim=tree.ClaimV1(
+                capsule_bytes=64,
+                queue_slots=2,
+            ),
+        )
+        scope = tree.seal_lease_node(
+            replace(
+                base.scope,
+                parent=parent,
+                integrity=0,
+            )
+        )
+        leaves = tuple(
+            tree.seal_lease_node(
+                replace(
+                    leaf,
+                    parent=parent,
+                    integrity=0,
+                )
+            )
+            for leaf in base.leaves_2
+        )
+        claim = tree.ClaimV1(device_bytes=8_192)
+        members = tuple(
+            tree.LeasePinMemberV1(
+                node_index=leaf.node_index,
+                node_generation=leaf.generation,
+                node_integrity=leaf.integrity,
+            )
+            for leaf in leaves
+        )
+        node_set_digest = tree.lease_pin_node_set_digest_v1(
+            base.materialized_tree_2.tree_key,
+            base.materialized_tree_2.identity_generation,
+            scope.node_index,
+            scope.generation,
+            members,
+        )
+        coordinator_epoch = base.coordinator_epoch
+        allocation_generation = base.lease_2.generation
+        request_epoch = base.allocation_fixture.request.request_epoch
+        session_id = base.session_id
+        sequence = base.publication_sequence
+        dispatch_authority = allocation.digest_v1(
+            b"overlap dispatch authority"
+        )
+        queue_authority = allocation.digest_v1(
+            b"overlap queue authority"
+        )
+
+        def runtimes(pin_count):
+            return (
+                tree._RuntimeNode(
+                    node=scope,
+                    state=tree.NODE_STATE_LIVE,
+                    pending_generation=0,
+                    subtree_claim=claim,
+                ),
+            ) + tuple(
+                tree._RuntimeNode(
+                    node=leaf,
+                    state=tree.NODE_STATE_LIVE,
+                    pending_generation=0,
+                    subtree_claim=leaf.claim,
+                    pin_count=pin_count,
+                )
+                for leaf in leaves
+            )
+
+        def make_slot(
+            pin_slot_index,
+            permit_generation,
+            tree_generation,
+            structural_revision,
+            completion_generation,
+            owner_key,
+        ):
+            return tree.seal_lease_pin_slot(
+                parent,
+                pin_slot_index,
+                tree.LeasePinSlotV1(
+                    active=True,
+                    receipt_slot_index=parent.slot_index,
+                    tree_key=base.materialized_tree_2.tree_key,
+                    tree_identity_generation=(
+                        base.materialized_tree_2
+                        .identity_generation
+                    ),
+                    tree_generation=tree_generation,
+                    structural_revision=structural_revision,
+                    generation=permit_generation,
+                    completion_generation=completion_generation,
+                    request_epoch=request_epoch,
+                    session_id=session_id,
+                    sequence=sequence,
+                    owner_key=owner_key,
+                    scope_index=scope.node_index,
+                    scope_generation=scope.generation,
+                    node_count=len(members),
+                    claim=claim,
+                    node_set_digest=node_set_digest,
+                    members=members,
+                ),
+            )
+
+        def make_permit(slot_index, slot):
+            return tree.seal_lease_pin_permit(
+                tree.LeasePinPermitV1(
+                    parent=parent,
+                    tree_key=slot.tree_key,
+                    tree_identity_generation=(
+                        slot.tree_identity_generation
+                    ),
+                    tree_generation=slot.tree_generation,
+                    structural_revision=slot.structural_revision,
+                    pin_slot_index=slot_index,
+                    generation=slot.generation,
+                    completion_generation=(
+                        slot.completion_generation
+                    ),
+                    request_epoch=slot.request_epoch,
+                    session_id=slot.session_id,
+                    sequence=slot.sequence,
+                    owner_key=slot.owner_key,
+                    scope_index=slot.scope_index,
+                    scope_generation=slot.scope_generation,
+                    node_count=slot.node_count,
+                    claim=slot.claim,
+                    node_set_digest=slot.node_set_digest,
+                )
+            )
+
+        fixed_roots = {
+            name: allocation.digest_v1(
+                ("overlap " + name).encode()
+            )
+            for name in (
+                "authority",
+                "request",
+                "admission",
+                "lease",
+                "backend object set",
+            )
+        }
+        leaf_set = tree.allocation_leaf_set_sha256_v1(leaves)
+        parent_root = allocation.resource_receipt_root(parent)
+
+        def make_public_pin(
+            dispatch_generation,
+            dispatch_request,
+            pinned_tree,
+            permit,
+        ):
+            draft = tree.LeaseTreeDispatchPinV1(
+                coordinator_epoch=coordinator_epoch,
+                allocation_generation=allocation_generation,
+                dispatch_generation=dispatch_generation,
+                authority_sha256=fixed_roots["authority"],
+                dispatch_authority_sha256=dispatch_authority,
+                queue_authority_sha256=queue_authority,
+                request_sha256=fixed_roots["request"],
+                admission_sha256=fixed_roots["admission"],
+                lease_sha256=fixed_roots["lease"],
+                parent_receipt_sha256=parent_root,
+                allocation_leaf_set_sha256=leaf_set,
+                backend_object_set_sha256=(
+                    fixed_roots["backend object set"]
+                ),
+                dispatch_request_sha256=dispatch_request,
+                publication_binding_sha256=(
+                    tree.dispatch_publication_binding_sha256_v1(
+                        parent,
+                        request_epoch,
+                        session_id,
+                        sequence,
+                    )
+                ),
+                bank_pin_sha256=(
+                    tree.lease_pin_permit_sha256_v1(permit)
+                ),
+                pinned_tree=pinned_tree,
+                scope=scope,
+                allocation_count=len(leaves),
+                pinned_device_bytes=claim.device_bytes,
+            )
+            result = replace(
+                draft,
+                pin_sha256=tree.dispatch_pin_root_v1(draft),
+            )
+            tree.validate_dispatch_pin_v1(result)
+            return result
+
+        request_a = allocation.digest_v1(b"overlap request a")
+        owner_a = tree.dispatch_owner_key_v1(
+            coordinator_epoch,
+            allocation_generation,
+            1,
+            request_a,
+        )
+        slot_a = make_slot(0, 17, 18, 7, 19, owner_a)
+        pinned_tree_a = tree._make_tree_state(
+            parent,
+            base.materialized_tree_2.tree_key,
+            base.materialized_tree_2.authority_key,
+            base.materialized_tree_2.identity_generation,
+            18,
+            7,
+            claim,
+            claim,
+            tree.PENDING_NONE,
+            0,
+            0,
+            0,
+            0,
+            tree.NO_LEASE_NODE,
+            0,
+            tree.ClaimV1(),
+            0,
+            runtimes(1),
+            ((0, slot_a),),
+        )
+        permit_a = make_permit(0, slot_a)
+        pin_a = make_public_pin(
+            1,
+            request_a,
+            pinned_tree_a,
+            permit_a,
+        )
+
+        request_b = allocation.digest_v1(b"overlap request b")
+        owner_b = tree.dispatch_owner_key_v1(
+            coordinator_epoch,
+            allocation_generation,
+            2,
+            request_b,
+        )
+        slot_b = make_slot(1, 20, 21, 8, 22, owner_b)
+        pinned_tree_b = tree._make_tree_state(
+            parent,
+            base.materialized_tree_2.tree_key,
+            base.materialized_tree_2.authority_key,
+            base.materialized_tree_2.identity_generation,
+            21,
+            8,
+            claim,
+            claim,
+            tree.PENDING_NONE,
+            0,
+            0,
+            0,
+            0,
+            tree.NO_LEASE_NODE,
+            0,
+            tree.ClaimV1(),
+            0,
+            runtimes(2),
+            ((0, slot_a), (1, slot_b)),
+        )
+        permit_b = make_permit(1, slot_b)
+        pin_b = make_public_pin(
+            2,
+            request_b,
+            pinned_tree_b,
+            permit_b,
+        )
+
+        after_b_tree = tree._make_tree_state(
+            parent,
+            base.materialized_tree_2.tree_key,
+            base.materialized_tree_2.authority_key,
+            base.materialized_tree_2.identity_generation,
+            23,
+            9,
+            claim,
+            claim,
+            tree.PENDING_NONE,
+            0,
+            0,
+            0,
+            0,
+            tree.NO_LEASE_NODE,
+            0,
+            tree.ClaimV1(),
+            0,
+            runtimes(1),
+            ((0, slot_a),),
+        )
+
+        def make_bank_completion(permit, completed_tree):
+            return tree.seal_lease_pin_completion(
+                tree.LeasePinCompletionV1(
+                    parent=parent,
+                    tree_key=permit.tree_key,
+                    tree_identity_generation=(
+                        permit.tree_identity_generation
+                    ),
+                    pin_slot_index=permit.pin_slot_index,
+                    permit_generation=permit.generation,
+                    completion_generation=(
+                        permit.completion_generation
+                    ),
+                    request_epoch=permit.request_epoch,
+                    session_id=permit.session_id,
+                    sequence=permit.sequence,
+                    owner_key=permit.owner_key,
+                    scope_index=permit.scope_index,
+                    scope_generation=permit.scope_generation,
+                    node_count=permit.node_count,
+                    claim=permit.claim,
+                    node_set_digest=permit.node_set_digest,
+                    permit_integrity=permit.integrity,
+                    completion_tree_generation=(
+                        completed_tree.generation
+                    ),
+                    completion_structural_revision=(
+                        completed_tree.structural_revision
+                    ),
+                    completion_state_digest=(
+                        completed_tree.state_digest
+                    ),
+                    completion_tree_integrity=(
+                        completed_tree.integrity
+                    ),
+                )
+            )
+
+        terminal_b = tree.make_dispatch_terminal_v1(
+            pin_b,
+            tree.DISPATCH_SUCCEEDED,
+            allocation.digest_v1(b"overlap submit b"),
+            allocation.digest_v1(b"overlap complete b"),
+            allocation.digest_v1(b"overlap output b"),
+        )
+        bank_completion_b = make_bank_completion(
+            permit_b,
+            after_b_tree,
+        )
+        completion_b = tree.make_dispatch_completion_v1(
+            pin_b,
+            terminal_b,
+            after_b_tree,
+            permit_b,
+            bank_completion_b,
+        )
+
+        after_a_tree = tree._make_tree_state(
+            parent,
+            base.materialized_tree_2.tree_key,
+            base.materialized_tree_2.authority_key,
+            base.materialized_tree_2.identity_generation,
+            24,
+            10,
+            claim,
+            claim,
+            tree.PENDING_NONE,
+            0,
+            0,
+            0,
+            0,
+            tree.NO_LEASE_NODE,
+            0,
+            tree.ClaimV1(),
+            0,
+            runtimes(0),
+        )
+        terminal_a = tree.make_dispatch_terminal_v1(
+            pin_a,
+            tree.DISPATCH_SUCCEEDED,
+            allocation.digest_v1(b"overlap submit a"),
+            allocation.digest_v1(b"overlap complete a"),
+            allocation.digest_v1(b"overlap output a"),
+        )
+        bank_completion_a = make_bank_completion(
+            permit_a,
+            after_a_tree,
+        )
+        completion_a = tree.make_dispatch_completion_v1(
+            pin_a,
+            terminal_a,
+            after_a_tree,
+            permit_a,
+            bank_completion_a,
+        )
+        tree.validate_dispatch_completion_for_bank_v1(
+            completion_b,
+            pin_b,
+            terminal_b,
+            permit_b,
+            bank_completion_b,
+        )
+        tree.validate_dispatch_completion_for_bank_v1(
+            completion_a,
+            pin_a,
+            terminal_a,
+            permit_a,
+            bank_completion_a,
+        )
+        self.assertEqual(2, parent.claim.queue_slots)
+        self.assertGreater(
+            completion_a.completed_tree.structural_revision,
+            pin_a.pinned_tree.structural_revision + 1,
+        )
+        self.assertGreater(
+            completion_a.completed_tree.generation,
+            permit_a.completion_generation,
+        )
+        self.assertNotEqual(
+            completion_b.completed_tree.state_digest,
+            completion_a.completed_tree.state_digest,
+        )
+
+    def test_dispatch_outcome_root_pairs_cover_all_terminal_paths(
+        self,
+    ) -> None:
+        campaign = self.dispatch
+        nonzero = allocation.digest_v1(b"dispatch outcome nonzero")
+        pairs = (
+            (
+                tree.DISPATCH_SUCCEEDED,
+                nonzero,
+                nonzero,
+                nonzero,
+            ),
+            (
+                tree.DISPATCH_TERMINAL_FAILURE,
+                nonzero,
+                nonzero,
+                tree.ZERO_DIGEST,
+            ),
+            (
+                tree.DISPATCH_CANCELLED_BEFORE_SUBMIT,
+                tree.ZERO_DIGEST,
+                tree.ZERO_DIGEST,
+                tree.ZERO_DIGEST,
+            ),
+            (
+                tree.DISPATCH_CANCELLED_AFTER_SUBMIT,
+                nonzero,
+                nonzero,
+                tree.ZERO_DIGEST,
+            ),
+            (
+                tree.DISPATCH_REJECTED_BEFORE_SUBMIT,
+                tree.ZERO_DIGEST,
+                tree.ZERO_DIGEST,
+                tree.ZERO_DIGEST,
+            ),
+        )
+        for outcome, submission, backend, output in pairs:
+            with self.subTest(dispatch_outcome=outcome):
+                terminal = tree.make_dispatch_terminal_v1(
+                    campaign.pin,
+                    outcome,
+                    submission,
+                    backend,
+                    output,
+                )
+                completion = tree.make_dispatch_completion_v1(
+                    campaign.pin,
+                    terminal,
+                    campaign.completed_tree,
+                    campaign.permit,
+                    campaign.bank_completion,
+                )
+                tree.validate_dispatch_completion_for_bank_v1(
+                    completion,
+                    campaign.pin,
+                    terminal,
+                    campaign.permit,
+                    campaign.bank_completion,
+                )
+
+        invalid_pairs = (
+            (
+                tree.DISPATCH_SUCCEEDED,
+                nonzero,
+                nonzero,
+                tree.ZERO_DIGEST,
+            ),
+            (
+                tree.DISPATCH_TERMINAL_FAILURE,
+                nonzero,
+                nonzero,
+                nonzero,
+            ),
+            (
+                tree.DISPATCH_CANCELLED_BEFORE_SUBMIT,
+                nonzero,
+                tree.ZERO_DIGEST,
+                tree.ZERO_DIGEST,
+            ),
+        )
+        for outcome, submission, backend, output in invalid_pairs:
+            with self.subTest(invalid_dispatch_outcome=outcome):
+                with self.assertRaises(tree.ContractError):
+                    tree.make_dispatch_terminal_v1(
+                        campaign.pin,
+                        outcome,
+                        submission,
+                        backend,
+                        output,
+                    )
 
 
 if __name__ == "__main__":

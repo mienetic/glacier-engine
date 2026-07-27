@@ -25,6 +25,15 @@ const Fixture = struct {
     manifest: allocation.AllocationManifestV1,
 };
 
+const DispatchFixture = struct {
+    inventory: [1]device.DeviceInventoryEntryV1,
+    requirement: device.DeviceRequirementV1,
+    selection: device.DeviceSelectionReceiptV1,
+    bindings: metal_allocation.MetalMatvecAllocationBindingsV1,
+    entries: [4]allocation.AllocationEntryV1,
+    manifest: allocation.AllocationManifestV1,
+};
+
 fn digest(bytes: []const u8) allocation.Digest {
     var result: allocation.Digest = undefined;
     std.crypto.hash.sha2.Sha256.hash(bytes, &result, .{});
@@ -113,6 +122,100 @@ fn makeFixture(
         .inventory = inventory,
         .requirement = requirement,
         .selection = selected.receipt,
+        .entries = entries,
+        .manifest = manifest,
+    };
+}
+
+fn makeDispatchFixture(
+    adapter: *metal_allocation.MetalAllocationAdapterV1,
+    inventory_entry: device.DeviceInventoryEntryV1,
+) !DispatchFixture {
+    const geometry = try metal_allocation.makeMatvecGeometryV1(
+        8,
+        64,
+        37,
+    );
+    const bindings: metal_allocation.MetalMatvecAllocationBindingsV1 = .{
+        .packed_weights_sha256 = digest(
+            "native Metal dispatch packed weights",
+        ),
+        .scales_sha256 = digest(
+            "native Metal dispatch scales",
+        ),
+        .input_sha256 = digest(
+            "native Metal dispatch input",
+        ),
+        .output_sha256 = digest(
+            "native Metal dispatch output",
+        ),
+    };
+    var entries = [4]allocation.AllocationEntryV1{
+        .{
+            .binding_sha256 = bindings.packed_weights_sha256,
+            .requested_bytes = geometry.packed_bytes,
+        },
+        .{
+            .binding_sha256 = bindings.scales_sha256,
+            .requested_bytes = geometry.scales_bytes,
+        },
+        .{
+            .binding_sha256 = bindings.input_sha256,
+            .requested_bytes = geometry.input_bytes,
+        },
+        .{
+            .binding_sha256 = bindings.output_sha256,
+            .requested_bytes = geometry.output_bytes,
+        },
+    };
+    for (&entries) |*entry| {
+        const quote = try adapter.quote(
+            entry.binding_sha256,
+            entry.requested_bytes,
+        );
+        entry.charged_bytes = quote.charged_bytes;
+        entry.quote_sha256 = quote.quote_sha256;
+    }
+    std.mem.sort(
+        allocation.AllocationEntryV1,
+        &entries,
+        {},
+        lessThan,
+    );
+    const manifest = try allocation.sealManifestV1(&entries);
+    const profile =
+        device.OperationProfileBitsV1.matvec_int4_f32_bounded;
+    const requirement = try device.sealRequirementV1(.{
+        .plan_sha256 = digest(
+            "native Metal pinned dispatch execution plan",
+        ),
+        .required_device_class = .accelerator,
+        .required_operation_profile_bits = profile,
+        .required_operator_bits = device.profileOperatorBitsV1(profile),
+        .required_element_type_bits = device.profileElementTypeBitsV1(profile),
+        .required_numerical_policy_bits = device.profileNumericalPolicyBitsV1(profile),
+        .required_feature_bits = device.FeatureBitsV1.allocation |
+            device.FeatureBitsV1.dispatch |
+            device.FeatureBitsV1.completion_fence |
+            device.FeatureBitsV1.persistent_weights |
+            device.FeatureBitsV1.allocated_bytes_observation,
+        .largest_single_allocation_bytes = manifest.largest_charged_bytes,
+        .total_device_bytes = manifest.total_charged_bytes,
+        .queue_slots = 1,
+        .fallback_policy = .forbidden,
+    });
+    const inventory = [1]device.DeviceInventoryEntryV1{
+        inventory_entry,
+    };
+    const selected = try device.selectDeviceV1(
+        requirement,
+        &inventory,
+    );
+    return .{
+        .inventory = inventory,
+        .requirement = requirement,
+        .selection = selected.receipt,
+        .bindings = bindings,
         .entries = entries,
         .manifest = manifest,
     };
@@ -744,6 +847,291 @@ test "real Metal buffers compose with LeaseTree free permits" {
     try bank.closePublicationSession(
         parent,
         301,
+        session_id,
+        publication_sequence,
+    );
+    try bank.closeLeaseTree(tree);
+    try bank.release(parent);
+    try testing.expect((try bank.snapshot()).used.isZero());
+}
+
+test "real Metal dispatch pins exact LeaseTree buffers until completion" {
+    if (!config.metal_enabled)
+        return error.NativeMetalAllocationRequiresMetal;
+
+    const allocator = testing.allocator;
+    const group_size: usize = 8;
+    const in_features: usize = 64;
+    const out_features: usize = 37;
+
+    var backend = try engine.MetalBackend.init(
+        engine.metal_library_path,
+    );
+    defer backend.deinit();
+    const inventory_entry =
+        try metal_allocation.makeAllocationInventoryEntryV1(
+            &backend,
+            112,
+            0,
+            1 * 1024 * 1024,
+        );
+    var native_slots =
+        [_]metal_allocation.MetalAllocationSlotV1{.{}} ** 4;
+    var adapter =
+        try metal_allocation.MetalAllocationAdapterV1.init(
+            &backend,
+            inventory_entry,
+            212,
+            0x4d65_7461_6c44_7370,
+            &native_slots,
+        );
+    const fixture = try makeDispatchFixture(
+        &adapter,
+        inventory_entry,
+    );
+    try testing.expectEqual(
+        @as(u64, 2_772),
+        fixture.manifest.total_charged_bytes,
+    );
+
+    var bank_slots = [_]resource.Slot{.{}};
+    var tree_roots = [_]resource.LeaseTreeRootSlot{.{}};
+    var tree_nodes = [_]resource.LeaseNodeSlot{.{}} ** 5;
+    var pin_slots = [_]resource.LeasePinSlotV1{.{}};
+    var bank = try resource.Bank.initWithLeaseTreePinStorage(
+        &bank_slots,
+        &tree_roots,
+        &tree_nodes,
+        &pin_slots,
+        .{
+            .host_bytes = 1_024,
+            .capsule_bytes = 1_024,
+            .device_bytes = fixture.manifest.total_charged_bytes,
+            .queue_slots = 1,
+        },
+        412,
+    );
+    const parent = try bank.commit(
+        try bank.reserve(512, .{
+            .capsule_bytes = 64,
+            .queue_slots = 1,
+        }),
+    );
+    const opened = try bank.openLeaseTree(
+        parent,
+        0x4d65_7461_6c44_7370,
+        0x4d65_7461_6c44_4175,
+        .{
+            .device_bytes = fixture.manifest.total_charged_bytes,
+        },
+    );
+    const scoped = try bank.openLeaseScope(
+        opened,
+        0x4d65_7461_6c44_5363,
+        0x4d65_7461_6c44_546e,
+        .{
+            .device_bytes = fixture.manifest.total_charged_bytes,
+        },
+    );
+    var tree = scoped.tree;
+    var session_byte: u8 = 0;
+    const session_id = @intFromPtr(&session_byte);
+    var publication_sequence: u64 = 0;
+    try bank.bindPublicationSessionWithLeaseTree(
+        tree,
+        302,
+        session_id,
+    );
+    var coordinator_objects =
+        [_]tree_allocation.CoordinatorObjectSlotV1{.{}} ** 4;
+    var coordinator_dispatches =
+        [_]tree_allocation.CoordinatorDispatchSlotV1{.{}};
+    var coordinator: tree_allocation.CoordinatorV1 = .{};
+    try coordinator.initWithDispatchStorage(
+        612,
+        &bank,
+        &tree,
+        scoped.scope,
+        302,
+        session_id,
+        &publication_sequence,
+        &coordinator_objects,
+        &coordinator_dispatches,
+    );
+    const request = try allocation.makeRequestV1(
+        302,
+        digest("native Metal pinned dispatch owner"),
+        adapter.authority,
+        fixture.selection,
+        fixture.requirement,
+        &fixture.inventory,
+        parent,
+        fixture.manifest,
+        &fixture.entries,
+    );
+    const admission = try coordinator.admit(
+        adapter.interface(),
+        request,
+        fixture.selection,
+        fixture.requirement,
+        &fixture.inventory,
+        parent,
+        fixture.manifest,
+        &fixture.entries,
+    );
+    const materialized = try coordinator.materialize(
+        admission,
+        adapter.interface(),
+        .{},
+    );
+    const lease = switch (materialized) {
+        .active => |value| value,
+        else => return error.TestUnexpectedResult,
+    };
+    try testing.expectEqual(@as(u64, 4), backend.liveBufferCount());
+    try testing.expectEqual(
+        @as(u64, 4),
+        try backend.nativeLiveBufferCount(),
+    );
+
+    const pin = try coordinator.acquireDispatchPin(
+        lease,
+        adapter.dispatchInterface(),
+        digest("native Metal pinned dispatch request"),
+    );
+    try tree_allocation.validateDispatchPinV1(pin);
+    const allocation_snapshot_before_release =
+        adapter.snapshot();
+    try testing.expectError(
+        tree_allocation.Error.DispatchInFlight,
+        coordinator.release(
+            lease,
+            adapter.interface(),
+        ),
+    );
+    try testing.expectEqualDeep(
+        allocation_snapshot_before_release,
+        adapter.snapshot(),
+    );
+    try testing.expectEqual(
+        fixture.manifest.total_charged_bytes,
+        (try bank.snapshotV3()).used.device_bytes,
+    );
+
+    var rng = std.Random.DefaultPrng.init(0x474c_4143_4945_52);
+    var weights: [in_features * out_features]f32 =
+        undefined;
+    var input: [in_features]f32 = undefined;
+    for (&weights) |*value|
+        value.* =
+            (rng.random().float(f32) * 2 - 1) * 0.25;
+    for (&input) |*value|
+        value.* = rng.random().float(f32) * 2 - 1;
+    const quantized = try engine.core.quant.quantize(
+        f32,
+        allocator,
+        &weights,
+        .int4,
+        group_size,
+    );
+    defer {
+        allocator.free(quantized.packed_bytes);
+        allocator.free(quantized.scales);
+    }
+    var input_tensor = try engine.core.tensor.fromF32(
+        allocator,
+        &.{ 1, in_features },
+        &input,
+    );
+    defer input_tensor.deinit();
+    var cpu_output = try engine.core.tensor.zerosF32(
+        allocator,
+        &.{ 1, out_features },
+    );
+    defer cpu_output.deinit();
+    try engine.int4_matmul.linearInt4OnTheFly(
+        input_tensor,
+        quantized.packed_bytes,
+        quantized.scales,
+        &.{},
+        cpu_output,
+        out_features,
+        in_features,
+        group_size,
+    );
+    var gpu_output = [_]f32{0} ** out_features;
+    const dispatch_count_before =
+        backend.completedDispatchCount();
+    const dispatch_result =
+        try adapter.dispatchMatvecInt4Observed(
+            lease,
+            pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            &gpu_output,
+            group_size,
+            in_features,
+            out_features,
+        );
+    try metal_allocation
+        .validateMetalLeaseTreeDispatchPayloadV1(
+        dispatch_result.observation,
+        quantized.packed_bytes,
+        quantized.scales,
+        &input,
+        &gpu_output,
+    );
+    try metal_allocation
+        .validateMetalLeaseTreeDispatchObservationForPinV1(
+        dispatch_result.observation,
+        pin,
+        dispatch_result.terminal,
+    );
+    try testing.expectEqual(
+        dispatch_count_before + 1,
+        backend.completedDispatchCount(),
+    );
+    for (cpu_output.asF32(), gpu_output) |expected, actual|
+        try testing.expectApproxEqAbs(expected, actual, 2e-5);
+
+    const completion = try coordinator.completeDispatchPin(
+        pin,
+        adapter.dispatchInterface(),
+        dispatch_result.terminal,
+    );
+    try tree_allocation.validateDispatchCompletionForPinV1(
+        completion,
+        pin,
+        dispatch_result.terminal,
+    );
+    try adapter.acknowledgeDispatchCompletion(completion);
+
+    const released = try coordinator.release(
+        lease,
+        adapter.interface(),
+    );
+    const terminal = switch (released) {
+        .terminal => |value| value,
+        else => return error.TestUnexpectedResult,
+    };
+    try tree_allocation.validateTerminalReceiptV1(terminal);
+    try testing.expect(terminal.terminal_tree.current.isZero());
+    try testing.expectEqual(
+        @as(u64, 0),
+        (try bank.snapshotV3()).used.device_bytes,
+    );
+    try testing.expectEqual(@as(u64, 0), backend.liveBufferCount());
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveBufferCount(),
+    );
+    try adapter.validateEmpty();
+
+    try bank.closePublicationSession(
+        parent,
+        302,
         session_id,
         publication_sequence,
     );

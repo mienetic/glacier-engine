@@ -155,9 +155,20 @@ sequence pointers are shared with the surrounding execution owner, which must
 externally serialize coordinator calls with every other mutation of them. See
 [LeaseTree Device Allocation](LEASE_TREE_DEVICE_ALLOCATION.md).
 
+The bounded dispatch-lifetime follow-up is also complete. Fixed Bank pin
+storage retains the exact ordered allocation leaves, allocation release fails
+while any pin is active, the bound adapter must validate terminal evidence,
+and overlapping pins can complete out of order. The native gate adds one exact
+four-buffer Metal dispatch, a CPU-oracle comparison, completion
+acknowledgement, and final zero ownership. See
+[Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md).
+
 Small next slices:
 
-- bind dispatch and queue/command lifetime to the LeaseTree-owned object set;
+- add asynchronous queue scheduling and completion delivery without weakening
+  the exact object-set pin;
+- add a safe pre-submit rejection transition for backend-specific malformed
+  geometry after pin acquisition;
 - prototype reserve/materialize/settle accounting if the post-creation
   `MTLResource.allocatedSize` observation, rather than logical resource length,
   must be charged;
@@ -172,13 +183,14 @@ Small next slices:
 
 **Current boundary:** the completed LeaseTree follow-up keeps stable capability
 facts separate from dynamic observations, consumes the exact selection,
-reserves every allocation node before native creation, and demonstrates
-free-before-uncharge recovery on the executing Metal host. It does not bind
-those objects to submitted command lifetime. Physical residency remains a
-separate later contract. Device-loss recovery, multi-GPU scheduling, telemetry,
-performance, retained device ranges, and native support remain unimplemented
-unless a slice supplies direct named evidence for that exact claim.
-Cross-compilation never counts as native support.
+reserves every allocation node before native creation, demonstrates
+free-before-uncharge recovery, and binds one exact object set to a synchronous
+submitted command on the executing Metal host. Physical residency remains a
+separate later contract. Device-loss recovery, general asynchronous and
+multi-GPU scheduling, telemetry, performance, retained device ranges, and
+native support remain unimplemented unless a slice supplies direct named
+evidence for that exact claim. Cross-compilation never counts as native
+support.
 
 ### Native observation adapters
 

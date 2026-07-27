@@ -39,7 +39,7 @@ thermal observations distinct.
 | `tools/zig-with-ephemeral-cache.sh build action-outbox-dispatch-test -Dmetal=false -Doptimize=ReleaseSafe -j2` | W4b-d pointer-free adapter contract, trusted StoreV1 driver, and bounded same-process fake authority: one protected future reconciliation slot per existing uncertain action plus three additional dispatch slots, status admitted only when free slots cover every uncertain action, durable intent before dispatch, atomic `not_applied_fenced(G)`, stale `<= G` rejection before and after terminal completion, exact `G + 1` retry with stable request and a new dispatch root, pending/unknown no-retry, terminal duplicate application count one, deterministic same-process faults at four terminal-transition plus four fenced-transition append phases followed by fresh reopen/repair/reconciliation, integrated Zig coverage, 20 independent Python tests, and a separate live canonical Zig-to-Python reference validation |
 | `zig build native-observation-test -Dmetal=false` | W5a fixed portable observer ABI and family-neutral runner: explicit present/missing/denied/unsupported, stable source identity separate from per-event provenance, nonzero unavailable-reason identity and no present-reason identity (all-zero fixed field), host/accelerator planes, sample-clock identity on every record and value-clock identity only on present time-valued metrics, fail-closed probe and pre-run admission, retained post-run contamination, correctness/zero-orphan/fallback gates, a download-free three-profile/six-item report checked independently, shared macOS system parsers and native read-only macOS smoke on Darwin, plus a platform-neutral JSON validator and bounded Linux available-memory adapter model; no throughput, latency, direct GPU/power/thermal, or multi-OS native claim |
 | `tools/zig-with-ephemeral-cache.sh build native-metal-observation-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Hard native macOS Metal diagnostic-readiness gate: exactly one real GPU dispatch total for a fixed synthetic 37x64 INT4 matrix-vector operation, CPU-oracle correctness, completed command-buffer GPU timestamps, registry-bound device/placement identity, `currentAllocatedSize`, zero leaked ownership, explicit no fallback, composed observation/run/dispatch roots, and an independent live-output verifier; no throughput, latency, performance, utilization, residency, queue, thermal, frequency, power, energy, cryptographic-origin, broad-device, or multi-OS claim |
-| `tools/zig-with-ephemeral-cache.sh build native-metal-allocation-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Hard native macOS Metal allocation-ownership gate: creates and directly inspects real Shared `MTLBuffer` resources through both ChildLease and LeaseTree coordinators; verifies exact logical precharge/reserve and release, LeaseTree whole-wave reservation, private FreePermit settlement, cancellation after two real buffers, per-object device/length/`allocatedSize`, zero adapter-tracked objects plus zero independently registered shim resources after release, foreign/stale-token rejection, distinct adapter authorities, concurrent registry balance, and generation-fenced slot reuse; this gate performs no GPU dispatch and makes no residency, heap, performance, broad-device, or multi-OS claim |
+| `tools/zig-with-ephemeral-cache.sh build native-metal-allocation-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Hard native macOS Metal allocation and dispatch-lifetime gate: creates and directly inspects real Shared `MTLBuffer` resources through both ChildLease and LeaseTree coordinators; verifies exact logical precharge/reserve and release, private FreePermit settlement, cancellation after two real buffers, per-object device/length/`allocatedSize`, foreign/stale-token rejection, distinct adapter authorities, concurrent registry balance, and generation-fenced slot reuse; a separate four-buffer LeaseTree case acquires an exact ResourceBank pin, rejects release while live, performs one real 37x64 INT4 dispatch on those registered resources, checks a CPU oracle, consumes and acknowledges completion, and proves zero adapter/shim ownership; it makes no residency, heap, performance, broad-device, or multi-OS claim |
 | `tools/zig-with-ephemeral-cache.sh build native-metal-suite-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Serialized native macOS device suite: readiness → allocation ownership → focused correctness, with no overlap between those device gates; it combines their evidence boundaries and does not create a benchmark or retained native artifact |
 | `zig build lane-publication-demo -Dmetal=false` | One-token prepare/commit/abort with KV, RNG, sampler, output, schedule, and resource roots |
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
@@ -170,13 +170,15 @@ therefore remain separate, and W5b remains open.
 
 The native Metal allocation gate is separate real-resource conformance. Its
 ChildLease and LeaseTree cases create and inspect direct Shared `MTLBuffer`
-objects on the selected device. The LeaseTree case reserves the complete
-logical wave before allocation, frees under a private `FreePermit`, and includes
-a cancellation path that stops after two real buffers and returns the charge
-only after both are freed. These checks establish ownership ordering and
-cleanup for that host run. They perform no command encoding or GPU dispatch,
-measure no throughput or latency, and do not establish residency or physical
-reclaim behavior.
+objects on the selected device. The LeaseTree ownership case reserves the
+complete logical wave before allocation, frees under a private `FreePermit`,
+and includes a cancellation path that stops after two real buffers and returns
+the charge only after both are freed. A separate pinned case submits one exact
+four-buffer command, waits for completion, checks the CPU oracle, and proves
+that release cannot pass the live pin. These checks establish ownership and
+bounded synchronous dispatch-lifetime ordering for that host run. They measure
+no throughput or latency and do not establish residency, general queue
+scheduling, or physical reclaim behavior.
 
 All commands should normally use `-Doptimize=ReleaseSafe` when validating
 contracts. None requires a real credential. Portable evidence is

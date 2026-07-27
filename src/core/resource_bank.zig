@@ -21,14 +21,17 @@ pub const child_lease_abi: u64 = 0x4752_434c_0000_0001;
 pub const snapshot_abi: u64 = 0x4752_4253_0000_0002;
 /// Optional bounded allocation-ownership tree. This is additive to the flat
 /// Receipt ABI and the aggregate ChildLease ABI; a Bank opts into at most one
-/// mutable sidecar mode at initialization. V1 is a trusted synchronous,
-/// request-local coordinator: its inert pin/reference fields do not authorize
-/// asynchronous readers or cross-worker reclamation.
+/// mutable sidecar mode at initialization. The optional bounded pin registry
+/// gives same-process command owners an exact release fence; published
+/// references remain reserved for a later additive authority.
 pub const lease_tree_abi: u64 = 0x4752_4c54_0000_0001;
 pub const lease_node_abi: u64 = 0x4752_4c4e_0000_0001;
 pub const lease_allocation_batch_abi: u64 = 0x4752_4c41_0000_0001;
 pub const lease_retire_ticket_abi: u64 = 0x4752_4c52_0000_0001;
 pub const lease_free_permit_abi: u64 = 0x4752_4c46_0000_0001;
+pub const lease_pin_permit_abi: u64 = 0x4752_4c50_0000_0001;
+pub const lease_pin_completion_abi: u64 = 0x4752_5043_0000_0001;
+pub const maximum_lease_pin_nodes: usize = 64;
 /// Snapshot v3 adds LeaseTree state and operation counters. Snapshot v1/v2
 /// layouts and meanings remain unchanged.
 pub const snapshot_v3_abi: u64 = 0x4752_4253_0000_0003;
@@ -40,6 +43,7 @@ pub const Error = error{
     CapacityExceeded,
     ReservationSlotsExhausted,
     LeaseNodesExhausted,
+    LeasePinSlotsExhausted,
     StaleReservation,
     InvalidTransition,
 };
@@ -235,16 +239,54 @@ pub const LeaseNodeSlot = struct {
     claim: Claim = .{},
     subtree_claim: Claim = .{},
     pending_generation: u64 = 0,
-    /// Reserved for a later bounded pin-set ABI. Stage 1 never increments
-    /// these fields and reclamation fails closed if either is nonzero.
+    /// Exact active command pins are reconciled against the optional bounded
+    /// registry. Published references remain zero until their own authority is
+    /// added; reclamation fails closed if either counter is nonzero.
     pin_count: u32 = 0,
     published_references: u32 = 0,
     integrity: u64 = 0,
 };
 
+/// Compact exact member identity retained inside one caller-owned pin slot.
+/// Array position preserves the caller's ordered object-set binding.
+pub const LeasePinMemberV1 = struct {
+    node_index: u32 = no_lease_node,
+    reserved: u32 = 0,
+    node_generation: u64 = 0,
+    node_integrity: u64 = 0,
+};
+
+/// Optional caller-owned active-command registry. Treat every field as private
+/// to one Bank after initialization. One slot represents one queue use and
+/// retains the exact ordered allocation-leaf membership needed to make copied
+/// permit release and slot-reuse ABA fail closed.
+pub const LeasePinSlotV1 = struct {
+    active: bool = false,
+    receipt_slot_index: u32 = 0,
+    tree_key: u64 = 0,
+    tree_identity_generation: u64 = 0,
+    tree_generation: u64 = 0,
+    structural_revision: u64 = 0,
+    generation: u64 = 0,
+    completion_generation: u64 = 0,
+    request_epoch: u64 = 0,
+    session_id: usize = 0,
+    sequence: u64 = 0,
+    owner_key: u64 = 0,
+    scope_index: u32 = no_lease_node,
+    scope_generation: u64 = 0,
+    node_count: u32 = 0,
+    claim: Claim = .{},
+    node_set_digest: u64 = 0,
+    integrity: u64 = 0,
+    members: [maximum_lease_pin_nodes]LeasePinMemberV1 =
+        [_]LeasePinMemberV1{.{}} ** maximum_lease_pin_nodes,
+};
+
 pub const LeaseTreeStorage = struct {
     roots: []LeaseTreeRootSlot,
     nodes: []LeaseNodeSlot,
+    pin_slots: []LeasePinSlotV1 = &.{},
 };
 
 pub const LeaseTreeV1 = struct {
@@ -370,6 +412,75 @@ pub const LeaseFreeAuthorizedV1 = struct {
     permit: LeaseFreePermitV1,
 };
 
+/// Private same-process authority for releasing one exact active command pin.
+/// The token remains valid across unrelated later tree generations because its
+/// live registry slot, rather than a cached whole-tree token, fences release.
+pub const LeasePinPermitV1 = struct {
+    abi_version: u64 = lease_pin_permit_abi,
+    parent: Receipt,
+    tree_key: u64,
+    tree_identity_generation: u64,
+    tree_generation: u64,
+    structural_revision: u64,
+    pin_slot_index: u32,
+    reserved: u32 = 0,
+    generation: u64,
+    completion_generation: u64,
+    request_epoch: u64,
+    session_id: usize,
+    sequence: u64,
+    owner_key: u64,
+    scope_index: u32,
+    scope_generation: u64,
+    node_count: u32,
+    claim: Claim,
+    node_set_digest: u64,
+    integrity: u64,
+};
+
+/// Pointer-free proof that one exact permit was consumed only after its owner
+/// observed command completion. This value grants no further mutation.
+pub const LeasePinCompletionV1 = struct {
+    abi_version: u64 = lease_pin_completion_abi,
+    parent: Receipt,
+    tree_key: u64,
+    tree_identity_generation: u64,
+    pin_slot_index: u32,
+    reserved: u32 = 0,
+    permit_generation: u64,
+    completion_generation: u64,
+    request_epoch: u64,
+    session_id: usize,
+    sequence: u64,
+    owner_key: u64,
+    scope_index: u32,
+    scope_generation: u64,
+    node_count: u32,
+    claim: Claim,
+    node_set_digest: u64,
+    permit_integrity: u64,
+    completion_tree_generation: u64,
+    completion_structural_revision: u64,
+    completion_state_digest: u64,
+    completion_tree_integrity: u64,
+    integrity: u64,
+};
+
+pub const LeasePinAcquiredV1 = struct {
+    tree: LeaseTreeV1,
+    permit: LeasePinPermitV1,
+};
+
+pub const LeasePinReleasedV1 = struct {
+    tree: LeaseTreeV1,
+    completion: LeasePinCompletionV1,
+};
+
+const LeasePinValidationV1 = struct {
+    root: *LeaseTreeRootSlot,
+    pin_slot: *LeasePinSlotV1,
+};
+
 const no_lease_node: u32 = std.math.maxInt(u32);
 
 comptime {
@@ -456,6 +567,59 @@ pub fn leaseNodeIntegrityValidV1(node: LeaseNodeV1) bool {
     inline for (std.meta.fields(Claim)) |field|
         result = mix64(result ^ @field(node.claim, field.name));
     return node.integrity == result;
+}
+
+/// Structural replay only. Current authority additionally requires
+/// `Bank.validateLeasePin`.
+pub fn leasePinPermitIntegrityValidV1(
+    permit: LeasePinPermitV1,
+) bool {
+    return permit.abi_version == lease_pin_permit_abi and
+        receiptIntegrityValidV1(permit.parent) and
+        permit.tree_key != 0 and permit.tree_identity_generation != 0 and
+        permit.tree_generation != 0 and permit.structural_revision != 0 and
+        permit.pin_slot_index != no_lease_node and permit.reserved == 0 and
+        permit.generation != 0 and permit.completion_generation != 0 and
+        permit.generation <= std.math.maxInt(u64) - 2 and
+        permit.tree_generation == permit.generation + 1 and
+        permit.completion_generation == permit.generation + 2 and
+        permit.request_epoch != 0 and permit.session_id != 0 and
+        permit.owner_key != 0 and permit.scope_index != no_lease_node and
+        permit.scope_generation != 0 and permit.node_count != 0 and
+        permit.node_count <= maximum_lease_pin_nodes and
+        !permit.claim.isZero() and permit.node_set_digest != 0 and
+        permit.integrity == leasePinPermitIntegrity(permit);
+}
+
+/// Recompute a consumed pin receipt without consulting live Bank state.
+/// Completion is pointer-free evidence and never authorizes another release.
+pub fn leasePinCompletionIntegrityValidV1(
+    completion: LeasePinCompletionV1,
+) bool {
+    return completion.abi_version == lease_pin_completion_abi and
+        receiptIntegrityValidV1(completion.parent) and
+        completion.tree_key != 0 and
+        completion.tree_identity_generation != 0 and
+        completion.pin_slot_index != no_lease_node and
+        completion.reserved == 0 and completion.permit_generation != 0 and
+        completion.completion_generation != 0 and
+        completion.permit_generation <= std.math.maxInt(u64) - 2 and
+        completion.completion_generation ==
+            completion.permit_generation + 2 and
+        completion.request_epoch != 0 and completion.session_id != 0 and
+        completion.owner_key != 0 and
+        completion.scope_index != no_lease_node and
+        completion.scope_generation != 0 and completion.node_count != 0 and
+        completion.node_count <= maximum_lease_pin_nodes and
+        !completion.claim.isZero() and completion.node_set_digest != 0 and
+        completion.permit_integrity != 0 and
+        completion.completion_tree_generation != 0 and
+        completion.completion_tree_generation >
+            completion.completion_generation and
+        completion.completion_structural_revision != 0 and
+        completion.completion_state_digest != 0 and
+        completion.completion_tree_integrity != 0 and
+        completion.integrity == leasePinCompletionIntegrity(completion);
 }
 
 /// Generation-fenced mutable allocator-commitment charge anchored to one
@@ -663,6 +827,29 @@ pub const Bank = struct {
         }, limits, epoch);
     }
 
+    /// Opt into exact bounded command pins without changing any existing
+    /// Receipt, LeaseTree, node, or snapshot layout. `pin_slots` bounds
+    /// simultaneously live commands; each slot retains at most
+    /// `maximum_lease_pin_nodes` exact ordered allocation leaves.
+    pub fn initWithLeaseTreePinStorage(
+        slots: []Slot,
+        roots: []LeaseTreeRootSlot,
+        nodes: []LeaseNodeSlot,
+        pin_slots: []LeasePinSlotV1,
+        limits: Limits,
+        epoch: u64,
+    ) Error!Bank {
+        if (roots.len != slots.len or nodes.len == 0 or
+            nodes.len > std.math.maxInt(u32) or pin_slots.len == 0 or
+            pin_slots.len > std.math.maxInt(u32))
+            return Error.InvalidConfiguration;
+        return initStorage(slots, null, .{
+            .roots = roots,
+            .nodes = nodes,
+            .pin_slots = pin_slots,
+        }, limits, epoch);
+    }
+
     pub fn initWithLeaseTree(
         slots: []Slot,
         roots: []LeaseTreeRootSlot,
@@ -694,10 +881,12 @@ pub const Bank = struct {
         }
         if (lease_tree_storage) |storage| {
             if (storage.roots.len != slots.len or storage.nodes.len == 0 or
-                storage.nodes.len > std.math.maxInt(u32))
+                storage.nodes.len > std.math.maxInt(u32) or
+                storage.pin_slots.len > std.math.maxInt(u32))
                 return Error.InvalidConfiguration;
             for (storage.roots) |*root| root.* = .{};
             for (storage.nodes) |*node| node.* = .{};
+            for (storage.pin_slots) |*pin_slot| pin_slot.* = .{};
         }
         return .{
             .slots = slots,
@@ -1658,6 +1847,241 @@ pub const Bank = struct {
         return makeLeaseTree(batch.parent, root.*);
     }
 
+    /// Atomically pin one exact ordered set of live allocation leaves before a
+    /// command is submitted. One active permit consumes one queue use already
+    /// admitted by the immutable parent Receipt; no resource charge changes.
+    pub fn acquireLeasePinsForSession(
+        self: *Bank,
+        tree: LeaseTreeV1,
+        scope: LeaseNodeV1,
+        request_epoch: u64,
+        session_id: usize,
+        expected_sequence: u64,
+        owner_key: u64,
+        leaves: []const LeaseNodeV1,
+    ) Error!LeasePinAcquiredV1 {
+        if (request_epoch == 0 or session_id == 0 or owner_key == 0 or
+            leaves.len == 0 or leaves.len > maximum_lease_pin_nodes or
+            leaves.len > std.math.maxInt(u32))
+            return Error.InvalidConfiguration;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const root = try self.validateLeaseTreeLocked(tree);
+        const scope_slot = try self.validateLeaseNodeLocked(tree, scope);
+        const parent_slot = try self.validateReceipt(tree.parent);
+        const storage = try self.leaseTreeStorage();
+        if (storage.pin_slots.len == 0)
+            return Error.InvalidConfiguration;
+        if (scope_slot.kind != .scope or scope_slot.state != .live or
+            root.pending_kind != .none or parent_slot.publication_active or
+            parent_slot.publication_request_epoch != request_epoch or
+            parent_slot.publication_session_id != session_id or
+            parent_slot.publication_next_sequence != expected_sequence or
+            tree.parent.claim.queue_slots == 0 or
+            root.structural_revision == std.math.maxInt(u64))
+            return Error.InvalidTransition;
+
+        var active_pins: u64 = 0;
+        var free_pin_index: ?usize = null;
+        for (storage.pin_slots, 0..) |pin_slot, pin_index| {
+            if (!pin_slot.active) {
+                if (free_pin_index == null) free_pin_index = pin_index;
+                continue;
+            }
+            if (pin_slot.receipt_slot_index == tree.parent.slot_index and
+                pin_slot.tree_identity_generation == tree.identity_generation)
+                active_pins = std.math.add(
+                    u64,
+                    active_pins,
+                    1,
+                ) catch return Error.InvalidConfiguration;
+        }
+        if (active_pins >= tree.parent.claim.queue_slots)
+            return Error.CapacityExceeded;
+        const pin_index = free_pin_index orelse
+            return Error.LeasePinSlotsExhausted;
+
+        var members =
+            [_]LeasePinMemberV1{.{}} ** maximum_lease_pin_nodes;
+        var aggregate: Claim = .{};
+        for (leaves, 0..) |leaf, ordinal| {
+            const node = try self.validateLeaseNodeLocked(tree, leaf);
+            if (node.kind != .allocation or node.state != .live or
+                node.parent_index != scope.node_index or
+                node.parent_generation != scope.generation or
+                node.pin_count == std.math.maxInt(u32))
+                return Error.InvalidTransition;
+            for (members[0..ordinal]) |prior| {
+                if (prior.node_index == leaf.node_index and
+                    prior.node_generation == leaf.generation)
+                    return Error.InvalidConfiguration;
+            }
+            aggregate = try addClaims(aggregate, node.claim);
+            members[ordinal] = .{
+                .node_index = leaf.node_index,
+                .node_generation = leaf.generation,
+                .node_integrity = leaf.integrity,
+            };
+        }
+        if (aggregate.isZero())
+            return Error.InvalidClaim;
+        const node_set_digest = leasePinNodeSetDigest(
+            tree.tree_key,
+            tree.identity_generation,
+            scope.node_index,
+            scope.generation,
+            members[0..leaves.len],
+        );
+
+        // Permit, acquired-tree, and completion-evidence generations are
+        // reserved before mutation. The eventual release tree takes a fresh
+        // generation so overlapping permits may complete in any order without
+        // regressing the current tree generation.
+        const generations = try self.reserveLeaseGenerations(3);
+        const permit_generation = generations;
+        const acquired_tree_generation = generations + 1;
+        const completion_generation = generations + 2;
+        var pin_slot: LeasePinSlotV1 = .{
+            .active = true,
+            .receipt_slot_index = tree.parent.slot_index,
+            .tree_key = tree.tree_key,
+            .tree_identity_generation = tree.identity_generation,
+            .tree_generation = acquired_tree_generation,
+            .structural_revision = root.structural_revision + 1,
+            .generation = permit_generation,
+            .completion_generation = completion_generation,
+            .request_epoch = request_epoch,
+            .session_id = session_id,
+            .sequence = expected_sequence,
+            .owner_key = owner_key,
+            .scope_index = scope.node_index,
+            .scope_generation = scope.generation,
+            .node_count = @intCast(leaves.len),
+            .claim = aggregate,
+            .node_set_digest = node_set_digest,
+            .members = members,
+        };
+        pin_slot.integrity = leasePinSlotIntegrity(
+            tree.parent,
+            @intCast(pin_index),
+            pin_slot,
+        );
+        storage.pin_slots[pin_index] = pin_slot;
+        for (members[0..leaves.len]) |member|
+            storage.nodes[member.node_index].pin_count += 1;
+        root.generation = acquired_tree_generation;
+        root.structural_revision += 1;
+        self.refreshLeaseTreeRootLocked(tree.parent, root);
+
+        var permit: LeasePinPermitV1 = .{
+            .parent = tree.parent,
+            .tree_key = tree.tree_key,
+            .tree_identity_generation = tree.identity_generation,
+            .tree_generation = root.generation,
+            .structural_revision = root.structural_revision,
+            .pin_slot_index = @intCast(pin_index),
+            .generation = permit_generation,
+            .completion_generation = completion_generation,
+            .request_epoch = request_epoch,
+            .session_id = session_id,
+            .sequence = expected_sequence,
+            .owner_key = owner_key,
+            .scope_index = scope.node_index,
+            .scope_generation = scope.generation,
+            .node_count = @intCast(leaves.len),
+            .claim = aggregate,
+            .node_set_digest = node_set_digest,
+            .integrity = 0,
+        };
+        permit.integrity = leasePinPermitIntegrity(permit);
+        return .{
+            .tree = makeLeaseTree(tree.parent, root.*),
+            .permit = permit,
+        };
+    }
+
+    /// Revalidate one exact currently active private pin authority without
+    /// consuming it.
+    pub fn validateLeasePin(
+        self: *Bank,
+        permit: LeasePinPermitV1,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        _ = try self.validateLeasePinLocked(permit);
+    }
+
+    /// Consume one exact active pin after the command owner has independently
+    /// observed terminal completion. The Bank deliberately accepts no caller
+    /// boolean or backend callback as proof; higher-level dispatch code keeps
+    /// this private permit until its completion authority succeeds.
+    pub fn releaseLeasePins(
+        self: *Bank,
+        permit: LeasePinPermitV1,
+    ) Error!LeasePinReleasedV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const validated = try self.validateLeasePinLocked(permit);
+        const root = validated.root;
+        const parent_slot = try self.validateReceipt(permit.parent);
+        if (root.pending_kind != .none or parent_slot.publication_active or
+            parent_slot.publication_request_epoch != permit.request_epoch or
+            parent_slot.publication_session_id != permit.session_id or
+            parent_slot.publication_next_sequence != permit.sequence or
+            root.structural_revision == std.math.maxInt(u64))
+            return Error.InvalidTransition;
+
+        const completion_tree_generation =
+            try self.reserveLeaseGenerations(1);
+        const source = validated.pin_slot.*;
+        const storage = try self.leaseTreeStorage();
+        const member_count: usize = @intCast(source.node_count);
+        for (source.members[0..member_count]) |member| {
+            const node = &storage.nodes[member.node_index];
+            if (node.state != .live or node.pin_count == 0)
+                return Error.InvalidTransition;
+        }
+        for (source.members[0..member_count]) |member|
+            storage.nodes[member.node_index].pin_count -= 1;
+        validated.pin_slot.* = .{};
+        root.generation = completion_tree_generation;
+        root.structural_revision += 1;
+        self.refreshLeaseTreeRootLocked(permit.parent, root);
+        const completion_tree = makeLeaseTree(permit.parent, root.*);
+
+        var completion: LeasePinCompletionV1 = .{
+            .parent = permit.parent,
+            .tree_key = permit.tree_key,
+            .tree_identity_generation = permit.tree_identity_generation,
+            .pin_slot_index = permit.pin_slot_index,
+            .permit_generation = permit.generation,
+            .completion_generation = permit.completion_generation,
+            .request_epoch = permit.request_epoch,
+            .session_id = permit.session_id,
+            .sequence = permit.sequence,
+            .owner_key = permit.owner_key,
+            .scope_index = permit.scope_index,
+            .scope_generation = permit.scope_generation,
+            .node_count = permit.node_count,
+            .claim = permit.claim,
+            .node_set_digest = permit.node_set_digest,
+            .permit_integrity = permit.integrity,
+            .completion_tree_generation = completion_tree.generation,
+            .completion_structural_revision = completion_tree.structural_revision,
+            .completion_state_digest = completion_tree.state_digest,
+            .completion_tree_integrity = completion_tree.integrity,
+            .integrity = 0,
+        };
+        completion.integrity =
+            leasePinCompletionIntegrity(completion);
+        return .{
+            .tree = completion_tree,
+            .completion = completion,
+        };
+    }
+
     /// Quiesce every live allocation directly beneath `scope`. The returned
     /// ticket is cancellable but is not allocator-free authority. Charge,
     /// subtree sums, and Bank usage remain unchanged.
@@ -2395,7 +2819,8 @@ pub const Bank = struct {
         expected_sequence: u64,
     ) Error!PublicationPermit {
         const slot = try self.validateReceipt(receipt);
-        if (try self.hasPendingLeaseTreeLocked(receipt.slot_index))
+        if (try self.hasPendingLeaseTreeLocked(receipt.slot_index) or
+            try self.hasActiveLeasePinsLocked(receipt.slot_index))
             return Error.InvalidTransition;
         if (slot.state != .committed or
             slot.publication_request_epoch != request_epoch or
@@ -2860,7 +3285,8 @@ pub const Bank = struct {
         const storage = self.lease_tree_storage orelse
             return Error.InvalidConfiguration;
         if (storage.roots.len != self.slots.len or storage.nodes.len == 0 or
-            storage.nodes.len > std.math.maxInt(u32))
+            storage.nodes.len > std.math.maxInt(u32) or
+            storage.pin_slots.len > std.math.maxInt(u32))
             return Error.InvalidConfiguration;
         return storage;
     }
@@ -2884,6 +3310,23 @@ pub const Bank = struct {
             return Error.InvalidConfiguration;
         const root = storage.roots[slot_index];
         return root.active and root.pending_kind != .none;
+    }
+
+    fn hasActiveLeasePinsLocked(
+        self: *Bank,
+        slot_index: u32,
+    ) Error!bool {
+        const storage = self.lease_tree_storage orelse return false;
+        if (storage.roots.len != self.slots.len or
+            storage.pin_slots.len > std.math.maxInt(u32) or
+            slot_index >= storage.roots.len)
+            return Error.InvalidConfiguration;
+        for (storage.pin_slots) |pin_slot| {
+            if (pin_slot.active and
+                pin_slot.receipt_slot_index == slot_index)
+                return true;
+        }
+        return false;
     }
 
     fn leaseTreeBlocksSessionCloseLocked(
@@ -2919,6 +3362,7 @@ pub const Bank = struct {
             @panic("LeaseTree storage disappeared");
         root.state_digest = leaseTreeStateDigest(
             storage.nodes,
+            storage.pin_slots,
             receipt.slot_index,
             root.*,
         );
@@ -2948,6 +3392,7 @@ pub const Bank = struct {
             root.integrity != tree.integrity or
             root.state_digest != leaseTreeStateDigest(
                 storage.nodes,
+                storage.pin_slots,
                 tree.parent.slot_index,
                 root.*,
             ) or
@@ -2959,6 +3404,7 @@ pub const Bank = struct {
             tree.parent,
             root.*,
         );
+        try self.validateLeasePinStorageLocked(storage);
         return root;
     }
 
@@ -3030,6 +3476,7 @@ pub const Bank = struct {
             root.pending_scope_index != no_lease_node or
             root.state_digest != leaseTreeStateDigest(
                 storage.nodes,
+                storage.pin_slots,
                 batch.parent.slot_index,
                 root.*,
             ) or root.integrity != leaseTreeIntegrity(batch.parent, root.*))
@@ -3079,6 +3526,7 @@ pub const Bank = struct {
             scope.tree_identity_generation != ticket.tree_identity_generation or
             root.state_digest != leaseTreeStateDigest(
                 storage.nodes,
+                storage.pin_slots,
                 ticket.parent.slot_index,
                 root.*,
             ) or root.integrity != leaseTreeIntegrity(ticket.parent, root.*))
@@ -3128,6 +3576,7 @@ pub const Bank = struct {
             scope.tree_identity_generation != permit.tree_identity_generation or
             root.state_digest != leaseTreeStateDigest(
                 storage.nodes,
+                storage.pin_slots,
                 permit.parent.slot_index,
                 root.*,
             ) or root.integrity != leaseTreeIntegrity(permit.parent, root.*))
@@ -3138,6 +3587,89 @@ pub const Bank = struct {
             root.*,
         );
         return root;
+    }
+
+    fn validateLeasePinStorageLocked(
+        self: *Bank,
+        storage: LeaseTreeStorage,
+    ) Error!void {
+        for (storage.pin_slots) |pin_slot| {
+            if (!pin_slot.active) continue;
+            if (pin_slot.receipt_slot_index >= storage.roots.len or
+                pin_slot.receipt_slot_index >= self.slots.len)
+                return Error.InvalidTransition;
+            const root = storage.roots[pin_slot.receipt_slot_index];
+            if (self.slots[pin_slot.receipt_slot_index].state != .committed or
+                !root.active or root.tree_key != pin_slot.tree_key or
+                root.identity_generation != pin_slot.tree_identity_generation)
+                return Error.InvalidTransition;
+        }
+        for (storage.roots, 0..) |root, root_index| {
+            if (!root.active) continue;
+            if (self.slots[root_index].state != .committed)
+                return Error.InvalidTransition;
+            try validateLeasePinRegistry(
+                storage.nodes,
+                storage.pin_slots,
+                receiptFromSlot(
+                    self.epoch,
+                    @intCast(root_index),
+                    self.slots[root_index],
+                ),
+                root,
+            );
+        }
+    }
+
+    fn validateLeasePinLocked(
+        self: *Bank,
+        permit: LeasePinPermitV1,
+    ) Error!LeasePinValidationV1 {
+        if (!leasePinPermitIntegrityValidV1(permit))
+            return Error.StaleReservation;
+        const parent_slot = try self.validateReceipt(permit.parent);
+        if (parent_slot.state != .committed)
+            return Error.InvalidTransition;
+        const storage = try self.leaseTreeStorage();
+        if (permit.pin_slot_index >= storage.pin_slots.len)
+            return Error.StaleReservation;
+        const root = &storage.roots[permit.parent.slot_index];
+        if (!root.active or root.tree_key != permit.tree_key or
+            root.identity_generation != permit.tree_identity_generation)
+            return Error.StaleReservation;
+        _ = try self.validateLeaseTreeLocked(makeLeaseTree(
+            permit.parent,
+            root.*,
+        ));
+        const pin_slot = &storage.pin_slots[permit.pin_slot_index];
+        if (!pin_slot.active or
+            pin_slot.receipt_slot_index != permit.parent.slot_index or
+            pin_slot.tree_key != permit.tree_key or
+            pin_slot.tree_identity_generation !=
+                permit.tree_identity_generation or
+            pin_slot.tree_generation != permit.tree_generation or
+            pin_slot.structural_revision != permit.structural_revision or
+            pin_slot.generation != permit.generation or
+            pin_slot.completion_generation != permit.completion_generation or
+            pin_slot.request_epoch != permit.request_epoch or
+            pin_slot.session_id != permit.session_id or
+            pin_slot.sequence != permit.sequence or
+            pin_slot.owner_key != permit.owner_key or
+            pin_slot.scope_index != permit.scope_index or
+            pin_slot.scope_generation != permit.scope_generation or
+            pin_slot.node_count != permit.node_count or
+            !std.meta.eql(pin_slot.claim, permit.claim) or
+            pin_slot.node_set_digest != permit.node_set_digest or
+            pin_slot.integrity != leasePinSlotIntegrity(
+                permit.parent,
+                permit.pin_slot_index,
+                pin_slot.*,
+            ))
+            return Error.StaleReservation;
+        return .{
+            .root = root,
+            .pin_slot = pin_slot,
+        };
     }
 
     fn takeChildGeneration(self: *Bank) Error!u64 {
@@ -3269,6 +3801,11 @@ const lease_pending_domain: u64 = 0x6c65_6173_6570_6431;
 const lease_batch_domain: u64 = 0x6c65_6173_6562_6131;
 const lease_retire_domain: u64 = 0x6c65_6173_6572_7431;
 const lease_free_domain: u64 = 0x6c65_6173_6566_7231;
+const lease_pin_state_domain: u64 = 0x6c65_6173_6570_7331;
+const lease_pin_member_domain: u64 = 0x6c65_6173_6570_6d31;
+const lease_pin_slot_domain: u64 = 0x6c65_6173_6570_6c31;
+const lease_pin_permit_domain: u64 = 0x6c65_6173_6570_7031;
+const lease_pin_completion_domain: u64 = 0x6c65_6173_6570_6331;
 
 fn clearLeasePending(root: *LeaseTreeRootSlot) void {
     root.pending_kind = .none;
@@ -3375,6 +3912,7 @@ fn leaseNodeIntegrity(
 
 fn leaseTreeStateDigest(
     nodes: []const LeaseNodeSlot,
+    pin_slots: []const LeasePinSlotV1,
     receipt_slot_index: u32,
     root: LeaseTreeRootSlot,
 ) u64 {
@@ -3416,6 +3954,23 @@ fn leaseTreeStateDigest(
         result = mix64(result ^ @as(u64, node.published_references));
         inline for (std.meta.fields(Claim)) |field|
             result = mix64(result ^ @field(node.subtree_claim, field.name));
+    }
+    // Preserve the exact legacy zero-pin digest. The registry branch is
+    // entered only while at least one exact permit is live for this tree.
+    var has_active_pins = false;
+    for (pin_slots, 0..) |pin_slot, pin_index| {
+        if (!pin_slot.active or
+            pin_slot.receipt_slot_index != receipt_slot_index or
+            pin_slot.tree_identity_generation != root.identity_generation)
+            continue;
+        if (!has_active_pins) {
+            result = mix64(result ^ lease_pin_state_domain);
+            has_active_pins = true;
+        }
+        result = mix64(result ^ @as(u64, @intCast(pin_index)));
+        result = mix64(result ^ pin_slot.generation);
+        result = mix64(result ^ pin_slot.node_set_digest);
+        result = mix64(result ^ pin_slot.integrity);
     }
     return result;
 }
@@ -3503,6 +4058,248 @@ fn leaseFreePermitIntegrity(permit: LeaseFreePermitV1) u64 {
     return result;
 }
 
+fn leasePinNodeSetDigest(
+    tree_key: u64,
+    tree_identity_generation: u64,
+    scope_index: u32,
+    scope_generation: u64,
+    members: []const LeasePinMemberV1,
+) u64 {
+    var result = mix64(lease_pin_member_domain ^ tree_key);
+    result = mix64(result ^ tree_identity_generation);
+    result = mix64(result ^ @as(u64, scope_index));
+    result = mix64(result ^ scope_generation);
+    result = mix64(result ^ @as(u64, @intCast(members.len)));
+    for (members, 0..) |member, ordinal| {
+        result = mix64(result ^ @as(u64, @intCast(ordinal)));
+        result = mix64(result ^ @as(u64, member.node_index));
+        result = mix64(result ^ @as(u64, member.reserved));
+        result = mix64(result ^ member.node_generation);
+        result = mix64(result ^ member.node_integrity);
+    }
+    return result;
+}
+
+fn leasePinSlotIntegrity(
+    parent: Receipt,
+    pin_slot_index: u32,
+    slot: LeasePinSlotV1,
+) u64 {
+    var result = mix64(lease_pin_slot_domain ^ parent.integrity);
+    result = mix64(result ^ @as(u64, @intFromBool(slot.active)));
+    result = mix64(result ^ @as(u64, pin_slot_index));
+    result = mix64(result ^ @as(u64, slot.receipt_slot_index));
+    result = mix64(result ^ slot.tree_key);
+    result = mix64(result ^ slot.tree_identity_generation);
+    result = mix64(result ^ slot.tree_generation);
+    result = mix64(result ^ slot.structural_revision);
+    result = mix64(result ^ slot.generation);
+    result = mix64(result ^ slot.completion_generation);
+    result = mix64(result ^ slot.request_epoch);
+    result = mix64(result ^ @as(u64, @intCast(slot.session_id)));
+    result = mix64(result ^ slot.sequence);
+    result = mix64(result ^ slot.owner_key);
+    result = mix64(result ^ @as(u64, slot.scope_index));
+    result = mix64(result ^ slot.scope_generation);
+    result = mix64(result ^ @as(u64, slot.node_count));
+    inline for (std.meta.fields(Claim)) |field|
+        result = mix64(result ^ @field(slot.claim, field.name));
+    result = mix64(result ^ slot.node_set_digest);
+    const count: usize = @intCast(slot.node_count);
+    if (count <= maximum_lease_pin_nodes) {
+        for (slot.members[0..count], 0..) |member, ordinal| {
+            result = mix64(result ^ @as(u64, @intCast(ordinal)));
+            result = mix64(result ^ @as(u64, member.node_index));
+            result = mix64(result ^ @as(u64, member.reserved));
+            result = mix64(result ^ member.node_generation);
+            result = mix64(result ^ member.node_integrity);
+        }
+    }
+    return result;
+}
+
+fn leasePinPermitIntegrity(permit: LeasePinPermitV1) u64 {
+    var result = mix64(lease_pin_permit_domain ^ permit.parent.integrity);
+    result = mix64(result ^ permit.tree_key);
+    result = mix64(result ^ permit.tree_identity_generation);
+    result = mix64(result ^ permit.tree_generation);
+    result = mix64(result ^ permit.structural_revision);
+    result = mix64(result ^ @as(u64, permit.pin_slot_index));
+    result = mix64(result ^ @as(u64, permit.reserved));
+    result = mix64(result ^ permit.generation);
+    result = mix64(result ^ permit.completion_generation);
+    result = mix64(result ^ permit.request_epoch);
+    result = mix64(result ^ @as(u64, @intCast(permit.session_id)));
+    result = mix64(result ^ permit.sequence);
+    result = mix64(result ^ permit.owner_key);
+    result = mix64(result ^ @as(u64, permit.scope_index));
+    result = mix64(result ^ permit.scope_generation);
+    result = mix64(result ^ @as(u64, permit.node_count));
+    inline for (std.meta.fields(Claim)) |field|
+        result = mix64(result ^ @field(permit.claim, field.name));
+    result = mix64(result ^ permit.node_set_digest);
+    return result;
+}
+
+fn leasePinCompletionIntegrity(completion: LeasePinCompletionV1) u64 {
+    var result =
+        mix64(lease_pin_completion_domain ^ completion.parent.integrity);
+    result = mix64(result ^ completion.tree_key);
+    result = mix64(result ^ completion.tree_identity_generation);
+    result = mix64(result ^ @as(u64, completion.pin_slot_index));
+    result = mix64(result ^ @as(u64, completion.reserved));
+    result = mix64(result ^ completion.permit_generation);
+    result = mix64(result ^ completion.completion_generation);
+    result = mix64(result ^ completion.request_epoch);
+    result = mix64(result ^ @as(u64, @intCast(completion.session_id)));
+    result = mix64(result ^ completion.sequence);
+    result = mix64(result ^ completion.owner_key);
+    result = mix64(result ^ @as(u64, completion.scope_index));
+    result = mix64(result ^ completion.scope_generation);
+    result = mix64(result ^ @as(u64, completion.node_count));
+    inline for (std.meta.fields(Claim)) |field|
+        result = mix64(result ^ @field(completion.claim, field.name));
+    result = mix64(result ^ completion.node_set_digest);
+    result = mix64(result ^ completion.permit_integrity);
+    result = mix64(result ^ completion.completion_tree_generation);
+    result = mix64(result ^ completion.completion_structural_revision);
+    result = mix64(result ^ completion.completion_state_digest);
+    result = mix64(result ^ completion.completion_tree_integrity);
+    return result;
+}
+
+fn validateLeasePinRegistry(
+    nodes: []const LeaseNodeSlot,
+    pin_slots: []const LeasePinSlotV1,
+    receipt: Receipt,
+    root: LeaseTreeRootSlot,
+) Error!void {
+    var active_pin_count: u64 = 0;
+    for (pin_slots, 0..) |pin_slot, pin_index| {
+        if (!pin_slot.active or
+            pin_slot.receipt_slot_index != receipt.slot_index)
+            continue;
+        if (pin_slot.tree_key != root.tree_key or
+            pin_slot.tree_identity_generation != root.identity_generation or
+            pin_slot.tree_generation == 0 or
+            pin_slot.tree_generation > root.generation or
+            pin_slot.structural_revision == 0 or
+            pin_slot.structural_revision > root.structural_revision or
+            pin_slot.generation == 0 or
+            pin_slot.generation > std.math.maxInt(u64) - 2 or
+            pin_slot.tree_generation != pin_slot.generation + 1 or
+            pin_slot.completion_generation != pin_slot.generation + 2 or
+            pin_slot.request_epoch == 0 or pin_slot.session_id == 0 or
+            pin_slot.owner_key == 0 or
+            pin_slot.scope_index == no_lease_node or
+            pin_slot.scope_index >= nodes.len or
+            pin_slot.scope_generation == 0 or pin_slot.node_count == 0 or
+            pin_slot.node_count > maximum_lease_pin_nodes or
+            pin_slot.claim.isZero() or pin_slot.node_set_digest == 0 or
+            pin_slot.integrity != leasePinSlotIntegrity(
+                receipt,
+                @intCast(pin_index),
+                pin_slot,
+            ))
+            return Error.InvalidTransition;
+        active_pin_count = std.math.add(
+            u64,
+            active_pin_count,
+            1,
+        ) catch return Error.InvalidTransition;
+        if (active_pin_count > receipt.claim.queue_slots)
+            return Error.InvalidTransition;
+
+        const scope = nodes[pin_slot.scope_index];
+        if (!scope.active or scope.kind != .scope or scope.state != .live or
+            scope.receipt_slot_index != receipt.slot_index or
+            scope.tree_identity_generation != root.identity_generation or
+            scope.generation != pin_slot.scope_generation or
+            scope.integrity != leaseNodeIntegrity(
+                receipt,
+                root.tree_key,
+                pin_slot.scope_index,
+                scope,
+            ))
+            return Error.InvalidTransition;
+
+        const member_count: usize = @intCast(pin_slot.node_count);
+        var aggregate: Claim = .{};
+        for (pin_slot.members[0..member_count], 0..) |member, ordinal| {
+            if (member.reserved != 0 or member.node_index == no_lease_node or
+                member.node_index >= nodes.len or member.node_generation == 0 or
+                member.node_integrity == 0)
+                return Error.InvalidTransition;
+            for (pin_slot.members[0..ordinal]) |prior| {
+                if (prior.node_index == member.node_index)
+                    return Error.InvalidTransition;
+            }
+            const node = nodes[member.node_index];
+            if (!node.active or node.kind != .allocation or
+                node.state != .live or
+                node.receipt_slot_index != receipt.slot_index or
+                node.tree_identity_generation != root.identity_generation or
+                node.generation != member.node_generation or
+                node.parent_index != pin_slot.scope_index or
+                node.parent_generation != pin_slot.scope_generation or
+                node.integrity != member.node_integrity or
+                node.integrity != leaseNodeIntegrity(
+                    receipt,
+                    root.tree_key,
+                    member.node_index,
+                    node,
+                ))
+                return Error.InvalidTransition;
+            aggregate = try addClaims(aggregate, node.claim);
+        }
+        for (pin_slot.members[member_count..]) |trailing| {
+            if (!std.meta.eql(trailing, LeasePinMemberV1{}))
+                return Error.InvalidTransition;
+        }
+        if (!std.meta.eql(aggregate, pin_slot.claim) or
+            pin_slot.node_set_digest != leasePinNodeSetDigest(
+                root.tree_key,
+                root.identity_generation,
+                pin_slot.scope_index,
+                pin_slot.scope_generation,
+                pin_slot.members[0..member_count],
+            ))
+            return Error.InvalidTransition;
+    }
+
+    for (nodes, 0..) |node, node_index| {
+        if (!node.active or
+            node.receipt_slot_index != receipt.slot_index or
+            node.tree_identity_generation != root.identity_generation)
+            continue;
+        if (node.published_references != 0)
+            return Error.InvalidTransition;
+        var expected_pins: u32 = 0;
+        for (pin_slots) |pin_slot| {
+            if (!pin_slot.active or
+                pin_slot.receipt_slot_index != receipt.slot_index or
+                pin_slot.tree_identity_generation != root.identity_generation)
+                continue;
+            const member_count: usize = @intCast(pin_slot.node_count);
+            for (pin_slot.members[0..member_count]) |member| {
+                if (member.node_index == node_index)
+                    expected_pins = std.math.add(
+                        u32,
+                        expected_pins,
+                        1,
+                    ) catch return Error.InvalidTransition;
+            }
+        }
+        if (node.kind == .scope and expected_pins != 0)
+            return Error.InvalidTransition;
+        if (node.kind == .allocation and node.state != .live and
+            expected_pins != 0)
+            return Error.InvalidTransition;
+        if (node.pin_count != expected_pins)
+            return Error.InvalidTransition;
+    }
+}
+
 fn validateLeaseTreeAccounting(
     nodes: []const LeaseNodeSlot,
     receipt: Receipt,
@@ -3535,12 +4332,15 @@ fn validateLeaseTreeAccounting(
         if (node_count == std.math.maxInt(u32))
             return Error.InvalidTransition;
         node_count += 1;
+        if (node.published_references != 0)
+            return Error.InvalidTransition;
         switch (node.kind) {
             .scope => {
                 if (node.state != .live or !node.claim.isZero() or
                     node.binding_key != 0 or
                     node.parent_index != no_lease_node or
-                    node.parent_generation != root.identity_generation)
+                    node.parent_generation != root.identity_generation or
+                    node.pin_count != 0)
                     return Error.InvalidTransition;
                 var scope_claim: Claim = .{};
                 for (nodes) |child| {
@@ -3573,6 +4373,8 @@ fn validateLeaseTreeAccounting(
                         node.state == .reserved_unmaterialized) or
                         (!root.restored_publication_activated and
                             node.state != .reserved_unmaterialized)))
+                    return Error.InvalidTransition;
+                if (node.state != .live and node.pin_count != 0)
                     return Error.InvalidTransition;
                 tree_claim = try addClaims(tree_claim, node.claim);
             },
@@ -6298,4 +7100,646 @@ test "copied funded allocation activation and abort linearize one outcome" {
     try std.testing.expect(snapshot.used.isZero());
     try std.testing.expectEqual(@as(usize, 0), snapshot.committed_receipts);
     try std.testing.expectEqual(@as(usize, 0), snapshot.active_lease_trees);
+}
+
+test "LeaseTree exact pins overlap release out of order and reject ABA" {
+    var slots = [_]Slot{.{}} ** 1;
+    var roots = [_]LeaseTreeRootSlot{.{}} ** slots.len;
+    var nodes = [_]LeaseNodeSlot{.{}} ** 5;
+    var pin_slots = [_]LeasePinSlotV1{.{}} ** 2;
+    var bank = try Bank.initWithLeaseTreePinStorage(
+        &slots,
+        &roots,
+        &nodes,
+        &pin_slots,
+        .{
+            .host_bytes = 96,
+            .kv_bytes = 96,
+            .queue_slots = 2,
+        },
+        0x5049_4e41_4241,
+    );
+    const receipt = try bank.commit(try bank.reserve(
+        1,
+        .{ .queue_slots = 2 },
+    ));
+    var tree = try bank.openLeaseTree(
+        receipt,
+        2,
+        3,
+        .{ .kv_bytes = 96 },
+    );
+    const first_scope = try bank.openLeaseScope(
+        tree,
+        4,
+        5,
+        .{ .kv_bytes = 64 },
+    );
+    tree = first_scope.tree;
+    const second_scope = try bank.openLeaseScope(
+        tree,
+        6,
+        7,
+        .{ .kv_bytes = 32 },
+    );
+    tree = second_scope.tree;
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    try bank.bindPublicationSessionWithTree(tree, 8, session_id);
+    const specs = [_]LeaseAllocationSpecV1{
+        .{
+            .scope = first_scope.scope,
+            .node_key = 9,
+            .binding_key = 10,
+            .claim = .{ .kv_bytes = 32 },
+        },
+        .{
+            .scope = first_scope.scope,
+            .node_key = 11,
+            .binding_key = 12,
+            .claim = .{ .kv_bytes = 32 },
+        },
+        .{
+            .scope = second_scope.scope,
+            .node_key = 13,
+            .binding_key = 14,
+            .claim = .{ .kv_bytes = 32 },
+        },
+    };
+    var leaves: [specs.len]LeaseNodeV1 = undefined;
+    const reserved = try bank.reserveAllocationsForSession(
+        tree,
+        8,
+        session_id,
+        0,
+        &specs,
+        &leaves,
+    );
+    tree = try bank.commitAllocationsAfterAllocate(reserved.batch);
+    try std.testing.expectEqual(
+        roots[0].state_digest,
+        leaseTreeStateDigest(&nodes, &.{}, 0, roots[0]),
+    );
+
+    const first = try bank.acquireLeasePinsForSession(
+        tree,
+        first_scope.scope,
+        8,
+        session_id,
+        0,
+        15,
+        leaves[0..2],
+    );
+    try std.testing.expect(leasePinPermitIntegrityValidV1(first.permit));
+    var malformed_permit_generation = first.permit;
+    malformed_permit_generation.tree_generation += 1;
+    malformed_permit_generation.integrity =
+        leasePinPermitIntegrity(malformed_permit_generation);
+    try std.testing.expect(
+        !leasePinPermitIntegrityValidV1(
+            malformed_permit_generation,
+        ),
+    );
+    malformed_permit_generation = first.permit;
+    malformed_permit_generation.completion_generation += 1;
+    malformed_permit_generation.integrity =
+        leasePinPermitIntegrity(malformed_permit_generation);
+    try std.testing.expect(
+        !leasePinPermitIntegrityValidV1(
+            malformed_permit_generation,
+        ),
+    );
+    try bank.validateLeasePin(first.permit);
+    try std.testing.expectError(
+        Error.StaleReservation,
+        bank.validateLeaseTree(tree),
+    );
+    const reverse = [_]LeaseNodeV1{ leaves[1], leaves[0] };
+    const second = try bank.acquireLeasePinsForSession(
+        first.tree,
+        first_scope.scope,
+        8,
+        session_id,
+        0,
+        16,
+        &reverse,
+    );
+    try std.testing.expect(
+        first.permit.node_set_digest != second.permit.node_set_digest,
+    );
+    try std.testing.expectEqual(@as(u32, 2), nodes[leaves[0].node_index].pin_count);
+    try std.testing.expectEqual(@as(u32, 2), nodes[leaves[1].node_index].pin_count);
+    try std.testing.expectError(
+        Error.CapacityExceeded,
+        bank.acquireLeasePinsForSession(
+            second.tree,
+            first_scope.scope,
+            8,
+            session_id,
+            0,
+            18,
+            leaves[0..1],
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.beginPublicationWithLeaseTree(
+            second.tree,
+            8,
+            session_id,
+            0,
+        ),
+    );
+
+    const first_released = try bank.releaseLeasePins(first.permit);
+    try std.testing.expect(
+        leasePinCompletionIntegrityValidV1(first_released.completion),
+    );
+    var malformed_completion = first_released.completion;
+    malformed_completion.completion_generation += 1;
+    malformed_completion.integrity =
+        leasePinCompletionIntegrity(malformed_completion);
+    try std.testing.expect(
+        !leasePinCompletionIntegrityValidV1(
+            malformed_completion,
+        ),
+    );
+    malformed_completion = first_released.completion;
+    malformed_completion.completion_tree_generation =
+        malformed_completion.completion_generation;
+    malformed_completion.integrity =
+        leasePinCompletionIntegrity(malformed_completion);
+    try std.testing.expect(
+        !leasePinCompletionIntegrityValidV1(
+            malformed_completion,
+        ),
+    );
+    try std.testing.expect(
+        first_released.completion.completion_tree_generation >
+            first.permit.completion_generation,
+    );
+    try std.testing.expectEqual(@as(u32, 1), nodes[leaves[0].node_index].pin_count);
+    try std.testing.expectError(
+        Error.StaleReservation,
+        bank.releaseLeasePins(first.permit),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.beginRetireSubtreeForSession(
+            first_released.tree,
+            first_scope.scope,
+            8,
+            session_id,
+            0,
+        ),
+    );
+
+    const second_released = try bank.releaseLeasePins(second.permit);
+    try std.testing.expect(
+        second_released.tree.generation >
+            first_released.tree.generation,
+    );
+    try std.testing.expectEqual(@as(u32, 0), nodes[leaves[0].node_index].pin_count);
+    const third = try bank.acquireLeasePinsForSession(
+        second_released.tree,
+        first_scope.scope,
+        8,
+        session_id,
+        0,
+        17,
+        leaves[0..2],
+    );
+    try std.testing.expectEqual(
+        first.permit.pin_slot_index,
+        third.permit.pin_slot_index,
+    );
+    try std.testing.expect(first.permit.generation != third.permit.generation);
+    try std.testing.expectError(
+        Error.StaleReservation,
+        bank.validateLeasePin(first.permit),
+    );
+
+    const sibling_pending = try bank.beginRetireSubtreeForSession(
+        third.tree,
+        second_scope.scope,
+        8,
+        session_id,
+        0,
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.releaseLeasePins(third.permit),
+    );
+    tree = try bank.cancelRetire(sibling_pending.ticket);
+    const third_released = try bank.releaseLeasePins(third.permit);
+    tree = third_released.tree;
+    try std.testing.expect(
+        leasePinCompletionIntegrityValidV1(third_released.completion),
+    );
+    try std.testing.expectEqual(
+        roots[0].state_digest,
+        leaseTreeStateDigest(&nodes, &.{}, 0, roots[0]),
+    );
+
+    const first_retire = try bank.beginRetireSubtreeForSession(
+        tree,
+        first_scope.scope,
+        8,
+        session_id,
+        0,
+    );
+    const first_free = try bank.authorizeFree(first_retire.ticket);
+    tree = try bank.commitFreeAfterAllocatorFree(first_free.permit);
+    const second_retire = try bank.beginRetireSubtreeForSession(
+        tree,
+        second_scope.scope,
+        8,
+        session_id,
+        0,
+    );
+    const second_free = try bank.authorizeFree(second_retire.ticket);
+    tree = try bank.commitFreeAfterAllocatorFree(second_free.permit);
+    try bank.closePublicationSession(receipt, 8, session_id, 0);
+    try bank.closeLeaseTree(tree);
+    try bank.release(receipt);
+    try std.testing.expect((try bank.snapshotV3()).used.isZero());
+}
+
+test "LeaseTree pin acquire and retire race has one winner" {
+    const Pinner = struct {
+        bank: *Bank,
+        start: *std.atomic.Value(bool),
+        tree: LeaseTreeV1,
+        scope: LeaseNodeV1,
+        leaf: LeaseNodeV1,
+        session_id: usize,
+        acquired: ?LeasePinAcquiredV1 = null,
+        operation_error: ?Error = null,
+
+        fn run(self: *@This()) void {
+            while (!self.start.load(.acquire)) std.atomic.spinLoopHint();
+            const leaves = [_]LeaseNodeV1{self.leaf};
+            self.acquired = self.bank.acquireLeasePinsForSession(
+                self.tree,
+                self.scope,
+                21,
+                self.session_id,
+                0,
+                22,
+                &leaves,
+            ) catch |err| {
+                self.operation_error = err;
+                return;
+            };
+        }
+    };
+    const Reclaimer = struct {
+        bank: *Bank,
+        start: *std.atomic.Value(bool),
+        tree: LeaseTreeV1,
+        scope: LeaseNodeV1,
+        session_id: usize,
+        prepared: ?LeaseRetirePreparedV1 = null,
+        operation_error: ?Error = null,
+
+        fn run(self: *@This()) void {
+            while (!self.start.load(.acquire)) std.atomic.spinLoopHint();
+            self.prepared = self.bank.beginRetireSubtreeForSession(
+                self.tree,
+                self.scope,
+                21,
+                self.session_id,
+                0,
+            ) catch |err| {
+                self.operation_error = err;
+                return;
+            };
+        }
+    };
+
+    var slots = [_]Slot{.{}} ** 1;
+    var roots = [_]LeaseTreeRootSlot{.{}} ** slots.len;
+    var nodes = [_]LeaseNodeSlot{.{}} ** 2;
+    var pin_slots = [_]LeasePinSlotV1{.{}} ** 1;
+    var bank = try Bank.initWithLeaseTreePinStorage(
+        &slots,
+        &roots,
+        &nodes,
+        &pin_slots,
+        .{ .kv_bytes = 64, .queue_slots = 1 },
+        0x5049_4e52_4143_45,
+    );
+    const receipt = try bank.commit(try bank.reserve(
+        18,
+        .{ .queue_slots = 1 },
+    ));
+    var tree = try bank.openLeaseTree(
+        receipt,
+        19,
+        20,
+        .{ .kv_bytes = 64 },
+    );
+    const scoped = try bank.openLeaseScope(
+        tree,
+        23,
+        24,
+        .{ .kv_bytes = 64 },
+    );
+    tree = scoped.tree;
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    try bank.bindPublicationSessionWithTree(tree, 21, session_id);
+    const specs = [_]LeaseAllocationSpecV1{.{
+        .scope = scoped.scope,
+        .node_key = 25,
+        .binding_key = 26,
+        .claim = .{ .kv_bytes = 64 },
+    }};
+    var leaves: [1]LeaseNodeV1 = undefined;
+    const reserved = try bank.reserveAllocationsForSession(
+        tree,
+        21,
+        session_id,
+        0,
+        &specs,
+        &leaves,
+    );
+    tree = try bank.commitAllocationsAfterAllocate(reserved.batch);
+
+    var start = std.atomic.Value(bool).init(false);
+    var pinner: Pinner = .{
+        .bank = &bank,
+        .start = &start,
+        .tree = tree,
+        .scope = scoped.scope,
+        .leaf = leaves[0],
+        .session_id = session_id,
+    };
+    var reclaimer: Reclaimer = .{
+        .bank = &bank,
+        .start = &start,
+        .tree = tree,
+        .scope = scoped.scope,
+        .session_id = session_id,
+    };
+    const pin_thread = try std.Thread.spawn(.{}, Pinner.run, .{&pinner});
+    const retire_thread = std.Thread.spawn(
+        .{},
+        Reclaimer.run,
+        .{&reclaimer},
+    ) catch |err| {
+        start.store(true, .release);
+        pin_thread.join();
+        return err;
+    };
+    start.store(true, .release);
+    pin_thread.join();
+    retire_thread.join();
+
+    try std.testing.expect(
+        (pinner.acquired == null) != (reclaimer.prepared == null),
+    );
+    var prepared: LeaseRetirePreparedV1 = undefined;
+    if (pinner.acquired) |acquired| {
+        try std.testing.expect(
+            reclaimer.operation_error.? == Error.StaleReservation or
+                reclaimer.operation_error.? == Error.InvalidTransition,
+        );
+        const released = try bank.releaseLeasePins(acquired.permit);
+        prepared = try bank.beginRetireSubtreeForSession(
+            released.tree,
+            scoped.scope,
+            21,
+            session_id,
+            0,
+        );
+    } else {
+        try std.testing.expect(
+            pinner.operation_error.? == Error.StaleReservation or
+                pinner.operation_error.? == Error.InvalidTransition,
+        );
+        prepared = reclaimer.prepared.?;
+    }
+    const authorized = try bank.authorizeFree(prepared.ticket);
+    tree = try bank.commitFreeAfterAllocatorFree(authorized.permit);
+    try bank.closePublicationSession(receipt, 21, session_id, 0);
+    try bank.closeLeaseTree(tree);
+    try bank.release(receipt);
+    try std.testing.expect((try bank.snapshotV3()).used.isZero());
+}
+
+test "LeaseTree pin storage is opt in and registry corruption fails closed" {
+    {
+        var slots = [_]Slot{.{}} ** 1;
+        var roots = [_]LeaseTreeRootSlot{.{}} ** slots.len;
+        var nodes = [_]LeaseNodeSlot{.{}} ** 2;
+        var bank = try Bank.initWithLeaseTree(
+            &slots,
+            &roots,
+            &nodes,
+            .{ .kv_bytes = 16, .queue_slots = 1 },
+            0x5049_4e4e_4f4e_45,
+        );
+        const receipt = try bank.commit(try bank.reserve(
+            30,
+            .{ .queue_slots = 1 },
+        ));
+        var tree = try bank.openLeaseTree(
+            receipt,
+            31,
+            32,
+            .{ .kv_bytes = 16 },
+        );
+        const scoped = try bank.openLeaseScope(
+            tree,
+            33,
+            34,
+            .{ .kv_bytes = 16 },
+        );
+        tree = scoped.tree;
+        var coordinator: u8 = 0;
+        const session_id = @intFromPtr(&coordinator);
+        try bank.bindPublicationSessionWithTree(tree, 35, session_id);
+        const specs = [_]LeaseAllocationSpecV1{.{
+            .scope = scoped.scope,
+            .node_key = 36,
+            .binding_key = 37,
+            .claim = .{ .kv_bytes = 16 },
+        }};
+        var leaves: [1]LeaseNodeV1 = undefined;
+        const reserved = try bank.reserveAllocationsForSession(
+            tree,
+            35,
+            session_id,
+            0,
+            &specs,
+            &leaves,
+        );
+        tree = try bank.commitAllocationsAfterAllocate(reserved.batch);
+        try std.testing.expectError(
+            Error.InvalidConfiguration,
+            bank.acquireLeasePinsForSession(
+                tree,
+                scoped.scope,
+                35,
+                session_id,
+                0,
+                38,
+                &leaves,
+            ),
+        );
+        try bank.validateLeaseTree(tree);
+        const retired = try bank.beginRetireSubtreeForSession(
+            tree,
+            scoped.scope,
+            35,
+            session_id,
+            0,
+        );
+        const authorized = try bank.authorizeFree(retired.ticket);
+        tree = try bank.commitFreeAfterAllocatorFree(authorized.permit);
+        try bank.closePublicationSession(receipt, 35, session_id, 0);
+        try bank.closeLeaseTree(tree);
+        try bank.release(receipt);
+    }
+
+    var slots = [_]Slot{.{}} ** 1;
+    var roots = [_]LeaseTreeRootSlot{.{}} ** slots.len;
+    var nodes = [_]LeaseNodeSlot{.{}} ** 2;
+    var pin_slots = [_]LeasePinSlotV1{.{}} ** 1;
+    var bank = try Bank.initWithLeaseTreePinStorage(
+        &slots,
+        &roots,
+        &nodes,
+        &pin_slots,
+        .{ .kv_bytes = 32, .queue_slots = 2 },
+        0x5049_4e43_4f52_52,
+    );
+    const receipt = try bank.commit(try bank.reserve(
+        39,
+        .{ .queue_slots = 2 },
+    ));
+    var tree = try bank.openLeaseTree(
+        receipt,
+        40,
+        41,
+        .{ .kv_bytes = 32 },
+    );
+    const scoped = try bank.openLeaseScope(
+        tree,
+        42,
+        43,
+        .{ .kv_bytes = 32 },
+    );
+    tree = scoped.tree;
+    var coordinator: u8 = 0;
+    const session_id = @intFromPtr(&coordinator);
+    try bank.bindPublicationSessionWithTree(tree, 44, session_id);
+    const specs = [_]LeaseAllocationSpecV1{.{
+        .scope = scoped.scope,
+        .node_key = 45,
+        .binding_key = 46,
+        .claim = .{ .kv_bytes = 32 },
+    }};
+    var leaves: [1]LeaseNodeV1 = undefined;
+    const reserved = try bank.reserveAllocationsForSession(
+        tree,
+        44,
+        session_id,
+        0,
+        &specs,
+        &leaves,
+    );
+    tree = try bank.commitAllocationsAfterAllocate(reserved.batch);
+    const duplicate = [_]LeaseNodeV1{ leaves[0], leaves[0] };
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        bank.acquireLeasePinsForSession(
+            tree,
+            scoped.scope,
+            44,
+            session_id,
+            0,
+            47,
+            &duplicate,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.acquireLeasePinsForSession(
+            tree,
+            scoped.scope,
+            44,
+            session_id + 1,
+            0,
+            47,
+            &leaves,
+        ),
+    );
+
+    const acquired = try bank.acquireLeasePinsForSession(
+        tree,
+        scoped.scope,
+        44,
+        session_id,
+        0,
+        47,
+        &leaves,
+    );
+    try std.testing.expectError(
+        Error.LeasePinSlotsExhausted,
+        bank.acquireLeasePinsForSession(
+            acquired.tree,
+            scoped.scope,
+            44,
+            session_id,
+            0,
+            48,
+            &leaves,
+        ),
+    );
+    var forged = acquired.permit;
+    forged.owner_key ^= 1;
+    try std.testing.expect(!leasePinPermitIntegrityValidV1(forged));
+    try std.testing.expectError(
+        Error.StaleReservation,
+        bank.releaseLeasePins(forged),
+    );
+
+    const leaf_index: usize = leaves[0].node_index;
+    nodes[leaf_index].pin_count += 1;
+    bank.refreshLeaseTreeRootLocked(receipt, &roots[0]);
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.validateLeaseTree(makeLeaseTree(receipt, roots[0])),
+    );
+    nodes[leaf_index].pin_count -= 1;
+    bank.refreshLeaseTreeRootLocked(receipt, &roots[0]);
+    try bank.validateLeasePin(acquired.permit);
+
+    const original_pin_slot = pin_slots[0];
+    pin_slots[0].members[0].node_generation ^= 1;
+    bank.refreshLeaseTreeRootLocked(receipt, &roots[0]);
+    try std.testing.expectError(
+        Error.InvalidTransition,
+        bank.validateLeaseTree(makeLeaseTree(receipt, roots[0])),
+    );
+    pin_slots[0] = original_pin_slot;
+    bank.refreshLeaseTreeRootLocked(receipt, &roots[0]);
+    try bank.validateLeasePin(acquired.permit);
+
+    const released = try bank.releaseLeasePins(acquired.permit);
+    const retired = try bank.beginRetireSubtreeForSession(
+        released.tree,
+        scoped.scope,
+        44,
+        session_id,
+        0,
+    );
+    const authorized = try bank.authorizeFree(retired.ticket);
+    tree = try bank.commitFreeAfterAllocatorFree(authorized.permit);
+    try bank.closePublicationSession(receipt, 44, session_id, 0);
+    try bank.closeLeaseTree(tree);
+    try bank.release(receipt);
+    try std.testing.expect((try bank.snapshotV3()).used.isZero());
 }
