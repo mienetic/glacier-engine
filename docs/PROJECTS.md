@@ -194,9 +194,10 @@ command-buffer `.error` can now be reconciled into
 `MetalAsyncDispatchTerminalFailureV1` plus core `terminal_failure`; quarantine,
 pin, charge, buffers, and command stay live through Bank settlement, then the
 private callback exact-finalizes that same `.error` before clearing private
-state. Ambiguity, unknown, and invalid completion remain sticky. The native
-backend may own distinct buffer sets concurrently, so this is not a global
-queue-depth-one claim.
+state. Ambiguity, unknown, and invalid completion remain sticky until the
+separate loss-authorized Phase B callback-retirement protocol succeeds. The
+native backend may own distinct buffer sets concurrently, so this is not a
+global queue-depth-one claim.
 
 The **exact terminal-command-error reconciliation** follow-up is complete at
 the contract boundary. Its pointer-free sidecar binds the original quarantine,
@@ -250,6 +251,27 @@ without a second release or finalization. Allocation retirement is a separate
 operation after the dispatch slot is gone. See
 [Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md).
 
+The **Device-loss Dispatch Callback Retirement Phase B** follow-up is complete
+for the current portable contract, Metal adapter, ARC-owned callback gate, and
+build-isolated held-callback path. Fixed pointer-free
+`LossDispatchCallbackRetentionV1` (464 bytes),
+`LossDispatchCallbackRetirementPlanV1` (240 bytes),
+`LossDispatchCallbackFenceV1` (408 bytes), and
+`LossDispatchCallbackRetirementReceiptV1` (504 bytes) cover exact pending,
+submission-ambiguous, completion-unknown, and invalid-completion ownership.
+Native prepare detaches the callback target without waiting for callback exit
+while retaining the command record and four command-held references. Core
+consumes the Bank pin before exact native unlink, and the receipt replays from
+a tombstone with zero output authority. Production requires exact native
+`removed_notification` or `command_buffer_device_removed` evidence plus
+same-source sticky revalidation. The native gate uses a real Metal
+command/resources, a held callback, and synthetic injected loss; it
+validates pending retirement end to end but does not reproduce physical
+removal or driver failure. The other three states have portable/adapter
+coverage without a retained native fault campaign. Allocation retirement
+remains separate. See
+[Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md).
+
 The **build-isolated native Metal fault/race gate** is complete. A second,
 non-installed shim build contains the test-only controls, while the production
 shim exports no fault-control symbols. Two threads race a context-local
@@ -265,9 +287,9 @@ pin or finalizing the native record twice.
 Small next slices:
 
 - exercise removal-requested and removed callbacks on removable hardware;
-- add Phase B callback-safe native retirement or loss-fenced polling for
-  pending, ambiguous, unknown, and invalid commands without inferring a
-  terminal or output;
+- add direct Phase B retirement telemetry without weakening its callback,
+  lock-order, or authority boundary;
+- port Phase B to an additional GPU backend with the same portable evidence;
 - add fresh selection under a new receipt and explicit migration policy;
 - add multi-slot queue scheduling and multi-device partitioning;
 - add physical residency and direct device telemetry as separate authorities;
@@ -275,13 +297,12 @@ Small next slices:
   OS/device matrices;
 - retain performance evidence under declared campaigns.
 
-**Phase B first slice:** add a deterministic backend fixture that can retain
-one pending or ambiguous native-command record across a loss fence and later
-prove a callback-safe retirement decision. Done when the exact lease, pin,
-Bank permit custody, callback identity, and native record remain unchanged
-until that decision; unknown, stale, substituted, and premature retirement
-attempts leave ownership live; and no test relabels timeout or device loss as
-completion.
+**Phase B extension slice:** add an additional backend adapter or retained
+removable-hardware campaign without changing the portable ABI. Done when the
+exact lease, pin, Bank permit custody, callback identity, and native record
+stay bound through detachment and Bank-first unlink; unknown, stale,
+substituted, and premature attempts leave ownership live; allocation retirement
+stays separate; and no test relabels timeout or device loss as completion.
 
 **Current boundary:** the completed LeaseTree follow-up keeps stable capability
 facts separate from dynamic observations, consumes the exact selection,
@@ -311,12 +332,14 @@ gate proves observer installation, initial selected-device membership, and an
 unchanged no-event snapshot around one real successful Metal command. It did
 not exercise a physical removal callback. Quiesced-allocation retirement now
 releases real references in the isolated native gate under synthetic loss;
-physical-callback evidence, Phase B retirement for pending, ambiguous, unknown,
-and invalid commands, fresh selection and migration, multi-slot scheduling,
-physical residency, direct device telemetry, additional GPU backends,
-performance evidence, and broader native OS/device matrices remain
-unimplemented unless a slice supplies direct named evidence. Cross-compilation
-never counts as native support.
+the Phase B branch separately holds a real command's completion handler before
+its ARC-owned gate and proves detach-before-exit, Bank-first native unlink,
+replay, and later handler release under synthetic injected loss. That is native
+callback-lifetime evidence, not physical loss. Physical-callback evidence,
+fresh selection and migration, multi-slot scheduling, physical residency,
+direct device telemetry, additional GPU backends, performance evidence, and
+broader native OS/device matrices remain unimplemented unless a slice supplies
+direct named evidence. Cross-compilation never counts as native support.
 
 ### Native observation adapters
 

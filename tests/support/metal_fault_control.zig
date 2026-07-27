@@ -20,6 +20,8 @@ pub const enabled: bool = blk: {
 pub const fault_plan_abi: u64 = 0x474d_4650_0000_0001;
 pub const completion_facts_abi: u64 =
     0x474d_4643_0000_0001;
+pub const retirement_commit_facts_abi: u64 =
+    0x474d_5246_0000_0001;
 pub const completed_as_command_error: u32 = 1;
 
 pub const Error = error{
@@ -30,6 +32,14 @@ pub const Error = error{
     FactsUnavailable,
     FactsAmbiguous,
     FactsPending,
+    RetirementUnavailable,
+    RetirementConflict,
+    RetirementCommitFailureAlreadyArmed,
+    RetirementCommitFailureUnavailable,
+    CallbackHoldUnavailable,
+    CallbackHoldTimeout,
+    RegisteredWaiterUnavailable,
+    RegisteredWaiterTimeout,
     InvalidFacts,
 };
 
@@ -51,6 +61,16 @@ pub const CompletionFactsV1 = extern struct {
     published: metal.MetalAsyncCompletion = .{},
 };
 
+pub const RetirementCommitFactsV1 = extern struct {
+    abi_version: u64 = 0,
+    commit_attempt_count: u64 = 0,
+    injected_failure_count: u64 = 0,
+    committed_retirement_count: u64 = 0,
+    replay_count: u64 = 0,
+    failure_armed: u32 = 0,
+    reserved: u32 = 0,
+};
+
 comptime {
     if (@sizeOf(FaultPlanV1) != 32 or
         @offsetOf(FaultPlanV1, "injected_error_code") != 24)
@@ -59,6 +79,11 @@ comptime {
         @offsetOf(CompletionFactsV1, "physical") != 32 or
         @offsetOf(CompletionFactsV1, "published") != 176)
         @compileError("Metal test completion-facts ABI layout changed");
+    if (@sizeOf(RetirementCommitFactsV1) != 48 or
+        @offsetOf(RetirementCommitFactsV1, "failure_armed") != 40)
+        @compileError(
+            "Metal test retirement-commit facts ABI layout changed",
+        );
 }
 
 extern "C" fn glacier_metal_test_arm_next_completed_as_command_error_v1(
@@ -70,6 +95,31 @@ extern "C" fn glacier_metal_test_completion_facts_for_binding_v1(
     ctx: *metal.MetalContext,
     submission_binding: *const [32]u8,
     out: *CompletionFactsV1,
+) c_int;
+
+extern "C" fn glacier_metal_test_registered_dispatch_retirement_prepare(
+    ctx: *metal.MetalContext,
+    submission: *const metal.MetalAsyncSubmission,
+    permit: *metal.MetalRegisteredDispatchRetirementPermit,
+) c_int;
+extern "C" fn glacier_metal_test_arm_next_completion_callback_hold(
+    ctx: *metal.MetalContext,
+) c_int;
+extern "C" fn glacier_metal_test_wait_for_held_completion_callback(
+    ctx: *metal.MetalContext,
+) c_int;
+extern "C" fn glacier_metal_test_wait_for_registered_dispatch_waiter(
+    ctx: *metal.MetalContext,
+) c_int;
+extern "C" fn glacier_metal_test_release_held_completion_callback(
+    ctx: *metal.MetalContext,
+) c_int;
+extern "C" fn glacier_metal_test_arm_next_dispatch_retirement_commit_failure(
+    ctx: *metal.MetalContext,
+) c_int;
+extern "C" fn glacier_metal_test_dispatch_retirement_commit_facts(
+    ctx: *metal.MetalContext,
+    out: *RetirementCommitFactsV1,
 ) c_int;
 
 pub fn validateFaultPlanV1(plan: FaultPlanV1) Error!void {
@@ -199,5 +249,139 @@ pub fn completionFactsForBindingV1(
         facts,
         submission_binding,
     );
+    return facts;
+}
+
+/// Test-build-only authority for exercising the callback-safe retirement
+/// protocol without manufacturing a production lifecycle event. The
+/// production shim does not export the referenced symbol.
+pub fn prepareRegisteredDispatchRetirementForTest(
+    backend: *engine.MetalBackend,
+    submission: metal.MetalAsyncSubmission,
+) Error!metal.MetalRegisteredDispatchRetirementPermit {
+    if (comptime !enabled) return Error.Unavailable;
+    metal.validateMetalAsyncSubmission(
+        submission,
+    ) catch return Error.InvalidControl;
+
+    backend.allocation_mutex.lock();
+    defer backend.allocation_mutex.unlock();
+    var permit =
+        std.mem.zeroes(
+            metal.MetalRegisteredDispatchRetirementPermit,
+        );
+    permit.abi_version = metal.dispatch_retirement_permit_abi;
+    const result =
+        glacier_metal_test_registered_dispatch_retirement_prepare(
+            backend.ctx,
+            &submission,
+            &permit,
+        );
+    switch (result) {
+        0 => {},
+        1 => return Error.InvalidControl,
+        2 => return Error.RetirementUnavailable,
+        3 => return Error.RetirementConflict,
+        4 => return Error.RetirementUnavailable,
+        else => return Error.InvalidControl,
+    }
+    metal.validateMetalRegisteredDispatchRetirementPermitForSubmission(
+        permit,
+        submission,
+    ) catch return Error.InvalidFacts;
+    if (permit.authorization_kind != .synthetic_test)
+        return Error.InvalidFacts;
+    return permit;
+}
+
+pub fn armNextCompletionCallbackHold(
+    backend: *engine.MetalBackend,
+) Error!void {
+    if (comptime !enabled) return Error.Unavailable;
+    return switch (glacier_metal_test_arm_next_completion_callback_hold(
+        backend.ctx,
+    )) {
+        0 => {},
+        2 => Error.PlanAlreadyArmed,
+        else => Error.InvalidControl,
+    };
+}
+
+pub fn waitForHeldCompletionCallback(
+    backend: *engine.MetalBackend,
+) Error!void {
+    if (comptime !enabled) return Error.Unavailable;
+    return switch (glacier_metal_test_wait_for_held_completion_callback(
+        backend.ctx,
+    )) {
+        0 => {},
+        2 => Error.CallbackHoldUnavailable,
+        3 => Error.CallbackHoldTimeout,
+        else => Error.InvalidControl,
+    };
+}
+
+pub fn releaseHeldCompletionCallback(
+    backend: *engine.MetalBackend,
+) Error!void {
+    if (comptime !enabled) return Error.Unavailable;
+    return switch (glacier_metal_test_release_held_completion_callback(
+        backend.ctx,
+    )) {
+        0 => {},
+        2 => Error.CallbackHoldUnavailable,
+        3 => Error.CallbackHoldTimeout,
+        else => Error.InvalidControl,
+    };
+}
+
+pub fn waitForRegisteredDispatchWaiter(
+    backend: *engine.MetalBackend,
+) Error!void {
+    if (comptime !enabled) return Error.Unavailable;
+    return switch (glacier_metal_test_wait_for_registered_dispatch_waiter(
+        backend.ctx,
+    )) {
+        0 => {},
+        2 => Error.RegisteredWaiterUnavailable,
+        3 => Error.RegisteredWaiterTimeout,
+        else => Error.InvalidControl,
+    };
+}
+
+/// Arm exactly one failure at the final pre-unlink native retirement commit
+/// boundary. The command record, four command-held allocation references, and
+/// callback-detached permit remain live and exact for a retry.
+pub fn armNextDispatchRetirementCommitFailure(
+    backend: *engine.MetalBackend,
+) Error!void {
+    if (comptime !enabled) return Error.Unavailable;
+    return switch (glacier_metal_test_arm_next_dispatch_retirement_commit_failure(
+        backend.ctx,
+    )) {
+        0 => {},
+        2 => Error.RetirementCommitFailureAlreadyArmed,
+        3 => Error.RetirementCommitFailureUnavailable,
+        else => Error.InvalidControl,
+    };
+}
+
+pub fn dispatchRetirementCommitFacts(
+    backend: *engine.MetalBackend,
+) Error!RetirementCommitFactsV1 {
+    if (comptime !enabled) return Error.Unavailable;
+    var facts: RetirementCommitFactsV1 = .{};
+    if (glacier_metal_test_dispatch_retirement_commit_facts(
+        backend.ctx,
+        &facts,
+    ) != 0)
+        return Error.InvalidControl;
+    if (facts.abi_version != retirement_commit_facts_abi or
+        facts.failure_armed > 1 or
+        facts.reserved != 0 or
+        facts.injected_failure_count > facts.commit_attempt_count or
+        facts.committed_retirement_count > facts.commit_attempt_count or
+        facts.replay_count > facts.commit_attempt_count)
+        return Error.InvalidFacts;
     return facts;
 }

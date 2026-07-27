@@ -20,6 +20,8 @@ pub const device_loss_retirement =
     core.device_loss_retirement;
 pub const device_loss_dispatch_reconciliation =
     core.device_loss_dispatch_reconciliation;
+pub const device_loss_dispatch_callback_retirement =
+    core.device_loss_dispatch_callback_retirement;
 pub const device_allocation_lease =
     core.device_allocation_lease;
 pub const device_allocation_lease_tree =

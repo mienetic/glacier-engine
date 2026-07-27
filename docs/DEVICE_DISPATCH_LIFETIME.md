@@ -221,7 +221,8 @@ immutable native `.error` snapshot still match. It returns
 the sidecar binds the exact native error projection and backend-completion root
 while the core terminal has no output root. This authorization does not clear
 quarantine or release ownership. Ambiguous submission, unknown completion, and
-invalid completion cannot use this path and remain sticky.
+invalid completion cannot use this path and remain sticky until the separate
+loss-authorized Phase B callback-retirement protocol succeeds.
 
 ### Device-loss dispatch reconciliation Phase A
 
@@ -267,11 +268,47 @@ successful Coordinator completion stored in the tombstone.
 Dispatch settlement does not release the allocation lease. Only after the
 dispatch slot is gone may the separate
 [Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md) flow drop
-allocation-owned native references and return logical device bytes. Phase B
-remains open for callback-safe native retirement or polling of pending,
-ambiguous, unknown, and invalid command states; none may be inferred terminal
-in Phase A. See
+allocation-owned native references and return logical device bytes. Pending,
+ambiguous, unknown, and invalid command states cannot be inferred terminal in
+Phase A. See
 [Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md).
+
+### Device-loss dispatch callback retirement Phase B
+
+Phase B provides the separate callback-safe ownership terminal for the exact
+`pending`, `submission_ambiguous`, `completion_unknown`, and
+`invalid_completion` states. Its portable evidence consists of:
+
+- a 464-byte `LossDispatchCallbackRetentionV1` binding the live lease, pin,
+  request, ticket, submission, state-specific quarantine shape, and adapter
+  challenge;
+- a 240-byte `LossDispatchCallbackRetirementPlanV1` binding that retention to
+  one exact accepted `present → lost` transition;
+- a 408-byte `LossDispatchCallbackFenceV1` proving the ARC-owned callback
+  target is detached while the native command record remains retained; and
+- a 504-byte `LossDispatchCallbackRetirementReceiptV1` composing the dedicated
+  ownership-retired terminal, dispatch and Bank completions, exact native
+  unlink, and adapter replay tombstone.
+
+Native prepare detaches the callback gate without waiting for a callback that
+is already running to exit. The handler can no longer reacquire the native
+Metal context, while the command record and four command-held references
+remain live for private settlement. The terminal outcome is
+`ownership_retired_after_device_loss`, carries the original nonzero submission
+and a fenced backend-terminal root, and has zero output. It is not relabelled
+success, terminal failure, or cancellation.
+
+Production arming accepts only exact native `removed_notification` or
+`command_buffer_device_removed` loss and revalidates that same sticky source at
+the backend. A removal request is insufficient. Core consumes the private Bank
+pin before the post-Bank adapter callback commits the exact native unlink.
+Exact replay returns the stored tombstone without a second Bank consumption or
+native unlink.
+
+Allocation ownership remains separate: Phase B clears the dispatch slot and
+command-held references, not the allocation lease, allocation-owned native
+references, logical device-byte charge, physical pages, or residency. See
+[Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md).
 
 ### Complete
 
@@ -449,11 +486,12 @@ output; it remains pinned until Bank settlement and exact native error
 finalization both succeed. Source-bound device-loss observation and
 loss-bound retirement of an already quiesced allocation now exist, and Phase A
 settles the exact command-specific native `5/1/11` case. Callback-safe
-retirement of pending, ambiguous, unknown, invalid, or timed-out commands
-remains Phase B, alongside fresh selection and automatic migration. This
-contract does not manufacture a successful completion from missing evidence.
-Those unresolved states remain pinned until a separate backend authority proves
-a safe terminal state.
+retirement of pending, submission-ambiguous, completion-unknown, and
+invalid-completion ownership now exists as Phase B. It detaches the exact
+native callback target and authorizes only the dedicated zero-output
+ownership-retired terminal; it does not manufacture a successful completion
+from missing evidence. A generic timeout still grants no authority. Fresh
+selection and automatic migration remain separate roadmap work.
 Other adapters that cannot prove a safe pre-submit rejection must likewise
 retain the pin rather than infer one.
 
@@ -471,14 +509,18 @@ device:
    source/state mapping, exact code `11` classification, native/synthetic
    separation, and mutation/replay/substitution rejection. The Phase A tests
    additionally replay the fixed retention/plan/receipt bindings and require
-   native-only production eligibility. They call no Metal API and execute no
-   GPU work.
+   native-only production eligibility. Phase B adds fixed
+   retention/plan/fence/receipt replay for all four retained ownership states,
+   native-only production eligibility, detach-with-record-retained invariants,
+   zero output authority, and duplicate/foreign/late-settlement rejection.
+   They call no Metal API and execute no GPU work.
 2. **Host integration tests** exercise the real ResourceBank, LeaseTree,
    mutexes, fixed storage, publication fences, and thread scheduling without
    claiming accelerator execution. The independent Python oracle separately
    rebuilds the exact error-sidecar, backend-completion, and core-terminal roots
-   plus the Phase A retention/plan/receipt roots and substitution checks; it
-   also executes no GPU work.
+   plus the Phase A roots and Phase B
+   retention/plan/fence/receipt roots and substitution checks; it also executes
+   no GPU work.
 3. **Native Metal tests** open a real `MTLDevice`, create and inspect real Shared
    `MTLBuffer` resources, dispatch the exact registry-owned buffers on the
    selected device, separate submit from completion observation, authenticate
@@ -505,7 +547,14 @@ device:
    an explicitly synthetic test-only loss permit. That proves ownership
    cleanup and logical settlement, not a reproduced removal or physical
    reclamation. Its code-`11`-shaped publication is likewise a synthetic Phase
-   A overlay and cannot satisfy the native-only production gate.
+   A overlay and cannot satisfy the native-only production gate. A separate
+   branch submits a real command, holds its completion handler before the
+   ARC-owned callback gate, and uses synthetic injected loss to exercise
+   pending Phase B callback detachment before handler exit, Bank-first exact
+   native unlink, tombstone replay, unchanged caller output, and safe later
+   handler release.
+   This is real command/resource and callback-lifetime evidence, not physical
+   removal, driver failure, output recovery, or performance evidence.
 
 Cross-compilation proves source and build portability only. It is never
 reported as native operating-system, driver, or accelerator evidence.
@@ -527,6 +576,12 @@ tools/zig-with-ephemeral-cache.sh test \
 
 python3 -m unittest \
   bench.tests.test_device_loss_dispatch_reconciliation
+
+tools/zig-with-ephemeral-cache.sh test \
+  src/core/device_loss_dispatch_callback_retirement.zig -OReleaseSafe
+
+python3 -m unittest \
+  bench.tests.test_device_loss_dispatch_callback_retirement
 ```
 
 Run the hardware-backed gate on macOS with Metal enabled:
@@ -562,9 +617,8 @@ Contributor-ready extensions include:
 
 - retain physical removal-requested and removed callbacks on removable
   hardware;
-- implement Phase B callback-safe native command retirement or loss-fenced
-  polling for pending, ambiguous, unknown, and invalid states without
-  inferring output or completion;
+- add direct Phase B retirement telemetry without weakening its callback,
+  lock-order, or authority boundaries;
 - add fresh device selection and explicit migration policy;
 - bounded multi-slot completion scheduling without weakening adapter identity;
 - additive snapshot capacity and active-pin telemetry;

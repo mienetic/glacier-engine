@@ -30,7 +30,7 @@ evidence. The plane and model-family sequence is specified in the
 | Token publication | Integrated | Contiguous/paged transactions plus exact-once next-token publication after natural exit and every checkpoint root-switch death phase | Uninterrupted/resumed production comparison |
 | Continuation identity | Prototype | Capsule, object lifecycle, durable payloads, ownership/KV/runtime reconstruction, atomic immutable checkpoint generations, two-process resume, and a three-generation prepared-text source-live/source-exited/terminal authority chain | Production model/tokenizer state, generation-one source recovery, acknowledged target progress, native Linux execution, and durable lifecycle metadata |
 | AI runtime | Mixed prototype/integrated planes; R0 registry complete and R1a/R1b/R1c/R1d/R1e/R1f/R1g/R1h-a/R1h-b plus the durable handoff slice integrated experimentally | CPU execution, an optional macOS Metal kernel path, prepared `.glrt` images, an exact-identity serial greedy prepared-text session with plan-derived atomic start, Common Model Contract request-profile binding, total-versus-request claim projection for shared read-only artifact residency, fixed-length terminal results, canonical non-terminal state, same-process rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, and a five-object canonical restart archive with exact source exit, exclusive POSIX lease, one-shot target activation, fresh-process resume, generation-three terminal selection, and terminal-semantic oracle comparison; plus admission, scheduling, continuation, provider, media, package, C verifier, and retained-reference inspector surfaces | Recover source death before generation-two publication; add an idempotent durable result sink and acknowledged progress generation for target-crash replay; complete request-shape accounting, raw-text tokenizer identity, variable-length results, non-blocking startup, stable APIs, production fixtures, native multi-OS validation, GPU/device continuation, physical resource integration, and distribution |
-| Device runtime | Portable selection, Device-loss Observation V1, command-specific Device-loss Dispatch Reconciliation Phase A, and loss-bound quiesced-resource retirement integrated; fake/native allocation ownership, bounded dispatch-to-allocation lifetime fencing, per-adapter single-flight Metal async completion, exact terminal-command-error reconciliation, and build-isolated native Metal fault gates integrated; native Metal readiness and pinned-dispatch bindings implemented | Pointer-free capability selection; source-bound lifecycle observations and present-to-newer-unavailable/lost transition receipts; exact 440/240/448-byte loss-dispatch retention, plan, and receipt values; native-only `5/1/11` production authorization; exact active-pin binding without exposing the Bank permit; separate allocation retirement; a real per-context `MTLCopyAllDevicesWithObserver` with initial selected-device membership, sticky removal-requested/removed/command-buffer-removed facts, exact native status/domain/code `5/1/11` classification before test overlays, and fail-closed new work; exact loss-plan binding to selection/allocation evidence; same-source sticky-native production arming; quiescence fencing; no-property-read native strong-reference release; ordinary FreePermit-backed logical settlement; zero physical-reclaim/output/migration/reset authority; adapter-quoted manifests; exact logical charge-before-allocate accounting; additive LeaseTree reserve/materialize/FreePermit recovery; exact object-set pins; adapter-issued generation-fenced INT4 request roots; sealed pre-Bank pin intents with exact post-reserve abort; callback/source validation; submitted, terminal-failure, pure-cancelled, and inspected-but-unsubmitted rejection branches; `MetalAsyncDispatchTicketV1` with exact submit replay and separate poll/wait; pending nonterminal retention; native command/four-buffer and exact output-role binding; exact quarantined `.error` authorization as core `terminal_failure`; production-symbol-isolated fault controls; separate physical-success and test-published-error facts; deterministic one-winner arm racing; Bank-first settlement, exact native terminal finalization, and `settlement_pending` confirmation retry without duplicate Bank release; sticky ambiguity/unknown quarantine; replay tombstones; real successful Metal commands under CPU-oracle gates, including an unchanged lifecycle snapshot around one command on the built-in M1 host; real-buffer retirement under an explicitly synthetic isolated loss permit; per-resource length/`allocatedSize`; generation-fenced reuse; and native fingerprint revalidation | Retain removal callbacks on removable hardware; add callback-safe Phase B retirement for pending, ambiguous, unknown, and invalid commands; add fresh selection and explicit migration policy; then multi-slot and multi-device scheduling, separate physical residency and direct telemetry, additional GPU backends, retained native OS/device matrices, and performance evidence under declared campaigns |
+| Device runtime | Portable selection, Device-loss Observation V1, command-specific Dispatch Reconciliation Phase A, callback-safe Dispatch Callback Retirement Phase B, and loss-bound quiesced-resource retirement integrated; fake/native allocation ownership, bounded dispatch-to-allocation lifetime fencing, per-adapter single-flight Metal async completion, and build-isolated native Metal gates integrated | Exact 440/240/448-byte Phase A evidence plus 464/240/408/504-byte Phase B retention/plan/fence/receipt evidence; native-only production authorization with same-source sticky-loss revalidation; exact active-pin binding without exposing the Bank permit; ARC-owned callback detachment without callback-exit inference; dedicated zero-output ownership-retired terminal; Bank-first settlement, exact native unlink, and replay tombstones; separate allocation retirement; real Metal commands and resources under CPU-oracle gates; build-isolated held-callback and synthetic-loss controls with production-symbol isolation; exact charge-before-allocate accounting, additive LeaseTree ownership, bounded pins, sticky quarantine, pre-submit rejection/cancellation, direct length/`allocatedSize` observation, generation-fenced reuse, and native fingerprint revalidation | Retain removal callback artifacts on removable hardware; add fresh selection and explicit migration policy; then multi-slot and multi-device scheduling, separate physical residency and direct telemetry, additional GPU backends, retained native OS/device matrices, and performance evidence under declared campaigns |
 | Model-family breadth | Text-generation prototype, typed vision/audio/temporal-video encoders, fresh-process stateful transcript and VFR video models, exact word/speaker annotations, video-segment results, canonical video timelines, exact audio/video result links, exact latent continuation, generated-image publication, acknowledged generated-PCM/video publication, atomic generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, validated bounded lossless delivery profiles for retained image/audio/video shapes, a typed pure-tool transaction fixture, a durable POSIX external-action handoff fixture, and a bounded same-process fake dispatch/status authority; other families gated | Shared artifact/plan/result wires, explicit support records, reusable stateless/stateful lifecycles, fresh-Bank retained-state restore, tensor, provider, media, tool-authorization, ActionOutbox, and evidence building blocks | Generic embeddings/reranking/classification, richer multimodal fusion, live provider-backed and OS-isolated dispatch/status adapters, production generative-media adapters and broader formats, additional replay profiles, agents/retrieval, and specialized families |
 | Multimodal execution | Model-free runtime, scheduler-coupled final-quantum transactions, streaming, continuation, post-restore generation three, processor/cache state, stateful transcript/video restart, exact word/speaker annotation restart, explicit VFR discontinuity evidence, exact audio/video result links, generated-image publication, acknowledged generated-PCM/video publication, atomic three-modality generated-output selection, exact encoded-payload archive composition, bounded multi-output registry continuity, typed producer/raw-output admission, deterministic source-model/materializer replay, and vision/audio/video fixtures integrated; bounded canonical PNG/WAVE/APNG profiles and their additive format sidecar integrated; production model execution gated | Shared identity/timeline, exact per-buffer ownership, six-object input checkpoint sets, image tile/patch state, audio window/hop/context plus fresh-process transcript state, sample-derived word timing and speaker-turn state, per-frame video PTS/duration plus retained temporal state, typed segment, deterministic merge state, cross-modal link state, exact cache payloads, restore-before-visible ownership, terminal-latent provenance, atomic media publication, exact application backpressure, canonical audio/video acknowledgement replay, complete previous-or-successor generated-output checkpoints, one eight-object archive for typed records plus exact payloads, a canonical typed-admission construction path, transition and format-evidence sidecars, strict lossless emit-and-accept modules, real two-generation PNG/WAVE/APNG registry-transition-format fixtures, an independent composed Python oracle, and optional format-aware read-only inspection without changing earlier V1 wires | Production encoder/container adapters and broader profiles, additional model/materializer profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, and physical playback/display and quality evidence |
 | Provider gateway | Integrated | Coalescing, cancellation, usage settlement, cost and event wires | Isolated live adapters and user-facing tooling |
@@ -293,7 +293,8 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   `terminal_failure`: bind the retained ticket/quarantine/native projection,
   keep quarantine, pin, charge, buffers, and command through Bank settlement,
   then exact-finalize the native `.error` record before private clearing.
-  Ambiguity and unknown completion remain sticky.
+  Ambiguity and unknown completion remain sticky until separately retired by
+  the loss-authorized Phase B protocol.
 - [x] Add Device-loss Observation V1: a fixed-width portable observation and
   transition receipt plus a durable external source cursor, canonical
   present-to-newer-unavailable/lost mapping, mutation/replay/substitution
@@ -330,12 +331,25 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   confirmation through one replay tombstone. Allocation retirement remains a
   separate operation after the dispatch slot is gone. The real-GPU fault gate
   uses a synthetic published-error overlay and does not claim physical loss.
+- [x] Add Device-loss Dispatch Callback Retirement Phase B for exact pending,
+  submission-ambiguous, completion-unknown, and invalid-completion ownership:
+  bind the live dispatch in a 464-byte retention and 240-byte loss plan;
+  detach its ARC-owned native callback gate while keeping the native record and
+  four command-held references live; seal a 408-byte fence and dedicated
+  zero-output ownership-retired terminal; consume the Bank pin before exact
+  native unlink; and retain a replayable 504-byte receipt. Production requires
+  exact native `removed_notification` or `command_buffer_device_removed`
+  evidence plus sticky same-source revalidation. Portable
+  and Python gates are structural models; the isolated native gate combines a
+  real Metal command and buffers with a held callback and synthetic injected
+  loss for the pending state, not physical removal or driver failure. The
+  other three states have portable/adapter coverage but no retained native
+  fault campaign. Allocation retirement remains separate.
 - [ ] Add residency as a separate authority, a removable-hardware callback
-  campaign, callback-safe Phase B retirement for pending, ambiguous, unknown,
-  and invalid commands, fresh selection and migration policy, multi-slot and
-  multi-device partitioning/scheduling, additional GPU backends, direct device
-  telemetry, retained performance evidence, and advertised native device
-  support matrices.
+  campaign, fresh selection and migration policy, multi-slot and multi-device
+  partitioning/scheduling, additional GPU backends, direct device telemetry,
+  retained performance evidence, and advertised native device support
+  matrices.
 - [ ] Add pin-aware Snapshot V4 capacity/activity telemetry, reduce repeated
   full-tree validation inside the Bank lock, and reserve explicit completion
   headroom before generation or structural-revision exhaustion.
@@ -939,19 +953,27 @@ Completed slices:
 - ~~exact terminal-command-error reconciliation from one retained
   `MetalAsyncDispatchQuarantineV1`: pointer-free failure roots authorize core
   `terminal_failure`, Bank settlement precedes exact native `.error`
-  finalization and private clearing, and ambiguity/unknown remain sticky.~~
+  finalization and private clearing, and ambiguity/unknown remain sticky until
+  separate loss-authorized Phase B retirement.~~
 - ~~Device-loss Dispatch Reconciliation Phase A for exact native
   command-specific `5/1/11`: pointer-free retention/plan/receipt evidence,
   native-only production gating, exact active-pin adapter replay without Bank
   permit exposure, Bank-first settlement, native finalization, tombstone
   replay, and separate later allocation retirement.~~
+- ~~Device-loss Dispatch Callback Retirement Phase B for pending,
+  submission-ambiguous, completion-unknown, and invalid-completion ownership:
+  fixed 464/240/408/504-byte evidence, ARC-owned callback detachment without
+  callback-exit inference, zero-output ownership retirement, Bank-first exact
+  native unlink, replay tombstones, and separate allocation retirement.~~
 - ~~build-isolated native Metal fault/race conformance: production artifacts
   export no fault-control symbols; two callers race a context-local one-shot arm
   with exactly one winner; one real command physically completes successfully
   while a test-only published `.error` overlay remains separately recorded;
   Bank-first settlement, exact native finalization/state clearing, and
   `settlement_pending` confirmation retry occur without a second Bank release or
-  native finalization.~~
+  native finalization; a separate real command is held before its callback gate
+  to prove Phase B detach-before-exit and later safe handler release under
+  synthetic loss.~~
 
 Next slices:
 
@@ -960,8 +982,8 @@ Next slices:
   must be charged;
 - separate physical residency authority and evidence;
 - physical removal-requested/removed callback evidence on removable hardware;
-- callback-safe Phase B retirement for pending, ambiguous, unknown, or invalid
-  commands without inferring terminal output;
+- direct callback-retirement telemetry without weakening the Phase B
+  authority or lock-order boundary;
 - fresh selection under a new receipt and explicit migration policy;
 - deterministic partition plan;
 - transfer ownership and cancellation;
@@ -988,7 +1010,8 @@ retained command-buffer `.error` can then authorize a matching core
 `terminal_failure`; quarantine, pin, charge, buffers, and native command remain
 live through Bank settlement, after which the private callback exact-finalizes
 the same `.error` record and clears private state. Ambiguity, unknown, and
-invalid completion remain sticky. The build-isolated native fault/race gate
+invalid completion remain sticky until the separate loss-authorized Phase B
+protocol succeeds. The build-isolated native fault/race gate
 runs a physically successful Metal command and changes only the test artifact's
 published completion to `.error` after that success is validated. It retains
 physical and published facts separately, admits exactly one of two competing
@@ -1038,10 +1061,13 @@ adapter state and records the replay tombstone; public acknowledgement is
 compatibility verification only. Device-loss Dispatch Reconciliation Phase A
 now composes that terminal machinery with the exact native command-specific
 `5/1/11` lifecycle transition while retaining the active pin through
-Bank-first/native finalization. It does not cover pending, ambiguous, unknown,
-or invalid commands; their callback-safe retirement is Phase B. Neither phase
-establishes physical residency, fresh selection, migration, multi-slot
-scheduling, or transfer ownership. The source-bound lifecycle observer and
+Bank-first/native finalization. The separate Phase B path covers pending,
+submission-ambiguous, completion-unknown, and invalid-completion ownership by
+detaching the ARC-owned callback gate, then consuming the Bank pin before
+exactly unlinking the retained native record. It does not require callback exit
+and does not infer output or successful completion. Neither phase establishes
+physical residency, fresh selection, migration, multi-slot scheduling, or
+transfer ownership. The source-bound lifecycle observer and
 portable unavailable/lost transition contract remain separate evidence; they
 do not make a dispatch terminal by themselves. The LeaseTree
 coordinator shares address-stable tree and publication-sequence pointers with
@@ -1053,6 +1079,7 @@ operating-system support. See
 [LeaseTree Device Allocation](LEASE_TREE_DEVICE_ALLOCATION.md),
 [Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md),
 [Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md),
+[Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md),
 and the
 [native Metal adapter](NATIVE_METAL_ALLOCATION.md).
 

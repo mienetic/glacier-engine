@@ -28,6 +28,10 @@ pub const async_completion_abi: u64 = 0x474d_4143_0000_0001;
 pub const device_lifecycle_abi: u64 = 0x474d_444c_0000_0001;
 pub const device_lifecycle_source_identity_abi: u64 =
     0x474d_4c53_0000_0001;
+pub const dispatch_retirement_permit_abi: u64 =
+    0x474d_5250_0000_0001;
+pub const dispatch_retirement_receipt_abi: u64 =
+    0x474d_5252_0000_0001;
 pub const completed_command_buffer_status: u32 = 4;
 pub const error_command_buffer_status: u32 = 5;
 pub const device_removed_command_buffer_error: i64 = 11;
@@ -217,6 +221,59 @@ pub const MetalDeviceLifecycleSourceIdentity = extern struct {
     context_nonce: [4]u64 = [_]u64{0} ** 4,
 };
 
+pub const MetalDispatchRetirementAuthorizationKind = enum(u32) {
+    native_loss = 1,
+    synthetic_test = 2,
+    _,
+};
+
+/// Pointer-free authorization produced while the native command record and
+/// all four allocation references remain retained. This is ownership
+/// authority only; `native_state` is a frozen callback projection and is not
+/// promoted to completion evidence.
+pub const MetalRegisteredDispatchRetirementPermit = extern struct {
+    abi_version: u64 = dispatch_retirement_permit_abi,
+    token: MetalCommandToken = .{},
+    submission_binding: [32]u8 = [_]u8{0} ** 32,
+    retirement_generation: u64 = 0,
+    source_identity: MetalDeviceLifecycleSourceIdentity =
+        std.mem.zeroes(MetalDeviceLifecycleSourceIdentity),
+    minimum_event_sequence: u64 = 0,
+    error_code: i64 = 0,
+    authorization_kind: MetalDispatchRetirementAuthorizationKind =
+        .native_loss,
+    submission_disposition: MetalAsyncSubmissionDisposition =
+        .submitted_or_ambiguous,
+    native_state: MetalAsyncCommandState = .pending,
+    command_status: u32 = 0,
+    completion_observed: u32 = 0,
+    error_domain_kind: MetalCommandErrorDomainKind = .none,
+    error_present: u32 = 0,
+    callback_fault: u32 = 0,
+    commit_invoked: u32 = 0,
+    callback_detached: u32 = 0,
+    reserved0: u32 = 0,
+    reserved1: u32 = 0,
+};
+
+/// Exact idempotent proof that one native record was unlinked and its four
+/// command-held allocation references were released.
+pub const MetalRegisteredDispatchRetirementReceipt = extern struct {
+    abi_version: u64 = dispatch_retirement_receipt_abi,
+    permit: MetalRegisteredDispatchRetirementPermit = .{},
+    retired_native_command_count: u64 = 0,
+    released_allocation_reference_count: u64 = 0,
+    error_code: i64 = 0,
+    completion_observed: u32 = 0,
+    native_state: MetalAsyncCommandState = .pending,
+    command_status: u32 = 0,
+    error_domain_kind: MetalCommandErrorDomainKind = .none,
+    error_present: u32 = 0,
+    callback_fault: u32 = 0,
+    callback_detached: u32 = 0,
+    reserved: u32 = 0,
+};
+
 comptime {
     if (@sizeOf(MetalDeviceInfo) != 88 or
         @offsetOf(MetalDeviceInfo, "registry_id") != 8 or
@@ -273,6 +330,46 @@ comptime {
         ) != 24)
         @compileError(
             "MetalDeviceLifecycleSourceIdentity ABI layout changed",
+        );
+    if (@sizeOf(MetalRegisteredDispatchRetirementPermit) != 208 or
+        @offsetOf(
+            MetalRegisteredDispatchRetirementPermit,
+            "retirement_generation",
+        ) != 80 or
+        @offsetOf(
+            MetalRegisteredDispatchRetirementPermit,
+            "source_identity",
+        ) != 88 or
+        @offsetOf(
+            MetalRegisteredDispatchRetirementPermit,
+            "error_code",
+        ) != 152 or
+        @offsetOf(
+            MetalRegisteredDispatchRetirementPermit,
+            "authorization_kind",
+        ) != 160)
+        @compileError(
+            "MetalRegisteredDispatchRetirementPermit ABI layout changed",
+        );
+    if (@sizeOf(MetalRegisteredDispatchRetirementReceipt) != 272 or
+        @offsetOf(
+            MetalRegisteredDispatchRetirementReceipt,
+            "permit",
+        ) != 8 or
+        @offsetOf(
+            MetalRegisteredDispatchRetirementReceipt,
+            "retired_native_command_count",
+        ) != 216 or
+        @offsetOf(
+            MetalRegisteredDispatchRetirementReceipt,
+            "error_code",
+        ) != 232 or
+        @offsetOf(
+            MetalRegisteredDispatchRetirementReceipt,
+            "completion_observed",
+        ) != 240)
+        @compileError(
+            "MetalRegisteredDispatchRetirementReceipt ABI layout changed",
         );
 }
 
@@ -418,6 +515,26 @@ extern "C" fn glacier_metal_registered_dispatch_finalize(
     token: *const MetalCommandToken,
     submission_binding: *const [32]u8,
     expected_completion: *const MetalAsyncCompletion,
+) c_int;
+extern "C" fn glacier_metal_registered_dispatch_retirement_prepare_after_loss(
+    ctx: *MetalContext,
+    submission: *const MetalAsyncSubmission,
+    source: *const MetalDeviceLifecycleSourceIdentity,
+    minimum_event_sequence: u64,
+    permit: *MetalRegisteredDispatchRetirementPermit,
+) c_int;
+// Defined only by the private GLACIER_METAL_TEST_FAULTS=1 shim. Zig's lazy
+// analysis emits no reference from production artifacts unless a
+// compile-time-gated test caller selects the method below.
+extern "C" fn glacier_metal_test_registered_dispatch_retirement_prepare(
+    ctx: *MetalContext,
+    submission: *const MetalAsyncSubmission,
+    permit: *MetalRegisteredDispatchRetirementPermit,
+) c_int;
+extern "C" fn glacier_metal_registered_dispatch_retirement_commit(
+    ctx: *MetalContext,
+    permit: *const MetalRegisteredDispatchRetirementPermit,
+    receipt: *MetalRegisteredDispatchRetirementReceipt,
 ) c_int;
 extern "C" fn glacier_metal_live_command_count(
     ctx: *MetalContext,
@@ -643,6 +760,162 @@ pub fn validateMetalDeviceLifecycleSourceIdentity(
             identity.context_nonce[1] == 0 and
             identity.context_nonce[2] == 0 and
             identity.context_nonce[3] == 0))
+        return MetalError.InvalidObservation;
+}
+
+fn lifecycleSourceIdentityIsZero(
+    identity: MetalDeviceLifecycleSourceIdentity,
+) bool {
+    return std.mem.allEqual(
+        u8,
+        std.mem.asBytes(&identity),
+        0,
+    );
+}
+
+fn retirementErrorFieldsValid(
+    error_domain_kind: MetalCommandErrorDomainKind,
+    error_present: u32,
+    error_code: i64,
+    callback_fault: u32,
+) bool {
+    if (error_present > 1 or callback_fault > 1)
+        return false;
+    if (error_present == 0)
+        return error_domain_kind == .none and error_code == 0;
+    return error_code != 0 and
+        (error_domain_kind == .command_buffer or
+            error_domain_kind == .other);
+}
+
+/// Validate the pointer-free native retirement authority independently of a
+/// backend instance. A synthetic permit is valid only with an all-zero
+/// lifecycle identity and sequence; production permits require a complete
+/// lifecycle source identity and non-zero minimum sequence.
+pub fn validateMetalRegisteredDispatchRetirementPermit(
+    permit: MetalRegisteredDispatchRetirementPermit,
+) MetalError!void {
+    if (permit.abi_version != dispatch_retirement_permit_abi or
+        !commandTokenValid(permit.token) or
+        digestIsZero(permit.submission_binding) or
+        permit.retirement_generation == 0 or
+        permit.retirement_generation == std.math.maxInt(u64) or
+        permit.completion_observed > 1 or
+        !retirementErrorFieldsValid(
+            permit.error_domain_kind,
+            permit.error_present,
+            permit.error_code,
+            permit.callback_fault,
+        ) or
+        permit.commit_invoked != 1 or
+        permit.callback_detached != 1 or
+        permit.reserved0 != 0 or
+        permit.reserved1 != 0)
+        return MetalError.InvalidObservation;
+
+    switch (permit.submission_disposition) {
+        .submitted, .submitted_or_ambiguous => {},
+        _ => return MetalError.InvalidObservation,
+    }
+    switch (permit.authorization_kind) {
+        .native_loss => {
+            try validateMetalDeviceLifecycleSourceIdentity(
+                permit.source_identity,
+            );
+            if (permit.minimum_event_sequence == 0)
+                return MetalError.InvalidObservation;
+        },
+        .synthetic_test => {
+            if (permit.minimum_event_sequence != 0 or
+                !lifecycleSourceIdentityIsZero(
+                    permit.source_identity,
+                ))
+                return MetalError.InvalidObservation;
+        },
+        _ => return MetalError.InvalidObservation,
+    }
+
+    if (permit.completion_observed == 0) {
+        if (permit.native_state != .pending or
+            permit.command_status != 0 or
+            permit.error_code != 0 or
+            permit.error_domain_kind != .none or
+            permit.error_present != 0 or
+            permit.callback_fault != 0)
+            return MetalError.InvalidObservation;
+        return;
+    }
+
+    switch (permit.native_state) {
+        .completed => {
+            if (permit.command_status !=
+                completed_command_buffer_status or
+                permit.callback_fault != 0 or
+                permit.error_present != 0)
+                return MetalError.InvalidObservation;
+        },
+        .@"error" => {
+            if (permit.command_status !=
+                error_command_buffer_status or
+                permit.callback_fault != 0)
+                return MetalError.InvalidObservation;
+        },
+        .unknown => {
+            if (permit.callback_fault == 0 and
+                (permit.command_status ==
+                    completed_command_buffer_status or
+                    permit.command_status ==
+                        error_command_buffer_status))
+                return MetalError.InvalidObservation;
+        },
+        .pending => return MetalError.InvalidObservation,
+        _ => return MetalError.InvalidObservation,
+    }
+}
+
+pub fn validateMetalRegisteredDispatchRetirementPermitForSubmission(
+    permit: MetalRegisteredDispatchRetirementPermit,
+    submission: MetalAsyncSubmission,
+) MetalError!void {
+    try validateMetalAsyncSubmission(submission);
+    try validateMetalRegisteredDispatchRetirementPermit(permit);
+    if (!std.meta.eql(permit.token, submission.token) or
+        !std.mem.eql(
+            u8,
+            &permit.submission_binding,
+            &submission.submission_binding,
+        ) or
+        permit.submission_disposition != submission.disposition)
+        return MetalError.InvalidObservation;
+}
+
+pub fn validateMetalRegisteredDispatchRetirementReceipt(
+    receipt: MetalRegisteredDispatchRetirementReceipt,
+    expected_permit: MetalRegisteredDispatchRetirementPermit,
+) MetalError!void {
+    try validateMetalRegisteredDispatchRetirementPermit(
+        expected_permit,
+    );
+    try validateMetalRegisteredDispatchRetirementPermit(
+        receipt.permit,
+    );
+    if (receipt.abi_version != dispatch_retirement_receipt_abi or
+        !std.meta.eql(receipt.permit, expected_permit) or
+        receipt.retired_native_command_count != 1 or
+        receipt.released_allocation_reference_count != 4 or
+        receipt.error_code != expected_permit.error_code or
+        receipt.completion_observed !=
+            expected_permit.completion_observed or
+        receipt.native_state != expected_permit.native_state or
+        receipt.command_status != expected_permit.command_status or
+        receipt.error_domain_kind !=
+            expected_permit.error_domain_kind or
+        receipt.error_present != expected_permit.error_present or
+        receipt.callback_fault != expected_permit.callback_fault or
+        receipt.callback_detached != 1 or
+        receipt.callback_detached !=
+            expected_permit.callback_detached or
+        receipt.reserved != 0)
         return MetalError.InvalidObservation;
 }
 
@@ -1803,11 +2076,14 @@ pub const MetalBackend = struct {
         self: *MetalBackend,
         submission: MetalAsyncSubmission,
     ) MetalError!MetalAsyncCompletion {
-        self.allocation_mutex.lock();
-        defer self.allocation_mutex.unlock();
         try validateMetalAsyncSubmission(submission);
         if (submission.disposition != .submitted)
             return MetalError.InvalidObservation;
+        // The native registry first copies strong references to the exact
+        // command buffer and callback-publication group, then drops its
+        // monitor before blocking. Do not hold allocation_mutex across that
+        // wait: another thread must remain able to inspect unrelated
+        // allocations and drive loss retirement.
         var completion: MetalAsyncCompletion = .{};
         if (glacier_metal_registered_dispatch_wait(
             self.ctx,
@@ -1850,6 +2126,131 @@ pub const MetalBackend = struct {
             output.len,
         ) != 0)
             return MetalError.DispatchFailed;
+    }
+
+    /// Freeze one exact native command record after the retained lifecycle
+    /// source has reached sticky terminal loss. The native callback gate is
+    /// detached before this returns, while the command record and all four
+    /// command-held allocation references remain live for the caller's
+    /// pre-commit ownership settlement.
+    pub fn prepareRegisteredDispatchRetirementAfterLoss(
+        self: *MetalBackend,
+        submission: MetalAsyncSubmission,
+        expected_source_identity: MetalDeviceLifecycleSourceIdentity,
+        minimum_event_sequence: u64,
+    ) MetalError!MetalRegisteredDispatchRetirementPermit {
+        try validateMetalAsyncSubmission(submission);
+        try validateMetalDeviceLifecycleSourceIdentity(
+            expected_source_identity,
+        );
+        _ = try self.requireStickyDeviceLost(
+            expected_source_identity,
+            minimum_event_sequence,
+        );
+
+        // Public lock order is allocation mutex -> native callback gate ->
+        // native registry monitor. The lifecycle monitor above is released
+        // before this ownership critical section begins.
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        var permit =
+            std.mem.zeroes(MetalRegisteredDispatchRetirementPermit);
+        permit.abi_version = dispatch_retirement_permit_abi;
+        if (glacier_metal_registered_dispatch_retirement_prepare_after_loss(
+            self.ctx,
+            &submission,
+            &expected_source_identity,
+            minimum_event_sequence,
+            &permit,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        validateMetalRegisteredDispatchRetirementPermitForSubmission(
+            permit,
+            submission,
+        ) catch @panic(
+            "native Metal retirement prepared an invalid permit",
+        );
+        if (permit.authorization_kind != .native_loss or
+            !std.meta.eql(
+                permit.source_identity,
+                expected_source_identity,
+            ) or
+            permit.minimum_event_sequence != minimum_event_sequence)
+            @panic(
+                "native Metal retirement prepared a mismatched loss permit",
+            );
+        return permit;
+    }
+
+    /// Fault-shim-only counterpart of the production lifecycle-loss prepare.
+    /// Callers must compile-time gate this method on their private
+    /// `metal_test_faults` option; the production native shim deliberately
+    /// does not define the referenced symbol.
+    pub fn prepareRegisteredDispatchRetirementForSyntheticLossTest(
+        self: *MetalBackend,
+        submission: MetalAsyncSubmission,
+    ) MetalError!MetalRegisteredDispatchRetirementPermit {
+        try validateMetalAsyncSubmission(submission);
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        var permit =
+            std.mem.zeroes(MetalRegisteredDispatchRetirementPermit);
+        permit.abi_version = dispatch_retirement_permit_abi;
+        if (glacier_metal_test_registered_dispatch_retirement_prepare(
+            self.ctx,
+            &submission,
+            &permit,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        validateMetalRegisteredDispatchRetirementPermitForSubmission(
+            permit,
+            submission,
+        ) catch @panic(
+            "native Metal synthetic retirement prepared an invalid permit",
+        );
+        if (permit.authorization_kind != .synthetic_test)
+            @panic(
+                "native Metal synthetic retirement prepared a mismatched permit",
+            );
+        return permit;
+    }
+
+    /// Complete one exact prepared retirement. The native side performs every
+    /// fallible check and allocates replay storage before unlinking, then
+    /// returns an idempotent tombstone receipt. This never claims physical
+    /// completion and therefore does not increment completed_dispatch_count.
+    pub fn commitRegisteredDispatchRetirement(
+        self: *MetalBackend,
+        permit: MetalRegisteredDispatchRetirementPermit,
+    ) MetalError!MetalRegisteredDispatchRetirementReceipt {
+        try validateMetalRegisteredDispatchRetirementPermit(permit);
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        var receipt =
+            std.mem.zeroes(MetalRegisteredDispatchRetirementReceipt);
+        receipt.abi_version = dispatch_retirement_receipt_abi;
+        if (glacier_metal_registered_dispatch_retirement_commit(
+            self.ctx,
+            &permit,
+            &receipt,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        validateMetalRegisteredDispatchRetirementReceipt(
+            receipt,
+            permit,
+        ) catch @panic(
+            "native Metal retirement committed with an invalid receipt",
+        );
+        if (self.compatibility_unresolved_submission) |retained| {
+            if (std.meta.eql(retained.token, permit.token) and
+                std.mem.eql(
+                    u8,
+                    &retained.submission_binding,
+                    &permit.submission_binding,
+                ))
+                self.compatibility_unresolved_submission = null;
+        }
+        return receipt;
     }
 
     /// Consume one exact completed/error command snapshot. Pending, unknown,
@@ -2456,5 +2857,97 @@ test "only exact command-buffer code 11 signals device removal" {
     completed.gpu_end_time = 2;
     try std.testing.expect(
         !try completionSignalsDeviceRemoved(completed),
+    );
+}
+
+test "registered dispatch retirement permit and receipt bind frozen native facts" {
+    var binding = [_]u8{0} ** 32;
+    binding[0] = 0xa5;
+    const submission: MetalAsyncSubmission = .{
+        .token = .{
+            .context_nonce = .{ 11, 12, 13, 14 },
+            .generation = 41,
+        },
+        .submission_binding = binding,
+        .disposition = .submitted_or_ambiguous,
+    };
+    const source: MetalDeviceLifecycleSourceIdentity = .{
+        .registry_id = 99,
+        .observer_generation = 7,
+        .context_nonce = .{ 11, 12, 13, 14 },
+    };
+    const permit: MetalRegisteredDispatchRetirementPermit = .{
+        .token = submission.token,
+        .submission_binding = binding,
+        .retirement_generation = 3,
+        .source_identity = source,
+        .minimum_event_sequence = 17,
+        .error_code = device_removed_command_buffer_error,
+        .authorization_kind = .native_loss,
+        .submission_disposition = submission.disposition,
+        .native_state = .@"error",
+        .command_status = error_command_buffer_status,
+        .completion_observed = 1,
+        .error_domain_kind = .command_buffer,
+        .error_present = 1,
+        .commit_invoked = 1,
+        .callback_detached = 1,
+    };
+    try validateMetalRegisteredDispatchRetirementPermitForSubmission(
+        permit,
+        submission,
+    );
+
+    const receipt: MetalRegisteredDispatchRetirementReceipt = .{
+        .permit = permit,
+        .retired_native_command_count = 1,
+        .released_allocation_reference_count = 4,
+        .error_code = permit.error_code,
+        .completion_observed = permit.completion_observed,
+        .native_state = permit.native_state,
+        .command_status = permit.command_status,
+        .error_domain_kind = permit.error_domain_kind,
+        .error_present = permit.error_present,
+        .callback_fault = permit.callback_fault,
+        .callback_detached = permit.callback_detached,
+    };
+    try validateMetalRegisteredDispatchRetirementReceipt(
+        receipt,
+        permit,
+    );
+
+    var zero_error_code = permit;
+    zero_error_code.error_code = 0;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalRegisteredDispatchRetirementPermit(
+            zero_error_code,
+        ),
+    );
+    var changed_receipt = receipt;
+    changed_receipt.error_code = 9;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalRegisteredDispatchRetirementReceipt(
+            changed_receipt,
+            permit,
+        ),
+    );
+
+    var synthetic = permit;
+    synthetic.source_identity =
+        std.mem.zeroes(MetalDeviceLifecycleSourceIdentity);
+    synthetic.minimum_event_sequence = 0;
+    synthetic.authorization_kind = .synthetic_test;
+    try validateMetalRegisteredDispatchRetirementPermitForSubmission(
+        synthetic,
+        submission,
+    );
+    synthetic.source_identity = source;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalRegisteredDispatchRetirementPermit(
+            synthetic,
+        ),
     );
 }

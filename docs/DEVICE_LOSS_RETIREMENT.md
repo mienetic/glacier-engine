@@ -56,8 +56,9 @@ Only after that dispatch slot is gone may this retirement protocol drop the
 allocation-owned native references and return logical device bytes through its
 separate FreePermit flow. Synthetic Phase A evidence is structurally testable
 but cannot pass production authorization. Pending, ambiguous, unknown, and
-invalid commands still require a callback-safe Phase B retirement primitive or
-loss-fenced poll and must remain pinned.
+invalid commands cannot enter allocation retirement directly: they must remain
+pinned until the integrated callback-safe Phase B protocol settles their exact
+dispatch ownership.
 
 ## Authority and settlement
 
@@ -164,8 +165,10 @@ tools/zig-with-ephemeral-cache.sh build \
 ## Open follow-up work
 
 - retain a real removal callback artifact on removable hardware;
-- add callback-safe Phase B retirement or loss-fenced polling for pending,
-  ambiguous, unknown, and invalid commands after device loss;
+- extend the separate integrated
+  [Phase B dispatch callback-retirement protocol](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md)
+  to additional GPU backends and direct telemetry without combining it with
+  allocation retirement;
 - create a fresh inventory and deterministic replacement selection;
 - define explicit retry, restart, and migration policy;
 - add separate physical residency and reclaim evidence;

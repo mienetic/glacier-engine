@@ -28,6 +28,8 @@ pub const device = core.device_capability_contract;
 pub const lifecycle = core.device_lifecycle_contract;
 pub const loss_dispatch_reconciliation =
     core.device_loss_dispatch_reconciliation;
+pub const loss_dispatch_callback_retirement =
+    core.device_loss_dispatch_callback_retirement;
 pub const loss_retirement = core.device_loss_retirement;
 const resource = core.resource_bank;
 pub const Digest = allocation.Digest;
@@ -103,6 +105,18 @@ const loss_dispatch_reconciliation_adapter_challenge_domain =
     "glacier-metal-loss-dispatch-reconciliation-adapter-challenge-v1\x00";
 const loss_dispatch_reconciliation_settlement_domain =
     "glacier-metal-loss-dispatch-reconciliation-settlement-v1\x00";
+const loss_dispatch_callback_retirement_adapter_challenge_domain =
+    "glacier-metal-loss-dispatch-callback-retirement-adapter-challenge-v1\x00";
+const loss_dispatch_callback_retirement_native_prepare_domain =
+    "glacier-metal-loss-dispatch-callback-retirement-native-prepare-v1\x00";
+const loss_dispatch_callback_retirement_callback_snapshot_domain =
+    "glacier-metal-loss-dispatch-callback-retirement-callback-snapshot-v1\x00";
+const loss_dispatch_callback_retirement_backend_terminal_domain =
+    "glacier-metal-loss-dispatch-callback-retirement-backend-terminal-v1\x00";
+const loss_dispatch_callback_retirement_native_receipt_domain =
+    "glacier-metal-loss-dispatch-callback-retirement-native-receipt-v1\x00";
+const loss_dispatch_callback_retirement_settlement_domain =
+    "glacier-metal-loss-dispatch-callback-retirement-settlement-v1\x00";
 const completed_command_buffer_status: u32 = 4;
 pub const async_native_command_status_unobserved: u64 =
     std.math.maxInt(u64);
@@ -128,6 +142,7 @@ pub const Error =
     device.Error ||
     lifecycle.Error ||
     loss_dispatch_reconciliation.Error ||
+    loss_dispatch_callback_retirement.Error ||
     loss_retirement.Error ||
     metal_lifecycle.Error ||
     metal.MetalError ||
@@ -381,6 +396,11 @@ pub const MetalAsyncDispatchTerminalFailureResultV1 = struct {
     terminal: lease_tree.DispatchTerminalEvidenceV1,
 };
 
+pub const MetalLossDispatchCallbackRetirementResultV1 = struct {
+    fence: loss_dispatch_callback_retirement.LossDispatchCallbackFenceV1,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+};
+
 /// Adapter-authorized diagnostic evidence for one exact pre-submit failure.
 /// The matching terminal is always `rejected_before_submit` with zero
 /// submission, backend-completion, and output roots.
@@ -406,6 +426,7 @@ pub const MetalMatvecPreSubmitRejectionResultV1 = struct {
 const AuthorizedDispatchEvidenceV1 = union(enum) {
     submitted: MetalLeaseTreeDispatchObservationV1,
     terminal_failure: MetalAsyncDispatchTerminalFailureV1,
+    loss_callback_retirement: loss_dispatch_callback_retirement.LossDispatchCallbackFenceV1,
     rejected_before_submit: MetalMatvecPreSubmitRejectionV1,
     cancelled_before_submit: MetalMatvecDispatchRequestV1,
 };
@@ -439,6 +460,11 @@ const PendingMetalAsyncDispatchV1 = struct {
     selected: ValidatedMatvecDispatchSetV1,
     native_submission: metal.MetalAsyncSubmission,
     native_completion: ?metal.MetalAsyncCompletion = null,
+};
+
+const MetalAsyncWaitPreparationV1 = union(enum) {
+    submission: metal.MetalAsyncSubmission,
+    resolved: MetalAsyncDispatchPollV1,
 };
 
 /// Pointer-free direct evidence for one currently live native allocation.
@@ -596,6 +622,89 @@ const MetalLossDispatchReconciliationArmContextV1 = struct {
     result: ?MetalAsyncDispatchTerminalFailureResultV1 = null,
 };
 
+const LossDispatchCallbackRetirementModeV1 = enum {
+    production,
+    synthetic_test,
+};
+
+/// Same-process two-phase authority. Native prepare has detached the callback,
+/// but the command record and its four allocation references remain live
+/// until the Coordinator has consumed the exact Bank pin.
+const MetalLossDispatchCallbackRetirementPermitV1 = struct {
+    mode: LossDispatchCallbackRetirementModeV1,
+    plan: loss_dispatch_callback_retirement.LossDispatchCallbackRetirementPlanV1,
+    retention: loss_dispatch_callback_retirement.LossDispatchCallbackRetentionV1,
+    selected_entry: device.DeviceInventoryEntryV1,
+    lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    native_permit: metal.MetalRegisteredDispatchRetirementPermit,
+    native_prepare_sha256: Digest,
+    fence: loss_dispatch_callback_retirement.LossDispatchCallbackFenceV1,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+};
+
+/// Exact post-Bank, post-native-unlink replay state. The native receipt is
+/// pointer-free and contains no Objective-C object or Bank mutation permit.
+const MetalLossDispatchCallbackRetirementTombstoneV1 = struct {
+    mode: LossDispatchCallbackRetirementModeV1,
+    plan: loss_dispatch_callback_retirement.LossDispatchCallbackRetirementPlanV1,
+    retention: loss_dispatch_callback_retirement.LossDispatchCallbackRetentionV1,
+    selected_entry: device.DeviceInventoryEntryV1,
+    lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    fence: loss_dispatch_callback_retirement.LossDispatchCallbackFenceV1,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+    completion: lease_tree.LeaseTreeDispatchCompletionV1,
+    native_receipt: metal.MetalRegisteredDispatchRetirementReceipt,
+    receipt: loss_dispatch_callback_retirement.LossDispatchCallbackRetirementReceiptV1,
+};
+
+const MetalLossDispatchCallbackRetirementChallengeContextV1 = struct {
+    adapter: *MetalAllocationAdapterV1,
+    observation: lifecycle.ObservationV1,
+    ticket: MetalAsyncDispatchTicketV1,
+    result: ?Digest = null,
+};
+
+const MetalLossDispatchCallbackRetirementArmContextV1 = struct {
+    adapter: *MetalAllocationAdapterV1,
+    mode: LossDispatchCallbackRetirementModeV1,
+    plan: loss_dispatch_callback_retirement.LossDispatchCallbackRetirementPlanV1,
+    retention: loss_dispatch_callback_retirement.LossDispatchCallbackRetentionV1,
+    observation: lifecycle.ObservationV1,
+    transition: lifecycle.TransitionReceiptV1,
+    source_cursor: lifecycle.SourceCursorV1,
+    requirement: device.DeviceRequirementV1,
+    selection: device.DeviceSelectionReceiptV1,
+    prior_inventory: []const device.DeviceInventoryEntryV1,
+    selected_entry: device.DeviceInventoryEntryV1,
+    successor_entry: device.DeviceInventoryEntryV1,
+    ticket: MetalAsyncDispatchTicketV1,
+    result: ?MetalLossDispatchCallbackRetirementResultV1 = null,
+};
+
+const ValidatedLossDispatchCallbackRetirementSourceV1 = struct {
+    pending: PendingMetalAsyncDispatchV1,
+    intent: lease_tree.DispatchPinIntentV1,
+    retained_state: loss_dispatch_callback_retirement.LossDispatchCallbackRetainedStateV1,
+    native_disposition: loss_dispatch_callback_retirement.LossDispatchCallbackNativeDispositionV1,
+    native_command_status: u64,
+    native_completion_observed: u64,
+    native_error_domain_kind: loss_dispatch_callback_retirement.LossDispatchCallbackErrorDomainKindV1,
+    native_error_code_bits: u64,
+    backend_quarantine_sha256: Digest,
+};
+
+const LossDispatchCallbackRetirementSourceClassificationV1 = struct {
+    retained_state: loss_dispatch_callback_retirement.LossDispatchCallbackRetainedStateV1,
+    native_disposition: loss_dispatch_callback_retirement.LossDispatchCallbackNativeDispositionV1,
+    native_command_status: u64,
+    native_completion_observed: u64,
+    native_error_domain_kind: loss_dispatch_callback_retirement.LossDispatchCallbackErrorDomainKindV1,
+    native_error_code_bits: u64,
+    backend_quarantine_sha256: Digest,
+};
+
 const ValidatedLossDispatchReconciliationSourceV1 = struct {
     pending: PendingMetalAsyncDispatchV1,
     intent: lease_tree.DispatchPinIntentV1,
@@ -708,6 +817,8 @@ pub const MetalAllocationAdapterV1 = struct {
     settlement_tombstone: ?DispatchSettlementTombstoneV1 = null,
     loss_dispatch_reconciliation_permit: ?MetalLossDispatchReconciliationPermitV1 = null,
     loss_dispatch_reconciliation_tombstone: ?MetalLossDispatchReconciliationTombstoneV1 = null,
+    loss_dispatch_callback_retirement_permit: ?MetalLossDispatchCallbackRetirementPermitV1 = null,
+    loss_dispatch_callback_retirement_tombstone: ?MetalLossDispatchCallbackRetirementTombstoneV1 = null,
     loss_retirement_permit: ?MetalLossRetirementPermitV1 = null,
     loss_retirement_tombstone: ?MetalLossRetirementTombstoneV1 = null,
     allocate_calls: u64 = 0,
@@ -1085,6 +1196,7 @@ pub const MetalAllocationAdapterV1 = struct {
             self.authorized_terminal != null or
             self.terminal_validation_observed or
             self.loss_dispatch_reconciliation_permit != null or
+            self.loss_dispatch_callback_retirement_permit != null or
             self.prepared_matvec_request != null or
             self.reserved_dispatch_intent != null or
             self.bound_dispatch_pin != null or
@@ -1669,6 +1781,352 @@ pub const MetalAllocationAdapterV1 = struct {
         return retained.receipt;
     }
 
+    /// Derive a non-authoritative challenge for an exact pending or sticky
+    /// nonterminal dispatch under the Coordinator's active-pin boundary.
+    pub fn lossDispatchCallbackRetirementAdapterChallengeV1(
+        self: *MetalAllocationAdapterV1,
+        coordinator: *lease_tree.CoordinatorV1,
+        bound_adapter: lease_tree.DispatchAdapterV1,
+        observation: lifecycle.ObservationV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        ticket: MetalAsyncDispatchTicketV1,
+    ) Error!Digest {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        try self.validateAddress();
+        if (observation.abi_version != lifecycle.observation_abi or
+            observation.observed_state != .lost or
+            digestIsZero(observation.observation_sha256) or
+            !device.digestEqual(
+                observation.observation_sha256,
+                lifecycle.observationRootV1(observation),
+            ))
+            return Error.InvalidObservation;
+        try validateMetalAsyncDispatchTicketV1(ticket);
+        var context: MetalLossDispatchCallbackRetirementChallengeContextV1 = .{
+            .adapter = self,
+            .observation = observation,
+            .ticket = ticket,
+        };
+        coordinator.withActiveDispatchReconciliationBindingV1(
+            lease,
+            pin,
+            .{
+                .context = &context,
+                .dispatch_adapter = bound_adapter,
+                .reconcile_fn = lossDispatchCallbackRetirementChallengeCallback,
+            },
+        ) catch |err|
+            return mapCoordinatorDispatchReconciliationError(err);
+        return context.result orelse Error.InvalidConfiguration;
+    }
+
+    /// Detach the native completion callback after exact same-source sticky
+    /// native loss and authorize ownership retirement without output.
+    pub fn armLossDispatchCallbackRetirementV1(
+        self: *MetalAllocationAdapterV1,
+        coordinator: *lease_tree.CoordinatorV1,
+        bound_adapter: lease_tree.DispatchAdapterV1,
+        plan: loss_dispatch_callback_retirement.LossDispatchCallbackRetirementPlanV1,
+        retention: loss_dispatch_callback_retirement.LossDispatchCallbackRetentionV1,
+        observation: lifecycle.ObservationV1,
+        transition: lifecycle.TransitionReceiptV1,
+        source_cursor: lifecycle.SourceCursorV1,
+        requirement: device.DeviceRequirementV1,
+        selection: device.DeviceSelectionReceiptV1,
+        prior_inventory: []const device.DeviceInventoryEntryV1,
+        selected_entry: device.DeviceInventoryEntryV1,
+        successor_entry: device.DeviceInventoryEntryV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        ticket: MetalAsyncDispatchTicketV1,
+    ) Error!MetalLossDispatchCallbackRetirementResultV1 {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        try self.validateAddress();
+        try loss_dispatch_callback_retirement
+            .validateLossDispatchCallbackRetirementPlanV1(
+            plan,
+            observation,
+            transition,
+            source_cursor,
+            requirement,
+            selection,
+            prior_inventory,
+            selected_entry,
+            successor_entry,
+            retention,
+            lease,
+            pin,
+        );
+        try loss_dispatch_callback_retirement
+            .requireProductionEligibleLossDispatchCallbackRetirementPlanV1(
+            plan,
+            retention,
+            observation,
+            transition,
+        );
+        return self.armLossDispatchCallbackRetirementAtBoundaryV1(
+            coordinator,
+            bound_adapter,
+            .production,
+            plan,
+            retention,
+            observation,
+            transition,
+            source_cursor,
+            requirement,
+            selection,
+            prior_inventory,
+            selected_entry,
+            successor_entry,
+            lease,
+            pin,
+            ticket,
+        );
+    }
+
+    /// Fault-build-only structural equivalent of production callback
+    /// retirement. It uses real native command/resource ownership but does
+    /// not claim that the host reproduced a physical device-loss event.
+    pub fn armSyntheticLossDispatchCallbackRetirementForTestV1(
+        self: *MetalAllocationAdapterV1,
+        coordinator: *lease_tree.CoordinatorV1,
+        bound_adapter: lease_tree.DispatchAdapterV1,
+        plan: loss_dispatch_callback_retirement.LossDispatchCallbackRetirementPlanV1,
+        retention: loss_dispatch_callback_retirement.LossDispatchCallbackRetentionV1,
+        observation: lifecycle.ObservationV1,
+        transition: lifecycle.TransitionReceiptV1,
+        source_cursor: lifecycle.SourceCursorV1,
+        requirement: device.DeviceRequirementV1,
+        selection: device.DeviceSelectionReceiptV1,
+        prior_inventory: []const device.DeviceInventoryEntryV1,
+        selected_entry: device.DeviceInventoryEntryV1,
+        successor_entry: device.DeviceInventoryEntryV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        ticket: MetalAsyncDispatchTicketV1,
+    ) Error!MetalLossDispatchCallbackRetirementResultV1 {
+        if (comptime !metal_enabled or !metal_test_faults)
+            return metal.MetalError.Unavailable;
+        try self.validateAddress();
+        try loss_dispatch_callback_retirement
+            .validateLossDispatchCallbackRetirementPlanV1(
+            plan,
+            observation,
+            transition,
+            source_cursor,
+            requirement,
+            selection,
+            prior_inventory,
+            selected_entry,
+            successor_entry,
+            retention,
+            lease,
+            pin,
+        );
+        if (plan.source != .test_injected or
+            plan.evidence_class != .synthetic or
+            observation.source != .test_injected or
+            observation.evidence_class != .synthetic or
+            transition.source != .test_injected or
+            transition.evidence_class != .synthetic or
+            loss_dispatch_callback_retirement
+                .lossDispatchCallbackRetirementPlanProductionEligibleV1(
+                plan,
+                retention,
+                observation,
+                transition,
+            ))
+            return Error.InvalidLossDispatchCallbackRetirementPlan;
+        return self.armLossDispatchCallbackRetirementAtBoundaryV1(
+            coordinator,
+            bound_adapter,
+            .synthetic_test,
+            plan,
+            retention,
+            observation,
+            transition,
+            source_cursor,
+            requirement,
+            selection,
+            prior_inventory,
+            selected_entry,
+            successor_entry,
+            lease,
+            pin,
+            ticket,
+        );
+    }
+
+    fn armLossDispatchCallbackRetirementAtBoundaryV1(
+        self: *MetalAllocationAdapterV1,
+        coordinator: *lease_tree.CoordinatorV1,
+        bound_adapter: lease_tree.DispatchAdapterV1,
+        mode: LossDispatchCallbackRetirementModeV1,
+        plan: loss_dispatch_callback_retirement.LossDispatchCallbackRetirementPlanV1,
+        retention: loss_dispatch_callback_retirement.LossDispatchCallbackRetentionV1,
+        observation: lifecycle.ObservationV1,
+        transition: lifecycle.TransitionReceiptV1,
+        source_cursor: lifecycle.SourceCursorV1,
+        requirement: device.DeviceRequirementV1,
+        selection: device.DeviceSelectionReceiptV1,
+        prior_inventory: []const device.DeviceInventoryEntryV1,
+        selected_entry: device.DeviceInventoryEntryV1,
+        successor_entry: device.DeviceInventoryEntryV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        ticket: MetalAsyncDispatchTicketV1,
+    ) Error!MetalLossDispatchCallbackRetirementResultV1 {
+        var context: MetalLossDispatchCallbackRetirementArmContextV1 = .{
+            .adapter = self,
+            .mode = mode,
+            .plan = plan,
+            .retention = retention,
+            .observation = observation,
+            .transition = transition,
+            .source_cursor = source_cursor,
+            .requirement = requirement,
+            .selection = selection,
+            .prior_inventory = prior_inventory,
+            .selected_entry = selected_entry,
+            .successor_entry = successor_entry,
+            .ticket = ticket,
+        };
+        coordinator.withActiveDispatchReconciliationBindingV1(
+            lease,
+            pin,
+            .{
+                .context = &context,
+                .dispatch_adapter = bound_adapter,
+                .reconcile_fn = lossDispatchCallbackRetirementArmCallback,
+            },
+        ) catch |err|
+            return mapCoordinatorDispatchReconciliationError(err);
+        return context.result orelse Error.InvalidConfiguration;
+    }
+
+    pub fn completeLossDispatchCallbackRetirementV1(
+        self: *MetalAllocationAdapterV1,
+        plan: loss_dispatch_callback_retirement.LossDispatchCallbackRetirementPlanV1,
+        retention: loss_dispatch_callback_retirement.LossDispatchCallbackRetentionV1,
+        completion: lease_tree.LeaseTreeDispatchCompletionV1,
+    ) Error!loss_dispatch_callback_retirement.LossDispatchCallbackRetirementReceiptV1 {
+        return (try self.currentLossDispatchCallbackRetirementReceiptV1(
+            plan,
+            retention,
+            completion,
+        )) orelse Error.InvalidConfiguration;
+    }
+
+    /// Exact replay of the post-Bank, post-native-unlink receipt.
+    pub fn currentLossDispatchCallbackRetirementReceiptV1(
+        self: *MetalAllocationAdapterV1,
+        plan: loss_dispatch_callback_retirement.LossDispatchCallbackRetirementPlanV1,
+        retention: loss_dispatch_callback_retirement.LossDispatchCallbackRetentionV1,
+        completion: lease_tree.LeaseTreeDispatchCompletionV1,
+    ) Error!?loss_dispatch_callback_retirement.LossDispatchCallbackRetirementReceiptV1 {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        try self.validateAddress();
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const retained =
+            self.loss_dispatch_callback_retirement_tombstone orelse
+            return null;
+        if (!std.meta.eql(retained.plan, plan) or
+            !std.meta.eql(retained.retention, retention) or
+            !std.meta.eql(retained.completion, completion))
+            return Error.StaleObject;
+        const settled = self.settlement_tombstone orelse
+            return Error.InvalidConfiguration;
+        try self.validateLossDispatchCallbackRetirementTombstoneUnlocked(
+            retained,
+            settled,
+        );
+        return retained.receipt;
+    }
+
+    fn validateLossDispatchCallbackRetirementTombstoneUnlocked(
+        self: *MetalAllocationAdapterV1,
+        retained: MetalLossDispatchCallbackRetirementTombstoneV1,
+        settled: DispatchSettlementTombstoneV1,
+    ) Error!void {
+        if (!std.meta.eql(retained.pin, settled.pin) or
+            !std.meta.eql(retained.terminal, settled.terminal) or
+            !std.meta.eql(retained.completion, settled.completion))
+            return Error.InvalidDispatchEvidence;
+        try metal.validateMetalRegisteredDispatchRetirementReceipt(
+            retained.native_receipt,
+            retained.native_receipt.permit,
+        );
+        const expected_mode: LossDispatchCallbackRetirementModeV1 =
+            switch (retained.native_receipt.permit.authorization_kind) {
+                .native_loss => .production,
+                .synthetic_test => .synthetic_test,
+                _ => return Error.InvalidDispatchEvidence,
+            };
+        const native_prepare_sha256 =
+            lossDispatchCallbackRetirementNativePrepareRootV1(
+                retained.native_receipt.permit,
+            );
+        const native_retirement_sha256 =
+            lossDispatchCallbackRetirementNativeReceiptRootV1(
+                retained.native_receipt,
+            );
+        if (retained.mode != expected_mode or
+            !device.digestEqual(
+                retained.fence.native_prepare_sha256,
+                native_prepare_sha256,
+            ) or !device.digestEqual(
+            retained.receipt.native_retirement_sha256,
+            native_retirement_sha256,
+        ))
+            return Error.InvalidDispatchEvidence;
+        const permit: MetalLossDispatchCallbackRetirementPermitV1 = .{
+            .mode = retained.mode,
+            .plan = retained.plan,
+            .retention = retained.retention,
+            .selected_entry = retained.selected_entry,
+            .lease = retained.lease,
+            .pin = retained.pin,
+            .native_permit = retained.native_receipt.permit,
+            .native_prepare_sha256 = native_prepare_sha256,
+            .fence = retained.fence,
+            .terminal = retained.terminal,
+        };
+        try validateMetalLossDispatchCallbackRetirementAuthorityV1(
+            permit,
+        );
+        const adapter_settlement_sha256 =
+            lossDispatchCallbackRetirementSettlementRootV1(
+                self,
+                permit,
+                settled.completion,
+                settled.bank_permit,
+                settled.bank_completion,
+                native_retirement_sha256,
+            );
+        if (!device.digestEqual(
+            retained.receipt.adapter_settlement_sha256,
+            adapter_settlement_sha256,
+        ))
+            return Error.InvalidDispatchEvidence;
+        try loss_dispatch_callback_retirement
+            .validateLossDispatchCallbackRetirementReceiptV1(
+            retained.receipt,
+            retained.plan,
+            retained.retention,
+            retained.fence,
+            retained.selected_entry,
+            retained.lease,
+            retained.pin,
+            retained.terminal,
+            retained.completion,
+        );
+    }
+
     fn validateLossDispatchObjectBindingUnlocked(
         self: *MetalAllocationAdapterV1,
         lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
@@ -1784,6 +2242,410 @@ pub const MetalAllocationAdapterV1 = struct {
             return Error.InvalidDispatchEvidence;
     }
 
+    fn validateLossDispatchCallbackRetirementSourceUnlocked(
+        self: *MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        intent: lease_tree.DispatchPinIntentV1,
+        retained_object_set: allocation.BackendObjectSetV1,
+        retained_calls: []const allocation.AllocationCallV1,
+        retained_objects: []const allocation.BackendObjectV1,
+        ticket: MetalAsyncDispatchTicketV1,
+    ) Error!ValidatedLossDispatchCallbackRetirementSourceV1 {
+        try self.validateLossDispatchObjectBindingUnlocked(
+            lease,
+            pin,
+            intent,
+            retained_object_set,
+            retained_calls,
+            retained_objects,
+        );
+        const pending = self.async_dispatch orelse
+            return Error.DispatchUnresolved;
+        if (!self.dispatch_unresolved or
+            self.loss_dispatch_reconciliation_permit != null or
+            self.loss_dispatch_reconciliation_tombstone != null or
+            self.loss_retirement_permit != null or
+            self.loss_retirement_tombstone != null or
+            !std.meta.eql(pending.lease, lease) or
+            !std.meta.eql(pending.pin, pin) or
+            !std.meta.eql(pending.ticket, ticket))
+            return Error.InvalidDispatchEvidence;
+        if (self.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.pin, pin))
+                return Error.StaleObject;
+        }
+        try validateMetalAsyncDispatchTicketForDispatchV1(
+            ticket,
+            pending.ticket.ticket_generation,
+            pending.request,
+            pin,
+            pending.draft,
+        );
+        if (self.authorized_terminal) |authorized| {
+            const permit =
+                self.loss_dispatch_callback_retirement_permit orelse
+                return Error.InvalidDispatchEvidence;
+            const fence = switch (authorized.evidence) {
+                .loss_callback_retirement => |value| value,
+                .submitted,
+                .terminal_failure,
+                .rejected_before_submit,
+                .cancelled_before_submit,
+                => return Error.InvalidDispatchEvidence,
+            };
+            if (!std.meta.eql(authorized.pin, pin) or
+                !std.meta.eql(authorized.request, pending.request) or
+                !std.meta.eql(permit.pin, pin) or
+                !std.meta.eql(permit.fence, fence) or
+                !std.meta.eql(permit.terminal, authorized.terminal))
+                return Error.InvalidDispatchEvidence;
+        } else if (self.loss_dispatch_callback_retirement_permit != null) {
+            return Error.InvalidDispatchEvidence;
+        }
+
+        const classification =
+            try classifyLossDispatchCallbackRetirementSourceV1(
+                ticket,
+                pending.native_submission,
+                self.async_quarantine,
+                self.device_sha256,
+                self.placement_sha256,
+            );
+        return .{
+            .pending = pending,
+            .intent = intent,
+            .retained_state = classification.retained_state,
+            .native_disposition = classification.native_disposition,
+            .native_command_status = classification.native_command_status,
+            .native_completion_observed = classification.native_completion_observed,
+            .native_error_domain_kind = classification.native_error_domain_kind,
+            .native_error_code_bits = classification.native_error_code_bits,
+            .backend_quarantine_sha256 = classification.backend_quarantine_sha256,
+        };
+    }
+
+    fn lossDispatchCallbackRetirementChallengeUnlocked(
+        self: *MetalAllocationAdapterV1,
+        observation: lifecycle.ObservationV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        intent: lease_tree.DispatchPinIntentV1,
+        retained_object_set: allocation.BackendObjectSetV1,
+        retained_calls: []const allocation.AllocationCallV1,
+        retained_objects: []const allocation.BackendObjectV1,
+        ticket: MetalAsyncDispatchTicketV1,
+    ) Error!Digest {
+        const source =
+            try self.validateLossDispatchCallbackRetirementSourceUnlocked(
+                lease,
+                pin,
+                intent,
+                retained_object_set,
+                retained_calls,
+                retained_objects,
+                ticket,
+            );
+        switch (observation.source) {
+            .removed_notification => {
+                if (observation.evidence_class != .native)
+                    return Error.InvalidObservation;
+            },
+            .command_buffer_device_removed => {
+                if (observation.evidence_class != .native or
+                    observation.native_command_status !=
+                        lifecycle.command_buffer_status_error or
+                    observation.native_error_domain_kind !=
+                        lifecycle.command_buffer_error_domain or
+                    observation.native_error_code_bits !=
+                        lifecycle.command_buffer_device_removed_error)
+                    return Error.InvalidObservation;
+            },
+            .test_injected => {
+                if (comptime !metal_test_faults)
+                    return metal.MetalError.Unavailable;
+                if (observation.evidence_class != .synthetic)
+                    return Error.InvalidObservation;
+            },
+            else => return Error.InvalidObservation,
+        }
+        return lossDispatchCallbackRetirementAdapterChallengeRootV1(
+            self,
+            observation,
+            lease,
+            pin,
+            intent,
+            retained_object_set,
+            source,
+        );
+    }
+
+    fn armLossDispatchCallbackRetirementFromCoordinatorUnlocked(
+        self: *MetalAllocationAdapterV1,
+        context: MetalLossDispatchCallbackRetirementArmContextV1,
+        retained_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        retained_pin: lease_tree.LeaseTreeDispatchPinV1,
+        retained_intent: lease_tree.DispatchPinIntentV1,
+        retained_object_set: allocation.BackendObjectSetV1,
+        retained_calls: []const allocation.AllocationCallV1,
+        retained_objects: []const allocation.BackendObjectV1,
+    ) Error!MetalLossDispatchCallbackRetirementResultV1 {
+        try loss_dispatch_callback_retirement
+            .validateLossDispatchCallbackRetirementPlanV1(
+            context.plan,
+            context.observation,
+            context.transition,
+            context.source_cursor,
+            context.requirement,
+            context.selection,
+            context.prior_inventory,
+            context.selected_entry,
+            context.successor_entry,
+            context.retention,
+            retained_lease,
+            retained_pin,
+        );
+        switch (context.mode) {
+            .production => try loss_dispatch_callback_retirement
+                .requireProductionEligibleLossDispatchCallbackRetirementPlanV1(
+                context.plan,
+                context.retention,
+                context.observation,
+                context.transition,
+            ),
+            .synthetic_test => {
+                if (comptime !metal_test_faults)
+                    return metal.MetalError.Unavailable;
+                if (context.plan.source != .test_injected or
+                    context.plan.evidence_class != .synthetic or
+                    context.observation.source != .test_injected or
+                    context.observation.evidence_class != .synthetic or
+                    context.transition.source != .test_injected or
+                    context.transition.evidence_class != .synthetic or
+                    loss_dispatch_callback_retirement
+                        .lossDispatchCallbackRetirementPlanProductionEligibleV1(
+                        context.plan,
+                        context.retention,
+                        context.observation,
+                        context.transition,
+                    ))
+                    return Error.InvalidLossDispatchCallbackRetirementPlan;
+            },
+        }
+        const source =
+            try self.validateLossDispatchCallbackRetirementSourceUnlocked(
+                retained_lease,
+                retained_pin,
+                retained_intent,
+                retained_object_set,
+                retained_calls,
+                retained_objects,
+                context.ticket,
+            );
+        try loss_dispatch_callback_retirement
+            .validateLossDispatchCallbackRetentionV1(
+            context.retention,
+            context.selected_entry,
+            retained_lease,
+            retained_pin,
+        );
+        const expected_challenge =
+            try self.lossDispatchCallbackRetirementChallengeUnlocked(
+                context.observation,
+                retained_lease,
+                retained_pin,
+                retained_intent,
+                retained_object_set,
+                retained_calls,
+                retained_objects,
+                context.ticket,
+            );
+        if (!device.digestEqual(
+            context.retention.adapter_challenge_sha256,
+            expected_challenge,
+        ) or !device.digestEqual(
+            context.retention.async_ticket_sha256,
+            source.pending.ticket.ticket_sha256,
+        ) or !device.digestEqual(
+            context.retention.submission_sha256,
+            source.pending.draft.submission_sha256,
+        ) or !device.digestEqual(
+            context.retention.backend_quarantine_sha256,
+            source.backend_quarantine_sha256,
+        ) or context.retention.retained_state !=
+            source.retained_state or
+            context.retention.native_disposition !=
+                source.native_disposition or
+            context.retention.native_command_status !=
+                source.native_command_status or
+            context.retention.native_completion_observed !=
+                source.native_completion_observed or
+            context.retention.native_error_domain_kind !=
+                source.native_error_domain_kind or
+            context.retention.native_error_code_bits !=
+                source.native_error_code_bits or
+            !device.digestEqual(
+                context.selected_entry.capability.device_sha256,
+                self.device_sha256,
+            ) or !device.digestEqual(
+            context.selected_entry.capability.placement_sha256,
+            self.placement_sha256,
+        ) or !device.digestEqual(
+            context.selected_entry.capability.capability_sha256,
+            self.authority.selected_capability_sha256,
+        ))
+            return Error.InvalidDispatchEvidence;
+
+        if (self.loss_dispatch_callback_retirement_tombstone != null)
+            return Error.StaleObject;
+        if (self.loss_dispatch_callback_retirement_permit) |retained| {
+            if (retained.mode != context.mode or
+                !std.meta.eql(retained.plan, context.plan) or
+                !std.meta.eql(retained.retention, context.retention) or
+                !std.meta.eql(
+                    retained.selected_entry,
+                    context.selected_entry,
+                ) or !std.meta.eql(
+                retained.lease,
+                retained_lease,
+            ) or !std.meta.eql(retained.pin, retained_pin))
+                return Error.DispatchBusy;
+            try validateMetalLossDispatchCallbackRetirementPermitV1(
+                retained,
+                source.pending,
+            );
+            return .{
+                .fence = retained.fence,
+                .terminal = retained.terminal,
+            };
+        }
+        if (self.authorized_terminal != null or
+            self.terminal_validation_observed or
+            self.loss_dispatch_reconciliation_permit != null or
+            self.loss_dispatch_reconciliation_tombstone != null)
+            return Error.InvalidDispatchEvidence;
+
+        var native_permit: metal.MetalRegisteredDispatchRetirementPermit = undefined;
+        switch (context.mode) {
+            .production => {
+                const sticky_snapshot = try metal_lifecycle
+                    .validateStickyNativeLossForRetirementV1(
+                    self.backend,
+                    context.observation,
+                );
+                native_permit = try self.backend
+                    .prepareRegisteredDispatchRetirementAfterLoss(
+                    source.pending.native_submission,
+                    self.backend
+                        .initialDeviceLifecycleSourceIdentity(),
+                    sticky_snapshot.event_sequence,
+                );
+            },
+            .synthetic_test => {
+                if (comptime metal_test_faults) {
+                    native_permit = try self.backend
+                        .prepareRegisteredDispatchRetirementForSyntheticLossTest(
+                        source.pending.native_submission,
+                    );
+                } else {
+                    return metal.MetalError.Unavailable;
+                }
+            },
+        }
+        metal.validateMetalRegisteredDispatchRetirementPermitForSubmission(
+            native_permit,
+            source.pending.native_submission,
+        ) catch @panic(
+            "native Metal callback retirement returned an invalid permit",
+        );
+        const expected_authorization: metal.MetalDispatchRetirementAuthorizationKind =
+            switch (context.mode) {
+                .production => .native_loss,
+                .synthetic_test => .synthetic_test,
+            };
+        if (native_permit.authorization_kind !=
+            expected_authorization)
+            @panic(
+                "native Metal callback retirement returned mismatched authority",
+            );
+
+        const native_prepare_sha256 =
+            lossDispatchCallbackRetirementNativePrepareRootV1(
+                native_permit,
+            );
+        const callback_snapshot_sha256 =
+            if (native_permit.completion_observed == 1)
+                lossDispatchCallbackRetirementCallbackSnapshotRootV1(
+                    native_permit,
+                    native_prepare_sha256,
+                )
+            else
+                allocation.zero_digest;
+        const native_error_domain_kind =
+            lossDispatchCallbackRetirementNativeErrorDomainV1(
+                native_permit,
+            ) catch @panic(
+                "native Metal callback retirement returned an invalid error domain",
+            );
+        const native_error_code_bits: u64 =
+            @bitCast(native_permit.error_code);
+        const backend_terminal_sha256 =
+            lossDispatchCallbackRetirementBackendTerminalRootV1(
+                context.plan,
+                context.retention,
+                native_prepare_sha256,
+                callback_snapshot_sha256,
+            );
+        const fence = loss_dispatch_callback_retirement
+            .makeLossDispatchCallbackFenceV1(
+            context.plan,
+            context.retention,
+            native_permit.retirement_generation,
+            native_prepare_sha256,
+            backend_terminal_sha256,
+            native_permit.completion_observed,
+            native_permit.command_status,
+            native_error_domain_kind,
+            native_error_code_bits,
+            callback_snapshot_sha256,
+        ) catch @panic(
+            "native Metal callback retirement could not seal its fence",
+        );
+        const terminal = lease_tree.makeDispatchTerminalV1(
+            retained_pin,
+            .ownership_retired_after_device_loss,
+            context.retention.submission_sha256,
+            fence.backend_terminal_sha256,
+            allocation.zero_digest,
+        ) catch @panic(
+            "native Metal callback retirement could not seal its terminal",
+        );
+        self.authorized_terminal = .{
+            .pin = retained_pin,
+            .request = source.pending.request,
+            .terminal = terminal,
+            .evidence = .{
+                .loss_callback_retirement = fence,
+            },
+        };
+        self.loss_dispatch_callback_retirement_permit = .{
+            .mode = context.mode,
+            .plan = context.plan,
+            .retention = context.retention,
+            .selected_entry = context.selected_entry,
+            .lease = retained_lease,
+            .pin = retained_pin,
+            .native_permit = native_permit,
+            .native_prepare_sha256 = native_prepare_sha256,
+            .fence = fence,
+            .terminal = terminal,
+        };
+        return .{
+            .fence = fence,
+            .terminal = terminal,
+        };
+    }
+
     fn validateLossDispatchReconciliationSourceUnlocked(
         self: *MetalAllocationAdapterV1,
         lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
@@ -1809,6 +2671,8 @@ pub const MetalAllocationAdapterV1 = struct {
         const native_completion = pending.native_completion orelse
             return Error.DispatchUnresolved;
         if (!self.dispatch_unresolved or
+            self.loss_dispatch_callback_retirement_permit != null or
+            self.loss_dispatch_callback_retirement_tombstone != null or
             self.loss_retirement_permit != null or
             self.loss_retirement_tombstone != null or
             !std.meta.eql(pending.lease, lease) or
@@ -2043,6 +2907,7 @@ pub const MetalAllocationAdapterV1 = struct {
             const failure = switch (authorized.evidence) {
                 .terminal_failure => |value| value,
                 .submitted,
+                .loss_callback_retirement,
                 .rejected_before_submit,
                 .cancelled_before_submit,
                 => return Error.InvalidDispatchEvidence,
@@ -2122,6 +2987,8 @@ pub const MetalAllocationAdapterV1 = struct {
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
+            self.loss_dispatch_callback_retirement_permit != null or
+            self.loss_dispatch_callback_retirement_tombstone != null or
             self.loss_retirement_permit != null or
             self.loss_retirement_tombstone != null or
             self.reserved_dispatch_intent != null or
@@ -2197,7 +3064,9 @@ pub const MetalAllocationAdapterV1 = struct {
             digestIsZero(vector_input_sha256))
             return Error.InvalidDispatchEvidence;
 
-        if (self.loss_retirement_permit != null or
+        if (self.loss_dispatch_callback_retirement_permit != null or
+            self.loss_dispatch_callback_retirement_tombstone != null or
+            self.loss_retirement_permit != null or
             self.loss_retirement_tombstone != null)
             return Error.DispatchBusy;
         if (self.async_dispatch) |pending| {
@@ -2386,7 +3255,7 @@ pub const MetalAllocationAdapterV1 = struct {
             pin,
             ticket,
             output,
-            false,
+            null,
         );
     }
 
@@ -2402,15 +3271,98 @@ pub const MetalAllocationAdapterV1 = struct {
     ) Error!MetalAsyncDispatchPollV1 {
         if (comptime !metal_enabled)
             return metal.MetalError.Unavailable;
+        const preparation =
+            try self.prepareMatvecInt4AsyncWait(
+                lease,
+                pin,
+                ticket,
+                output,
+            );
+        const submission = switch (preparation) {
+            .resolved => |resolved| return resolved,
+            .submission => |value| value,
+        };
+        const waited = self.backend.waitRegisteredDispatch(
+            submission,
+        );
+
         self.mutex.lock();
         defer self.mutex.unlock();
+        if (self.loss_dispatch_callback_retirement_permit != null)
+            return Error.DispatchUnresolved;
+        if (self.loss_dispatch_callback_retirement_tombstone != null) {
+            if (self.settlement_tombstone) |settled| {
+                if (std.meta.eql(settled.pin, pin))
+                    return Error.StaleObject;
+            }
+            return Error.DispatchUnresolved;
+        }
+        const pending = self.async_dispatch orelse {
+            if (self.settlement_tombstone) |settled| {
+                if (std.meta.eql(settled.pin, pin))
+                    return Error.StaleObject;
+            }
+            return Error.DispatchUnresolved;
+        };
+        if (!std.meta.eql(pending.lease, lease) or
+            !std.meta.eql(pending.pin, pin) or
+            !std.meta.eql(pending.ticket, ticket) or
+            !std.meta.eql(pending.native_submission, submission))
+            return Error.InvalidDispatchEvidence;
+        const native_completion = waited catch {
+            const quarantine =
+                try self.installAsyncQuarantineUnlocked(
+                    ticket,
+                    .completion_unknown,
+                    .submitted,
+                    async_native_command_status_unobserved,
+                    0,
+                    .native_bridge,
+                    3,
+                );
+            return .{ .quarantined = quarantine };
+        };
         return self.observeMatvecInt4AsyncUnlocked(
             lease,
             pin,
             ticket,
             output,
-            true,
+            native_completion,
         );
+    }
+
+    fn prepareMatvecInt4AsyncWait(
+        self: *MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        ticket: MetalAsyncDispatchTicketV1,
+        output: []f32,
+    ) Error!MetalAsyncWaitPreparationV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const observed = try self.observeMatvecInt4AsyncUnlocked(
+            lease,
+            pin,
+            ticket,
+            output,
+            null,
+        );
+        return switch (observed) {
+            .pending => blk: {
+                const pending = self.async_dispatch orelse
+                    return Error.DispatchUnresolved;
+                if (!std.meta.eql(pending.lease, lease) or
+                    !std.meta.eql(pending.pin, pin) or
+                    !std.meta.eql(pending.ticket, ticket))
+                    return Error.InvalidDispatchEvidence;
+                break :blk .{
+                    .submission = pending.native_submission,
+                };
+            },
+            .completed, .quarantined => .{
+                .resolved = observed,
+            },
+        };
     }
 
     /// Copy the current public ticket without exposing the private native
@@ -2498,6 +3450,7 @@ pub const MetalAllocationAdapterV1 = struct {
             const failure = switch (authorized.evidence) {
                 .terminal_failure => |value| value,
                 .submitted,
+                .loss_callback_retirement,
                 .rejected_before_submit,
                 .cancelled_before_submit,
                 => return Error.InvalidDispatchEvidence,
@@ -2692,7 +3645,7 @@ pub const MetalAllocationAdapterV1 = struct {
         pin: lease_tree.LeaseTreeDispatchPinV1,
         ticket: MetalAsyncDispatchTicketV1,
         output: []f32,
-        wait_for_completion: bool,
+        native_completion_override: ?metal.MetalAsyncCompletion,
     ) Error!MetalAsyncDispatchPollV1 {
         const pending = self.async_dispatch orelse {
             if (self.settlement_tombstone) |settled| {
@@ -2729,6 +3682,7 @@ pub const MetalAllocationAdapterV1 = struct {
             const observation = switch (authorized.evidence) {
                 .submitted => |value| value,
                 .terminal_failure,
+                .loss_callback_retirement,
                 .rejected_before_submit,
                 .cancelled_before_submit,
                 => return Error.InvalidDispatchEvidence,
@@ -2762,14 +3716,28 @@ pub const MetalAllocationAdapterV1 = struct {
         }
 
         const native_completion =
-            (if (wait_for_completion)
-                self.backend.waitRegisteredDispatch(
-                    pending.native_submission,
-                )
+            (if (native_completion_override) |completion|
+                completion
             else
                 self.backend.pollRegisteredDispatch(
                     pending.native_submission,
-                )) catch {
+                ) catch {
+                    const quarantine =
+                        try self.installAsyncQuarantineUnlocked(
+                            ticket,
+                            .completion_unknown,
+                            .submitted,
+                            async_native_command_status_unobserved,
+                            0,
+                            .native_bridge,
+                            3,
+                        );
+                    return .{ .quarantined = quarantine };
+                });
+        if (native_completion_override != null) {
+            metal.validateMetalAsyncCompletion(
+                native_completion,
+            ) catch {
                 const quarantine =
                     try self.installAsyncQuarantineUnlocked(
                         ticket,
@@ -2782,6 +3750,7 @@ pub const MetalAllocationAdapterV1 = struct {
                     );
                 return .{ .quarantined = quarantine };
             };
+        }
 
         switch (native_completion.state) {
             .pending => return .pending,
@@ -3032,6 +4001,7 @@ pub const MetalAllocationAdapterV1 = struct {
                 },
                 .submitted,
                 .terminal_failure,
+                .loss_callback_retirement,
                 .rejected_before_submit,
                 => {},
             }
@@ -3139,6 +4109,7 @@ pub const MetalAllocationAdapterV1 = struct {
                 },
                 .submitted,
                 .terminal_failure,
+                .loss_callback_retirement,
                 .cancelled_before_submit,
                 => {},
             }
@@ -3276,7 +4247,9 @@ pub const MetalAllocationAdapterV1 = struct {
             return metal.MetalError.Unavailable;
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (self.loss_retirement_permit != null or
+        if (self.loss_dispatch_callback_retirement_permit != null or
+            self.loss_dispatch_callback_retirement_tombstone != null or
+            self.loss_retirement_permit != null or
             self.loss_retirement_tombstone != null)
             return Error.DispatchBusy;
         var live_count: usize = 0;
@@ -3323,6 +4296,8 @@ pub const MetalAllocationAdapterV1 = struct {
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
+            self.loss_dispatch_callback_retirement_permit != null or
+            self.loss_dispatch_callback_retirement_tombstone != null or
             self.loss_retirement_permit != null or
             self.loss_retirement_tombstone != null or
             self.reserved_dispatch_intent != null or
@@ -3735,6 +4710,7 @@ pub const MetalAllocationAdapterV1 = struct {
             self.observed_allocated_size_bytes != 0 or
             !digestIsZero(self.active_admission_sha256) or
             self.loss_dispatch_reconciliation_permit != null or
+            self.loss_dispatch_callback_retirement_permit != null or
             self.loss_retirement_permit != null or
             self.dispatch_unresolved or
             self.async_dispatch != null or
@@ -3774,6 +4750,8 @@ pub const MetalAllocationAdapterV1 = struct {
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
+            self.loss_dispatch_callback_retirement_permit != null or
+            self.loss_dispatch_callback_retirement_tombstone != null or
             self.loss_retirement_permit != null or
             self.loss_retirement_tombstone != null or
             self.bound_dispatch_pin != null or
@@ -3953,6 +4931,37 @@ pub const MetalAllocationAdapterV1 = struct {
                 ) catch return lease_tree.DispatchCallbackError
                     .InvalidTerminalEvidence;
             },
+            .loss_callback_retirement => |fence| {
+                const permit =
+                    self.loss_dispatch_callback_retirement_permit orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
+                const pending = self.async_dispatch orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
+                if (self.loss_dispatch_reconciliation_permit != null or
+                    !std.meta.eql(permit.pin, authorized.pin) or
+                    !std.meta.eql(permit.terminal, terminal) or
+                    !std.meta.eql(permit.fence, fence) or
+                    !std.meta.eql(pending.lease, permit.lease) or
+                    !std.meta.eql(pending.pin, permit.pin) or
+                    !std.meta.eql(
+                        pending.request,
+                        authorized.request,
+                    ) or !device.digestEqual(
+                    permit.native_prepare_sha256,
+                    lossDispatchCallbackRetirementNativePrepareRootV1(
+                        permit.native_permit,
+                    ),
+                ))
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
+                validateMetalLossDispatchCallbackRetirementPermitV1(
+                    permit,
+                    pending,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidTerminalEvidence;
+            },
             .rejected_before_submit => |rejection| {
                 if (self.async_dispatch != null or
                     self.async_quarantine != null)
@@ -4015,6 +5024,9 @@ pub const MetalAllocationAdapterV1 = struct {
                 if (self.loss_dispatch_reconciliation_permit != null)
                     return lease_tree.DispatchCallbackError
                         .InvalidSettlementEvidence;
+                if (self.loss_dispatch_callback_retirement_permit != null)
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
                 if (self.loss_dispatch_reconciliation_tombstone) |loss| {
                     if (!std.meta.eql(loss.pin, pin) or
                         !std.meta.eql(loss.terminal, terminal) or
@@ -4031,6 +5043,13 @@ pub const MetalAllocationAdapterV1 = struct {
                         loss.pin,
                         loss.terminal,
                         loss.completion,
+                    ) catch return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
+                }
+                if (self.loss_dispatch_callback_retirement_tombstone) |loss| {
+                    self.validateLossDispatchCallbackRetirementTombstoneUnlocked(
+                        loss,
+                        settled,
                     ) catch return lease_tree.DispatchCallbackError
                         .InvalidSettlementEvidence;
                 }
@@ -4148,6 +5167,37 @@ pub const MetalAllocationAdapterV1 = struct {
                     .completion = native_completion,
                 };
             },
+            .loss_callback_retirement => |fence| {
+                const permit =
+                    self.loss_dispatch_callback_retirement_permit orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
+                const pending = self.async_dispatch orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
+                if (self.loss_dispatch_reconciliation_permit != null or
+                    !std.meta.eql(permit.pin, pin) or
+                    !std.meta.eql(permit.terminal, terminal) or
+                    !std.meta.eql(permit.fence, fence) or
+                    !std.meta.eql(pending.lease, permit.lease) or
+                    !std.meta.eql(pending.pin, permit.pin) or
+                    !std.meta.eql(
+                        pending.request,
+                        authorized.request,
+                    ) or !device.digestEqual(
+                    permit.native_prepare_sha256,
+                    lossDispatchCallbackRetirementNativePrepareRootV1(
+                        permit.native_permit,
+                    ),
+                ))
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
+                validateMetalLossDispatchCallbackRetirementPermitV1(
+                    permit,
+                    pending,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+            },
             .rejected_before_submit => |rejection| {
                 if (self.async_dispatch != null or
                     self.async_quarantine != null)
@@ -4195,6 +5245,7 @@ pub const MetalAllocationAdapterV1 = struct {
             const failure = switch (authorized.evidence) {
                 .terminal_failure => |value| value,
                 .submitted,
+                .loss_callback_retirement,
                 .rejected_before_submit,
                 .cancelled_before_submit,
                 => return lease_tree.DispatchCallbackError
@@ -4249,6 +5300,91 @@ pub const MetalAllocationAdapterV1 = struct {
                 .receipt = receipt,
             };
         }
+        var callback_retirement_tombstone: ?MetalLossDispatchCallbackRetirementTombstoneV1 = null;
+        if (self.loss_dispatch_callback_retirement_permit) |permit| {
+            if (self.loss_dispatch_reconciliation_permit != null)
+                return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+            const fence = switch (authorized.evidence) {
+                .loss_callback_retirement => |value| value,
+                .submitted,
+                .terminal_failure,
+                .rejected_before_submit,
+                .cancelled_before_submit,
+                => return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence,
+            };
+            if (!std.meta.eql(permit.pin, pin) or
+                !std.meta.eql(permit.terminal, terminal) or
+                !std.meta.eql(permit.fence, fence))
+                return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+            const expected_native_receipt =
+                expectedLossDispatchCallbackNativeRetirementReceiptV1(
+                    permit.native_permit,
+                );
+            metal.validateMetalRegisteredDispatchRetirementReceipt(
+                expected_native_receipt,
+                permit.native_permit,
+            ) catch return lease_tree.DispatchCallbackError
+                .InvalidSettlementEvidence;
+            const native_retirement_sha256 =
+                lossDispatchCallbackRetirementNativeReceiptRootV1(
+                    expected_native_receipt,
+                );
+            const adapter_settlement_sha256 =
+                lossDispatchCallbackRetirementSettlementRootV1(
+                    self,
+                    permit,
+                    completion,
+                    bank_permit,
+                    bank_completion,
+                    native_retirement_sha256,
+                );
+            if (digestIsZero(native_retirement_sha256) or
+                digestIsZero(adapter_settlement_sha256))
+                return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+            const receipt = loss_dispatch_callback_retirement
+                .makeLossDispatchCallbackRetirementReceiptV1(
+                permit.plan,
+                permit.retention,
+                permit.fence,
+                permit.selected_entry,
+                permit.lease,
+                permit.pin,
+                permit.terminal,
+                completion,
+                native_retirement_sha256,
+                adapter_settlement_sha256,
+            ) catch return lease_tree.DispatchCallbackError
+                .InvalidSettlementEvidence;
+            const native_receipt =
+                self.backend.commitRegisteredDispatchRetirement(
+                    permit.native_permit,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+            if (!std.meta.eql(
+                native_receipt,
+                expected_native_receipt,
+            ))
+                @panic(
+                    "native Metal retirement committed with a noncanonical receipt",
+                );
+            callback_retirement_tombstone = .{
+                .mode = permit.mode,
+                .plan = permit.plan,
+                .retention = permit.retention,
+                .selected_entry = permit.selected_entry,
+                .lease = permit.lease,
+                .pin = permit.pin,
+                .fence = permit.fence,
+                .terminal = permit.terminal,
+                .completion = completion,
+                .native_receipt = native_receipt,
+                .receipt = receipt,
+            };
+        }
         if (native_finalize) |value|
             self.backend.finalizeRegisteredDispatch(
                 value.submission,
@@ -4266,6 +5402,11 @@ pub const MetalAllocationAdapterV1 = struct {
             self.loss_dispatch_reconciliation_tombstone =
                 retained;
             self.loss_dispatch_reconciliation_permit = null;
+        }
+        if (callback_retirement_tombstone) |retained| {
+            self.loss_dispatch_callback_retirement_tombstone =
+                retained;
+            self.loss_dispatch_callback_retirement_permit = null;
         }
         self.async_dispatch = null;
         self.async_quarantine = null;
@@ -4329,6 +5470,8 @@ pub const MetalAllocationAdapterV1 = struct {
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
+            self.loss_dispatch_callback_retirement_permit != null or
+            self.loss_dispatch_callback_retirement_tombstone != null or
             self.loss_retirement_permit != null or
             self.loss_retirement_tombstone != null or
             self.prepared_matvec_request != null or
@@ -4634,6 +5777,63 @@ fn lossDispatchReconciliationArmCallback(
     context.result = result;
 }
 
+fn lossDispatchCallbackRetirementChallengeCallback(
+    context_ptr: *anyopaque,
+    retained_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    retained_pin: lease_tree.LeaseTreeDispatchPinV1,
+    retained_intent: lease_tree.DispatchPinIntentV1,
+    retained_object_set: allocation.BackendObjectSetV1,
+    retained_calls: []const allocation.AllocationCallV1,
+    retained_objects: []const allocation.BackendObjectV1,
+) lease_tree.ActiveDispatchReconciliationBindingCallbackError!void {
+    const context: *MetalLossDispatchCallbackRetirementChallengeContextV1 =
+        @ptrCast(@alignCast(context_ptr));
+    const self = context.adapter;
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    const challenge =
+        self.lossDispatchCallbackRetirementChallengeUnlocked(
+            context.observation,
+            retained_lease,
+            retained_pin,
+            retained_intent,
+            retained_object_set,
+            retained_calls,
+            retained_objects,
+            context.ticket,
+        ) catch |err|
+            return mapDispatchReconciliationCallbackError(err);
+    context.result = challenge;
+}
+
+fn lossDispatchCallbackRetirementArmCallback(
+    context_ptr: *anyopaque,
+    retained_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    retained_pin: lease_tree.LeaseTreeDispatchPinV1,
+    retained_intent: lease_tree.DispatchPinIntentV1,
+    retained_object_set: allocation.BackendObjectSetV1,
+    retained_calls: []const allocation.AllocationCallV1,
+    retained_objects: []const allocation.BackendObjectV1,
+) lease_tree.ActiveDispatchReconciliationBindingCallbackError!void {
+    const context: *MetalLossDispatchCallbackRetirementArmContextV1 =
+        @ptrCast(@alignCast(context_ptr));
+    const self = context.adapter;
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    const result =
+        self.armLossDispatchCallbackRetirementFromCoordinatorUnlocked(
+            context.*,
+            retained_lease,
+            retained_pin,
+            retained_intent,
+            retained_object_set,
+            retained_calls,
+            retained_objects,
+        ) catch |err|
+            return mapDispatchReconciliationCallbackError(err);
+    context.result = result;
+}
+
 fn mapDispatchReconciliationCallbackError(
     err: anyerror,
 ) lease_tree.ActiveDispatchReconciliationBindingCallbackError {
@@ -4670,7 +5870,8 @@ fn lossRetirementChallengeCallback(
     defer self.mutex.unlock();
     self.validateAddress() catch
         return error.InvalidRetirementBinding;
-    if (self.loss_retirement_permit != null or
+    if (self.loss_dispatch_callback_retirement_permit != null or
+        self.loss_retirement_permit != null or
         self.loss_retirement_tombstone != null)
         return error.Busy;
     allocation.validateObjectSetForAdmissionRootV1(
@@ -5140,6 +6341,75 @@ fn asyncDispatchQuarantineShapeValid(
             value.error_domain_kind == .command_buffer,
         _ => false,
     };
+}
+
+fn classifyLossDispatchCallbackRetirementSourceV1(
+    ticket: MetalAsyncDispatchTicketV1,
+    native_submission: metal.MetalAsyncSubmission,
+    quarantine: ?MetalAsyncDispatchQuarantineV1,
+    device_sha256: Digest,
+    placement_sha256: Digest,
+) Error!LossDispatchCallbackRetirementSourceClassificationV1 {
+    try validateMetalAsyncDispatchTicketV1(ticket);
+    try metal.validateMetalAsyncSubmission(native_submission);
+
+    var result: LossDispatchCallbackRetirementSourceClassificationV1 = .{
+        .retained_state = .pending,
+        .native_disposition = .submitted,
+        .native_command_status = 0,
+        .native_completion_observed = 0,
+        .native_error_domain_kind = .none,
+        .native_error_code_bits = 0,
+        .backend_quarantine_sha256 = allocation.zero_digest,
+    };
+    if (quarantine) |retained| {
+        try validateMetalAsyncDispatchQuarantineForTicketV1(
+            retained,
+            ticket,
+            device_sha256,
+            placement_sha256,
+        );
+        result.retained_state = switch (retained.reason) {
+            .submission_ambiguous => .submission_ambiguous,
+            .completion_unknown => .completion_unknown,
+            .invalid_completion => .invalid_completion,
+            .terminal_command_error, _ => return Error.InvalidDispatchEvidence,
+        };
+        result.native_disposition = switch (retained.native_disposition) {
+            .commit_started => .commit_started,
+            .submitted => .submitted,
+            .terminal_status_observed => .terminal_status_observed,
+            _ => return Error.InvalidDispatchEvidence,
+        };
+        result.native_command_status =
+            retained.native_command_status;
+        result.native_completion_observed =
+            retained.native_completion_observed;
+        result.native_error_domain_kind = switch (retained.error_domain_kind) {
+            .native_bridge => .native_bridge,
+            .completion_validation => .completion_validation,
+            else => return Error.InvalidDispatchEvidence,
+        };
+        result.native_error_code_bits =
+            retained.error_code_bits;
+        result.backend_quarantine_sha256 =
+            retained.quarantine_sha256;
+    }
+
+    const expected_submission_disposition: metal.MetalAsyncSubmissionDisposition =
+        if (result.retained_state == .submission_ambiguous)
+            .submitted_or_ambiguous
+        else
+            .submitted;
+    if (native_submission.disposition !=
+        expected_submission_disposition or
+        !std.mem.eql(
+            u8,
+            &native_submission.submission_binding,
+            &ticket.ticket_sha256,
+        ))
+        return Error.InvalidDispatchEvidence;
+    return result;
 }
 
 pub fn makeMetalAsyncDispatchQuarantineV1(
@@ -6401,6 +7671,325 @@ fn makeObservationV1(
     };
     result.observation_sha256 = observationRootV1(result);
     return result;
+}
+
+fn lossDispatchCallbackRetirementNativeErrorDomainV1(
+    permit: metal.MetalRegisteredDispatchRetirementPermit,
+) Error!loss_dispatch_callback_retirement.LossDispatchCallbackErrorDomainKindV1 {
+    try metal.validateMetalRegisteredDispatchRetirementPermit(permit);
+    return switch (permit.error_domain_kind) {
+        .none => .none,
+        .command_buffer => .command_buffer,
+        .other => .native_other,
+        _ => Error.InvalidDispatchEvidence,
+    };
+}
+
+fn validateMetalLossDispatchCallbackRetirementAuthorityV1(
+    permit: MetalLossDispatchCallbackRetirementPermitV1,
+) Error!void {
+    try metal.validateMetalRegisteredDispatchRetirementPermit(
+        permit.native_permit,
+    );
+    try loss_dispatch_callback_retirement
+        .validateLossDispatchCallbackRetentionV1(
+        permit.retention,
+        permit.selected_entry,
+        permit.lease,
+        permit.pin,
+    );
+    const expected_authorization: metal.MetalDispatchRetirementAuthorizationKind =
+        switch (permit.mode) {
+            .production => .native_loss,
+            .synthetic_test => .synthetic_test,
+        };
+    const native_prepare_sha256 =
+        lossDispatchCallbackRetirementNativePrepareRootV1(
+            permit.native_permit,
+        );
+    const callback_snapshot_sha256 =
+        if (permit.native_permit.completion_observed == 1)
+            lossDispatchCallbackRetirementCallbackSnapshotRootV1(
+                permit.native_permit,
+                native_prepare_sha256,
+            )
+        else
+            allocation.zero_digest;
+    const backend_terminal_sha256 =
+        lossDispatchCallbackRetirementBackendTerminalRootV1(
+            permit.plan,
+            permit.retention,
+            native_prepare_sha256,
+            callback_snapshot_sha256,
+        );
+    const expected_fence = try loss_dispatch_callback_retirement
+        .makeLossDispatchCallbackFenceV1(
+        permit.plan,
+        permit.retention,
+        permit.native_permit.retirement_generation,
+        native_prepare_sha256,
+        backend_terminal_sha256,
+        permit.native_permit.completion_observed,
+        permit.native_permit.command_status,
+        try lossDispatchCallbackRetirementNativeErrorDomainV1(
+            permit.native_permit,
+        ),
+        @as(u64, @bitCast(permit.native_permit.error_code)),
+        callback_snapshot_sha256,
+    );
+    const expected_terminal = try lease_tree.makeDispatchTerminalV1(
+        permit.pin,
+        .ownership_retired_after_device_loss,
+        permit.retention.submission_sha256,
+        expected_fence.backend_terminal_sha256,
+        allocation.zero_digest,
+    );
+    if (permit.native_permit.authorization_kind !=
+        expected_authorization or
+        !device.digestEqual(
+            permit.native_prepare_sha256,
+            native_prepare_sha256,
+        ) or !std.meta.eql(permit.fence, expected_fence) or
+        !std.meta.eql(permit.terminal, expected_terminal))
+        return Error.InvalidDispatchEvidence;
+}
+
+fn validateMetalLossDispatchCallbackRetirementPermitV1(
+    permit: MetalLossDispatchCallbackRetirementPermitV1,
+    pending: PendingMetalAsyncDispatchV1,
+) Error!void {
+    try validateMetalLossDispatchCallbackRetirementAuthorityV1(
+        permit,
+    );
+    try metal
+        .validateMetalRegisteredDispatchRetirementPermitForSubmission(
+        permit.native_permit,
+        pending.native_submission,
+    );
+    if (!std.meta.eql(pending.lease, permit.lease) or
+        !std.meta.eql(pending.pin, permit.pin))
+        return Error.InvalidDispatchEvidence;
+}
+
+fn lossDispatchCallbackRetirementAdapterChallengeRootV1(
+    adapter: *const MetalAllocationAdapterV1,
+    observation: lifecycle.ObservationV1,
+    lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    intent: lease_tree.DispatchPinIntentV1,
+    retained_object_set: allocation.BackendObjectSetV1,
+    source: ValidatedLossDispatchCallbackRetirementSourceV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        loss_dispatch_callback_retirement_adapter_challenge_domain,
+    );
+    hashU64(&hash, adapter_abi);
+    hash.update(&adapter.authority.authority_sha256);
+    hash.update(&adapter.authority.backend_authority_sha256);
+    hash.update(&adapter.dispatch_authority_sha256);
+    hash.update(&adapter.queue_authority_sha256);
+    hashU64(&hash, adapter.adapter_nonce);
+    hashU64(&hash, adapter.adapter_identity.abi_version);
+    for (adapter.adapter_identity.context_nonce) |word|
+        hashU64(&hash, word);
+    hashU64(&hash, adapter.adapter_identity.adapter_instance);
+    hash.update(&adapter.device_sha256);
+    hash.update(&adapter.placement_sha256);
+    hash.update(&lease.admission_sha256);
+    hash.update(&lease.lease_sha256);
+    hash.update(&lease.allocation_leaf_set_sha256);
+    hash.update(&lease.backend_object_set_sha256);
+    hash.update(&pin.pin_sha256);
+    hash.update(&intent.intent_sha256);
+    hash.update(&retained_object_set.object_set_sha256);
+    hash.update(&source.pending.request.request_sha256);
+    hash.update(&source.pending.ticket.ticket_sha256);
+    hash.update(&source.pending.draft.submission_sha256);
+    hashU64(&hash, source.pending.native_submission.abi_version);
+    for (source.pending.native_submission.token.context_nonce) |word|
+        hashU64(&hash, word);
+    hashU64(
+        &hash,
+        source.pending.native_submission.token.generation,
+    );
+    hash.update(&source.pending.native_submission.submission_binding);
+    hashU64(
+        &hash,
+        @intFromEnum(source.pending.native_submission.disposition),
+    );
+    hashU64(&hash, source.pending.native_submission.reserved);
+    hashU64(&hash, @intFromEnum(source.retained_state));
+    hashU64(&hash, @intFromEnum(source.native_disposition));
+    hashU64(&hash, source.native_command_status);
+    hashU64(&hash, source.native_completion_observed);
+    hashU64(&hash, @intFromEnum(source.native_error_domain_kind));
+    hashU64(&hash, source.native_error_code_bits);
+    hash.update(&source.backend_quarantine_sha256);
+    hashU64(&hash, @intFromEnum(observation.source));
+    hashU64(&hash, @intFromEnum(observation.evidence_class));
+    hashU64(&hash, observation.source_sequence);
+    hash.update(&observation.source_instance_sha256);
+    hash.update(&observation.observation_sha256);
+    return finish(&hash);
+}
+
+fn lossDispatchCallbackRetirementNativePrepareRootV1(
+    permit: metal.MetalRegisteredDispatchRetirementPermit,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        loss_dispatch_callback_retirement_native_prepare_domain,
+    );
+    hashU64(&hash, permit.abi_version);
+    for (permit.token.context_nonce) |word| hashU64(&hash, word);
+    hashU64(&hash, permit.token.generation);
+    hash.update(&permit.submission_binding);
+    hashU64(&hash, permit.retirement_generation);
+    hashU64(&hash, permit.source_identity.abi_version);
+    hashU64(&hash, permit.source_identity.registry_id);
+    hashU64(&hash, permit.source_identity.observer_generation);
+    for (permit.source_identity.context_nonce) |word|
+        hashU64(&hash, word);
+    hashU64(&hash, permit.minimum_event_sequence);
+    hashU64(&hash, @as(u64, @bitCast(permit.error_code)));
+    hashU64(&hash, @intFromEnum(permit.authorization_kind));
+    hashU64(&hash, @intFromEnum(permit.submission_disposition));
+    hashU64(&hash, @intFromEnum(permit.native_state));
+    hashU64(&hash, permit.command_status);
+    hashU64(&hash, permit.completion_observed);
+    hashU64(&hash, @intFromEnum(permit.error_domain_kind));
+    hashU64(&hash, permit.error_present);
+    hashU64(&hash, permit.callback_fault);
+    hashU64(&hash, permit.commit_invoked);
+    hashU64(&hash, permit.callback_detached);
+    hashU64(&hash, permit.reserved0);
+    hashU64(&hash, permit.reserved1);
+    return finish(&hash);
+}
+
+fn lossDispatchCallbackRetirementCallbackSnapshotRootV1(
+    permit: metal.MetalRegisteredDispatchRetirementPermit,
+    native_prepare_sha256: Digest,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        loss_dispatch_callback_retirement_callback_snapshot_domain,
+    );
+    hash.update(&native_prepare_sha256);
+    hashU64(&hash, @intFromEnum(permit.native_state));
+    hashU64(&hash, permit.command_status);
+    hashU64(&hash, permit.completion_observed);
+    hashU64(&hash, @intFromEnum(permit.error_domain_kind));
+    hashU64(&hash, permit.error_present);
+    hashU64(&hash, @as(u64, @bitCast(permit.error_code)));
+    hashU64(&hash, permit.callback_fault);
+    return finish(&hash);
+}
+
+fn lossDispatchCallbackRetirementBackendTerminalRootV1(
+    plan: loss_dispatch_callback_retirement.LossDispatchCallbackRetirementPlanV1,
+    retention: loss_dispatch_callback_retirement.LossDispatchCallbackRetentionV1,
+    native_prepare_sha256: Digest,
+    callback_snapshot_sha256: Digest,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        loss_dispatch_callback_retirement_backend_terminal_domain,
+    );
+    hash.update(&plan.plan_sha256);
+    hash.update(&retention.retention_sha256);
+    hash.update(&retention.submission_sha256);
+    hash.update(&native_prepare_sha256);
+    hash.update(&callback_snapshot_sha256);
+    return finish(&hash);
+}
+
+fn lossDispatchCallbackRetirementNativeReceiptRootV1(
+    receipt: metal.MetalRegisteredDispatchRetirementReceipt,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        loss_dispatch_callback_retirement_native_receipt_domain,
+    );
+    hashU64(&hash, receipt.abi_version);
+    hash.update(
+        &lossDispatchCallbackRetirementNativePrepareRootV1(
+            receipt.permit,
+        ),
+    );
+    hashU64(&hash, receipt.retired_native_command_count);
+    hashU64(&hash, receipt.released_allocation_reference_count);
+    hashU64(&hash, @as(u64, @bitCast(receipt.error_code)));
+    hashU64(&hash, receipt.completion_observed);
+    hashU64(&hash, @intFromEnum(receipt.native_state));
+    hashU64(&hash, receipt.command_status);
+    hashU64(&hash, @intFromEnum(receipt.error_domain_kind));
+    hashU64(&hash, receipt.error_present);
+    hashU64(&hash, receipt.callback_fault);
+    hashU64(&hash, receipt.callback_detached);
+    hashU64(&hash, receipt.reserved);
+    return finish(&hash);
+}
+
+fn expectedLossDispatchCallbackNativeRetirementReceiptV1(
+    permit: metal.MetalRegisteredDispatchRetirementPermit,
+) metal.MetalRegisteredDispatchRetirementReceipt {
+    return .{
+        .abi_version = metal.dispatch_retirement_receipt_abi,
+        .permit = permit,
+        .retired_native_command_count = 1,
+        .released_allocation_reference_count = 4,
+        .error_code = permit.error_code,
+        .completion_observed = permit.completion_observed,
+        .native_state = permit.native_state,
+        .command_status = permit.command_status,
+        .error_domain_kind = permit.error_domain_kind,
+        .error_present = permit.error_present,
+        .callback_fault = permit.callback_fault,
+        .callback_detached = permit.callback_detached,
+    };
+}
+
+fn lossDispatchCallbackRetirementSettlementRootV1(
+    adapter: *const MetalAllocationAdapterV1,
+    permit: MetalLossDispatchCallbackRetirementPermitV1,
+    completion: lease_tree.LeaseTreeDispatchCompletionV1,
+    bank_permit: resource.LeasePinPermitV1,
+    bank_completion: resource.LeasePinCompletionV1,
+    native_retirement_sha256: Digest,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        loss_dispatch_callback_retirement_settlement_domain,
+    );
+    hashU64(&hash, adapter_abi);
+    hashU64(&hash, @intFromEnum(permit.mode));
+    hash.update(&permit.plan.plan_sha256);
+    hash.update(&permit.retention.retention_sha256);
+    hash.update(&permit.selected_entry.entry_sha256);
+    hash.update(&permit.lease.lease_sha256);
+    hash.update(&permit.pin.pin_sha256);
+    hash.update(&permit.native_prepare_sha256);
+    hash.update(&permit.fence.fence_sha256);
+    hash.update(&permit.terminal.terminal_sha256);
+    hash.update(&completion.completion_sha256);
+    hash.update(&completion.bank_completion_sha256);
+    hash.update(&lease_tree.leasePinPermitSha256V1(bank_permit));
+    hash.update(&lease_tree.leasePinCompletionSha256V1(
+        bank_completion,
+    ));
+    hash.update(&native_retirement_sha256);
+    hash.update(&adapter.authority.authority_sha256);
+    hash.update(&adapter.dispatch_authority_sha256);
+    hash.update(&adapter.queue_authority_sha256);
+    hash.update(&adapter.device_sha256);
+    hash.update(&adapter.placement_sha256);
+    hashU64(&hash, adapter.adapter_identity.abi_version);
+    for (adapter.adapter_identity.context_nonce) |word|
+        hashU64(&hash, word);
+    hashU64(&hash, adapter.adapter_identity.adapter_instance);
+    return finish(&hash);
 }
 
 fn lossDispatchReconciliationAdapterChallengeRootV1(
@@ -7677,6 +9266,248 @@ test "Metal async quarantine shapes are sticky and explicitly nonterminal" {
     try std.testing.expectError(
         Error.InvalidDispatchEvidence,
         validateMetalAsyncDispatchQuarantineV1(invalid),
+    );
+}
+
+test "Metal loss callback retirement classifies every retained dispatch shape exactly" {
+    const fixture = try makeTestAsyncEvidenceFixture(23);
+    const Case = struct {
+        reason: ?MetalAsyncDispatchQuarantineReasonV1,
+        submission_disposition: metal.MetalAsyncSubmissionDisposition,
+        quarantine_disposition: MetalAsyncNativeDispositionV1,
+        native_status: u64,
+        completion_observed: u64,
+        error_domain: MetalAsyncErrorDomainKindV1,
+        error_code_bits: u64,
+        retained_state: loss_dispatch_callback_retirement.LossDispatchCallbackRetainedStateV1,
+        retained_disposition: loss_dispatch_callback_retirement.LossDispatchCallbackNativeDispositionV1,
+        retained_error_domain: loss_dispatch_callback_retirement.LossDispatchCallbackErrorDomainKindV1,
+    };
+    const cases = [_]Case{
+        .{
+            .reason = null,
+            .submission_disposition = .submitted,
+            .quarantine_disposition = .submitted,
+            .native_status = 0,
+            .completion_observed = 0,
+            .error_domain = .none,
+            .error_code_bits = 0,
+            .retained_state = .pending,
+            .retained_disposition = .submitted,
+            .retained_error_domain = .none,
+        },
+        .{
+            .reason = .submission_ambiguous,
+            .submission_disposition = .submitted_or_ambiguous,
+            .quarantine_disposition = .commit_started,
+            .native_status = async_native_command_status_unobserved,
+            .completion_observed = 0,
+            .error_domain = .native_bridge,
+            .error_code_bits = async_submission_ambiguous_adapter_code,
+            .retained_state = .submission_ambiguous,
+            .retained_disposition = .commit_started,
+            .retained_error_domain = .native_bridge,
+        },
+        .{
+            .reason = .completion_unknown,
+            .submission_disposition = .submitted,
+            .quarantine_disposition = .submitted,
+            .native_status = async_native_command_status_completed,
+            .completion_observed = 0,
+            .error_domain = .native_bridge,
+            .error_code_bits = 0x401,
+            .retained_state = .completion_unknown,
+            .retained_disposition = .submitted,
+            .retained_error_domain = .native_bridge,
+        },
+        .{
+            .reason = .completion_unknown,
+            .submission_disposition = .submitted,
+            .quarantine_disposition = .submitted,
+            .native_status = async_native_command_status_error,
+            .completion_observed = 1,
+            .error_domain = .native_bridge,
+            .error_code_bits = 0x501,
+            .retained_state = .completion_unknown,
+            .retained_disposition = .submitted,
+            .retained_error_domain = .native_bridge,
+        },
+        .{
+            .reason = .invalid_completion,
+            .submission_disposition = .submitted,
+            .quarantine_disposition = .terminal_status_observed,
+            .native_status = async_native_command_status_completed,
+            .completion_observed = 1,
+            .error_domain = .completion_validation,
+            .error_code_bits = 0x601,
+            .retained_state = .invalid_completion,
+            .retained_disposition = .terminal_status_observed,
+            .retained_error_domain = .completion_validation,
+        },
+    };
+
+    for (cases) |case| {
+        var native_submission =
+            makeTestNativeAsyncErrorFixture(fixture.ticket).submission;
+        native_submission.disposition =
+            case.submission_disposition;
+        const retained: ?MetalAsyncDispatchQuarantineV1 =
+            if (case.reason) |reason|
+                try makeMetalAsyncDispatchQuarantineV1(
+                    fixture.ticket,
+                    fixture.device_sha256,
+                    fixture.placement_sha256,
+                    reason,
+                    case.quarantine_disposition,
+                    case.native_status,
+                    case.completion_observed,
+                    case.error_domain,
+                    case.error_code_bits,
+                )
+            else
+                null;
+        const classified =
+            try classifyLossDispatchCallbackRetirementSourceV1(
+                fixture.ticket,
+                native_submission,
+                retained,
+                fixture.device_sha256,
+                fixture.placement_sha256,
+            );
+        try std.testing.expectEqual(
+            case.retained_state,
+            classified.retained_state,
+        );
+        try std.testing.expectEqual(
+            case.retained_disposition,
+            classified.native_disposition,
+        );
+        try std.testing.expectEqual(
+            case.native_status,
+            classified.native_command_status,
+        );
+        try std.testing.expectEqual(
+            case.completion_observed,
+            classified.native_completion_observed,
+        );
+        try std.testing.expectEqual(
+            case.retained_error_domain,
+            classified.native_error_domain_kind,
+        );
+        try std.testing.expectEqual(
+            case.error_code_bits,
+            classified.native_error_code_bits,
+        );
+        if (retained) |value| {
+            try std.testing.expect(
+                !digestIsZero(
+                    classified.backend_quarantine_sha256,
+                ),
+            );
+            try std.testing.expectEqualSlices(
+                u8,
+                &value.quarantine_sha256,
+                &classified.backend_quarantine_sha256,
+            );
+        } else {
+            try std.testing.expect(
+                digestIsZero(
+                    classified.backend_quarantine_sha256,
+                ),
+            );
+        }
+
+        var wrong_disposition = native_submission;
+        wrong_disposition.disposition =
+            if (case.submission_disposition == .submitted)
+                .submitted_or_ambiguous
+            else
+                .submitted;
+        try std.testing.expectError(
+            Error.InvalidDispatchEvidence,
+            classifyLossDispatchCallbackRetirementSourceV1(
+                fixture.ticket,
+                wrong_disposition,
+                retained,
+                fixture.device_sha256,
+                fixture.placement_sha256,
+            ),
+        );
+    }
+}
+
+test "Metal loss callback retirement rejects terminal and substituted sources" {
+    const fixture = try makeTestAsyncEvidenceFixture(24);
+    var native_submission =
+        makeTestNativeAsyncErrorFixture(fixture.ticket).submission;
+    native_submission.disposition = .submitted;
+    const terminal_command_error =
+        try makeMetalAsyncDispatchQuarantineV1(
+            fixture.ticket,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+            .terminal_command_error,
+            .terminal_status_observed,
+            async_native_command_status_error,
+            1,
+            .command_buffer,
+            0x701,
+        );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        classifyLossDispatchCallbackRetirementSourceV1(
+            fixture.ticket,
+            native_submission,
+            terminal_command_error,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+        ),
+    );
+
+    const completion_unknown =
+        try makeMetalAsyncDispatchQuarantineV1(
+            fixture.ticket,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+            .completion_unknown,
+            .submitted,
+            0x77,
+            1,
+            .native_bridge,
+            0x702,
+        );
+    const foreign_ticket = try makeMetalAsyncDispatchTicketV1(
+        25,
+        fixture.request,
+        fixture.pin,
+        fixture.draft,
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        classifyLossDispatchCallbackRetirementSourceV1(
+            foreign_ticket,
+            native_submission,
+            completion_unknown,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+        ),
+    );
+
+    var substituted_binding = native_submission;
+    substituted_binding.submission_binding =
+        foreign_ticket.ticket_sha256;
+    try metal.validateMetalAsyncSubmission(
+        substituted_binding,
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        classifyLossDispatchCallbackRetirementSourceV1(
+            fixture.ticket,
+            substituted_binding,
+            null,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+        ),
     );
 }
 

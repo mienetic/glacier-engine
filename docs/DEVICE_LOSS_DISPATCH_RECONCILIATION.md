@@ -8,7 +8,8 @@ charge, native command record, and allocation still have to remain owned.
 Phase A handles only that command-specific terminal signature. Device loss by
 itself is not command completion. Pending, ambiguous, unknown, malformed, or
 non-command-specific observations retain every pin, charge, buffer, and native
-record.
+record unless the separate callback-safe Phase B ownership protocol detaches
+the exact native callback and completes its Bank-first settlement.
 
 ## Portable evidence
 
@@ -92,11 +93,22 @@ tools/zig-with-ephemeral-cache.sh build \
   native-metal-fault-test -Dmetal=true -Doptimize=ReleaseSafe -j2
 ```
 
-## Next phases
+## Phase B and later work
 
-Phase B must add a callback-safe native command-lifetime primitive and a
-loss-fenced reconciliation poll before any pending, ambiguous, unknown, or
-invalid command can be retired safely. Later work can add fresh-device
+[Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md)
+is the integrated Phase B path for `pending`, `submission_ambiguous`,
+`completion_unknown`, and `invalid_completion`. It detaches an ARC-owned native
+callback gate while retaining the exact command record, authorizes the
+dedicated `ownership_retired_after_device_loss` terminal with zero output,
+settles the Bank pin before exact native unlink, and stores a replay tombstone.
+It never converts loss, timeout, or missing completion into successful output.
+Allocation retirement remains separate.
+
+The current native gate combines real Metal commands and resources with a
+build-isolated held callback and synthetic injected loss; it is not evidence of
+physical removal or driver failure. That end-to-end branch currently covers
+pending retirement; the other three states have portable structural and
+adapter coverage without a retained native fault campaign. Later work includes
+removable-hardware callback campaigns, direct telemetry, fresh-device
 selection, explicit migration policy, multiple queue slots, multi-device
-scheduling, additional GPU backends, and retained native removal evidence
-across supported OS and device matrices.
+scheduling, additional GPU backends, and retained native OS/device matrices.

@@ -37,6 +37,28 @@ before the first stable release.
 
 ### Added
 
+- Added **Device-loss Dispatch Callback Retirement Phase B** for exact
+  `pending`, `submission_ambiguous`, `completion_unknown`, and
+  `invalid_completion` Metal dispatch ownership after accepted device loss.
+  Fixed pointer-free 464-byte retention, 240-byte plan, 408-byte
+  callback-detachment fence, and 504-byte receipt values bind the live
+  lease/pin, ticket, submission, quarantine shape, native prepare, dedicated
+  zero-output `ownership_retired_after_device_loss` terminal, Bank completion,
+  exact native unlink, and replay tombstone. The ARC-owned callback gate can be
+  detached without waiting for callback exit while the native command record
+  and four command-held references stay retained. Core consumes the Bank pin
+  before the private adapter callback commits that exact unlink; receipt replay
+  cannot consume or unlink twice. Production requires exact native
+  `removed_notification` or `command_buffer_device_removed` evidence plus
+  same-source sticky backend revalidation. Portable Zig and
+  Python tests are deterministic structural models. The build-isolated native
+  gate instead runs a real Metal command over real buffers, holds its
+  completion handler before the callback gate, and uses synthetic injected
+  loss to exercise the pending state, detach-before-exit, and later safe
+  handler release. The other three states currently have portable structural
+  and adapter coverage, not a retained native fault campaign. This does not
+  reproduce physical removal, driver or hardware failure, output recovery,
+  migration, reset, physical reclaim, residency, or performance.
 - Added **Device-loss Dispatch Reconciliation Phase A** for one exact active
   command whose native Metal command-buffer status/domain/code is `5/1/11`.
   Fixed pointer-free 440-byte retention, 240-byte plan, and 448-byte receipt
@@ -53,8 +75,9 @@ before the first stable release.
   quiesced-release protocol. The native fault gate runs a real successful GPU
   command and then publishes a test-only code-`11`-shaped overlay; it verifies
   the synthetic flow but is not physical device-loss, driver-failure, or
-  performance evidence. Callback-safe retirement of pending, ambiguous,
-  unknown, or invalid commands is reserved for Phase B.
+  performance evidence. Phase B now handles the four nonterminal ownership
+  states through a separate callback-detachment protocol rather than
+  reclassifying them as this Phase A terminal failure.
 - Added **Device-loss Retirement V1**. A fixed 544-byte plan composes one exact
   `lost` observation and transition with the selected inventory entry,
   allocation authority, live LeaseTree lease, leaf/object sets, recovery
@@ -95,9 +118,9 @@ before the first stable release.
   work. A real native two-thread consumption race requires one consumed and one
   stale result while the snapshot remains readable; it does not reproduce
   physical removal. Hashes verify composition and integrity, not authenticity
-  or attestation. Physical callback campaigns, callback-safe Phase B
-  retirement of pending, ambiguous, unknown, or invalid commands, fresh
-  selection, and migration remain open.
+  or attestation. Physical callback campaigns, fresh selection, and migration
+  remain open; Phase B uses this lifecycle transition only after separate
+  callback-gate and active-dispatch validation.
 - Added a build-isolated native Metal fault/race gate. A real four-buffer INT4
   command completes physically on the executing GPU before the private shim
   publishes a one-shot command-buffer error overlay. The gate retains separate
@@ -126,7 +149,8 @@ before the first stable release.
   `terminal_failure` with no output root. Quarantine, pin, charge, buffers, and
   command remain live through Bank settlement; the private callback then
   exact-finalizes that same native `.error` before clearing state. Ambiguous,
-  unknown, and invalid completion remain sticky. Pure Zig and independent
+  unknown, and invalid completion remain sticky until the separate
+  loss-authorized Phase B protocol succeeds. Pure Zig and independent
   Python tests cover roots, mutation rejection, replay, and pre-settlement
   retention; the ordinary allocation gate remains a successful-command
   regression, while the separate private fault build supplies controlled

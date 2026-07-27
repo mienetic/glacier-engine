@@ -230,13 +230,37 @@ retrieval likewise requires the exact plan, retention, and successful
 Coordinator completion retained in the tombstone. See
 [Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md).
 
-Submission ambiguity, unknown completion, and invalid completion still lack
-terminal authority and remain sticky. Phase B must add a callback-safe native
-command-lifetime primitive or loss-fenced poll before those states can retire.
-Source-bound lifecycle observation does not infer a dispatch terminal. The
-separate retirement path can release only an already quiesced allocation; it
-cannot clear unresolved quarantine, migrate work, select a fresh device, or
-provide multi-slot scheduling.
+Submission ambiguity, unknown completion, invalid completion, and pending work
+still cannot use Phase A terminal authority. The separate callback-safe Phase B
+protocol below retires only their ownership and does not infer success, output,
+or terminal command failure. Source-bound lifecycle observation by itself does
+not infer a dispatch terminal.
+
+### Device-loss dispatch callback retirement Phase B
+
+Phase B binds exact pending, submission-ambiguous, completion-unknown, and
+invalid-completion ownership in a 464-byte retention, a 240-byte loss plan, a
+408-byte callback fence, and a 504-byte settlement receipt. Production accepts
+only exact native `removed_notification` or
+`command_buffer_device_removed` evidence with same-source sticky backend
+revalidation.
+
+The Objective-C completion handler captures an ARC-owned callback gate instead
+of depending on the malloc-owned native Metal context. Native prepare freezes
+the current command facts and clears the gate's context owner while the command
+record and all four command-held buffer references stay registered. This
+detachment does not wait for callback exit; an already-running handler observes
+the detached gate and cannot return to the context.
+
+The adapter then authorizes only core
+`ownership_retired_after_device_loss` with the original submission, a fenced
+backend-terminal root, and zero output. Core consumes its private Bank pin
+before the settlement callback commits the exact native unlink. Commit removes
+one command record, drops its four command-held references, and stores replay
+tombstones so duplicate receipt retrieval cannot unlink or consume twice.
+Allocation ownership and its logical charge stay live until a separate
+allocation release. See
+[Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md).
 
 The native hard gate now exercises both coordinators. The LeaseTree path uses
 distinct admission/lease/recovery/terminal evidence and keeps its allocation
@@ -281,11 +305,22 @@ finalization, so the coordinator retains `settlement_pending`. Repeating
 the coordinator slot, and performs neither a second Bank release nor a second
 native finalization.
 
+The same isolated build has a separate Phase B branch. It submits a real Metal
+command over four real buffers, then a test-only hold stops the completion
+handler before it enters the ARC-owned callback gate. While the adapter still
+reports an exact pending dispatch, synthetic injected loss authorizes native
+prepare. The gate proves detachment without waiting for handler exit,
+Bank-first settlement while the command record is live, exact native unlink,
+zero caller-output mutation, replay, and safe handler release afterward.
+Allocation-owned references and logical charge remain live until the separate
+allocation release.
+
 This gate is native conformance evidence for production-symbol isolation,
 host-thread arm racing, real successful GPU execution, and the exact
-reconciliation/settlement lifecycle. The published error is a test-only
-overlay. It is not evidence of a physical driver, hardware, or device-loss
-fault, device-loss recovery, or performance.
+reconciliation/settlement lifecycle plus the held-callback Phase B boundary.
+The published error and injected loss are test-only. They are not evidence of
+a physical driver, hardware, or device-loss fault, device-loss recovery, or
+performance.
 
 ## Byte meanings
 
@@ -347,6 +382,12 @@ active-command references exactly once. None of these native handles enters
 `MetalAsyncDispatchTicketV1`, `MetalAsyncDispatchQuarantineV1`, or
 `MetalAsyncDispatchTerminalFailureV1`.
 
+For Phase B, each registered command also owns an ARC callback gate. Prepare
+authenticates the exact token and binding, detaches the gate's context owner,
+and retains the command record. The post-Bank commit authenticates the frozen
+permit before unlinking that record and storing a native replay tombstone.
+Callback exit is intentionally outside the retirement prerequisite.
+
 In assertion-enabled builds, backend deinitialization asserts that its
 Zig-side live weight/allocation counters and the independently maintained shim
 registry count are zero. Normal lease release removes the shim registry entry
@@ -363,12 +404,16 @@ rebuilds the fixed failure and terminal roots and rejects substitutions. The
 separate Phase A Zig/Python pair independently rebuilds the 440/240/448-byte
 retention, plan, and receipt roots, replays lifecycle/selection/lease/pin and
 terminal/completion bindings, and rejects synthetic production authorization.
-They open no
+The Phase B Zig/Python pair independently rebuilds the 464/240/408/504-byte
+retention, plan, fence, and receipt roots for all four retained ownership
+states, verifies zero output authority and callback-detached/record-retained
+shape, and rejects mutation, substitution, duplicate, foreign, and late
+settlement. They open no
 `MTLDevice`, create no `MTLBuffer`, and execute no GPU command. These tests
-model an exact native `.error` projection; they do not induce or claim a
+model canonical native fact projections; they do not induce or claim a
 hardware or driver error.
 
-Run the Phase A portable contract and independent oracle with:
+Run the Phase A and Phase B portable contracts and independent oracles with:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh test \
@@ -376,6 +421,12 @@ tools/zig-with-ephemeral-cache.sh test \
 
 python3 -m unittest \
   bench.tests.test_device_loss_dispatch_reconciliation
+
+tools/zig-with-ephemeral-cache.sh test \
+  src/core/device_loss_dispatch_callback_retirement.zig -OReleaseSafe
+
+python3 -m unittest \
+  bench.tests.test_device_loss_dispatch_callback_retirement
 ```
 
 The native allocation hard gate is different. On the executing macOS host it:
@@ -483,6 +534,11 @@ overlay and exact coordinator retry. Phase A additionally binds only the exact
 native `5/1/11` lifecycle transition to the retained active pin through fixed
 pointer-free retention, plan, and receipt evidence, a native-only production
 gate, Bank-first finalization, and separate later allocation retirement.
+Phase B additionally binds the four retained nonterminal ownership states to
+callback detachment, a dedicated zero-output ownership terminal, Bank-first
+exact native unlink, and replay through fixed 464/240/408/504-byte evidence.
+Its isolated native branch holds a real command callback and uses synthetic
+loss for pending retirement; it does not reproduce a physical device failure.
 Separately, the lifecycle slice
 establishes real observer installation, initial selected-device membership,
 source-specific sticky removal facts, exact code `11` classification, and
@@ -496,8 +552,8 @@ explicitly synthetic test-only loss permit. It does not establish:
 - a physical command-buffer, driver, hardware, or device-loss failure from the
   test-published error;
 - a physical removal-callback campaign;
-- callback-safe Phase B retirement or polling for pending, ambiguous, unknown,
-  and invalid commands;
+- direct callback-retirement telemetry or an additional-backend Phase B
+  implementation;
 - fresh selection or automatic migration;
 - multi-slot queue scheduling, a global native queue-depth limit, queue-depth
   evidence, or transfer ownership;

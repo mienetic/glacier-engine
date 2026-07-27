@@ -76,6 +76,13 @@ Phase A protocol can consume the exact native
 selected capability, live lease, active pin, retained quarantine, terminal
 failure, and completion. Its production gate rejects `test_injected`; the
 lifecycle observation alone still grants no terminal authority.
+The separate
+[Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md)
+Phase B protocol can consume exact native `removed_notification` or
+`command_buffer_device_removed` loss only after additionally validating the
+live nonterminal dispatch and detaching its native callback gate. Synthetic
+loss reaches only the build-isolated test entry point. Observation alone still
+cannot retire a command.
 The separate [Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md) protocol
 may consume an exact `lost` transition as one input to a private,
 quiescence-checked release flow; the observation alone remains
@@ -165,6 +172,13 @@ Bank-first settlement, tombstone replay, and native finalization, but cannot
 pass the native-only production gate. It is not a physical command-buffer,
 driver, hardware, or device-loss failure.
 
+The same isolated build has a distinct Phase B held-callback path. It submits
+a real command over real buffers, stops the completion handler before its
+ARC-owned callback gate, and injects synthetic loss. That path proves
+detach-before-callback-exit, Bank-first exact native unlink, replay, and later
+safe handler release. It still does not exercise a native removal callback or
+reproduce physical loss.
+
 ## Current boundary and next work
 
 The M1 GPU used for the native gate is built in. No physical
@@ -183,13 +197,24 @@ through Bank-first settlement and exact native finalization. Allocation
 retirement remains a later, separate operation after the dispatch slot is
 gone.
 
+Device-loss Dispatch Callback Retirement Phase B covers exact pending,
+submission-ambiguous, completion-unknown, and invalid-completion ownership.
+Its 464-byte retention, 240-byte plan, 408-byte callback fence, and 504-byte
+receipt bind callback detachment without waiting for callback exit,
+Bank-first settlement, exact native unlink, and replay. The native gate uses a
+real command and buffers with a build-isolated held callback and synthetic
+injected loss for pending retirement; that is not a reproduced physical loss
+event or driver failure. The other three states currently have portable and
+adapter evidence but no retained native fault campaign.
+The dedicated terminal has zero output authority, and allocation retirement
+remains separate.
+
 Still open:
 
 - retain removal-requested and removed callbacks on suitable removable
   hardware;
-- add callback-safe Phase B retirement or loss-fenced polling for pending,
-  ambiguous, unknown, and invalid command states without releasing ownership
-  early;
+- retain direct Phase B telemetry without weakening the callback-detachment
+  boundary;
 - create and validate a fresh inventory and selection receipt;
 - create a fresh backend context and rehydrate model/input state; and
 - authorize explicit migration without reusing stale device authority.
@@ -197,6 +222,7 @@ Still open:
 See [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md),
 [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md),
 [Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md),
+[Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md),
 [Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md),
 [Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md), and
 [Native Metal Allocation Adapter](NATIVE_METAL_ALLOCATION.md).

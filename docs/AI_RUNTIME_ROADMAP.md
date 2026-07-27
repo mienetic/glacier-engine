@@ -160,9 +160,8 @@ identity, and unsupported combinations fail before visible state or output
 changes.
 
 The selection receipt is decision evidence only. Physical-page commitment,
-reclamation, and residency authority/evidence, callback-safe Phase B
-retirement for pending, ambiguous, unknown, or invalid commands, fresh
-selection/migration, multi-GPU
+reclamation, and residency authority/evidence, fresh selection/migration,
+multi-GPU
 partitioning/scheduling, direct telemetry, performance evidence, native device
 ranges, and native support on cross-compiled targets remain open.
 
@@ -212,7 +211,8 @@ exact retained native command-buffer `.error` can be explicitly bound to
 charge, buffers, and native command. Core then consumes its private Bank pin;
 only the private post-Bank callback exact-finalizes that same native `.error`
 record before atomically clearing adapter state and recording a replay
-tombstone. Ambiguity, unknown, and invalid completion remain sticky. Public
+tombstone. Ambiguity, unknown, and invalid completion remain sticky until the
+separate loss-authorized Phase B protocol succeeds. Public
 `acknowledgeDispatchCompletion` only verifies compatibility; it grants no
 authority and clears no state. This terminal-error sidecar does not classify
 device loss or migrate work on its own. The separate lifecycle layer observes
@@ -235,10 +235,25 @@ explicitly synthetic published-error overlay, so it is not physical
 device-loss evidence. See
 [Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md).
 
-Physical residency, callback-safe Phase B retirement for pending, ambiguous,
-unknown, or invalid commands, fresh selection, multi-slot and multi-device
-scheduling, production weight paging, additional GPU backends, and native OS
-matrices remain planned.
+Device-loss Dispatch Callback Retirement Phase B covers the exact `pending`,
+`submission_ambiguous`, `completion_unknown`, and `invalid_completion`
+ownership states. Its pointer-free 464-byte retention, 240-byte plan, 408-byte
+fence, and 504-byte receipt bind the same live dispatch to an ARC-owned native
+callback detachment, dedicated zero-output ownership-retired terminal,
+Bank-first settlement, exact native unlink, and replay tombstone. Callback exit
+is not a fence prerequisite, and allocation retirement remains separate.
+Production requires exact native `removed_notification` or
+`command_buffer_device_removed` evidence plus same-source sticky revalidation.
+Portable Zig/Python coverage is structural; the native gate uses
+real Metal commands/resources with a build-isolated held callback and
+synthetic injected loss for pending retirement, not physical removal or driver
+failure. The other three states do not yet have a retained native fault
+campaign. See
+[Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md).
+
+Physical residency, fresh selection, multi-slot and multi-device scheduling,
+production weight paging, direct telemetry, additional GPU backends, and
+native OS matrices remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
 cancellation returns the declared delta, and measured physical counters are
@@ -592,7 +607,8 @@ become sticky nonterminal quarantine evidence. An exact retained native
 command-buffer `.error` can now authorize core `terminal_failure`; its
 quarantine, pin, charge, buffers, and command remain live through Bank
 settlement, then the private callback exact-finalizes that same `.error` before
-clearing private state. Ambiguity and unknown completion remain sticky.
+clearing private state. Ambiguity and unknown completion remain sticky until
+the separate loss-authorized Phase B protocol succeeds.
 Portable Zig state tests and the independent Python mirror exercise the exact
 failure roots, mutations, and pre-settlement retention contract without GPU
 work. The native
@@ -615,9 +631,12 @@ isolated configuration exercises command-specific Phase A reconciliation
 after a real GPU command succeeds by publishing a separate synthetic
 code-`11`-shaped error overlay. That proves exact retention, Bank-first
 settlement, tombstone replay, and native finalization on the test path, not a
-physical failure. A removable-hardware callback campaign, callback-safe Phase B
-retirement for pending, ambiguous, unknown, or invalid commands, fresh
-selection and migration,
+physical failure. The same build-isolated native configuration now holds a
+real command's completion handler before its ARC-owned callback gate and
+exercises Phase B detach-before-exit, Bank-first native unlink, replay, and
+later handler release under synthetic injected loss. It is not a physical
+removal or driver-failure campaign. A removable-hardware callback campaign,
+fresh selection and migration,
 multi-slot and multi-device scheduling,
 physical residency and device telemetry, additional GPU backends, and broader
 native OS/device matrices stay open.
@@ -1497,9 +1516,9 @@ Contributors can work on the runtime without downloading a large model:
   placement, device-loss, or multi-device evidence slice that consumes a fresh
   selection receipt, builds on the bounded lifecycle, and rejects unsupported
   fallback;
-- one Phase B callback-safe command-lifetime fixture that keeps pending,
-  ambiguous, unknown, and invalid work pinned until a backend proves a safe
-  retirement boundary;
+- one Phase B implementation for an additional backend that preserves the
+  portable retention/fence/receipt contract and keeps the native record live
+  until Bank-first exact unlink;
 - one repeated-handoff, lease-contention, replay, disruption, or bounded-soak
   workload profile;
 - one read-only evidence inspector or validated renderer extension;
@@ -1512,5 +1531,6 @@ rejection paths, evidence command, and nonclaims. See
 [Device Allocation Lease](DEVICE_ALLOCATION_LEASE.md),
 [Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md),
 [Device-loss Dispatch Reconciliation](DEVICE_LOSS_DISPATCH_RECONCILIATION.md),
+[Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md),
 and
 [Evidence Policy](EVIDENCE_POLICY.md).

@@ -122,12 +122,16 @@ pub const ActiveDispatchReconciliationBindingCallbackError = error{
 /// Only terminal queue states may release a device-allocation pin. Pending,
 /// unknown, timed-out, or device-lost observations intentionally have no
 /// value in this enum and must retain the pin for later reconciliation.
+/// `ownership_retired_after_device_loss` additionally requires backend proof
+/// that the exact native callback was detached while its command record stayed
+/// retained for the private post-Bank settlement callback.
 pub const DispatchTerminalOutcomeV1 = enum(u64) {
     succeeded = 1,
     terminal_failure = 2,
     cancelled_before_submit = 3,
     cancelled_after_submit = 4,
     rejected_before_submit = 5,
+    ownership_retired_after_device_loss = 6,
     _,
 };
 
@@ -4518,6 +4522,7 @@ fn dispatchTerminalOutcomeValid(
         .cancelled_before_submit,
         .cancelled_after_submit,
         .rejected_before_submit,
+        .ownership_retired_after_device_loss,
         => true,
         _ => false,
     };
@@ -4532,7 +4537,10 @@ fn dispatchTerminalRootPairValid(
         ) and !digestIsZero(
             terminal.backend_completion_sha256,
         ) and !digestIsZero(terminal.output_sha256),
-        .terminal_failure, .cancelled_after_submit => !digestIsZero(
+        .terminal_failure,
+        .cancelled_after_submit,
+        .ownership_retired_after_device_loss,
+        => !digestIsZero(
             terminal.submission_sha256,
         ) and !digestIsZero(
             terminal.backend_completion_sha256,
@@ -4555,7 +4563,10 @@ fn dispatchCompletionRootPairValid(
         ) and !digestIsZero(
             completion.backend_completion_sha256,
         ) and !digestIsZero(completion.output_sha256),
-        .terminal_failure, .cancelled_after_submit => !digestIsZero(
+        .terminal_failure,
+        .cancelled_after_submit,
+        .ownership_retired_after_device_loss,
+        => !digestIsZero(
             completion.submission_sha256,
         ) and !digestIsZero(
             completion.backend_completion_sha256,

@@ -18,6 +18,8 @@ const device = engine.device_capability_contract;
 const lifecycle = engine.device_lifecycle_contract;
 const loss_dispatch_reconciliation =
     engine.device_loss_dispatch_reconciliation;
+const loss_dispatch_callback_retirement =
+    engine.device_loss_dispatch_callback_retirement;
 const retirement = engine.device_loss_retirement;
 const resource = engine.resource_bank;
 const metal_allocation = engine.metal_allocation_adapter;
@@ -44,6 +46,75 @@ fn digest(bytes: []const u8) allocation.Digest {
     var result: allocation.Digest = undefined;
     std.crypto.hash.sha2.Sha256.hash(bytes, &result, .{});
     return result;
+}
+
+const held_callback_group_size: u32 = 8;
+const held_callback_in_features: u32 = 64;
+const held_callback_out_features: u32 = 37;
+const held_callback_elements: usize =
+    held_callback_in_features * held_callback_out_features;
+const held_callback_packed_bytes: usize =
+    (held_callback_elements + 1) / 2;
+const held_callback_scale_count: usize =
+    (held_callback_elements + held_callback_group_size - 1) /
+    held_callback_group_size;
+
+fn createHeldCallbackMatvecTokens(
+    backend: *engine.MetalBackend,
+) ![4]engine.metal_backend.MetalBufferToken {
+    var tokens: [4]engine.metal_backend.MetalBufferToken =
+        undefined;
+    tokens[0] = try backend.createBufferAllocation(
+        held_callback_packed_bytes,
+    );
+    errdefer backend.destroyBufferAllocation(tokens[0]) catch {};
+    tokens[1] = try backend.createBufferAllocation(
+        held_callback_scale_count * @sizeOf(f32),
+    );
+    errdefer backend.destroyBufferAllocation(tokens[1]) catch {};
+    tokens[2] = try backend.createBufferAllocation(
+        held_callback_in_features * @sizeOf(f32),
+    );
+    errdefer backend.destroyBufferAllocation(tokens[2]) catch {};
+    tokens[3] = try backend.createBufferAllocation(
+        held_callback_out_features * @sizeOf(f32),
+    );
+    return tokens;
+}
+
+fn destroyHeldCallbackMatvecTokens(
+    backend: *engine.MetalBackend,
+    tokens: [4]engine.metal_backend.MetalBufferToken,
+) !void {
+    for (tokens) |token|
+        try backend.destroyBufferAllocation(token);
+}
+
+fn submitHeldCallbackMatvec(
+    backend: *engine.MetalBackend,
+    tokens: [4]engine.metal_backend.MetalBufferToken,
+    binding: [32]u8,
+) !engine.metal_backend.MetalAsyncSubmission {
+    const packed_values =
+        [_]u8{0} ** held_callback_packed_bytes;
+    const scales =
+        [_]f32{1.0} ** held_callback_scale_count;
+    const input =
+        [_]f32{0.25} ** held_callback_in_features;
+    return backend.submitMatvecInt4RegisteredBuffers(
+        binding,
+        tokens[0],
+        tokens[1],
+        tokens[2],
+        tokens[3],
+        &packed_values,
+        &scales,
+        &input,
+        held_callback_out_features,
+        held_callback_group_size,
+        held_callback_in_features,
+        held_callback_out_features,
+    );
 }
 
 fn lessThan(
@@ -405,6 +476,53 @@ const MetalFaultArmWorker = struct {
                 self.backend,
             ) catch |err| {
                 self.arm_error = err;
+                return;
+            };
+    }
+};
+
+const MetalRegisteredWaitWorker = struct {
+    backend: *engine.MetalBackend,
+    submission: engine.metal_backend.MetalAsyncSubmission,
+    started: *std.atomic.Value(bool),
+    finished: *std.atomic.Value(bool),
+    completion: ?engine.metal_backend.MetalAsyncCompletion = null,
+    wait_error: ?engine.metal_backend.MetalError = null,
+
+    fn run(self: *@This()) void {
+        self.started.store(true, .release);
+        defer self.finished.store(true, .release);
+        self.completion = self.backend.waitRegisteredDispatch(
+            self.submission,
+        ) catch |err| {
+            self.wait_error = err;
+            return;
+        };
+    }
+};
+
+const MetalAdapterWaitWorker = struct {
+    adapter: *metal_allocation.MetalAllocationAdapterV1,
+    lease: tree_allocation.LeaseTreeDeviceAllocationLeaseV1,
+    pin: tree_allocation.LeaseTreeDispatchPinV1,
+    ticket: metal_allocation.MetalAsyncDispatchTicketV1,
+    output: []f32,
+    started: *std.atomic.Value(bool),
+    finished: *std.atomic.Value(bool),
+    observation: ?metal_allocation.MetalAsyncDispatchPollV1 = null,
+    wait_error: ?metal_allocation.Error = null,
+
+    fn run(self: *@This()) void {
+        self.started.store(true, .release);
+        defer self.finished.store(true, .release);
+        self.observation =
+            self.adapter.waitMatvecInt4AsyncObserved(
+                self.lease,
+                self.pin,
+                self.ticket,
+                self.output,
+            ) catch |err| {
+                self.wait_error = err;
                 return;
             };
     }
@@ -3269,6 +3387,1036 @@ test "fault-injected Metal terminal error settles after physical success" {
     if (comptime !metal_fault_control.enabled)
         return error.SkipZigTest;
     try runRealMetalDispatchLifecycle(true);
+}
+
+test "held Metal callback permits retirement and wait releases allocation mutex" {
+    if (comptime !metal_fault_control.enabled)
+        return error.SkipZigTest;
+    if (!config.metal_enabled)
+        return error.NativeMetalAllocationRequiresMetal;
+
+    var backend = try engine.MetalBackend.init(
+        engine.metal_library_path,
+    );
+    defer backend.deinit();
+
+    // First wave: keep the completion handler before its callback gate while
+    // waitRegisteredDispatch blocks on native publication. The waiter must
+    // finish even while this thread owns the backend allocation mutex.
+    const wait_tokens =
+        try createHeldCallbackMatvecTokens(&backend);
+    try metal_fault_control.armNextCompletionCallbackHold(
+        &backend,
+    );
+    var wait_hold_active = true;
+    defer if (wait_hold_active)
+        metal_fault_control.releaseHeldCompletionCallback(
+            &backend,
+        ) catch {};
+    const wait_binding = digest(
+        "held callback allocation mutex wait binding",
+    );
+    const wait_submission = try submitHeldCallbackMatvec(
+        &backend,
+        wait_tokens,
+        wait_binding,
+    );
+    try testing.expect(
+        wait_submission.disposition == .submitted,
+    );
+    try metal_fault_control.waitForHeldCompletionCallback(
+        &backend,
+    );
+
+    backend.allocation_mutex.lock();
+    var allocation_mutex_locked = true;
+    defer if (allocation_mutex_locked)
+        backend.allocation_mutex.unlock();
+    var wait_started = std.atomic.Value(bool).init(false);
+    var wait_finished = std.atomic.Value(bool).init(false);
+    var wait_worker: MetalRegisteredWaitWorker = .{
+        .backend = &backend,
+        .submission = wait_submission,
+        .started = &wait_started,
+        .finished = &wait_finished,
+    };
+    const wait_thread = try std.Thread.spawn(
+        .{},
+        MetalRegisteredWaitWorker.run,
+        .{&wait_worker},
+    );
+    while (!wait_started.load(.acquire))
+        std.atomic.spinLoopHint();
+    try metal_fault_control.releaseHeldCompletionCallback(
+        &backend,
+    );
+    wait_hold_active = false;
+
+    var wait_timer = try std.time.Timer.start();
+    while (!wait_finished.load(.acquire) and
+        wait_timer.read() < 5 * std.time.ns_per_s)
+        std.Thread.yield() catch {};
+    const wait_finished_while_allocation_locked =
+        wait_finished.load(.acquire);
+    backend.allocation_mutex.unlock();
+    allocation_mutex_locked = false;
+    wait_thread.join();
+    if (wait_worker.wait_error) |err| return err;
+    const wait_completion =
+        wait_worker.completion orelse
+        return error.TestUnexpectedResult;
+    try backend.finalizeRegisteredDispatch(
+        wait_submission,
+        wait_completion,
+    );
+    try destroyHeldCallbackMatvecTokens(
+        &backend,
+        wait_tokens,
+    );
+    try testing.expect(
+        wait_finished_while_allocation_locked,
+    );
+
+    // Second wave: physical completion reaches the deliberately held block,
+    // but no callback projection exists yet. Prepare must freeze pending,
+    // detach the gate, and preserve all native ownership until exact commit.
+    const retirement_tokens =
+        try createHeldCallbackMatvecTokens(&backend);
+    try metal_fault_control.armNextCompletionCallbackHold(
+        &backend,
+    );
+    var retirement_hold_active = true;
+    defer if (retirement_hold_active)
+        metal_fault_control.releaseHeldCompletionCallback(
+            &backend,
+        ) catch {};
+    const retirement_binding = digest(
+        "held callback exact retirement binding",
+    );
+    const retirement_submission =
+        try submitHeldCallbackMatvec(
+            &backend,
+            retirement_tokens,
+            retirement_binding,
+        );
+    try metal_fault_control.waitForHeldCompletionCallback(
+        &backend,
+    );
+    const permit =
+        try backend
+            .prepareRegisteredDispatchRetirementForSyntheticLossTest(
+            retirement_submission,
+        );
+    try testing.expectEqualDeep(
+        permit,
+        try metal_fault_control
+            .prepareRegisteredDispatchRetirementForTest(
+            &backend,
+            retirement_submission,
+        ),
+    );
+    try testing.expect(
+        permit.authorization_kind == .synthetic_test,
+    );
+    try testing.expectEqual(@as(u32, 0), permit.completion_observed);
+    try testing.expect(permit.native_state == .pending);
+    try testing.expectEqual(@as(i64, 0), permit.error_code);
+    try testing.expectEqual(
+        @as(u64, 1),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectError(
+        engine.metal_backend.MetalError.InvalidObservation,
+        backend.destroyBufferAllocation(retirement_tokens[0]),
+    );
+
+    try metal_fault_control
+        .armNextDispatchRetirementCommitFailure(
+        &backend,
+    );
+    try testing.expectError(
+        engine.metal_backend.MetalError.InvalidObservation,
+        backend.commitRegisteredDispatchRetirement(permit),
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectEqualDeep(
+        metal_fault_control.RetirementCommitFactsV1{
+            .abi_version = metal_fault_control.retirement_commit_facts_abi,
+            .commit_attempt_count = 1,
+            .injected_failure_count = 1,
+        },
+        try metal_fault_control.dispatchRetirementCommitFacts(
+            &backend,
+        ),
+    );
+
+    const retirement_receipt =
+        try backend.commitRegisteredDispatchRetirement(permit);
+    try testing.expectEqualDeep(
+        retirement_receipt,
+        try backend.commitRegisteredDispatchRetirement(permit),
+    );
+    try testing.expectEqualDeep(
+        metal_fault_control.RetirementCommitFactsV1{
+            .abi_version = metal_fault_control.retirement_commit_facts_abi,
+            .commit_attempt_count = 3,
+            .injected_failure_count = 1,
+            .committed_retirement_count = 1,
+            .replay_count = 1,
+        },
+        try metal_fault_control.dispatchRetirementCommitFacts(
+            &backend,
+        ),
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveCommandCount(),
+    );
+    try destroyHeldCallbackMatvecTokens(
+        &backend,
+        retirement_tokens,
+    );
+    try testing.expectEqual(@as(u64, 0), backend.liveBufferCount());
+    try metal_fault_control.releaseHeldCompletionCallback(
+        &backend,
+    );
+    retirement_hold_active = false;
+
+    const recovery_token =
+        try backend.createBufferAllocation(64);
+    try backend.destroyBufferAllocation(recovery_token);
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveBufferCount(),
+    );
+}
+
+test "synthetic loss settles pending adapter dispatch through callback retirement" {
+    if (comptime !metal_fault_control.enabled)
+        return error.SkipZigTest;
+    if (!config.metal_enabled)
+        return error.NativeMetalAllocationRequiresMetal;
+
+    var backend = try engine.MetalBackend.init(
+        engine.metal_library_path,
+    );
+    defer backend.deinit();
+    const inventory_entry =
+        try metal_allocation.makeAllocationInventoryEntryV1(
+            &backend,
+            114,
+            0,
+            1 * 1024 * 1024,
+        );
+    var native_slots =
+        [_]metal_allocation.MetalAllocationSlotV1{.{}} ** 4;
+    var adapter =
+        try metal_allocation.MetalAllocationAdapterV1.init(
+            &backend,
+            inventory_entry,
+            214,
+            0x4342_5265_7469_7265,
+            &native_slots,
+        );
+    const fixture = try makeDispatchFixture(
+        &adapter,
+        inventory_entry,
+    );
+
+    var bank_slots = [_]resource.Slot{.{}};
+    var tree_roots = [_]resource.LeaseTreeRootSlot{.{}};
+    var tree_nodes = [_]resource.LeaseNodeSlot{.{}} ** 5;
+    var pin_slots = [_]resource.LeasePinSlotV1{.{}};
+    var bank = try resource.Bank.initWithLeaseTreePinStorage(
+        &bank_slots,
+        &tree_roots,
+        &tree_nodes,
+        &pin_slots,
+        .{
+            .host_bytes = 1_024,
+            .capsule_bytes = 1_024,
+            .device_bytes = fixture.manifest.total_charged_bytes,
+            .queue_slots = 1,
+        },
+        414,
+    );
+    const parent = try bank.commit(
+        try bank.reserve(514, .{
+            .capsule_bytes = 64,
+            .queue_slots = 1,
+        }),
+    );
+    const opened = try bank.openLeaseTree(
+        parent,
+        0x4342_5265_7445_3254,
+        0x4342_5265_7441_7574,
+        .{
+            .device_bytes = fixture.manifest.total_charged_bytes,
+        },
+    );
+    const scoped = try bank.openLeaseScope(
+        opened,
+        0x4342_5265_7453_636f,
+        0x4342_5265_7454_656e,
+        .{
+            .device_bytes = fixture.manifest.total_charged_bytes,
+        },
+    );
+    var tree = scoped.tree;
+    var session_byte: u8 = 0;
+    const session_id = @intFromPtr(&session_byte);
+    var publication_sequence: u64 = 0;
+    try bank.bindPublicationSessionWithLeaseTree(
+        tree,
+        304,
+        session_id,
+    );
+    var coordinator_objects =
+        [_]tree_allocation.CoordinatorObjectSlotV1{.{}} ** 4;
+    var coordinator_dispatches =
+        [_]tree_allocation.CoordinatorDispatchSlotV1{.{}};
+    var coordinator: tree_allocation.CoordinatorV1 = .{};
+    try coordinator.initWithDispatchStorage(
+        614,
+        &bank,
+        &tree,
+        scoped.scope,
+        304,
+        session_id,
+        &publication_sequence,
+        &coordinator_objects,
+        &coordinator_dispatches,
+    );
+    const request = try allocation.makeRequestV1(
+        304,
+        digest("callback retirement allocation owner"),
+        adapter.authority,
+        fixture.selection,
+        fixture.requirement,
+        &fixture.inventory,
+        parent,
+        fixture.manifest,
+        &fixture.entries,
+    );
+    const admission = try coordinator.admit(
+        adapter.interface(),
+        request,
+        fixture.selection,
+        fixture.requirement,
+        &fixture.inventory,
+        parent,
+        fixture.manifest,
+        &fixture.entries,
+    );
+    const materialized = try coordinator.materialize(
+        admission,
+        adapter.interface(),
+        .{},
+    );
+    const lease = switch (materialized) {
+        .active => |value| value,
+        else => return error.TestUnexpectedResult,
+    };
+    try testing.expectEqual(
+        @as(u64, 4),
+        backend.liveBufferCount(),
+    );
+    try testing.expectEqual(
+        @as(u64, 4),
+        try backend.nativeLiveBufferCount(),
+    );
+
+    const packed_values =
+        [_]u8{0} ** held_callback_packed_bytes;
+    const scales =
+        [_]f32{1.0} ** held_callback_scale_count;
+    const input =
+        [_]f32{0.25} ** held_callback_in_features;
+    var output =
+        [_]f32{-987.25} ** held_callback_out_features;
+    const output_before = output;
+    const attempt =
+        try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+            fixture.bindings,
+            packed_values.len,
+            scales.len,
+            input.len,
+            output.len,
+            held_callback_group_size,
+            held_callback_in_features,
+            held_callback_out_features,
+        );
+    const dispatch_request =
+        try adapter.prepareMatvecDispatchRequestV1(attempt);
+    const pin = try coordinator.acquireDispatchPin(
+        lease,
+        adapter.dispatchInterface(),
+        dispatch_request.request_sha256,
+    );
+    try tree_allocation.validateDispatchPinV1(pin);
+    const bank_permit =
+        coordinator_dispatches[0].bank_permit.?;
+    try bank.validateLeasePin(bank_permit);
+
+    // The command executes on Metal, but its completed handler remains before
+    // the callback gate. The adapter therefore still owns an exact pending
+    // dispatch with no callback-published completion or output.
+    try metal_fault_control.armNextCompletionCallbackHold(
+        &backend,
+    );
+    var callback_hold_active = true;
+    defer if (callback_hold_active)
+        metal_fault_control.releaseHeldCompletionCallback(
+            &backend,
+        ) catch {};
+    const ticket = try adapter.submitMatvecInt4AsyncObserved(
+        lease,
+        pin,
+        fixture.bindings,
+        &packed_values,
+        &scales,
+        &input,
+        &output,
+        held_callback_group_size,
+        held_callback_in_features,
+        held_callback_out_features,
+    );
+    try metal_allocation.validateMetalAsyncDispatchTicketV1(
+        ticket,
+    );
+    try metal_fault_control.waitForHeldCompletionCallback(
+        &backend,
+    );
+    try testing.expectEqualSlices(
+        f32,
+        &output_before,
+        &output,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectEqual(
+        @as(usize, 1),
+        (try coordinator.snapshot()).active_dispatches,
+    );
+    try testing.expectEqual(
+        fixture.manifest.total_charged_bytes,
+        (try bank.snapshotV3()).used.device_bytes,
+    );
+
+    // Exercise the public adapter wait path, not merely the native backend
+    // helper. The fault shim confirms that the worker has copied the command
+    // and publication group and is blocked outside both adapter/backend
+    // ownership mutexes before this thread begins Phase-B retirement.
+    var adapter_wait_started =
+        std.atomic.Value(bool).init(false);
+    var adapter_wait_finished =
+        std.atomic.Value(bool).init(false);
+    var adapter_wait_worker: MetalAdapterWaitWorker = .{
+        .adapter = &adapter,
+        .lease = lease,
+        .pin = pin,
+        .ticket = ticket,
+        .output = &output,
+        .started = &adapter_wait_started,
+        .finished = &adapter_wait_finished,
+    };
+    const adapter_wait_thread = try std.Thread.spawn(
+        .{},
+        MetalAdapterWaitWorker.run,
+        .{&adapter_wait_worker},
+    );
+    var adapter_wait_joined = false;
+    defer if (!adapter_wait_joined) {
+        if (callback_hold_active) {
+            metal_fault_control.releaseHeldCompletionCallback(
+                &backend,
+            ) catch {};
+            callback_hold_active = false;
+        }
+        adapter_wait_thread.join();
+    };
+    try metal_fault_control.waitForRegisteredDispatchWaiter(
+        &backend,
+    );
+    try testing.expect(
+        adapter_wait_started.load(.acquire),
+    );
+    try testing.expect(
+        !adapter_wait_finished.load(.acquire),
+    );
+
+    const source_cursor: lifecycle.SourceCursorV1 = .{
+        .source_instance_sha256 = digest(
+            "callback retirement synthetic loss source",
+        ),
+        .last_sequence = 0,
+    };
+    const observation = try lifecycle.makeObservationV1(
+        inventory_entry,
+        &fixture.inventory,
+        source_cursor.source_instance_sha256,
+        1,
+        .test_injected,
+        digest("callback retirement synthetic loss evidence"),
+        0,
+        0,
+        0,
+    );
+    const successor_entry = try lifecycle.makeSuccessorEntryV1(
+        observation,
+        inventory_entry,
+        &fixture.inventory,
+        source_cursor,
+        inventory_entry.discovery_epoch + 1,
+    );
+    const transition = try lifecycle.makeTransitionReceiptV1(
+        observation,
+        inventory_entry,
+        &fixture.inventory,
+        successor_entry,
+        source_cursor,
+    );
+    const adapter_challenge =
+        try adapter
+            .lossDispatchCallbackRetirementAdapterChallengeV1(
+            &coordinator,
+            adapter.dispatchInterface(),
+            observation,
+            lease,
+            pin,
+            ticket,
+        );
+    const retention =
+        try loss_dispatch_callback_retirement
+            .makeLossDispatchCallbackRetentionV1(
+            .pending,
+            .submitted,
+            0,
+            0,
+            .none,
+            0,
+            inventory_entry,
+            lease,
+            pin,
+            ticket.ticket_sha256,
+            ticket.submission_sha256,
+            allocation.zero_digest,
+            adapter_challenge,
+        );
+    const plan =
+        try loss_dispatch_callback_retirement
+            .makeLossDispatchCallbackRetirementPlanV1(
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            retention,
+            lease,
+            pin,
+            1,
+        );
+    try testing.expectError(
+        loss_dispatch_callback_retirement
+            .Error.ProductionEvidenceRequired,
+        adapter.armLossDispatchCallbackRetirementV1(
+            &coordinator,
+            adapter.dispatchInterface(),
+            plan,
+            retention,
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            lease,
+            pin,
+            ticket,
+        ),
+    );
+
+    // A separately sealed but foreign retention is structurally valid and
+    // cannot substitute for the adapter-derived challenge.
+    const foreign_retention =
+        try loss_dispatch_callback_retirement
+            .makeLossDispatchCallbackRetentionV1(
+            .pending,
+            .submitted,
+            0,
+            0,
+            .none,
+            0,
+            inventory_entry,
+            lease,
+            pin,
+            ticket.ticket_sha256,
+            ticket.submission_sha256,
+            allocation.zero_digest,
+            digest("foreign callback retirement challenge"),
+        );
+    const foreign_plan =
+        try loss_dispatch_callback_retirement
+            .makeLossDispatchCallbackRetirementPlanV1(
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            foreign_retention,
+            lease,
+            pin,
+            1,
+        );
+    try testing.expectError(
+        tree_allocation.Error.InvalidDispatchReconciliationBinding,
+        adapter
+            .armSyntheticLossDispatchCallbackRetirementForTestV1(
+            &coordinator,
+            adapter.dispatchInterface(),
+            foreign_plan,
+            foreign_retention,
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            lease,
+            pin,
+            ticket,
+        ),
+    );
+
+    const retirement_result =
+        try adapter
+            .armSyntheticLossDispatchCallbackRetirementForTestV1(
+            &coordinator,
+            adapter.dispatchInterface(),
+            plan,
+            retention,
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            lease,
+            pin,
+            ticket,
+        );
+    try testing.expectEqualDeep(
+        retirement_result,
+        try adapter
+            .armSyntheticLossDispatchCallbackRetirementForTestV1(
+            &coordinator,
+            adapter.dispatchInterface(),
+            plan,
+            retention,
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            lease,
+            pin,
+            ticket,
+        ),
+    );
+    try loss_dispatch_callback_retirement
+        .validateLossDispatchCallbackFenceV1(
+        retirement_result.fence,
+        plan,
+        retention,
+    );
+    try testing.expect(
+        retirement_result.fence.state ==
+            .detached_pending_settlement,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        retirement_result.fence.native_callback_detached,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        retirement_result.fence.native_record_retained,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        retirement_result.fence.native_completion_observed,
+    );
+    try testing.expect(
+        retirement_result.terminal.outcome ==
+            .ownership_retired_after_device_loss,
+    );
+    try testing.expect(device.digestEqual(
+        retirement_result.terminal.submission_sha256,
+        ticket.submission_sha256,
+    ));
+    try testing.expect(device.digestEqual(
+        retirement_result.terminal.backend_completion_sha256,
+        retirement_result.fence.backend_terminal_sha256,
+    ));
+    try testing.expect(device.digestEqual(
+        retirement_result.terminal.output_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expect(device.digestEqual(
+        retirement_result.fence.output_authority_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expectEqualSlices(
+        f32,
+        &output_before,
+        &output,
+    );
+    try bank.validateLeasePin(bank_permit);
+    try testing.expectEqual(
+        @as(u64, 1),
+        try backend.nativeLiveCommandCount(),
+    );
+
+    const next_plan =
+        try loss_dispatch_callback_retirement
+            .makeLossDispatchCallbackRetirementPlanV1(
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            retention,
+            lease,
+            pin,
+            2,
+        );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter
+            .armSyntheticLossDispatchCallbackRetirementForTestV1(
+            &coordinator,
+            adapter.dispatchInterface(),
+            next_plan,
+            retention,
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            lease,
+            pin,
+            ticket,
+        ),
+    );
+    const substituted_terminal =
+        try tree_allocation.makeDispatchTerminalV1(
+            pin,
+            .ownership_retired_after_device_loss,
+            ticket.submission_sha256,
+            digest("foreign callback retirement terminal"),
+            allocation.zero_digest,
+        );
+    try testing.expectError(
+        tree_allocation.Error.InvalidDispatchTerminal,
+        coordinator.completeDispatchPin(
+            pin,
+            adapter.dispatchInterface(),
+            substituted_terminal,
+        ),
+    );
+    try bank.validateLeasePin(bank_permit);
+    try testing.expectEqual(
+        @as(u64, 1),
+        try backend.nativeLiveCommandCount(),
+    );
+
+    try metal_fault_control
+        .armNextDispatchRetirementCommitFailure(
+        &backend,
+    );
+    try testing.expectError(
+        tree_allocation.Error.InvalidDispatchCompletion,
+        coordinator.completeDispatchPin(
+            pin,
+            adapter.dispatchInterface(),
+            retirement_result.terminal,
+        ),
+    );
+    try testing.expectError(
+        resource.Error.StaleReservation,
+        bank.validateLeasePin(bank_permit),
+    );
+    try testing.expectEqual(
+        @as(usize, 1),
+        (try coordinator.snapshot()).active_dispatches,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectEqualSlices(
+        f32,
+        &output_before,
+        &output,
+    );
+    try testing.expect(
+        !adapter_wait_finished.load(.acquire),
+    );
+    try testing.expectEqualDeep(
+        metal_fault_control.RetirementCommitFactsV1{
+            .abi_version = metal_fault_control.retirement_commit_facts_abi,
+            .commit_attempt_count = 1,
+            .injected_failure_count = 1,
+        },
+        try metal_fault_control.dispatchRetirementCommitFacts(
+            &backend,
+        ),
+    );
+
+    const completion = try coordinator.completeDispatchPin(
+        pin,
+        adapter.dispatchInterface(),
+        retirement_result.terminal,
+    );
+    try tree_allocation.validateDispatchCompletionForPinV1(
+        completion,
+        pin,
+        retirement_result.terminal,
+    );
+    try testing.expect(
+        completion.outcome ==
+            .ownership_retired_after_device_loss,
+    );
+    try testing.expect(device.digestEqual(
+        completion.output_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expectError(
+        resource.Error.StaleReservation,
+        bank.validateLeasePin(bank_permit),
+    );
+    try testing.expectEqual(
+        @as(usize, 0),
+        (try coordinator.snapshot()).active_dispatches,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectEqualDeep(
+        metal_fault_control.RetirementCommitFactsV1{
+            .abi_version = metal_fault_control.retirement_commit_facts_abi,
+            .commit_attempt_count = 2,
+            .injected_failure_count = 1,
+            .committed_retirement_count = 1,
+        },
+        try metal_fault_control.dispatchRetirementCommitFacts(
+            &backend,
+        ),
+    );
+    try testing.expect(
+        !adapter_wait_finished.load(.acquire),
+    );
+    try testing.expectError(
+        tree_allocation.Error.InvalidDispatchPin,
+        coordinator.completeDispatchPin(
+            pin,
+            adapter.dispatchInterface(),
+            retirement_result.terminal,
+        ),
+    );
+
+    const receipt =
+        try adapter.completeLossDispatchCallbackRetirementV1(
+            plan,
+            retention,
+            completion,
+        );
+    try loss_dispatch_callback_retirement
+        .validateLossDispatchCallbackRetirementReceiptV1(
+        receipt,
+        plan,
+        retention,
+        retirement_result.fence,
+        inventory_entry,
+        lease,
+        pin,
+        retirement_result.terminal,
+        completion,
+    );
+    try testing.expectEqual(@as(u64, 1), receipt.released_dispatch_pin_count);
+    try testing.expectEqual(@as(u64, 1), receipt.retired_native_command_count);
+    try testing.expectEqual(@as(u64, 1), receipt.detached_native_callback_count);
+    try testing.expect(device.digestEqual(
+        receipt.output_authority_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expect(device.digestEqual(
+        receipt.migration_authority_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expect(device.digestEqual(
+        receipt.reset_authority_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expect(device.digestEqual(
+        receipt.physical_reclaim_authority_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expectEqualDeep(
+        receipt,
+        try adapter.completeLossDispatchCallbackRetirementV1(
+            plan,
+            retention,
+            completion,
+        ),
+    );
+    try testing.expectEqualDeep(
+        receipt,
+        (try adapter
+            .currentLossDispatchCallbackRetirementReceiptV1(
+            plan,
+            retention,
+            completion,
+        )).?,
+    );
+    // Receipt replay is adapter-local and must not invoke native retirement
+    // again after the one exact unlink.
+    try testing.expectEqualDeep(
+        metal_fault_control.RetirementCommitFactsV1{
+            .abi_version = metal_fault_control.retirement_commit_facts_abi,
+            .commit_attempt_count = 2,
+            .injected_failure_count = 1,
+            .committed_retirement_count = 1,
+        },
+        try metal_fault_control.dispatchRetirementCommitFacts(
+            &backend,
+        ),
+    );
+    var foreign_completion = completion;
+    foreign_completion.completion_sha256[0] ^= 1;
+    try testing.expectError(
+        metal_allocation.Error.StaleObject,
+        adapter.currentLossDispatchCallbackRetirementReceiptV1(
+            plan,
+            retention,
+            foreign_completion,
+        ),
+    );
+    try adapter.acknowledgeDispatchCompletion(completion);
+    try adapter.acknowledgeDispatchCompletion(completion);
+
+    // Dispatch ownership is gone, but allocation ownership and its Bank
+    // charge are deliberately still live until the separate lease release.
+    try testing.expectEqualSlices(
+        f32,
+        &output_before,
+        &output,
+    );
+    try testing.expectEqual(
+        fixture.manifest.total_charged_bytes,
+        (try bank.snapshotV3()).used.device_bytes,
+    );
+    try testing.expectEqual(
+        @as(u64, 4),
+        backend.liveBufferCount(),
+    );
+    try testing.expectEqual(
+        @as(u64, 4),
+        try backend.nativeLiveBufferCount(),
+    );
+    _ = try backend.inspectBufferAllocation(
+        native_slots[0].native_token,
+    );
+
+    try metal_fault_control.releaseHeldCompletionCallback(
+        &backend,
+    );
+    callback_hold_active = false;
+    var adapter_wait_timer = try std.time.Timer.start();
+    while (!adapter_wait_finished.load(.acquire) and
+        adapter_wait_timer.read() < 5 * std.time.ns_per_s)
+        std.Thread.yield() catch {};
+    try testing.expect(
+        adapter_wait_finished.load(.acquire),
+    );
+    adapter_wait_thread.join();
+    adapter_wait_joined = true;
+    try testing.expect(
+        adapter_wait_worker.observation == null,
+    );
+    try testing.expect(
+        adapter_wait_worker.wait_error != null,
+    );
+    try testing.expect(
+        adapter_wait_worker.wait_error.? ==
+            metal_allocation.Error.StaleObject,
+    );
+    try testing.expectEqualSlices(
+        f32,
+        &output_before,
+        &output,
+    );
+
+    const released = try coordinator.release(
+        lease,
+        adapter.interface(),
+    );
+    const allocation_terminal = switch (released) {
+        .terminal => |value| value,
+        .recovery_required => return error.TestUnexpectedResult,
+    };
+    try tree_allocation.validateTerminalReceiptV1(
+        allocation_terminal,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        (try bank.snapshotV3()).used.device_bytes,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        backend.liveBufferCount(),
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveBufferCount(),
+    );
+    try adapter.validateEmpty();
+
+    try bank.closePublicationSession(
+        parent,
+        304,
+        session_id,
+        publication_sequence,
+    );
+    try bank.closeLeaseTree(tree);
+    try bank.release(parent);
+    try testing.expect((try bank.snapshot()).used.isZero());
 }
 
 test "native Metal adapter rejects invalid logical lengths without allocation" {
