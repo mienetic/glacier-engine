@@ -46,6 +46,8 @@ pub const native_observation_contract =
     @import("native_observation_contract.zig");
 pub const native_observation_runner =
     @import("native_observation_runner.zig");
+pub const native_workload_report =
+    @import("native_workload_report.zig");
 pub const tool_action_contract =
     @import("tool_action_contract.zig");
 pub const tool_action_harness =
@@ -209,6 +211,7 @@ pub const TypedToolWorkload = typed_tool_workload;
 pub const NativeObservationContract =
     native_observation_contract;
 pub const NativeObservationRunner = native_observation_runner;
+pub const NativeWorkloadReport = native_workload_report;
 pub const ToolActionContract = tool_action_contract;
 pub const ToolActionHarness = tool_action_harness.Harness;
 pub const ToolActionOutboxRecord = tool_action_outbox_record;

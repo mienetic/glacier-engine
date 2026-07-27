@@ -7,7 +7,10 @@ download-free reference workload, and a shared read-only macOS host observer.
 The first post-W5a platform slice adds a platform-neutral JSON record layer and
 a bounded Linux available-memory adapter without changing the portable Zig V1
 contract. A native macOS Metal readiness slice now binds the same runner to one
-fixed synthetic accelerator dispatch.
+fixed synthetic accelerator dispatch. The separate W6a
+[Native Workload Report](NATIVE_WORKLOAD_REPORT.md) now consumes the same
+availability discipline in a portable raw-record/summary/closure wire, but it
+does not turn unavailable observers into native measurements.
 
 W5a is an integrated conformance slice, not completion of W5. Direct CPU and
 accelerator power, temperature, frequency, energy, utilization, and residency
@@ -316,6 +319,13 @@ native host. It does not turn those fields into a retained performance result,
 broader backend certification, or support for another device or operating
 system.
 
+The W6a report foundation separately proves a versioned allocation-free codec,
+deterministic synthetic reference runner, measured-only summary recomputation,
+zero-orphan closure, independent Python decoding, mutation rejection, and
+portable host/cross-target compilation. It does not execute the bounded Metal
+load producer, retain a native workload artifact, observe physical utilization
+or residency, or establish native behavior on a cross-compiled target.
+
 ## Contributor-ready next slices
 
 Each adapter can merge independently when it preserves the V1 metric meaning
@@ -331,8 +341,9 @@ and availability rules:
    preserving diagnostic-only claim scope;
 5. add direct accelerator utilization or memory-residency evidence without
    deriving it from logical resource claims; or
-6. build the W6 raw-request/native-summary codec and independent verifier while
-   preserving every rejected observation.
+6. connect the completed W6a raw-record/summary/closure contract to one bounded
+   production-native workload producer while preserving every rejected
+   observation and explicit unavailable metric.
 
 A contribution should name its source, unit, subject, sample-clock identity,
 bounds, permission behavior, native acceptance command, and nonclaims. A

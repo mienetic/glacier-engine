@@ -182,6 +182,13 @@ DURABLE_RUNTIME_PROFILE_PATHS = {
     "bench/continuation_checkpoint_file_worker.zig",
 }
 
+WORKLOAD_REPORT_PORTABLE_PATHS = {
+    "src/core/native_workload_report.zig",
+    "examples/native_workload_report.zig",
+    "bench/native_workload_report.py",
+    "bench/tests/test_native_workload_report.py",
+}
+
 
 @dataclass(frozen=True)
 class PathDecision:
@@ -457,6 +464,20 @@ def _decision_for_path(path: str) -> PathDecision:
             path,
             "native Rust contract consumer changed",
             frozenset({"rust-native"}),
+            (),
+        )
+
+    if path in WORKLOAD_REPORT_PORTABLE_PATHS:
+        report_flags = {"workload-report-portable"}
+        if suffix == ".py":
+            report_flags.add("python-changed")
+        return PathDecision(
+            path,
+            (
+                "portable workload evidence codec, reference runner, "
+                "independent verifier, or focused test changed"
+            ),
+            frozenset(report_flags),
             (),
         )
 
@@ -802,6 +823,7 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
         ("darwin-aarch64-native", "native/darwin-aarch64"),
         ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
+        ("workload-report-portable", "portable/workload-report"),
     ):
         if flag in decision.flags:
             names.append(label)
@@ -833,6 +855,7 @@ def print_report(plan: VerificationPlan) -> None:
         ("darwin-aarch64-native", "native/darwin-aarch64"),
         ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
+        ("workload-report-portable", "portable/workload-report"),
     ):
         if plan.requires(flag):
             selected_gates.append(label)

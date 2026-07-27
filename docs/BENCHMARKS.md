@@ -18,10 +18,12 @@ claim boundary.
 Passing a conformance demo does not establish throughput, physical memory,
 energy, or production reliability.
 
-The staged multi-request runner, CPU/GPU observer, native report, and
-soak/disruption contracts are defined in the
-[Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md). Accelerator results must keep
-host, device, synchronization, placement, residency, fallback, power, and
+The portable W6a report contract is integrated; its production-native
+multi-request producer and retained load evidence remain staged. The CPU/GPU
+observer, native producer, and soak/disruption sequence are defined in the
+[Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md), with the exact W6a boundary in
+[Native Workload Report](NATIVE_WORKLOAD_REPORT.md). Accelerator results must
+keep host, device, synchronization, placement, residency, fallback, power, and
 thermal observations distinct.
 
 ## Current conformance surfaces
@@ -38,6 +40,8 @@ thermal observations distinct.
 | `tools/zig-with-ephemeral-cache.sh build action-outbox-recovery-test -Dmetal=false -Doptimize=ReleaseSafe -j2` | W4b-c descriptor-relative POSIX store: clean committed `320 + 752n` prefixes, semantic preflight, exclusive advisory lock and namespace/identity fences, ordered body/footer sync, exact snapshot/lease/repair roots, explicit repair/reacquisition, Zig/Python matrices covering 40 append phases + 754 section-prefix cases + 751 repair tails + 8 repair faults, and 49 host process deaths; no power-loss, live-dispatch, provider-truth, external exactly-once, Windows-durability, or performance claim |
 | `tools/zig-with-ephemeral-cache.sh build action-outbox-dispatch-test -Dmetal=false -Doptimize=ReleaseSafe -j2` | W4b-d pointer-free adapter contract, trusted StoreV1 driver, and bounded same-process fake authority: one protected future reconciliation slot per existing uncertain action plus three additional dispatch slots, status admitted only when free slots cover every uncertain action, durable intent before dispatch, atomic `not_applied_fenced(G)`, stale `<= G` rejection before and after terminal completion, exact `G + 1` retry with stable request and a new dispatch root, pending/unknown no-retry, terminal duplicate application count one, deterministic same-process faults at four terminal-transition plus four fenced-transition append phases followed by fresh reopen/repair/reconciliation, integrated Zig coverage, 20 independent Python tests, and a separate live canonical Zig-to-Python reference validation |
 | `zig build native-observation-test -Dmetal=false` | W5a fixed portable observer ABI and family-neutral runner: explicit present/missing/denied/unsupported, stable source identity separate from per-event provenance, nonzero unavailable-reason identity and no present-reason identity (all-zero fixed field), host/accelerator planes, sample-clock identity on every record and value-clock identity only on present time-valued metrics, fail-closed probe and pre-run admission, retained post-run contamination, correctness/zero-orphan/fallback gates, a download-free three-profile/six-item report checked independently, shared macOS system parsers and native read-only macOS smoke on Darwin, plus a platform-neutral JSON validator and bounded Linux available-memory adapter model; no throughput, latency, direct GPU/power/thermal, or multi-OS native claim |
+| `tools/zig-with-ephemeral-cache.sh build native-workload-report-test -Dmetal=false -Doptimize=ReleaseSafe -j2` | W6a portable report conformance: a versioned allocation-free scenario/raw-record/summary/closure wire, a deterministic two-warmup/four-measured synthetic runner, measured-only counts and nearest-rank distributions, exact throughput rational and logical in-flight/fairness facts, availability-bearing metric slots, zero-orphan closure, rejection of a one-bit mutation at every byte plus truncation/extension/reorder/duplicate/semantic forgeries, and independent standard-library Python decode/recomputation of the live raw wire; it opens no device and is not native load or performance evidence |
+| `tools/zig-with-ephemeral-cache.sh build native-workload-report-cross-compile -Dmetal=false -Doptimize=ReleaseSafe -j2` | Compile-only W6a codec-test and reference-runner coverage for Linux x86_64/AArch64 GNU, Windows x86_64 GNU, and FreeBSD x86_64; it does not execute those binaries and is not native evidence for any foreign target |
 | `tools/zig-with-ephemeral-cache.sh test src/core/device_lifecycle_contract.zig -OReleaseSafe` | Pointer-free Device-loss Observation V1: every source/state mapping, exact status/domain/code `5/1/11` classification, explicit native versus synthetic evidence, canonical prior-inventory recomputation, present-to-newer-unavailable/lost transition receipts, capability/policy preservation, selection exclusion, and mutation/replay/substitution rejection. This deterministic contract gate opens no Metal device and proves no physical failure or recovery. |
 | `tools/zig-with-ephemeral-cache.sh test src/core/device_loss_dispatch_reconciliation.zig -OReleaseSafe` plus `python3 -m unittest bench.tests.test_device_loss_dispatch_reconciliation` | Device-loss Dispatch Reconciliation Phase A contract models: fixed pointer-free 440-byte retention, 240-byte plan, and 448-byte receipt values; exact lifecycle, selection, lease, active-pin, terminal-failure, dispatch-completion, and Bank-completion replay; stable independent roots; native-only production eligibility for command-specific `5/1/11`; synthetic structural coverage; replay and authority-drift rejection; and separate later allocation retirement. These deterministic gates open no Metal device, execute no GPU work, and do not prove physical device loss. |
 | `tools/zig-with-ephemeral-cache.sh test src/core/device_loss_dispatch_callback_retirement.zig -OReleaseSafe` plus `python3 -m unittest bench.tests.test_device_loss_dispatch_callback_retirement` | Device-loss Dispatch Callback Retirement Phase B contract models: fixed pointer-free 464-byte retention, 240-byte plan, 408-byte callback fence, and 504-byte receipt; exact pending/submission-ambiguous/completion-unknown/invalid-completion shapes; callback-detached/record-retained fencing without callback-exit inference; dedicated zero-output ownership-retired terminal; Bank/native settlement composition; production-native eligibility; and mutation, substitution, duplicate, foreign, replay, and late-settlement rejection. These deterministic gates open no Metal device and execute no GPU work. |
@@ -156,6 +160,27 @@ adapter dispatch, source/provenance separation, and unavailable-state mapping.
 Only a required smoke executed on Linux can establish that the native
 `/proc/meminfo` source was observed; a skipped smoke or foreign-target compile
 cannot.
+
+The W6a workload-report gate is also portable conformance, not a benchmark.
+Its allocation-free codec retains one exact scenario, every warmup and measured
+request, a measured-only summary, and terminal zero-orphan closure in a
+versioned binary wire. The deterministic reference contains two warmup and four
+measured records, including completed, capacity-rejected, and timed-out
+outcomes. Zig and independently encoded Python fixture coverage flip one bit at
+every serialized byte and separately test truncation, extension, record
+reorder/duplication, and rehashed semantic forgeries. The standard-library
+Python verifier parses the raw runner output independently and recomputes the
+record chain, roots, summary, metric availability, and closure rather than
+accepting a producer projection.
+
+The focused host compile gate and the separate Linux x86_64/AArch64 GNU,
+Windows x86_64 GNU, and FreeBSD x86_64 cross-compile gate establish source
+portability for the codec and deterministic runner only. They execute no
+production-native workload, produce no retained machine artifact, and do not
+establish CPU or GPU performance, physical concurrency, queue depth,
+utilization, residency, power, thermal, frequency, energy, or native behavior
+on a foreign target. The first bounded production Metal producer remains W6b.
+See [Native Workload Report](NATIVE_WORKLOAD_REPORT.md).
 
 The separate native Metal gate is readiness conformance, not a microbenchmark.
 It performs exactly one real GPU dispatch across the full gate for one fixed
@@ -851,6 +876,10 @@ Core verification:
 
 ```sh
 zig build native-observation-test -Dmetal=false
+tools/zig-with-ephemeral-cache.sh build native-workload-report-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+tools/zig-with-ephemeral-cache.sh build native-workload-report-compile \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
 zig build test -Doptimize=Debug -Dmetal=false
 zig build test -Doptimize=ReleaseSafe -Dmetal=false
 zig build test -Doptimize=ReleaseFast -Dmetal=false
@@ -861,6 +890,8 @@ Concurrency and portability gates:
 
 ```sh
 zig build test -Doptimize=ReleaseSafe -Dmetal=false -Dsanitize-thread=true
+tools/zig-with-ephemeral-cache.sh build native-workload-report-cross-compile \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
 zig build test-compile -Dtarget=x86_64-linux-gnu -Dmetal=false -Doptimize=ReleaseSafe
 zig build test-compile -Dtarget=aarch64-linux-gnu -Dmetal=false -Doptimize=ReleaseSafe
 ```

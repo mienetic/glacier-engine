@@ -606,6 +606,21 @@ if [ "$profile" = "affected" ] &&
     fi
 fi
 
+if [ "$profile" = "affected" ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "workload-report-portable"; then
+    if [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
+        run_gate "portable/workload-report" \
+            run_zig_build \
+            native-workload-report-test \
+            native-workload-report-compile \
+            native-workload-report-cross-compile
+    else
+        record_skip "portable/workload-report" \
+            "requires working zig and python3 executables"
+    fi
+fi
+
 run_native_full=0
 run_python_full=0
 native_full_status=not-run

@@ -1488,6 +1488,182 @@ pub fn build(b: *std.Build) void {
         native_observation_compile_step,
     );
 
+    // W6 is a portable, allocation-free workload evidence wire. The focused
+    // module tests and fixed reference runner deliberately import only the
+    // hardware-independent report codec; the Python model independently
+    // decodes, validates, and mutation-tests the runner's raw stdout.
+    const native_workload_report_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/native_workload_report.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_native_workload_report_tests = b.addRunArtifact(
+        native_workload_report_tests,
+    );
+    const native_workload_report_mod = b.createModule(.{
+        .root_source_file = b.path(
+            "src/core/native_workload_report.zig",
+        ),
+        .target = target,
+        .optimize = optimize,
+        .sanitize_thread = sanitize_thread,
+    });
+    const native_workload_report_exe = b.addExecutable(.{
+        .name = "glacier-native-workload-report",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/native_workload_report.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    native_workload_report_exe.root_module.addImport(
+        "native_workload_report",
+        native_workload_report_mod,
+    );
+
+    const run_native_workload_report_model =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_native_workload_report",
+        });
+    run_native_workload_report_model.setCwd(b.path("."));
+    run_native_workload_report_model.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_native_workload_report_model.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    const run_native_workload_report_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_native_workload_report_oracle.setCwd(b.path("."));
+    run_native_workload_report_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_native_workload_report_oracle.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_native_workload_report_oracle.addFileArg(
+        b.path("bench/native_workload_report.py"),
+    );
+    run_native_workload_report_oracle.addArg("--runner");
+    run_native_workload_report_oracle.addArtifactArg(
+        native_workload_report_exe,
+    );
+    run_native_workload_report_oracle.addArg(
+        "--expected-wire-sha256",
+    );
+    run_native_workload_report_oracle.addArg(
+        "7b61707818f7a4acc0f3f66ee2c8d729" ++
+            "9a3e1fffc4336ae3fc9d34e11c56d954",
+    );
+
+    const native_workload_report_test_step = b.step(
+        "native-workload-report-test",
+        "Run native workload report codec and independent Python tests",
+    );
+    native_workload_report_test_step.dependOn(
+        &run_native_workload_report_tests.step,
+    );
+    native_workload_report_test_step.dependOn(
+        &run_native_workload_report_model.step,
+    );
+    native_workload_report_test_step.dependOn(
+        &run_native_workload_report_oracle.step,
+    );
+    const native_workload_report_compile_step = b.step(
+        "native-workload-report-compile",
+        "Compile the native workload report tests and reference runner",
+    );
+    native_workload_report_compile_step.dependOn(
+        &native_workload_report_tests.step,
+    );
+    native_workload_report_compile_step.dependOn(
+        &native_workload_report_exe.step,
+    );
+
+    const native_workload_report_cross_compile_step = b.step(
+        "native-workload-report-cross-compile",
+        "Cross-compile the report tests and runner for portable targets",
+    );
+    const native_workload_report_cross_targets = [_]std.Target.Query{
+        .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .gnu,
+        },
+        .{
+            .cpu_arch = .aarch64,
+            .os_tag = .linux,
+            .abi = .gnu,
+        },
+        .{
+            .cpu_arch = .x86_64,
+            .os_tag = .windows,
+            .abi = .gnu,
+        },
+        .{
+            .cpu_arch = .x86_64,
+            .os_tag = .freebsd,
+        },
+    };
+    for (native_workload_report_cross_targets) |cross_query| {
+        const cross_target = b.resolveTargetQuery(cross_query);
+        const cross_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "src/core/native_workload_report.zig",
+                ),
+                .target = cross_target,
+                .optimize = optimize,
+            }),
+        });
+        const cross_report_mod = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/native_workload_report.zig",
+            ),
+            .target = cross_target,
+            .optimize = optimize,
+        });
+        const cross_runner = b.addExecutable(.{
+            .name = "glacier-native-workload-report",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_workload_report.zig",
+                ),
+                .target = cross_target,
+                .optimize = optimize,
+            }),
+        });
+        cross_runner.root_module.addImport(
+            "native_workload_report",
+            cross_report_mod,
+        );
+        native_workload_report_cross_compile_step.dependOn(
+            &cross_tests.step,
+        );
+        native_workload_report_cross_compile_step.dependOn(
+            &cross_runner.step,
+        );
+    }
+    test_step.dependOn(native_workload_report_test_step);
+    test_compile_step.dependOn(
+        native_workload_report_compile_step,
+    );
+
     // W5b-a is an explicitly invoked native macOS gate. Its Python verifier
     // launches the only real fixed-input Metal dispatch after all pure Zig
     // and Python mutation tests finish. Unlike the broad test suite, this

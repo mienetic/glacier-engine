@@ -96,6 +96,15 @@ EXPECTED_DURABLE_RUNTIME_PROFILE_PATHS = frozenset(
     }
 )
 
+EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
+    {
+        "src/core/native_workload_report.zig",
+        "examples/native_workload_report.zig",
+        "bench/native_workload_report.py",
+        "bench/tests/test_native_workload_report.py",
+    }
+)
+
 
 class VerificationPolicyTests(unittest.TestCase):
     def assert_targets(self, paths, expected):
@@ -367,6 +376,66 @@ class VerificationPolicyTests(unittest.TestCase):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
                 self.assertEqual(frozenset({"python-full"}), plan.flags)
+
+    def test_workload_report_paths_select_only_the_focused_portable_gate(self):
+        self.assertEqual(
+            EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS,
+            policy.WORKLOAD_REPORT_PORTABLE_PATHS,
+        )
+        for changed_path in sorted(
+            EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                expected_flags = {"workload-report-portable"}
+                if changed_path.endswith(".py"):
+                    expected_flags.add("python-changed")
+                self.assertEqual(frozenset(expected_flags), plan.flags)
+                self.assertFalse(plan.requires("native-full"))
+                self.assertFalse(plan.requires("python-full"))
+                self.assertFalse(plan.requires("metal-native"))
+                gate_names = policy._gate_names(plan.decisions[0])
+                self.assertIn("portable/workload-report", gate_names)
+                self.assertNotIn("native/metal", gate_names)
+
+    def test_workload_report_path_near_misses_fail_closed(self):
+        cases = {
+            "src/core/native_workload_report_v2.zig": frozenset(
+                {"native-full", "python-full"}
+            ),
+            "examples/native_workload_report_copy.zig": frozenset(
+                {"native-full", "python-full"}
+            ),
+            "bench/native_workload_report_copy.py": frozenset(
+                {"python-changed", "python-full"}
+            ),
+            "bench/tests/test_native_workload_report_copy.py": frozenset(
+                {"python-changed", "python-full"}
+            ),
+            "Src/Core/native_workload_report.zig": frozenset(
+                {"native-full", "python-full"}
+            ),
+        }
+        for changed_path, expected_flags in cases.items():
+            with self.subTest(changed_path=changed_path):
+                plan = policy.classify_paths([changed_path])
+                self.assertEqual(expected_flags, plan.flags)
+                self.assertFalse(
+                    plan.requires("workload-report-portable")
+                )
+                self.assertFalse(plan.requires("metal-native"))
+
+    def test_workload_report_and_native_metal_gates_remain_independent(self):
+        plan = policy.classify_paths(
+            [
+                "src/core/native_workload_report.zig",
+                "tests/native_metal_observation.zig",
+            ]
+        )
+        self.assertTrue(plan.requires("workload-report-portable"))
+        self.assertTrue(plan.requires("metal-native"))
+        self.assertFalse(plan.requires("native-full"))
+        self.assertEqual((), plan.targets)
 
     def test_unknown_interop_hex_fixture_remains_conservative(self):
         for changed_path in (
@@ -1222,6 +1291,64 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertIn(
                 "-Dmetal-output-dir=",
                 metal_calls[0],
+            )
+
+    def test_workload_report_uses_one_portable_non_metal_build_graph(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            report_path = (
+                repository
+                / "src"
+                / "core"
+                / "native_workload_report.zig"
+            )
+            report_path.parent.mkdir(parents=True)
+            report_path.write_text("", encoding="ascii")
+
+            result = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  portable/workload-report:",
+                result.stdout,
+            )
+            self.assertNotIn("PASS  native/metal:", result.stdout)
+            self.assertNotIn(
+                "PASS  native/releasesafe-suite:",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            report_calls = [
+                line
+                for line in calls
+                if line.startswith(
+                    "build native-workload-report-test "
+                    "native-workload-report-compile "
+                    "native-workload-report-cross-compile "
+                )
+            ]
+            self.assertEqual(1, len(report_calls), report_calls)
+            self.assertIn("-Dmetal=false ", report_calls[0])
+            self.assertFalse(
+                any("native-metal-suite-test" in line for line in calls),
+                calls,
+            )
+            self.assertFalse(
+                any(" -Dtarget=" in line for line in calls),
+                calls,
             )
 
     def test_shell_rejects_unknown_or_out_of_order_policy_targets(self):

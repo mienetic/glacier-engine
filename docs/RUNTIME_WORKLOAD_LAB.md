@@ -22,10 +22,13 @@ dispatch/status driver, and a bounded same-process fake authority with an
 opaque synthetic credential. W5a now adds a portable native-observation
 contract, a family-neutral fail-closed runner, a download-free retained
 three-profile/six-item workload, and a shared bounded macOS host observer.
-Provider, stateful, streaming, batched,
-preemptible, device-backed, live-service, and OS-isolated real-credential
-profiles, direct physical CPU/device adapters, native multi-request reports,
-soak campaigns, and native platform replication remain staged work.
+W6a now adds the portable, allocation-free raw-record/summary/closure report
+wire, a deterministic synthetic reference runner, and independent Python
+recomputation. Provider, stateful, streaming, batched, preemptible,
+device-backed, live-service, and OS-isolated real-credential profiles, direct
+physical CPU/device adapters, a production-native multi-request report
+producer, retained native load evidence, soak campaigns, and native platform
+replication remain staged work.
 A logical driver step is never reported as a millisecond, and a logical
 resource claim is never reported as RSS, device residency, energy, or
 temperature.
@@ -202,12 +205,26 @@ Results from different modes are not merged into one headline number.
     Cross-host parser tests, an unretained local native pass, and
     cross-compilation remain narrower than retained campaign evidence and do
     not complete this slice.
-- [ ] **W6 — Native workload reports.** Retain raw request observations and
-  versioned throughput, latency, CPU, accelerator, memory, fairness, and
-  outcome summaries. The fixed two-slot Metal path is now the first native
-  accelerator target for an open/closed pressure report; the report must keep
-  queue occupancy, utilization, power, residency, and physical parallelism
-  unsupported unless a named observer supplies them.
+- [ ] **W6 — Native workload reports.**
+  - [x] **W6a — Portable report foundation.** The versioned allocation-free
+    wire binds one scenario, every warmup and measured raw request, a summary
+    recomputed only from the measured cohort, and an exact zero-orphan closure.
+    A deterministic six-record synthetic runner emits the binary wire; an
+    independent standard-library Python implementation decodes it and
+    recomputes its identities and summary. Zig and independently encoded Python
+    mutation coverage reject a one-bit change at every serialized-byte
+    position, truncation, extension, record reorder or duplicate, and rehashed
+    summary, physical-metric, or device-duration forgeries.
+    Focused test and compile gates are integrated, and the codec plus runner
+    cross-compile for Linux x86_64/AArch64, Windows x86_64, and FreeBSD x86_64.
+    Cross-building these targets is portability evidence, not native execution.
+    See [Native Workload Report](NATIVE_WORKLOAD_REPORT.md).
+  - [ ] **W6b — Bounded native producer and evidence.** Connect the fixed
+    two-slot production Metal path to W6a, retain every request and an
+    addressable report for the declared campaign, and preserve correctness,
+    fallback, clock-domain, and ownership closure. Physical queue occupancy,
+    utilization, power, residency, thermal, frequency, energy, and parallelism
+    remain unsupported unless a named native observer supplies them.
 - [ ] **W7 — Soak and disruption.** Run bounded campaigns under a fixed fault
   schedule and prove recovery, bounded growth, exact publication, and zero
   leaked ownership.
@@ -324,9 +341,9 @@ two real commands. Both commands submit and complete, pass their CPU oracles,
 and remain retained until B is deliberately settled before A. The native
 registry reaches two records, replay stays at two, a third request is
 capacity-rejected before native mutation, and final command, pin, and buffer
-counts are zero. This is the runtime foundation for W6 load reports; it is not
-a latency, throughput, utilization, queue-depth, physical-parallel, or
-completion-order result.
+counts are zero. This is the native runtime target for the pending W6b report
+producer; it is not itself a report, latency, throughput, utilization,
+queue-depth, physical-parallel, or completion-order result.
 
 The readiness report records Metal registry identity, pre/post
 `currentAllocatedSize`, and command-buffer GPU timestamps.
@@ -352,30 +369,62 @@ Platform and backend truth remains governed by
 
 ## Native report contract
 
-The report retains every request observation before aggregation. Each record
-contains arrival, admission, first service, first visible output, terminal
-outcome, family and profile identity, resource receipt, correctness result,
-and observer status.
+The implemented W6a report retains every request before aggregation in a fixed
+little-endian binary wire. Its scenario binds the workload/profile, artifact,
+build, machine, backend, device, placement, host/device observer and clock
+identities, campaign mode, warmup/measured counts, logical in-flight target,
+adapter queue count, flow count, challenge, and summary algorithm.
 
-A versioned summary reports:
+Each raw record retains its cohort, flow, outcome, work units, optional adapter
+slot, the host-observed lifecycle from arrival through settlement, semantic
+roots, correctness and fallback, available same-clock device timing and
+allocated-size context, and logical Bank/pin/dispatch/native-command facts.
+Warmup records remain in the chain but never enter the measured summary.
 
-- admitted, completed, rejected, cancelled, and timed-out counts;
-- completed work per measured second and the exact measurement interval;
-- queue, first-output, service, and end-to-end p50/p95/p99/max;
-- fairness, deadline misses, backpressure, and concurrency high-water;
-- process CPU time or utilization and observed external CPU interference;
-- accelerator submit/device/synchronization timing only when a named timing
-  observer reports it, explicit fallback status whenever a device backend is
-  selected, and utilization or queue pressure only when named observers report
-  them;
-- logical ledger, allocator, RSS, peak RSS, mapped memory, and device
-  residency as separate sources; and
-- CPU and accelerator power, thermal, frequency, throttling, and energy only
-  when their named observers are present and valid.
+The canonical V1 summary recomputes:
 
-The percentile algorithm, raw unrounded inputs, rejected observations, stable
-observer source identities, per-event provenance, and nonzero
-unavailable-reason identities are part of report identity.
+- attempted, admitted, completed, capacity-rejected, failed, cancelled, and
+  timed-out counts plus attempted and completed work units;
+- completed work over the exact first-arrival-to-final-settlement interval as
+  an integer rational;
+- nearest-rank p50/p95/p99/max admission, queue, first-output, service,
+  end-to-end, and available device-duration distributions;
+- logical in-flight high-water from the ordered host event sequences;
+- per-flow completion minimum, maximum, and spread;
+- fallback and correctness counts; and
+- sampled allocated-size context when present without relabelling it as device
+  residency.
+
+Host CPU time, RSS, device duration, allocated-size context, utilization,
+physical queue depth, residency, power, energy, temperature, frequency, and
+physical parallelism have fixed availability-bearing metric positions.
+Unavailable metrics remain missing, denied, or unsupported rather than present
+zeroes. The initial synthetic producer keeps direct physical metrics
+unsupported.
+
+The closure requires zero logical Bank usage, active pins, active dispatches,
+native commands, and native buffers; equal acquisition/completion counts; and
+explicit zero-orphan status. The decoder checks fixed lengths, reserved values,
+causal event sequences, clock rules, record order and hash chain, exact summary
+recomputation, metric availability, semantic roots, and closure.
+
+Run the portable gates with:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-workload-report-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+tools/zig-with-ephemeral-cache.sh build native-workload-report-compile \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+tools/zig-with-ephemeral-cache.sh build native-workload-report-cross-compile \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
+The first command executes a deterministic synthetic reference and an
+independent Python verifier. It opens no device and performs no measured
+production CPU or GPU workload. The last command only cross-compiles the codec
+tests and runner; it does not execute them on the foreign operating systems. See
+[Native Workload Report](NATIVE_WORKLOAD_REPORT.md) for the exact wire and
+claim boundary.
 
 ## Promotion gate
 
@@ -405,7 +454,9 @@ Independent contributions can add:
    metric-specific signed ranges;
 6. a bounded device observer slice for placement, host submit/sync timing,
    fallback detection, and explicit device-time value-clock identity;
-7. the raw-request and native-summary report codecs plus independent verifier;
+7. one bounded production-native workload producer that feeds the completed
+   W6a report without weakening its raw-record, clock, availability, or closure
+   rules;
 8. one bounded fault injector with an explicit authority ceiling; or
 9. a native replication recipe for one supported backend.
 
@@ -414,5 +465,6 @@ and nonclaims. See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md),
 [Generated Workload Corpus](GENERATED_WORKLOAD_CORPUS.md),
 [Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md), and
 [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md), plus the
-[Native Observation Contract](NATIVE_OBSERVATION.md) and
+[Native Observation Contract](NATIVE_OBSERVATION.md),
+[Native Workload Report](NATIVE_WORKLOAD_REPORT.md), and
 [Benchmark and Evidence Guide](BENCHMARKS.md) for the existing foundations.
