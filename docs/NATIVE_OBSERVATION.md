@@ -265,6 +265,25 @@ result. A passing invocation is native evidence only for the exact host and
 session that produced it until a raw artifact is retained under the evidence
 policy. W5b therefore remains open.
 
+### Metal device lifecycle evidence
+
+The selected Metal context also installs a real
+`MTLCopyAllDevicesWithObserver`. Its fixed snapshot validates initial
+membership by registry ID and keeps removal-requested, removed, and exact
+command-buffer-removed as distinct sticky source facts. Exact command-buffer
+removal requires native status/domain/code `5/1/11` and is fenced before any
+test-only overlay; generic failures do not qualify. New work fails closed after
+a loss fact. The portable
+[Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md) contract maps those
+facts into a newer `unavailable` or `lost` inventory entry without granting
+resource recovery or migration authority.
+
+The actual built-in M1 development-host correctness run observed only initial
+membership and an unchanged lifecycle snapshot around one real successful
+Metal command. It did not exercise removal-requested, removed, or code `11`.
+Synthetic lifecycle fixtures and the isolated published-error overlay are
+separate, nonphysical evidence classes.
+
 ## Evidence and claim boundary
 
 W5a proves:

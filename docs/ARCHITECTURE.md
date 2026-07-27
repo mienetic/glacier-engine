@@ -14,6 +14,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Model | `.glacier`, `.glrt`, loader, prepared model | Validate source and execution layouts before use |
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Device selection | `DeviceCapabilityV1`, canonical inventory, plan-bound requirement, selection receipt | Choose one compatible present CPU or accelerator deterministically before admission without granting allocation, queue, dispatch, or publication authority |
+| Device lifecycle observation | `ObservationV1`, `TransitionReceiptV1`, native Metal lifecycle snapshot | Bind a source-specific native or synthetic fact to one exact prior present inventory and derive only a capability- and policy-preserving newer `unavailable` or `lost` entry; fail new native work closed without granting release, quarantine-clear, fresh-selection, recovery, or migration authority |
 | Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, async ticket/quarantine/failure evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, bind per-adapter single-flight Metal completion to exact Bank settlement, and authorize one exact quarantined native `.error` as core `terminal_failure` without releasing ownership early; native gates create, dispatch through, and directly inspect real buffers, while a production-symbol-isolated fault gate keeps physical success separate from a test-published error and proves exact settlement retry without claiming residency, physical device failure, device-loss recovery, general scheduling, or performance |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
@@ -908,6 +909,35 @@ loading and barrier participation, requires exact nonzero buffer geometry, and
 matches a CPU oracle for shapes on both sides of the 16x16 tile boundary without
 turning those tests into a performance result.
 
+The lifecycle layer remains separate from both selection and allocation.
+Every selected Metal context installs `MTLCopyAllDevicesWithObserver`, verifies
+initial membership by registry ID, and retains source-specific
+removal-requested, removed, and exact command-buffer-removed facts. The latter
+requires native status `5`, Metal command-buffer error domain `1`, and code
+`11` and is fenced before any test overlay. A sticky source bitset derives an
+effective monotone state, so a weaker later callback cannot downgrade loss.
+A native admission lease linearizes entry against lifecycle publication: work
+admitted before loss may settle under existing authority, while admission
+beginning after loss rejects. Live `MTLDevice` property reads used by
+`deviceInfo` and `allocationLimits` acquire the same lease, closing the
+precheck/use race. The backend uses retained initial device identity for loss
+observation rather than querying a dead device.
+
+The 40-byte `SourceCursorV1`, 280-byte `ObservationV1`, and 272-byte
+`TransitionReceiptV1` bind a native source instance and monotonically
+increasing source sequence to the prior inventory and successor. The
+source-instance digest binds a 256-bit per-context nonce, the
+observer-generation reset discriminator, registry ID, and stable
+device/placement identities rather than relying on the 64-bit generation
+alone. Gaps are valid; the caller must durably and atomically commit the
+advanced cursor with dependent state. The live adapter claims each exact
+native snapshot at most once. Source mismatch fails closed; fresh adoption
+requires a new inventory and exact initial sequence 1. The transition derives a
+newer `unavailable` or `lost` entry, which normal selection excludes, but does not
+release existing native ownership, clear quarantine, create a fresh selection,
+recover dead resources, or migrate state. Its hashes establish composition and
+integrity, not authenticity or platform attestation.
+
 The receipt itself grants no allocation, residency, queue, dispatch, or
 publication authority.
 
@@ -956,12 +986,19 @@ after exact native finalization and state clearing. The coordinator retains
 slot without a second Bank release or native finalization.
 
 The overlay is not a physical command-buffer, driver, hardware, or device-loss
-fault and provides no performance evidence. Physical residency, physical
-device-loss inspection/recovery, general quarantine clearing, fresh selection
-and migration, multi-slot and multi-device scheduling, telemetry, performance,
-retained driver/device ranges, and native support on cross-compiled targets
-remain open. See
-[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md) and
+fault and provides no performance evidence. The built-in M1 lifecycle run
+separately proves initial observer membership and an unchanged no-event
+snapshot around one real successful command. A native two-thread race requires
+one exact initial-snapshot consumption and one stale result while the snapshot
+remains readable; neither result is a physical removal callback.
+Portable transition and error-path tests are deterministic synthetic/model
+evidence rather than physical-removal evidence.
+Physical residency, safe dead-resource recovery, general quarantine clearing,
+fresh selection and migration, multi-slot and multi-device scheduling,
+telemetry, performance, retained driver/device ranges, and native support on
+cross-compiled targets remain open. See
+[Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md),
+[Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md), and
 [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md).
 
 ## Native observation flow
@@ -1056,6 +1093,12 @@ readiness evidence, not throughput, latency, or a performance result.
 `recommendedMaxWorkingSetSize` is capacity context only. Utilization,
 committed/resident bytes, queue depth, temperature, frequency, power, and energy
 remain explicit `unsupported` records.
+
+The same native context carries the lifecycle observer. The actual built-in M1
+correctness run checked initial selected-device membership and an unchanged
+snapshot before and after a real successful GPU command. This is no-event
+observer evidence only: no removal-requested, removed, or exact code `11` event
+occurred. Portable synthetic lifecycle tests remain a separate evidence class.
 
 The independent Python verifier checks bounded semantic composition and
 corruption in the self-asserted live capture; it does not provide cryptographic

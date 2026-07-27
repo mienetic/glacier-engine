@@ -18,6 +18,122 @@ const config = @import("config");
 
 const testing = std.testing;
 
+const LifecycleConsumeOutcome = enum {
+    pending,
+    consumed,
+    stale,
+    unexpected,
+};
+
+const LifecycleConsumeRace = struct {
+    backend: *engine.MetalBackend,
+    snapshot: engine.metal_backend.MetalDeviceLifecycleSnapshot,
+    outcome: *LifecycleConsumeOutcome,
+    ready: *std.atomic.Value(usize),
+    start: *std.atomic.Value(bool),
+
+    fn run(self: *@This()) void {
+        _ = self.ready.fetchAdd(1, .acq_rel);
+        while (!self.start.load(.acquire))
+            std.atomic.spinLoopHint();
+        const sequence =
+            self.backend.consumeDeviceLifecycleSnapshot(
+                self.snapshot,
+            ) catch |err| {
+                self.outcome.* = if (err ==
+                    engine.metal_backend.MetalError
+                        .StaleLifecycleSnapshot)
+                    .stale
+                else
+                    .unexpected;
+                return;
+            };
+        self.outcome.* = if (sequence ==
+            self.snapshot.event_sequence)
+            .consumed
+        else
+            .unexpected;
+    }
+};
+
+test "Metal lifecycle exact snapshot has one concurrent consumer" {
+    if (!config.metal_enabled) return error.SkipZigTest;
+
+    var backend = engine.MetalBackend.init(
+        engine.metal_library_path,
+    ) catch return error.SkipZigTest;
+    defer backend.deinit();
+
+    const snapshot = try backend.deviceLifecycleSnapshot();
+    const source_identity =
+        backend.initialDeviceLifecycleSourceIdentity();
+    try engine.metal_backend
+        .validateMetalDeviceLifecycleSourceIdentity(
+        source_identity,
+    );
+    try testing.expectEqual(
+        snapshot.registry_id,
+        source_identity.registry_id,
+    );
+    try testing.expectEqual(
+        snapshot.observer_generation,
+        source_identity.observer_generation,
+    );
+
+    var outcomes =
+        [_]LifecycleConsumeOutcome{.pending} ** 2;
+    var ready = std.atomic.Value(usize).init(0);
+    var start = std.atomic.Value(bool).init(false);
+    var workers = [_]LifecycleConsumeRace{
+        .{
+            .backend = &backend,
+            .snapshot = snapshot,
+            .outcome = &outcomes[0],
+            .ready = &ready,
+            .start = &start,
+        },
+        .{
+            .backend = &backend,
+            .snapshot = snapshot,
+            .outcome = &outcomes[1],
+            .ready = &ready,
+            .start = &start,
+        },
+    };
+    var threads: [2]std.Thread = undefined;
+    var spawned: usize = 0;
+    errdefer {
+        start.store(true, .release);
+        for (threads[0..spawned]) |thread| thread.join();
+    }
+    for (&threads, 0..) |*thread, index| {
+        thread.* = try std.Thread.spawn(
+            .{},
+            LifecycleConsumeRace.run,
+            .{&workers[index]},
+        );
+        spawned += 1;
+    }
+    while (ready.load(.acquire) != workers.len)
+        std.atomic.spinLoopHint();
+    start.store(true, .release);
+    for (&threads) |*thread| thread.join();
+
+    var consumed: usize = 0;
+    var stale: usize = 0;
+    for (outcomes) |outcome| switch (outcome) {
+        .consumed => consumed += 1,
+        .stale => stale += 1,
+        else => return error.UnexpectedLifecycleConsumeOutcome,
+    };
+    try testing.expectEqual(@as(usize, 1), consumed);
+    try testing.expectEqual(@as(usize, 1), stale);
+    try testing.expectEqualDeep(
+        snapshot,
+        try backend.deviceLifecycleSnapshot(),
+    );
+}
+
 test "Metal dequant matches CPU reference within FP16 tolerance" {
     if (!config.metal_enabled) return error.SkipZigTest;
 
@@ -49,9 +165,48 @@ test "Metal dequant matches CPU reference within FP16 tolerance" {
     };
     defer backend.deinit();
 
+    const lifecycle_before =
+        try backend.deviceLifecycleSnapshot();
+    const device_info = try backend.deviceInfo();
+    try testing.expectEqual(
+        device_info.registry_id,
+        lifecycle_before.registry_id,
+    );
+    try testing.expectEqual(
+        engine.metal_backend.MetalDeviceLifecycleEventKind
+            .initial_membership,
+        lifecycle_before.event_kind,
+    );
+    try testing.expectEqual(@as(u64, 1), lifecycle_before.event_sequence);
+    try testing.expectEqual(@as(u32, 1), lifecycle_before.present);
+    try testing.expectEqual(
+        @as(u32, 0),
+        lifecycle_before.removal_requested,
+    );
+    try testing.expectEqual(@as(u32, 0), lifecycle_before.removed);
+    try testing.expectEqual(
+        @as(u32, 1),
+        lifecycle_before.observer_active,
+    );
+    try testing.expectEqual(
+        @as(u32, 1),
+        lifecycle_before.initial_membership,
+    );
+    try testing.expectEqual(
+        engine.metal_backend.MetalDeviceLifecycleSourceBits
+            .initial_membership,
+        lifecycle_before.source_bits,
+    );
+
     var gpu_bytes = try allocator.alloc(u8, num_elements * 2);
     defer allocator.free(gpu_bytes);
     try backend.dequantInt4(payload, gpu_bytes, @intCast(num_elements));
+    const lifecycle_after =
+        try backend.deviceLifecycleSnapshot();
+    try testing.expectEqualDeep(
+        lifecycle_before,
+        lifecycle_after,
+    );
 
     // Decode the GPU's FP16 output bit-by-bit into f32 for comparison.
     var max_diff: f32 = 0;

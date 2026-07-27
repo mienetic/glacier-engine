@@ -19,6 +19,15 @@ dispatch ownership, or performance. A separate
 reuses these adapter contracts under execution-owned allocation nodes without
 changing this ChildLease ABI.
 
+The native backend now also installs a source-bound Metal device lifecycle
+observer, and the portable
+[Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md) contract can replace a
+prior present inventory entry with a newer `unavailable` or `lost` entry. That
+observation layer fails new work closed but grants no allocation cleanup,
+quarantine clearing, or migration authority. Allocation ownership therefore
+remains charged and fenced until this contract's existing release/recovery
+rules, or a future dead-resource authority, resolve it.
+
 V1 accepts only a present accelerator selection with allocation capability and
 `fallback_used == 0`. “Backend-neutral” describes the portable contract shape;
 it does not mean that this V1 allocation lifecycle accepts CPU fallback.
@@ -276,7 +285,8 @@ V1 deliberately does not provide:
 
 - a portable-compute or additional vendor allocation adapter;
 - physical-page commitment/reclamation or residency evidence;
-- device-loss detection, quarantine, or migration;
+- safe allocation recovery, quarantine clearing, fresh selection, or migration
+  after an observed device loss;
 - queue, stream, dispatch, or publication authority;
 - asynchronous or cross-process cleanup;
 - concurrent materialized leases within one adapter context;
@@ -298,7 +308,8 @@ The next accelerator-runtime work is intentionally split:
 1. add a reserve/materialize/settle ABI if the post-creation
    `MTLResource.allocatedSize` observation must be charged rather than V1
    logical resource length;
-2. add device-loss events, quarantine, and mandatory fresh selection;
+2. connect source-bound lifecycle transition evidence to a conservative
+   dead-resource retirement/quarantine policy and mandatory fresh selection;
 3. add deterministic two-device partition planning before live multi-device
    execution;
 4. add residency as a separate optional authority and evidence contract;

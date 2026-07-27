@@ -102,7 +102,8 @@ const supported_features =
     device.FeatureBitsV1.dispatch |
     device.FeatureBitsV1.completion_fence |
     device.FeatureBitsV1.persistent_weights |
-    device.FeatureBitsV1.allocated_bytes_observation;
+    device.FeatureBitsV1.allocated_bytes_observation |
+    device.FeatureBitsV1.device_loss_signal;
 
 pub const Error =
     allocation.Error ||

@@ -25,8 +25,12 @@ pub const buffer_info_abi: u64 = 0x474d_4249_0000_0001;
 pub const adapter_identity_abi: u64 = 0x474d_4144_0000_0001;
 pub const async_submission_abi: u64 = 0x474d_4153_0000_0001;
 pub const async_completion_abi: u64 = 0x474d_4143_0000_0001;
+pub const device_lifecycle_abi: u64 = 0x474d_444c_0000_0001;
+pub const device_lifecycle_source_identity_abi: u64 =
+    0x474d_4c53_0000_0001;
 pub const completed_command_buffer_status: u32 = 4;
 pub const error_command_buffer_status: u32 = 5;
+pub const device_removed_command_buffer_error: i64 = 11;
 pub const shared_storage_mode: u32 = 0;
 pub const default_cpu_cache_mode: u32 = 0;
 
@@ -154,6 +158,65 @@ pub const MetalAllocationAdapterIdentity = extern struct {
     adapter_instance: u64 = 0,
 };
 
+pub const MetalDeviceLifecycleEventKind = enum(u32) {
+    initial_membership = 1,
+    added = 2,
+    removal_requested = 3,
+    removed = 4,
+    command_buffer_removed = 5,
+    _,
+};
+
+pub const MetalDeviceLifecycleSourceBits = struct {
+    pub const initial_membership: u32 = @as(u32, 1) << 0;
+    pub const added: u32 = @as(u32, 1) << 1;
+    pub const removal_requested: u32 = @as(u32, 1) << 2;
+    pub const removed: u32 = @as(u32, 1) << 3;
+    pub const command_buffer_removed: u32 = @as(u32, 1) << 4;
+    pub const all: u32 =
+        initial_membership |
+        added |
+        removal_requested |
+        removed |
+        command_buffer_removed;
+};
+
+pub const MetalDeviceLifecycleConsumeStatus = enum(c_int) {
+    consumed = 0,
+    invalid = 1,
+    unavailable = 2,
+    generation_mismatch = 3,
+    stale = 4,
+    _,
+};
+
+/// Exact snapshot of the observer installed for this context's selected
+/// `MTLDevice`. `event_kind` is the latest source, while `source_bits` is
+/// sticky for the observer generation and determines the monotone effective
+/// state.
+pub const MetalDeviceLifecycleSnapshot = extern struct {
+    abi_version: u64 = device_lifecycle_abi,
+    registry_id: u64 = 0,
+    observer_generation: u64 = 0,
+    event_sequence: u64 = 0,
+    event_kind: MetalDeviceLifecycleEventKind =
+        .initial_membership,
+    present: u32 = 0,
+    removal_requested: u32 = 0,
+    removed: u32 = 0,
+    observer_active: u32 = 0,
+    initial_membership: u32 = 0,
+    observer_fault: u32 = 0,
+    source_bits: u32 = 0,
+};
+
+pub const MetalDeviceLifecycleSourceIdentity = extern struct {
+    abi_version: u64 = device_lifecycle_source_identity_abi,
+    registry_id: u64 = 0,
+    observer_generation: u64 = 0,
+    context_nonce: [4]u64 = [_]u64{0} ** 4,
+};
+
 comptime {
     if (@sizeOf(MetalDeviceInfo) != 88 or
         @offsetOf(MetalDeviceInfo, "registry_id") != 8 or
@@ -189,6 +252,28 @@ comptime {
             "adapter_instance",
         ) != 40)
         @compileError("MetalAllocationAdapterIdentity ABI layout changed");
+    if (@sizeOf(MetalDeviceLifecycleSnapshot) != 64 or
+        @offsetOf(
+            MetalDeviceLifecycleSnapshot,
+            "event_kind",
+        ) != 32 or
+        @offsetOf(
+            MetalDeviceLifecycleSnapshot,
+            "observer_active",
+        ) != 48 or
+        @offsetOf(
+            MetalDeviceLifecycleSnapshot,
+            "source_bits",
+        ) != 60)
+        @compileError("MetalDeviceLifecycleSnapshot ABI layout changed");
+    if (@sizeOf(MetalDeviceLifecycleSourceIdentity) != 56 or
+        @offsetOf(
+            MetalDeviceLifecycleSourceIdentity,
+            "context_nonce",
+        ) != 24)
+        @compileError(
+            "MetalDeviceLifecycleSourceIdentity ABI layout changed",
+        );
 }
 
 pub const MetalDispatchTelemetry = struct {
@@ -205,6 +290,19 @@ extern "C" fn glacier_metal_deinit(ctx: *MetalContext) c_int;
 extern "C" fn glacier_metal_device_info(
     ctx: *MetalContext,
     out: *MetalDeviceInfo,
+) c_int;
+extern "C" fn glacier_metal_device_lifecycle_snapshot(
+    ctx: *MetalContext,
+    out: *MetalDeviceLifecycleSnapshot,
+) c_int;
+extern "C" fn glacier_metal_device_lifecycle_source_identity(
+    ctx: *MetalContext,
+    out: *MetalDeviceLifecycleSourceIdentity,
+) c_int;
+extern "C" fn glacier_metal_device_lifecycle_consume(
+    ctx: *MetalContext,
+    expected: *const MetalDeviceLifecycleSnapshot,
+    consumed_event_sequence: *u64,
 ) c_int;
 extern "C" fn glacier_metal_allocation_limits(
     ctx: *MetalContext,
@@ -337,12 +435,16 @@ extern "C" fn glacier_metal_int4_registered_output_read(
 
 pub const MetalError = error{
     Unavailable,
+    DeviceRemovalRequested,
+    DeviceLost,
     ShaderLoadFailed,
     DispatchFailed,
     MatmulFailed,
     UploadFailed,
     AllocationFailed,
     InvalidObservation,
+    LifecycleGenerationMismatch,
+    StaleLifecycleSnapshot,
 };
 
 fn digestIsZero(value: [32]u8) bool {
@@ -440,6 +542,167 @@ pub fn validateMetalAsyncCompletion(
         },
         _ => return MetalError.InvalidObservation,
     }
+}
+
+fn sourceBitForMetalDeviceLifecycleEventKind(
+    event_kind: MetalDeviceLifecycleEventKind,
+) ?u32 {
+    return switch (event_kind) {
+        .initial_membership => MetalDeviceLifecycleSourceBits.initial_membership,
+        .added => MetalDeviceLifecycleSourceBits.added,
+        .removal_requested => MetalDeviceLifecycleSourceBits.removal_requested,
+        .removed => MetalDeviceLifecycleSourceBits.removed,
+        .command_buffer_removed => MetalDeviceLifecycleSourceBits.command_buffer_removed,
+        _ => null,
+    };
+}
+
+fn effectiveMetalDeviceLifecycleEventKindUnchecked(
+    source_bits: u32,
+) ?MetalDeviceLifecycleEventKind {
+    if (source_bits &
+        MetalDeviceLifecycleSourceBits.command_buffer_removed != 0)
+        return .command_buffer_removed;
+    if (source_bits &
+        MetalDeviceLifecycleSourceBits.removed != 0)
+        return .removed;
+    if (source_bits &
+        MetalDeviceLifecycleSourceBits.removal_requested != 0)
+        return .removal_requested;
+    if (source_bits &
+        MetalDeviceLifecycleSourceBits.added != 0)
+        return .added;
+    if (source_bits &
+        MetalDeviceLifecycleSourceBits.initial_membership != 0)
+        return .initial_membership;
+    return null;
+}
+
+pub fn validateMetalDeviceLifecycleSnapshot(
+    snapshot: MetalDeviceLifecycleSnapshot,
+) MetalError!void {
+    if (snapshot.abi_version != device_lifecycle_abi or
+        snapshot.registry_id == 0 or
+        snapshot.observer_generation == 0 or
+        snapshot.event_sequence == 0 or
+        snapshot.present > 1 or
+        snapshot.removal_requested > 1 or
+        snapshot.removed > 1 or
+        snapshot.observer_active != 1 or
+        snapshot.initial_membership != 1 or
+        snapshot.observer_fault != 0 or
+        snapshot.source_bits == 0 or
+        snapshot.source_bits &
+            ~MetalDeviceLifecycleSourceBits.all != 0 or
+        snapshot.source_bits &
+            MetalDeviceLifecycleSourceBits.initial_membership == 0)
+        return MetalError.InvalidObservation;
+
+    const latest_source =
+        sourceBitForMetalDeviceLifecycleEventKind(
+            snapshot.event_kind,
+        ) orelse return MetalError.InvalidObservation;
+    if (snapshot.source_bits & latest_source == 0)
+        return MetalError.InvalidObservation;
+
+    const effective_kind =
+        effectiveMetalDeviceLifecycleEventKindUnchecked(
+            snapshot.source_bits,
+        ) orelse return MetalError.InvalidObservation;
+    switch (effective_kind) {
+        .initial_membership, .added => {
+            if (snapshot.present != 1 or
+                snapshot.removal_requested != 0 or
+                snapshot.removed != 0)
+                return MetalError.InvalidObservation;
+        },
+        .removal_requested => {
+            if (snapshot.present != 0 or
+                snapshot.removal_requested != 1 or
+                snapshot.removed != 0)
+                return MetalError.InvalidObservation;
+        },
+        .removed, .command_buffer_removed => {
+            if (snapshot.present != 0 or
+                snapshot.removal_requested != 1 or
+                snapshot.removed != 1)
+                return MetalError.InvalidObservation;
+        },
+        _ => return MetalError.InvalidObservation,
+    }
+}
+
+pub fn validateMetalDeviceLifecycleSourceIdentity(
+    identity: MetalDeviceLifecycleSourceIdentity,
+) MetalError!void {
+    if (identity.abi_version !=
+        device_lifecycle_source_identity_abi or
+        identity.registry_id == 0 or
+        identity.observer_generation == 0 or
+        (identity.context_nonce[0] == 0 and
+            identity.context_nonce[1] == 0 and
+            identity.context_nonce[2] == 0 and
+            identity.context_nonce[3] == 0))
+        return MetalError.InvalidObservation;
+}
+
+/// Return the strongest sticky source observed in this generation. A later
+/// lower-severity notification remains in `event_kind` but cannot downgrade
+/// admission or the effective lifecycle state.
+pub fn effectiveMetalDeviceLifecycleEventKind(
+    snapshot: MetalDeviceLifecycleSnapshot,
+) MetalError!MetalDeviceLifecycleEventKind {
+    try validateMetalDeviceLifecycleSnapshot(snapshot);
+    return effectiveMetalDeviceLifecycleEventKindUnchecked(
+        snapshot.source_bits,
+    ) orelse MetalError.InvalidObservation;
+}
+
+/// Classify only Metal's exact terminal device-removed error. Timeout, page
+/// fault, access revocation, OOM, foreign domains, and injected provenance
+/// remain distinct facts at their callers.
+pub fn completionSignalsDeviceRemoved(
+    completion: MetalAsyncCompletion,
+) MetalError!bool {
+    try validateMetalAsyncCompletion(completion);
+    return completion.state == .@"error" and
+        completion.command_status == error_command_buffer_status and
+        completion.error_present == 1 and
+        completion.error_domain_kind == .command_buffer and
+        completion.error_code == device_removed_command_buffer_error and
+        completion.callback_fault == 0;
+}
+
+pub fn requireAcceptingLifecycleSnapshot(
+    snapshot: MetalDeviceLifecycleSnapshot,
+) MetalError!void {
+    switch (try effectiveMetalDeviceLifecycleEventKind(snapshot)) {
+        .initial_membership, .added => {},
+        .removal_requested => return MetalError.DeviceRemovalRequested,
+        .removed, .command_buffer_removed => return MetalError.DeviceLost,
+        _ => return MetalError.InvalidObservation,
+    }
+}
+
+fn consumedLifecycleSequenceForStatus(
+    raw_status: c_int,
+    expected_event_sequence: u64,
+    consumed_event_sequence: u64,
+) MetalError!u64 {
+    const status: MetalDeviceLifecycleConsumeStatus =
+        @enumFromInt(raw_status);
+    return switch (status) {
+        .consumed => if (expected_event_sequence != 0 and
+            consumed_event_sequence == expected_event_sequence)
+            consumed_event_sequence
+        else
+            MetalError.InvalidObservation,
+        .invalid => MetalError.InvalidObservation,
+        .unavailable => MetalError.Unavailable,
+        .generation_mismatch => MetalError.LifecycleGenerationMismatch,
+        .stale => MetalError.StaleLifecycleSnapshot,
+        _ => MetalError.InvalidObservation,
+    };
 }
 
 fn validateCompletionForSubmission(
@@ -646,6 +909,8 @@ fn synchronousRegisteredDispatchBinding(
 
 pub const MetalBackend = struct {
     ctx: *MetalContext,
+    initial_device_info: MetalDeviceInfo = .{},
+    initial_lifecycle_source_identity: MetalDeviceLifecycleSourceIdentity = .{},
     live_weight_count: u64 = 0,
     live_buffer_count: u64 = 0,
     completed_dispatch_count: u64 = 0,
@@ -658,7 +923,37 @@ pub const MetalBackend = struct {
     /// into the bundle).
     pub fn init(metallib_path: [*:0]const u8) MetalError!MetalBackend {
         const ctx = glacier_metal_init(metallib_path) orelse return MetalError.Unavailable;
-        return .{ .ctx = ctx };
+        errdefer {
+            if (glacier_metal_deinit(ctx) != 0)
+                @panic(
+                    "Metal shim refused an unowned context after failed initialization",
+                );
+        }
+        var result: MetalBackend = .{ .ctx = ctx };
+        const lifecycle_before =
+            try result.deviceLifecycleSnapshot();
+        try requireAcceptingLifecycleSnapshot(lifecycle_before);
+        const lifecycle_source_identity =
+            try result.deviceLifecycleSourceIdentity();
+        const initial_device_info = try result.deviceInfo();
+        const lifecycle_after =
+            try result.deviceLifecycleSnapshot();
+        try requireAcceptingLifecycleSnapshot(lifecycle_after);
+        if (lifecycle_before.observer_generation !=
+            lifecycle_after.observer_generation or
+            lifecycle_source_identity.observer_generation !=
+                lifecycle_before.observer_generation or
+            lifecycle_before.registry_id !=
+                initial_device_info.registry_id or
+            lifecycle_source_identity.registry_id !=
+                initial_device_info.registry_id or
+            lifecycle_after.registry_id !=
+                initial_device_info.registry_id)
+            return MetalError.InvalidObservation;
+        result.initial_device_info = initial_device_info;
+        result.initial_lifecycle_source_identity =
+            lifecycle_source_identity;
+        return result;
     }
 
     pub fn deinit(self: *MetalBackend) void {
@@ -684,12 +979,75 @@ pub const MetalBackend = struct {
             @panic("Metal shim refused context deinit");
     }
 
+    /// Observe the lifecycle monitor attached atomically to the context's
+    /// selected device. The initial snapshot proves observer installation and
+    /// membership only; it is not a device-removal event.
+    pub fn deviceLifecycleSnapshot(
+        self: *MetalBackend,
+    ) MetalError!MetalDeviceLifecycleSnapshot {
+        var result: MetalDeviceLifecycleSnapshot = .{};
+        if (glacier_metal_device_lifecycle_snapshot(
+            self.ctx,
+            &result,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        try validateMetalDeviceLifecycleSnapshot(result);
+        return result;
+    }
+
+    /// Return the immutable native context nonce and observer coordinate that
+    /// distinguish this lifecycle source across backend restarts.
+    pub fn deviceLifecycleSourceIdentity(
+        self: *MetalBackend,
+    ) MetalError!MetalDeviceLifecycleSourceIdentity {
+        var result: MetalDeviceLifecycleSourceIdentity = .{};
+        if (glacier_metal_device_lifecycle_source_identity(
+            self.ctx,
+            &result,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        try validateMetalDeviceLifecycleSourceIdentity(result);
+        return result;
+    }
+
+    /// Atomically consume one exact current observer sequence. A replay of the
+    /// same snapshot is stale, and a snapshot from another observer
+    /// generation is reported distinctly.
+    pub fn consumeDeviceLifecycleSnapshot(
+        self: *MetalBackend,
+        expected: MetalDeviceLifecycleSnapshot,
+    ) MetalError!u64 {
+        try validateMetalDeviceLifecycleSnapshot(expected);
+        var consumed_event_sequence: u64 = 0;
+        const status = glacier_metal_device_lifecycle_consume(
+            self.ctx,
+            &expected,
+            &consumed_event_sequence,
+        );
+        return consumedLifecycleSequenceForStatus(
+            status,
+            expected.event_sequence,
+            consumed_event_sequence,
+        );
+    }
+
+    /// Fail closed for new allocation or dispatch work after Metal requests
+    /// removal or reports removal. Existing command and allocation ownership
+    /// stays available to the explicit poll/finalize/release paths.
+    pub fn requireDeviceAcceptingWork(
+        self: *MetalBackend,
+    ) MetalError!void {
+        const snapshot = try self.deviceLifecycleSnapshot();
+        try requireAcceptingLifecycleSnapshot(snapshot);
+    }
+
     /// Resolve the exact persistent INT4 matrix-vector pipeline without
     /// allocating weights or dispatching work. Capability adapters call this
     /// before advertising that operation and repeat it before acquisition.
     pub fn requireInt4MatvecSupport(
         self: *MetalBackend,
     ) MetalError!void {
+        try self.requireDeviceAcceptingWork();
         if (glacier_metal_require_int4_matvec_support(self.ctx) != 0)
             return MetalError.ShaderLoadFailed;
     }
@@ -698,8 +1056,15 @@ pub const MetalBackend = struct {
     /// `recommended_max_working_set_size` is capability context, not a
     /// residency measurement.
     pub fn deviceInfo(self: *MetalBackend) MetalError!MetalDeviceInfo {
+        try self.requireDeviceAcceptingWork();
         var result: MetalDeviceInfo = .{};
-        if (glacier_metal_device_info(self.ctx, &result) != 0)
+        const status = glacier_metal_device_info(
+            self.ctx,
+            &result,
+        );
+        if (status == 2 or status == 3)
+            return self.nativeAdmissionFailure();
+        if (status != 0)
             return MetalError.InvalidObservation;
         if (result.abi_version != device_info_abi or
             result.registry_id == 0 or
@@ -714,6 +1079,21 @@ pub const MetalBackend = struct {
         return result;
     }
 
+    /// Return the immutable device identity captured while the initial
+    /// lifecycle was accepting. This remains available after loss without
+    /// querying properties on a dead native device.
+    pub fn initialDeviceInfo(
+        self: *const MetalBackend,
+    ) MetalDeviceInfo {
+        return self.initial_device_info;
+    }
+
+    pub fn initialDeviceLifecycleSourceIdentity(
+        self: *const MetalBackend,
+    ) MetalDeviceLifecycleSourceIdentity {
+        return self.initial_lifecycle_source_identity;
+    }
+
     /// Return immutable policy facts for direct Shared MTLBuffer resources.
     /// Resource bytes are exact `MTLBuffer.length` bytes. This does not
     /// predict `MTLResource.allocatedSize`, which Metal exposes only after
@@ -721,8 +1101,15 @@ pub const MetalBackend = struct {
     pub fn allocationLimits(
         self: *MetalBackend,
     ) MetalError!MetalAllocationLimits {
+        try self.requireDeviceAcceptingWork();
         var result: MetalAllocationLimits = .{};
-        if (glacier_metal_allocation_limits(self.ctx, &result) != 0)
+        const status = glacier_metal_allocation_limits(
+            self.ctx,
+            &result,
+        );
+        if (status == 2 or status == 3)
+            return self.nativeAdmissionFailure();
+        if (status != 0)
             return MetalError.InvalidObservation;
         if (result.abi_version != allocation_limits_abi or
             result.device_registry_id == 0 or
@@ -734,11 +1121,22 @@ pub const MetalBackend = struct {
         return result;
     }
 
+    fn nativeAdmissionFailure(
+        self: *MetalBackend,
+    ) MetalError {
+        const snapshot = self.deviceLifecycleSnapshot() catch |err|
+            return err;
+        requireAcceptingLifecycleSnapshot(snapshot) catch |err|
+            return err;
+        return MetalError.InvalidObservation;
+    }
+
     /// Claim a collision-resistant context identity plus a never-reused
     /// instance number for one allocation adapter authority.
     pub fn claimAllocationAdapterIdentity(
         self: *MetalBackend,
     ) MetalError!MetalAllocationAdapterIdentity {
+        try self.requireDeviceAcceptingWork();
         var result: MetalAllocationAdapterIdentity = .{};
         if (glacier_metal_claim_allocation_adapter(
             self.ctx,
@@ -771,6 +1169,7 @@ pub const MetalBackend = struct {
         self: *MetalBackend,
         requested_length: u64,
     ) MetalError!MetalBufferToken {
+        try self.requireDeviceAcceptingWork();
         self.allocation_mutex.lock();
         defer self.allocation_mutex.unlock();
         const limits = try self.allocationLimits();
@@ -898,6 +1297,7 @@ pub const MetalBackend = struct {
         out: []u8,
         num_elements: u32,
     ) MetalError!void {
+        try self.requireDeviceAcceptingWork();
         const header_size: usize = 16;
         if (payload.len < header_size) return MetalError.DispatchFailed;
         if (std.mem.readInt(u32, payload[0..4], .little) != 0x514F4954)
@@ -944,6 +1344,7 @@ pub const MetalBackend = struct {
         k: u32,
         n: u32,
     ) MetalError!void {
+        try self.requireDeviceAcceptingWork();
         if (m == 0 or k == 0 or n == 0)
             return MetalError.MatmulFailed;
         const m_size = std.math.cast(usize, m) orelse
@@ -990,6 +1391,7 @@ pub const MetalBackend = struct {
         in_features: u32,
         out_features: u32,
     ) MetalError!*MetalInt4Weight {
+        try self.requireDeviceAcceptingWork();
         const result = glacier_metal_int4_weight_create(
             self.ctx,
             packed_weights.ptr,
@@ -1022,6 +1424,7 @@ pub const MetalBackend = struct {
         input: []const f32,
         output: []f32,
     ) MetalError!void {
+        try self.requireDeviceAcceptingWork();
         if (self.completed_dispatch_count ==
             std.math.maxInt(u64))
             return MetalError.DispatchFailed;
@@ -1053,6 +1456,7 @@ pub const MetalBackend = struct {
         input: []const f32,
         output: []f32,
     ) MetalError!MetalDispatchTelemetry {
+        try self.requireDeviceAcceptingWork();
         if (self.completed_dispatch_count ==
             std.math.maxInt(u64))
             return MetalError.DispatchFailed;
@@ -1095,6 +1499,7 @@ pub const MetalBackend = struct {
         in_features: u32,
         out_features: u32,
     ) MetalError!MetalAsyncSubmission {
+        try self.requireDeviceAcceptingWork();
         const geometry = try registeredMatvecGeometry(
             group_size,
             in_features,
@@ -1589,5 +1994,276 @@ test "registered matvec roles reject zero foreign and duplicate tokens" {
             },
             .{ .context_nonce = nonce, .generation = 4 },
         }),
+    );
+}
+
+test "device lifecycle snapshots derive monotone sticky source state" {
+    const initial: MetalDeviceLifecycleSnapshot = .{
+        .registry_id = 73,
+        .observer_generation = 9,
+        .event_sequence = 1,
+        .event_kind = .initial_membership,
+        .present = 1,
+        .observer_active = 1,
+        .initial_membership = 1,
+        .source_bits = MetalDeviceLifecycleSourceBits.initial_membership,
+    };
+    const source_identity: MetalDeviceLifecycleSourceIdentity = .{
+        .registry_id = initial.registry_id,
+        .observer_generation = initial.observer_generation,
+        .context_nonce = .{ 1, 2, 3, 4 },
+    };
+    try validateMetalDeviceLifecycleSourceIdentity(
+        source_identity,
+    );
+    var invalid_source_identity = source_identity;
+    invalid_source_identity.context_nonce = .{ 0, 0, 0, 0 };
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDeviceLifecycleSourceIdentity(
+            invalid_source_identity,
+        ),
+    );
+    try validateMetalDeviceLifecycleSnapshot(initial);
+    try requireAcceptingLifecycleSnapshot(initial);
+    try std.testing.expectEqual(
+        MetalDeviceLifecycleEventKind.initial_membership,
+        try effectiveMetalDeviceLifecycleEventKind(initial),
+    );
+
+    var requested = initial;
+    requested.event_sequence = 2;
+    requested.event_kind = .removal_requested;
+    requested.source_bits |=
+        MetalDeviceLifecycleSourceBits.removal_requested;
+    requested.present = 0;
+    requested.removal_requested = 1;
+    try validateMetalDeviceLifecycleSnapshot(requested);
+    try std.testing.expectError(
+        MetalError.DeviceRemovalRequested,
+        requireAcceptingLifecycleSnapshot(requested),
+    );
+
+    var removed = requested;
+    removed.event_sequence = 3;
+    removed.event_kind = .removed;
+    removed.source_bits |=
+        MetalDeviceLifecycleSourceBits.removed;
+    removed.removed = 1;
+    try validateMetalDeviceLifecycleSnapshot(removed);
+    try std.testing.expectError(
+        MetalError.DeviceLost,
+        requireAcceptingLifecycleSnapshot(removed),
+    );
+    var command_removed = removed;
+    command_removed.event_sequence = 4;
+    command_removed.event_kind = .command_buffer_removed;
+    command_removed.source_bits |=
+        MetalDeviceLifecycleSourceBits.command_buffer_removed;
+    try validateMetalDeviceLifecycleSnapshot(command_removed);
+    try std.testing.expectError(
+        MetalError.DeviceLost,
+        requireAcceptingLifecycleSnapshot(command_removed),
+    );
+
+    var later_added = command_removed;
+    later_added.event_sequence = 5;
+    later_added.event_kind = .added;
+    later_added.source_bits |=
+        MetalDeviceLifecycleSourceBits.added;
+    try validateMetalDeviceLifecycleSnapshot(later_added);
+    try std.testing.expectEqual(
+        MetalDeviceLifecycleEventKind.command_buffer_removed,
+        try effectiveMetalDeviceLifecycleEventKind(later_added),
+    );
+    try std.testing.expectError(
+        MetalError.DeviceLost,
+        requireAcceptingLifecycleSnapshot(later_added),
+    );
+
+    var requested_then_added = requested;
+    requested_then_added.event_sequence = 3;
+    requested_then_added.event_kind = .added;
+    requested_then_added.source_bits |=
+        MetalDeviceLifecycleSourceBits.added;
+    try validateMetalDeviceLifecycleSnapshot(
+        requested_then_added,
+    );
+    try std.testing.expectEqual(
+        MetalDeviceLifecycleEventKind.removal_requested,
+        try effectiveMetalDeviceLifecycleEventKind(
+            requested_then_added,
+        ),
+    );
+    try std.testing.expectError(
+        MetalError.DeviceRemovalRequested,
+        requireAcceptingLifecycleSnapshot(
+            requested_then_added,
+        ),
+    );
+
+    var removed_without_request = removed;
+    removed_without_request.removal_requested = 0;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDeviceLifecycleSnapshot(
+            removed_without_request,
+        ),
+    );
+
+    var missing_latest_source = requested_then_added;
+    missing_latest_source.source_bits &=
+        ~MetalDeviceLifecycleSourceBits.added;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDeviceLifecycleSnapshot(
+            missing_latest_source,
+        ),
+    );
+
+    var downgraded = later_added;
+    downgraded.present = 1;
+    downgraded.removal_requested = 0;
+    downgraded.removed = 0;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDeviceLifecycleSnapshot(downgraded),
+    );
+
+    var unknown_source = initial;
+    unknown_source.source_bits |= @as(u32, 1) << 31;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDeviceLifecycleSnapshot(unknown_source),
+    );
+
+    var contradictory = requested;
+    contradictory.present = 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDeviceLifecycleSnapshot(contradictory),
+    );
+    var inactive = initial;
+    inactive.observer_active = 0;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDeviceLifecycleSnapshot(inactive),
+    );
+    var faulted = initial;
+    faulted.observer_fault = 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDeviceLifecycleSnapshot(faulted),
+    );
+}
+
+test "device lifecycle consume statuses remain typed and exact" {
+    try std.testing.expectEqual(
+        @as(u64, 17),
+        try consumedLifecycleSequenceForStatus(0, 17, 17),
+    );
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        consumedLifecycleSequenceForStatus(0, 17, 16),
+    );
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        consumedLifecycleSequenceForStatus(1, 17, 0),
+    );
+    try std.testing.expectError(
+        MetalError.Unavailable,
+        consumedLifecycleSequenceForStatus(2, 17, 0),
+    );
+    try std.testing.expectError(
+        MetalError.LifecycleGenerationMismatch,
+        consumedLifecycleSequenceForStatus(3, 17, 0),
+    );
+    try std.testing.expectError(
+        MetalError.StaleLifecycleSnapshot,
+        consumedLifecycleSequenceForStatus(4, 17, 0),
+    );
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        consumedLifecycleSequenceForStatus(99, 17, 0),
+    );
+}
+
+test "initial Metal device info is returned as an immutable copy" {
+    const retained: MetalDeviceInfo = .{
+        .abi_version = device_info_abi,
+        .registry_id = 73,
+        .recommended_max_working_set_size = 4096,
+        .max_threads_x = 32,
+        .max_threads_y = 1,
+        .max_threads_z = 1,
+        .unified_memory = 1,
+    };
+    const retained_source: MetalDeviceLifecycleSourceIdentity = .{
+        .registry_id = retained.registry_id,
+        .observer_generation = 9,
+        .context_nonce = .{ 1, 2, 3, 4 },
+    };
+    const backend: MetalBackend = .{
+        .ctx = @ptrFromInt(0x1000),
+        .initial_device_info = retained,
+        .initial_lifecycle_source_identity = retained_source,
+    };
+    var copy = backend.initialDeviceInfo();
+    copy.registry_id = 91;
+    try std.testing.expectEqual(
+        @as(u64, 73),
+        backend.initialDeviceInfo().registry_id,
+    );
+    var source_copy =
+        backend.initialDeviceLifecycleSourceIdentity();
+    source_copy.context_nonce[0] = 99;
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        backend.initialDeviceLifecycleSourceIdentity()
+            .context_nonce[0],
+    );
+}
+
+test "only exact command-buffer code 11 signals device removal" {
+    var binding = [_]u8{0} ** 32;
+    binding[0] = 1;
+    const removed: MetalAsyncCompletion = .{
+        .token = .{
+            .context_nonce = .{ 1, 2, 3, 4 },
+            .generation = 8,
+        },
+        .submission_binding = binding,
+        .current_allocated_before = 4096,
+        .error_code = device_removed_command_buffer_error,
+        .state = .@"error",
+        .command_status = error_command_buffer_status,
+        .error_domain_kind = .command_buffer,
+        .error_present = 1,
+    };
+    try std.testing.expect(
+        try completionSignalsDeviceRemoved(removed),
+    );
+
+    var timeout = removed;
+    timeout.error_code = 2;
+    try std.testing.expect(
+        !try completionSignalsDeviceRemoved(timeout),
+    );
+    var foreign_domain = removed;
+    foreign_domain.error_domain_kind = .other;
+    try std.testing.expect(
+        !try completionSignalsDeviceRemoved(foreign_domain),
+    );
+    var completed = removed;
+    completed.state = .completed;
+    completed.command_status = completed_command_buffer_status;
+    completed.error_code = 0;
+    completed.error_domain_kind = .none;
+    completed.error_present = 0;
+    completed.current_allocated_after = 4096;
+    completed.gpu_start_time = 1;
+    completed.gpu_end_time = 2;
+    try std.testing.expect(
+        !try completionSignalsDeviceRemoved(completed),
     );
 }

@@ -294,6 +294,43 @@ but the published error is a test-only overlay. The gate is not a physical
 driver, hardware, or device-loss fault, device-loss recovery, or performance
 test.
 
+### Device lifecycle observation boundary
+
+Device-loss Observation V1 is now a separate evidence layer. Each native Metal
+context installs `MTLCopyAllDevicesWithObserver`, validates initial membership
+for the selected registry ID, and retains removal-requested and removed as
+distinct bits in a sticky source set whose effective state cannot downgrade.
+Exact native command-buffer status `5`, Metal command-buffer error domain `1`,
+and error code `11` publishes the separate command-buffer-removed bit before
+any test-only overlay. A native admission lease linearizes new work and live
+`MTLDevice` property reads used by `deviceInfo` and `allocationLimits` against
+loss: already-admitted operations may settle, while admission after loss fails
+closed. Loss observation uses retained initial identity rather than querying a
+dead device.
+
+The 40-byte source cursor, 280-byte observation, and 272-byte transition
+receipt bind a native source instance and increasing source sequence to a prior
+present inventory entry and recomputed inventory root. Its digest binds a
+256-bit per-context nonce, observer-generation reset discriminator, registry
+ID, and stable device/placement identities instead of relying on the 64-bit
+generation alone. Gaps are valid, callers must durably and atomically commit
+the advanced cursor, and the adapter claims each exact native snapshot at most
+once. Source mismatch fails closed; fresh adoption requires a new inventory
+and exact initial sequence 1. Normal
+selection excludes the resulting newer `unavailable` or `lost` successor.
+Hashes verify composition and integrity, not authenticity or attestation. This
+does not terminalize an
+in-flight dispatch, release its pin or charge, clear quarantine, create a fresh
+selection, or migrate work. See
+[Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md).
+
+The actual built-in M1 development-host gate proved initial membership and an
+unchanged no-event lifecycle snapshot around one real successful Metal
+command. A native two-thread race requires one exact initial-snapshot
+consumption and one stale result while the snapshot remains readable. It did
+not exercise a physical removal callback. Synthetic lifecycle transition/error
+tests and the build-isolated published-error overlay are not physical failures.
+
 ## Terminal outcomes
 
 The public terminal enum contains only states that make allocation reclamation
@@ -348,12 +385,12 @@ The Metal path now detects ambiguous or unsafe post-submit observations and
 records sticky quarantine. One exact retained native command-buffer `.error`
 may now be authorized as core `terminal_failure` and settled without publishing
 output; it remains pinned until Bank settlement and exact native error
-finalization both succeed. Device-loss inspection and recovery, general
-quarantine clearing, fresh selection, and automatic migration remain later
-authorities. This contract does not manufacture a successful completion from
-missing evidence. Ambiguous submissions, invalid or unknown completion,
-timeouts, and device loss remain pinned until a separate reconciliation
-authority proves a safe terminal state.
+finalization both succeed. Source-bound device-loss observation now exists, but
+safe dead-resource recovery, general quarantine clearing, fresh selection, and
+automatic migration remain later authorities. This contract does not
+manufacture a successful completion from missing evidence. Ambiguous
+submissions, invalid or unknown completion, timeouts, and device loss remain
+pinned until a separate reconciliation authority proves a safe terminal state.
 Other adapters that cannot prove a safe pre-submit rejection must likewise
 retain the pin rather than infer one.
 
@@ -367,7 +404,10 @@ device:
    tamper, stale-token, copied-permit, slot-reuse, pre-submit terminal,
    settlement retry, out-of-order completion, acquire-versus-retire races, and
    the pointer-free async ticket/quarantine shapes and exact terminal-error
-   reconciliation roots. They call no Metal API and execute no GPU work.
+   reconciliation roots. The separate lifecycle contract tests cover every
+   source/state mapping, exact code `11` classification, native/synthetic
+   separation, and mutation/replay/substitution rejection. They call no Metal
+   API and execute no GPU work.
 2. **Host integration tests** exercise the real ResourceBank, LeaseTree,
    mutexes, fixed storage, publication fences, and thread scheduling without
    claiming accelerator execution. The independent Python oracle separately
@@ -382,7 +422,10 @@ device:
    cases retain the same real context and resource ownership but intentionally
    submit zero GPU commands. Rejection may inspect those resources;
    cancellation is native-free. All three paths settle through the same private
-   callback and return ownership to zero.
+   callback and return ownership to zero. The focused correctness gate also
+   verifies initial selected-device observer membership and an unchanged
+   lifecycle snapshot around one real successful command on the built-in M1
+   development host; it does not exercise a removal callback.
 4. **Build-isolated native fault/race tests** run another real, physically
    successful Metal command while publishing a separate test-only `.error`
    overlay. They prove production-symbol isolation, a deterministic one-winner
@@ -398,6 +441,9 @@ reported as native operating-system, driver, or accelerator evidence.
 Run the portable contract and independent oracle with:
 
 ```sh
+tools/zig-with-ephemeral-cache.sh test \
+  src/core/device_lifecycle_contract.zig -OReleaseSafe
+
 tools/zig-with-ephemeral-cache.sh test \
   src/core/device_allocation_lease_tree.zig -OReleaseSafe
 
@@ -436,7 +482,9 @@ focused correctness.
 
 Contributor-ready extensions include:
 
-- physical device-loss inspection and safe recovery;
+- retain physical removal-requested and removed callbacks on removable
+  hardware;
+- add safe dead-resource recovery without inferring release or reclaim;
 - general quarantine clearing, fresh device selection, and explicit migration
   policy;
 - bounded multi-slot completion scheduling without weakening adapter identity;

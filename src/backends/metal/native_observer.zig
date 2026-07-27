@@ -150,6 +150,7 @@ pub const MacOSMetalObserverV1 = struct {
     backend: *metal.MetalBackend,
     timer: std.time.Timer,
     initial_device: metal.MetalDeviceInfo,
+    initial_lifecycle: metal.MetalDeviceLifecycleSnapshot,
     logical_cpu_count: u64,
     machine_sha256: Digest,
     device_sha256: Digest,
@@ -163,7 +164,13 @@ pub const MacOSMetalObserverV1 = struct {
     pub fn init(
         backend: *metal.MetalBackend,
     ) !MacOSMetalObserverV1 {
-        const initial_device = try backend.deviceInfo();
+        const initial_device = backend.initialDeviceInfo();
+        const initial_lifecycle =
+            try backend.deviceLifecycleSnapshot();
+        if (initial_lifecycle.registry_id !=
+            initial_device.registry_id)
+            return error.InvalidMetalLifecycleIdentity;
+        try backend.requireDeviceAcceptingWork();
         const cpu_count_usize = try std.Thread.getCpuCount();
         const logical_cpu_count = std.math.cast(
             u64,
@@ -180,6 +187,7 @@ pub const MacOSMetalObserverV1 = struct {
             .backend = backend,
             .timer = try std.time.Timer.start(),
             .initial_device = initial_device,
+            .initial_lifecycle = initial_lifecycle,
             .logical_cpu_count = logical_cpu_count,
             .machine_sha256 = machine_sha256,
             .device_sha256 = device_sha256,
@@ -234,8 +242,41 @@ pub const MacOSMetalObserverV1 = struct {
             phase != .pre_run and
             phase != .post_run)
             return runner.CallbackError.InvalidSample;
-        const info = self.backend.deviceInfo() catch
-            return runner.CallbackError.ObserverUnavailable;
+        const lifecycle =
+            self.backend.deviceLifecycleSnapshot() catch
+                return runner.CallbackError.ObserverUnavailable;
+        if (lifecycle.registry_id !=
+            self.initial_lifecycle.registry_id or
+            lifecycle.observer_generation !=
+                self.initial_lifecycle.observer_generation)
+            return runner.CallbackError.InvalidSample;
+        const effective_event =
+            metal.effectiveMetalDeviceLifecycleEventKind(
+                lifecycle,
+            ) catch return runner.CallbackError.InvalidSample;
+        const device_accepting_work = switch (effective_event) {
+            .initial_membership, .added => true,
+            .removal_requested,
+            .removed,
+            .command_buffer_removed,
+            => false,
+            _ => return runner.CallbackError.InvalidSample,
+        };
+        const info = if (device_accepting_work) blk: {
+            const current = self.backend.deviceInfo() catch
+                return runner.CallbackError.ObserverUnavailable;
+            if (current.registry_id != lifecycle.registry_id or
+                !contract.digestEqual(
+                    deviceIdentityV1(current),
+                    self.device_sha256,
+                ) or
+                !contract.digestEqual(
+                    placementIdentityV1(current),
+                    self.placement_sha256,
+                ))
+                return runner.CallbackError.InvalidSample;
+            break :blk current;
+        } else self.initial_device;
         const observed_at = self.nextTick();
         const time_value = std.math.cast(
             i64,
@@ -245,10 +286,13 @@ pub const MacOSMetalObserverV1 = struct {
             i64,
             self.logical_cpu_count,
         ) orelse return runner.CallbackError.InvalidSample;
-        const allocated_value = std.math.cast(
-            i64,
-            info.current_allocated_size,
-        ) orelse return runner.CallbackError.InvalidSample;
+        const allocated_value: ?i64 = if (device_accepting_work)
+            std.math.cast(
+                i64,
+                info.current_allocated_size,
+            ) orelse return runner.CallbackError.InvalidSample
+        else
+            null;
         const current_device_sha256 = deviceIdentityV1(info);
         const current_source_sha256 = self.metal_source_sha256;
         const phase_provenance = observationProvenanceV1(
@@ -314,7 +358,7 @@ pub const MacOSMetalObserverV1 = struct {
             phase,
             .accelerator_device_present,
             .present,
-            1,
+            @intFromBool(device_accepting_work),
             observed_at,
             host_clock,
             contract.zero_digest,
@@ -361,23 +405,45 @@ pub const MacOSMetalObserverV1 = struct {
             current_device_sha256,
             "Metal utilization has no direct adapter/v1",
         ) catch return runner.CallbackError.InvalidSample;
-        append(
-            output,
-            &count,
-            descriptor.*,
-            plan.*,
-            phase,
-            .accelerator_allocated_bytes,
-            .present,
-            allocated_value,
-            observed_at,
-            host_clock,
-            contract.zero_digest,
-            current_source_sha256,
-            phase_provenance,
-            current_device_sha256,
-            contract.zero_digest,
-        ) catch return runner.CallbackError.InvalidSample;
+        if (allocated_value) |value| {
+            append(
+                output,
+                &count,
+                descriptor.*,
+                plan.*,
+                phase,
+                .accelerator_allocated_bytes,
+                .present,
+                value,
+                observed_at,
+                host_clock,
+                contract.zero_digest,
+                current_source_sha256,
+                phase_provenance,
+                current_device_sha256,
+                contract.zero_digest,
+            ) catch return runner.CallbackError.InvalidSample;
+        } else {
+            append(
+                output,
+                &count,
+                descriptor.*,
+                plan.*,
+                phase,
+                .accelerator_allocated_bytes,
+                .missing,
+                0,
+                observed_at,
+                host_clock,
+                contract.zero_digest,
+                current_source_sha256,
+                phase_provenance,
+                current_device_sha256,
+                contract.digestV1(
+                    "Metal device loss blocks live allocation query/v1",
+                ),
+            ) catch return runner.CallbackError.InvalidSample;
+        }
         inline for ([_]struct {
             metric: contract.MetricIdV1,
             reason: []const u8,
@@ -1773,7 +1839,8 @@ pub fn makeReadinessDeviceDecisionAtEpochV1(
         device_contract.FeatureBitsV1.completion_fence |
         device_contract.FeatureBitsV1.persistent_weights |
         device_contract.FeatureBitsV1.command_buffer_time |
-        device_contract.FeatureBitsV1.allocated_bytes_observation;
+        device_contract.FeatureBitsV1.allocated_bytes_observation |
+        device_contract.FeatureBitsV1.device_loss_signal;
     const capability = try device_contract.sealCapabilityV1(.{
         .backend_kind = .metal,
         .device_class = .accelerator,

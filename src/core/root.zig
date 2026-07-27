@@ -18,6 +18,8 @@ pub const resource_bank = @import("resource_bank.zig");
 pub const platform_capabilities = @import("platform_capabilities.zig");
 pub const device_capability_contract =
     @import("device_capability_contract.zig");
+pub const device_lifecycle_contract =
+    @import("device_lifecycle_contract.zig");
 pub const device_allocation_lease =
     @import("device_allocation_lease.zig");
 pub const device_allocation_lease_tree =
@@ -181,6 +183,8 @@ pub const ResourceBank = resource_bank.Bank;
 pub const PlatformCapabilities = platform_capabilities;
 pub const DeviceCapabilityContract =
     device_capability_contract;
+pub const DeviceLifecycleContract =
+    device_lifecycle_contract;
 pub const DeviceAllocationLease = device_allocation_lease;
 pub const DeviceAllocationLeaseTree =
     device_allocation_lease_tree;

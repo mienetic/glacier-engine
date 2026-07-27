@@ -29,6 +29,53 @@ For one exact `MetalBackend` context, the adapter:
 9. rejects copied leases after release and reuses slots only under newer
    generations.
 
+## Device lifecycle observation
+
+Every `MetalBackend` context now installs
+`MTLCopyAllDevicesWithObserver` and validates that the selected device's
+`registryID` appears in the initial device array. The callback captures a
+separate ARC-owned lifecycle state rather than the malloc-owned context, and
+teardown removes the observer before releasing the context.
+
+The fixed native snapshot keeps initial membership and source-specific
+`added`, `removal_requested`, `removed`, and `command_buffer_removed` events.
+A sticky source bitset derives a monotone effective state, so later weaker
+notifications cannot downgrade loss. Generic API failures do not become
+device-loss facts; an unmodified native command completion publishes
+`command_buffer_removed` only for exact status `5`, Metal command-buffer error
+domain `1`, and error code `11`, before any test-only completion overlay.
+A native admission lease linearizes entry against that publication: work
+admitted first may settle, while new allocation and dispatch admitted after
+loss fail closed. Live `MTLDevice` property reads used by `deviceInfo` and
+`allocationLimits` acquire the same native lease, closing the precheck/use
+race. Loss reporting uses retained initial device identity rather than querying
+a dead device.
+
+The portable [Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md) contract
+uses a 40-byte source cursor, 280-byte observation, and 272-byte transition
+receipt. It binds a native source instance and increasing source sequence to
+the prior present inventory entry and recomputed inventory root; gaps are valid
+and the caller must durably and atomically commit the advanced cursor. The
+source-instance digest binds a 256-bit per-context nonce,
+observer-generation reset discriminator, registry ID, and stable
+device/placement identities, rather than relying on the 64-bit generation
+alone. The adapter claims each exact native snapshot at most once. Source
+mismatch fails closed; fresh adoption requires a new inventory and exact initial
+sequence 1 and grants no recovery or migration authority. Inventory absence or
+removal-requested becomes `unavailable`; removed or exact code `11` becomes
+`lost`. Existing selection excludes either state. Contract hashes verify
+composition and integrity, not authenticity or attestation. Synthetic injected
+evidence has an explicit synthetic class and is not native failure evidence.
+
+The actual built-in M1 development-host correctness gate retained the same
+initial-membership snapshot while one real Metal command succeeded. The native
+allocation gate races two threads to consume that exact initial snapshot and
+requires one consumed and one stale result while the snapshot remains readable.
+That proves observer installation, real GPU execution, and at-most-once
+consumption on the no-event path for that host session. It did not exercise a
+physical removal-requested or removed callback; transition and error-path
+coverage is deterministic synthetic/model evidence.
+
 For the bounded LeaseTree dispatch profile, the same adapter also binds four
 exact live objects to packed weights, scales, input, and output roles. One
 adapter-owned slot retains one exact request and a pointer-free,
@@ -106,9 +153,9 @@ Bank settlement. The private callback then exact-finalizes the same native
 `.error` record before clearing private state.
 
 Submission ambiguity, unknown completion, and invalid completion still lack
-terminal authority and remain sticky. This slice does not detect physical
-device loss, infer a terminal from device state, migrate work, select a fresh
-device, or provide multi-slot scheduling.
+terminal authority and remain sticky. Source-bound lifecycle observation does
+not infer a dispatch terminal, release dead resources, clear quarantine,
+migrate work, select a fresh device, or provide multi-slot scheduling.
 
 The native hard gate now exercises both coordinators. The LeaseTree path uses
 distinct admission/lease/recovery/terminal evidence and keeps its allocation
@@ -335,14 +382,18 @@ pre-settlement retention contract for exact terminal command errors through
 pure Zig and independent Python mirror tests. The build-isolated native gate
 then exercises that reconciliation path after a real command physically
 completes successfully, using a separately recorded test-only publication
-overlay and exact coordinator retry. It does not establish:
+overlay and exact coordinator retry. Separately, the lifecycle slice
+establishes real observer installation, initial selected-device membership,
+source-specific sticky removal facts, exact code `11` classification, and
+fail-closed new work. Its M1 evidence is the unchanged no-event path around a
+successful command. It does not establish:
 
 - physical residency or reclaim completion;
 - heap allocation or fragmentation accounting;
 - a physical command-buffer, driver, hardware, or device-loss failure from the
   test-published error;
-- physical device-loss inspection or recovery, general quarantine clearing,
-  fresh selection, or automatic migration;
+- a physical removal-callback campaign or safe dead-resource recovery;
+- general quarantine clearing, fresh selection, or automatic migration;
 - multi-slot queue scheduling, a global native queue-depth limit, queue-depth
   evidence, or transfer ownership;
 - inferred terminal state or quarantine reconciliation after ambiguous queue

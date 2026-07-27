@@ -121,12 +121,35 @@ the selected fingerprint and registry identity before the first Metal resource
 acquisition and again through post-run evidence. See
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md).
 
+Device-loss Observation V1 is the next completed decision-evidence layer.
+The 40-byte `SourceCursorV1`, 280-byte `ObservationV1`, and 272-byte
+`TransitionReceiptV1` bind a native source instance, increasing source
+sequence, and native/synthetic evidence class to an exact prior present entry
+and recomputed inventory root. Sequence gaps are valid; callers must durably
+and atomically commit the advanced cursor. The native Metal context installs
+`MTLCopyAllDevicesWithObserver`, validates and retains initial selected-device
+identity, records source facts in a sticky bitset with a monotone effective
+state, and claims each exact snapshot at most once. The source-instance digest
+binds a 256-bit per-context nonce, observer-generation reset discriminator,
+registry ID, and stable device/placement identities; it does not rely on the
+64-bit generation alone for durable freshness. A native admission lease covers
+new work and live `deviceInfo`/`allocationLimits` property reads:
+already-admitted operations may settle, while admission after loss rejects.
+Source mismatch fails closed; fresh adoption requires a new inventory and exact
+initial sequence 1 and grants no recovery or migration. Exact native
+command-buffer removal requires status/domain/code `5/1/11` before any
+test-only overlay. Transition receipts preserve capability and policy rank
+while deriving a newer `unavailable` or `lost` successor. Their hashes verify
+composition and integrity, not authenticity or attestation.
+See [Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md).
+
 Promotion gate: the plan fully predicts memory and output ceilings, the backend
 confirms exact capability identity, and unsupported combinations fail before
 visible state or output changes.
 
 The selection receipt is decision evidence only. Physical-page commitment,
-reclamation, and residency authority/evidence, device-loss recovery, multi-GPU
+reclamation, and residency authority/evidence, safe dead-resource recovery,
+general quarantine clearing, fresh selection/migration, multi-GPU
 partitioning/scheduling, direct telemetry, performance evidence, native device
 ranges, and native support on cross-compiled targets remain open.
 
@@ -178,11 +201,13 @@ only the private post-Bank callback exact-finalizes that same native `.error`
 record before atomically clearing adapter state and recording a replay
 tombstone. Ambiguity, unknown, and invalid completion remain sticky. Public
 `acknowledgeDispatchCompletion` only verifies compatibility; it grants no
-authority and clears no state. This path neither detects physical device loss
-nor automatically migrates work. Physical residency, device-loss recovery,
-general quarantine clearing and fresh selection, multi-slot and multi-device
-scheduling, production weight paging, additional GPU backends, and native OS
-matrices remain planned.
+authority and clears no state. This terminal-error sidecar does not classify
+device loss or migrate work on its own. The separate lifecycle layer observes
+source-bound removal signals and fails new work closed without making this
+dispatch path a recovery authority. Physical residency, safe dead-resource
+recovery, general quarantine clearing and fresh selection, multi-slot and
+multi-device scheduling, production weight paging, additional GPU backends,
+and native OS matrices remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
 cancellation returns the declared delta, and measured physical counters are
@@ -542,8 +567,19 @@ failure roots, mutations, and pre-settlement retention contract without GPU
 work. The native
 macOS gate opens a real `MTLDevice`, creates real `MTLBuffer` resources, and
 executes the valid command on the device as a success regression; it does not
-induce or claim a hardware error. Physical device-loss inspection/recovery,
-fresh selection and migration, multi-slot and multi-device scheduling,
+induce or claim a hardware error. The same native lifecycle surface installs a
+real observer and fails new work closed after removal-requested, removed, or an
+exact native command-buffer code `11`, which is fenced before any test-only
+overlay. Admission is linearized by a native lease, so already-admitted work
+and live `deviceInfo`/`allocationLimits` property reads share the same race
+boundary: earlier operations may settle while admission after loss rejects. On
+the built-in M1 development host, the snapshot stayed at initial membership
+around a real successful command. A native two-thread exact-consumption race
+required one consumed result and one stale result while leaving the snapshot
+readable. None of those loss sources occurred. Transition and error paths are
+covered by deterministic synthetic/model tests. A removable-hardware callback
+campaign, safe dead-resource recovery, fresh selection and migration,
+multi-slot and multi-device scheduling,
 physical residency and device telemetry, additional GPU backends, and broader
 native OS/device matrices stay open.
 Contract validation requires a present logical CPU count of at least one and

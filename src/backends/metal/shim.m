@@ -25,6 +25,32 @@
 #define GLACIER_METAL_ADAPTER_IDENTITY_ABI 0x474d414400000001ULL
 #define GLACIER_METAL_ASYNC_SUBMISSION_ABI 0x474d415300000001ULL
 #define GLACIER_METAL_ASYNC_COMPLETION_ABI 0x474d414300000001ULL
+#define GLACIER_METAL_DEVICE_LIFECYCLE_ABI 0x474d444c00000001ULL
+#define GLACIER_METAL_LIFECYCLE_SOURCE_IDENTITY_ABI \
+    0x474d4c5300000001ULL
+
+#define GLACIER_METAL_DEVICE_EVENT_INITIAL_MEMBERSHIP 1U
+#define GLACIER_METAL_DEVICE_EVENT_ADDED 2U
+#define GLACIER_METAL_DEVICE_EVENT_REMOVAL_REQUESTED 3U
+#define GLACIER_METAL_DEVICE_EVENT_REMOVED 4U
+#define GLACIER_METAL_DEVICE_EVENT_COMMAND_BUFFER_REMOVED 5U
+
+#define GLACIER_METAL_DEVICE_SOURCE_INITIAL (1U << 0)
+#define GLACIER_METAL_DEVICE_SOURCE_ADDED (1U << 1)
+#define GLACIER_METAL_DEVICE_SOURCE_REMOVAL_REQUESTED (1U << 2)
+#define GLACIER_METAL_DEVICE_SOURCE_REMOVED (1U << 3)
+#define GLACIER_METAL_DEVICE_SOURCE_COMMAND_BUFFER_REMOVED (1U << 4)
+#define GLACIER_METAL_DEVICE_SOURCE_ALL \
+    (GLACIER_METAL_DEVICE_SOURCE_INITIAL | \
+     GLACIER_METAL_DEVICE_SOURCE_ADDED | \
+     GLACIER_METAL_DEVICE_SOURCE_REMOVAL_REQUESTED | \
+     GLACIER_METAL_DEVICE_SOURCE_REMOVED | \
+     GLACIER_METAL_DEVICE_SOURCE_COMMAND_BUFFER_REMOVED)
+
+#define GLACIER_METAL_LIFECYCLE_CONSUME_INVALID 1
+#define GLACIER_METAL_LIFECYCLE_CONSUME_UNAVAILABLE 2
+#define GLACIER_METAL_LIFECYCLE_CONSUME_GENERATION_MISMATCH 3
+#define GLACIER_METAL_LIFECYCLE_CONSUME_STALE 4
 
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
@@ -96,6 +122,47 @@ typedef struct {
     uint32_t reserved;
 } GlacierMetalAsyncCompletion;
 
+// Pointer-free, level-triggered lifecycle facts for the exact selected device.
+// Removal flags are monotonic for one observer generation; this observation
+// does not itself authorize resource release or device migration.
+typedef struct {
+    uint64_t abi_version;
+    uint64_t registry_id;
+    uint64_t observer_generation;
+    uint64_t event_sequence;
+    uint32_t event_kind;
+    uint32_t present;
+    uint32_t removal_requested;
+    uint32_t removed;
+    uint32_t observer_active;
+    uint32_t initial_membership;
+    uint32_t observer_fault;
+    uint32_t source_bits;
+} GlacierMetalDeviceLifecycle;
+
+// Immutable per-context source identity. The 256-bit context nonce provides
+// restart freshness beyond the u64 observer-generation reset discriminator.
+typedef struct {
+    uint64_t abi_version;
+    uint64_t registry_id;
+    uint64_t observer_generation;
+    uint64_t context_nonce[4];
+} GlacierMetalDeviceLifecycleSourceIdentity;
+
+// The Metal notification block captures this ARC-owned object and never the
+// malloc-owned GlacierMetalContext. MTLRemoveDeviceObserver releases the block
+// before the context drops its final state reference.
+@interface GlacierMetalDeviceLifecycleState : NSObject {
+@public
+    GlacierMetalDeviceLifecycle snapshot;
+    uint64_t active_admissions;
+    uint64_t last_consumed_event_sequence;
+}
+@end
+
+@implementation GlacierMetalDeviceLifecycleState
+@end
+
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
 // Build-isolated test authority. This ABI is compiled only into the
@@ -129,6 +196,8 @@ typedef struct {
     id<MTLComputePipelineState> dequant_pipeline;
     id<MTLComputePipelineState> matmul_pipeline;
     id<MTLComputePipelineState> int4_matvec_pipeline;
+    id<NSObject> device_lifecycle_observer;
+    GlacierMetalDeviceLifecycleState* device_lifecycle_state;
     GlacierMetalBufferAllocation* buffer_allocations;
     GlacierMetalCommandRecord* command_records;
     uint64_t allocation_context_nonce[4];
@@ -311,6 +380,31 @@ _Static_assert(offsetof(GlacierMetalAsyncCompletion, gpu_start_time) == 96,
     "GlacierMetalAsyncCompletion timestamp offset changed");
 _Static_assert(offsetof(GlacierMetalAsyncCompletion, state) == 120,
     "GlacierMetalAsyncCompletion state offset changed");
+_Static_assert(sizeof(GlacierMetalDeviceLifecycle) == 64,
+    "GlacierMetalDeviceLifecycle ABI size changed");
+_Static_assert(offsetof(
+        GlacierMetalDeviceLifecycle,
+        registry_id) == 8,
+    "GlacierMetalDeviceLifecycle registry offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDeviceLifecycle,
+        event_sequence) == 24,
+    "GlacierMetalDeviceLifecycle sequence offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDeviceLifecycle,
+        event_kind) == 32,
+    "GlacierMetalDeviceLifecycle event offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDeviceLifecycle,
+        source_bits) == 60,
+    "GlacierMetalDeviceLifecycle source-bits offset changed");
+_Static_assert(
+    sizeof(GlacierMetalDeviceLifecycleSourceIdentity) == 56,
+    "GlacierMetalDeviceLifecycleSourceIdentity ABI size changed");
+_Static_assert(offsetof(
+        GlacierMetalDeviceLifecycleSourceIdentity,
+        context_nonce) == 24,
+    "GlacierMetalDeviceLifecycleSourceIdentity nonce offset changed");
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
 _Static_assert(sizeof(GlacierMetalTestFaultPlanV1) == 32,
@@ -341,6 +435,420 @@ static int glacier_metal_binding_is_zero(const uint8_t binding[32]) {
     for (size_t index = 0; index < 32; index += 1)
         combined |= binding[index];
     return combined == 0;
+}
+
+static uint64_t glacier_metal_reserve_device_lifecycle_generation(void) {
+    uint64_t result = 0;
+    do {
+        arc4random_buf(&result, sizeof(result));
+    } while (result == 0 || result == UINT64_MAX);
+    return result;
+}
+
+static uint32_t glacier_metal_device_lifecycle_source_for_event(
+    uint32_t event_kind)
+{
+    switch (event_kind) {
+        case GLACIER_METAL_DEVICE_EVENT_INITIAL_MEMBERSHIP:
+            return GLACIER_METAL_DEVICE_SOURCE_INITIAL;
+        case GLACIER_METAL_DEVICE_EVENT_ADDED:
+            return GLACIER_METAL_DEVICE_SOURCE_ADDED;
+        case GLACIER_METAL_DEVICE_EVENT_REMOVAL_REQUESTED:
+            return GLACIER_METAL_DEVICE_SOURCE_REMOVAL_REQUESTED;
+        case GLACIER_METAL_DEVICE_EVENT_REMOVED:
+            return GLACIER_METAL_DEVICE_SOURCE_REMOVED;
+        case GLACIER_METAL_DEVICE_EVENT_COMMAND_BUFFER_REMOVED:
+            return
+                GLACIER_METAL_DEVICE_SOURCE_COMMAND_BUFFER_REMOVED;
+        default:
+            return 0;
+    }
+}
+
+// Source bits are sticky within one observer generation. The effective kind
+// therefore comes from the strongest source ever observed, not necessarily
+// the most recent notification retained in event_kind.
+static uint32_t glacier_metal_device_lifecycle_effective_kind(
+    const GlacierMetalDeviceLifecycle* lifecycle)
+{
+    if (!lifecycle) return 0;
+    const uint32_t bits = lifecycle->source_bits;
+    if (bits &
+        GLACIER_METAL_DEVICE_SOURCE_COMMAND_BUFFER_REMOVED)
+        return
+            GLACIER_METAL_DEVICE_EVENT_COMMAND_BUFFER_REMOVED;
+    if (bits & GLACIER_METAL_DEVICE_SOURCE_REMOVED)
+        return GLACIER_METAL_DEVICE_EVENT_REMOVED;
+    if (bits & GLACIER_METAL_DEVICE_SOURCE_REMOVAL_REQUESTED)
+        return GLACIER_METAL_DEVICE_EVENT_REMOVAL_REQUESTED;
+    if (bits & GLACIER_METAL_DEVICE_SOURCE_ADDED)
+        return GLACIER_METAL_DEVICE_EVENT_ADDED;
+    if (bits & GLACIER_METAL_DEVICE_SOURCE_INITIAL)
+        return GLACIER_METAL_DEVICE_EVENT_INITIAL_MEMBERSHIP;
+    return 0;
+}
+
+static void glacier_metal_device_lifecycle_apply_effective_state(
+    GlacierMetalDeviceLifecycle* lifecycle)
+{
+    if (!lifecycle) return;
+    switch (glacier_metal_device_lifecycle_effective_kind(
+        lifecycle))
+    {
+        case GLACIER_METAL_DEVICE_EVENT_INITIAL_MEMBERSHIP:
+        case GLACIER_METAL_DEVICE_EVENT_ADDED:
+            lifecycle->present = 1;
+            lifecycle->removal_requested = 0;
+            lifecycle->removed = 0;
+            break;
+        case GLACIER_METAL_DEVICE_EVENT_REMOVAL_REQUESTED:
+            lifecycle->present = 0;
+            lifecycle->removal_requested = 1;
+            lifecycle->removed = 0;
+            break;
+        case GLACIER_METAL_DEVICE_EVENT_REMOVED:
+        case GLACIER_METAL_DEVICE_EVENT_COMMAND_BUFFER_REMOVED:
+            lifecycle->present = 0;
+            lifecycle->removal_requested = 1;
+            lifecycle->removed = 1;
+            break;
+        default:
+            lifecycle->observer_fault = 1;
+            lifecycle->present = 0;
+            lifecycle->removal_requested = 1;
+            lifecycle->removed = 1;
+            break;
+    }
+}
+
+static int glacier_metal_device_lifecycle_shape_valid(
+    const GlacierMetalDeviceLifecycle* lifecycle)
+{
+    if (!lifecycle ||
+        lifecycle->abi_version !=
+            GLACIER_METAL_DEVICE_LIFECYCLE_ABI ||
+        lifecycle->registry_id == 0 ||
+        lifecycle->observer_generation == 0 ||
+        lifecycle->event_sequence == 0 ||
+        lifecycle->present > 1 ||
+        lifecycle->removal_requested > 1 ||
+        lifecycle->removed > 1 ||
+        lifecycle->observer_active > 1 ||
+        lifecycle->initial_membership != 1 ||
+        lifecycle->observer_fault > 1 ||
+        lifecycle->source_bits == 0 ||
+        (lifecycle->source_bits &
+            ~GLACIER_METAL_DEVICE_SOURCE_ALL) != 0 ||
+        (lifecycle->source_bits &
+            GLACIER_METAL_DEVICE_SOURCE_INITIAL) == 0)
+        return 0;
+
+    const uint32_t latest_source =
+        glacier_metal_device_lifecycle_source_for_event(
+            lifecycle->event_kind);
+    if (latest_source == 0 ||
+        (lifecycle->source_bits & latest_source) == 0)
+        return 0;
+
+    switch (glacier_metal_device_lifecycle_effective_kind(
+        lifecycle))
+    {
+        case GLACIER_METAL_DEVICE_EVENT_INITIAL_MEMBERSHIP:
+        case GLACIER_METAL_DEVICE_EVENT_ADDED:
+            return lifecycle->present == 1 &&
+                lifecycle->removal_requested == 0 &&
+                lifecycle->removed == 0;
+        case GLACIER_METAL_DEVICE_EVENT_REMOVAL_REQUESTED:
+            return lifecycle->present == 0 &&
+                lifecycle->removal_requested == 1 &&
+                lifecycle->removed == 0;
+        case GLACIER_METAL_DEVICE_EVENT_REMOVED:
+        case GLACIER_METAL_DEVICE_EVENT_COMMAND_BUFFER_REMOVED:
+            return lifecycle->present == 0 &&
+                lifecycle->removal_requested == 1 &&
+                lifecycle->removed == 1;
+        default:
+            return 0;
+    }
+}
+
+// Reserved for lifecycle observer installation/callback integrity failures.
+// Operational Metal exceptions have their own return or callback-fault fields
+// and must never poison an already valid lifecycle source.
+static void glacier_metal_device_lifecycle_observer_fault(
+    GlacierMetalDeviceLifecycleState* state)
+{
+    if (!state) return;
+    @synchronized (state) {
+        if (state->snapshot.observer_active != 0)
+            state->snapshot.observer_fault = 1;
+    }
+}
+
+// Admission linearizes under the lifecycle-state monitor and releases it
+// before any context registry lock, pipeline compilation, command commit, or
+// Metal wait. Work already admitted may settle after a later removal event.
+static int glacier_metal_device_lifecycle_begin_admission(
+    GlacierMetalContext* ctx)
+{
+    if (!ctx) return 1;
+    GlacierMetalDeviceLifecycleState* state =
+        ctx->device_lifecycle_state;
+    if (!state) return 1;
+
+    int result = 1;
+    @synchronized (state) {
+        GlacierMetalDeviceLifecycle* lifecycle = &state->snapshot;
+        const uint32_t effective_kind =
+            glacier_metal_device_lifecycle_effective_kind(
+                lifecycle);
+        if (lifecycle->observer_active != 1 ||
+            lifecycle->observer_fault != 0 ||
+            !glacier_metal_device_lifecycle_shape_valid(
+                lifecycle) ||
+            (effective_kind !=
+                GLACIER_METAL_DEVICE_EVENT_INITIAL_MEMBERSHIP &&
+             effective_kind !=
+                GLACIER_METAL_DEVICE_EVENT_ADDED))
+        {
+            result = 1;
+        } else if (state->active_admissions == UINT64_MAX) {
+            lifecycle->observer_fault = 1;
+            result = 1;
+        } else {
+            state->active_admissions += 1;
+            result = 0;
+        }
+    }
+    return result;
+}
+
+static void glacier_metal_device_lifecycle_end_admission(
+    GlacierMetalContext* ctx)
+{
+    if (!ctx) return;
+    GlacierMetalDeviceLifecycleState* state =
+        ctx->device_lifecycle_state;
+    if (!state) return;
+    @synchronized (state) {
+        if (state->active_admissions == 0) {
+            state->snapshot.observer_fault = 1;
+            return;
+        }
+        state->active_admissions -= 1;
+    }
+}
+
+static void glacier_metal_device_lifecycle_event(
+    GlacierMetalDeviceLifecycleState* state,
+    id<MTLDevice> device,
+    MTLDeviceNotificationName name)
+{
+    if (!state) return;
+    if (!device || !name) {
+        glacier_metal_device_lifecycle_observer_fault(state);
+        return;
+    }
+
+    uint64_t registry_id = 0;
+    uint32_t event_kind = 0;
+    int callback_valid = 1;
+    @try {
+        if (![device
+                respondsToSelector:@selector(registryID)])
+            callback_valid = 0;
+        else
+            registry_id = device.registryID;
+        if (callback_valid) {
+            if ([name
+                    isEqualToString:MTLDeviceWasAddedNotification])
+                event_kind = GLACIER_METAL_DEVICE_EVENT_ADDED;
+            else if ([name isEqualToString:
+                    MTLDeviceRemovalRequestedNotification])
+                event_kind =
+                    GLACIER_METAL_DEVICE_EVENT_REMOVAL_REQUESTED;
+            else if ([name isEqualToString:
+                    MTLDeviceWasRemovedNotification])
+                event_kind =
+                    GLACIER_METAL_DEVICE_EVENT_REMOVED;
+            else
+                callback_valid = 0;
+        }
+    } @catch (NSException* exception) {
+        (void)exception;
+        callback_valid = 0;
+    }
+    if (!callback_valid) {
+        glacier_metal_device_lifecycle_observer_fault(state);
+        return;
+    }
+
+    @synchronized (state) {
+        GlacierMetalDeviceLifecycle* lifecycle = &state->snapshot;
+        if (lifecycle->observer_active == 0 ||
+            registry_id != lifecycle->registry_id)
+            return;
+
+        if (lifecycle->event_sequence == UINT64_MAX) {
+            lifecycle->observer_fault = 1;
+            return;
+        }
+        const uint32_t source =
+            glacier_metal_device_lifecycle_source_for_event(
+                event_kind);
+        if (source == 0) {
+            lifecycle->observer_fault = 1;
+            return;
+        }
+        lifecycle->event_sequence += 1;
+        lifecycle->event_kind = event_kind;
+        lifecycle->source_bits |= source;
+        glacier_metal_device_lifecycle_apply_effective_state(
+            lifecycle);
+    }
+}
+
+static void glacier_metal_device_lifecycle_command_buffer_removed(
+    GlacierMetalDeviceLifecycleState* state)
+{
+    if (!state) return;
+    @synchronized (state) {
+        GlacierMetalDeviceLifecycle* lifecycle = &state->snapshot;
+        if (lifecycle->observer_active == 0)
+            return;
+        if (lifecycle->event_sequence == UINT64_MAX) {
+            lifecycle->observer_fault = 1;
+            return;
+        }
+        lifecycle->event_sequence += 1;
+        lifecycle->event_kind =
+            GLACIER_METAL_DEVICE_EVENT_COMMAND_BUFFER_REMOVED;
+        lifecycle->source_bits |=
+            GLACIER_METAL_DEVICE_SOURCE_COMMAND_BUFFER_REMOVED;
+        glacier_metal_device_lifecycle_apply_effective_state(
+            lifecycle);
+    }
+}
+
+static int glacier_metal_install_device_lifecycle_observer(
+    GlacierMetalContext* ctx)
+{
+    if (!ctx || !ctx->device)
+        return 1;
+    if (@available(macOS 10.13, *)) {
+        const uint64_t observer_generation =
+            glacier_metal_reserve_device_lifecycle_generation();
+        if (observer_generation == 0)
+            return 1;
+
+        uint64_t selected_registry_id = 0;
+        @try {
+            if (![ctx->device
+                    respondsToSelector:@selector(registryID)])
+                return 1;
+            selected_registry_id = ctx->device.registryID;
+        } @catch (NSException* exception) {
+            (void)exception;
+            return 1;
+        }
+        if (selected_registry_id == 0)
+            return 1;
+
+        GlacierMetalDeviceLifecycleState* state =
+            [[GlacierMetalDeviceLifecycleState alloc] init];
+        if (!state) return 1;
+        memset(&state->snapshot, 0, sizeof(state->snapshot));
+        state->active_admissions = 0;
+        state->last_consumed_event_sequence = 0;
+        state->snapshot.abi_version =
+            GLACIER_METAL_DEVICE_LIFECYCLE_ABI;
+        state->snapshot.registry_id = selected_registry_id;
+        state->snapshot.observer_generation =
+            observer_generation;
+        state->snapshot.event_sequence = 1;
+        state->snapshot.event_kind =
+            GLACIER_METAL_DEVICE_EVENT_INITIAL_MEMBERSHIP;
+        state->snapshot.present = 1;
+        state->snapshot.observer_active = 1;
+        state->snapshot.initial_membership = 1;
+        state->snapshot.source_bits =
+            GLACIER_METAL_DEVICE_SOURCE_INITIAL;
+
+        id<NSObject> observer = nil;
+        GlacierMetalDeviceLifecycleState* callback_state = state;
+        NSArray<id<MTLDevice>>* initial_devices = nil;
+        @try {
+            initial_devices =
+                MTLCopyAllDevicesWithObserver(
+                    &observer,
+                    ^(id<MTLDevice> device,
+                        MTLDeviceNotificationName name)
+                    {
+                        @autoreleasepool {
+                            glacier_metal_device_lifecycle_event(
+                                callback_state,
+                                device,
+                                name);
+                        }
+                    });
+        } @catch (NSException* exception) {
+            (void)exception;
+            glacier_metal_device_lifecycle_observer_fault(state);
+        }
+
+        int initial_member_found = 0;
+        @try {
+            for (id<MTLDevice> candidate in initial_devices) {
+                if ([candidate
+                        respondsToSelector:@selector(registryID)] &&
+                    candidate.registryID ==
+                        state->snapshot.registry_id)
+                {
+                    initial_member_found = 1;
+                    break;
+                }
+            }
+        } @catch (NSException* exception) {
+            (void)exception;
+            initial_member_found = 0;
+            glacier_metal_device_lifecycle_observer_fault(state);
+        }
+        if (!observer || !initial_devices ||
+            !initial_member_found)
+        {
+            @synchronized (state) {
+                state->snapshot.observer_active = 0;
+                state->snapshot.observer_fault = 1;
+            }
+            if (observer)
+                MTLRemoveDeviceObserver(observer);
+            return 1;
+        }
+        ctx->device_lifecycle_observer = observer;
+        ctx->device_lifecycle_state = state;
+        return 0;
+    }
+    return 1;
+}
+
+static void glacier_metal_remove_device_lifecycle_observer(
+    GlacierMetalContext* ctx)
+{
+    if (!ctx) return;
+    GlacierMetalDeviceLifecycleState* state =
+        ctx->device_lifecycle_state;
+    id<NSObject> observer = ctx->device_lifecycle_observer;
+    if (state) {
+        @synchronized (state) {
+            state->snapshot.observer_active = 0;
+        }
+    }
+    if (observer) {
+        if (@available(macOS 10.13, *))
+            MTLRemoveDeviceObserver(observer);
+    }
+    ctx->device_lifecycle_observer = nil;
+    ctx->device_lifecycle_state = nil;
 }
 
 static void glacier_metal_command_destroy(
@@ -374,6 +882,16 @@ static int glacier_metal_context_destroy(GlacierMetalContext* ctx) {
         if (allocation->active_command_references != 0)
             return 1;
     }
+    GlacierMetalDeviceLifecycleState* lifecycle_state =
+        ctx->device_lifecycle_state;
+    if (lifecycle_state) {
+        @synchronized (lifecycle_state) {
+            if (lifecycle_state->active_admissions != 0)
+                return 1;
+            lifecycle_state->snapshot.observer_active = 0;
+        }
+    }
+    glacier_metal_remove_device_lifecycle_observer(ctx);
     while (ctx->buffer_allocations) {
         GlacierMetalBufferAllocation* allocation =
             ctx->buffer_allocations;
@@ -564,6 +1082,69 @@ static int glacier_metal_test_exact_physical_success(
 }
 #endif
 
+static int glacier_metal_exact_command_buffer_device_removed(
+    uint32_t command_status,
+    uint32_t error_present,
+    uint32_t error_domain_kind,
+    int64_t error_code,
+    uint32_t property_fault)
+{
+    return property_fault == 0 &&
+        command_status == MTLCommandBufferStatusError &&
+        error_present != 0 &&
+        error_domain_kind ==
+            GLACIER_METAL_ERROR_DOMAIN_COMMAND_BUFFER &&
+        error_code ==
+            (int64_t)MTLCommandBufferErrorDeviceRemoved;
+}
+
+// Observe the exact direct-command terminal properties before callers fold
+// every non-completed result into their legacy generic failure code.
+static int glacier_metal_observe_direct_command_buffer(
+    GlacierMetalContext* ctx,
+    id<MTLCommandBuffer> command_buffer,
+    uint32_t* command_status_out)
+{
+    if (command_status_out) *command_status_out = 0;
+    if (!ctx || !command_buffer || !command_status_out)
+        return 1;
+
+    uint32_t command_status = 0;
+    uint32_t error_present = 0;
+    uint32_t error_domain_kind =
+        GLACIER_METAL_ERROR_DOMAIN_NONE;
+    int64_t error_code = 0;
+    @try {
+        command_status = (uint32_t)command_buffer.status;
+        NSError* error = command_buffer.error;
+        if (error) {
+            error_present = 1;
+            error_code = (int64_t)error.code;
+            error_domain_kind =
+                [error.domain
+                    isEqualToString:MTLCommandBufferErrorDomain]
+                ? GLACIER_METAL_ERROR_DOMAIN_COMMAND_BUFFER
+                : GLACIER_METAL_ERROR_DOMAIN_OTHER;
+        }
+    } @catch (NSException* exception) {
+        (void)exception;
+        return 1;
+    }
+
+    *command_status_out = command_status;
+    if (glacier_metal_exact_command_buffer_device_removed(
+            command_status,
+            error_present,
+            error_domain_kind,
+            error_code,
+            0))
+    {
+        glacier_metal_device_lifecycle_command_buffer_removed(
+            ctx->device_lifecycle_state);
+    }
+    return 0;
+}
+
 // Publish one immutable final snapshot. The completed handler is the normal
 // caller; wait uses this helper only as a fallback if Metal has reached a
 // final status before the handler acquires the registry lock.
@@ -585,17 +1166,11 @@ static void glacier_metal_snapshot_completion_locked(
         GLACIER_METAL_ERROR_DOMAIN_NONE;
     uint32_t error_present = 0;
     uint32_t callback_fault = 0;
+    // Read terminal classification first. Error paths intentionally leave
+    // allocation and GPU timing telemetry unavailable so an exact
+    // device-removed error never triggers another query on the dead device.
     @try {
         command_status = (uint32_t)command_buffer.status;
-        // A completed-handler invocation with any other raw status is
-        // inconsistent but still an observation. Publish it so the portable
-        // layer classifies the command as unknown and retains quarantine
-        // instead of replaying pending forever after the publication fence
-        // has opened.
-        current_allocated_after =
-            ctx->device.currentAllocatedSize;
-        gpu_start_time = command_buffer.GPUStartTime;
-        gpu_end_time = command_buffer.GPUEndTime;
         NSError* error = command_buffer.error;
         if (error) {
             error_present = 1;
@@ -617,6 +1192,22 @@ static void glacier_metal_snapshot_completion_locked(
         error_present = 0;
         callback_fault = 1;
     }
+    if (callback_fault == 0 &&
+        command_status == MTLCommandBufferStatusCompleted)
+    {
+        @try {
+            current_allocated_after =
+                ctx->device.currentAllocatedSize;
+            gpu_start_time = command_buffer.GPUStartTime;
+            gpu_end_time = command_buffer.GPUEndTime;
+        } @catch (NSException* exception) {
+            (void)exception;
+            current_allocated_after = 0;
+            gpu_start_time = 0;
+            gpu_end_time = 0;
+            callback_fault = 1;
+        }
+    }
 
     record->current_allocated_after = current_allocated_after;
     record->gpu_start_time = gpu_start_time;
@@ -626,6 +1217,16 @@ static void glacier_metal_snapshot_completion_locked(
     record->error_domain_kind = error_domain_kind;
     record->error_present = error_present;
     record->callback_fault = callback_fault;
+    if (glacier_metal_exact_command_buffer_device_removed(
+            command_status,
+            error_present,
+            error_domain_kind,
+            error_code,
+            callback_fault))
+    {
+        glacier_metal_device_lifecycle_command_buffer_removed(
+            ctx->device_lifecycle_state);
+    }
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
     if (record->test_fault_plan.abi_version ==
@@ -813,6 +1414,10 @@ GlacierMetalContext* glacier_metal_init(const char* metallib_path) {
         (void)glacier_metal_context_destroy(ctx);
         return NULL;
     }
+    if (glacier_metal_install_device_lifecycle_observer(ctx) != 0) {
+        (void)glacier_metal_context_destroy(ctx);
+        return NULL;
+    }
     do {
         arc4random_buf(
             ctx->allocation_context_nonce,
@@ -850,9 +1455,131 @@ int glacier_metal_deinit(GlacierMetalContext* ctx) {
     return glacier_metal_context_destroy(ctx);
 }
 
+int glacier_metal_device_lifecycle_snapshot(
+    GlacierMetalContext* ctx,
+    GlacierMetalDeviceLifecycle* out)
+{
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        out->abi_version = GLACIER_METAL_DEVICE_LIFECYCLE_ABI;
+    }
+    if (!ctx || !out)
+        return 1;
+    GlacierMetalDeviceLifecycleState* state =
+        ctx->device_lifecycle_state;
+    if (!state)
+        return 2;
+
+    @synchronized (state) {
+        *out = state->snapshot;
+    }
+    return 0;
+}
+
+int glacier_metal_device_lifecycle_source_identity(
+    GlacierMetalContext* ctx,
+    GlacierMetalDeviceLifecycleSourceIdentity* out)
+{
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        out->abi_version =
+            GLACIER_METAL_LIFECYCLE_SOURCE_IDENTITY_ABI;
+    }
+    if (!ctx || !out)
+        return 1;
+    GlacierMetalDeviceLifecycleState* state =
+        ctx->device_lifecycle_state;
+    if (!state ||
+        glacier_metal_nonce_is_zero(
+            ctx->allocation_context_nonce))
+        return 2;
+
+    int result = 0;
+    @synchronized (state) {
+        const GlacierMetalDeviceLifecycle* lifecycle =
+            &state->snapshot;
+        if (lifecycle->observer_active != 1 ||
+            lifecycle->observer_fault != 0 ||
+            !glacier_metal_device_lifecycle_shape_valid(
+                lifecycle))
+        {
+            result = 3;
+        } else {
+            out->registry_id = lifecycle->registry_id;
+            out->observer_generation =
+                lifecycle->observer_generation;
+            memcpy(
+                out->context_nonce,
+                ctx->allocation_context_nonce,
+                sizeof(out->context_nonce));
+        }
+    }
+    return result;
+}
+
+// Consume one exact immutable snapshot sequence. The observer generation and
+// event sequence must still be current, and a sequence can be consumed only
+// once. Snapshot publication itself remains level-triggered and unchanged.
+int glacier_metal_device_lifecycle_consume(
+    GlacierMetalContext* ctx,
+    const GlacierMetalDeviceLifecycle* expected,
+    uint64_t* consumed_event_sequence)
+{
+    if (consumed_event_sequence)
+        *consumed_event_sequence = 0;
+    if (!ctx || !expected || !consumed_event_sequence)
+        return GLACIER_METAL_LIFECYCLE_CONSUME_INVALID;
+    const GlacierMetalDeviceLifecycle expected_copy = *expected;
+    if (!glacier_metal_device_lifecycle_shape_valid(
+            &expected_copy) ||
+        expected_copy.observer_active != 1 ||
+        expected_copy.observer_fault != 0)
+        return GLACIER_METAL_LIFECYCLE_CONSUME_INVALID;
+
+    GlacierMetalDeviceLifecycleState* state =
+        ctx->device_lifecycle_state;
+    if (!state)
+        return GLACIER_METAL_LIFECYCLE_CONSUME_UNAVAILABLE;
+
+    int result = 0;
+    @synchronized (state) {
+        const GlacierMetalDeviceLifecycle* current =
+            &state->snapshot;
+        if (current->observer_active != 1 ||
+            current->observer_fault != 0 ||
+            !glacier_metal_device_lifecycle_shape_valid(current))
+        {
+            result =
+                GLACIER_METAL_LIFECYCLE_CONSUME_UNAVAILABLE;
+        } else if (expected_copy.observer_generation !=
+            current->observer_generation)
+        {
+            result =
+                GLACIER_METAL_LIFECYCLE_CONSUME_GENERATION_MISMATCH;
+        } else if (expected_copy.event_sequence !=
+                current->event_sequence ||
+            expected_copy.event_sequence <=
+                state->last_consumed_event_sequence ||
+            memcmp(
+                &expected_copy,
+                current,
+                sizeof(expected_copy)) != 0)
+        {
+            result = GLACIER_METAL_LIFECYCLE_CONSUME_STALE;
+        } else {
+            state->last_consumed_event_sequence =
+                expected_copy.event_sequence;
+            *consumed_event_sequence =
+                expected_copy.event_sequence;
+        }
+    }
+    return result;
+}
+
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
-int glacier_metal_test_arm_next_completed_as_command_error_v1(
+static int
+glacier_metal_test_arm_next_completed_as_command_error_v1_admitted(
     GlacierMetalContext* ctx,
     GlacierMetalTestFaultPlanV1* out)
 {
@@ -896,6 +1623,31 @@ int glacier_metal_test_arm_next_completed_as_command_error_v1(
         }
     }
     return result;
+}
+
+int glacier_metal_test_arm_next_completed_as_command_error_v1(
+    GlacierMetalContext* ctx,
+    GlacierMetalTestFaultPlanV1* out)
+{
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        out->abi_version =
+            GLACIER_METAL_TEST_FAULT_PLAN_ABI;
+    }
+    if (!ctx) return 1;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return 5;
+    @try {
+        return
+            glacier_metal_test_arm_next_completed_as_command_error_v1_admitted(
+                ctx,
+                out);
+    } @catch (NSException* exception) {
+        (void)exception;
+        return 5;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
 }
 
 int glacier_metal_test_completion_facts_for_binding_v1(
@@ -944,7 +1696,7 @@ int glacier_metal_test_completion_facts_for_binding_v1(
 }
 #endif
 
-int glacier_metal_device_info(
+static int glacier_metal_device_info_admitted(
     GlacierMetalContext* ctx,
     GlacierMetalDeviceInfo* out)
 {
@@ -988,7 +1740,33 @@ int glacier_metal_device_info(
     return 0;
 }
 
-int glacier_metal_allocation_limits(
+int glacier_metal_device_info(
+    GlacierMetalContext* ctx,
+    GlacierMetalDeviceInfo* out)
+{
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        out->abi_version = GLACIER_METAL_DEVICE_INFO_ABI;
+    }
+    if (!ctx) return 1;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return 3;
+    @try {
+        return glacier_metal_device_info_admitted(ctx, out);
+    } @catch (NSException* exception) {
+        (void)exception;
+        if (out) {
+            memset(out, 0, sizeof(*out));
+            out->abi_version =
+                GLACIER_METAL_DEVICE_INFO_ABI;
+        }
+        return 3;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
+}
+
+static int glacier_metal_allocation_limits_admitted(
     GlacierMetalContext* ctx,
     GlacierMetalAllocationLimits* out)
 {
@@ -1017,7 +1795,36 @@ int glacier_metal_allocation_limits(
     return 0;
 }
 
-int glacier_metal_claim_allocation_adapter(
+int glacier_metal_allocation_limits(
+    GlacierMetalContext* ctx,
+    GlacierMetalAllocationLimits* out)
+{
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        out->abi_version =
+            GLACIER_METAL_ALLOCATION_LIMITS_ABI;
+    }
+    if (!ctx) return 1;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return 3;
+    @try {
+        return glacier_metal_allocation_limits_admitted(
+            ctx,
+            out);
+    } @catch (NSException* exception) {
+        (void)exception;
+        if (out) {
+            memset(out, 0, sizeof(*out));
+            out->abi_version =
+                GLACIER_METAL_ALLOCATION_LIMITS_ABI;
+        }
+        return 3;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
+}
+
+static int glacier_metal_claim_allocation_adapter_admitted(
     GlacierMetalContext* ctx,
     GlacierMetalAdapterIdentity* out)
 {
@@ -1042,7 +1849,27 @@ int glacier_metal_claim_allocation_adapter(
     return 0;
 }
 
-int glacier_metal_buffer_create(
+int glacier_metal_claim_allocation_adapter(
+    GlacierMetalContext* ctx,
+    GlacierMetalAdapterIdentity* out)
+{
+    if (out) memset(out, 0, sizeof(*out));
+    if (!ctx) return 1;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return 3;
+    @try {
+        return glacier_metal_claim_allocation_adapter_admitted(
+            ctx,
+            out);
+    } @catch (NSException* exception) {
+        (void)exception;
+        return 3;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
+}
+
+static int glacier_metal_buffer_create_admitted(
     GlacierMetalContext* ctx,
     uint64_t requested_length,
     GlacierMetalBufferToken* out)
@@ -1125,6 +1952,29 @@ int glacier_metal_buffer_create(
         *out = allocation->token;
     }
     return 0;
+}
+
+int glacier_metal_buffer_create(
+    GlacierMetalContext* ctx,
+    uint64_t requested_length,
+    GlacierMetalBufferToken* out)
+{
+    if (out) memset(out, 0, sizeof(*out));
+    if (!ctx) return 1;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return 4;
+    @try {
+        return glacier_metal_buffer_create_admitted(
+            ctx,
+            requested_length,
+            out);
+    } @catch (NSException* exception) {
+        (void)exception;
+        if (out) memset(out, 0, sizeof(*out));
+        return 4;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
 }
 
 int glacier_metal_buffer_info(
@@ -1211,10 +2061,28 @@ int glacier_metal_live_buffer_count(
     return 0;
 }
 
-int glacier_metal_require_int4_matvec_support(
+static int glacier_metal_require_int4_matvec_support_admitted(
     GlacierMetalContext* ctx)
 {
     return glacier_metal_get_int4_matvec_pipeline(ctx) ? 0 : 1;
+}
+
+int glacier_metal_require_int4_matvec_support(
+    GlacierMetalContext* ctx)
+{
+    if (!ctx) return 1;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return 2;
+    @try {
+        return
+            glacier_metal_require_int4_matvec_support_admitted(
+                ctx);
+    } @catch (NSException* exception) {
+        (void)exception;
+        return 2;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
 }
 
 // Dispatch the INT4 → FP16 dequant kernel.
@@ -1223,7 +2091,7 @@ int glacier_metal_require_int4_matvec_support(
 //   out: caller-allocated FP16 buffer (host memory), num_elements * 2 bytes
 //   num_elements: number of weights to decode
 // Returns 0 on success, non-zero on error.
-int glacier_metal_dequant_int4(
+static int glacier_metal_dequant_int4_admitted(
     GlacierMetalContext* ctx,
     const uint8_t* payload,
     uint64_t payload_bytes,
@@ -1288,16 +2156,47 @@ int glacier_metal_dequant_int4(
     [enc endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
-    if (cb.status != MTLCommandBufferStatusCompleted) return 3;
+    uint32_t command_status = 0;
+    if (glacier_metal_observe_direct_command_buffer(
+            ctx,
+            cb,
+            &command_status) != 0 ||
+        command_status != MTLCommandBufferStatusCompleted)
+        return 3;
 
     memcpy(out, out_buf.contents, num_elements * sizeof(uint16_t));
     return 0;
 }
 
+int glacier_metal_dequant_int4(
+    GlacierMetalContext* ctx,
+    const uint8_t* payload,
+    uint64_t payload_bytes,
+    void* out,
+    uint32_t num_elements)
+{
+    if (!ctx) return 1;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return 4;
+    @try {
+        return glacier_metal_dequant_int4_admitted(
+            ctx,
+            payload,
+            payload_bytes,
+            out,
+            num_elements);
+    } @catch (NSException* exception) {
+        (void)exception;
+        return 4;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
+}
+
 // Dispatch matmul_f16_tiled: C[M,N] = A[M,K] × B^T[N,K].
 // A and B are half* (FP16), C is half* output.
 // Returns 0 on success, non-zero on error.
-int glacier_metal_matmul(
+static int glacier_metal_matmul_admitted(
     GlacierMetalContext* ctx,
     const void* A_bytes,     // [M*K] half
     const void* B_bytes,     // [N*K] half (weights, transposed)
@@ -1364,15 +2263,51 @@ int glacier_metal_matmul(
     [enc endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
-    if (cb.status != MTLCommandBufferStatusCompleted) return 4;
+    uint32_t command_status = 0;
+    if (glacier_metal_observe_direct_command_buffer(
+            ctx,
+            cb,
+            &command_status) != 0 ||
+        command_status != MTLCommandBufferStatusCompleted)
+        return 4;
 
     memcpy(C_bytes, c_buf.contents, c_length);
     return 0;
 }
 
+int glacier_metal_matmul(
+    GlacierMetalContext* ctx,
+    const void* A_bytes,
+    const void* B_bytes,
+    void* C_bytes,
+    uint32_t M,
+    uint32_t K,
+    uint32_t N)
+{
+    if (!ctx) return 1;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return 5;
+    @try {
+        return glacier_metal_matmul_admitted(
+            ctx,
+            A_bytes,
+            B_bytes,
+            C_bytes,
+            M,
+            K,
+            N);
+    } @catch (NSException* exception) {
+        (void)exception;
+        return 5;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
+}
+
 // Upload one packed INT4 matrix and its scales once. The returned handle owns
 // reusable activation/output buffers and is valid until explicitly destroyed.
-GlacierMetalInt4Weight* glacier_metal_int4_weight_create(
+static GlacierMetalInt4Weight*
+glacier_metal_int4_weight_create_admitted(
     GlacierMetalContext* ctx,
     const uint8_t* packed,
     uint64_t packed_bytes,
@@ -1395,16 +2330,27 @@ GlacierMetalInt4Weight* glacier_metal_int4_weight_create(
         (GlacierMetalInt4Weight*)calloc(1, sizeof(GlacierMetalInt4Weight));
     if (!weight) return NULL;
 
-    weight->packed = [ctx->device newBufferWithBytes:packed
-                                               length:required_packed
-                                              options:MTLResourceStorageModeShared];
-    weight->scales = [ctx->device newBufferWithBytes:scales
-                                               length:required_scales * sizeof(float)
-                                              options:MTLResourceStorageModeShared];
-    weight->input = [ctx->device newBufferWithLength:(uint64_t)in_features * sizeof(float)
-                                              options:MTLResourceStorageModeShared];
-    weight->output = [ctx->device newBufferWithLength:(uint64_t)out_features * sizeof(float)
-                                               options:MTLResourceStorageModeShared];
+    @try {
+        weight->packed = [ctx->device
+            newBufferWithBytes:packed
+                        length:required_packed
+                       options:MTLResourceStorageModeShared];
+        weight->scales = [ctx->device
+            newBufferWithBytes:scales
+                        length:required_scales * sizeof(float)
+                       options:MTLResourceStorageModeShared];
+        weight->input = [ctx->device
+            newBufferWithLength:
+                (uint64_t)in_features * sizeof(float)
+                         options:MTLResourceStorageModeShared];
+        weight->output = [ctx->device
+            newBufferWithLength:
+                (uint64_t)out_features * sizeof(float)
+                         options:MTLResourceStorageModeShared];
+    } @catch (NSException* exception) {
+        glacier_metal_weight_destroy(weight);
+        @throw exception;
+    }
     if (!weight->packed || !weight->scales || !weight->input || !weight->output) {
         glacier_metal_weight_destroy(weight);
         return NULL;
@@ -1414,6 +2360,37 @@ GlacierMetalInt4Weight* glacier_metal_int4_weight_create(
     weight->group_size = group_size;
     weight->group_shift = __builtin_ctz(group_size);
     return weight;
+}
+
+GlacierMetalInt4Weight* glacier_metal_int4_weight_create(
+    GlacierMetalContext* ctx,
+    const uint8_t* packed,
+    uint64_t packed_bytes,
+    const float* scales,
+    uint64_t scale_count,
+    uint32_t group_size,
+    uint32_t in_features,
+    uint32_t out_features)
+{
+    if (!ctx) return NULL;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return NULL;
+    @try {
+        return glacier_metal_int4_weight_create_admitted(
+            ctx,
+            packed,
+            packed_bytes,
+            scales,
+            scale_count,
+            group_size,
+            in_features,
+            out_features);
+    } @catch (NSException* exception) {
+        (void)exception;
+        return NULL;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
 }
 
 void glacier_metal_int4_weight_destroy(GlacierMetalInt4Weight* weight) {
@@ -1439,7 +2416,8 @@ int glacier_metal_int4_weight_read_output(
 // Submit using four exact resources owned by the native allocation registry.
 // Host output is intentionally absent. The returned command token owns the
 // command buffer and all four buffers until exact terminal finalization.
-int glacier_metal_int4_registered_buffers_submit_async(
+static int
+glacier_metal_int4_registered_buffers_submit_async_admitted(
     GlacierMetalContext* ctx,
     const GlacierMetalBufferToken* packed_token,
     const GlacierMetalBufferToken* scales_token,
@@ -1828,6 +2806,64 @@ int glacier_metal_int4_registered_buffers_submit_async(
     return 0;
 }
 
+int glacier_metal_int4_registered_buffers_submit_async(
+    GlacierMetalContext* ctx,
+    const GlacierMetalBufferToken* packed_token,
+    const GlacierMetalBufferToken* scales_token,
+    const GlacierMetalBufferToken* input_token,
+    const GlacierMetalBufferToken* output_token,
+    const uint8_t* packed,
+    uint64_t packed_bytes,
+    const float* scales,
+    uint64_t scale_count,
+    const float* input,
+    uint64_t input_count,
+    uint32_t group_size,
+    uint32_t in_features,
+    uint32_t out_features,
+    const uint8_t submission_binding[32],
+    GlacierMetalAsyncSubmission* submission)
+{
+    if (submission) {
+        memset(submission, 0, sizeof(*submission));
+        submission->abi_version =
+            GLACIER_METAL_ASYNC_SUBMISSION_ABI;
+    }
+    if (!ctx) return 1;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return 5;
+    @try {
+        return
+            glacier_metal_int4_registered_buffers_submit_async_admitted(
+                ctx,
+                packed_token,
+                scales_token,
+                input_token,
+                output_token,
+                packed,
+                packed_bytes,
+                scales,
+                scale_count,
+                input,
+                input_count,
+                group_size,
+                in_features,
+                out_features,
+                submission_binding,
+                submission);
+    } @catch (NSException* exception) {
+        (void)exception;
+        if (submission) {
+            memset(submission, 0, sizeof(*submission));
+            submission->abi_version =
+                GLACIER_METAL_ASYNC_SUBMISSION_ABI;
+        }
+        return 5;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
+}
+
 int glacier_metal_registered_dispatch_poll(
     GlacierMetalContext* ctx,
     const GlacierMetalCommandToken* token,
@@ -2088,7 +3124,7 @@ int glacier_metal_int4_registered_output_read(
     return 0;
 }
 
-int glacier_metal_int4_matvec_observed(
+static int glacier_metal_int4_matvec_observed_admitted(
     GlacierMetalContext* ctx,
     GlacierMetalInt4Weight* weight,
     const float* input,
@@ -2136,15 +3172,62 @@ int glacier_metal_int4_matvec_observed(
     [enc endEncoding];
     [cb commit];
     [cb waitUntilCompleted];
+    uint32_t command_status = 0;
+    if (glacier_metal_observe_direct_command_buffer(
+            ctx,
+            cb,
+            &command_status) != 0)
+        return 3;
+    if (observation)
+        observation->command_status = command_status;
+    if (command_status != MTLCommandBufferStatusCompleted)
+        return 3;
     if (observation) {
         observation->current_allocated_after =
             ctx->device.currentAllocatedSize;
         observation->gpu_start_time = cb.GPUStartTime;
         observation->gpu_end_time = cb.GPUEndTime;
-        observation->command_status = (uint32_t)cb.status;
     }
-    if (cb.status != MTLCommandBufferStatusCompleted) return 3;
     return 0;
+}
+
+int glacier_metal_int4_matvec_observed(
+    GlacierMetalContext* ctx,
+    GlacierMetalInt4Weight* weight,
+    const float* input,
+    uint64_t input_count,
+    float* output,
+    uint64_t output_count,
+    GlacierMetalDispatchObservation* observation)
+{
+    if (observation) {
+        memset(observation, 0, sizeof(*observation));
+        observation->abi_version =
+            GLACIER_METAL_DISPATCH_ABI;
+    }
+    if (!ctx) return 1;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return 4;
+    @try {
+        return glacier_metal_int4_matvec_observed_admitted(
+            ctx,
+            weight,
+            input,
+            input_count,
+            output,
+            output_count,
+            observation);
+    } @catch (NSException* exception) {
+        (void)exception;
+        if (observation) {
+            memset(observation, 0, sizeof(*observation));
+            observation->abi_version =
+                GLACIER_METAL_DISPATCH_ABI;
+        }
+        return 4;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
 }
 
 int glacier_metal_int4_matvec_dispatch(

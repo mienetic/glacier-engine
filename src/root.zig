@@ -14,6 +14,8 @@ pub const resource_bank = core.resource_bank;
 pub const platform_capabilities = core.platform_capabilities;
 pub const device_capability_contract =
     core.device_capability_contract;
+pub const device_lifecycle_contract =
+    core.device_lifecycle_contract;
 pub const device_allocation_lease =
     core.device_allocation_lease;
 pub const device_allocation_lease_tree =
@@ -90,6 +92,8 @@ pub const ResourceBank = core.ResourceBank;
 pub const PlatformCapabilities = core.PlatformCapabilities;
 pub const DeviceCapabilityContract =
     core.DeviceCapabilityContract;
+pub const DeviceLifecycleContract =
+    core.DeviceLifecycleContract;
 pub const DeviceAllocationLease =
     core.DeviceAllocationLease;
 pub const DeviceAllocationLeaseTree =
@@ -157,12 +161,16 @@ pub const int4_matmul = @import("backends/cpu/int4_matmul.zig");
 pub const metal_backend = @import("backends/metal/backend.zig");
 pub const metal_allocation_adapter =
     @import("backends/metal/allocation_adapter.zig");
+pub const metal_device_lifecycle_adapter =
+    @import("backends/metal/device_lifecycle_adapter.zig");
 pub const metal_native_observer =
     @import("backends/metal/native_observer.zig");
 
 pub const CpuBackend = cpu_backend.CpuBackend;
 pub const MetalBackend = metal_backend.MetalBackend;
 pub const MetalAllocationAdapter = metal_allocation_adapter;
+pub const MetalDeviceLifecycleAdapter =
+    metal_device_lifecycle_adapter;
 pub const MetalNativeObserver = metal_native_observer;
 
 /// Build-time flag from build.zig. When false, the Metal bindings are still

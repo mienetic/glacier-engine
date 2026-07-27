@@ -37,6 +37,31 @@ before the first stable release.
 
 ### Added
 
+- Added **Device-loss Observation V1**. Pointer-free observations and
+  transition receipts bind source-specific native or synthetic evidence to an
+  exact prior present inventory and derive only a capability- and
+  policy-preserving newer `unavailable` or `lost` entry. A 40-byte
+  `SourceCursorV1`, 280-byte `ObservationV1`, and 272-byte
+  `TransitionReceiptV1` bind the native source instance and increasing source
+  sequence; gaps are valid and callers must durably and atomically commit the
+  advanced cursor. Native Metal contexts install a selected-device observer,
+  retain initial device identity, derive a monotone effective state from a
+  sticky source bitset, claim each exact native snapshot at most once, and use
+  one admission lease for work plus live `deviceInfo` and `allocationLimits`
+  property reads, so operations admitted before loss may settle while later
+  admission fails closed. The source instance binds a 256-bit per-context
+  nonce, observer-generation reset discriminator, registry ID, and stable
+  device/placement identities rather than relying on the 64-bit generation
+  alone. Source mismatch rejects; fresh adoption requires a new inventory and
+  exact initial sequence 1 and grants no recovery or migration.
+  Portable Zig/Python tests cover canonical roots, replay, mutation,
+  substitution, and synthetic transitions; the built-in M1 gate proves
+  observer installation and an unchanged no-event snapshot around real GPU
+  work. A real native two-thread consumption race requires one consumed and one
+  stale result while the snapshot remains readable; it does not reproduce
+  physical removal. Hashes verify composition and integrity, not authenticity
+  or attestation. Physical callback campaigns,
+  safe dead-resource recovery, fresh selection, and migration remain open.
 - Added a build-isolated native Metal fault/race gate. A real four-buffer INT4
   command completes physically on the executing GPU before the private shim
   publishes a one-shot command-buffer error overlay. The gate retains separate

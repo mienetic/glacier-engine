@@ -203,8 +203,22 @@ the contract boundary. Its pointer-free sidecar binds the original quarantine,
 ticket, native error projection, submission, object set, and pin to a core
 `terminal_failure` with no output root. Authorization is replayable but cannot
 release ownership; the same retained `.error` must survive Bank settlement and
-exact native finalization before private state is cleared. This is not physical
-device-loss detection or automatic migration.
+exact native finalization before private state is cleared. This sidecar is not
+the separate source-bound device-loss classifier and grants no automatic
+migration.
+
+The **Device-loss Observation V1** follow-up is complete as a separate,
+non-authoritative evidence layer. A portable fixed-width observation binds one
+source and evidence class to an exact prior present inventory entry and
+recomputed inventory root. Its transition receipt preserves capability and
+policy rank while moving that entry into a strictly newer `unavailable` or
+`lost` epoch; deterministic selection excludes the successor. The native Metal
+context installs `MTLCopyAllDevicesWithObserver`, validates initial membership
+for the selected registry ID, retains removal-requested and removed as distinct
+sticky notification facts, and publishes a separate sticky
+command-buffer-removed fact only from exact native status/domain/code
+`5/1/11` before any test overlay. New allocation/dispatch work then fails
+closed. Synthetic injected evidence remains explicitly synthetic.
 
 The **build-isolated native Metal fault/race gate** is complete. A second,
 non-installed shim build contains the test-only controls, while the production
@@ -220,7 +234,8 @@ pin or finalizing the native record twice.
 
 Small next slices:
 
-- add physical device-loss inspection and safe recovery;
+- exercise removal-requested and removed callbacks on removable hardware;
+- add safe dead-resource recovery without inferring release or reclaim;
 - add general quarantine clearing, fresh selection under a new receipt, and
   explicit migration policy;
 - add multi-slot queue scheduling and multi-device partitioning;
@@ -249,7 +264,10 @@ as `.error`; it keeps those fact planes separate and exports no fault controls
 from the production shim. The race and settlement retry are real host-thread
 and coordinator transitions, but the published error is deliberately injected.
 It is not a physical driver, hardware, or device-loss failure and is not
-performance evidence. Physical device-loss inspection/recovery, general
+performance evidence. Separately, the built-in M1 development-host lifecycle
+gate proves observer installation, initial selected-device membership, and an
+unchanged no-event snapshot around one real successful Metal command. It did
+not exercise a physical removal callback. Safe dead-resource recovery, general
 quarantine clearing, fresh selection and migration, multi-slot scheduling,
 physical residency, direct device telemetry, additional GPU backends,
 performance evidence, and broader native OS/device matrices remain

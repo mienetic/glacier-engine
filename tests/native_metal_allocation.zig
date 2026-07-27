@@ -15,8 +15,10 @@ const testing = std.testing;
 const allocation = engine.device_allocation_lease;
 const tree_allocation = engine.device_allocation_lease_tree;
 const device = engine.device_capability_contract;
+const lifecycle = engine.device_lifecycle_contract;
 const resource = engine.resource_bank;
 const metal_allocation = engine.metal_allocation_adapter;
+const metal_lifecycle = engine.metal_device_lifecycle_adapter;
 
 const Fixture = struct {
     inventory: [1]device.DeviceInventoryEntryV1,
@@ -199,7 +201,8 @@ fn makeDispatchFixture(
             device.FeatureBitsV1.dispatch |
             device.FeatureBitsV1.completion_fence |
             device.FeatureBitsV1.persistent_weights |
-            device.FeatureBitsV1.allocated_bytes_observation,
+            device.FeatureBitsV1.allocated_bytes_observation |
+            device.FeatureBitsV1.device_loss_signal,
         .largest_single_allocation_bytes = manifest.largest_charged_bytes,
         .total_device_bytes = manifest.total_charged_bytes,
         .queue_slots = 1,
@@ -607,6 +610,64 @@ test "real Metal buffers obey receipt charge release and generation reuse" {
             0,
             1 * 1024 * 1024,
         );
+    const lifecycle_inventory =
+        [_]device.DeviceInventoryEntryV1{inventory_entry};
+    const lifecycle_claim =
+        try metal_lifecycle.observeInitialLifecycleV1(
+            &backend,
+            inventory_entry,
+            &lifecycle_inventory,
+        );
+    const lifecycle_observation = lifecycle_claim.observation;
+    try testing.expectEqual(
+        lifecycle.ObservationSourceV1.initial_membership,
+        lifecycle_observation.source,
+    );
+    try testing.expectEqual(
+        lifecycle.EvidenceClassV1.native,
+        lifecycle_observation.evidence_class,
+    );
+    try testing.expectEqual(
+        device.InventoryStateV1.present,
+        lifecycle_observation.observed_state,
+    );
+    const initial_cursor: lifecycle.SourceCursorV1 = .{
+        .source_instance_sha256 = lifecycle_observation.source_instance_sha256,
+        .last_sequence = 0,
+    };
+    try lifecycle.validateObservationV1(
+        lifecycle_observation,
+        inventory_entry,
+        &lifecycle_inventory,
+        initial_cursor,
+    );
+    try testing.expectEqualDeep(
+        lifecycle_claim.advanced_cursor,
+        try lifecycle.validateAndAdvanceObservationV1(
+            lifecycle_observation,
+            inventory_entry,
+            &lifecycle_inventory,
+            initial_cursor,
+        ),
+    );
+    const readable_after_claim =
+        try backend.deviceLifecycleSnapshot();
+    try testing.expectEqual(
+        lifecycle_observation.source_sequence,
+        readable_after_claim.event_sequence,
+    );
+    try testing.expectError(
+        lifecycle.Error.StaleObservation,
+        metal_lifecycle.observeInitialLifecycleV1(
+            &backend,
+            inventory_entry,
+            &lifecycle_inventory,
+        ),
+    );
+    try testing.expectEqualDeep(
+        readable_after_claim,
+        try backend.deviceLifecycleSnapshot(),
+    );
 
     var native_slots =
         [_]metal_allocation.MetalAllocationSlotV1{.{}} ** 3;
