@@ -14,7 +14,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Model | `.glacier`, `.glrt`, loader, prepared model | Validate source and execution layouts before use |
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Device selection | `DeviceCapabilityV1`, canonical inventory, plan-bound requirement, selection receipt | Choose one compatible present CPU or accelerator deterministically before admission without granting allocation, queue, dispatch, or publication authority |
-| Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, async ticket/quarantine evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, and bind per-adapter single-flight Metal completion to exact Bank settlement; the native gate creates, dispatches through, and directly inspects real buffers without claiming residency or general scheduling |
+| Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, async ticket/quarantine/failure evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, bind per-adapter single-flight Metal completion to exact Bank settlement, and authorize one exact quarantined native `.error` as core `terminal_failure` without releasing ownership early; the native gate creates, dispatches through, and directly inspects real buffers without claiming residency, device-loss recovery, or general scheduling |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b/W4b-c/W4b-d | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, uncertain external-action handoff, generation-fenced fake reconciliation, and durable storage faults without presenting logical steps as native performance |
@@ -931,13 +931,20 @@ and the bounded INT4 path provides per-adapter single-flight async completion:
 `MetalAsyncDispatchTicketV1`, exact submit replay, separate poll/wait, pending
 ownership retention, exact completed-output binding, and native finalization
 only after Bank settlement. Ambiguous, unknown, invalid, or command-error
-observations retain sticky nonterminal quarantine rather than manufacturing a
-terminal. Portable tests and the independent Python oracle are contract models
+observations first retain sticky nonterminal quarantine rather than
+manufacturing a terminal. The exact retained command-buffer `.error` case has
+a separate pointer-free sidecar that can authorize core `terminal_failure`
+with no output root; quarantine, pin, charge, buffers, and native command stay
+live through Bank settlement, then the private callback exact-finalizes the
+same `.error` before private clearing. Ambiguity and unknown completion remain
+sticky. Portable Zig and independent Python tests model the error contract
 without GPU work; the native macOS gate uses a real `MTLDevice`, real
-`MTLBuffer` resources, and a CPU output oracle. Physical residency, device-loss
-inspection/reconciliation, quarantine clearing and fresh selection, multi-slot
-and multi-device scheduling, telemetry, performance, retained driver/device
-ranges, and native support on cross-compiled targets remain open. See
+`MTLBuffer` resources, and a CPU output oracle as a successful-command
+regression, not an induced hardware-error test. Physical residency, physical
+device-loss inspection/recovery, general quarantine clearing, fresh selection
+and migration, multi-slot and multi-device scheduling, telemetry, performance,
+retained driver/device ranges, and native support on cross-compiled targets
+remain open. See
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md) and
 [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md).
 

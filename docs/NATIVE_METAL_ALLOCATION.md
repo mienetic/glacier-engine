@@ -77,27 +77,38 @@ and output roots. Rejection may inspect the selected device and live resource
 roles, but it performs no upload, constructs or submits no command buffer, and
 does not increase the backend's completed-command count.
 
-Submitted, rejected, and cancelled terminals all use the same core settlement.
-For an exact completed submission, the adapter retains the native submission
-and immutable completion snapshot even after it authorizes terminal evidence.
-The coordinator first consumes the private Bank pin, then invokes the private
+Submitted, reconciled-failure, rejected, and cancelled terminals all use the
+same core settlement. For an exact completed submission or exact retained
+command-buffer error, the adapter retains the native submission and immutable
+completion snapshot even after it authorizes terminal evidence. The
+coordinator first consumes the private Bank pin, then invokes the private
 settlement callback with the exact permit and completion. Under the adapter
-lock, that callback finalizes the exact native command record after Bank
-settlement, clears prepared request, reserved intent, bound pin, async slot,
-and terminal state together, and records an exact replay tombstone. Rejection
-and cancellation have no native command record to finalize. Callback failure
-leaves core settlement pending for exact retry. Public
+lock, that callback finalizes the exact native `.completed` or `.error` command
+record after Bank settlement, then clears prepared request, reserved intent,
+bound pin, async slot, quarantine, and terminal state together and records an
+exact replay tombstone. Rejection and cancellation have no native command
+record to finalize. Callback failure leaves core settlement pending for exact
+retry. Public
 `acknowledgeDispatchCompletion` only verifies that tombstone idempotently; it
 does not grant authority or clear state. A changed attempt is rejected while
 settlement is pending, and a consumed pin is stale.
 
-Ambiguous submission, unknown completion, invalid completed evidence, and
-terminal command errors instead install sticky nonterminal
+Ambiguous submission, unknown completion, invalid completed evidence, and an
+exact terminal command error first install sticky nonterminal
 `MetalAsyncDispatchQuarantineV1`. Quarantine retains the adapter slot, native
-record, four buffer references, pin, and charge and cannot be converted into a
-core terminal. This slice detects quarantine but does not inspect or reconcile
-device loss, clear quarantine, or perform fresh device selection. It also does
-not provide multi-slot scheduling.
+record, four buffer references, pin, and charge. Only a quarantine containing
+the exact retained native command-buffer `.error` snapshot can be explicitly
+reconciled: `MetalAsyncDispatchTerminalFailureV1` binds that snapshot,
+submission, ticket, quarantine, object set, and pin to a core
+`terminal_failure` with no output root. Authorization alone releases nothing;
+the quarantine, pin, charge, buffers, and native command remain live through
+Bank settlement. The private callback then exact-finalizes the same native
+`.error` record before clearing private state.
+
+Submission ambiguity, unknown completion, and invalid completion still lack
+terminal authority and remain sticky. This slice does not detect physical
+device loss, infer a terminal from device state, migrate work, select a fresh
+device, or provide multi-slot scheduling.
 
 The native hard gate now exercises both coordinators. The LeaseTree path uses
 distinct admission/lease/recovery/terminal evidence and keeps its allocation
@@ -166,7 +177,8 @@ ordered allocation records, and strong references to the same four
 binding replay. Output read and finalize additionally require the byte-for-byte
 immutable terminal snapshot; finalize unlinks the record and drops all four
 active-command references exactly once. None of these native handles enters
-`MetalAsyncDispatchTicketV1` or `MetalAsyncDispatchQuarantineV1`.
+`MetalAsyncDispatchTicketV1`, `MetalAsyncDispatchQuarantineV1`, or
+`MetalAsyncDispatchTerminalFailureV1`.
 
 In assertion-enabled builds, backend deinitialization asserts that its
 Zig-side live weight/allocation counters and the independently maintained shim
@@ -177,10 +189,14 @@ by the adapter; it does not prove when a driver reclaims physical pages.
 ## Evidence and tests
 
 The portable allocation contract and fake-adapter failure campaign are
-deterministic contract models. Zig fake-adapter/state tests cover reservation,
-abort, pin, terminal, and settlement boundaries; the independent Python oracle
-rebuilds the fixed roots and substitution failures. They open no `MTLDevice`,
-create no `MTLBuffer`, and execute no GPU command.
+deterministic contract models. Zig state tests cover reservation, abort, pin,
+terminal, rejected-settlement retention, exact command-error authorization,
+mutation rejection, and replay boundaries; the independent Python mirror
+rebuilds the fixed
+failure and terminal roots and rejects substitutions. They open no
+`MTLDevice`, create no `MTLBuffer`, and execute no GPU command. These tests
+model an exact native `.error` projection; they do not induce or claim a
+hardware or driver error.
 
 The native allocation hard gate is different. On the executing macOS host it:
 
@@ -201,7 +217,8 @@ The native allocation hard gate is different. On the executing macOS host it:
   with the CPU oracle, proves the native command is still retained before
   settlement, completes private Bank settlement and exact native
   finalization, verifies the compatibility acknowledgement, and then returns
-  all ownership to zero;
+  all ownership to zero. This is a successful-command regression and does not
+  induce a native command-buffer error;
 - uses adapter-issued, generation-fenced request roots and reserved intents for
   separate real-resource pins describing invalid geometry, host length,
   duplicate role binding, and foreign live-role mapping; proves rejection may
@@ -263,21 +280,29 @@ native allocation gate now includes one correctness-only pinned dispatch for
 that exact profile; it is not yet a generic allocation-only Metal profile or a
 performance gate.
 
+The next native validation slice is a build-isolated Metal fault/race harness.
+It must record physical observations separately from injected overlays and
+must export no fault-control symbols or test hooks in production artifacts.
+
 ## Claim boundary
 
 This slice establishes direct Metal resource creation, per-object inspection,
 adapter ownership, logical precharge, release ordering, and generation-fenced
 reuse plus per-adapter single-flight async completion delivery on the host that
-executes the hard gate. It does not establish:
+executes the hard gate. It separately establishes the pointer-free
+authorization and pre-settlement retention contract for exact terminal command
+errors through pure Zig and independent Python mirror tests; the native gate is
+a successful-command regression. It
+does not establish:
 
 - physical residency or reclaim completion;
 - heap allocation or fragmentation accounting;
-- device-loss inspection or reconciliation, quarantine clearing, or fresh
-  selection;
+- physical device-loss inspection or recovery, general quarantine clearing,
+  fresh selection, or automatic migration;
 - multi-slot queue scheduling, a global native queue-depth limit, queue-depth
   evidence, or transfer ownership;
-- post-submit quarantine reconciliation or inferred terminal state after
-  ambiguous queue ownership;
+- inferred terminal state or quarantine reconciliation after ambiguous queue
+  ownership or unknown completion;
 - multiple simultaneously materialized coordinator leases per adapter context;
 - multi-device partitioning;
 - additional GPU backends;

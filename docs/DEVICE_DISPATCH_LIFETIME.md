@@ -37,10 +37,12 @@ LeaseTreeDispatchPinV1
         │                                                              │
         └── submit once ── MetalAsyncDispatchTicketV1                  │
                                 ├── pending ── retain pin and charge    │
-                                ├── sticky quarantine ── retain both   │
-                                └── exact completed snapshot            │
-                                             │                         │
-                                             └── submitted terminal ───┤
+                                ├── ambiguity / unknown ── sticky       │
+                                │                         quarantine    │
+                                ├── exact .error ── quarantine          │
+                                │       └── exact reconciliation ──────┤
+                                │                   terminal_failure   │
+                                └── exact .completed ── succeeded ─────┤
                                                                        ▼
                                                        validate terminal state
                                                                        │
@@ -48,7 +50,7 @@ LeaseTreeDispatchPinV1
                                                                        │
                                                        private settlement callback
                                                                        │
-                                           exact native finalize for submitted work
+                                           exact native terminal finalization
                                                                        │
                                                        clear state / replay tombstone
                                                                        │
@@ -204,14 +206,22 @@ before settlement, but the native record and all four buffer references still
 remain retained.
 
 Ambiguous submission, unknown completion, invalid completed evidence, and an
-exact terminal command error produce sticky
+exact terminal command error first produce sticky
 `MetalAsyncDispatchQuarantineV1`. This pointer-free value is bound to the
 ticket, selected device and placement, native disposition/status, and bounded
-error classification. It is diagnostic nonterminal evidence: it never becomes
-`DispatchTerminalEvidenceV1`, never clears the adapter slot, and never releases
-the pin, charge, native command, or buffers. The current slice detects and
-retains quarantine; it does not inspect for device loss, reconcile the command,
-clear quarantine, or select a fresh device.
+error classification. Quarantine itself is diagnostic nonterminal evidence:
+it never becomes `DispatchTerminalEvidenceV1`, never clears the adapter slot,
+and never releases the pin, charge, native command, or buffers.
+
+The exact command-buffer-error case has one narrower authority.
+`reconcileTerminalCommandFailureObserved` takes the original live lease, pin,
+and ticket, then authorizes only if the retained quarantine, submission, and
+immutable native `.error` snapshot still match. It returns
+`MetalAsyncDispatchTerminalFailureV1` and a matching core `terminal_failure`;
+the sidecar binds the exact native error projection and backend-completion root
+while the core terminal has no output root. This authorization does not clear
+quarantine or release ownership. Ambiguous submission, unknown completion, and
+invalid completion cannot use this path and remain sticky.
 
 ### Complete
 
@@ -229,12 +239,14 @@ Only after those checks does ResourceBank consume the private permit. Core then
 constructs `LeaseTreeDispatchCompletionV1` and invokes the adapter's private
 settlement callback with the exact pin, terminal, completion, Bank permit, and
 Bank completion. For submitted Metal work, the callback validates the retained
-ticket and exact immutable completed snapshot, finalizes that exact native
-record only after the Bank settlement, then clears the prepared request,
-intent, pin, terminal, async slot, and unresolved state and records an exact
-replay tombstone while holding the adapter lock. No-submit terminals have no
-native record to finalize. Core frees its dispatch slot only after the callback
-succeeds.
+ticket and exact immutable `.completed` or `.error` snapshot, finalizes that
+exact native record only after Bank settlement, then clears the prepared
+request, intent, pin, terminal, async slot, quarantine, and unresolved state
+and records an exact replay tombstone while holding the adapter lock. A
+reconciled error therefore retains the quarantine, pin, charge, command, and
+four buffers until the Bank settlement is committed and the same native
+`.error` record is finalized. No-submit terminals have no native record to
+finalize. Core frees its dispatch slot only after the callback succeeds.
 
 If the private callback fails after Bank release, the coordinator retains a
 `settlement_pending` slot and retries the exact confirmation; it does not
@@ -268,7 +280,10 @@ safe:
 Pending, timed-out, unknown, quarantined, and device-lost observations
 intentionally have no terminal enum value. They retain the pin until a separate
 backend authority can reconcile a safe terminal state. A timeout is not
-completion, and `MetalAsyncDispatchQuarantineV1` is not terminal evidence.
+completion, and `MetalAsyncDispatchQuarantineV1` is not terminal evidence. The
+implemented Metal error path instead constructs a separately validated
+`MetalAsyncDispatchTerminalFailureV1` from one exact retained `.error`
+snapshot; it does not promote quarantine by itself.
 
 The submission, backend-completion, and output roots must match the outcome:
 
@@ -302,14 +317,15 @@ The contract prefers a retained allocation over an unsafe release:
 
 This can intentionally retain resources after ambiguous device failure.
 The Metal path now detects ambiguous or unsafe post-submit observations and
-records sticky quarantine, but device-loss inspection and reconciliation,
-quarantine clearing, and fresh selection remain later authorities. This
-contract does not manufacture a successful completion from missing evidence.
-The Metal helper can settle only an exact completed submitted command, exact
-pure cancellation, or canonical deterministic geometry/host-length/role
-rejection before submission. Ambiguous submissions, invalid or unknown
-completion, command errors, timeouts, and device loss remain pinned until a
-separate reconciliation authority proves a safe terminal state.
+records sticky quarantine. One exact retained native command-buffer `.error`
+may now be authorized as core `terminal_failure` and settled without publishing
+output; it remains pinned until Bank settlement and exact native error
+finalization both succeed. Device-loss inspection and recovery, general
+quarantine clearing, fresh selection, and automatic migration remain later
+authorities. This contract does not manufacture a successful completion from
+missing evidence. Ambiguous submissions, invalid or unknown completion,
+timeouts, and device loss remain pinned until a separate reconciliation
+authority proves a safe terminal state.
 Other adapters that cannot prove a safe pre-submit rejection must likewise
 retain the pin rather than infer one.
 
@@ -322,12 +338,13 @@ device:
    fixtures to cover intent reservation/abort, callback drift, failure,
    tamper, stale-token, copied-permit, slot-reuse, pre-submit terminal,
    settlement retry, out-of-order completion, acquire-versus-retire races, and
-   the pointer-free async ticket/quarantine shapes and roots. They call no
-   Metal API and execute no GPU work.
+   the pointer-free async ticket/quarantine shapes and exact terminal-error
+   reconciliation roots. They call no Metal API and execute no GPU work.
 2. **Host integration tests** exercise the real ResourceBank, LeaseTree,
    mutexes, fixed storage, publication fences, and thread scheduling without
    claiming accelerator execution. The independent Python oracle separately
-   rebuilds ABI roots and substitution checks; it also executes no GPU work.
+   rebuilds the exact error-sidecar, backend-completion, and core-terminal roots
+   plus substitution checks; it also executes no GPU work.
 3. **Native Metal tests** open a real `MTLDevice`, create and inspect real Shared
    `MTLBuffer` resources, dispatch the exact registry-owned buffers on the
    selected device, separate submit from completion observation, authenticate
@@ -337,7 +354,10 @@ device:
    cases retain the same real context and resource ownership but intentionally
    submit zero GPU commands. Rejection may inspect those resources;
    cancellation is native-free. All three paths settle through the same private
-   callback and return ownership to zero.
+   callback and return ownership to zero. The native command path is a
+   successful-command regression; terminal-error evidence is covered by the
+   pure Zig and independent Python contract models, not by inducing or claiming
+   a hardware or driver failure.
 
 Cross-compilation proves source and build portability only. It is never
 reported as native operating-system, driver, or accelerator evidence.
@@ -364,8 +384,9 @@ tools/zig-with-ephemeral-cache.sh build \
 
 Contributor-ready extensions include:
 
-- device-loss inspection and safe terminal reconciliation;
-- explicit quarantine clearing and fresh device selection;
+- physical device-loss inspection and safe recovery;
+- general quarantine clearing, fresh device selection, and explicit migration
+  policy;
 - bounded multi-slot completion scheduling without weakening adapter identity;
 - additive snapshot capacity and active-pin telemetry;
 - separate published-reference authority for outputs retained after dispatch;

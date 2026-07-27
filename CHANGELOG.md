@@ -45,11 +45,19 @@ before the first stable release.
   Exact completed output is bound to the command, submission, snapshot, and
   output role, and the native record is finalized only from the private
   callback after core Bank settlement. Ambiguous submission, unknown or
-  invalid completion, and terminal command errors produce sticky nonterminal
-  `MetalAsyncDispatchQuarantineV1` evidence rather than a manufactured core
-  terminal. This does not impose a global native queue-depth limit and does not
-  provide a multi-slot scheduler, device-loss inspection or reconciliation,
-  quarantine clearing, or fresh device selection.
+  invalid completion, and terminal command errors first produce sticky
+  nonterminal `MetalAsyncDispatchQuarantineV1` evidence rather than a
+  manufactured core terminal. An exact retained command-buffer `.error` may
+  now authorize `MetalAsyncDispatchTerminalFailureV1` plus core
+  `terminal_failure` with no output root. Quarantine, pin, charge, buffers, and
+  command remain live through Bank settlement; the private callback then
+  exact-finalizes that same native `.error` before clearing state. Ambiguous,
+  unknown, and invalid completion remain sticky. Pure Zig and independent
+  Python tests cover roots, mutation rejection, replay, and pre-settlement
+  retention; the real Metal gate remains a successful-command regression and
+  does not induce a hardware error. This does not impose a global native
+  queue-depth limit or provide physical device-loss recovery, general
+  quarantine clearing, fresh selection, migration, or a multi-slot scheduler.
 - Added the first Stage-5
   [device capability and selection contract](docs/DEVICE_CAPABILITY_CONTRACT.md).
   Portable pointer-free `DeviceCapabilityV1`, inventory-entry, requirement,

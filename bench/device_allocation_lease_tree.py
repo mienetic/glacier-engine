@@ -26,6 +26,11 @@ implementation, so shared self-hashing cannot hide field-order or width drift.
 public transcript with a single-flight async ticket and all four deliberately
 nonterminal quarantine reason shapes.  Native handles and implementation
 status are not consulted.
+
+``make_metal_async_dispatch_terminal_failure_campaign`` then projects one
+exact command-buffer error into adapter-authorized terminal-failure evidence.
+It mirrors the public fixed-width transcript while deliberately omitting
+private native handles.
 """
 
 from __future__ import annotations
@@ -72,6 +77,9 @@ METAL_MATVEC_DISPATCH_REQUEST_ABI = 0x474D_4452_0000_0001
 METAL_PRE_SUBMIT_REJECTION_ABI = 0x474D_5052_0000_0001
 METAL_ASYNC_DISPATCH_TICKET_ABI = 0x474D_4154_0000_0001
 METAL_ASYNC_DISPATCH_QUARANTINE_ABI = 0x474D_4151_0000_0001
+METAL_ASYNC_DISPATCH_TERMINAL_FAILURE_ABI = (
+    0x474D_4146_0000_0001
+)
 
 TREE_DOMAIN = b"glacier-resource-lease-tree-v1\x00"
 NODE_DOMAIN = b"glacier-resource-lease-node-v1\x00"
@@ -124,6 +132,15 @@ METAL_ASYNC_DISPATCH_TICKET_DOMAIN = (
 )
 METAL_ASYNC_DISPATCH_QUARANTINE_DOMAIN = (
     b"glacier-metal-async-dispatch-quarantine-v1\x00"
+)
+METAL_ASYNC_NATIVE_TERMINAL_DOMAIN = (
+    b"glacier-metal-async-native-terminal-v1\x00"
+)
+METAL_ASYNC_FAILURE_BACKEND_COMPLETION_DOMAIN = (
+    b"glacier-metal-async-failure-backend-completion-v1\x00"
+)
+METAL_ASYNC_DISPATCH_TERMINAL_FAILURE_DOMAIN = (
+    b"glacier-metal-async-dispatch-terminal-failure-v1\x00"
 )
 
 LEASE_TREE_INTEGRITY_DOMAIN = 0x6C65_6173_6574_7231
@@ -605,6 +622,38 @@ class MetalAsyncDispatchQuarantineV1:
     error_domain_kind: int = METAL_ASYNC_ERROR_NATIVE_BRIDGE
     error_code_bits: int = 0
     quarantine_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
+class MetalAsyncDispatchTerminalFailureV1:
+    abi_version: int = METAL_ASYNC_DISPATCH_TERMINAL_FAILURE_ABI
+    outcome: int = DISPATCH_TERMINAL_FAILURE
+    quarantine: MetalAsyncDispatchQuarantineV1 = (
+        MetalAsyncDispatchQuarantineV1()
+    )
+    dispatch_generation: int = 0
+    allocation_count: int = 0
+    materialized_bytes: int = 0
+    pin_sha256: Digest = ZERO_DIGEST
+    backend_object_set_sha256: Digest = ZERO_DIGEST
+    current_allocated_before: int = 0
+    current_allocated_after: int = 0
+    gpu_start_time_bits: int = 0
+    gpu_end_time_bits: int = 0
+    native_command_status: int = 0
+    error_domain_kind: int = METAL_ASYNC_ERROR_COMMAND_BUFFER
+    error_code_bits: int = 0
+    native_terminal_sha256: Digest = ZERO_DIGEST
+    submission_sha256: Digest = ZERO_DIGEST
+    backend_completion_sha256: Digest = ZERO_DIGEST
+    terminal_sha256: Digest = ZERO_DIGEST
+    failure_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
+class MetalAsyncDispatchTerminalFailureResultV1:
+    failure: MetalAsyncDispatchTerminalFailureV1
+    terminal: DispatchTerminalEvidenceV1
 
 
 @dataclass(frozen=True)
@@ -3339,6 +3388,319 @@ def validate_metal_async_dispatch_quarantine_replay_v1(
         )
 
 
+def metal_async_dispatch_native_terminal_root_v1(
+    value: MetalAsyncDispatchTerminalFailureV1,
+) -> Digest:
+    return _hash(
+        METAL_ASYNC_NATIVE_TERMINAL_DOMAIN,
+        (
+            _le(value.abi_version),
+            _digest(value.quarantine.ticket.ticket_sha256),
+            _digest(value.quarantine.quarantine_sha256),
+            _le(
+                value.current_allocated_before,
+                value.current_allocated_after,
+                value.gpu_start_time_bits,
+                value.gpu_end_time_bits,
+                value.native_command_status,
+                value.error_domain_kind,
+                value.error_code_bits,
+            ),
+        ),
+    )
+
+
+def metal_async_dispatch_failure_backend_completion_root_v1(
+    value: MetalAsyncDispatchTerminalFailureV1,
+) -> Digest:
+    return _hash(
+        METAL_ASYNC_FAILURE_BACKEND_COMPLETION_DOMAIN,
+        (
+            _le(value.abi_version),
+            _digest(value.submission_sha256),
+            _digest(value.native_terminal_sha256),
+        ),
+    )
+
+
+def metal_async_dispatch_terminal_failure_root_v1(
+    value: MetalAsyncDispatchTerminalFailureV1,
+) -> Digest:
+    return _hash(
+        METAL_ASYNC_DISPATCH_TERMINAL_FAILURE_DOMAIN,
+        (
+            _le(value.abi_version, value.outcome),
+            _digest(value.quarantine.quarantine_sha256),
+            _le(
+                value.dispatch_generation,
+                value.allocation_count,
+                value.materialized_bytes,
+            ),
+            _digest(value.pin_sha256),
+            _digest(value.backend_object_set_sha256),
+            _le(
+                value.current_allocated_before,
+                value.current_allocated_after,
+                value.gpu_start_time_bits,
+                value.gpu_end_time_bits,
+                value.native_command_status,
+                value.error_domain_kind,
+                value.error_code_bits,
+            ),
+            _digest(value.native_terminal_sha256),
+            _digest(value.submission_sha256),
+            _digest(value.backend_completion_sha256),
+            _digest(value.terminal_sha256),
+        ),
+    )
+
+
+def validate_metal_async_dispatch_terminal_failure_v1(
+    value: MetalAsyncDispatchTerminalFailureV1,
+    terminal: DispatchTerminalEvidenceV1,
+) -> None:
+    """Validate the pointer-free failure sidecar and core terminal."""
+
+    validate_metal_async_dispatch_quarantine_v1(value.quarantine)
+    validate_dispatch_terminal_v1(terminal)
+    _u64s(
+        value.abi_version,
+        value.outcome,
+        value.dispatch_generation,
+        value.allocation_count,
+        value.materialized_bytes,
+        value.current_allocated_before,
+        value.current_allocated_after,
+        value.gpu_start_time_bits,
+        value.gpu_end_time_bits,
+        value.native_command_status,
+        value.error_domain_kind,
+        value.error_code_bits,
+    )
+    roots = (
+        value.pin_sha256,
+        value.backend_object_set_sha256,
+        value.native_terminal_sha256,
+        value.submission_sha256,
+        value.backend_completion_sha256,
+        value.terminal_sha256,
+        value.failure_sha256,
+    )
+    for root in roots:
+        _digest(root)
+    if (
+        value.abi_version
+        != METAL_ASYNC_DISPATCH_TERMINAL_FAILURE_ABI
+        or value.outcome != DISPATCH_TERMINAL_FAILURE
+        or value.quarantine.reason
+        != METAL_ASYNC_TERMINAL_COMMAND_ERROR
+        or value.dispatch_generation == 0
+        or value.dispatch_generation
+        != value.quarantine.ticket.dispatch_generation
+        or value.allocation_count != 4
+        or value.materialized_bytes < value.allocation_count
+        or value.pin_sha256 == ZERO_DIGEST
+        or value.pin_sha256
+        != value.quarantine.ticket.pin_sha256
+        or value.backend_object_set_sha256 == ZERO_DIGEST
+        or value.current_allocated_before == 0
+        or value.native_command_status
+        != METAL_ASYNC_COMMAND_STATUS_ERROR
+        or value.error_domain_kind
+        != METAL_ASYNC_ERROR_COMMAND_BUFFER
+        or value.error_code_bits == 0
+        or value.error_code_bits
+        != value.quarantine.error_code_bits
+        or value.native_terminal_sha256 == ZERO_DIGEST
+        or value.native_terminal_sha256
+        != metal_async_dispatch_native_terminal_root_v1(value)
+        or value.submission_sha256 == ZERO_DIGEST
+        or value.submission_sha256
+        != value.quarantine.ticket.submission_sha256
+        or value.backend_completion_sha256 == ZERO_DIGEST
+        or value.backend_completion_sha256
+        != metal_async_dispatch_failure_backend_completion_root_v1(
+            value
+        )
+        or value.terminal_sha256 == ZERO_DIGEST
+        or value.terminal_sha256 != terminal.terminal_sha256
+        or terminal.outcome != DISPATCH_TERMINAL_FAILURE
+        or terminal.dispatch_generation != value.dispatch_generation
+        or terminal.dispatch_authority_sha256
+        != value.quarantine.ticket.dispatch_authority_sha256
+        or terminal.queue_authority_sha256
+        != value.quarantine.ticket.queue_authority_sha256
+        or terminal.pin_sha256 != value.pin_sha256
+        or terminal.dispatch_request_sha256
+        != value.quarantine.ticket.request.request_sha256
+        or terminal.submission_sha256 != value.submission_sha256
+        or terminal.backend_completion_sha256
+        != value.backend_completion_sha256
+        or terminal.output_sha256 != ZERO_DIGEST
+        or value.failure_sha256 == ZERO_DIGEST
+        or value.failure_sha256
+        != metal_async_dispatch_terminal_failure_root_v1(value)
+    ):
+        raise ContractError(
+            "invalid Metal async dispatch terminal failure"
+        )
+
+
+def validate_metal_async_dispatch_terminal_failure_for_dispatch_v1(
+    value: MetalAsyncDispatchTerminalFailureV1,
+    pin: LeaseTreeDispatchPinV1,
+    terminal: DispatchTerminalEvidenceV1,
+) -> None:
+    """Bind the public projection to its exact portable dispatch pin.
+
+    Native command-token authentication remains intentionally outside this
+    independent pointer-free oracle.
+    """
+
+    validate_metal_async_dispatch_terminal_failure_v1(
+        value,
+        terminal,
+    )
+    validate_metal_async_dispatch_ticket_for_dispatch_v1(
+        value.quarantine.ticket,
+        value.quarantine.ticket.ticket_generation,
+        value.quarantine.ticket.request,
+        pin,
+        value.submission_sha256,
+    )
+    validate_dispatch_terminal_for_pin_v1(terminal, pin)
+    if (
+        value.dispatch_generation != pin.dispatch_generation
+        or value.allocation_count != pin.allocation_count
+        or value.materialized_bytes != pin.pinned_device_bytes
+        or value.backend_object_set_sha256
+        != pin.backend_object_set_sha256
+        or value.error_code_bits
+        != value.quarantine.error_code_bits
+    ):
+        raise ContractError(
+            "Metal async terminal failure does not bind dispatch pin"
+        )
+
+
+def validate_metal_async_dispatch_terminal_failure_replay_v1(
+    value: MetalAsyncDispatchTerminalFailureV1,
+    terminal: DispatchTerminalEvidenceV1,
+    retained: MetalAsyncDispatchTerminalFailureV1,
+    retained_terminal: DispatchTerminalEvidenceV1,
+) -> None:
+    """Require an idempotent replay of exact retained public evidence."""
+
+    validate_metal_async_dispatch_terminal_failure_v1(
+        value,
+        terminal,
+    )
+    validate_metal_async_dispatch_terminal_failure_v1(
+        retained,
+        retained_terminal,
+    )
+    if value != retained or terminal != retained_terminal:
+        raise ContractError(
+            "Metal async terminal failure replay is not exact"
+        )
+
+
+def make_metal_async_dispatch_terminal_failure_v1(
+    quarantine: MetalAsyncDispatchQuarantineV1,
+    pin: LeaseTreeDispatchPinV1,
+    current_allocated_before: int,
+    current_allocated_after: int,
+    gpu_start_time_bits: int,
+    gpu_end_time_bits: int,
+) -> MetalAsyncDispatchTerminalFailureResultV1:
+    """Seal a fixed-width command-error projection without native handles."""
+
+    validate_metal_async_dispatch_quarantine_v1(quarantine)
+    validate_dispatch_pin_v1(pin)
+    validate_metal_async_dispatch_ticket_for_dispatch_v1(
+        quarantine.ticket,
+        quarantine.ticket.ticket_generation,
+        quarantine.ticket.request,
+        pin,
+        quarantine.ticket.submission_sha256,
+    )
+    _u64s(
+        current_allocated_before,
+        current_allocated_after,
+        gpu_start_time_bits,
+        gpu_end_time_bits,
+    )
+    if (
+        quarantine.reason
+        != METAL_ASYNC_TERMINAL_COMMAND_ERROR
+        or quarantine.native_command_status
+        != METAL_ASYNC_COMMAND_STATUS_ERROR
+        or quarantine.native_completion_observed != 1
+        or quarantine.error_domain_kind
+        != METAL_ASYNC_ERROR_COMMAND_BUFFER
+        or quarantine.error_code_bits == 0
+    ):
+        raise ContractError(
+            "quarantine is not an exact terminal command error"
+        )
+    failure = MetalAsyncDispatchTerminalFailureV1(
+        quarantine=quarantine,
+        dispatch_generation=pin.dispatch_generation,
+        allocation_count=pin.allocation_count,
+        materialized_bytes=pin.pinned_device_bytes,
+        pin_sha256=pin.pin_sha256,
+        backend_object_set_sha256=pin.backend_object_set_sha256,
+        current_allocated_before=current_allocated_before,
+        current_allocated_after=current_allocated_after,
+        gpu_start_time_bits=gpu_start_time_bits,
+        gpu_end_time_bits=gpu_end_time_bits,
+        native_command_status=quarantine.native_command_status,
+        error_domain_kind=quarantine.error_domain_kind,
+        error_code_bits=quarantine.error_code_bits,
+        submission_sha256=quarantine.ticket.submission_sha256,
+    )
+    failure = replace(
+        failure,
+        native_terminal_sha256=(
+            metal_async_dispatch_native_terminal_root_v1(failure)
+        ),
+    )
+    failure = replace(
+        failure,
+        backend_completion_sha256=(
+            metal_async_dispatch_failure_backend_completion_root_v1(
+                failure
+            )
+        ),
+    )
+    terminal = make_dispatch_terminal_v1(
+        pin,
+        DISPATCH_TERMINAL_FAILURE,
+        failure.submission_sha256,
+        failure.backend_completion_sha256,
+        ZERO_DIGEST,
+    )
+    failure = replace(
+        failure,
+        terminal_sha256=terminal.terminal_sha256,
+    )
+    failure = replace(
+        failure,
+        failure_sha256=(
+            metal_async_dispatch_terminal_failure_root_v1(failure)
+        ),
+    )
+    validate_metal_async_dispatch_terminal_failure_for_dispatch_v1(
+        failure,
+        pin,
+        terminal,
+    )
+    return MetalAsyncDispatchTerminalFailureResultV1(
+        failure=failure,
+        terminal=terminal,
+    )
+
+
 def metal_matvec_pre_submit_rejection_root_v1(
     rejection: MetalMatvecPreSubmitRejectionV1,
 ) -> Digest:
@@ -5130,4 +5492,45 @@ def make_metal_async_dispatch_evidence_campaign(
         device_sha256=device_sha256,
         placement_sha256=placement_sha256,
         quarantines=quarantines,
+    )
+
+
+@dataclass(frozen=True)
+class MetalAsyncDispatchTerminalFailureCampaignV1:
+    evidence: MetalAsyncDispatchEvidenceCampaignV1
+    quarantine: MetalAsyncDispatchQuarantineV1
+    failure: MetalAsyncDispatchTerminalFailureV1
+    terminal: DispatchTerminalEvidenceV1
+
+
+def make_metal_async_dispatch_terminal_failure_campaign(
+) -> MetalAsyncDispatchTerminalFailureCampaignV1:
+    """Build one fixed pointer-free command-error terminal transcript."""
+
+    evidence = make_metal_async_dispatch_evidence_campaign()
+    error_code_bits = U64_MAX - 72  # Two's-complement projection of -73.
+    quarantine = make_metal_async_dispatch_quarantine_v1(
+        evidence.ticket,
+        evidence.device_sha256,
+        evidence.placement_sha256,
+        METAL_ASYNC_TERMINAL_COMMAND_ERROR,
+        METAL_ASYNC_TERMINAL_STATUS_OBSERVED,
+        METAL_ASYNC_COMMAND_STATUS_ERROR,
+        1,
+        METAL_ASYNC_ERROR_COMMAND_BUFFER,
+        error_code_bits,
+    )
+    result = make_metal_async_dispatch_terminal_failure_v1(
+        quarantine,
+        evidence.pin,
+        4_096,
+        4_352,
+        0x4029_0000_0000_0000,
+        0x4029_8000_0000_0000,
+    )
+    return MetalAsyncDispatchTerminalFailureCampaignV1(
+        evidence=evidence,
+        quarantine=quarantine,
+        failure=result.failure,
+        terminal=result.terminal,
     )

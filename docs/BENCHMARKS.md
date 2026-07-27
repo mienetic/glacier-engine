@@ -193,10 +193,14 @@ consumes the private Bank pin before that callback clears adapter state and
 records the replay tombstone; public acknowledgement only verifies it.
 
 These native checks establish ownership and per-adapter single-flight async
-completion delivery for that host run. The portable Zig/Python checks are
-deterministic contract models and execute no GPU work. Neither layer measures
-throughput or latency or establishes residency, multi-slot queue scheduling,
-device-loss reconciliation, or physical reclaim behavior.
+completion delivery for that successful host run. Separate portable Zig/Python
+checks authorize one exact quarantined command-buffer `.error` as core
+`terminal_failure`, reject substitutions, and retain ownership before
+settlement; they are deterministic contract models and execute no GPU work.
+The native gate does not induce or claim a hardware or driver error. Neither
+layer measures throughput or latency or establishes residency, multi-slot queue
+scheduling, physical device-loss recovery, automatic migration, or physical
+reclaim behavior.
 
 All commands should normally use `-Doptimize=ReleaseSafe` when validating
 contracts. None requires a real credential. Portable evidence is

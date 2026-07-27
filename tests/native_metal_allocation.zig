@@ -1841,6 +1841,17 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
         .completed => |result| result,
         .quarantined => return error.TestUnexpectedResult,
     };
+    try testing.expect(
+        adapter.currentAsyncDispatchQuarantine() == null,
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchUnresolved,
+        adapter.reconcileTerminalCommandFailureObserved(
+            lease,
+            pin,
+            async_ticket,
+        ),
+    );
     const replayed =
         try adapter.pollMatvecInt4AsyncObserved(
             lease,
@@ -1914,6 +1925,9 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
     try testing.expectEqual(
         @as(u64, 0),
         try backend.nativeLiveCommandCount(),
+    );
+    try testing.expect(
+        adapter.currentAsyncDispatchQuarantine() == null,
     );
     try tree_allocation.validateDispatchCompletionForPinV1(
         completion,

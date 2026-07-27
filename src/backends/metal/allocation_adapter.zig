@@ -37,6 +37,8 @@ pub const async_dispatch_ticket_abi: u64 =
     0x474d_4154_0000_0001;
 pub const async_dispatch_quarantine_abi: u64 =
     0x474d_4151_0000_0001;
+pub const async_dispatch_terminal_failure_abi: u64 =
+    0x474d_4146_0000_0001;
 
 const authority_domain =
     "glacier-metal-allocation-authority-v1\x00";
@@ -78,6 +80,12 @@ const async_dispatch_ticket_domain =
     "glacier-metal-single-flight-async-ticket-v1\x00";
 const async_dispatch_quarantine_domain =
     "glacier-metal-async-dispatch-quarantine-v1\x00";
+const async_dispatch_native_terminal_domain =
+    "glacier-metal-async-native-terminal-v1\x00";
+const async_dispatch_failure_backend_completion_domain =
+    "glacier-metal-async-failure-backend-completion-v1\x00";
+const async_dispatch_terminal_failure_domain =
+    "glacier-metal-async-dispatch-terminal-failure-v1\x00";
 const completed_command_buffer_status: u32 = 4;
 pub const async_native_command_status_unobserved: u64 =
     std.math.maxInt(u64);
@@ -262,7 +270,9 @@ pub const MetalAsyncDispatchTicketV1 = struct {
 /// Sticky, explicitly nonterminal classification of one async command whose
 /// allocation pin must remain retained. These reasons describe only the
 /// observed submission/completion boundary. They do not assert physical
-/// device loss and cannot be converted into DispatchTerminalEvidenceV1.
+/// device loss and do not alone authorize `DispatchTerminalEvidenceV1`.
+/// Only an exact `terminal_command_error` plus the adapter's matching private
+/// native snapshot may be reconciled into terminal-failure evidence.
 pub const MetalAsyncDispatchQuarantineReasonV1 = enum(u64) {
     submission_ambiguous = 1,
     /// The adapter could not authenticate a completion snapshot. Raw status
@@ -310,6 +320,45 @@ pub const MetalAsyncDispatchQuarantineV1 = struct {
     quarantine_sha256: Digest = allocation.zero_digest,
 };
 
+/// Adapter-authorized terminal-failure evidence for one exact quarantined
+/// command-buffer error. The native command token remains private, while the
+/// retained ticket, quarantine, and exact fixed-width error projection bind
+/// this sidecar to the original submission. This value does not assert
+/// physical device loss, residency loss, or successful output publication.
+pub const MetalAsyncDispatchTerminalFailureV1 = struct {
+    abi_version: u64 =
+        async_dispatch_terminal_failure_abi,
+    outcome: lease_tree.DispatchTerminalOutcomeV1 =
+        .terminal_failure,
+    quarantine: MetalAsyncDispatchQuarantineV1 = .{},
+    dispatch_generation: u64 = 0,
+    allocation_count: u64 = 0,
+    materialized_bytes: u64 = 0,
+    pin_sha256: Digest = allocation.zero_digest,
+    backend_object_set_sha256: Digest =
+        allocation.zero_digest,
+    current_allocated_before: u64 = 0,
+    current_allocated_after: u64 = 0,
+    gpu_start_time_bits: u64 = 0,
+    gpu_end_time_bits: u64 = 0,
+    native_command_status: u64 = 0,
+    error_domain_kind: MetalAsyncErrorDomainKindV1 =
+        .command_buffer,
+    error_code_bits: u64 = 0,
+    native_terminal_sha256: Digest =
+        allocation.zero_digest,
+    submission_sha256: Digest = allocation.zero_digest,
+    backend_completion_sha256: Digest =
+        allocation.zero_digest,
+    terminal_sha256: Digest = allocation.zero_digest,
+    failure_sha256: Digest = allocation.zero_digest,
+};
+
+pub const MetalAsyncDispatchTerminalFailureResultV1 = struct {
+    failure: MetalAsyncDispatchTerminalFailureV1,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+};
+
 /// Adapter-authorized diagnostic evidence for one exact pre-submit failure.
 /// The matching terminal is always `rejected_before_submit` with zero
 /// submission, backend-completion, and output roots.
@@ -334,6 +383,7 @@ pub const MetalMatvecPreSubmitRejectionResultV1 = struct {
 
 const AuthorizedDispatchEvidenceV1 = union(enum) {
     submitted: MetalLeaseTreeDispatchObservationV1,
+    terminal_failure: MetalAsyncDispatchTerminalFailureV1,
     rejected_before_submit: MetalMatvecPreSubmitRejectionV1,
     cancelled_before_submit: MetalMatvecDispatchRequestV1,
 };
@@ -996,6 +1046,106 @@ pub const MetalAllocationAdapterV1 = struct {
         return self.async_quarantine;
     }
 
+    /// Convert one exact retained command-buffer error into core
+    /// `terminal_failure` authority. The quarantine, native command, pin, and
+    /// charge remain live until the coordinator confirms the matching Bank
+    /// settlement through the adapter's private callback.
+    ///
+    /// Submission ambiguity, unknown completion, and invalid completion are
+    /// intentionally not accepted here: those states still lack exact
+    /// terminal authority and must remain quarantined.
+    pub fn reconcileTerminalCommandFailureObserved(
+        self: *MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        ticket: MetalAsyncDispatchTicketV1,
+    ) Error!MetalAsyncDispatchTerminalFailureResultV1 {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const pending = self.async_dispatch orelse {
+            if (self.settlement_tombstone) |settled| {
+                if (std.meta.eql(settled.pin, pin))
+                    return Error.StaleObject;
+            }
+            return Error.DispatchUnresolved;
+        };
+        try validateMetalAsyncDispatchTicketForDispatchV1(
+            ticket,
+            pending.ticket.ticket_generation,
+            pending.request,
+            pending.pin,
+            pending.draft,
+        );
+        if (!self.dispatch_unresolved or
+            !std.meta.eql(ticket, pending.ticket) or
+            !std.meta.eql(lease, pending.lease) or
+            !std.meta.eql(pin, pending.pin))
+            return Error.InvalidDispatchEvidence;
+
+        const quarantine = self.async_quarantine orelse
+            return Error.DispatchUnresolved;
+        try validateMetalAsyncDispatchQuarantineForTicketV1(
+            quarantine,
+            ticket,
+            self.device_sha256,
+            self.placement_sha256,
+        );
+        if (quarantine.reason != .terminal_command_error)
+            return Error.DispatchUnresolved;
+        const native_completion =
+            pending.native_completion orelse
+            return Error.InvalidDispatchEvidence;
+
+        if (self.authorized_terminal) |authorized| {
+            if (!std.meta.eql(authorized.pin, pin) or
+                !std.meta.eql(
+                    authorized.request,
+                    pending.request,
+                ))
+                return Error.InvalidDispatchEvidence;
+            const failure = switch (authorized.evidence) {
+                .terminal_failure => |value| value,
+                .submitted,
+                .rejected_before_submit,
+                .cancelled_before_submit,
+                => return Error.InvalidDispatchEvidence,
+            };
+            try validateMetalAsyncDispatchTerminalFailureForDispatchV1(
+                failure,
+                pin,
+                pending.draft,
+                pending.native_submission,
+                native_completion,
+                authorized.terminal,
+            );
+            return .{
+                .failure = failure,
+                .terminal = authorized.terminal,
+            };
+        }
+
+        const result =
+            try makeMetalAsyncDispatchTerminalFailureV1(
+                quarantine,
+                pin,
+                pending.draft,
+                pending.native_submission,
+                native_completion,
+            );
+        self.authorized_terminal = .{
+            .pin = pin,
+            .request = pending.request,
+            .terminal = result.terminal,
+            .evidence = .{
+                .terminal_failure = result.failure,
+            },
+        };
+        return result;
+    }
+
     /// Synchronous compatibility wrapper over the single native async path.
     /// Native ownership still remains live after this method returns success;
     /// only the coordinator's private post-Bank callback finalizes it.
@@ -1082,6 +1232,71 @@ pub const MetalAllocationAdapterV1 = struct {
         return quarantine;
     }
 
+    fn installTerminalCommandErrorQuarantineUnlocked(
+        self: *MetalAllocationAdapterV1,
+        ticket: MetalAsyncDispatchTicketV1,
+        native_completion: metal.MetalAsyncCompletion,
+    ) Error!MetalAsyncDispatchQuarantineV1 {
+        const pending = self.async_dispatch orelse
+            return Error.InvalidDispatchEvidence;
+        metal.validateMetalAsyncSubmission(
+            pending.native_submission,
+        ) catch return Error.InvalidDispatchEvidence;
+        metal.validateMetalAsyncCompletion(
+            native_completion,
+        ) catch return Error.InvalidDispatchEvidence;
+        const native_error_bits: u64 =
+            @bitCast(native_completion.error_code);
+        if (native_completion.state != .@"error" or
+            native_completion.command_status !=
+                async_native_command_status_error or
+            native_completion.error_present != 1 or
+            native_completion.callback_fault != 0 or
+            native_completion.error_domain_kind !=
+                .command_buffer or
+            native_error_bits == 0 or
+            !std.meta.eql(
+                pending.native_submission.token,
+                native_completion.token,
+            ) or
+            !std.mem.eql(
+                u8,
+                &pending.native_submission
+                    .submission_binding,
+                &native_completion.submission_binding,
+            ) or
+            !std.mem.eql(
+                u8,
+                &pending.native_submission
+                    .submission_binding,
+                &ticket.ticket_sha256,
+            ))
+            return Error.InvalidDispatchEvidence;
+
+        if (pending.native_completion) |exact| {
+            if (!std.meta.eql(exact, native_completion))
+                return Error.InvalidDispatchEvidence;
+        }
+        const quarantine =
+            try self.installAsyncQuarantineUnlocked(
+                ticket,
+                .terminal_command_error,
+                .terminal_status_observed,
+                native_completion.command_status,
+                1,
+                .command_buffer,
+                native_error_bits,
+            );
+        if (quarantine.reason != .terminal_command_error or
+            quarantine.error_code_bits != native_error_bits)
+            return Error.InvalidDispatchEvidence;
+        if (self.async_dispatch) |*retained| {
+            if (retained.native_completion == null)
+                retained.native_completion = native_completion;
+        } else return Error.InvalidDispatchEvidence;
+        return quarantine;
+    }
+
     fn observeMatvecInt4AsyncUnlocked(
         self: *MetalAllocationAdapterV1,
         lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
@@ -1124,6 +1339,7 @@ pub const MetalAllocationAdapterV1 = struct {
         if (self.authorized_terminal) |authorized| {
             const observation = switch (authorized.evidence) {
                 .submitted => |value| value,
+                .terminal_failure,
                 .rejected_before_submit,
                 .cancelled_before_submit,
                 => return Error.InvalidDispatchEvidence,
@@ -1201,35 +1417,62 @@ pub const MetalAllocationAdapterV1 = struct {
             .@"error" => {
                 const native_error_bits: u64 =
                     @bitCast(native_completion.error_code);
+                const native_submission_valid = blk: {
+                    metal.validateMetalAsyncSubmission(
+                        pending.native_submission,
+                    ) catch break :blk false;
+                    break :blk true;
+                };
+                const native_completion_valid = blk: {
+                    metal.validateMetalAsyncCompletion(
+                        native_completion,
+                    ) catch break :blk false;
+                    break :blk true;
+                };
                 const exact_command_error =
+                    native_submission_valid and
+                    native_completion_valid and
                     native_completion.error_present == 1 and
+                    native_completion.callback_fault == 0 and
+                    native_completion.command_status ==
+                        async_native_command_status_error and
                     native_completion.error_domain_kind ==
                         .command_buffer and
-                    native_error_bits != 0;
-                const quarantine =
-                    if (exact_command_error)
-                        try self.installAsyncQuarantineUnlocked(
-                            ticket,
-                            .terminal_command_error,
-                            .terminal_status_observed,
-                            native_completion.command_status,
-                            1,
-                            .command_buffer,
-                            native_error_bits,
-                        )
-                    else
-                        try self.installAsyncQuarantineUnlocked(
-                            ticket,
-                            .completion_unknown,
-                            .submitted,
-                            native_completion.command_status,
-                            1,
-                            .native_bridge,
-                            if (native_error_bits != 0)
-                                native_error_bits
-                            else
-                                4,
-                        );
+                    native_error_bits != 0 and
+                    std.meta.eql(
+                        pending.native_submission.token,
+                        native_completion.token,
+                    ) and
+                    std.mem.eql(
+                        u8,
+                        &pending.native_submission
+                            .submission_binding,
+                        &native_completion.submission_binding,
+                    ) and
+                    std.mem.eql(
+                        u8,
+                        &pending.native_submission
+                            .submission_binding,
+                        &ticket.ticket_sha256,
+                    );
+                const quarantine = if (exact_command_error)
+                    try self.installTerminalCommandErrorQuarantineUnlocked(
+                        ticket,
+                        native_completion,
+                    )
+                else
+                    try self.installAsyncQuarantineUnlocked(
+                        ticket,
+                        .completion_unknown,
+                        .submitted,
+                        native_completion.command_status,
+                        1,
+                        .native_bridge,
+                        if (native_error_bits != 0)
+                            native_error_bits
+                        else
+                            4,
+                    );
                 return .{ .quarantined = quarantine };
             },
             .completed => {},
@@ -1398,7 +1641,10 @@ pub const MetalAllocationAdapterV1 = struct {
                         return authorized.terminal;
                     }
                 },
-                .submitted, .rejected_before_submit => {},
+                .submitted,
+                .terminal_failure,
+                .rejected_before_submit,
+                => {},
             }
             return Error.DispatchBusy;
         }
@@ -1502,7 +1748,10 @@ pub const MetalAllocationAdapterV1 = struct {
                             .terminal = authorized.terminal,
                         };
                 },
-                .submitted, .cancelled_before_submit => {},
+                .submitted,
+                .terminal_failure,
+                .cancelled_before_submit,
+                => {},
             }
             return Error.DispatchBusy;
         }
@@ -2262,6 +2511,48 @@ pub const MetalAllocationAdapterV1 = struct {
                 ) catch return lease_tree.DispatchCallbackError
                     .InvalidTerminalEvidence;
             },
+            .terminal_failure => |failure| {
+                const pending = self.async_dispatch orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
+                const quarantine = self.async_quarantine orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
+                const native_completion =
+                    pending.native_completion orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
+                if (!std.meta.eql(
+                    quarantine,
+                    failure.quarantine,
+                ) or
+                    !std.meta.eql(
+                        pending.pin,
+                        authorized.pin,
+                    ) or
+                    !std.meta.eql(
+                        pending.request,
+                        authorized.request,
+                    ))
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
+                validateMetalAsyncDispatchQuarantineForTicketV1(
+                    quarantine,
+                    pending.ticket,
+                    self.device_sha256,
+                    self.placement_sha256,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidTerminalEvidence;
+                validateMetalAsyncDispatchTerminalFailureForDispatchV1(
+                    failure,
+                    authorized.pin,
+                    pending.draft,
+                    pending.native_submission,
+                    native_completion,
+                    terminal,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidTerminalEvidence;
+            },
             .rejected_before_submit => |rejection| {
                 if (self.async_dispatch != null or
                     self.async_quarantine != null)
@@ -2382,6 +2673,49 @@ pub const MetalAllocationAdapterV1 = struct {
                 validateMetalLeaseTreeDispatchObservationForPinV1(
                     observation,
                     pin,
+                    terminal,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+                native_finalize = .{
+                    .submission = pending.native_submission,
+                    .completion = native_completion,
+                };
+            },
+            .terminal_failure => |failure| {
+                const pending = self.async_dispatch orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
+                const quarantine = self.async_quarantine orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
+                const native_completion =
+                    pending.native_completion orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
+                if (!std.meta.eql(
+                    quarantine,
+                    failure.quarantine,
+                ) or
+                    !std.meta.eql(pending.pin, pin) or
+                    !std.meta.eql(
+                        pending.request,
+                        authorized.request,
+                    ))
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
+                validateMetalAsyncDispatchQuarantineForTicketV1(
+                    quarantine,
+                    pending.ticket,
+                    self.device_sha256,
+                    self.placement_sha256,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+                validateMetalAsyncDispatchTerminalFailureForDispatchV1(
+                    failure,
+                    pin,
+                    pending.draft,
+                    pending.native_submission,
+                    native_completion,
                     terminal,
                 ) catch return lease_tree.DispatchCallbackError
                     .InvalidSettlementEvidence;
@@ -3194,6 +3528,328 @@ pub fn validateMetalAsyncDispatchQuarantineReplayV1(
     try validateMetalAsyncDispatchQuarantineV1(retained);
     if (!std.meta.eql(value, retained))
         return Error.InvalidDispatchEvidence;
+}
+
+pub fn metalAsyncDispatchNativeTerminalRootV1(
+    value: MetalAsyncDispatchTerminalFailureV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(async_dispatch_native_terminal_domain);
+    hashU64(&hash, value.abi_version);
+    hash.update(&value.quarantine.ticket.ticket_sha256);
+    hash.update(&value.quarantine.quarantine_sha256);
+    hashU64(&hash, value.current_allocated_before);
+    hashU64(&hash, value.current_allocated_after);
+    hashU64(&hash, value.gpu_start_time_bits);
+    hashU64(&hash, value.gpu_end_time_bits);
+    hashU64(&hash, value.native_command_status);
+    hashU64(&hash, @intFromEnum(value.error_domain_kind));
+    hashU64(&hash, value.error_code_bits);
+    return finish(&hash);
+}
+
+pub fn metalAsyncDispatchFailureBackendCompletionRootV1(
+    value: MetalAsyncDispatchTerminalFailureV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        async_dispatch_failure_backend_completion_domain,
+    );
+    hashU64(&hash, value.abi_version);
+    hash.update(&value.submission_sha256);
+    hash.update(&value.native_terminal_sha256);
+    return finish(&hash);
+}
+
+pub fn metalAsyncDispatchTerminalFailureRootV1(
+    value: MetalAsyncDispatchTerminalFailureV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(async_dispatch_terminal_failure_domain);
+    hashU64(&hash, value.abi_version);
+    hashU64(&hash, @intFromEnum(value.outcome));
+    hash.update(&value.quarantine.quarantine_sha256);
+    hashU64(&hash, value.dispatch_generation);
+    hashU64(&hash, value.allocation_count);
+    hashU64(&hash, value.materialized_bytes);
+    hash.update(&value.pin_sha256);
+    hash.update(&value.backend_object_set_sha256);
+    hashU64(&hash, value.current_allocated_before);
+    hashU64(&hash, value.current_allocated_after);
+    hashU64(&hash, value.gpu_start_time_bits);
+    hashU64(&hash, value.gpu_end_time_bits);
+    hashU64(&hash, value.native_command_status);
+    hashU64(&hash, @intFromEnum(value.error_domain_kind));
+    hashU64(&hash, value.error_code_bits);
+    hash.update(&value.native_terminal_sha256);
+    hash.update(&value.submission_sha256);
+    hash.update(&value.backend_completion_sha256);
+    hash.update(&value.terminal_sha256);
+    return finish(&hash);
+}
+
+/// Validate the portable terminal-failure sidecar and its matching core
+/// terminal. Same-process native token authentication is deliberately
+/// performed by `validateMetalAsyncDispatchTerminalFailureForDispatchV1`.
+pub fn validateMetalAsyncDispatchTerminalFailureV1(
+    value: MetalAsyncDispatchTerminalFailureV1,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+) Error!void {
+    try validateMetalAsyncDispatchQuarantineV1(
+        value.quarantine,
+    );
+    lease_tree.validateDispatchTerminalV1(
+        terminal,
+    ) catch return Error.InvalidDispatchEvidence;
+    if (value.abi_version !=
+        async_dispatch_terminal_failure_abi or
+        value.outcome != .terminal_failure or
+        value.quarantine.reason !=
+            .terminal_command_error or
+        value.dispatch_generation == 0 or
+        value.dispatch_generation !=
+            value.quarantine.ticket.dispatch_generation or
+        value.allocation_count != 4 or
+        value.materialized_bytes <
+            value.allocation_count or
+        digestIsZero(value.pin_sha256) or
+        !device.digestEqual(
+            value.pin_sha256,
+            value.quarantine.ticket.pin_sha256,
+        ) or
+        digestIsZero(value.backend_object_set_sha256) or
+        value.current_allocated_before == 0 or
+        value.native_command_status !=
+            async_native_command_status_error or
+        value.error_domain_kind != .command_buffer or
+        value.error_code_bits == 0 or
+        value.error_code_bits !=
+            value.quarantine.error_code_bits or
+        digestIsZero(value.native_terminal_sha256) or
+        !device.digestEqual(
+            value.native_terminal_sha256,
+            metalAsyncDispatchNativeTerminalRootV1(value),
+        ) or
+        digestIsZero(value.submission_sha256) or
+        !device.digestEqual(
+            value.submission_sha256,
+            value.quarantine.ticket.submission_sha256,
+        ) or
+        digestIsZero(value.backend_completion_sha256) or
+        !device.digestEqual(
+            value.backend_completion_sha256,
+            metalAsyncDispatchFailureBackendCompletionRootV1(
+                value,
+            ),
+        ) or
+        digestIsZero(value.terminal_sha256) or
+        !device.digestEqual(
+            value.terminal_sha256,
+            terminal.terminal_sha256,
+        ) or
+        terminal.outcome != .terminal_failure or
+        terminal.dispatch_generation !=
+            value.dispatch_generation or
+        !device.digestEqual(
+            terminal.dispatch_authority_sha256,
+            value.quarantine.ticket
+                .dispatch_authority_sha256,
+        ) or
+        !device.digestEqual(
+            terminal.queue_authority_sha256,
+            value.quarantine.ticket
+                .queue_authority_sha256,
+        ) or
+        !device.digestEqual(
+            terminal.pin_sha256,
+            value.pin_sha256,
+        ) or
+        !device.digestEqual(
+            terminal.dispatch_request_sha256,
+            value.quarantine.ticket
+                .request.request_sha256,
+        ) or
+        !device.digestEqual(
+            terminal.submission_sha256,
+            value.submission_sha256,
+        ) or
+        !device.digestEqual(
+            terminal.backend_completion_sha256,
+            value.backend_completion_sha256,
+        ) or
+        !digestIsZero(terminal.output_sha256) or
+        digestIsZero(value.failure_sha256) or
+        !device.digestEqual(
+            value.failure_sha256,
+            metalAsyncDispatchTerminalFailureRootV1(value),
+        ))
+        return Error.InvalidDispatchEvidence;
+}
+
+/// Bind the portable failure sidecar back to the exact live pin, draft, and
+/// private native command snapshot retained by the adapter.
+pub fn validateMetalAsyncDispatchTerminalFailureForDispatchV1(
+    value: MetalAsyncDispatchTerminalFailureV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    draft: MetalLeaseTreeDispatchObservationV1,
+    submission: metal.MetalAsyncSubmission,
+    completion: metal.MetalAsyncCompletion,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+) Error!void {
+    try validateMetalAsyncDispatchTerminalFailureV1(
+        value,
+        terminal,
+    );
+    try validateMetalAsyncDispatchTicketForDispatchV1(
+        value.quarantine.ticket,
+        value.quarantine.ticket.ticket_generation,
+        value.quarantine.ticket.request,
+        pin,
+        draft,
+    );
+    metal.validateMetalAsyncSubmission(
+        submission,
+    ) catch return Error.InvalidDispatchEvidence;
+    metal.validateMetalAsyncCompletion(
+        completion,
+    ) catch return Error.InvalidDispatchEvidence;
+    lease_tree.validateDispatchTerminalForPinV1(
+        terminal,
+        pin,
+    ) catch return Error.InvalidDispatchEvidence;
+    const error_code_bits: u64 =
+        @bitCast(completion.error_code);
+    if (completion.state != .@"error" or
+        completion.command_status !=
+            async_native_command_status_error or
+        completion.error_present != 1 or
+        completion.callback_fault != 0 or
+        completion.error_domain_kind != .command_buffer or
+        error_code_bits == 0 or
+        !std.meta.eql(submission.token, completion.token) or
+        !std.mem.eql(
+            u8,
+            &submission.submission_binding,
+            &completion.submission_binding,
+        ) or
+        !std.mem.eql(
+            u8,
+            &submission.submission_binding,
+            &value.quarantine.ticket.ticket_sha256,
+        ) or
+        value.current_allocated_before !=
+            completion.current_allocated_before or
+        value.current_allocated_after !=
+            completion.current_allocated_after or
+        value.gpu_start_time_bits !=
+            @as(u64, @bitCast(completion.gpu_start_time)) or
+        value.gpu_end_time_bits !=
+            @as(u64, @bitCast(completion.gpu_end_time)) or
+        value.native_command_status !=
+            completion.command_status or
+        value.error_code_bits != error_code_bits or
+        value.error_code_bits !=
+            value.quarantine.error_code_bits or
+        value.dispatch_generation != pin.dispatch_generation or
+        value.allocation_count != pin.allocation_count or
+        value.materialized_bytes !=
+            pin.pinned_device_bytes or
+        !device.digestEqual(
+            value.backend_object_set_sha256,
+            pin.backend_object_set_sha256,
+        ))
+        return Error.InvalidDispatchEvidence;
+}
+
+pub fn makeMetalAsyncDispatchTerminalFailureV1(
+    quarantine: MetalAsyncDispatchQuarantineV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    draft: MetalLeaseTreeDispatchObservationV1,
+    submission: metal.MetalAsyncSubmission,
+    completion: metal.MetalAsyncCompletion,
+) Error!MetalAsyncDispatchTerminalFailureResultV1 {
+    try validateMetalAsyncDispatchQuarantineV1(quarantine);
+    try validateMetalAsyncDispatchTicketForDispatchV1(
+        quarantine.ticket,
+        quarantine.ticket.ticket_generation,
+        quarantine.ticket.request,
+        pin,
+        draft,
+    );
+    metal.validateMetalAsyncSubmission(
+        submission,
+    ) catch return Error.InvalidDispatchEvidence;
+    metal.validateMetalAsyncCompletion(
+        completion,
+    ) catch return Error.InvalidDispatchEvidence;
+    const error_code_bits: u64 =
+        @bitCast(completion.error_code);
+    if (quarantine.reason != .terminal_command_error or
+        completion.state != .@"error" or
+        completion.command_status !=
+            async_native_command_status_error or
+        completion.error_present != 1 or
+        completion.callback_fault != 0 or
+        completion.error_domain_kind != .command_buffer or
+        error_code_bits == 0 or
+        !std.meta.eql(submission.token, completion.token) or
+        !std.mem.eql(
+            u8,
+            &submission.submission_binding,
+            &completion.submission_binding,
+        ) or
+        !std.mem.eql(
+            u8,
+            &submission.submission_binding,
+            &quarantine.ticket.ticket_sha256,
+        ) or
+        error_code_bits != quarantine.error_code_bits)
+        return Error.InvalidDispatchEvidence;
+
+    var failure: MetalAsyncDispatchTerminalFailureV1 = .{
+        .quarantine = quarantine,
+        .dispatch_generation = pin.dispatch_generation,
+        .allocation_count = pin.allocation_count,
+        .materialized_bytes = pin.pinned_device_bytes,
+        .pin_sha256 = pin.pin_sha256,
+        .backend_object_set_sha256 = pin.backend_object_set_sha256,
+        .current_allocated_before = completion.current_allocated_before,
+        .current_allocated_after = completion.current_allocated_after,
+        .gpu_start_time_bits = @bitCast(completion.gpu_start_time),
+        .gpu_end_time_bits = @bitCast(completion.gpu_end_time),
+        .native_command_status = completion.command_status,
+        .error_domain_kind = .command_buffer,
+        .error_code_bits = error_code_bits,
+        .submission_sha256 = draft.submission_sha256,
+    };
+    failure.native_terminal_sha256 =
+        metalAsyncDispatchNativeTerminalRootV1(failure);
+    failure.backend_completion_sha256 =
+        metalAsyncDispatchFailureBackendCompletionRootV1(
+            failure,
+        );
+    const terminal = lease_tree.makeDispatchTerminalV1(
+        pin,
+        .terminal_failure,
+        failure.submission_sha256,
+        failure.backend_completion_sha256,
+        allocation.zero_digest,
+    ) catch return Error.InvalidDispatchEvidence;
+    failure.terminal_sha256 = terminal.terminal_sha256;
+    failure.failure_sha256 =
+        metalAsyncDispatchTerminalFailureRootV1(failure);
+    try validateMetalAsyncDispatchTerminalFailureForDispatchV1(
+        failure,
+        pin,
+        draft,
+        submission,
+        completion,
+        terminal,
+    );
+    return .{
+        .failure = failure,
+        .terminal = terminal,
+    };
 }
 
 fn validateMetalMatvecCancellationForPinV1(
@@ -4152,6 +4808,7 @@ fn testDispatchDigest(label: []const u8) Digest {
 
 const TestAsyncEvidenceFixture = struct {
     request: MetalMatvecDispatchRequestV1,
+    intent: lease_tree.DispatchPinIntentV1,
     pin: lease_tree.LeaseTreeDispatchPinV1,
     draft: MetalLeaseTreeDispatchObservationV1,
     ticket: MetalAsyncDispatchTicketV1,
@@ -4317,6 +4974,28 @@ fn makeTestAsyncEvidenceFixture(
     };
     pin.pin_sha256 = lease_tree.dispatchPinRootV1(pin);
     try lease_tree.validateDispatchPinV1(pin);
+    var intent: lease_tree.DispatchPinIntentV1 = .{
+        .coordinator_epoch = pin.coordinator_epoch,
+        .allocation_generation = pin.allocation_generation,
+        .dispatch_generation = pin.dispatch_generation,
+        .allocation_count = pin.allocation_count,
+        .pinned_device_bytes = pin.pinned_device_bytes,
+        .authority_sha256 = pin.authority_sha256,
+        .dispatch_authority_sha256 = pin.dispatch_authority_sha256,
+        .queue_authority_sha256 = pin.queue_authority_sha256,
+        .request_sha256 = pin.request_sha256,
+        .admission_sha256 = pin.admission_sha256,
+        .lease_sha256 = pin.lease_sha256,
+        .parent_receipt_sha256 = pin.parent_receipt_sha256,
+        .allocation_leaf_set_sha256 = pin.allocation_leaf_set_sha256,
+        .backend_object_set_sha256 = pin.backend_object_set_sha256,
+        .scope_sha256 = lease_tree.leaseNodeSha256V1(pin.scope),
+        .dispatch_request_sha256 = pin.dispatch_request_sha256,
+        .publication_binding_sha256 = pin.publication_binding_sha256,
+    };
+    intent.intent_sha256 =
+        lease_tree.dispatchPinIntentRootV1(intent);
+    try lease_tree.validateDispatchPinIntentV1(intent);
 
     var roles: MetalMatvecRoleEvidenceV1 = .{
         .bindings = bindings,
@@ -4359,11 +5038,46 @@ fn makeTestAsyncEvidenceFixture(
     );
     return .{
         .request = request,
+        .intent = intent,
         .pin = pin,
         .draft = draft,
         .ticket = ticket,
         .device_sha256 = testDispatchDigest("async native device"),
         .placement_sha256 = testDispatchDigest("async native placement"),
+    };
+}
+
+const TestNativeAsyncErrorFixture = struct {
+    submission: metal.MetalAsyncSubmission,
+    completion: metal.MetalAsyncCompletion,
+};
+
+fn makeTestNativeAsyncErrorFixture(
+    ticket: MetalAsyncDispatchTicketV1,
+) TestNativeAsyncErrorFixture {
+    const token: metal.MetalCommandToken = .{
+        .context_nonce = .{ 0x11, 0x22, 0x33, 0x44 },
+        .generation = 71,
+    };
+    return .{
+        .submission = .{
+            .token = token,
+            .submission_binding = ticket.ticket_sha256,
+            .disposition = .submitted,
+        },
+        .completion = .{
+            .token = token,
+            .submission_binding = ticket.ticket_sha256,
+            .current_allocated_before = 4_096,
+            .current_allocated_after = 4_352,
+            .gpu_start_time = 12.5,
+            .gpu_end_time = 12.75,
+            .error_code = -73,
+            .state = .@"error",
+            .command_status = async_native_command_status_error,
+            .error_domain_kind = .command_buffer,
+            .error_present = 1,
+        },
     };
 }
 
@@ -4379,6 +5093,29 @@ fn resealTestAsyncQuarantine(
 ) void {
     value.quarantine_sha256 =
         metalAsyncDispatchQuarantineRootV1(value.*);
+}
+
+fn resealTestAsyncTerminalFailure(
+    value: *MetalAsyncDispatchTerminalFailureV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+) !lease_tree.DispatchTerminalEvidenceV1 {
+    value.native_terminal_sha256 =
+        metalAsyncDispatchNativeTerminalRootV1(value.*);
+    value.backend_completion_sha256 =
+        metalAsyncDispatchFailureBackendCompletionRootV1(
+            value.*,
+        );
+    const terminal = try lease_tree.makeDispatchTerminalV1(
+        pin,
+        .terminal_failure,
+        value.submission_sha256,
+        value.backend_completion_sha256,
+        allocation.zero_digest,
+    );
+    value.terminal_sha256 = terminal.terminal_sha256;
+    value.failure_sha256 =
+        metalAsyncDispatchTerminalFailureRootV1(value.*);
+    return terminal;
 }
 
 fn resealTestDispatchObservation(
@@ -5049,6 +5786,378 @@ test "Metal async quarantine shapes are sticky and explicitly nonterminal" {
     );
 }
 
+test "Metal async exact command error authorizes only terminal failure settlement" {
+    const fixture = try makeTestAsyncEvidenceFixture(31);
+    const native_error =
+        makeTestNativeAsyncErrorFixture(fixture.ticket);
+    try metal.validateMetalAsyncSubmission(
+        native_error.submission,
+    );
+    try metal.validateMetalAsyncCompletion(
+        native_error.completion,
+    );
+    const error_code_bits: u64 =
+        @bitCast(native_error.completion.error_code);
+    const quarantine =
+        try makeMetalAsyncDispatchQuarantineV1(
+            fixture.ticket,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+            .terminal_command_error,
+            .terminal_status_observed,
+            async_native_command_status_error,
+            1,
+            .command_buffer,
+            error_code_bits,
+        );
+
+    const first =
+        try makeMetalAsyncDispatchTerminalFailureV1(
+            quarantine,
+            fixture.pin,
+            fixture.draft,
+            native_error.submission,
+            native_error.completion,
+        );
+    const replay =
+        try makeMetalAsyncDispatchTerminalFailureV1(
+            quarantine,
+            fixture.pin,
+            fixture.draft,
+            native_error.submission,
+            native_error.completion,
+        );
+    try std.testing.expectEqualDeep(first, replay);
+    try validateMetalAsyncDispatchTerminalFailureV1(
+        first.failure,
+        first.terminal,
+    );
+    try validateMetalAsyncDispatchTerminalFailureForDispatchV1(
+        first.failure,
+        fixture.pin,
+        fixture.draft,
+        native_error.submission,
+        native_error.completion,
+        first.terminal,
+    );
+    try std.testing.expect(
+        first.terminal.outcome == .terminal_failure,
+    );
+    try std.testing.expect(device.digestEqual(
+        first.terminal.submission_sha256,
+        fixture.ticket.submission_sha256,
+    ));
+    try std.testing.expect(
+        !digestIsZero(
+            first.terminal.backend_completion_sha256,
+        ),
+    );
+    try std.testing.expect(
+        digestIsZero(first.terminal.output_sha256),
+    );
+    try std.testing.expect(
+        !@hasField(
+            MetalAsyncDispatchTerminalFailureV1,
+            "output_sha256",
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        quarantine,
+        first.failure.quarantine,
+    );
+
+    var unsealed = first.failure;
+    unsealed.current_allocated_after += 1;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTerminalFailureV1(
+            unsealed,
+            first.terminal,
+        ),
+    );
+
+    // Rehashing cannot make an error code disagreeing with the embedded
+    // quarantine into a valid portable terminal-failure projection.
+    var substituted_error_code = first.failure;
+    substituted_error_code.error_code_bits += 1;
+    const substituted_error_terminal =
+        try resealTestAsyncTerminalFailure(
+            &substituted_error_code,
+            fixture.pin,
+        );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTerminalFailureV1(
+            substituted_error_code,
+            substituted_error_terminal,
+        ),
+    );
+
+    // A coherently resealed portable projection is structurally valid, but
+    // cannot replace the exact native snapshot retained by this adapter.
+    var substituted = first.failure;
+    substituted.current_allocated_after += 1;
+    const substituted_terminal =
+        try resealTestAsyncTerminalFailure(
+            &substituted,
+            fixture.pin,
+        );
+    try validateMetalAsyncDispatchTerminalFailureV1(
+        substituted,
+        substituted_terminal,
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTerminalFailureForDispatchV1(
+            substituted,
+            fixture.pin,
+            fixture.draft,
+            native_error.submission,
+            native_error.completion,
+            substituted_terminal,
+        ),
+    );
+
+    var foreign_completion = native_error.completion;
+    foreign_completion.token.generation += 1;
+    try metal.validateMetalAsyncCompletion(
+        foreign_completion,
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        makeMetalAsyncDispatchTerminalFailureV1(
+            quarantine,
+            fixture.pin,
+            fixture.draft,
+            native_error.submission,
+            foreign_completion,
+        ),
+    );
+
+    var foreign_submission = native_error.submission;
+    var foreign_bound_completion = native_error.completion;
+    const foreign_binding =
+        testDispatchDigest("foreign native async binding");
+    foreign_submission.submission_binding = foreign_binding;
+    foreign_bound_completion.submission_binding =
+        foreign_binding;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        makeMetalAsyncDispatchTerminalFailureV1(
+            quarantine,
+            fixture.pin,
+            fixture.draft,
+            foreign_submission,
+            foreign_bound_completion,
+        ),
+    );
+
+    const unknown =
+        try makeMetalAsyncDispatchQuarantineV1(
+            fixture.ticket,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+            .completion_unknown,
+            .submitted,
+            async_native_command_status_error,
+            1,
+            .native_bridge,
+            error_code_bits,
+        );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        makeMetalAsyncDispatchTerminalFailureV1(
+            unknown,
+            fixture.pin,
+            fixture.draft,
+            native_error.submission,
+            native_error.completion,
+        ),
+    );
+}
+
+test "Metal adapter keeps exact terminal failure quarantined until private settlement" {
+    if (!metal_enabled) return error.SkipZigTest;
+
+    const fixture = try makeTestAsyncEvidenceFixture(32);
+    const native_error =
+        makeTestNativeAsyncErrorFixture(fixture.ticket);
+    const error_code_bits: u64 =
+        @bitCast(native_error.completion.error_code);
+    const quarantine =
+        try makeMetalAsyncDispatchQuarantineV1(
+            fixture.ticket,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+            .terminal_command_error,
+            .terminal_status_observed,
+            async_native_command_status_error,
+            1,
+            .command_buffer,
+            error_code_bits,
+        );
+    const lease = std.mem.zeroes(
+        lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    );
+    var slots = [_]MetalAllocationSlotV1{.{}};
+    var adapter: MetalAllocationAdapterV1 = .{
+        .backend = @ptrFromInt(0x1000),
+        .authority = .{},
+        .slots = &slots,
+        .limits = .{},
+        .device_sha256 = fixture.device_sha256,
+        .placement_sha256 = fixture.placement_sha256,
+        .adapter_nonce = 1,
+        .adapter_identity = .{},
+        .dispatch_authority_sha256 = fixture.request.dispatch_authority_sha256,
+        .queue_authority_sha256 = fixture.request.queue_authority_sha256,
+        .prepared_matvec_request = fixture.request,
+        .reserved_dispatch_intent = fixture.intent,
+        .bound_dispatch_pin = fixture.pin,
+        .dispatch_unresolved = true,
+        .async_dispatch = .{
+            .lease = lease,
+            .pin = fixture.pin,
+            .request = fixture.request,
+            .ticket = fixture.ticket,
+            .draft = fixture.draft,
+            .selected = .{
+                .tokens = [_]metal.MetalBufferToken{.{}} ** 4,
+                .evidence = fixture.draft.roles,
+            },
+            .native_submission = native_error.submission,
+        },
+    };
+
+    var changed_native_error = native_error.completion;
+    changed_native_error.current_allocated_after += 1;
+    try metal.validateMetalAsyncCompletion(
+        changed_native_error,
+    );
+    adapter.async_dispatch.?.native_completion =
+        changed_native_error;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        adapter.installTerminalCommandErrorQuarantineUnlocked(
+            fixture.ticket,
+            native_error.completion,
+        ),
+    );
+    try std.testing.expect(adapter.async_quarantine == null);
+    adapter.async_dispatch.?.native_completion = null;
+
+    const installed =
+        try adapter.installTerminalCommandErrorQuarantineUnlocked(
+            fixture.ticket,
+            native_error.completion,
+        );
+    try std.testing.expectEqualDeep(quarantine, installed);
+    try std.testing.expectEqualDeep(
+        native_error.completion,
+        adapter.async_dispatch.?.native_completion.?,
+    );
+    try std.testing.expectEqualDeep(
+        installed,
+        try adapter.installTerminalCommandErrorQuarantineUnlocked(
+            fixture.ticket,
+            native_error.completion,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        adapter.installTerminalCommandErrorQuarantineUnlocked(
+            fixture.ticket,
+            changed_native_error,
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        native_error.completion,
+        adapter.async_dispatch.?.native_completion.?,
+    );
+
+    const first =
+        try adapter.reconcileTerminalCommandFailureObserved(
+            lease,
+            fixture.pin,
+            fixture.ticket,
+        );
+    const replay =
+        try adapter.reconcileTerminalCommandFailureObserved(
+            lease,
+            fixture.pin,
+            fixture.ticket,
+        );
+    try std.testing.expectEqualDeep(first, replay);
+    try std.testing.expectEqualDeep(
+        quarantine,
+        adapter.currentAsyncDispatchQuarantine().?,
+    );
+    try std.testing.expect(adapter.dispatch_unresolved);
+    try std.testing.expect(
+        adapter.async_dispatch.?.native_completion != null,
+    );
+    try std.testing.expect(
+        adapter.authorized_terminal != null,
+    );
+
+    const dispatch_interface = adapter.dispatchInterface();
+    try dispatch_interface.validate_terminal_fn(
+        dispatch_interface.context,
+        first.terminal,
+    );
+    try std.testing.expect(
+        adapter.terminal_validation_observed,
+    );
+    try std.testing.expectEqualDeep(
+        quarantine,
+        adapter.currentAsyncDispatchQuarantine().?,
+    );
+
+    // Rejected settlement evidence must not reach native finalization or
+    // clear any retained ownership.
+    try std.testing.expectError(
+        lease_tree.DispatchCallbackError
+            .InvalidSettlementEvidence,
+        dispatch_interface.confirm_settlement_fn(
+            dispatch_interface.context,
+            fixture.pin,
+            first.terminal,
+            std.mem.zeroes(
+                lease_tree.LeaseTreeDispatchCompletionV1,
+            ),
+            std.mem.zeroes(resource.LeasePinPermitV1),
+            std.mem.zeroes(resource.LeasePinCompletionV1),
+        ),
+    );
+    try std.testing.expect(
+        adapter.terminal_validation_observed,
+    );
+    try std.testing.expect(adapter.dispatch_unresolved);
+    try std.testing.expect(
+        adapter.async_dispatch.?.native_completion != null,
+    );
+    try std.testing.expectEqualDeep(
+        quarantine,
+        adapter.currentAsyncDispatchQuarantine().?,
+    );
+
+    var output = [_]f32{0} ** 37;
+    const observed =
+        try adapter.pollMatvecInt4AsyncObserved(
+            lease,
+            fixture.pin,
+            fixture.ticket,
+            &output,
+        );
+    switch (observed) {
+        .quarantined => |value| try std.testing.expectEqualDeep(
+            quarantine,
+            value,
+        ),
+        .pending, .completed => return error.TestUnexpectedResult,
+    }
+}
+
 test "Metal dispatch observation seals exact geometry roles telemetry and data" {
     const observation = try makeTestDispatchObservation();
     try validateMetalLeaseTreeDispatchObservationV1(
@@ -5497,6 +6606,106 @@ test "Metal async ticket and quarantine roots match cross-language goldens" {
             u8,
             &expected_quarantine_sha256,
             &quarantine.quarantine_sha256,
+        );
+    }
+
+    const terminal_error_bits: u64 =
+        @bitCast(@as(i64, -73));
+    const terminal_quarantine =
+        try makeMetalAsyncDispatchQuarantineV1(
+            ticket,
+            testDispatchDigest("async Metal device"),
+            testDispatchDigest("async Metal placement"),
+            .terminal_command_error,
+            .terminal_status_observed,
+            async_native_command_status_error,
+            1,
+            .command_buffer,
+            terminal_error_bits,
+        );
+    var backend_object_set_sha256: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &backend_object_set_sha256,
+        "6c658fa780e2e01102b38508bd2aa4b6f9218450eb6c9f5317a0a58a9ffe7418",
+    );
+    var failure: MetalAsyncDispatchTerminalFailureV1 = .{
+        .quarantine = terminal_quarantine,
+        .dispatch_generation = 1,
+        .allocation_count = 4,
+        .materialized_bytes = 8_192,
+        .pin_sha256 = pin_sha256,
+        .backend_object_set_sha256 = backend_object_set_sha256,
+        .current_allocated_before = 4_096,
+        .current_allocated_after = 4_352,
+        .gpu_start_time_bits = 0x4029_0000_0000_0000,
+        .gpu_end_time_bits = 0x4029_8000_0000_0000,
+        .native_command_status = async_native_command_status_error,
+        .error_domain_kind = .command_buffer,
+        .error_code_bits = terminal_error_bits,
+        .submission_sha256 = ticket.submission_sha256,
+    };
+    failure.native_terminal_sha256 =
+        metalAsyncDispatchNativeTerminalRootV1(failure);
+    failure.backend_completion_sha256 =
+        metalAsyncDispatchFailureBackendCompletionRootV1(
+            failure,
+        );
+    var terminal: lease_tree.DispatchTerminalEvidenceV1 = .{
+        .outcome = .terminal_failure,
+        .dispatch_generation = 1,
+        .dispatch_authority_sha256 = request.dispatch_authority_sha256,
+        .queue_authority_sha256 = request.queue_authority_sha256,
+        .pin_sha256 = pin_sha256,
+        .dispatch_request_sha256 = request.request_sha256,
+        .submission_sha256 = ticket.submission_sha256,
+        .backend_completion_sha256 = failure.backend_completion_sha256,
+    };
+    terminal.terminal_sha256 =
+        lease_tree.dispatchTerminalRootV1(terminal);
+    failure.terminal_sha256 = terminal.terminal_sha256;
+    failure.failure_sha256 =
+        metalAsyncDispatchTerminalFailureRootV1(failure);
+    try validateMetalAsyncDispatchTerminalFailureV1(
+        failure,
+        terminal,
+    );
+
+    const Golden = struct {
+        actual: Digest,
+        expected_hex: []const u8,
+    };
+    const goldens = [_]Golden{
+        .{
+            .actual = terminal_quarantine.quarantine_sha256,
+            .expected_hex = "2b035ebd584186a2e6e7c57234159455fbcd2ad35f60116fb9352d7968cfb2e5",
+        },
+        .{
+            .actual = failure.native_terminal_sha256,
+            .expected_hex = "ecc3170904263bd9d60cc5ccd7f1e091e1a82ab7e3ded6b6e557185ffffb13ba",
+        },
+        .{
+            .actual = failure.backend_completion_sha256,
+            .expected_hex = "6f14c76497c1641ede6092984b638e7799ea1dc65a290c40a087e80de402cdee",
+        },
+        .{
+            .actual = terminal.terminal_sha256,
+            .expected_hex = "e2f46a7585a8633ed04d47b4f4d5f14f2d0c43bbc8374d64f8bfb89ffbd258b2",
+        },
+        .{
+            .actual = failure.failure_sha256,
+            .expected_hex = "af406c37a46e4557cc281d4bf98927afcd13b4ab12fbdd69563cbfad90eb015e",
+        },
+    };
+    for (goldens) |golden| {
+        var expected: Digest = undefined;
+        _ = try std.fmt.hexToBytes(
+            &expected,
+            golden.expected_hex,
+        );
+        try std.testing.expectEqualSlices(
+            u8,
+            &expected,
+            &golden.actual,
         );
     }
 }

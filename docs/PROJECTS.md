@@ -188,14 +188,32 @@ unchanged, and keeps the pin and charge. Exact completed output is bound to the
 command, submission binding, immutable snapshot, and output role; only the
 private callback after core Bank settlement finalizes the native record.
 Ambiguous submission, unknown or invalid completion, and terminal command
-errors retain sticky nonterminal `MetalAsyncDispatchQuarantineV1` instead of
-manufacturing core terminal evidence. The native backend may own distinct
-buffer sets concurrently, so this is not a global queue-depth-one claim.
+errors first retain sticky nonterminal `MetalAsyncDispatchQuarantineV1`
+instead of manufacturing core terminal evidence. One exact retained native
+command-buffer `.error` can now be reconciled into
+`MetalAsyncDispatchTerminalFailureV1` plus core `terminal_failure`; quarantine,
+pin, charge, buffers, and command stay live through Bank settlement, then the
+private callback exact-finalizes that same `.error` before clearing private
+state. Ambiguity, unknown, and invalid completion remain sticky. The native
+backend may own distinct buffer sets concurrently, so this is not a global
+queue-depth-one claim.
+
+The **exact terminal-command-error reconciliation** follow-up is complete at
+the contract boundary. Its pointer-free sidecar binds the original quarantine,
+ticket, native error projection, submission, object set, and pin to a core
+`terminal_failure` with no output root. Authorization is replayable but cannot
+release ownership; the same retained `.error` must survive Bank settlement and
+exact native finalization before private state is cleared. This is not physical
+device-loss detection or automatic migration.
 
 Small next slices:
 
-- add device-loss inspection and safe terminal reconciliation;
-- add quarantine clearing and fresh selection under a new receipt;
+- add physical device-loss inspection and safe recovery;
+- add a build-isolated native Metal fault/race harness that records physical
+  and injected completion facts separately and exports no production test
+  hooks;
+- add general quarantine clearing, fresh selection under a new receipt, and
+  explicit migration policy;
 - add multi-slot queue scheduling and multi-device partitioning;
 - add physical residency and direct device telemetry as separate authorities;
 - add more GPU backends with CPU-oracle/lifecycle gates and expand native
@@ -214,12 +232,16 @@ deterministic contract models and use no GPU. The native macOS gate uses a real
 from completion observation, authenticates the completed command and output
 role, settles the Bank pin before native finalization, and checks the CPU
 oracle; reject/cancel retain real context/resources but issue zero GPU
-commands. Sticky quarantine detection is implemented, but device-loss
-inspection/reconciliation, quarantine clearing, fresh selection, multi-slot
-scheduling, physical residency, direct device telemetry, additional GPU
-backends, performance evidence, and broader native OS/device matrices remain
-unimplemented unless a slice supplies direct named evidence. Cross-compilation
-never counts as native support.
+commands. Exact command-error reconciliation roots, tamper rejection, and
+pre-settlement retention are pure Zig and independent Python mirror contracts;
+the
+native Metal path remains a successful-command regression and does not induce
+or claim a hardware or driver error. Physical device-loss
+inspection/recovery, general quarantine clearing, fresh selection and
+migration, multi-slot scheduling, physical residency, direct device telemetry,
+additional GPU backends, performance evidence, and broader native OS/device
+matrices remain unimplemented unless a slice supplies direct named evidence.
+Cross-compilation never counts as native support.
 
 ### Native observation adapters
 

@@ -168,17 +168,21 @@ the lease, request, intent, and pin. Valid preflight either submits or settles
 the pure `cancelled_before_submit` path; malformed attempts settle exact
 `rejected_before_submit`. Both no-submit terminals use zero submission,
 backend-completion, and output roots and the same private settlement path.
-Ambiguous submission, unknown or invalid completion, and terminal command
-errors instead retain sticky nonterminal `MetalAsyncDispatchQuarantineV1`;
-this detects uncertainty but does not reconcile or clear it. For an exact
-terminal, core consumes its private Bank pin, then the private callback
-finalizes the exact native record, atomically clears adapter state, and records
-a replay tombstone. Public
+Ambiguous submission, unknown or invalid completion, and a terminal command
+error first retain sticky nonterminal `MetalAsyncDispatchQuarantineV1`. One
+exact retained native command-buffer `.error` can be explicitly bound to
+`MetalAsyncDispatchTerminalFailureV1` and a matching core
+`terminal_failure` with no output root. Authorization retains quarantine, pin,
+charge, buffers, and native command. Core then consumes its private Bank pin;
+only the private post-Bank callback exact-finalizes that same native `.error`
+record before atomically clearing adapter state and recording a replay
+tombstone. Ambiguity, unknown, and invalid completion remain sticky. Public
 `acknowledgeDispatchCompletion` only verifies compatibility; it grants no
-authority and clears no state. Physical residency, device-loss
-inspection/reconciliation, quarantine clearing and fresh selection, multi-slot
-and multi-device scheduling, production weight paging, additional GPU
-backends, and native OS matrices remain planned.
+authority and clears no state. This path neither detects physical device loss
+nor automatically migrates work. Physical residency, device-loss recovery,
+general quarantine clearing and fresh selection, multi-slot and multi-device
+scheduling, production weight paging, additional GPU backends, and native OS
+matrices remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
 cancellation returns the declared delta, and measured physical counters are
@@ -527,15 +531,21 @@ roots and use the same settlement without a native record. Public
 `acknowledgeDispatchCompletion` is compatibility verification only. Rejection
 may inspect the native device and resources but creates and submits no command
 buffer; cancellation is native-free after the sealed binding. Ambiguous
-submission, unknown or invalid completion, and terminal command errors become
-sticky nonterminal quarantine evidence; reconciliation and clearing remain
-open. Portable Zig fake/state tests and the independent Python oracle exercise
-only deterministic contract models and do no GPU work. The native macOS gate
-opens a real `MTLDevice`, creates real `MTLBuffer` resources, and executes the
-valid command on the device. Device-loss inspection/reconciliation, fresh
-selection, multi-slot and multi-device scheduling, physical residency and
-device telemetry, additional GPU backends, and broader native OS/device
-matrices stay open.
+submission, unknown or invalid completion, and terminal command errors first
+become sticky nonterminal quarantine evidence. An exact retained native
+command-buffer `.error` can now authorize core `terminal_failure`; its
+quarantine, pin, charge, buffers, and command remain live through Bank
+settlement, then the private callback exact-finalizes that same `.error` before
+clearing private state. Ambiguity and unknown completion remain sticky.
+Portable Zig state tests and the independent Python mirror exercise the exact
+failure roots, mutations, and pre-settlement retention contract without GPU
+work. The native
+macOS gate opens a real `MTLDevice`, creates real `MTLBuffer` resources, and
+executes the valid command on the device as a success regression; it does not
+induce or claim a hardware error. Physical device-loss inspection/recovery,
+fresh selection and migration, multi-slot and multi-device scheduling,
+physical residency and device telemetry, additional GPU backends, and broader
+native OS/device matrices stay open.
 Contract validation requires a present logical CPU count of at least one and
 accepts signed physical temperatures down to, but never below, absolute zero.
 

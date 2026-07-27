@@ -1140,6 +1140,370 @@ class DeviceAllocationLeaseTreeOracleTests(unittest.TestCase):
             tree.MetalAsyncDispatchQuarantineV1.__dataclass_fields__,
         )
 
+    def test_metal_async_terminal_failure_has_fixed_goldens(
+        self,
+    ) -> None:
+        campaign = (
+            tree.make_metal_async_dispatch_terminal_failure_campaign()
+        )
+        failure = campaign.failure
+        actual = {
+            "quarantine_sha256": (
+                campaign.quarantine.quarantine_sha256.hex()
+            ),
+            "native_terminal_sha256": (
+                failure.native_terminal_sha256.hex()
+            ),
+            "backend_completion_sha256": (
+                failure.backend_completion_sha256.hex()
+            ),
+            "terminal_sha256": campaign.terminal.terminal_sha256.hex(),
+            "failure_sha256": failure.failure_sha256.hex(),
+        }
+        expected = {
+            "quarantine_sha256": (
+                "2b035ebd584186a2e6e7c57234159455"
+                "fbcd2ad35f60116fb9352d7968cfb2e5"
+            ),
+            "native_terminal_sha256": (
+                "ecc3170904263bd9d60cc5ccd7f1e091"
+                "e1a82ab7e3ded6b6e557185ffffb13ba"
+            ),
+            "backend_completion_sha256": (
+                "6f14c76497c1641ede6092984b638e77"
+                "99ea1dc65a290c40a087e80de402cdee"
+            ),
+            "terminal_sha256": (
+                "e2f46a7585a8633ed04d47b4f4d5f14f"
+                "2d0c43bbc8374d64f8bfb89ffbd258b2"
+            ),
+            "failure_sha256": (
+                "af406c37a46e4557cc281d4bf98927af"
+                "cd13b4ab12fbdd69563cbfad90eb015e"
+            ),
+        }
+        self.assertEqual(expected, actual)
+        self.assertEqual(
+            tree.DISPATCH_TERMINAL_FAILURE,
+            campaign.terminal.outcome,
+        )
+        self.assertEqual(
+            (
+                tree.METAL_ASYNC_COMMAND_STATUS_ERROR,
+                tree.METAL_ASYNC_ERROR_COMMAND_BUFFER,
+                tree.U64_MAX - 72,
+                tree.ZERO_DIGEST,
+            ),
+            (
+                failure.native_command_status,
+                failure.error_domain_kind,
+                failure.error_code_bits,
+                campaign.terminal.output_sha256,
+            ),
+        )
+        self.assertNotIn(
+            "output_sha256",
+            failure.__dataclass_fields__,
+        )
+        tree.validate_metal_async_dispatch_terminal_failure_v1(
+            failure,
+            campaign.terminal,
+        )
+        tree.validate_metal_async_dispatch_terminal_failure_for_dispatch_v1(
+            failure,
+            campaign.evidence.pin,
+            campaign.terminal,
+        )
+        replay = tree.make_metal_async_dispatch_terminal_failure_v1(
+            campaign.quarantine,
+            campaign.evidence.pin,
+            failure.current_allocated_before,
+            failure.current_allocated_after,
+            failure.gpu_start_time_bits,
+            failure.gpu_end_time_bits,
+        )
+        self.assertEqual(failure, replay.failure)
+        self.assertEqual(campaign.terminal, replay.terminal)
+        tree.validate_metal_async_dispatch_terminal_failure_replay_v1(
+            replay.failure,
+            replay.terminal,
+            failure,
+            campaign.terminal,
+        )
+
+    def test_metal_async_terminal_failure_schema_order_is_explicit(
+        self,
+    ) -> None:
+        self.assertEqual(
+            (
+                "abi_version",
+                "outcome",
+                "quarantine",
+                "dispatch_generation",
+                "allocation_count",
+                "materialized_bytes",
+                "pin_sha256",
+                "backend_object_set_sha256",
+                "current_allocated_before",
+                "current_allocated_after",
+                "gpu_start_time_bits",
+                "gpu_end_time_bits",
+                "native_command_status",
+                "error_domain_kind",
+                "error_code_bits",
+                "native_terminal_sha256",
+                "submission_sha256",
+                "backend_completion_sha256",
+                "terminal_sha256",
+                "failure_sha256",
+            ),
+            tuple(
+                field.name
+                for field in fields(
+                    tree.MetalAsyncDispatchTerminalFailureV1
+                )
+            ),
+        )
+        self.assertEqual(
+            ("failure", "terminal"),
+            tuple(
+                field.name
+                for field in fields(
+                    tree.MetalAsyncDispatchTerminalFailureResultV1
+                )
+            ),
+        )
+
+    def test_metal_async_terminal_failure_mutations_fail_closed(
+        self,
+    ) -> None:
+        campaign = (
+            tree.make_metal_async_dispatch_terminal_failure_campaign()
+        )
+        failure = campaign.failure
+        foreign = allocation.digest_v1(
+            b"foreign Metal async terminal failure field"
+        )
+        unsealed_tampers = {
+            "abi_version": failure.abi_version + 1,
+            "outcome": tree.DISPATCH_SUCCEEDED,
+            "quarantine": campaign.evidence.quarantines[-1],
+            "dispatch_generation": failure.dispatch_generation + 1,
+            "allocation_count": failure.allocation_count + 1,
+            "materialized_bytes": failure.materialized_bytes + 1,
+            "pin_sha256": foreign,
+            "backend_object_set_sha256": foreign,
+            "current_allocated_before": (
+                failure.current_allocated_before + 1
+            ),
+            "current_allocated_after": (
+                failure.current_allocated_after + 1
+            ),
+            "gpu_start_time_bits": failure.gpu_start_time_bits + 1,
+            "gpu_end_time_bits": failure.gpu_end_time_bits + 1,
+            "native_command_status": (
+                tree.METAL_ASYNC_COMMAND_STATUS_COMPLETED
+            ),
+            "error_domain_kind": tree.METAL_ASYNC_ERROR_NATIVE_BRIDGE,
+            "error_code_bits": failure.error_code_bits + 1,
+            "native_terminal_sha256": foreign,
+            "submission_sha256": foreign,
+            "backend_completion_sha256": foreign,
+            "terminal_sha256": foreign,
+            "failure_sha256": foreign,
+        }
+        self.assertEqual(
+            set(failure.__dataclass_fields__),
+            set(unsealed_tampers),
+        )
+        for field, value in unsealed_tampers.items():
+            with self.subTest(
+                metal_async_terminal_failure_field=field
+            ):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_metal_async_dispatch_terminal_failure_v1(
+                        replace(failure, **{field: value}),
+                        campaign.terminal,
+                    )
+        with self.assertRaises(tree.ContractError):
+            tree.metal_async_dispatch_terminal_failure_root_v1(
+                replace(
+                    failure,
+                    gpu_end_time_bits=tree.U64_MAX + 1,
+                )
+            )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_terminal_failure_for_dispatch_v1(
+                failure,
+                self.dispatch.pin,
+                campaign.terminal,
+            )
+
+    def test_metal_async_terminal_failure_reseal_and_aba_are_distinct(
+        self,
+    ) -> None:
+        campaign = (
+            tree.make_metal_async_dispatch_terminal_failure_campaign()
+        )
+        failure = campaign.failure
+        pin = campaign.evidence.pin
+
+        def reseal(**changes):
+            draft = replace(
+                failure,
+                **changes,
+                native_terminal_sha256=tree.ZERO_DIGEST,
+                backend_completion_sha256=tree.ZERO_DIGEST,
+                terminal_sha256=tree.ZERO_DIGEST,
+                failure_sha256=tree.ZERO_DIGEST,
+            )
+            draft = replace(
+                draft,
+                native_terminal_sha256=(
+                    tree.metal_async_dispatch_native_terminal_root_v1(
+                        draft
+                    )
+                ),
+            )
+            draft = replace(
+                draft,
+                backend_completion_sha256=(
+                    tree
+                    .metal_async_dispatch_failure_backend_completion_root_v1(
+                        draft
+                    )
+                ),
+            )
+            terminal = tree.make_dispatch_terminal_v1(
+                pin,
+                tree.DISPATCH_TERMINAL_FAILURE,
+                draft.submission_sha256,
+                draft.backend_completion_sha256,
+                tree.ZERO_DIGEST,
+            )
+            draft = replace(
+                draft,
+                terminal_sha256=terminal.terminal_sha256,
+            )
+            draft = replace(
+                draft,
+                failure_sha256=(
+                    tree.metal_async_dispatch_terminal_failure_root_v1(
+                        draft
+                    )
+                ),
+            )
+            return draft, terminal
+
+        substituted, substituted_terminal = reseal(
+            current_allocated_after=(
+                failure.current_allocated_after + 1
+            )
+        )
+        tree.validate_metal_async_dispatch_terminal_failure_v1(
+            substituted,
+            substituted_terminal,
+        )
+        tree.validate_metal_async_dispatch_terminal_failure_for_dispatch_v1(
+            substituted,
+            pin,
+            substituted_terminal,
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_terminal_failure_replay_v1(
+                substituted,
+                substituted_terminal,
+                failure,
+                campaign.terminal,
+            )
+
+        substituted_error, substituted_error_terminal = reseal(
+            error_code_bits=failure.error_code_bits + 1
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_terminal_failure_v1(
+                substituted_error,
+                substituted_error_terminal,
+            )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_terminal_failure_for_dispatch_v1(
+                substituted_error,
+                pin,
+                substituted_error_terminal,
+            )
+
+        invalid_before, invalid_before_terminal = reseal(
+            current_allocated_before=0
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_terminal_failure_v1(
+                invalid_before,
+                invalid_before_terminal,
+            )
+
+        second_ticket = tree.make_metal_async_dispatch_ticket_v1(
+            campaign.evidence.ticket.ticket_generation + 1,
+            campaign.evidence.request,
+            pin,
+            campaign.evidence.submission_sha256,
+        )
+        second_quarantine = (
+            tree.make_metal_async_dispatch_quarantine_v1(
+                second_ticket,
+                campaign.evidence.device_sha256,
+                campaign.evidence.placement_sha256,
+                tree.METAL_ASYNC_TERMINAL_COMMAND_ERROR,
+                tree.METAL_ASYNC_TERMINAL_STATUS_OBSERVED,
+                tree.METAL_ASYNC_COMMAND_STATUS_ERROR,
+                1,
+                tree.METAL_ASYNC_ERROR_COMMAND_BUFFER,
+                failure.error_code_bits,
+            )
+        )
+        second = tree.make_metal_async_dispatch_terminal_failure_v1(
+            second_quarantine,
+            pin,
+            failure.current_allocated_before,
+            failure.current_allocated_after,
+            failure.gpu_start_time_bits,
+            failure.gpu_end_time_bits,
+        )
+        tree.validate_metal_async_dispatch_terminal_failure_for_dispatch_v1(
+            second.failure,
+            pin,
+            second.terminal,
+        )
+        self.assertNotEqual(
+            failure.failure_sha256,
+            second.failure.failure_sha256,
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_terminal_failure_replay_v1(
+                second.failure,
+                second.terminal,
+                failure,
+                campaign.terminal,
+            )
+
+        with self.assertRaises(tree.ContractError):
+            tree.make_metal_async_dispatch_terminal_failure_v1(
+                campaign.evidence.quarantines[1],
+                pin,
+                failure.current_allocated_before,
+                failure.current_allocated_after,
+                failure.gpu_start_time_bits,
+                failure.gpu_end_time_bits,
+            )
+        with self.assertRaises(tree.ContractError):
+            tree.make_metal_async_dispatch_terminal_failure_v1(
+                campaign.quarantine,
+                pin,
+                0,
+                failure.current_allocated_after,
+                failure.gpu_start_time_bits,
+                failure.gpu_end_time_bits,
+            )
+
     def test_metal_async_schema_field_order_is_explicit(
         self,
     ) -> None:
