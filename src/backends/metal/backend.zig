@@ -23,7 +23,10 @@ pub const dispatch_observation_abi: u64 = 0x474d_4452_0000_0001;
 pub const allocation_limits_abi: u64 = 0x474d_4149_0000_0001;
 pub const buffer_info_abi: u64 = 0x474d_4249_0000_0001;
 pub const adapter_identity_abi: u64 = 0x474d_4144_0000_0001;
+pub const async_submission_abi: u64 = 0x474d_4153_0000_0001;
+pub const async_completion_abi: u64 = 0x474d_4143_0000_0001;
 pub const completed_command_buffer_status: u32 = 4;
+pub const error_command_buffer_status: u32 = 5;
 pub const shared_storage_mode: u32 = 0;
 pub const default_cpu_cache_mode: u32 = 0;
 
@@ -85,6 +88,66 @@ pub const MetalBufferToken = extern struct {
     }
 };
 
+pub const MetalCommandToken = extern struct {
+    context_nonce: [4]u64 = [_]u64{0} ** 4,
+    generation: u64 = 0,
+
+    pub fn isZero(self: MetalCommandToken) bool {
+        return self.generation == 0 and
+            self.context_nonce[0] == 0 and
+            self.context_nonce[1] == 0 and
+            self.context_nonce[2] == 0 and
+            self.context_nonce[3] == 0;
+    }
+};
+
+pub const MetalAsyncSubmissionDisposition = enum(u32) {
+    submitted = 1,
+    submitted_or_ambiguous = 2,
+    _,
+};
+
+pub const MetalAsyncCommandState = enum(u32) {
+    pending = 1,
+    completed = 2,
+    @"error" = 3,
+    unknown = 4,
+    _,
+};
+
+pub const MetalCommandErrorDomainKind = enum(u32) {
+    none = 0,
+    command_buffer = 1,
+    other = 2,
+    _,
+};
+
+pub const MetalAsyncSubmission = extern struct {
+    abi_version: u64 = async_submission_abi,
+    token: MetalCommandToken = .{},
+    submission_binding: [32]u8 = [_]u8{0} ** 32,
+    disposition: MetalAsyncSubmissionDisposition =
+        .submitted_or_ambiguous,
+    reserved: u32 = 0,
+};
+
+pub const MetalAsyncCompletion = extern struct {
+    abi_version: u64 = async_completion_abi,
+    token: MetalCommandToken = .{},
+    submission_binding: [32]u8 = [_]u8{0} ** 32,
+    current_allocated_before: u64 = 0,
+    current_allocated_after: u64 = 0,
+    gpu_start_time: f64 = 0,
+    gpu_end_time: f64 = 0,
+    error_code: i64 = 0,
+    state: MetalAsyncCommandState = .pending,
+    command_status: u32 = 0,
+    error_domain_kind: MetalCommandErrorDomainKind = .none,
+    error_present: u32 = 0,
+    callback_fault: u32 = 0,
+    reserved: u32 = 0,
+};
+
 pub const MetalAllocationAdapterIdentity = extern struct {
     abi_version: u64 = 0,
     context_nonce: [4]u64 = [_]u64{0} ** 4,
@@ -110,6 +173,16 @@ comptime {
     if (@sizeOf(MetalBufferToken) != 40 or
         @offsetOf(MetalBufferToken, "generation") != 32)
         @compileError("MetalBufferToken ABI layout changed");
+    if (@sizeOf(MetalCommandToken) != 40 or
+        @offsetOf(MetalCommandToken, "generation") != 32)
+        @compileError("MetalCommandToken ABI layout changed");
+    if (@sizeOf(MetalAsyncSubmission) != 88 or
+        @offsetOf(MetalAsyncSubmission, "disposition") != 80)
+        @compileError("MetalAsyncSubmission ABI layout changed");
+    if (@sizeOf(MetalAsyncCompletion) != 144 or
+        @offsetOf(MetalAsyncCompletion, "gpu_start_time") != 96 or
+        @offsetOf(MetalAsyncCompletion, "state") != 120)
+        @compileError("MetalAsyncCompletion ABI layout changed");
     if (@sizeOf(MetalAllocationAdapterIdentity) != 48 or
         @offsetOf(
             MetalAllocationAdapterIdentity,
@@ -128,7 +201,7 @@ pub const MetalDispatchTelemetry = struct {
 };
 
 extern "C" fn glacier_metal_init(metallib_path: [*:0]const u8) ?*MetalContext;
-extern "C" fn glacier_metal_deinit(ctx: *MetalContext) void;
+extern "C" fn glacier_metal_deinit(ctx: *MetalContext) c_int;
 extern "C" fn glacier_metal_device_info(
     ctx: *MetalContext,
     out: *MetalDeviceInfo,
@@ -212,7 +285,7 @@ extern "C" fn glacier_metal_int4_matvec_observed(
     output_count: u64,
     observation: *RawDispatchObservation,
 ) c_int;
-extern "C" fn glacier_metal_int4_registered_buffers_observed(
+extern "C" fn glacier_metal_int4_registered_buffers_submit_async(
     ctx: *MetalContext,
     packed_token: *const MetalBufferToken,
     scales_token: *const MetalBufferToken,
@@ -227,10 +300,36 @@ extern "C" fn glacier_metal_int4_registered_buffers_observed(
     group_size: u32,
     in_features: u32,
     out_features: u32,
-    observation: *RawDispatchObservation,
+    submission_binding: *const [32]u8,
+    submission: *MetalAsyncSubmission,
+) c_int;
+extern "C" fn glacier_metal_registered_dispatch_poll(
+    ctx: *MetalContext,
+    token: *const MetalCommandToken,
+    submission_binding: *const [32]u8,
+    completion: *MetalAsyncCompletion,
+) c_int;
+extern "C" fn glacier_metal_registered_dispatch_wait(
+    ctx: *MetalContext,
+    token: *const MetalCommandToken,
+    submission_binding: *const [32]u8,
+    completion: *MetalAsyncCompletion,
+) c_int;
+extern "C" fn glacier_metal_registered_dispatch_finalize(
+    ctx: *MetalContext,
+    token: *const MetalCommandToken,
+    submission_binding: *const [32]u8,
+    expected_completion: *const MetalAsyncCompletion,
+) c_int;
+extern "C" fn glacier_metal_live_command_count(
+    ctx: *MetalContext,
+    out: *u64,
 ) c_int;
 extern "C" fn glacier_metal_int4_registered_output_read(
     ctx: *MetalContext,
+    command_token: *const MetalCommandToken,
+    submission_binding: *const [32]u8,
+    expected_completion: *const MetalAsyncCompletion,
     output_token: *const MetalBufferToken,
     output: [*]f32,
     output_count: u64,
@@ -246,6 +345,118 @@ pub const MetalError = error{
     InvalidObservation,
 };
 
+fn digestIsZero(value: [32]u8) bool {
+    return std.mem.eql(
+        u8,
+        &value,
+        &([_]u8{0} ** 32),
+    );
+}
+
+fn commandTokenValid(token: MetalCommandToken) bool {
+    return token.generation != 0 and
+        !(token.context_nonce[0] == 0 and
+            token.context_nonce[1] == 0 and
+            token.context_nonce[2] == 0 and
+            token.context_nonce[3] == 0);
+}
+
+pub fn validateMetalAsyncSubmission(
+    submission: MetalAsyncSubmission,
+) MetalError!void {
+    if (submission.abi_version != async_submission_abi or
+        !commandTokenValid(submission.token) or
+        digestIsZero(submission.submission_binding) or
+        submission.reserved != 0)
+        return MetalError.InvalidObservation;
+    switch (submission.disposition) {
+        .submitted, .submitted_or_ambiguous => {},
+        _ => return MetalError.InvalidObservation,
+    }
+}
+
+fn asyncErrorFieldsValid(
+    completion: MetalAsyncCompletion,
+) bool {
+    if (completion.error_present > 1 or
+        completion.callback_fault > 1)
+        return false;
+    if (completion.error_present == 0)
+        return completion.error_domain_kind == .none and
+            completion.error_code == 0;
+    return completion.error_domain_kind == .command_buffer or
+        completion.error_domain_kind == .other;
+}
+
+pub fn validateMetalAsyncCompletion(
+    completion: MetalAsyncCompletion,
+) MetalError!void {
+    if (completion.abi_version != async_completion_abi or
+        !commandTokenValid(completion.token) or
+        digestIsZero(completion.submission_binding) or
+        completion.reserved != 0 or
+        !asyncErrorFieldsValid(completion))
+        return MetalError.InvalidObservation;
+
+    switch (completion.state) {
+        .pending => {
+            if (completion.current_allocated_before != 0 or
+                completion.current_allocated_after != 0 or
+                completion.gpu_start_time != 0 or
+                completion.gpu_end_time != 0 or
+                completion.command_status != 0 or
+                completion.error_present != 0 or
+                completion.callback_fault != 0)
+                return MetalError.InvalidObservation;
+        },
+        .completed => {
+            if (completion.command_status !=
+                completed_command_buffer_status or
+                completion.callback_fault != 0 or
+                completion.error_present != 0 or
+                completion.current_allocated_before == 0 or
+                completion.current_allocated_after == 0 or
+                !std.math.isFinite(completion.gpu_start_time) or
+                !std.math.isFinite(completion.gpu_end_time) or
+                completion.gpu_start_time <= 0 or
+                completion.gpu_end_time <=
+                    completion.gpu_start_time)
+                return MetalError.InvalidObservation;
+        },
+        .@"error" => {
+            if (completion.command_status !=
+                error_command_buffer_status or
+                completion.callback_fault != 0 or
+                completion.current_allocated_before == 0)
+                return MetalError.InvalidObservation;
+        },
+        .unknown => {
+            if (completion.callback_fault == 0 and
+                (completion.command_status ==
+                    completed_command_buffer_status or
+                    completion.command_status ==
+                        error_command_buffer_status))
+                return MetalError.InvalidObservation;
+        },
+        _ => return MetalError.InvalidObservation,
+    }
+}
+
+fn validateCompletionForSubmission(
+    submission: MetalAsyncSubmission,
+    completion: MetalAsyncCompletion,
+) MetalError!void {
+    try validateMetalAsyncSubmission(submission);
+    try validateMetalAsyncCompletion(completion);
+    if (!std.meta.eql(submission.token, completion.token) or
+        !std.mem.eql(
+            u8,
+            &submission.submission_binding,
+            &completion.submission_binding,
+        ))
+        return MetalError.InvalidObservation;
+}
+
 fn recordPhysicalCompletion(
     completed_dispatch_count: *u64,
 ) MetalError!void {
@@ -254,6 +465,13 @@ fn recordPhysicalCompletion(
         completed_dispatch_count.*,
         1,
     ) catch return MetalError.DispatchFailed;
+}
+
+fn recordPhysicalCompletionSaturating(
+    completed_dispatch_count: *u64,
+) void {
+    if (completed_dispatch_count.* != std.math.maxInt(u64))
+        completed_dispatch_count.* += 1;
 }
 
 /// Account for a command that the native bridge reports as physically
@@ -265,6 +483,12 @@ fn recordCompletedObservation(
     raw: RawDispatchObservation,
 ) MetalError!MetalDispatchTelemetry {
     try recordPhysicalCompletion(completed_dispatch_count);
+    return telemetryFromCompletedObservation(raw);
+}
+
+fn telemetryFromCompletedObservation(
+    raw: RawDispatchObservation,
+) MetalError!MetalDispatchTelemetry {
     if (raw.abi_version != dispatch_observation_abi or
         raw.command_status != completed_command_buffer_status or
         raw.reserved != 0 or
@@ -293,6 +517,25 @@ fn recordCompletedObservation(
         ),
         .command_status = raw.command_status,
     };
+}
+
+/// Convert an exact final asynchronous success snapshot into the existing
+/// completed-dispatch telemetry. Pending, error, and unknown states remain
+/// distinct and cannot be relabelled as successful completion.
+pub fn telemetryForAsyncCompletion(
+    completion: MetalAsyncCompletion,
+) MetalError!MetalDispatchTelemetry {
+    try validateMetalAsyncCompletion(completion);
+    if (completion.state != .completed)
+        return MetalError.InvalidObservation;
+    return telemetryFromCompletedObservation(.{
+        .abi_version = dispatch_observation_abi,
+        .current_allocated_before = completion.current_allocated_before,
+        .current_allocated_after = completion.current_allocated_after,
+        .gpu_start_time = completion.gpu_start_time,
+        .gpu_end_time = completion.gpu_end_time,
+        .command_status = completion.command_status,
+    });
 }
 
 fn finalizeObservedDispatch(
@@ -373,11 +616,41 @@ fn validateRegisteredMatvecTokens(
     }
 }
 
+fn synchronousRegisteredDispatchBinding(
+    tokens: [4]MetalBufferToken,
+    geometry: RegisteredMatvecGeometry,
+    packed_weights: []const u8,
+    scales: []const f32,
+    input: []const f32,
+) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-metal-synchronous-registered-dispatch-v1\x00",
+    );
+    for (tokens) |token| {
+        hash.update(std.mem.asBytes(&token.context_nonce));
+        hash.update(std.mem.asBytes(&token.generation));
+    }
+    hash.update(std.mem.asBytes(&geometry));
+    hash.update(packed_weights);
+    hash.update(std.mem.sliceAsBytes(scales));
+    hash.update(std.mem.sliceAsBytes(input));
+    var result: [32]u8 = undefined;
+    hash.final(&result);
+    // SHA-256 producing zero is cryptographically negligible, but the native
+    // token ABI reserves zero as invalid. Keep this private compatibility
+    // binding total without changing caller-owned data.
+    if (digestIsZero(result)) result[0] = 1;
+    return result;
+}
+
 pub const MetalBackend = struct {
     ctx: *MetalContext,
     live_weight_count: u64 = 0,
     live_buffer_count: u64 = 0,
     completed_dispatch_count: u64 = 0,
+    compatibility_unresolved_submission: ?MetalAsyncSubmission = null,
+    compatibility_dispatch_mutex: std.Thread.Mutex = .{},
     allocation_mutex: std.Thread.Mutex = .{},
 
     /// Initialize the Metal backend. `metallib_path` must point to a
@@ -389,14 +662,26 @@ pub const MetalBackend = struct {
     }
 
     pub fn deinit(self: *MetalBackend) void {
-        std.debug.assert(self.live_weight_count == 0);
+        self.compatibility_dispatch_mutex.lock();
+        defer self.compatibility_dispatch_mutex.unlock();
+        if (self.live_weight_count != 0)
+            @panic("Metal backend deinit with live weights");
         self.allocation_mutex.lock();
-        std.debug.assert(self.live_buffer_count == 0);
-        const native_live = self.nativeLiveBufferCountUnlocked() catch
-            std.math.maxInt(u64);
-        std.debug.assert(native_live == 0);
-        self.allocation_mutex.unlock();
-        glacier_metal_deinit(self.ctx);
+        defer self.allocation_mutex.unlock();
+        const zig_live_buffers = self.live_buffer_count;
+        const native_live_buffers =
+            self.nativeLiveBufferCountUnlocked() catch
+                std.math.maxInt(u64);
+        const native_live_commands =
+            self.nativeLiveCommandCountUnlocked() catch
+                std.math.maxInt(u64);
+        if (self.compatibility_unresolved_submission != null or
+            zig_live_buffers != 0 or
+            native_live_buffers != 0 or
+            native_live_commands != 0)
+            @panic("Metal backend deinit with live native ownership");
+        if (glacier_metal_deinit(self.ctx) != 0)
+            @panic("Metal shim refused context deinit");
     }
 
     /// Resolve the exact persistent INT4 matrix-vector pipeline without
@@ -581,6 +866,28 @@ pub const MetalBackend = struct {
         self.allocation_mutex.lock();
         defer self.allocation_mutex.unlock();
         return self.nativeLiveBufferCountUnlocked();
+    }
+
+    fn nativeLiveCommandCountUnlocked(
+        self: *MetalBackend,
+    ) MetalError!u64 {
+        var result: u64 = 0;
+        if (glacier_metal_live_command_count(
+            self.ctx,
+            &result,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        return result;
+    }
+
+    /// Authoritative native registry count. Pending, ambiguous, completed, and
+    /// error commands remain live until exact finalization.
+    pub fn nativeLiveCommandCount(
+        self: *MetalBackend,
+    ) MetalError!u64 {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        return self.nativeLiveCommandCountUnlocked();
     }
 
     /// Dispatch the INT4→FP16 dequant kernel. `out` must be at least
@@ -769,12 +1076,13 @@ pub const MetalBackend = struct {
         );
     }
 
-    /// Upload and dispatch through four exact live registry allocations.
-    /// Every shape, host length, token identity, and native resource length
-    /// is validated before command creation. Caller output is published only
-    /// after Metal reports completion and the observation passes validation.
-    pub fn matvecInt4RegisteredBuffersObserved(
+    /// Non-blocking submission through four exact live registry allocations.
+    /// The caller-supplied binding is retained by the native registry and is
+    /// required unchanged by poll, wait, and finalization. No host output
+    /// pointer survives this call.
+    pub fn submitMatvecInt4RegisteredBuffers(
         self: *MetalBackend,
+        submission_binding: [32]u8,
         packed_token: MetalBufferToken,
         scales_token: MetalBufferToken,
         input_token: MetalBufferToken,
@@ -782,11 +1090,11 @@ pub const MetalBackend = struct {
         packed_weights: []const u8,
         scales: []const f32,
         input: []const f32,
-        output: []f32,
+        output_count: u64,
         group_size: u32,
         in_features: u32,
         out_features: u32,
-    ) MetalError!MetalDispatchTelemetry {
+    ) MetalError!MetalAsyncSubmission {
         const geometry = try registeredMatvecGeometry(
             group_size,
             in_features,
@@ -798,8 +1106,8 @@ pub const MetalBackend = struct {
                 geometry.scale_count or
             @as(u64, @intCast(input.len)) !=
                 geometry.input_count or
-            @as(u64, @intCast(output.len)) !=
-                geometry.output_count)
+            output_count != geometry.output_count or
+            digestIsZero(submission_binding))
             return MetalError.DispatchFailed;
 
         const tokens = [4]MetalBufferToken{
@@ -836,8 +1144,8 @@ pub const MetalBackend = struct {
                 return MetalError.DispatchFailed;
         }
 
-        var raw: RawDispatchObservation = .{};
-        if (glacier_metal_int4_registered_buffers_observed(
+        var submission: MetalAsyncSubmission = .{};
+        if (glacier_metal_int4_registered_buffers_submit_async(
             self.ctx,
             &packed_token,
             &scales_token,
@@ -852,21 +1160,292 @@ pub const MetalBackend = struct {
             group_size,
             in_features,
             out_features,
-            &raw,
+            &submission_binding,
+            &submission,
         ) != 0)
             return MetalError.DispatchFailed;
+        validateMetalAsyncSubmission(submission) catch
+            @panic(
+                "native Metal submit returned success without a valid registry token",
+            );
+        if (!std.mem.eql(
+            u8,
+            &submission.submission_binding,
+            &submission_binding,
+        ))
+            @panic(
+                "native Metal submit returned success with a mismatched binding",
+            );
+        return submission;
+    }
 
-        const telemetry = try recordCompletedObservation(
-            &self.completed_dispatch_count,
-            raw,
+    /// Non-blocking exact replay of the native completed-handler snapshot.
+    pub fn pollRegisteredDispatch(
+        self: *MetalBackend,
+        submission: MetalAsyncSubmission,
+    ) MetalError!MetalAsyncCompletion {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        try validateMetalAsyncSubmission(submission);
+        var completion: MetalAsyncCompletion = .{};
+        if (glacier_metal_registered_dispatch_poll(
+            self.ctx,
+            &submission.token,
+            &submission.submission_binding,
+            &completion,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        try validateCompletionForSubmission(
+            submission,
+            completion,
         );
+        return completion;
+    }
+
+    /// Wait for the exact native command without holding the native registry
+    /// monitor. A driver exception or non-final status remains `unknown` or
+    /// `pending`; neither is converted into terminal evidence.
+    pub fn waitRegisteredDispatch(
+        self: *MetalBackend,
+        submission: MetalAsyncSubmission,
+    ) MetalError!MetalAsyncCompletion {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        try validateMetalAsyncSubmission(submission);
+        if (submission.disposition != .submitted)
+            return MetalError.InvalidObservation;
+        var completion: MetalAsyncCompletion = .{};
+        if (glacier_metal_registered_dispatch_wait(
+            self.ctx,
+            &submission.token,
+            &submission.submission_binding,
+            &completion,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        try validateCompletionForSubmission(
+            submission,
+            completion,
+        );
+        return completion;
+    }
+
+    /// Copy output only for the exact completed command snapshot and exact
+    /// registered output role while both native records remain live.
+    pub fn readMatvecInt4RegisteredOutput(
+        self: *MetalBackend,
+        submission: MetalAsyncSubmission,
+        completion: MetalAsyncCompletion,
+        output_token: MetalBufferToken,
+        output: []f32,
+    ) MetalError!void {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        try validateCompletionForSubmission(
+            submission,
+            completion,
+        );
+        if (completion.state != .completed or output.len == 0)
+            return MetalError.DispatchFailed;
         if (glacier_metal_int4_registered_output_read(
             self.ctx,
+            &submission.token,
+            &submission.submission_binding,
+            &completion,
             &output_token,
             output.ptr,
-            geometry.output_count,
+            output.len,
         ) != 0)
             return MetalError.DispatchFailed;
+    }
+
+    /// Consume one exact completed/error command snapshot. Pending, unknown,
+    /// foreign, stale, binding-changed, or snapshot-changed calls retain the
+    /// native record. A successful call increments the completed counter once
+    /// unless that diagnostic counter has already saturated.
+    pub fn finalizeRegisteredDispatch(
+        self: *MetalBackend,
+        submission: MetalAsyncSubmission,
+        completion: MetalAsyncCompletion,
+    ) MetalError!void {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        try validateCompletionForSubmission(
+            submission,
+            completion,
+        );
+        if (completion.state != .completed and
+            completion.state != .@"error")
+            return MetalError.InvalidObservation;
+
+        if (glacier_metal_registered_dispatch_finalize(
+            self.ctx,
+            &submission.token,
+            &submission.submission_binding,
+            &completion,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        if (self.compatibility_unresolved_submission) |retained| {
+            if (std.meta.eql(retained, submission))
+                self.compatibility_unresolved_submission = null;
+        }
+        recordPhysicalCompletionSaturating(
+            &self.completed_dispatch_count,
+        );
+    }
+
+    fn retainCompatibilityUnresolvedSubmission(
+        self: *MetalBackend,
+        submission: MetalAsyncSubmission,
+    ) void {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        if (self.compatibility_unresolved_submission) |retained| {
+            if (!std.meta.eql(retained, submission))
+                @panic(
+                    "Metal compatibility dispatch replaced unresolved ownership",
+                );
+            return;
+        }
+        self.compatibility_unresolved_submission = submission;
+    }
+
+    fn finalizeCompatibilityRegisteredDispatch(
+        self: *MetalBackend,
+        submission: MetalAsyncSubmission,
+        completion: MetalAsyncCompletion,
+    ) MetalError!void {
+        self.finalizeRegisteredDispatch(
+            submission,
+            completion,
+        ) catch |err| {
+            self.retainCompatibilityUnresolvedSubmission(
+                submission,
+            );
+            return err;
+        };
+    }
+
+    /// Return the exact native token retained after the synchronous
+    /// compatibility API encounters a nonterminal or ambiguous state.
+    /// Callers may use the normal poll/finalize API; the token is cleared only
+    /// by exact native finalization.
+    pub fn compatibilityUnresolvedSubmission(
+        self: *MetalBackend,
+    ) ?MetalAsyncSubmission {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        return self.compatibility_unresolved_submission;
+    }
+
+    /// Synchronous compatibility path implemented entirely through the native
+    /// command registry. New lifetime-aware callers should retain the returned
+    /// async token until their private Bank settlement callback.
+    pub fn matvecInt4RegisteredBuffersObserved(
+        self: *MetalBackend,
+        packed_token: MetalBufferToken,
+        scales_token: MetalBufferToken,
+        input_token: MetalBufferToken,
+        output_token: MetalBufferToken,
+        packed_weights: []const u8,
+        scales: []const f32,
+        input: []const f32,
+        output: []f32,
+        group_size: u32,
+        in_features: u32,
+        out_features: u32,
+    ) MetalError!MetalDispatchTelemetry {
+        self.compatibility_dispatch_mutex.lock();
+        defer self.compatibility_dispatch_mutex.unlock();
+        if (self.compatibilityUnresolvedSubmission() != null)
+            return MetalError.DispatchFailed;
+        const geometry = try registeredMatvecGeometry(
+            group_size,
+            in_features,
+            out_features,
+        );
+        const tokens = [4]MetalBufferToken{
+            packed_token,
+            scales_token,
+            input_token,
+            output_token,
+        };
+        const binding = synchronousRegisteredDispatchBinding(
+            tokens,
+            geometry,
+            packed_weights,
+            scales,
+            input,
+        );
+        const submission =
+            try self.submitMatvecInt4RegisteredBuffers(
+                binding,
+                packed_token,
+                scales_token,
+                input_token,
+                output_token,
+                packed_weights,
+                scales,
+                input,
+                @intCast(output.len),
+                group_size,
+                in_features,
+                out_features,
+            );
+        if (submission.disposition != .submitted) {
+            self.retainCompatibilityUnresolvedSubmission(
+                submission,
+            );
+            return MetalError.DispatchFailed;
+        }
+        const completion =
+            self.waitRegisteredDispatch(submission) catch |err| {
+                self.retainCompatibilityUnresolvedSubmission(
+                    submission,
+                );
+                return err;
+            };
+        switch (completion.state) {
+            .completed => {},
+            .@"error" => {
+                try self.finalizeCompatibilityRegisteredDispatch(
+                    submission,
+                    completion,
+                );
+                return MetalError.DispatchFailed;
+            },
+            .pending, .unknown => {
+                self.retainCompatibilityUnresolvedSubmission(
+                    submission,
+                );
+                return MetalError.DispatchFailed;
+            },
+            _ => return MetalError.InvalidObservation,
+        }
+
+        const telemetry =
+            telemetryForAsyncCompletion(completion) catch |err| {
+                try self.finalizeCompatibilityRegisteredDispatch(
+                    submission,
+                    completion,
+                );
+                return err;
+            };
+        self.readMatvecInt4RegisteredOutput(
+            submission,
+            completion,
+            output_token,
+            output,
+        ) catch |err| {
+            try self.finalizeCompatibilityRegisteredDispatch(
+                submission,
+                completion,
+            );
+            return err;
+        };
+        try self.finalizeCompatibilityRegisteredDispatch(
+            submission,
+            completion,
+        );
         return telemetry;
     }
 
@@ -880,7 +1459,9 @@ pub const MetalBackend = struct {
         return self.live_buffer_count;
     }
 
-    pub fn completedDispatchCount(self: MetalBackend) u64 {
+    pub fn completedDispatchCount(self: *MetalBackend) u64 {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
         return self.completed_dispatch_count;
     }
 };
@@ -924,6 +1505,25 @@ test "invalid completed observation is counted before output publication" {
         completed_dispatch_count,
     );
     try std.testing.expectEqualSlices(f32, &sentinel, &output);
+}
+
+test "async completion accounting saturates without blocking finalization" {
+    var completed_dispatch_count: u64 =
+        std.math.maxInt(u64) - 1;
+    recordPhysicalCompletionSaturating(
+        &completed_dispatch_count,
+    );
+    try std.testing.expectEqual(
+        std.math.maxInt(u64),
+        completed_dispatch_count,
+    );
+    recordPhysicalCompletionSaturating(
+        &completed_dispatch_count,
+    );
+    try std.testing.expectEqual(
+        std.math.maxInt(u64),
+        completed_dispatch_count,
+    );
 }
 
 test "registered matvec geometry requires exact shader-safe dimensions" {

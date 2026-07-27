@@ -14,7 +14,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Model | `.glacier`, `.glrt`, loader, prepared model | Validate source and execution layouts before use |
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Device selection | `DeviceCapabilityV1`, canonical inventory, plan-bound requirement, selection receipt | Choose one compatible present CPU or accelerator deterministically before admission without granting allocation, queue, dispatch, or publication authority |
-| Device allocation contract prototype | Adapter-quoted manifest, `ResourceBank.ChildLease`, allocation admission, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, and reject stale or substituted ownership; the Metal adapter also creates and directly inspects real buffers without claiming residency or execution integration |
+| Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, async ticket/quarantine evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, and bind per-adapter single-flight Metal completion to exact Bank settlement; the native gate creates, dispatches through, and directly inspects real buffers without claiming residency or general scheduling |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b/W4b-c/W4b-d | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, uncertain external-action handoff, generation-fenced fake reconciliation, and durable storage faults without presenting logical steps as native performance |
@@ -925,12 +925,19 @@ The fake path proves the portable ownership/accounting state machine and
 injected recovery. The Metal path additionally creates and directly inspects
 real Shared buffers, retaining logical `length` and separately observed
 per-resource `allocatedSize` without inferring either from device-wide memory
-samples. Both V1 adapters use the mutually exclusive ChildLease sidecar and
-therefore do not yet compose with a receipt already using LeaseTree.
-LeaseTree integration, physical residency, device-loss quarantine/recovery,
-asynchronous cancellation, multi-device partitioning/scheduling, telemetry,
-performance, retained driver/device ranges, and native support on
-cross-compiled targets remain open. See
+samples. Receipt-bound `ChildLease` ownership and execution-owned additive
+`LeaseTree` ownership are both integrated. Exact object-set pins fence release,
+and the bounded INT4 path provides per-adapter single-flight async completion:
+`MetalAsyncDispatchTicketV1`, exact submit replay, separate poll/wait, pending
+ownership retention, exact completed-output binding, and native finalization
+only after Bank settlement. Ambiguous, unknown, invalid, or command-error
+observations retain sticky nonterminal quarantine rather than manufacturing a
+terminal. Portable tests and the independent Python oracle are contract models
+without GPU work; the native macOS gate uses a real `MTLDevice`, real
+`MTLBuffer` resources, and a CPU output oracle. Physical residency, device-loss
+inspection/reconciliation, quarantine clearing and fresh selection, multi-slot
+and multi-device scheduling, telemetry, performance, retained driver/device
+ranges, and native support on cross-compiled targets remain open. See
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md) and
 [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md).
 
@@ -1118,7 +1125,9 @@ backend. The focused macOS-only Metal readiness gate keeps device authority in
 the native adapter, binds one local discovery epoch, revalidates its selected
 fingerprint and registry identity, and fails
 rather than skipping when its one completed diagnostic dispatch cannot be
-observed.
+observed. A separate native allocation gate exercises real-buffer ownership and
+per-adapter async submit/poll-or-wait/output-validation/settlement/finalization;
+portable contract tests do not execute GPU work.
 Execution, numerical, durable-recovery, and physical-resource validation still
 require real machines for each promoted platform.
 

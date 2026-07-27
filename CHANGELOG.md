@@ -37,6 +37,19 @@ before the first stable release.
 
 ### Added
 
+- Added **single-flight Metal async completion delivery** per allocation
+  adapter. `MetalAsyncDispatchTicketV1` is a pointer-free, generation-fenced
+  handoff from one exact submit to separate poll/wait observation. The native
+  registry retains the command and its four exact buffers; pending remains
+  nonterminal and preserves caller output, the allocation pin, and its charge.
+  Exact completed output is bound to the command, submission, snapshot, and
+  output role, and the native record is finalized only from the private
+  callback after core Bank settlement. Ambiguous submission, unknown or
+  invalid completion, and terminal command errors produce sticky nonterminal
+  `MetalAsyncDispatchQuarantineV1` evidence rather than a manufactured core
+  terminal. This does not impose a global native queue-depth limit and does not
+  provide a multi-slot scheduler, device-loss inspection or reconciliation,
+  quarantine clearing, or fresh device selection.
 - Added the first Stage-5
   [device capability and selection contract](docs/DEVICE_CAPABILITY_CONTRACT.md).
   Portable pointer-free `DeviceCapabilityV1`, inventory-entry, requirement,

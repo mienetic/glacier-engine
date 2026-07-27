@@ -1068,6 +1068,519 @@ class DeviceAllocationLeaseTreeOracleTests(unittest.TestCase):
             campaign.terminal,
         )
 
+    def test_metal_async_evidence_has_fixed_independent_goldens(
+        self,
+    ) -> None:
+        campaign = tree.make_metal_async_dispatch_evidence_campaign()
+        actual = {
+            "ticket_sha256": campaign.ticket.ticket_sha256.hex(),
+            **{
+                "quarantine_%d_sha256" % value.reason: (
+                    value.quarantine_sha256.hex()
+                )
+                for value in campaign.quarantines
+            },
+        }
+        expected = {
+            "ticket_sha256": (
+                "50eafb3b20fd1ce75b3b8be385a41300"
+                "1e3d297a929bfda3ba115b99621eabc7"
+            ),
+            "quarantine_1_sha256": (
+                "20612cc2fc1f4111353d2abbe2a565be"
+                "8c03e3c33ec7dc6b5d368e4857501aa7"
+            ),
+            "quarantine_2_sha256": (
+                "bc08b31107c056f768da3eb8f5807df2"
+                "faf230ae907175ead2de62fc685626d9"
+            ),
+            "quarantine_3_sha256": (
+                "ee46ee2bc57ad0bba2542f33bff363a9"
+                "18eaa6214da5291432bf5ff3d8458cf9"
+            ),
+            "quarantine_4_sha256": (
+                "ec05a4ea41d93a96ae763f85c217344d"
+                "e3abeab261a4e7dbd169809a64d72ae9"
+            ),
+        }
+        self.assertEqual(expected, actual)
+        self.assertEqual(
+            (
+                tree.METAL_ASYNC_SUBMISSION_AMBIGUOUS,
+                tree.METAL_ASYNC_COMPLETION_UNKNOWN,
+                tree.METAL_ASYNC_INVALID_COMPLETION,
+                tree.METAL_ASYNC_TERMINAL_COMMAND_ERROR,
+            ),
+            tuple(value.reason for value in campaign.quarantines),
+        )
+        tree.validate_metal_async_dispatch_ticket_for_dispatch_v1(
+            campaign.ticket,
+            21,
+            campaign.request,
+            campaign.pin,
+            campaign.submission_sha256,
+        )
+        for value in campaign.quarantines:
+            tree.validate_metal_async_dispatch_quarantine_for_ticket_v1(
+                value,
+                campaign.ticket,
+                campaign.device_sha256,
+                campaign.placement_sha256,
+            )
+            tree.validate_metal_async_dispatch_quarantine_replay_v1(
+                value,
+                value,
+            )
+        self.assertNotIn(
+            "terminal_sha256",
+            tree.MetalAsyncDispatchQuarantineV1.__dataclass_fields__,
+        )
+        self.assertNotIn(
+            "output_sha256",
+            tree.MetalAsyncDispatchQuarantineV1.__dataclass_fields__,
+        )
+
+    def test_metal_async_schema_field_order_is_explicit(
+        self,
+    ) -> None:
+        self.assertEqual(
+            (
+                "abi_version",
+                "ticket_generation",
+                "queue_slot",
+                "dispatch_generation",
+                "dispatch_authority_sha256",
+                "queue_authority_sha256",
+                "request",
+                "pin_sha256",
+                "submission_sha256",
+                "ticket_sha256",
+            ),
+            tuple(
+                field.name
+                for field in fields(tree.MetalAsyncDispatchTicketV1)
+            ),
+        )
+        self.assertEqual(
+            (
+                "abi_version",
+                "reason",
+                "ticket",
+                "device_sha256",
+                "placement_sha256",
+                "native_disposition",
+                "native_command_status",
+                "native_completion_observed",
+                "error_domain_kind",
+                "error_code_bits",
+                "quarantine_sha256",
+            ),
+            tuple(
+                field.name
+                for field in fields(
+                    tree.MetalAsyncDispatchQuarantineV1
+                )
+            ),
+        )
+
+    def test_metal_async_ticket_mutation_reseal_and_aba_fail_closed(
+        self,
+    ) -> None:
+        campaign = tree.make_metal_async_dispatch_evidence_campaign()
+        ticket = campaign.ticket
+        foreign = allocation.digest_v1(
+            b"foreign Metal async ticket field"
+        )
+        second_request = tree.make_metal_matvec_dispatch_request_v1(
+            campaign.request.request_generation + 1,
+            campaign.request.dispatch_authority_sha256,
+            campaign.request.queue_authority_sha256,
+            campaign.request.attempt,
+        )
+        second_ticket = tree.make_metal_async_dispatch_ticket_v1(
+            ticket.ticket_generation + 1,
+            campaign.request,
+            campaign.pin,
+            campaign.submission_sha256,
+        )
+        unsealed_tampers = {
+            "abi_version": ticket.abi_version + 1,
+            "ticket_generation": ticket.ticket_generation + 1,
+            "queue_slot": 1,
+            "dispatch_generation": ticket.dispatch_generation + 1,
+            "dispatch_authority_sha256": foreign,
+            "queue_authority_sha256": foreign,
+            "request": second_request,
+            "pin_sha256": foreign,
+            "submission_sha256": foreign,
+            "ticket_sha256": foreign,
+        }
+        self.assertEqual(
+            set(ticket.__dataclass_fields__),
+            set(unsealed_tampers),
+        )
+        for field, value in unsealed_tampers.items():
+            with self.subTest(metal_async_ticket_field=field):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_metal_async_dispatch_ticket_v1(
+                        replace(ticket, **{field: value})
+                    )
+
+        def reseal_ticket(**changes):
+            draft = replace(
+                ticket,
+                **changes,
+                ticket_sha256=tree.ZERO_DIGEST,
+            )
+            return replace(
+                draft,
+                ticket_sha256=(
+                    tree.metal_async_dispatch_ticket_root_v1(draft)
+                ),
+            )
+
+        coherent_generation = reseal_ticket(
+            ticket_generation=ticket.ticket_generation + 1
+        )
+        self.assertEqual(second_ticket, coherent_generation)
+        tree.validate_metal_async_dispatch_ticket_v1(
+            coherent_generation
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_ticket_for_dispatch_v1(
+                ticket,
+                coherent_generation.ticket_generation,
+                campaign.request,
+                campaign.pin,
+                campaign.submission_sha256,
+            )
+
+        coherent_submission = reseal_ticket(
+            submission_sha256=foreign
+        )
+        tree.validate_metal_async_dispatch_ticket_v1(
+            coherent_submission
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_ticket_for_dispatch_v1(
+                coherent_submission,
+                ticket.ticket_generation,
+                campaign.request,
+                campaign.pin,
+                campaign.submission_sha256,
+            )
+
+        coherent_pin = reseal_ticket(pin_sha256=foreign)
+        tree.validate_metal_async_dispatch_ticket_v1(coherent_pin)
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_ticket_for_dispatch_v1(
+                coherent_pin,
+                ticket.ticket_generation,
+                campaign.request,
+                campaign.pin,
+                campaign.submission_sha256,
+            )
+
+        foreign_pin_draft = replace(
+            campaign.pin,
+            dispatch_request_sha256=second_request.request_sha256,
+            pin_sha256=tree.ZERO_DIGEST,
+        )
+        foreign_pin = replace(
+            foreign_pin_draft,
+            pin_sha256=tree.dispatch_pin_root_v1(
+                foreign_pin_draft
+            ),
+        )
+        tree.validate_dispatch_pin_v1(foreign_pin)
+        mismatched_request_pin = reseal_ticket(
+            pin_sha256=foreign_pin.pin_sha256
+        )
+        tree.validate_metal_async_dispatch_ticket_v1(
+            mismatched_request_pin
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_ticket_for_dispatch_v1(
+                mismatched_request_pin,
+                ticket.ticket_generation,
+                campaign.request,
+                foreign_pin,
+                campaign.submission_sha256,
+            )
+
+        coherent_request = reseal_ticket(request=second_request)
+        tree.validate_metal_async_dispatch_ticket_v1(coherent_request)
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_ticket_for_dispatch_v1(
+                coherent_request,
+                ticket.ticket_generation,
+                campaign.request,
+                campaign.pin,
+                campaign.submission_sha256,
+            )
+
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_ticket_v1(
+                reseal_ticket(queue_slot=1)
+            )
+        for invalid_generation in (0, tree.U64_MAX):
+            with self.subTest(
+                invalid_ticket_generation=invalid_generation
+            ):
+                with self.assertRaises(tree.ContractError):
+                    tree.make_metal_async_dispatch_ticket_v1(
+                        invalid_generation,
+                        campaign.request,
+                        campaign.pin,
+                        campaign.submission_sha256,
+                    )
+        with self.assertRaises(tree.ContractError):
+            tree.metal_async_dispatch_ticket_root_v1(
+                replace(
+                    ticket,
+                    ticket_generation=tree.U64_MAX + 1,
+                )
+            )
+
+    def test_metal_async_quarantine_reason_shapes_are_exact(
+        self,
+    ) -> None:
+        campaign = tree.make_metal_async_dispatch_evidence_campaign()
+        expected_shapes = (
+            (
+                tree.METAL_ASYNC_SUBMISSION_AMBIGUOUS,
+                tree.METAL_ASYNC_COMMIT_STARTED,
+                tree.METAL_ASYNC_COMMAND_STATUS_UNOBSERVED,
+                0,
+                tree.METAL_ASYNC_ERROR_NATIVE_BRIDGE,
+                tree.METAL_ASYNC_SUBMISSION_AMBIGUOUS_ADAPTER_CODE,
+            ),
+            (
+                tree.METAL_ASYNC_COMPLETION_UNKNOWN,
+                tree.METAL_ASYNC_SUBMITTED,
+                77,
+                1,
+                tree.METAL_ASYNC_ERROR_NATIVE_BRIDGE,
+                0x777,
+            ),
+            (
+                tree.METAL_ASYNC_INVALID_COMPLETION,
+                tree.METAL_ASYNC_TERMINAL_STATUS_OBSERVED,
+                tree.METAL_ASYNC_COMMAND_STATUS_COMPLETED,
+                1,
+                tree.METAL_ASYNC_ERROR_COMPLETION_VALIDATION,
+                0x202,
+            ),
+            (
+                tree.METAL_ASYNC_TERMINAL_COMMAND_ERROR,
+                tree.METAL_ASYNC_TERMINAL_STATUS_OBSERVED,
+                tree.METAL_ASYNC_COMMAND_STATUS_ERROR,
+                1,
+                tree.METAL_ASYNC_ERROR_COMMAND_BUFFER,
+                0x303,
+            ),
+        )
+        self.assertEqual(
+            expected_shapes,
+            tuple(
+                (
+                    value.reason,
+                    value.native_disposition,
+                    value.native_command_status,
+                    value.native_completion_observed,
+                    value.error_domain_kind,
+                    value.error_code_bits,
+                )
+                for value in campaign.quarantines
+            ),
+        )
+
+        def reseal(value, **changes):
+            draft = replace(
+                value,
+                **changes,
+                quarantine_sha256=tree.ZERO_DIGEST,
+            )
+            return replace(
+                draft,
+                quarantine_sha256=(
+                    tree.metal_async_dispatch_quarantine_root_v1(
+                        draft
+                    )
+                ),
+            )
+
+        for value in campaign.quarantines:
+            wrong_disposition = (
+                tree.METAL_ASYNC_SUBMITTED
+                if value.native_disposition
+                != tree.METAL_ASYNC_SUBMITTED
+                else tree.METAL_ASYNC_COMMIT_STARTED
+            )
+            invalid = (
+                reseal(value, reason=99),
+                reseal(
+                    value,
+                    native_disposition=wrong_disposition,
+                ),
+                reseal(value, native_completion_observed=2),
+                reseal(
+                    value,
+                    error_domain_kind=tree.METAL_ASYNC_ERROR_NONE,
+                ),
+                reseal(value, error_code_bits=0),
+            )
+            for candidate in invalid:
+                with self.subTest(
+                    invalid_quarantine_shape=(
+                        value.reason,
+                        candidate,
+                    )
+                ):
+                    with self.assertRaises(tree.ContractError):
+                        tree.validate_metal_async_dispatch_quarantine_v1(
+                            candidate
+                        )
+            if (
+                value.reason
+                == tree.METAL_ASYNC_COMPLETION_UNKNOWN
+            ):
+                raw_pending = reseal(
+                    value,
+                    native_command_status=(
+                        tree.METAL_ASYNC_COMMAND_STATUS_UNOBSERVED
+                    ),
+                    native_completion_observed=0,
+                )
+                tree.validate_metal_async_dispatch_quarantine_v1(
+                    raw_pending
+                )
+            else:
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_metal_async_dispatch_quarantine_v1(
+                        reseal(
+                            value,
+                            native_command_status=77,
+                        )
+                    )
+
+    def test_metal_async_quarantine_reseal_replay_and_foreign_binding(
+        self,
+    ) -> None:
+        campaign = tree.make_metal_async_dispatch_evidence_campaign()
+        retained = campaign.quarantines[1]
+        foreign = allocation.digest_v1(
+            b"foreign Metal async quarantine field"
+        )
+        second_ticket = tree.make_metal_async_dispatch_ticket_v1(
+            campaign.ticket.ticket_generation + 1,
+            campaign.request,
+            campaign.pin,
+            campaign.submission_sha256,
+        )
+        unsealed_tampers = {
+            "abi_version": retained.abi_version + 1,
+            "reason": tree.METAL_ASYNC_TERMINAL_COMMAND_ERROR,
+            "ticket": second_ticket,
+            "device_sha256": foreign,
+            "placement_sha256": foreign,
+            "native_disposition": tree.METAL_ASYNC_COMMIT_STARTED,
+            "native_command_status": (
+                retained.native_command_status + 1
+            ),
+            "native_completion_observed": 0,
+            "error_domain_kind": (
+                tree.METAL_ASYNC_ERROR_COMPLETION_VALIDATION
+            ),
+            "error_code_bits": retained.error_code_bits + 1,
+            "quarantine_sha256": foreign,
+        }
+        self.assertEqual(
+            set(retained.__dataclass_fields__),
+            set(unsealed_tampers),
+        )
+        for field, value in unsealed_tampers.items():
+            with self.subTest(metal_async_quarantine_field=field):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_metal_async_dispatch_quarantine_v1(
+                        replace(retained, **{field: value})
+                    )
+
+        def reseal(**changes):
+            draft = replace(
+                retained,
+                **changes,
+                quarantine_sha256=tree.ZERO_DIGEST,
+            )
+            return replace(
+                draft,
+                quarantine_sha256=(
+                    tree.metal_async_dispatch_quarantine_root_v1(
+                        draft
+                    )
+                ),
+            )
+
+        coherent_error = reseal(
+            error_code_bits=retained.error_code_bits + 1
+        )
+        tree.validate_metal_async_dispatch_quarantine_v1(
+            coherent_error
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_quarantine_replay_v1(
+                coherent_error,
+                retained,
+            )
+
+        coherent_device = reseal(device_sha256=foreign)
+        tree.validate_metal_async_dispatch_quarantine_for_ticket_v1(
+            coherent_device,
+            campaign.ticket,
+            foreign,
+            campaign.placement_sha256,
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_quarantine_for_ticket_v1(
+                coherent_device,
+                campaign.ticket,
+                campaign.device_sha256,
+                campaign.placement_sha256,
+            )
+
+        coherent_ticket = reseal(ticket=second_ticket)
+        tree.validate_metal_async_dispatch_quarantine_for_ticket_v1(
+            coherent_ticket,
+            second_ticket,
+            campaign.device_sha256,
+            campaign.placement_sha256,
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_quarantine_for_ticket_v1(
+                coherent_ticket,
+                campaign.ticket,
+                campaign.device_sha256,
+                campaign.placement_sha256,
+            )
+
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_quarantine_v1(
+                reseal(device_sha256=tree.ZERO_DIGEST)
+            )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_async_dispatch_quarantine_v1(
+                reseal(
+                    placement_sha256=campaign.device_sha256
+                )
+            )
+        with self.assertRaises(tree.ContractError):
+            tree.metal_async_dispatch_quarantine_root_v1(
+                replace(
+                    retained,
+                    error_code_bits=tree.U64_MAX + 1,
+                )
+            )
+
     def test_metal_pre_submit_schema_field_order_is_explicit(
         self,
     ) -> None:

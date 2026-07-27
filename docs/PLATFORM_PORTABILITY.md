@@ -92,12 +92,16 @@ set. The adapter issues a generation-fenced
 pin's dispatch-request root. Core seals `DispatchPinIntentV1`, calls reserve
 before Bank mutation, aborts exactly on atomic acquisition failure, and
 validates callback/source identity before binding the lease, request, intent,
-and pin. Valid preflight submits one real INT4 command, waits, and checks the
-CPU oracle, or it takes the pure `cancelled_before_submit` branch. A malformed
-attempt can take exact `rejected_before_submit`. Both no-submit terminals use
+and pin. Valid preflight submits one real INT4 command into an adapter-owned
+async slot and returns a generation-fenced `MetalAsyncDispatchTicketV1`.
+Exact replay does not commit again; poll/wait separately authenticate the
+retained command and buffers, pending preserves output and ownership, and exact
+completed output is checked against the CPU oracle. A pure
+`cancelled_before_submit` or malformed `rejected_before_submit` branch uses
 zero submission, backend-completion, and output roots and the same settlement:
-core consumes the private Bank pin, then a private callback atomically clears
-adapter state and records a replay tombstone. Public
+core consumes the private Bank pin, then a private callback finalizes the exact
+native record when present, atomically clears adapter state, and records a
+replay tombstone. Public
 `acknowledgeDispatchCompletion` only verifies compatibility; it grants no
 authority and clears no state. Rejection may inspect the real native
 device/resources but creates and submits no command buffer. Cancellation is
@@ -447,8 +451,8 @@ The LeaseTree coordinator is synchronous and address-stable. The surrounding
 execution owner must serialize coordinator calls with every other mutation of
 the shared tree token and publication sequence; cross-thread use without that
 external serialization is outside the contract. Bounded exact object-set
-dispatch pins are implemented; asynchronous queue/stream scheduling, physical
-residency, loss/quarantine reconciliation, and multi-GPU
+dispatch pins are implemented; multi-slot queue/stream scheduling, physical
+residency, device-loss reconciliation, quarantine clearing, and multi-GPU
 partitioning/scheduling remain open. For the bounded Metal INT4 path, an
 adapter-issued, generation-fenced `MetalMatvecDispatchRequestV1` root is the pin
 dispatch-request root. Core seals the intent and reserves before Bank mutation;
@@ -463,9 +467,13 @@ consumption followed by a private settlement callback that
 atomically clears adapter state and records the replay tombstone. The public
 acknowledgement is compatibility verification only. Rejection may inspect
 native device/resources without creating or submitting a command buffer;
-cancellation is native-free after binding. This does not cover errors after
-submission or device loss. OS and accelerator support remain separate
-dimensions. See the
+cancellation is native-free after binding. The submitted branch now separates
+submit from poll/wait, returns `MetalAsyncDispatchTicketV1`, preserves pending
+output and ownership, and exact-finalizes its native record only after Bank
+settlement. Ambiguous submission, unknown or invalid completion, and terminal
+command errors are detected as sticky nonterminal quarantine; this slice does
+not reconcile or clear quarantine, inspect physical device loss, or select a
+fresh device. OS and accelerator support remain separate dimensions. See the
 [device capability and selection contract](DEVICE_CAPABILITY_CONTRACT.md),
 [device allocation lease](DEVICE_ALLOCATION_LEASE.md),
 [LeaseTree device allocation](LEASE_TREE_DEVICE_ALLOCATION.md), and
@@ -662,7 +670,7 @@ not represented as partial support.
 - ~~bind bounded dispatch lifetime to the exact LeaseTree-owned object set;~~
   complete with fixed Bank pin storage, private permit custody, terminal
   completion evidence, release fencing, and one real four-buffer Metal
-  dispatch; general asynchronous queue scheduling remains open;
+  dispatch;
 - ~~add adapter-authorized pre-submit rejection after pin acquisition;~~
   complete for the adapter-issued generation-fenced request, core-sealed
   intent, reserve-before-Bank-mutation acquisition, exact abort after
@@ -670,9 +678,13 @@ not represented as partial support.
   validation, zero submission/backend-completion/output roots for rejection
   and cancellation, private settlement and replay tombstone, and
   compatibility-only public acknowledgement;
-- add asynchronous queue scheduling and completion delivery;
-- add explicit device-loss quarantine and recovery under a fresh selection
-  receipt;
+- ~~add per-adapter single-flight async completion delivery;~~ complete with
+  generation-fenced tickets, exact submit replay, separate poll/wait, pending
+  ownership retention, exact completed-output binding, post-Bank native
+  finalization, and sticky nonterminal quarantine detection;
+- add multi-slot queue scheduling and multi-device partitioning;
+- add explicit device-loss inspection and safe reconciliation, quarantine
+  clearing, and fresh selection under a new receipt;
 - add physical residency and direct device telemetry as separate authorities;
 - add more GPU backends with CPU-oracle/lifecycle gates and expand native
   OS/device matrices.
@@ -689,18 +701,20 @@ installation quality, physical telemetry, or performance. The W5a
 cross-compile gate likewise does not establish native observation. The
 portable selection contract, fake allocation lifecycles, one real-Metal
 allocation/pinned-dispatch ownership gate, and one Metal readiness binding do
-not establish general asynchronous queue scheduling, physical residency,
-device-loss recovery, multi-GPU behavior, telemetry, performance, or native
-support for any cross-compiled target. The fake lifecycles establish deterministic
+not establish multi-slot queue scheduling, physical residency, device-loss
+reconciliation, multi-GPU behavior, telemetry, performance, or native support
+for any cross-compiled target. The fake lifecycles establish deterministic
 failure/recovery semantics for both ChildLease and LeaseTree ownership. The
 native allocation gate additionally establishes direct resource creation,
-inspection, release, cancellation cleanup, generation reuse, and one bounded
-synchronous dispatch-lifetime fence on its executing host only. It also
+inspection, release, cancellation cleanup, generation reuse, and per-adapter
+single-flight async completion delivery on its executing host only. It also
 establishes exact zero-command rejection and pure cancellation before
 submission for the bounded Metal profile. Portable Zig fake/state tests and
 the Python oracle are contract models without a GPU; only the native macOS
-gate uses real Metal devices and buffers. That gate submits and waits only on
-the valid branch, while reject/cancel issue zero GPU commands. It does not
-establish post-submit or device-loss reconciliation. This document is an
+gate uses real Metal devices and buffers. That gate separates submit from
+poll/wait on the valid branch, validates exact output, settles Bank ownership,
+then finalizes the native command; reject/cancel issue zero GPU commands.
+Sticky quarantine detects post-submit uncertainty but does not reconcile or
+clear it and does not establish physical device-loss recovery. This document is an
 implementation plan and evidence ledger, not a declaration that every listed
 platform is currently supported.

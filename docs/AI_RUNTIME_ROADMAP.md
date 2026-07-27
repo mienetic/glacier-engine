@@ -152,9 +152,14 @@ the exact admission receipt instead of reserving again, then performs one
 failure-atomic bound close and release. The device path now reserves complete
 adapter-quoted waves before allocation, retains private FreePermit recovery,
 and can pin the exact live object set across a bounded dispatch. One native
-Metal gate creates four real buffers, submits only those pinned resources,
-checks output against a CPU oracle, and releases them only after terminal
-completion. For the bounded INT4 profile, the adapter issues a
+Metal gate creates four real buffers and exercises per-adapter single-flight
+async completion over only those pinned resources. Submit returns a
+pointer-free, generation-fenced `MetalAsyncDispatchTicketV1`; exact replay does
+not commit again, poll/wait are separate, and pending preserves output, the pin,
+and its charge. Exact completed output is bound to the command, submission,
+snapshot, and output role, checked against a CPU oracle, and retained until
+Bank settlement authorizes native finalization. For the bounded INT4 profile,
+the adapter issues a
 generation-fenced `MetalMatvecDispatchRequestV1`; that sealed request root,
 never the raw attempt root, is the pin's dispatch-request root. Core seals
 `DispatchPinIntentV1`, calls reserve before Bank mutation, aborts exactly if
@@ -163,12 +168,17 @@ the lease, request, intent, and pin. Valid preflight either submits or settles
 the pure `cancelled_before_submit` path; malformed attempts settle exact
 `rejected_before_submit`. Both no-submit terminals use zero submission,
 backend-completion, and output roots and the same private settlement path.
-Core consumes its private Bank pin, then the private callback atomically clears
-adapter state and records a replay tombstone. Public
+Ambiguous submission, unknown or invalid completion, and terminal command
+errors instead retain sticky nonterminal `MetalAsyncDispatchQuarantineV1`;
+this detects uncertainty but does not reconcile or clear it. For an exact
+terminal, core consumes its private Bank pin, then the private callback
+finalizes the exact native record, atomically clears adapter state, and records
+a replay tombstone. Public
 `acknowledgeDispatchCompletion` only verifies compatibility; it grants no
 authority and clears no state. Physical residency, device-loss
-quarantine/recovery, asynchronous queue scheduling, production weight paging,
-and additional GPU backends and native OS matrices remain planned.
+inspection/reconciliation, quarantine clearing and fresh selection, multi-slot
+and multi-device scheduling, production weight paging, additional GPU
+backends, and native OS matrices remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
 cancellation returns the declared delta, and measured physical counters are
@@ -504,16 +514,28 @@ adapter-issued, generation-fenced `MetalMatvecDispatchRequestV1` root through a
 core-sealed `DispatchPinIntentV1`. Core reserves before Bank mutation and
 aborts exactly on atomic acquisition failure. Callback/source validation
 precedes the exact lease/request/intent/pin binding. Valid preflight can submit
-or produce pure `cancelled_before_submit`; malformed input can produce exact
-`rejected_before_submit`. Both no-submit terminals carry zero submission,
-backend-completion, and output roots and use the same settlement: core consumes
-the private Bank pin, then a private callback atomically clears adapter state
-and records a replay tombstone. Public `acknowledgeDispatchCompletion` is
-compatibility verification only. Rejection may inspect the native device and
-resources but creates and submits no command buffer; cancellation is
-native-free after the sealed binding. Asynchronous queue scheduling,
-device-loss quarantine/recovery, physical residency and device telemetry,
-additional GPU backends, and broader native OS/device matrices stay open.
+into one adapter-owned async slot or produce pure
+`cancelled_before_submit`; malformed input can produce exact
+`rejected_before_submit`. Submit returns `MetalAsyncDispatchTicketV1`; exact
+replay does not recommit, pending preserves output and ownership, and poll/wait
+authenticate the retained command and four exact buffers. Exact completed
+output is bound to the submission, immutable snapshot, and output role. Core
+consumes the private Bank pin before the private callback finalizes that exact
+native record, clears adapter state, and records a replay tombstone. Both
+no-submit terminals carry zero submission, backend-completion, and output
+roots and use the same settlement without a native record. Public
+`acknowledgeDispatchCompletion` is compatibility verification only. Rejection
+may inspect the native device and resources but creates and submits no command
+buffer; cancellation is native-free after the sealed binding. Ambiguous
+submission, unknown or invalid completion, and terminal command errors become
+sticky nonterminal quarantine evidence; reconciliation and clearing remain
+open. Portable Zig fake/state tests and the independent Python oracle exercise
+only deterministic contract models and do no GPU work. The native macOS gate
+opens a real `MTLDevice`, creates real `MTLBuffer` resources, and executes the
+valid command on the device. Device-loss inspection/reconciliation, fresh
+selection, multi-slot and multi-device scheduling, physical residency and
+device telemetry, additional GPU backends, and broader native OS/device
+matrices stay open.
 Contract validation requires a present logical CPU count of at least one and
 accepts signed physical temperatures down to, but never below, absolute zero.
 

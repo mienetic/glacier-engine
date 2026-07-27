@@ -1753,8 +1753,9 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
         dispatch_count_before,
         backend.completedDispatchCount(),
     );
-    const dispatch_result =
-        try adapter.dispatchMatvecInt4Observed(
+    const output_before_async = gpu_output;
+    const async_ticket =
+        try adapter.submitMatvecInt4AsyncObserved(
             lease,
             pin,
             fixture.bindings,
@@ -1766,6 +1767,94 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
             in_features,
             out_features,
         );
+    try metal_allocation.validateMetalAsyncDispatchTicketV1(
+        async_ticket,
+    );
+    try testing.expectEqualDeep(
+        async_ticket,
+        try adapter.submitMatvecInt4AsyncObserved(
+            lease,
+            pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            &gpu_output,
+            group_size,
+            in_features,
+            out_features,
+        ),
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectError(
+        engine.metal_backend.MetalError.InvalidObservation,
+        backend.destroyBufferAllocation(
+            native_slots[0].native_token,
+        ),
+    );
+    var changed_input = input;
+    changed_input[0] += 0.25;
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.submitMatvecInt4AsyncObserved(
+            lease,
+            pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &changed_input,
+            &gpu_output,
+            group_size,
+            in_features,
+            out_features,
+        ),
+    );
+    const first_poll =
+        try adapter.pollMatvecInt4AsyncObserved(
+            lease,
+            pin,
+            async_ticket,
+            &gpu_output,
+        );
+    const dispatch_result = switch (first_poll) {
+        .pending => blk: {
+            try testing.expectEqualSlices(
+                f32,
+                &output_before_async,
+                &gpu_output,
+            );
+            const waited =
+                try adapter.waitMatvecInt4AsyncObserved(
+                    lease,
+                    pin,
+                    async_ticket,
+                    &gpu_output,
+                );
+            break :blk switch (waited) {
+                .completed => |result| result,
+                .pending, .quarantined => return error.TestUnexpectedResult,
+            };
+        },
+        .completed => |result| result,
+        .quarantined => return error.TestUnexpectedResult,
+    };
+    const replayed =
+        try adapter.pollMatvecInt4AsyncObserved(
+            lease,
+            pin,
+            async_ticket,
+            &gpu_output,
+        );
+    switch (replayed) {
+        .completed => |result| try testing.expectEqualDeep(
+            dispatch_result,
+            result,
+        ),
+        .pending, .quarantined => return error.TestUnexpectedResult,
+    }
     try metal_allocation
         .validateMetalLeaseTreeDispatchPayloadV1(
         dispatch_result.observation,
@@ -1781,8 +1870,12 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
         dispatch_result.terminal,
     );
     try testing.expectEqual(
-        dispatch_count_before + 1,
+        dispatch_count_before,
         backend.completedDispatchCount(),
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        try backend.nativeLiveCommandCount(),
     );
     try testing.expectError(
         metal_allocation.Error.DispatchBusy,
@@ -1813,6 +1906,14 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
         pin,
         adapter.dispatchInterface(),
         dispatch_result.terminal,
+    );
+    try testing.expectEqual(
+        dispatch_count_before + 1,
+        backend.completedDispatchCount(),
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveCommandCount(),
     );
     try tree_allocation.validateDispatchCompletionForPinV1(
         completion,

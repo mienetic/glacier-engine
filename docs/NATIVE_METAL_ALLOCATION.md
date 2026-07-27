@@ -4,8 +4,9 @@ The native Metal allocation adapter binds the portable allocation-adapter
 contract to real direct Shared `MTLBuffer` resources on macOS through both the
 receipt-bound ChildLease coordinator and the execution-owned LeaseTree
 coordinator. It is a bounded allocation-ownership prototype, not a residency
-or performance subsystem. Its optional dispatch path adds a synchronous
-lifetime fence; it is not a general queue scheduler.
+or performance subsystem. Its optional dispatch path adds per-adapter
+**single-flight Metal async completion delivery**; it is neither a global
+native queue-depth limit nor a general queue scheduler.
 
 ## What is implemented
 
@@ -29,11 +30,20 @@ For one exact `MetalBackend` context, the adapter:
    generations.
 
 For the bounded LeaseTree dispatch profile, the same adapter also binds four
-exact live objects to packed weights, scales, input, and output roles. It
-uploads and submits only those registry-owned buffers, waits for the real
-command buffer to complete, retains terminal evidence until the coordinator
-consumes its private Bank pin and confirms private settlement, and rejects
-allocation or free callbacks until then.
+exact live objects to packed weights, scales, input, and output roles. One
+adapter-owned slot retains one exact request and a pointer-free,
+generation-fenced `MetalAsyncDispatchTicketV1`. Submit is separate from
+non-blocking poll and blocking wait; an exact submit replay returns the same
+ticket without uploading or committing twice. The underlying native backend
+may own commands for distinct buffer sets concurrently, so the single-flight
+claim is deliberately scoped to this adapter.
+
+The native command registry strongly retains the command buffer and the exact
+four registered buffers until exact finalization. Pending completion is
+nonterminal, leaves caller output unchanged, and preserves the allocation pin
+and charge. Output copying requires the exact command token, submission
+binding, immutable completed snapshot, and output-role token while both native
+records remain live.
 
 The Metal INT4 profile also has an adapter-authorized pre-submit rejection
 path. `MetalMatvecPreSubmitAttemptV1` seals raw geometry, host
@@ -68,16 +78,26 @@ roles, but it performs no upload, constructs or submits no command buffer, and
 does not increase the backend's completed-command count.
 
 Submitted, rejected, and cancelled terminals all use the same core settlement.
+For an exact completed submission, the adapter retains the native submission
+and immutable completion snapshot even after it authorizes terminal evidence.
 The coordinator first consumes the private Bank pin, then invokes the private
 settlement callback with the exact permit and completion. Under the adapter
-lock, that callback clears prepared request, reserved intent, bound pin, and
-terminal state together and records an exact replay tombstone. Callback
-failure leaves core settlement pending for exact retry. Public
+lock, that callback finalizes the exact native command record after Bank
+settlement, clears prepared request, reserved intent, bound pin, async slot,
+and terminal state together, and records an exact replay tombstone. Rejection
+and cancellation have no native command record to finalize. Callback failure
+leaves core settlement pending for exact retry. Public
 `acknowledgeDispatchCompletion` only verifies that tombstone idempotently; it
 does not grant authority or clear state. A changed attempt is rejected while
-settlement is pending, and a consumed pin is stale. These transitions do not
-classify post-submit errors, unknown queue state, or device loss, and they do
-not provide asynchronous scheduling.
+settlement is pending, and a consumed pin is stale.
+
+Ambiguous submission, unknown completion, invalid completed evidence, and
+terminal command errors instead install sticky nonterminal
+`MetalAsyncDispatchQuarantineV1`. Quarantine retains the adapter slot, native
+record, four buffer references, pin, and charge and cannot be converted into a
+core terminal. This slice detects quarantine but does not inspect or reconcile
+device loss, clear quarantine, or perform fresh device selection. It also does
+not provide multi-slot scheduling.
 
 The native hard gate now exercises both coordinators. The LeaseTree path uses
 distinct admission/lease/recovery/terminal evidence and keeps its allocation
@@ -139,6 +159,15 @@ authority, Metal registry identity, private slot index, generation, and
 allocation-call root. The coordinator additionally binds the exact adapter
 context and callback addresses and the exact `ResourceBank` instance.
 
+Async commands use a separate private command token. Its native registry record
+binds the submission digest, command buffer, completion-publication fence, four
+ordered allocation records, and strong references to the same four
+`MTLBuffer`s. Poll, wait, output read, and finalize require exact token and
+binding replay. Output read and finalize additionally require the byte-for-byte
+immutable terminal snapshot; finalize unlinks the record and drops all four
+active-command references exactly once. None of these native handles enters
+`MetalAsyncDispatchTicketV1` or `MetalAsyncDispatchQuarantineV1`.
+
 In assertion-enabled builds, backend deinitialization asserts that its
 Zig-side live weight/allocation counters and the independently maintained shim
 registry count are zero. Normal lease release removes the shim registry entry
@@ -166,9 +195,13 @@ The native allocation hard gate is different. On the executing macOS host it:
   to `free_authorized` and finally an empty device scope;
 - creates a separate exact four-buffer 37x64 INT4 allocation wave, acquires a
   ResourceBank dispatch pin, proves release is rejected while pinned, submits
-  those four real registry-owned buffers, waits for Metal completion, compares
-  output with the CPU oracle, completes private settlement, verifies the
-  compatibility acknowledgement, and then returns all ownership to zero;
+  those four real registry-owned buffers through the adapter's async entry
+  point, retains the exact ticket, observes completion through the separated
+  wait path, authenticates the command/snapshot/output role, compares output
+  with the CPU oracle, proves the native command is still retained before
+  settlement, completes private Bank settlement and exact native
+  finalization, verifies the compatibility acknowledgement, and then returns
+  all ownership to zero;
 - uses adapter-issued, generation-fenced request roots and reserved intents for
   separate real-resource pins describing invalid geometry, host length,
   duplicate role binding, and foreign live-role mapping; proves rejection may
@@ -234,17 +267,20 @@ performance gate.
 
 This slice establishes direct Metal resource creation, per-object inspection,
 adapter ownership, logical precharge, release ordering, and generation-fenced
-reuse on the host that executes the hard gate. It does not establish:
+reuse plus per-adapter single-flight async completion delivery on the host that
+executes the hard gate. It does not establish:
 
 - physical residency or reclaim completion;
 - heap allocation or fragmentation accounting;
-- device-loss inspection or reconciliation;
-- asynchronous cleanup;
-- asynchronous queue scheduling, queue-depth evidence, or transfer ownership;
-- post-submit error reconciliation or inferred rejection after ambiguous queue
-  ownership;
+- device-loss inspection or reconciliation, quarantine clearing, or fresh
+  selection;
+- multi-slot queue scheduling, a global native queue-depth limit, queue-depth
+  evidence, or transfer ownership;
+- post-submit quarantine reconciliation or inferred terminal state after
+  ambiguous queue ownership;
 - multiple simultaneously materialized coordinator leases per adapter context;
 - multi-device partitioning;
+- additional GPU backends;
 - a supported device/OS range; or
 - latency, throughput, utilization, power, temperature, frequency, or energy.
 

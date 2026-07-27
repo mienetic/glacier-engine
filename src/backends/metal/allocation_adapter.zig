@@ -33,6 +33,10 @@ pub const matvec_dispatch_request_abi: u64 =
     0x474d_4452_0000_0001;
 pub const pre_submit_rejection_abi: u64 =
     0x474d_5052_0000_0001;
+pub const async_dispatch_ticket_abi: u64 =
+    0x474d_4154_0000_0001;
+pub const async_dispatch_quarantine_abi: u64 =
+    0x474d_4151_0000_0001;
 
 const authority_domain =
     "glacier-metal-allocation-authority-v1\x00";
@@ -70,7 +74,19 @@ const matvec_dispatch_request_domain =
     "glacier-metal-matvec-dispatch-request-v1\x00";
 const pre_submit_rejection_domain =
     "glacier-metal-matvec-pre-submit-rejection-v1\x00";
+const async_dispatch_ticket_domain =
+    "glacier-metal-single-flight-async-ticket-v1\x00";
+const async_dispatch_quarantine_domain =
+    "glacier-metal-async-dispatch-quarantine-v1\x00";
 const completed_command_buffer_status: u32 = 4;
+pub const async_native_command_status_unobserved: u64 =
+    std.math.maxInt(u64);
+pub const async_native_command_status_completed: u64 =
+    completed_command_buffer_status;
+pub const async_native_command_status_error: u64 = 5;
+/// Adapter-local reason code used when the native submit call cannot prove
+/// whether commit occurred and no native error code exists yet.
+pub const async_submission_ambiguous_adapter_code: u64 = 1;
 const supported_profile =
     device.OperationProfileBitsV1.matvec_int4_f32_bounded;
 const supported_features =
@@ -176,6 +192,15 @@ pub const MetalLeaseTreeDispatchResultV1 = struct {
     terminal: lease_tree.DispatchTerminalEvidenceV1,
 };
 
+/// Level-triggered observation of one exact single-flight async dispatch.
+/// `pending` and `quarantined` are deliberately nonterminal and grant no
+/// Bank-release or native-finalization authority.
+pub const MetalAsyncDispatchPollV1 = union(enum) {
+    pending,
+    completed: MetalLeaseTreeDispatchResultV1,
+    quarantined: MetalAsyncDispatchQuarantineV1,
+};
+
 /// Deterministic precedence for failures proven before any Metal command is
 /// submitted. `invalid_role_mapping` additionally depends on the adapter's
 /// exact live allocation slots and is therefore adapter-authorized rather
@@ -215,6 +240,74 @@ pub const MetalMatvecDispatchRequestV1 = struct {
     queue_authority_sha256: Digest = allocation.zero_digest,
     attempt: MetalMatvecPreSubmitAttemptV1 = .{},
     request_sha256: Digest = allocation.zero_digest,
+};
+
+/// Pointer-free evidence that one exact prepared request and dispatch pin
+/// were handed to the adapter's single native queue slot. The ticket is not
+/// terminal evidence, grants no Bank mutation authority, and contains no
+/// native handle. `ticket_generation` fences reuse of queue slot zero.
+pub const MetalAsyncDispatchTicketV1 = struct {
+    abi_version: u64 = async_dispatch_ticket_abi,
+    ticket_generation: u64 = 0,
+    queue_slot: u64 = 0,
+    dispatch_generation: u64 = 0,
+    dispatch_authority_sha256: Digest = allocation.zero_digest,
+    queue_authority_sha256: Digest = allocation.zero_digest,
+    request: MetalMatvecDispatchRequestV1 = .{},
+    pin_sha256: Digest = allocation.zero_digest,
+    submission_sha256: Digest = allocation.zero_digest,
+    ticket_sha256: Digest = allocation.zero_digest,
+};
+
+/// Sticky, explicitly nonterminal classification of one async command whose
+/// allocation pin must remain retained. These reasons describe only the
+/// observed submission/completion boundary. They do not assert physical
+/// device loss and cannot be converted into DispatchTerminalEvidenceV1.
+pub const MetalAsyncDispatchQuarantineReasonV1 = enum(u64) {
+    submission_ambiguous = 1,
+    /// The adapter could not authenticate a completion snapshot. Raw status
+    /// and observed-bit values are retained verbatim, including 4 or 5; this
+    /// classification remains nonterminal regardless of those raw values.
+    completion_unknown = 2,
+    invalid_completion = 3,
+    terminal_command_error = 4,
+    _,
+};
+
+pub const MetalAsyncNativeDispositionV1 = enum(u64) {
+    commit_started = 1,
+    submitted = 2,
+    terminal_status_observed = 3,
+    _,
+};
+
+pub const MetalAsyncErrorDomainKindV1 = enum(u64) {
+    none = 0,
+    native_bridge = 1,
+    completion_validation = 2,
+    command_buffer = 3,
+    _,
+};
+
+/// Pointer-free sticky quarantine observation for one exact async ticket.
+/// Even when the raw native status is terminal, this value is deliberately
+/// not core terminal evidence and carries no terminal/output root.
+pub const MetalAsyncDispatchQuarantineV1 = struct {
+    abi_version: u64 = async_dispatch_quarantine_abi,
+    reason: MetalAsyncDispatchQuarantineReasonV1 =
+        .submission_ambiguous,
+    ticket: MetalAsyncDispatchTicketV1 = .{},
+    device_sha256: Digest = allocation.zero_digest,
+    placement_sha256: Digest = allocation.zero_digest,
+    native_disposition: MetalAsyncNativeDispositionV1 =
+        .commit_started,
+    native_command_status: u64 =
+        async_native_command_status_unobserved,
+    native_completion_observed: u64 = 0,
+    error_domain_kind: MetalAsyncErrorDomainKindV1 =
+        .native_bridge,
+    error_code_bits: u64 = 0,
+    quarantine_sha256: Digest = allocation.zero_digest,
 };
 
 /// Adapter-authorized diagnostic evidence for one exact pre-submit failure.
@@ -263,6 +356,17 @@ const DispatchSettlementTombstoneV1 = struct {
 const ValidatedMatvecDispatchSetV1 = struct {
     tokens: [4]metal.MetalBufferToken,
     evidence: MetalMatvecRoleEvidenceV1,
+};
+
+const PendingMetalAsyncDispatchV1 = struct {
+    lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    request: MetalMatvecDispatchRequestV1,
+    ticket: MetalAsyncDispatchTicketV1,
+    draft: MetalLeaseTreeDispatchObservationV1,
+    selected: ValidatedMatvecDispatchSetV1,
+    native_submission: metal.MetalAsyncSubmission,
+    native_completion: ?metal.MetalAsyncCompletion = null,
 };
 
 /// Pointer-free direct evidence for one currently live native allocation.
@@ -401,6 +505,7 @@ pub const MetalAllocationAdapterV1 = struct {
     queue_authority_sha256: Digest,
     next_generation: u64 = 1,
     next_matvec_request_generation: u64 = 1,
+    next_async_ticket_generation: u64 = 1,
     prepared_matvec_request: ?MetalMatvecDispatchRequestV1 = null,
     reserved_dispatch_intent: ?lease_tree.DispatchPinIntentV1 = null,
     aborted_dispatch_intent: ?lease_tree.DispatchPinIntentV1 = null,
@@ -410,6 +515,8 @@ pub const MetalAllocationAdapterV1 = struct {
     observed_allocated_size_bytes: u64 = 0,
     active_admission_sha256: Digest = allocation.zero_digest,
     dispatch_unresolved: bool = false,
+    async_dispatch: ?PendingMetalAsyncDispatchV1 = null,
+    async_quarantine: ?MetalAsyncDispatchQuarantineV1 = null,
     authorized_terminal: ?AuthorizedDispatchTerminalV1 = null,
     terminal_validation_observed: bool = false,
     settlement_tombstone: ?DispatchSettlementTombstoneV1 = null,
@@ -610,16 +717,12 @@ pub const MetalAllocationAdapterV1 = struct {
         );
     }
 
-    /// Submit one synchronous INT4 matvec through the exact four allocations
-    /// named by `roles`. The caller must first acquire `pin` from the
-    /// LeaseTree coordinator using `dispatchInterface()`.
-    ///
-    /// Once native submission is attempted, any ambiguous backend error keeps
-    /// the adapter blocked: no new dispatch or free is permitted because the
-    /// queue may still reference the registered buffers. A successful call
-    /// returns terminal evidence; the coordinator's private settlement
-    /// callback atomically validates Bank release and clears the block.
-    pub fn dispatchMatvecInt4Observed(
+    /// Submit one exact INT4 matvec without waiting for GPU completion.
+    /// Successful replay of the same lease, pin, request, payload roots, and
+    /// geometry returns the same ticket and never uploads or commits twice.
+    /// A different request is rejected before native mutation while the one
+    /// queue slot is occupied.
+    pub fn submitMatvecInt4AsyncObserved(
         self: *MetalAllocationAdapterV1,
         lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
         pin: lease_tree.LeaseTreeDispatchPinV1,
@@ -627,23 +730,15 @@ pub const MetalAllocationAdapterV1 = struct {
         packed_weights: []const u8,
         scales: []const f32,
         input: []const f32,
-        output: []f32,
+        output: []const f32,
         group_size: u32,
         in_features: u32,
         out_features: u32,
-    ) Error!MetalLeaseTreeDispatchResultV1 {
+    ) Error!MetalAsyncDispatchTicketV1 {
         if (comptime !metal_enabled)
             return metal.MetalError.Unavailable;
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (self.dispatch_unresolved or
-            self.authorized_terminal != null or
-            self.terminal_validation_observed)
-            return Error.DispatchBusy;
-        if (self.settlement_tombstone) |settled| {
-            if (std.meta.eql(settled.pin, pin))
-                return Error.StaleObject;
-        }
 
         const attempt = try makeMetalMatvecPreSubmitAttemptV1(
             roles,
@@ -655,6 +750,53 @@ pub const MetalAllocationAdapterV1 = struct {
             in_features,
             out_features,
         );
+        const packed_input_sha256 =
+            matvecPackedWeightsInputRootV1(packed_weights);
+        const scales_input_sha256 =
+            matvecScalesInputRootV1(scales);
+        const vector_input_sha256 =
+            matvecVectorInputRootV1(input);
+        if (digestIsZero(packed_input_sha256) or
+            digestIsZero(scales_input_sha256) or
+            digestIsZero(vector_input_sha256))
+            return Error.InvalidDispatchEvidence;
+
+        if (self.async_dispatch) |pending| {
+            try validateMetalAsyncDispatchTicketForDispatchV1(
+                pending.ticket,
+                pending.ticket.ticket_generation,
+                pending.request,
+                pending.pin,
+                pending.draft,
+            );
+            if (!std.meta.eql(pending.lease, lease) or
+                !std.meta.eql(pending.pin, pin) or
+                !std.meta.eql(
+                    pending.request.attempt,
+                    attempt,
+                ) or !device.digestEqual(
+                pending.draft.packed_weights_input_sha256,
+                packed_input_sha256,
+            ) or !device.digestEqual(
+                pending.draft.scales_input_sha256,
+                scales_input_sha256,
+            ) or !device.digestEqual(
+                pending.draft.vector_input_sha256,
+                vector_input_sha256,
+            ))
+                return Error.DispatchBusy;
+            return pending.ticket;
+        }
+        if (self.dispatch_unresolved or
+            self.async_quarantine != null or
+            self.authorized_terminal != null or
+            self.terminal_validation_observed)
+            return Error.DispatchBusy;
+        if (self.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.pin, pin))
+                return Error.StaleObject;
+        }
+
         const request =
             try self.requirePreparedMatvecRequestForPinUnlocked(
                 pin,
@@ -685,18 +827,8 @@ pub const MetalAllocationAdapterV1 = struct {
             request,
             pin,
         );
-        const packed_input_sha256 =
-            matvecPackedWeightsInputRootV1(packed_weights);
-        const scales_input_sha256 =
-            matvecScalesInputRootV1(scales);
-        const vector_input_sha256 =
-            matvecVectorInputRootV1(input);
-        if (digestIsZero(packed_input_sha256) or
-            digestIsZero(scales_input_sha256) or
-            digestIsZero(vector_input_sha256))
-            return Error.InvalidDispatchEvidence;
 
-        var observation: MetalLeaseTreeDispatchObservationV1 = .{
+        var draft: MetalLeaseTreeDispatchObservationV1 = .{
             .dispatch_generation = pin.dispatch_generation,
             .allocation_count = pin.allocation_count,
             .materialized_bytes = pin.pinned_device_bytes,
@@ -714,16 +846,27 @@ pub const MetalAllocationAdapterV1 = struct {
             .scales_input_sha256 = scales_input_sha256,
             .vector_input_sha256 = vector_input_sha256,
         };
-        observation.submission_sha256 =
-            dispatchSubmissionRootV1(observation);
-        if (digestIsZero(observation.submission_sha256))
+        draft.submission_sha256 =
+            dispatchSubmissionRootV1(draft);
+        if (digestIsZero(draft.submission_sha256))
             return Error.InvalidDispatchEvidence;
+        if (self.next_async_ticket_generation == 0 or
+            self.next_async_ticket_generation ==
+                std.math.maxInt(u64))
+            return Error.GenerationExhausted;
+        const ticket = try makeMetalAsyncDispatchTicketV1(
+            self.next_async_ticket_generation,
+            request,
+            pin,
+            draft,
+        );
 
-        // From this point on, an error can no longer prove that native queue
-        // ownership was never established. Leave the adapter blocked.
-        self.dispatch_unresolved = true;
-        const telemetry =
-            try self.backend.matvecInt4RegisteredBuffersObserved(
+        // The backend returns an error only before its native commit boundary.
+        // Once registry ownership exists it always returns a token, including
+        // the explicitly ambiguous disposition.
+        const native_submission =
+            try self.backend.submitMatvecInt4RegisteredBuffers(
+                ticket.ticket_sha256,
                 selected.tokens[0],
                 selected.tokens[1],
                 selected.tokens[2],
@@ -731,11 +874,37 @@ pub const MetalAllocationAdapterV1 = struct {
                 packed_weights,
                 scales,
                 input,
-                output,
+                geometry.output_count,
                 group_size,
                 in_features,
                 out_features,
             );
+        self.next_async_ticket_generation += 1;
+        self.dispatch_unresolved = true;
+        self.async_dispatch = .{
+            .lease = lease,
+            .pin = pin,
+            .request = request,
+            .ticket = ticket,
+            .draft = draft,
+            .selected = selected,
+            .native_submission = native_submission,
+        };
+
+        if (native_submission.disposition ==
+            .submitted_or_ambiguous)
+        {
+            _ = try self.installAsyncQuarantineUnlocked(
+                ticket,
+                .submission_ambiguous,
+                .commit_started,
+                async_native_command_status_unobserved,
+                0,
+                .native_bridge,
+                async_submission_ambiguous_adapter_code,
+            );
+            return ticket;
+        }
         if (!device.digestEqual(
             packed_input_sha256,
             matvecPackedWeightsInputRootV1(packed_weights),
@@ -745,9 +914,376 @@ pub const MetalAllocationAdapterV1 = struct {
         ) or !device.digestEqual(
             vector_input_sha256,
             matvecVectorInputRootV1(input),
-        ))
+        )) {
+            _ = try self.installAsyncQuarantineUnlocked(
+                ticket,
+                .completion_unknown,
+                .submitted,
+                async_native_command_status_unobserved,
+                0,
+                .native_bridge,
+                2,
+            );
+        }
+        return ticket;
+    }
+
+    /// Non-blocking, level-triggered observation. Pending leaves `output`
+    /// byte-for-byte unchanged. A completed result may be replayed before
+    /// settlement and republishes the exact retained GPU output.
+    pub fn pollMatvecInt4AsyncObserved(
+        self: *MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        ticket: MetalAsyncDispatchTicketV1,
+        output: []f32,
+    ) Error!MetalAsyncDispatchPollV1 {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.observeMatvecInt4AsyncUnlocked(
+            lease,
+            pin,
+            ticket,
+            output,
+            false,
+        );
+    }
+
+    /// Blocking counterpart to `pollMatvecInt4AsyncObserved`. It waits only
+    /// for a normally submitted native command; an ambiguous submission is
+    /// already sticky quarantine and is never waited as if commit were known.
+    pub fn waitMatvecInt4AsyncObserved(
+        self: *MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        ticket: MetalAsyncDispatchTicketV1,
+        output: []f32,
+    ) Error!MetalAsyncDispatchPollV1 {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.observeMatvecInt4AsyncUnlocked(
+            lease,
+            pin,
+            ticket,
+            output,
+            true,
+        );
+    }
+
+    /// Copy the current public ticket without exposing the private native
+    /// command token. This remains available when the synchronous
+    /// compatibility wrapper reports an unresolved/quarantined command.
+    pub fn currentAsyncDispatchTicket(
+        self: *MetalAllocationAdapterV1,
+    ) ?MetalAsyncDispatchTicketV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return if (self.async_dispatch) |pending|
+            pending.ticket
+        else
+            null;
+    }
+
+    pub fn currentAsyncDispatchQuarantine(
+        self: *MetalAllocationAdapterV1,
+    ) ?MetalAsyncDispatchQuarantineV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.async_quarantine;
+    }
+
+    /// Synchronous compatibility wrapper over the single native async path.
+    /// Native ownership still remains live after this method returns success;
+    /// only the coordinator's private post-Bank callback finalizes it.
+    pub fn dispatchMatvecInt4Observed(
+        self: *MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        roles: MetalMatvecAllocationBindingsV1,
+        packed_weights: []const u8,
+        scales: []const f32,
+        input: []const f32,
+        output: []f32,
+        group_size: u32,
+        in_features: u32,
+        out_features: u32,
+    ) Error!MetalLeaseTreeDispatchResultV1 {
+        const ticket = try self.submitMatvecInt4AsyncObserved(
+            lease,
+            pin,
+            roles,
+            packed_weights,
+            scales,
+            input,
+            output,
+            group_size,
+            in_features,
+            out_features,
+        );
+        const observed = try self.waitMatvecInt4AsyncObserved(
+            lease,
+            pin,
+            ticket,
+            output,
+        );
+        return switch (observed) {
+            .completed => |result| result,
+            .pending, .quarantined => Error.DispatchUnresolved,
+        };
+    }
+
+    fn installAsyncQuarantineUnlocked(
+        self: *MetalAllocationAdapterV1,
+        ticket: MetalAsyncDispatchTicketV1,
+        reason: MetalAsyncDispatchQuarantineReasonV1,
+        native_disposition: MetalAsyncNativeDispositionV1,
+        native_command_status: u64,
+        native_completion_observed: u64,
+        error_domain_kind: MetalAsyncErrorDomainKindV1,
+        error_code_bits: u64,
+    ) Error!MetalAsyncDispatchQuarantineV1 {
+        const pending = self.async_dispatch orelse
+            return Error.InvalidDispatchEvidence;
+        try validateMetalAsyncDispatchTicketForDispatchV1(
+            ticket,
+            pending.ticket.ticket_generation,
+            pending.request,
+            pending.pin,
+            pending.draft,
+        );
+        if (!std.meta.eql(ticket, pending.ticket))
+            return Error.InvalidDispatchEvidence;
+        if (self.async_quarantine) |retained| {
+            try validateMetalAsyncDispatchQuarantineForTicketV1(
+                retained,
+                ticket,
+                self.device_sha256,
+                self.placement_sha256,
+            );
+            return retained;
+        }
+        const quarantine =
+            try makeMetalAsyncDispatchQuarantineV1(
+                ticket,
+                self.device_sha256,
+                self.placement_sha256,
+                reason,
+                native_disposition,
+                native_command_status,
+                native_completion_observed,
+                error_domain_kind,
+                error_code_bits,
+            );
+        self.async_quarantine = quarantine;
+        return quarantine;
+    }
+
+    fn observeMatvecInt4AsyncUnlocked(
+        self: *MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        ticket: MetalAsyncDispatchTicketV1,
+        output: []f32,
+        wait_for_completion: bool,
+    ) Error!MetalAsyncDispatchPollV1 {
+        const pending = self.async_dispatch orelse {
+            if (self.settlement_tombstone) |settled| {
+                if (std.meta.eql(settled.pin, pin))
+                    return Error.StaleObject;
+            }
+            return Error.DispatchUnresolved;
+        };
+        try validateMetalAsyncDispatchTicketForDispatchV1(
+            ticket,
+            pending.ticket.ticket_generation,
+            pending.request,
+            pending.pin,
+            pending.draft,
+        );
+        if (!self.dispatch_unresolved or
+            !std.meta.eql(ticket, pending.ticket) or
+            !std.meta.eql(lease, pending.lease) or
+            !std.meta.eql(pin, pending.pin) or
+            @as(u64, @intCast(output.len)) !=
+                pending.draft.geometry.output_count)
             return Error.InvalidDispatchEvidence;
 
+        if (self.async_quarantine) |quarantine| {
+            try validateMetalAsyncDispatchQuarantineForTicketV1(
+                quarantine,
+                ticket,
+                self.device_sha256,
+                self.placement_sha256,
+            );
+            return .{ .quarantined = quarantine };
+        }
+        if (self.authorized_terminal) |authorized| {
+            const observation = switch (authorized.evidence) {
+                .submitted => |value| value,
+                .rejected_before_submit,
+                .cancelled_before_submit,
+                => return Error.InvalidDispatchEvidence,
+            };
+            const native_completion =
+                pending.native_completion orelse
+                return Error.InvalidDispatchEvidence;
+            try self.backend.readMatvecInt4RegisteredOutput(
+                pending.native_submission,
+                native_completion,
+                pending.selected.tokens[3],
+                output,
+            );
+            if (!device.digestEqual(
+                observation.output_sha256,
+                matvecOutputRootV1(output),
+            ))
+                return Error.InvalidDispatchEvidence;
+            try validateMetalLeaseTreeDispatchObservationForPinV1(
+                observation,
+                pending.pin,
+                authorized.terminal,
+            );
+            try metal.validateMetalAsyncCompletion(
+                native_completion,
+            );
+            return .{ .completed = .{
+                .observation = observation,
+                .terminal = authorized.terminal,
+            } };
+        }
+
+        const native_completion =
+            (if (wait_for_completion)
+                self.backend.waitRegisteredDispatch(
+                    pending.native_submission,
+                )
+            else
+                self.backend.pollRegisteredDispatch(
+                    pending.native_submission,
+                )) catch {
+                const quarantine =
+                    try self.installAsyncQuarantineUnlocked(
+                        ticket,
+                        .completion_unknown,
+                        .submitted,
+                        async_native_command_status_unobserved,
+                        0,
+                        .native_bridge,
+                        3,
+                    );
+                return .{ .quarantined = quarantine };
+            };
+
+        switch (native_completion.state) {
+            .pending => return .pending,
+            .unknown => {
+                const native_error_bits: u64 =
+                    @bitCast(native_completion.error_code);
+                const quarantine =
+                    try self.installAsyncQuarantineUnlocked(
+                        ticket,
+                        .completion_unknown,
+                        .submitted,
+                        native_completion.command_status,
+                        1,
+                        .native_bridge,
+                        if (native_error_bits != 0)
+                            native_error_bits
+                        else
+                            3,
+                    );
+                return .{ .quarantined = quarantine };
+            },
+            .@"error" => {
+                const native_error_bits: u64 =
+                    @bitCast(native_completion.error_code);
+                const exact_command_error =
+                    native_completion.error_present == 1 and
+                    native_completion.error_domain_kind ==
+                        .command_buffer and
+                    native_error_bits != 0;
+                const quarantine =
+                    if (exact_command_error)
+                        try self.installAsyncQuarantineUnlocked(
+                            ticket,
+                            .terminal_command_error,
+                            .terminal_status_observed,
+                            native_completion.command_status,
+                            1,
+                            .command_buffer,
+                            native_error_bits,
+                        )
+                    else
+                        try self.installAsyncQuarantineUnlocked(
+                            ticket,
+                            .completion_unknown,
+                            .submitted,
+                            native_completion.command_status,
+                            1,
+                            .native_bridge,
+                            if (native_error_bits != 0)
+                                native_error_bits
+                            else
+                                4,
+                        );
+                return .{ .quarantined = quarantine };
+            },
+            .completed => {},
+            _ => {
+                const quarantine =
+                    try self.installAsyncQuarantineUnlocked(
+                        ticket,
+                        .completion_unknown,
+                        .submitted,
+                        native_completion.command_status,
+                        1,
+                        .native_bridge,
+                        3,
+                    );
+                return .{ .quarantined = quarantine };
+            },
+        }
+
+        const telemetry =
+            metal.telemetryForAsyncCompletion(
+                native_completion,
+            ) catch {
+                const quarantine =
+                    try self.installAsyncQuarantineUnlocked(
+                        ticket,
+                        .invalid_completion,
+                        .terminal_status_observed,
+                        async_native_command_status_completed,
+                        1,
+                        .completion_validation,
+                        5,
+                    );
+                return .{ .quarantined = quarantine };
+            };
+        self.backend.readMatvecInt4RegisteredOutput(
+            pending.native_submission,
+            native_completion,
+            pending.selected.tokens[3],
+            output,
+        ) catch {
+            const quarantine =
+                try self.installAsyncQuarantineUnlocked(
+                    ticket,
+                    .invalid_completion,
+                    .terminal_status_observed,
+                    async_native_command_status_completed,
+                    1,
+                    .completion_validation,
+                    6,
+                );
+            return .{ .quarantined = quarantine };
+        };
+
+        var observation = pending.draft;
         observation.telemetry = telemetry;
         observation.telemetry_sha256 =
             dispatchTelemetryRootV1(telemetry);
@@ -764,33 +1300,55 @@ pub const MetalAllocationAdapterV1 = struct {
             observation.submission_sha256,
             observation.backend_completion_sha256,
             observation.output_sha256,
-        ) catch return Error.InvalidDispatchEvidence;
+        ) catch {
+            const quarantine =
+                try self.installAsyncQuarantineUnlocked(
+                    ticket,
+                    .invalid_completion,
+                    .terminal_status_observed,
+                    async_native_command_status_completed,
+                    1,
+                    .completion_validation,
+                    7,
+                );
+            return .{ .quarantined = quarantine };
+        };
         observation.terminal_sha256 =
             terminal.terminal_sha256;
         observation.observation_sha256 =
             metalDispatchObservationRootV1(observation);
-        validateMetalLeaseTreeDispatchPayloadV1(
-            observation,
-            packed_weights,
-            scales,
-            input,
-            output,
-        ) catch return Error.InvalidDispatchEvidence;
         validateMetalLeaseTreeDispatchObservationForPinV1(
             observation,
             pin,
             terminal,
-        ) catch return Error.InvalidDispatchEvidence;
+        ) catch {
+            const quarantine =
+                try self.installAsyncQuarantineUnlocked(
+                    ticket,
+                    .invalid_completion,
+                    .terminal_status_observed,
+                    async_native_command_status_completed,
+                    1,
+                    .completion_validation,
+                    8,
+                );
+            return .{ .quarantined = quarantine };
+        };
+
+        if (self.async_dispatch) |*retained|
+            retained.native_completion = native_completion
+        else
+            return Error.InvalidDispatchEvidence;
         self.authorized_terminal = .{
             .pin = pin,
-            .request = request,
+            .request = pending.request,
             .terminal = terminal,
             .evidence = .{ .submitted = observation },
         };
-        return .{
+        return .{ .completed = .{
             .observation = observation,
             .terminal = terminal,
-        };
+        } };
     }
 
     /// Authorize abandonment of one exact acquired request before native
@@ -1534,6 +2092,8 @@ pub const MetalAllocationAdapterV1 = struct {
             self.observed_allocated_size_bytes != 0 or
             !digestIsZero(self.active_admission_sha256) or
             self.dispatch_unresolved or
+            self.async_dispatch != null or
+            self.async_quarantine != null or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
             self.prepared_matvec_request != null or
@@ -1664,6 +2224,37 @@ pub const MetalAllocationAdapterV1 = struct {
                 .InvalidTerminalEvidence;
         switch (authorized.evidence) {
             .submitted => |observation| {
+                const pending = self.async_dispatch orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
+                const native_completion =
+                    pending.native_completion orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
+                validateMetalAsyncDispatchTicketForDispatchV1(
+                    pending.ticket,
+                    pending.ticket.ticket_generation,
+                    pending.request,
+                    pending.pin,
+                    pending.draft,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidTerminalEvidence;
+                metal.validateMetalAsyncCompletion(
+                    native_completion,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidTerminalEvidence;
+                if (self.async_quarantine != null or
+                    native_completion.state != .completed or
+                    !std.meta.eql(pending.pin, authorized.pin) or
+                    !std.meta.eql(
+                        pending.request,
+                        authorized.request,
+                    ) or !device.digestEqual(
+                    pending.draft.submission_sha256,
+                    observation.submission_sha256,
+                ))
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
                 validateMetalLeaseTreeDispatchObservationForPinV1(
                     observation,
                     authorized.pin,
@@ -1672,6 +2263,10 @@ pub const MetalAllocationAdapterV1 = struct {
                     .InvalidTerminalEvidence;
             },
             .rejected_before_submit => |rejection| {
+                if (self.async_dispatch != null or
+                    self.async_quarantine != null)
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
                 validateMetalMatvecPreSubmitRejectionForPinV1(
                     rejection,
                     authorized.pin,
@@ -1680,6 +2275,10 @@ pub const MetalAllocationAdapterV1 = struct {
                     .InvalidTerminalEvidence;
             },
             .cancelled_before_submit => |cancelled_request| {
+                if (self.async_dispatch != null or
+                    self.async_quarantine != null)
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
                 if (!std.meta.eql(
                     cancelled_request,
                     authorized.request,
@@ -1705,6 +2304,9 @@ pub const MetalAllocationAdapterV1 = struct {
         bank_permit: resource.LeasePinPermitV1,
         bank_completion: resource.LeasePinCompletionV1,
     ) lease_tree.DispatchCallbackError!void {
+        if (comptime !metal_enabled)
+            return lease_tree.DispatchCallbackError
+                .InvalidSettlementEvidence;
         const self: *MetalAllocationAdapterV1 =
             @ptrCast(@alignCast(context));
         self.mutex.lock();
@@ -1740,16 +2342,59 @@ pub const MetalAllocationAdapterV1 = struct {
             !std.meta.eql(bound, authorized.pin))
             return lease_tree.DispatchCallbackError
                 .InvalidSettlementEvidence;
+        var native_finalize: ?struct {
+            submission: metal.MetalAsyncSubmission,
+            completion: metal.MetalAsyncCompletion,
+        } = null;
         switch (authorized.evidence) {
             .submitted => |observation| {
+                const pending = self.async_dispatch orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
+                const native_completion =
+                    pending.native_completion orelse
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
+                validateMetalAsyncDispatchTicketForDispatchV1(
+                    pending.ticket,
+                    pending.ticket.ticket_generation,
+                    pending.request,
+                    pending.pin,
+                    pending.draft,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+                metal.validateMetalAsyncCompletion(
+                    native_completion,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+                if (self.async_quarantine != null or
+                    native_completion.state != .completed or
+                    !std.meta.eql(pending.pin, pin) or
+                    !std.meta.eql(
+                        pending.request,
+                        authorized.request,
+                    ) or !device.digestEqual(
+                    pending.draft.submission_sha256,
+                    observation.submission_sha256,
+                ))
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
                 validateMetalLeaseTreeDispatchObservationForPinV1(
                     observation,
                     pin,
                     terminal,
                 ) catch return lease_tree.DispatchCallbackError
                     .InvalidSettlementEvidence;
+                native_finalize = .{
+                    .submission = pending.native_submission,
+                    .completion = native_completion,
+                };
             },
             .rejected_before_submit => |rejection| {
+                if (self.async_dispatch != null or
+                    self.async_quarantine != null)
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
                 validateMetalMatvecPreSubmitRejectionForPinV1(
                     rejection,
                     pin,
@@ -1758,6 +2403,10 @@ pub const MetalAllocationAdapterV1 = struct {
                     .InvalidSettlementEvidence;
             },
             .cancelled_before_submit => |cancelled_request| {
+                if (self.async_dispatch != null or
+                    self.async_quarantine != null)
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
                 if (!std.meta.eql(
                     cancelled_request,
                     authorized.request,
@@ -1780,6 +2429,12 @@ pub const MetalAllocationAdapterV1 = struct {
             bank_completion,
         ) catch return lease_tree.DispatchCallbackError
             .InvalidSettlementEvidence;
+        if (native_finalize) |value|
+            self.backend.finalizeRegisteredDispatch(
+                value.submission,
+                value.completion,
+            ) catch return lease_tree.DispatchCallbackError
+                .InvalidSettlementEvidence;
         self.settlement_tombstone = .{
             .pin = pin,
             .terminal = terminal,
@@ -1787,6 +2442,8 @@ pub const MetalAllocationAdapterV1 = struct {
             .bank_permit = bank_permit,
             .bank_completion = bank_completion,
         };
+        self.async_dispatch = null;
+        self.async_quarantine = null;
         self.authorized_terminal = null;
         self.dispatch_unresolved = false;
         self.terminal_validation_observed = false;
@@ -2155,6 +2812,387 @@ pub fn validateMetalMatvecDispatchRequestV1(
             request.request_sha256,
             metalMatvecDispatchRequestRootV1(request),
         ))
+        return Error.InvalidDispatchEvidence;
+}
+
+/// Validate the canonical pre-completion observation used to seal an async
+/// ticket. Completion, output, terminal, and final-observation fields must all
+/// remain absent. The inherited `.succeeded` value is only the submitted
+/// operation profile; this draft is not terminal evidence.
+pub fn validateMetalAsyncDispatchDraftForPinV1(
+    draft: MetalLeaseTreeDispatchObservationV1,
+    request: MetalMatvecDispatchRequestV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+) Error!void {
+    try validateMetalMatvecDispatchRequestV1(request);
+    lease_tree.validateDispatchPinV1(pin) catch
+        return Error.InvalidDispatchEvidence;
+    try validateMatvecGeometryV1(draft.geometry);
+    try validateMatvecRoleEvidenceV1(draft.roles);
+
+    const exact_bytes = std.math.add(
+        u64,
+        draft.geometry.packed_bytes,
+        draft.geometry.scales_bytes,
+    ) catch return Error.InvalidDispatchEvidence;
+    const exact_with_input = std.math.add(
+        u64,
+        exact_bytes,
+        draft.geometry.input_bytes,
+    ) catch return Error.InvalidDispatchEvidence;
+    const total_bytes = std.math.add(
+        u64,
+        exact_with_input,
+        draft.geometry.output_bytes,
+    ) catch return Error.InvalidDispatchEvidence;
+    const empty_telemetry: metal.MetalDispatchTelemetry = .{
+        .current_allocated_before = 0,
+        .current_allocated_after = 0,
+        .gpu_start_time_bits = 0,
+        .gpu_end_time_bits = 0,
+        .gpu_duration_nanoseconds = 0,
+        .command_status = 0,
+    };
+
+    if (draft.abi_version != dispatch_observation_abi or
+        draft.outcome != .succeeded or
+        draft.dispatch_generation != pin.dispatch_generation or
+        draft.allocation_count != 4 or
+        draft.allocation_count != pin.allocation_count or
+        draft.materialized_bytes != total_bytes or
+        draft.materialized_bytes != pin.pinned_device_bytes or
+        !device.digestEqual(
+            draft.authority_sha256,
+            pin.authority_sha256,
+        ) or !device.digestEqual(
+        draft.admission_sha256,
+        pin.admission_sha256,
+    ) or !device.digestEqual(
+        draft.lease_sha256,
+        pin.lease_sha256,
+    ) or !device.digestEqual(
+        draft.backend_object_set_sha256,
+        pin.backend_object_set_sha256,
+    ) or !device.digestEqual(
+        draft.pin_sha256,
+        pin.pin_sha256,
+    ) or !device.digestEqual(
+        draft.dispatch_request_sha256,
+        pin.dispatch_request_sha256,
+    ) or !device.digestEqual(
+        draft.dispatch_request_sha256,
+        request.request_sha256,
+    ) or !device.digestEqual(
+        draft.dispatch_authority_sha256,
+        pin.dispatch_authority_sha256,
+    ) or !device.digestEqual(
+        draft.dispatch_authority_sha256,
+        request.dispatch_authority_sha256,
+    ) or !device.digestEqual(
+        draft.queue_authority_sha256,
+        pin.queue_authority_sha256,
+    ) or !device.digestEqual(
+        draft.queue_authority_sha256,
+        request.queue_authority_sha256,
+    ) or request.attempt.group_size !=
+        draft.geometry.group_size or
+        request.attempt.in_features !=
+            draft.geometry.in_features or
+        request.attempt.out_features !=
+            draft.geometry.out_features or
+        request.attempt.packed_weights_bytes !=
+            draft.geometry.packed_bytes or
+        request.attempt.scales_count !=
+            draft.geometry.scale_count or
+        request.attempt.input_count !=
+            draft.geometry.input_count or
+        request.attempt.output_count !=
+            draft.geometry.output_count or
+        !std.meta.eql(
+            request.attempt.bindings,
+            draft.roles.bindings,
+        ) or digestIsZero(
+        draft.packed_weights_input_sha256,
+    ) or digestIsZero(
+        draft.scales_input_sha256,
+    ) or digestIsZero(
+        draft.vector_input_sha256,
+    ) or digestIsZero(draft.submission_sha256) or
+        !device.digestEqual(
+            draft.submission_sha256,
+            dispatchSubmissionRootV1(draft),
+        ) or !std.meta.eql(
+        draft.telemetry,
+        empty_telemetry,
+    ) or !digestIsZero(draft.telemetry_sha256) or
+        !digestIsZero(
+            draft.backend_completion_sha256,
+        ) or !digestIsZero(draft.output_sha256) or
+        !digestIsZero(draft.terminal_sha256) or
+        !digestIsZero(draft.observation_sha256))
+        return Error.InvalidDispatchEvidence;
+}
+
+pub fn makeMetalAsyncDispatchTicketV1(
+    ticket_generation: u64,
+    request: MetalMatvecDispatchRequestV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    draft: MetalLeaseTreeDispatchObservationV1,
+) Error!MetalAsyncDispatchTicketV1 {
+    try validateMetalAsyncDispatchDraftForPinV1(
+        draft,
+        request,
+        pin,
+    );
+    if (ticket_generation == 0 or
+        ticket_generation == std.math.maxInt(u64))
+        return Error.InvalidDispatchEvidence;
+    var result: MetalAsyncDispatchTicketV1 = .{
+        .ticket_generation = ticket_generation,
+        .dispatch_generation = pin.dispatch_generation,
+        .dispatch_authority_sha256 = pin.dispatch_authority_sha256,
+        .queue_authority_sha256 = pin.queue_authority_sha256,
+        .request = request,
+        .pin_sha256 = pin.pin_sha256,
+        .submission_sha256 = draft.submission_sha256,
+    };
+    result.ticket_sha256 =
+        metalAsyncDispatchTicketRootV1(result);
+    try validateMetalAsyncDispatchTicketForDispatchV1(
+        result,
+        ticket_generation,
+        request,
+        pin,
+        draft,
+    );
+    return result;
+}
+
+pub fn metalAsyncDispatchTicketRootV1(
+    ticket: MetalAsyncDispatchTicketV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(async_dispatch_ticket_domain);
+    hashU64(&hash, ticket.abi_version);
+    hashU64(&hash, ticket.ticket_generation);
+    hashU64(&hash, ticket.queue_slot);
+    hashU64(&hash, ticket.dispatch_generation);
+    hash.update(&ticket.dispatch_authority_sha256);
+    hash.update(&ticket.queue_authority_sha256);
+    hash.update(&ticket.request.request_sha256);
+    hash.update(&ticket.pin_sha256);
+    hash.update(&ticket.submission_sha256);
+    return finish(&hash);
+}
+
+pub fn validateMetalAsyncDispatchTicketV1(
+    ticket: MetalAsyncDispatchTicketV1,
+) Error!void {
+    try validateMetalMatvecDispatchRequestV1(
+        ticket.request,
+    );
+    if (ticket.abi_version != async_dispatch_ticket_abi or
+        ticket.ticket_generation == 0 or
+        ticket.ticket_generation == std.math.maxInt(u64) or
+        ticket.queue_slot != 0 or
+        ticket.dispatch_generation == 0 or
+        digestIsZero(ticket.dispatch_authority_sha256) or
+        digestIsZero(ticket.queue_authority_sha256) or
+        device.digestEqual(
+            ticket.dispatch_authority_sha256,
+            ticket.queue_authority_sha256,
+        ) or !device.digestEqual(
+        ticket.dispatch_authority_sha256,
+        ticket.request.dispatch_authority_sha256,
+    ) or !device.digestEqual(
+        ticket.queue_authority_sha256,
+        ticket.request.queue_authority_sha256,
+    ) or digestIsZero(ticket.pin_sha256) or
+        digestIsZero(ticket.submission_sha256) or
+        digestIsZero(ticket.ticket_sha256) or
+        !device.digestEqual(
+            ticket.ticket_sha256,
+            metalAsyncDispatchTicketRootV1(ticket),
+        ))
+        return Error.InvalidDispatchEvidence;
+}
+
+/// Bind a standalone ticket back to the exact live generation, request, pin,
+/// and canonical pre-completion draft retained by the same-process adapter.
+pub fn validateMetalAsyncDispatchTicketForDispatchV1(
+    ticket: MetalAsyncDispatchTicketV1,
+    expected_ticket_generation: u64,
+    request: MetalMatvecDispatchRequestV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    draft: MetalLeaseTreeDispatchObservationV1,
+) Error!void {
+    try validateMetalAsyncDispatchTicketV1(ticket);
+    try validateMetalAsyncDispatchDraftForPinV1(
+        draft,
+        request,
+        pin,
+    );
+    if (expected_ticket_generation == 0 or
+        expected_ticket_generation == std.math.maxInt(u64) or
+        ticket.ticket_generation != expected_ticket_generation or
+        ticket.dispatch_generation != pin.dispatch_generation or
+        !std.meta.eql(ticket.request, request) or
+        !device.digestEqual(
+            ticket.pin_sha256,
+            pin.pin_sha256,
+        ) or !device.digestEqual(
+        ticket.submission_sha256,
+        draft.submission_sha256,
+    ) or !device.digestEqual(
+        ticket.dispatch_authority_sha256,
+        pin.dispatch_authority_sha256,
+    ) or !device.digestEqual(
+        ticket.queue_authority_sha256,
+        pin.queue_authority_sha256,
+    ))
+        return Error.InvalidDispatchEvidence;
+}
+
+fn asyncDispatchQuarantineReasonValid(
+    reason: MetalAsyncDispatchQuarantineReasonV1,
+) bool {
+    return switch (reason) {
+        .submission_ambiguous,
+        .completion_unknown,
+        .invalid_completion,
+        .terminal_command_error,
+        => true,
+        _ => false,
+    };
+}
+
+fn asyncDispatchQuarantineShapeValid(
+    value: MetalAsyncDispatchQuarantineV1,
+) bool {
+    if (value.error_code_bits == 0 or
+        value.native_completion_observed > 1)
+        return false;
+    return switch (value.reason) {
+        .submission_ambiguous => value.native_disposition == .commit_started and
+            value.native_command_status ==
+                async_native_command_status_unobserved and
+            value.native_completion_observed == 0 and
+            value.error_domain_kind == .native_bridge and
+            value.error_code_bits ==
+                async_submission_ambiguous_adapter_code,
+        .completion_unknown => value.native_disposition == .submitted and
+            value.error_domain_kind == .native_bridge,
+        .invalid_completion => value.native_disposition == .terminal_status_observed and
+            value.native_command_status ==
+                async_native_command_status_completed and
+            value.native_completion_observed == 1 and
+            value.error_domain_kind ==
+                .completion_validation,
+        .terminal_command_error => value.native_disposition == .terminal_status_observed and
+            value.native_command_status ==
+                async_native_command_status_error and
+            value.native_completion_observed == 1 and
+            value.error_domain_kind == .command_buffer,
+        _ => false,
+    };
+}
+
+pub fn makeMetalAsyncDispatchQuarantineV1(
+    ticket: MetalAsyncDispatchTicketV1,
+    device_sha256: Digest,
+    placement_sha256: Digest,
+    reason: MetalAsyncDispatchQuarantineReasonV1,
+    native_disposition: MetalAsyncNativeDispositionV1,
+    native_command_status: u64,
+    native_completion_observed: u64,
+    error_domain_kind: MetalAsyncErrorDomainKindV1,
+    error_code_bits: u64,
+) Error!MetalAsyncDispatchQuarantineV1 {
+    try validateMetalAsyncDispatchTicketV1(ticket);
+    var result: MetalAsyncDispatchQuarantineV1 = .{
+        .reason = reason,
+        .ticket = ticket,
+        .device_sha256 = device_sha256,
+        .placement_sha256 = placement_sha256,
+        .native_disposition = native_disposition,
+        .native_command_status = native_command_status,
+        .native_completion_observed = native_completion_observed,
+        .error_domain_kind = error_domain_kind,
+        .error_code_bits = error_code_bits,
+    };
+    result.quarantine_sha256 =
+        metalAsyncDispatchQuarantineRootV1(result);
+    try validateMetalAsyncDispatchQuarantineV1(result);
+    return result;
+}
+
+pub fn metalAsyncDispatchQuarantineRootV1(
+    value: MetalAsyncDispatchQuarantineV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(async_dispatch_quarantine_domain);
+    hashU64(&hash, value.abi_version);
+    hashU64(&hash, @intFromEnum(value.reason));
+    hash.update(&value.ticket.ticket_sha256);
+    hash.update(&value.device_sha256);
+    hash.update(&value.placement_sha256);
+    hashU64(&hash, @intFromEnum(value.native_disposition));
+    hashU64(&hash, value.native_command_status);
+    hashU64(&hash, value.native_completion_observed);
+    hashU64(&hash, @intFromEnum(value.error_domain_kind));
+    hashU64(&hash, value.error_code_bits);
+    return finish(&hash);
+}
+
+pub fn validateMetalAsyncDispatchQuarantineV1(
+    value: MetalAsyncDispatchQuarantineV1,
+) Error!void {
+    try validateMetalAsyncDispatchTicketV1(value.ticket);
+    if (value.abi_version != async_dispatch_quarantine_abi or
+        !asyncDispatchQuarantineReasonValid(value.reason) or
+        digestIsZero(value.device_sha256) or
+        digestIsZero(value.placement_sha256) or
+        device.digestEqual(
+            value.device_sha256,
+            value.placement_sha256,
+        ) or !asyncDispatchQuarantineShapeValid(value) or
+        digestIsZero(value.quarantine_sha256) or
+        !device.digestEqual(
+            value.quarantine_sha256,
+            metalAsyncDispatchQuarantineRootV1(value),
+        ))
+        return Error.InvalidDispatchEvidence;
+}
+
+pub fn validateMetalAsyncDispatchQuarantineForTicketV1(
+    value: MetalAsyncDispatchQuarantineV1,
+    ticket: MetalAsyncDispatchTicketV1,
+    device_sha256: Digest,
+    placement_sha256: Digest,
+) Error!void {
+    try validateMetalAsyncDispatchQuarantineV1(value);
+    try validateMetalAsyncDispatchTicketV1(ticket);
+    if (!std.meta.eql(value.ticket, ticket) or
+        !device.digestEqual(
+            value.device_sha256,
+            device_sha256,
+        ) or !device.digestEqual(
+        value.placement_sha256,
+        placement_sha256,
+    ))
+        return Error.InvalidDispatchEvidence;
+}
+
+/// A sticky quarantine slot may replay only the byte-for-byte same canonical
+/// observation. A coherently resealed change is a different observation and
+/// cannot replace the one already retained by the adapter.
+pub fn validateMetalAsyncDispatchQuarantineReplayV1(
+    value: MetalAsyncDispatchQuarantineV1,
+    retained: MetalAsyncDispatchQuarantineV1,
+) Error!void {
+    try validateMetalAsyncDispatchQuarantineV1(value);
+    try validateMetalAsyncDispatchQuarantineV1(retained);
+    if (!std.meta.eql(value, retained))
         return Error.InvalidDispatchEvidence;
 }
 
@@ -3112,6 +4150,237 @@ fn testDispatchDigest(label: []const u8) Digest {
     return native.contract.digestV1(label);
 }
 
+const TestAsyncEvidenceFixture = struct {
+    request: MetalMatvecDispatchRequestV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    draft: MetalLeaseTreeDispatchObservationV1,
+    ticket: MetalAsyncDispatchTicketV1,
+    device_sha256: Digest,
+    placement_sha256: Digest,
+};
+
+fn makeTestAsyncEvidenceFixture(
+    ticket_generation: u64,
+) !TestAsyncEvidenceFixture {
+    const geometry = try makeMatvecGeometryV1(8, 64, 37);
+    const bindings: MetalMatvecAllocationBindingsV1 = .{
+        .packed_weights_sha256 = testDispatchDigest("async packed binding"),
+        .scales_sha256 = testDispatchDigest("async scales binding"),
+        .input_sha256 = testDispatchDigest("async input binding"),
+        .output_sha256 = testDispatchDigest("async output binding"),
+    };
+    const attempt = try makeMetalMatvecPreSubmitAttemptV1(
+        bindings,
+        geometry.packed_bytes,
+        geometry.scale_count,
+        geometry.input_count,
+        geometry.output_count,
+        geometry.group_size,
+        geometry.in_features,
+        geometry.out_features,
+    );
+    const dispatch_authority_sha256 =
+        testDispatchDigest("async dispatch authority");
+    const queue_authority_sha256 =
+        testDispatchDigest("async queue authority");
+    const request = try makeMetalMatvecDispatchRequestV1(
+        17,
+        dispatch_authority_sha256,
+        queue_authority_sha256,
+        attempt,
+    );
+    const total_bytes = geometry.packed_bytes +
+        geometry.scales_bytes +
+        geometry.input_bytes +
+        geometry.output_bytes;
+
+    var slots = [_]resource.Slot{.{}};
+    var roots = [_]resource.LeaseTreeRootSlot{.{}};
+    var nodes = [_]resource.LeaseNodeSlot{.{}} ** 5;
+    var pin_slots = [_]resource.LeasePinSlotV1{.{}};
+    var bank = try resource.Bank.initWithLeaseTreePinStorage(
+        &slots,
+        &roots,
+        &nodes,
+        &pin_slots,
+        .{
+            .device_bytes = total_bytes,
+            .queue_slots = 1,
+        },
+        0x4153_594e_4354,
+    );
+    const parent = try bank.commit(
+        try bank.reserve(1, .{ .queue_slots = 1 }),
+    );
+    var tree = try bank.openLeaseTree(
+        parent,
+        2,
+        3,
+        .{ .device_bytes = total_bytes },
+    );
+    const scoped = try bank.openLeaseScope(
+        tree,
+        4,
+        5,
+        .{ .device_bytes = total_bytes },
+    );
+    tree = scoped.tree;
+    var session_owner: u8 = 0;
+    const session_id = @intFromPtr(&session_owner);
+    const request_epoch: u64 = 6;
+    try bank.bindPublicationSessionWithLeaseTree(
+        tree,
+        request_epoch,
+        session_id,
+    );
+    const specs = [_]resource.LeaseAllocationSpecV1{
+        .{
+            .scope = scoped.scope,
+            .node_key = 10,
+            .binding_key = 20,
+            .claim = .{
+                .device_bytes = geometry.packed_bytes,
+            },
+        },
+        .{
+            .scope = scoped.scope,
+            .node_key = 11,
+            .binding_key = 21,
+            .claim = .{
+                .device_bytes = geometry.scales_bytes,
+            },
+        },
+        .{
+            .scope = scoped.scope,
+            .node_key = 12,
+            .binding_key = 22,
+            .claim = .{
+                .device_bytes = geometry.input_bytes,
+            },
+        },
+        .{
+            .scope = scoped.scope,
+            .node_key = 13,
+            .binding_key = 23,
+            .claim = .{
+                .device_bytes = geometry.output_bytes,
+            },
+        },
+    };
+    var leaves: [specs.len]resource.LeaseNodeV1 =
+        undefined;
+    const reserved = try bank.reserveAllocationsForSession(
+        tree,
+        request_epoch,
+        session_id,
+        0,
+        &specs,
+        &leaves,
+    );
+    tree = try bank.commitAllocationsAfterAllocate(
+        reserved.batch,
+    );
+    const acquired = try bank.acquireLeasePinsForSession(
+        tree,
+        scoped.scope,
+        request_epoch,
+        session_id,
+        0,
+        30,
+        &leaves,
+    );
+
+    var pin: lease_tree.LeaseTreeDispatchPinV1 = .{
+        .coordinator_epoch = 7,
+        .allocation_generation = 8,
+        .dispatch_generation = 9,
+        .authority_sha256 = testDispatchDigest("async allocation authority"),
+        .dispatch_authority_sha256 = dispatch_authority_sha256,
+        .queue_authority_sha256 = queue_authority_sha256,
+        .request_sha256 = testDispatchDigest("async allocation request"),
+        .admission_sha256 = testDispatchDigest("async allocation admission"),
+        .lease_sha256 = testDispatchDigest("async allocation lease"),
+        .parent_receipt_sha256 = allocation.resourceReceiptRootV1(
+            acquired.tree.parent,
+        ),
+        .allocation_leaf_set_sha256 = testDispatchDigest("async allocation leaves"),
+        .backend_object_set_sha256 = testDispatchDigest("async backend objects"),
+        .dispatch_request_sha256 = request.request_sha256,
+        .publication_binding_sha256 = testDispatchDigest("async publication binding"),
+        .bank_pin_sha256 = lease_tree.leasePinPermitSha256V1(
+            acquired.permit,
+        ),
+        .pinned_tree = acquired.tree,
+        .scope = scoped.scope,
+        .allocation_count = 4,
+        .pinned_device_bytes = total_bytes,
+    };
+    pin.pin_sha256 = lease_tree.dispatchPinRootV1(pin);
+    try lease_tree.validateDispatchPinV1(pin);
+
+    var roles: MetalMatvecRoleEvidenceV1 = .{
+        .bindings = bindings,
+        .packed_weights_object_sha256 = testDispatchDigest("async packed object"),
+        .scales_object_sha256 = testDispatchDigest("async scales object"),
+        .input_object_sha256 = testDispatchDigest("async input object"),
+        .output_object_sha256 = testDispatchDigest("async output object"),
+    };
+    roles.roles_sha256 = matvecRoleEvidenceRootV1(roles);
+    var draft: MetalLeaseTreeDispatchObservationV1 = .{
+        .dispatch_generation = pin.dispatch_generation,
+        .allocation_count = pin.allocation_count,
+        .materialized_bytes = pin.pinned_device_bytes,
+        .authority_sha256 = pin.authority_sha256,
+        .admission_sha256 = pin.admission_sha256,
+        .lease_sha256 = pin.lease_sha256,
+        .backend_object_set_sha256 = pin.backend_object_set_sha256,
+        .pin_sha256 = pin.pin_sha256,
+        .dispatch_request_sha256 = pin.dispatch_request_sha256,
+        .dispatch_authority_sha256 = pin.dispatch_authority_sha256,
+        .queue_authority_sha256 = pin.queue_authority_sha256,
+        .geometry = geometry,
+        .roles = roles,
+        .packed_weights_input_sha256 = testDispatchDigest("async packed input"),
+        .scales_input_sha256 = testDispatchDigest("async scales input"),
+        .vector_input_sha256 = testDispatchDigest("async vector input"),
+    };
+    draft.submission_sha256 =
+        dispatchSubmissionRootV1(draft);
+    try validateMetalAsyncDispatchDraftForPinV1(
+        draft,
+        request,
+        pin,
+    );
+    const ticket = try makeMetalAsyncDispatchTicketV1(
+        ticket_generation,
+        request,
+        pin,
+        draft,
+    );
+    return .{
+        .request = request,
+        .pin = pin,
+        .draft = draft,
+        .ticket = ticket,
+        .device_sha256 = testDispatchDigest("async native device"),
+        .placement_sha256 = testDispatchDigest("async native placement"),
+    };
+}
+
+fn resealTestAsyncTicket(
+    ticket: *MetalAsyncDispatchTicketV1,
+) void {
+    ticket.ticket_sha256 =
+        metalAsyncDispatchTicketRootV1(ticket.*);
+}
+
+fn resealTestAsyncQuarantine(
+    value: *MetalAsyncDispatchQuarantineV1,
+) void {
+    value.quarantine_sha256 =
+        metalAsyncDispatchQuarantineRootV1(value.*);
+}
+
 fn resealTestDispatchObservation(
     observation: *MetalLeaseTreeDispatchObservationV1,
 ) void {
@@ -3197,6 +4466,587 @@ fn makeTestDispatchObservation() !MetalLeaseTreeDispatchObservationV1 {
     };
     resealTestDispatchObservation(&observation);
     return observation;
+}
+
+test "Metal async ticket binds exact request pin draft and live generation" {
+    const fixture = try makeTestAsyncEvidenceFixture(1);
+    try validateMetalAsyncDispatchTicketV1(
+        fixture.ticket,
+    );
+    try validateMetalAsyncDispatchTicketForDispatchV1(
+        fixture.ticket,
+        1,
+        fixture.request,
+        fixture.pin,
+        fixture.draft,
+    );
+
+    var unsealed = fixture.ticket;
+    unsealed.ticket_generation += 1;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTicketV1(unsealed),
+    );
+    unsealed = fixture.ticket;
+    unsealed.ticket_sha256[0] ^= 1;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTicketV1(unsealed),
+    );
+
+    var nonzero_slot = fixture.ticket;
+    nonzero_slot.queue_slot = 1;
+    resealTestAsyncTicket(&nonzero_slot);
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTicketV1(nonzero_slot),
+    );
+
+    var coherent_submission = fixture.ticket;
+    coherent_submission.submission_sha256 =
+        testDispatchDigest("foreign async submission");
+    resealTestAsyncTicket(&coherent_submission);
+    try validateMetalAsyncDispatchTicketV1(
+        coherent_submission,
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTicketForDispatchV1(
+            coherent_submission,
+            1,
+            fixture.request,
+            fixture.pin,
+            fixture.draft,
+        ),
+    );
+
+    const foreign_request =
+        try makeMetalMatvecDispatchRequestV1(
+            fixture.request.request_generation + 1,
+            fixture.request.dispatch_authority_sha256,
+            fixture.request.queue_authority_sha256,
+            fixture.request.attempt,
+        );
+    var foreign_request_pin = fixture.pin;
+    foreign_request_pin.dispatch_request_sha256 =
+        foreign_request.request_sha256;
+    foreign_request_pin.pin_sha256 =
+        lease_tree.dispatchPinRootV1(
+            foreign_request_pin,
+        );
+    try lease_tree.validateDispatchPinV1(
+        foreign_request_pin,
+    );
+    var foreign_request_draft = fixture.draft;
+    foreign_request_draft.pin_sha256 =
+        foreign_request_pin.pin_sha256;
+    foreign_request_draft.dispatch_request_sha256 =
+        foreign_request.request_sha256;
+    foreign_request_draft.submission_sha256 =
+        dispatchSubmissionRootV1(foreign_request_draft);
+    const foreign_request_ticket =
+        try makeMetalAsyncDispatchTicketV1(
+            2,
+            foreign_request,
+            foreign_request_pin,
+            foreign_request_draft,
+        );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTicketForDispatchV1(
+            foreign_request_ticket,
+            2,
+            fixture.request,
+            fixture.pin,
+            fixture.draft,
+        ),
+    );
+
+    var foreign_pin = fixture.pin;
+    foreign_pin.dispatch_generation += 1;
+    foreign_pin.pin_sha256 =
+        lease_tree.dispatchPinRootV1(foreign_pin);
+    try lease_tree.validateDispatchPinV1(foreign_pin);
+    var foreign_pin_draft = fixture.draft;
+    foreign_pin_draft.dispatch_generation =
+        foreign_pin.dispatch_generation;
+    foreign_pin_draft.pin_sha256 = foreign_pin.pin_sha256;
+    foreign_pin_draft.submission_sha256 =
+        dispatchSubmissionRootV1(foreign_pin_draft);
+    const foreign_pin_ticket =
+        try makeMetalAsyncDispatchTicketV1(
+            3,
+            fixture.request,
+            foreign_pin,
+            foreign_pin_draft,
+        );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTicketForDispatchV1(
+            foreign_pin_ticket,
+            3,
+            fixture.request,
+            fixture.pin,
+            fixture.draft,
+        ),
+    );
+
+    var foreign_draft = fixture.draft;
+    foreign_draft.vector_input_sha256 =
+        testDispatchDigest("foreign async vector");
+    foreign_draft.submission_sha256 =
+        dispatchSubmissionRootV1(foreign_draft);
+    const foreign_submission_ticket =
+        try makeMetalAsyncDispatchTicketV1(
+            4,
+            fixture.request,
+            fixture.pin,
+            foreign_draft,
+        );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTicketForDispatchV1(
+            foreign_submission_ticket,
+            4,
+            fixture.request,
+            fixture.pin,
+            fixture.draft,
+        ),
+    );
+
+    var coherent_authority = fixture.ticket;
+    coherent_authority.dispatch_authority_sha256 =
+        testDispatchDigest("foreign async authority");
+    coherent_authority.request.dispatch_authority_sha256 =
+        coherent_authority.dispatch_authority_sha256;
+    coherent_authority.request.request_sha256 =
+        metalMatvecDispatchRequestRootV1(
+            coherent_authority.request,
+        );
+    resealTestAsyncTicket(&coherent_authority);
+    try validateMetalAsyncDispatchTicketV1(
+        coherent_authority,
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTicketForDispatchV1(
+            coherent_authority,
+            1,
+            fixture.request,
+            fixture.pin,
+            fixture.draft,
+        ),
+    );
+}
+
+test "Metal async draft is canonical and completion-free" {
+    const fixture = try makeTestAsyncEvidenceFixture(11);
+
+    var unsealed = fixture.draft;
+    unsealed.vector_input_sha256[0] ^= 1;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchDraftForPinV1(
+            unsealed,
+            fixture.request,
+            fixture.pin,
+        ),
+    );
+
+    var completion_state = fixture.draft;
+    completion_state.telemetry.command_status =
+        completed_command_buffer_status;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchDraftForPinV1(
+            completion_state,
+            fixture.request,
+            fixture.pin,
+        ),
+    );
+    completion_state = fixture.draft;
+    completion_state.telemetry_sha256 =
+        testDispatchDigest("draft telemetry");
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchDraftForPinV1(
+            completion_state,
+            fixture.request,
+            fixture.pin,
+        ),
+    );
+    completion_state = fixture.draft;
+    completion_state.backend_completion_sha256 =
+        testDispatchDigest("draft completion");
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchDraftForPinV1(
+            completion_state,
+            fixture.request,
+            fixture.pin,
+        ),
+    );
+    completion_state = fixture.draft;
+    completion_state.output_sha256 =
+        testDispatchDigest("draft output");
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchDraftForPinV1(
+            completion_state,
+            fixture.request,
+            fixture.pin,
+        ),
+    );
+    completion_state = fixture.draft;
+    completion_state.terminal_sha256 =
+        testDispatchDigest("draft terminal");
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchDraftForPinV1(
+            completion_state,
+            fixture.request,
+            fixture.pin,
+        ),
+    );
+    completion_state = fixture.draft;
+    completion_state.observation_sha256 =
+        testDispatchDigest("draft observation");
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchDraftForPinV1(
+            completion_state,
+            fixture.request,
+            fixture.pin,
+        ),
+    );
+    completion_state = fixture.draft;
+    completion_state.outcome = .terminal_failure;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchDraftForPinV1(
+            completion_state,
+            fixture.request,
+            fixture.pin,
+        ),
+    );
+}
+
+test "Metal async ticket generation fences exhaustion and ABA replay" {
+    const fixture = try makeTestAsyncEvidenceFixture(1);
+    const second = try makeMetalAsyncDispatchTicketV1(
+        2,
+        fixture.request,
+        fixture.pin,
+        fixture.draft,
+    );
+    try std.testing.expect(!device.digestEqual(
+        fixture.ticket.ticket_sha256,
+        second.ticket_sha256,
+    ));
+    try validateMetalAsyncDispatchTicketForDispatchV1(
+        second,
+        2,
+        fixture.request,
+        fixture.pin,
+        fixture.draft,
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTicketForDispatchV1(
+            fixture.ticket,
+            2,
+            fixture.request,
+            fixture.pin,
+            fixture.draft,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        makeMetalAsyncDispatchTicketV1(
+            0,
+            fixture.request,
+            fixture.pin,
+            fixture.draft,
+        ),
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        makeMetalAsyncDispatchTicketV1(
+            std.math.maxInt(u64),
+            fixture.request,
+            fixture.pin,
+            fixture.draft,
+        ),
+    );
+
+    var exhausted = fixture.ticket;
+    exhausted.ticket_generation = std.math.maxInt(u64);
+    resealTestAsyncTicket(&exhausted);
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchTicketV1(exhausted),
+    );
+
+    var exact_second = fixture.ticket;
+    exact_second.ticket_generation = 2;
+    resealTestAsyncTicket(&exact_second);
+    try std.testing.expectEqualDeep(second, exact_second);
+}
+
+test "Metal async quarantine shapes are sticky and explicitly nonterminal" {
+    const fixture = try makeTestAsyncEvidenceFixture(21);
+    const Case = struct {
+        reason: MetalAsyncDispatchQuarantineReasonV1,
+        disposition: MetalAsyncNativeDispositionV1,
+        status: u64,
+        completion_observed: u64,
+        error_domain: MetalAsyncErrorDomainKindV1,
+    };
+    const cases = [_]Case{
+        .{
+            .reason = .submission_ambiguous,
+            .disposition = .commit_started,
+            .status = async_native_command_status_unobserved,
+            .completion_observed = 0,
+            .error_domain = .native_bridge,
+        },
+        .{
+            .reason = .completion_unknown,
+            .disposition = .submitted,
+            .status = async_native_command_status_error,
+            .completion_observed = 1,
+            .error_domain = .native_bridge,
+        },
+        .{
+            .reason = .invalid_completion,
+            .disposition = .terminal_status_observed,
+            .status = async_native_command_status_completed,
+            .completion_observed = 1,
+            .error_domain = .completion_validation,
+        },
+        .{
+            .reason = .terminal_command_error,
+            .disposition = .terminal_status_observed,
+            .status = async_native_command_status_error,
+            .completion_observed = 1,
+            .error_domain = .command_buffer,
+        },
+    };
+    try std.testing.expect(
+        !@hasField(
+            MetalAsyncDispatchQuarantineV1,
+            "terminal_sha256",
+        ),
+    );
+    try std.testing.expect(
+        !@hasField(
+            MetalAsyncDispatchQuarantineV1,
+            "output_sha256",
+        ),
+    );
+
+    for (cases, 0..) |case, index| {
+        const value =
+            try makeMetalAsyncDispatchQuarantineV1(
+                fixture.ticket,
+                fixture.device_sha256,
+                fixture.placement_sha256,
+                case.reason,
+                case.disposition,
+                case.status,
+                case.completion_observed,
+                case.error_domain,
+                if (case.reason ==
+                    .submission_ambiguous)
+                    async_submission_ambiguous_adapter_code
+                else
+                    0x100 + index,
+            );
+        try validateMetalAsyncDispatchQuarantineForTicketV1(
+            value,
+            fixture.ticket,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+        );
+        try validateMetalAsyncDispatchQuarantineReplayV1(
+            value,
+            value,
+        );
+
+        var wrong = value;
+        wrong.native_disposition = switch (case.disposition) {
+            .commit_started => .submitted,
+            .submitted => .commit_started,
+            .terminal_status_observed => .submitted,
+            _ => .commit_started,
+        };
+        resealTestAsyncQuarantine(&wrong);
+        try std.testing.expectError(
+            Error.InvalidDispatchEvidence,
+            validateMetalAsyncDispatchQuarantineV1(wrong),
+        );
+
+        wrong = value;
+        wrong.native_command_status =
+            if (case.status ==
+            async_native_command_status_unobserved)
+                async_native_command_status_completed
+            else
+                async_native_command_status_unobserved;
+        resealTestAsyncQuarantine(&wrong);
+        if (case.reason == .completion_unknown) {
+            try validateMetalAsyncDispatchQuarantineV1(wrong);
+        } else {
+            try std.testing.expectError(
+                Error.InvalidDispatchEvidence,
+                validateMetalAsyncDispatchQuarantineV1(wrong),
+            );
+        }
+
+        wrong = value;
+        wrong.native_completion_observed =
+            if (case.reason == .completion_unknown)
+                2
+            else
+                1 - case.completion_observed;
+        resealTestAsyncQuarantine(&wrong);
+        try std.testing.expectError(
+            Error.InvalidDispatchEvidence,
+            validateMetalAsyncDispatchQuarantineV1(wrong),
+        );
+
+        wrong = value;
+        wrong.error_domain_kind =
+            if (case.error_domain == .native_bridge)
+                .completion_validation
+            else
+                .native_bridge;
+        resealTestAsyncQuarantine(&wrong);
+        try std.testing.expectError(
+            Error.InvalidDispatchEvidence,
+            validateMetalAsyncDispatchQuarantineV1(wrong),
+        );
+
+        wrong = value;
+        wrong.error_code_bits = 0;
+        resealTestAsyncQuarantine(&wrong);
+        try std.testing.expectError(
+            Error.InvalidDispatchEvidence,
+            validateMetalAsyncDispatchQuarantineV1(wrong),
+        );
+    }
+
+    const retained =
+        try makeMetalAsyncDispatchQuarantineV1(
+            fixture.ticket,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+            .completion_unknown,
+            .submitted,
+            77,
+            1,
+            .native_bridge,
+            0x777,
+        );
+    _ = try makeMetalAsyncDispatchQuarantineV1(
+        fixture.ticket,
+        fixture.device_sha256,
+        fixture.placement_sha256,
+        .submission_ambiguous,
+        .commit_started,
+        async_native_command_status_unobserved,
+        0,
+        .native_bridge,
+        async_submission_ambiguous_adapter_code,
+    );
+    var unsealed = retained;
+    unsealed.error_code_bits += 1;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchQuarantineV1(unsealed),
+    );
+
+    var coherent_error = retained;
+    coherent_error.error_code_bits += 1;
+    resealTestAsyncQuarantine(&coherent_error);
+    try validateMetalAsyncDispatchQuarantineV1(
+        coherent_error,
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchQuarantineReplayV1(
+            coherent_error,
+            retained,
+        ),
+    );
+
+    var coherent_device = retained;
+    coherent_device.device_sha256 =
+        testDispatchDigest("foreign async device");
+    resealTestAsyncQuarantine(&coherent_device);
+    try validateMetalAsyncDispatchQuarantineV1(
+        coherent_device,
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchQuarantineForTicketV1(
+            coherent_device,
+            fixture.ticket,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+        ),
+    );
+
+    const second = try makeMetalAsyncDispatchTicketV1(
+        22,
+        fixture.request,
+        fixture.pin,
+        fixture.draft,
+    );
+    var foreign_ticket = retained;
+    foreign_ticket.ticket = second;
+    resealTestAsyncQuarantine(&foreign_ticket);
+    try validateMetalAsyncDispatchQuarantineV1(
+        foreign_ticket,
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchQuarantineForTicketV1(
+            foreign_ticket,
+            fixture.ticket,
+            fixture.device_sha256,
+            fixture.placement_sha256,
+        ),
+    );
+
+    var invalid = retained;
+    invalid.reason = @enumFromInt(99);
+    resealTestAsyncQuarantine(&invalid);
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchQuarantineV1(invalid),
+    );
+    invalid = retained;
+    invalid.native_completion_observed = 2;
+    resealTestAsyncQuarantine(&invalid);
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchQuarantineV1(invalid),
+    );
+    invalid = retained;
+    invalid.device_sha256 = allocation.zero_digest;
+    resealTestAsyncQuarantine(&invalid);
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchQuarantineV1(invalid),
+    );
+    invalid = retained;
+    invalid.placement_sha256 = invalid.device_sha256;
+    resealTestAsyncQuarantine(&invalid);
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalAsyncDispatchQuarantineV1(invalid),
+    );
 }
 
 test "Metal dispatch observation seals exact geometry roles telemetry and data" {
@@ -3527,6 +5377,128 @@ test "Metal matvec request and rejection roots match cross-language golden" {
     try validateMetalMatvecPreSubmitRejectionV1(
         rejection,
     );
+}
+
+test "Metal async ticket and quarantine roots match cross-language goldens" {
+    const attempt = try makeMetalMatvecPreSubmitAttemptV1(
+        .{
+            .packed_weights_sha256 = testDispatchDigest("request packed binding"),
+            .scales_sha256 = testDispatchDigest("request scales binding"),
+            .input_sha256 = testDispatchDigest("request input binding"),
+            .output_sha256 = testDispatchDigest("request output binding"),
+        },
+        1_184,
+        296,
+        64,
+        37,
+        8,
+        64,
+        37,
+    );
+    const request = try makeMetalMatvecDispatchRequestV1(
+        1,
+        testDispatchDigest("request dispatch authority"),
+        testDispatchDigest("request queue authority"),
+        attempt,
+    );
+    var pin_sha256: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &pin_sha256,
+        "d8a9faa9bced09e52d1867afee4e2f2698d38d9dce277bd11aab403a9289f93c",
+    );
+    var ticket: MetalAsyncDispatchTicketV1 = .{
+        .ticket_generation = 21,
+        .dispatch_generation = 1,
+        .dispatch_authority_sha256 = request.dispatch_authority_sha256,
+        .queue_authority_sha256 = request.queue_authority_sha256,
+        .request = request,
+        .pin_sha256 = pin_sha256,
+        .submission_sha256 = testDispatchDigest("async dispatch submission"),
+    };
+    ticket.ticket_sha256 = metalAsyncDispatchTicketRootV1(ticket);
+    try validateMetalAsyncDispatchTicketV1(ticket);
+
+    var expected_ticket_sha256: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &expected_ticket_sha256,
+        "50eafb3b20fd1ce75b3b8be385a413001e3d297a929bfda3ba115b99621eabc7",
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &expected_ticket_sha256,
+        &ticket.ticket_sha256,
+    );
+
+    const Case = struct {
+        reason: MetalAsyncDispatchQuarantineReasonV1,
+        disposition: MetalAsyncNativeDispositionV1,
+        status: u64,
+        completion_observed: u64,
+        error_domain: MetalAsyncErrorDomainKindV1,
+        error_code_bits: u64,
+        expected_sha256_hex: []const u8,
+    };
+    const cases = [_]Case{
+        .{
+            .reason = .submission_ambiguous,
+            .disposition = .commit_started,
+            .status = async_native_command_status_unobserved,
+            .completion_observed = 0,
+            .error_domain = .native_bridge,
+            .error_code_bits = async_submission_ambiguous_adapter_code,
+            .expected_sha256_hex = "20612cc2fc1f4111353d2abbe2a565be8c03e3c33ec7dc6b5d368e4857501aa7",
+        },
+        .{
+            .reason = .completion_unknown,
+            .disposition = .submitted,
+            .status = 77,
+            .completion_observed = 1,
+            .error_domain = .native_bridge,
+            .error_code_bits = 0x777,
+            .expected_sha256_hex = "bc08b31107c056f768da3eb8f5807df2faf230ae907175ead2de62fc685626d9",
+        },
+        .{
+            .reason = .invalid_completion,
+            .disposition = .terminal_status_observed,
+            .status = async_native_command_status_completed,
+            .completion_observed = 1,
+            .error_domain = .completion_validation,
+            .error_code_bits = 0x202,
+            .expected_sha256_hex = "ee46ee2bc57ad0bba2542f33bff363a918eaa6214da5291432bf5ff3d8458cf9",
+        },
+        .{
+            .reason = .terminal_command_error,
+            .disposition = .terminal_status_observed,
+            .status = async_native_command_status_error,
+            .completion_observed = 1,
+            .error_domain = .command_buffer,
+            .error_code_bits = 0x303,
+            .expected_sha256_hex = "ec05a4ea41d93a96ae763f85c217344de3abeab261a4e7dbd169809a64d72ae9",
+        },
+    };
+    for (cases) |case| {
+        const quarantine = try makeMetalAsyncDispatchQuarantineV1(
+            ticket,
+            testDispatchDigest("async Metal device"),
+            testDispatchDigest("async Metal placement"),
+            case.reason,
+            case.disposition,
+            case.status,
+            case.completion_observed,
+            case.error_domain,
+            case.error_code_bits,
+        );
+        var expected_quarantine_sha256: Digest = undefined;
+        _ = try std.fmt.hexToBytes(
+            &expected_quarantine_sha256,
+            case.expected_sha256_hex,
+        );
+        try std.testing.expectEqualSlices(
+            u8,
+            &expected_quarantine_sha256,
+            &quarantine.quarantine_sha256,
+        );
+    }
 }
 
 test "Metal prepared matvec request is idempotent and generation fenced" {
@@ -3888,6 +5860,39 @@ test "disabled Metal adapter rejects every native entry point" {
             1,
             1,
             1,
+        ),
+    );
+    try std.testing.expectError(
+        metal.MetalError.Unavailable,
+        adapter.submitMatvecInt4AsyncObserved(
+            .{},
+            .{},
+            .{},
+            &packed_input,
+            &scales,
+            &input,
+            &output,
+            1,
+            1,
+            1,
+        ),
+    );
+    try std.testing.expectError(
+        metal.MetalError.Unavailable,
+        adapter.pollMatvecInt4AsyncObserved(
+            .{},
+            .{},
+            .{},
+            &output,
+        ),
+    );
+    try std.testing.expectError(
+        metal.MetalError.Unavailable,
+        adapter.waitMatvecInt4AsyncObserved(
+            .{},
+            .{},
+            .{},
+            &output,
         ),
     );
     try std.testing.expectError(

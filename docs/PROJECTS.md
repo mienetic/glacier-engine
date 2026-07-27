@@ -164,8 +164,8 @@ root, is the pin dispatch-request root. Core seals `DispatchPinIntentV1`, calls
 reserve before Bank mutation, aborts exactly on atomic acquisition failure, and
 validates the callback source before binding the lease, request, intent, and
 pin. The native gate adds one exact four-buffer Metal dispatch, waits, compares
-against a CPU oracle, privately settles completion, and ends with zero
-ownership. See
+against a CPU oracle, privately settles Bank completion before exact native
+finalization, and ends with zero ownership. See
 [Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md).
 
 The bounded Metal no-submit follow-up is complete too. Valid preflight can
@@ -179,28 +179,47 @@ callback atomically clears adapter state and records a replay tombstone. Public
 `acknowledgeDispatchCompletion` only verifies compatibility; it grants no
 authority and clears no state.
 
+The **single-flight Metal async completion delivery** follow-up is now complete
+per adapter. One exact submit returns pointer-free, generation-fenced
+`MetalAsyncDispatchTicketV1`; exact replay does not upload or commit again, and
+poll/wait are separate completion operations. The native registry retains the
+command and its four exact buffers. Pending is nonterminal, leaves output
+unchanged, and keeps the pin and charge. Exact completed output is bound to the
+command, submission binding, immutable snapshot, and output role; only the
+private callback after core Bank settlement finalizes the native record.
+Ambiguous submission, unknown or invalid completion, and terminal command
+errors retain sticky nonterminal `MetalAsyncDispatchQuarantineV1` instead of
+manufacturing core terminal evidence. The native backend may own distinct
+buffer sets concurrently, so this is not a global queue-depth-one claim.
+
 Small next slices:
 
-- add asynchronous queue scheduling and completion delivery;
-- add device-loss quarantine and recovery under a fresh selection receipt;
+- add device-loss inspection and safe terminal reconciliation;
+- add quarantine clearing and fresh selection under a new receipt;
+- add multi-slot queue scheduling and multi-device partitioning;
 - add physical residency and direct device telemetry as separate authorities;
 - add more GPU backends with CPU-oracle/lifecycle gates and expand native
-  OS/device matrices.
+  OS/device matrices;
+- retain performance evidence under declared campaigns.
 
 **Current boundary:** the completed LeaseTree follow-up keeps stable capability
 facts separate from dynamic observations, consumes the exact selection,
 reserves every allocation node before native creation, demonstrates
-free-before-uncharge recovery, binds one exact object set to a synchronous
-submitted command, and safely settles deterministic malformed pre-submit
-attempts or pure pre-submit cancellation on the executing Metal host. Portable
-Zig fake/state tests and the independent Python oracle are deterministic
-contract models and use no GPU. The native macOS gate uses a real `MTLDevice`
-and real `MTLBuffer` resources: the valid branch submits a command, waits, and
-checks the CPU oracle; reject/cancel retain real context/resources but issue
-zero GPU commands. Physical residency, device telemetry, device-loss recovery,
-general asynchronous scheduling, additional GPU backends, and broader native
-OS/device matrices remain unimplemented unless a slice supplies direct named
-evidence. Cross-compilation never counts as native support.
+free-before-uncharge recovery, binds one exact object set to a per-adapter
+single-flight async ticket, and safely settles deterministic malformed
+pre-submit attempts or pure pre-submit cancellation on the executing Metal
+host. Portable Zig fake/state tests and the independent Python oracle are
+deterministic contract models and use no GPU. The native macOS gate uses a real
+`MTLDevice` and real `MTLBuffer` resources: the valid branch separates submit
+from completion observation, authenticates the completed command and output
+role, settles the Bank pin before native finalization, and checks the CPU
+oracle; reject/cancel retain real context/resources but issue zero GPU
+commands. Sticky quarantine detection is implemented, but device-loss
+inspection/reconciliation, quarantine clearing, fresh selection, multi-slot
+scheduling, physical residency, direct device telemetry, additional GPU
+backends, performance evidence, and broader native OS/device matrices remain
+unimplemented unless a slice supplies direct named evidence. Cross-compilation
+never counts as native support.
 
 ### Native observation adapters
 

@@ -11,6 +11,7 @@
 // lightest-weight path that works on every macOS version we target.
 
 #import <Metal/Metal.h>
+#import <dispatch/dispatch.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -21,9 +22,25 @@
 #define GLACIER_METAL_ALLOCATION_LIMITS_ABI 0x474d414900000001ULL
 #define GLACIER_METAL_BUFFER_INFO_ABI 0x474d424900000001ULL
 #define GLACIER_METAL_ADAPTER_IDENTITY_ABI 0x474d414400000001ULL
+#define GLACIER_METAL_ASYNC_SUBMISSION_ABI 0x474d415300000001ULL
+#define GLACIER_METAL_ASYNC_COMPLETION_ABI 0x474d414300000001ULL
+
+#define GLACIER_METAL_SUBMIT_SUBMITTED 1U
+#define GLACIER_METAL_SUBMIT_SUBMITTED_OR_AMBIGUOUS 2U
+
+#define GLACIER_METAL_COMMAND_PENDING 1U
+#define GLACIER_METAL_COMMAND_COMPLETED 2U
+#define GLACIER_METAL_COMMAND_ERROR 3U
+#define GLACIER_METAL_COMMAND_UNKNOWN 4U
+
+#define GLACIER_METAL_ERROR_DOMAIN_NONE 0U
+#define GLACIER_METAL_ERROR_DOMAIN_COMMAND_BUFFER 1U
+#define GLACIER_METAL_ERROR_DOMAIN_OTHER 2U
 
 typedef struct GlacierMetalBufferAllocation
     GlacierMetalBufferAllocation;
+typedef struct GlacierMetalCommandRecord
+    GlacierMetalCommandRecord;
 
 // Copyable native token. It contains no pointer: the random context nonce
 // rejects foreign contexts and the never-reused generation rejects stale
@@ -32,6 +49,44 @@ typedef struct {
     uint64_t context_nonce[4];
     uint64_t generation;
 } GlacierMetalBufferToken;
+
+// A command token follows the same context-nonce and generation rules as a
+// buffer token. It never embeds an Objective-C pointer.
+typedef struct {
+    uint64_t context_nonce[4];
+    uint64_t generation;
+} GlacierMetalCommandToken;
+
+// Native ownership returned before the Objective-C commit boundary. A normal
+// commit return is `SUBMITTED`; an exception after commit invocation is
+// `SUBMITTED_OR_AMBIGUOUS`. Both dispositions retain the registry record.
+typedef struct {
+    uint64_t abi_version;
+    GlacierMetalCommandToken token;
+    uint8_t submission_binding[32];
+    uint32_t disposition;
+    uint32_t reserved;
+} GlacierMetalAsyncSubmission;
+
+// Stable snapshot copied by poll and wait. Pending and unknown states are not
+// terminal authority. Error text is deliberately absent; only a stable domain
+// classification and numeric code cross the C boundary.
+typedef struct {
+    uint64_t abi_version;
+    GlacierMetalCommandToken token;
+    uint8_t submission_binding[32];
+    uint64_t current_allocated_before;
+    uint64_t current_allocated_after;
+    double gpu_start_time;
+    double gpu_end_time;
+    int64_t error_code;
+    uint32_t state;
+    uint32_t command_status;
+    uint32_t error_domain_kind;
+    uint32_t error_present;
+    uint32_t callback_fault;
+    uint32_t reserved;
+} GlacierMetalAsyncCompletion;
 
 // Opaque handle returned to Zig. The Zig side treats it as *anyopaque.
 typedef struct {
@@ -42,10 +97,13 @@ typedef struct {
     id<MTLComputePipelineState> matmul_pipeline;
     id<MTLComputePipelineState> int4_matvec_pipeline;
     GlacierMetalBufferAllocation* buffer_allocations;
+    GlacierMetalCommandRecord* command_records;
     uint64_t allocation_context_nonce[4];
     uint64_t next_allocation_adapter_instance;
     uint64_t next_buffer_generation;
+    uint64_t next_command_generation;
     uint64_t live_buffer_allocations;
+    uint64_t live_command_records;
 } GlacierMetalContext;
 
 typedef struct {
@@ -70,6 +128,35 @@ struct GlacierMetalBufferAllocation {
     uint64_t requested_length;
     uint64_t resource_length;
     uint64_t allocated_size;
+    uint64_t active_command_references;
+};
+
+// Context-owned command state. The registry and every referenced allocation
+// are mutated under @synchronized(ctx->device). Strong references remain here
+// until a caller presents the exact terminal snapshot to finalize.
+struct GlacierMetalCommandRecord {
+    GlacierMetalContext* owner;
+    GlacierMetalCommandRecord* next;
+    GlacierMetalCommandToken token;
+    uint8_t submission_binding[32];
+    id<MTLCommandBuffer> command_buffer;
+    id<MTLBuffer> packed;
+    id<MTLBuffer> scales;
+    id<MTLBuffer> input;
+    id<MTLBuffer> output;
+    dispatch_group_t completion_publication;
+    GlacierMetalBufferAllocation* allocations[4];
+    uint64_t current_allocated_before;
+    uint64_t current_allocated_after;
+    double gpu_start_time;
+    double gpu_end_time;
+    int64_t error_code;
+    uint32_t command_status;
+    uint32_t error_domain_kind;
+    uint32_t error_present;
+    uint32_t callback_fault;
+    uint32_t completion_observed;
+    uint32_t commit_invoked;
 };
 
 // Fixed-width, pointer-free facts used to derive the selected device and
@@ -165,14 +252,64 @@ _Static_assert(sizeof(GlacierMetalBufferToken) == 40,
     "GlacierMetalBufferToken ABI size changed");
 _Static_assert(offsetof(GlacierMetalBufferToken, generation) == 32,
     "GlacierMetalBufferToken generation offset changed");
+_Static_assert(sizeof(GlacierMetalCommandToken) == 40,
+    "GlacierMetalCommandToken ABI size changed");
+_Static_assert(offsetof(GlacierMetalCommandToken, generation) == 32,
+    "GlacierMetalCommandToken generation offset changed");
+_Static_assert(sizeof(GlacierMetalAsyncSubmission) == 88,
+    "GlacierMetalAsyncSubmission ABI size changed");
+_Static_assert(offsetof(GlacierMetalAsyncSubmission, disposition) == 80,
+    "GlacierMetalAsyncSubmission disposition offset changed");
+_Static_assert(sizeof(GlacierMetalAsyncCompletion) == 144,
+    "GlacierMetalAsyncCompletion ABI size changed");
+_Static_assert(offsetof(GlacierMetalAsyncCompletion, gpu_start_time) == 96,
+    "GlacierMetalAsyncCompletion timestamp offset changed");
+_Static_assert(offsetof(GlacierMetalAsyncCompletion, state) == 120,
+    "GlacierMetalAsyncCompletion state offset changed");
 
 static int glacier_metal_nonce_is_zero(const uint64_t nonce[4]) {
     return nonce[0] == 0 && nonce[1] == 0 &&
         nonce[2] == 0 && nonce[3] == 0;
 }
 
-static void glacier_metal_context_destroy(GlacierMetalContext* ctx) {
-    if (!ctx) return;
+static int glacier_metal_binding_is_zero(const uint8_t binding[32]) {
+    uint8_t combined = 0;
+    for (size_t index = 0; index < 32; index += 1)
+        combined |= binding[index];
+    return combined == 0;
+}
+
+static void glacier_metal_command_destroy(
+    GlacierMetalCommandRecord* record)
+{
+    if (!record) return;
+    record->owner = NULL;
+    record->next = NULL;
+    record->command_buffer = nil;
+    record->packed = nil;
+    record->scales = nil;
+    record->input = nil;
+    record->output = nil;
+    record->completion_publication = nil;
+    memset(record->allocations, 0, sizeof(record->allocations));
+    free(record);
+}
+
+// Context destruction is refused while native command ownership remains. The
+// caller can then reconcile the exact command token instead of freeing an
+// Objective-C callback target or a buffer still referenced by the GPU.
+static int glacier_metal_context_destroy(GlacierMetalContext* ctx) {
+    if (!ctx) return 0;
+    if (ctx->command_records || ctx->live_command_records != 0)
+        return 1;
+    for (GlacierMetalBufferAllocation* allocation =
+            ctx->buffer_allocations;
+         allocation;
+         allocation = allocation->next)
+    {
+        if (allocation->active_command_references != 0)
+            return 1;
+    }
     while (ctx->buffer_allocations) {
         GlacierMetalBufferAllocation* allocation =
             ctx->buffer_allocations;
@@ -190,6 +327,7 @@ static void glacier_metal_context_destroy(GlacierMetalContext* ctx) {
     ctx->queue = nil;
     ctx->device = nil;
     free(ctx);
+    return 0;
 }
 
 static void glacier_metal_weight_destroy(GlacierMetalInt4Weight* weight) {
@@ -205,10 +343,199 @@ static void glacier_metal_buffer_destroy(
     GlacierMetalBufferAllocation* allocation)
 {
     if (!allocation) return;
+    if (allocation->active_command_references != 0)
+        return;
     allocation->owner = NULL;
     allocation->next = NULL;
     allocation->buffer = nil;
     free(allocation);
+}
+
+// Resolve a copied command token without ever dereferencing caller memory as
+// an address. Callers hold @synchronized(ctx->device).
+static GlacierMetalCommandRecord** glacier_metal_command_link_locked(
+    GlacierMetalContext* ctx,
+    const GlacierMetalCommandToken* token)
+{
+    GlacierMetalCommandRecord** link = &ctx->command_records;
+    while (*link && memcmp(
+            &(*link)->token,
+            token,
+            sizeof(*token)) != 0)
+        link = &(*link)->next;
+    return *link ? link : NULL;
+}
+
+static int glacier_metal_unlink_command_locked(
+    GlacierMetalContext* ctx,
+    GlacierMetalCommandRecord* record)
+{
+    if (!ctx || !record || record->owner != ctx ||
+        ctx->live_command_records == 0)
+        return 1;
+    GlacierMetalCommandRecord** link =
+        glacier_metal_command_link_locked(ctx, &record->token);
+    if (!link || *link != record)
+        return 1;
+    for (size_t index = 0; index < 4; index += 1) {
+        GlacierMetalBufferAllocation* allocation =
+            record->allocations[index];
+        if (!allocation || allocation->owner != ctx ||
+            allocation->active_command_references == 0)
+            return 1;
+    }
+    *link = record->next;
+    record->next = NULL;
+    record->owner = NULL;
+    ctx->live_command_records -= 1;
+    for (size_t index = 0; index < 4; index += 1)
+        record->allocations[index]->active_command_references -= 1;
+    return 0;
+}
+
+// A submit reserves all four exact allocations before exposing their Shared
+// contents to host writes. Until the command record is linked, this helper is
+// the only path allowed to release those provisional references.
+static void glacier_metal_release_command_reservations(
+    GlacierMetalContext* ctx,
+    GlacierMetalBufferAllocation* allocations[4])
+{
+    if (!ctx || !ctx->device || !allocations)
+        abort();
+    @synchronized (ctx->device) {
+        for (size_t index = 0; index < 4; index += 1) {
+            if (!allocations[index] ||
+                allocations[index]->owner != ctx ||
+                allocations[index]->active_command_references != 1)
+                abort();
+        }
+        for (size_t index = 0; index < 4; index += 1)
+            allocations[index]->active_command_references -= 1;
+    }
+}
+
+static int glacier_metal_command_matches_locked(
+    GlacierMetalContext* ctx,
+    GlacierMetalCommandRecord* record,
+    const uint8_t submission_binding[32])
+{
+    return record &&
+        record->owner == ctx &&
+        record->command_buffer &&
+        record->completion_publication &&
+        !glacier_metal_binding_is_zero(submission_binding) &&
+        memcmp(
+            record->submission_binding,
+            submission_binding,
+            sizeof(record->submission_binding)) == 0;
+}
+
+static uint32_t glacier_metal_command_state_locked(
+    const GlacierMetalCommandRecord* record)
+{
+    if (!record->completion_observed)
+        return GLACIER_METAL_COMMAND_PENDING;
+    if (record->callback_fault != 0)
+        return GLACIER_METAL_COMMAND_UNKNOWN;
+    if (record->command_status == MTLCommandBufferStatusCompleted)
+        return GLACIER_METAL_COMMAND_COMPLETED;
+    if (record->command_status == MTLCommandBufferStatusError)
+        return GLACIER_METAL_COMMAND_ERROR;
+    return GLACIER_METAL_COMMAND_UNKNOWN;
+}
+
+static void glacier_metal_fill_completion_locked(
+    const GlacierMetalCommandRecord* record,
+    GlacierMetalAsyncCompletion* out)
+{
+    memset(out, 0, sizeof(*out));
+    out->abi_version = GLACIER_METAL_ASYNC_COMPLETION_ABI;
+    out->token = record->token;
+    memcpy(
+        out->submission_binding,
+        record->submission_binding,
+        sizeof(out->submission_binding));
+    out->state = glacier_metal_command_state_locked(record);
+    if (!record->completion_observed)
+        return;
+    out->current_allocated_before =
+        record->current_allocated_before;
+    out->current_allocated_after =
+        record->current_allocated_after;
+    out->gpu_start_time = record->gpu_start_time;
+    out->gpu_end_time = record->gpu_end_time;
+    out->error_code = record->error_code;
+    out->command_status = record->command_status;
+    out->error_domain_kind = record->error_domain_kind;
+    out->error_present = record->error_present;
+    out->callback_fault = record->callback_fault;
+}
+
+// Publish one immutable final snapshot. The completed handler is the normal
+// caller; wait uses this helper only as a fallback if Metal has reached a
+// final status before the handler acquires the registry lock.
+static void glacier_metal_snapshot_completion_locked(
+    GlacierMetalContext* ctx,
+    GlacierMetalCommandRecord* record,
+    id<MTLCommandBuffer> command_buffer)
+{
+    if (!ctx || !record || record->completion_observed ||
+        !command_buffer)
+        return;
+
+    uint64_t current_allocated_after = 0;
+    double gpu_start_time = 0;
+    double gpu_end_time = 0;
+    int64_t error_code = 0;
+    uint32_t command_status = 0;
+    uint32_t error_domain_kind =
+        GLACIER_METAL_ERROR_DOMAIN_NONE;
+    uint32_t error_present = 0;
+    uint32_t callback_fault = 0;
+    @try {
+        command_status = (uint32_t)command_buffer.status;
+        // A completed-handler invocation with any other raw status is
+        // inconsistent but still an observation. Publish it so the portable
+        // layer classifies the command as unknown and retains quarantine
+        // instead of replaying pending forever after the publication fence
+        // has opened.
+        current_allocated_after =
+            ctx->device.currentAllocatedSize;
+        gpu_start_time = command_buffer.GPUStartTime;
+        gpu_end_time = command_buffer.GPUEndTime;
+        NSError* error = command_buffer.error;
+        if (error) {
+            error_present = 1;
+            error_code = (int64_t)error.code;
+            error_domain_kind =
+                [error.domain
+                    isEqualToString:MTLCommandBufferErrorDomain]
+                ? GLACIER_METAL_ERROR_DOMAIN_COMMAND_BUFFER
+                : GLACIER_METAL_ERROR_DOMAIN_OTHER;
+        }
+    } @catch (NSException* exception) {
+        (void)exception;
+        current_allocated_after = 0;
+        gpu_start_time = 0;
+        gpu_end_time = 0;
+        error_code = 0;
+        error_domain_kind =
+            GLACIER_METAL_ERROR_DOMAIN_NONE;
+        error_present = 0;
+        callback_fault = 1;
+    }
+
+    record->current_allocated_after = current_allocated_after;
+    record->gpu_start_time = gpu_start_time;
+    record->gpu_end_time = gpu_end_time;
+    record->error_code = error_code;
+    record->command_status = command_status;
+    record->error_domain_kind = error_domain_kind;
+    record->error_present = error_present;
+    record->callback_fault = callback_fault;
+    // This release-ordered publication is serialized by the Objective-C
+    // monitor; readers copy the record only while holding the same monitor.
+    record->completion_observed = 1;
 }
 
 // Find a handle by pointer identity without dereferencing the untrusted input.
@@ -341,7 +668,7 @@ GlacierMetalContext* glacier_metal_init(const char* metallib_path) {
     if (!ctx) return NULL;
     ctx->device = MTLCreateSystemDefaultDevice();
     if (!ctx->device) {
-        glacier_metal_context_destroy(ctx);
+        (void)glacier_metal_context_destroy(ctx);
         return NULL;
     }
     do {
@@ -352,28 +679,29 @@ GlacierMetalContext* glacier_metal_init(const char* metallib_path) {
         ctx->allocation_context_nonce));
     ctx->next_allocation_adapter_instance = 1;
     ctx->next_buffer_generation = 1;
+    ctx->next_command_generation = 1;
     ctx->queue = [ctx->device newCommandQueue];
     if (!ctx->queue) {
-        glacier_metal_context_destroy(ctx);
+        (void)glacier_metal_context_destroy(ctx);
         return NULL;
     }
 
     NSString* path = [NSString stringWithUTF8String:metallib_path];
     if (!path) {
-        glacier_metal_context_destroy(ctx);
+        (void)glacier_metal_context_destroy(ctx);
         return NULL;
     }
     NSError* err = nil;
     ctx->library = [ctx->device newLibraryWithURL:[NSURL fileURLWithPath:path] error:&err];
     if (!ctx->library) {
-        glacier_metal_context_destroy(ctx);
+        (void)glacier_metal_context_destroy(ctx);
         return NULL;
     }
     return ctx;
 }
 
-void glacier_metal_deinit(GlacierMetalContext* ctx) {
-    glacier_metal_context_destroy(ctx);
+int glacier_metal_deinit(GlacierMetalContext* ctx) {
+    return glacier_metal_context_destroy(ctx);
 }
 
 int glacier_metal_device_info(
@@ -620,6 +948,8 @@ int glacier_metal_buffer_release(
             return 2;
         if (ctx->live_buffer_allocations == 0)
             return 3;
+        if ((*link)->active_command_references != 0)
+            return 4;
         allocation = *link;
         *link = allocation->next;
         allocation->owner = NULL;
@@ -866,10 +1196,10 @@ int glacier_metal_int4_weight_read_output(
     return 0;
 }
 
-// Dispatch using four exact resources owned by the native allocation registry.
-// Host output is intentionally absent: Zig validates the completed observation
-// before invoking glacier_metal_int4_registered_output_read.
-int glacier_metal_int4_registered_buffers_observed(
+// Submit using four exact resources owned by the native allocation registry.
+// Host output is intentionally absent. The returned command token owns the
+// command buffer and all four buffers until exact terminal finalization.
+int glacier_metal_int4_registered_buffers_submit_async(
     GlacierMetalContext* ctx,
     const GlacierMetalBufferToken* packed_token,
     const GlacierMetalBufferToken* scales_token,
@@ -884,16 +1214,20 @@ int glacier_metal_int4_registered_buffers_observed(
     uint32_t group_size,
     uint32_t in_features,
     uint32_t out_features,
-    GlacierMetalDispatchObservation* observation)
+    const uint8_t submission_binding[32],
+    GlacierMetalAsyncSubmission* submission)
 {
-    if (observation) {
-        memset(observation, 0, sizeof(*observation));
-        observation->abi_version = GLACIER_METAL_DISPATCH_ABI;
+    if (submission) {
+        memset(submission, 0, sizeof(*submission));
+        submission->abi_version =
+            GLACIER_METAL_ASYNC_SUBMISSION_ABI;
     }
     if (!ctx || !ctx->device || !ctx->queue || !ctx->library ||
         !packed_token || !scales_token || !input_token ||
         !output_token || !packed || !scales || !input ||
-        !observation || group_size == 0 ||
+        !submission_binding ||
+        glacier_metal_binding_is_zero(submission_binding) ||
+        !submission || group_size == 0 ||
         (group_size & (group_size - 1)) != 0 ||
         in_features == 0 || out_features == 0 ||
         packed_token->generation == 0 ||
@@ -948,18 +1282,29 @@ int glacier_metal_int4_registered_buffers_observed(
     void* packed_contents = NULL;
     void* scales_contents = NULL;
     void* input_contents = NULL;
+    GlacierMetalBufferAllocation* packed_allocation = NULL;
+    GlacierMetalBufferAllocation* scales_allocation = NULL;
+    GlacierMetalBufferAllocation* input_allocation = NULL;
+    GlacierMetalBufferAllocation* output_allocation = NULL;
+    GlacierMetalBufferAllocation* reserved_allocations[4] = {
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+    };
+    int reservations_held = 0;
     @try {
         @synchronized (ctx->device) {
-            GlacierMetalBufferAllocation* packed_allocation =
+            packed_allocation =
                 glacier_metal_buffer_exact_locked(
                     ctx, packed_token, required_packed);
-            GlacierMetalBufferAllocation* scales_allocation =
+            scales_allocation =
                 glacier_metal_buffer_exact_locked(
                     ctx, scales_token, scales_bytes);
-            GlacierMetalBufferAllocation* input_allocation =
+            input_allocation =
                 glacier_metal_buffer_exact_locked(
                     ctx, input_token, input_bytes);
-            GlacierMetalBufferAllocation* output_allocation =
+            output_allocation =
                 glacier_metal_buffer_exact_locked(
                     ctx, output_token, output_bytes);
             if (!packed_allocation || !scales_allocation ||
@@ -975,22 +1320,63 @@ int glacier_metal_int4_registered_buffers_observed(
             if (!packed_contents || !scales_contents ||
                 !input_contents || !output_buffer.contents)
                 return 2;
+            reserved_allocations[0] = packed_allocation;
+            reserved_allocations[1] = scales_allocation;
+            reserved_allocations[2] = input_allocation;
+            reserved_allocations[3] = output_allocation;
+            for (size_t index = 0; index < 4; index += 1) {
+                if (reserved_allocations[index]
+                        ->active_command_references != 0)
+                    return 5;
+            }
+            for (size_t index = 0; index < 4; index += 1)
+                reserved_allocations[index]
+                    ->active_command_references += 1;
+            reservations_held = 1;
         }
     } @catch (NSException* exception) {
         (void)exception;
+        if (reservations_held)
+            glacier_metal_release_command_reservations(
+                ctx,
+                reserved_allocations);
         return 2;
     }
 
-    id<MTLComputePipelineState> pipeline =
-        glacier_metal_get_int4_matvec_pipeline(ctx);
-    if (!pipeline || pipeline.threadExecutionWidth == 0)
+    id<MTLComputePipelineState> pipeline = nil;
+    NSUInteger pipeline_width = 0;
+    @try {
+        pipeline =
+            glacier_metal_get_int4_matvec_pipeline(ctx);
+        pipeline_width = pipeline
+            ? pipeline.threadExecutionWidth
+            : 0;
+    } @catch (NSException* exception) {
+        (void)exception;
+        pipeline = nil;
+        pipeline_width = 0;
+    }
+    if (!pipeline || pipeline_width == 0) {
+        glacier_metal_release_command_reservations(
+            ctx,
+            reserved_allocations);
         return 3;
+    }
 
-    observation->current_allocated_before =
-        ctx->device.currentAllocatedSize;
-    memcpy(packed_contents, packed, required_packed);
-    memcpy(scales_contents, scales, scales_bytes);
-    memcpy(input_contents, input, input_bytes);
+    uint64_t current_allocated_before = 0;
+    @try {
+        current_allocated_before =
+            ctx->device.currentAllocatedSize;
+        memcpy(packed_contents, packed, required_packed);
+        memcpy(scales_contents, scales, scales_bytes);
+        memcpy(input_contents, input, input_bytes);
+    } @catch (NSException* exception) {
+        (void)exception;
+        glacier_metal_release_command_reservations(
+            ctx,
+            reserved_allocations);
+        return 3;
+    }
     struct {
         uint32_t in_features;
         uint32_t out_features;
@@ -1003,43 +1389,386 @@ int glacier_metal_int4_registered_buffers_observed(
         __builtin_ctz(group_size),
     };
 
-    id<MTLCommandBuffer> cb = [ctx->queue commandBuffer];
-    if (!cb)
-        return 4;
-    id<MTLComputeCommandEncoder> enc =
-        [cb computeCommandEncoder];
-    if (!enc)
-        return 4;
-    [enc setComputePipelineState:pipeline];
-    [enc setBuffer:packed_buffer offset:0 atIndex:0];
-    [enc setBuffer:scales_buffer offset:0 atIndex:1];
-    [enc setBuffer:input_buffer offset:0 atIndex:2];
-    [enc setBuffer:output_buffer offset:0 atIndex:3];
-    [enc setBytes:&dims length:sizeof(dims) atIndex:4];
+    id<MTLCommandBuffer> cb = nil;
+    @try {
+        cb = [ctx->queue commandBuffer];
+        if (!cb) {
+            glacier_metal_release_command_reservations(
+                ctx,
+                reserved_allocations);
+            return 4;
+        }
+        id<MTLComputeCommandEncoder> enc =
+            [cb computeCommandEncoder];
+        if (!enc) {
+            glacier_metal_release_command_reservations(
+                ctx,
+                reserved_allocations);
+            return 4;
+        }
+        [enc setComputePipelineState:pipeline];
+        [enc setBuffer:packed_buffer offset:0 atIndex:0];
+        [enc setBuffer:scales_buffer offset:0 atIndex:1];
+        [enc setBuffer:input_buffer offset:0 atIndex:2];
+        [enc setBuffer:output_buffer offset:0 atIndex:3];
+        [enc setBytes:&dims length:sizeof(dims) atIndex:4];
 
-    const NSUInteger width = pipeline.threadExecutionWidth;
-    [enc dispatchThreadgroups:MTLSizeMake(out_features, 1, 1)
-         threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
-    [enc endEncoding];
-    [cb commit];
-    [cb waitUntilCompleted];
-    observation->current_allocated_after =
-        ctx->device.currentAllocatedSize;
-    observation->gpu_start_time = cb.GPUStartTime;
-    observation->gpu_end_time = cb.GPUEndTime;
-    observation->command_status = (uint32_t)cb.status;
-    if (cb.status != MTLCommandBufferStatusCompleted)
-        return 5;
+        [enc dispatchThreadgroups:MTLSizeMake(out_features, 1, 1)
+             threadsPerThreadgroup:
+                MTLSizeMake(pipeline_width, 1, 1)];
+        [enc endEncoding];
+    } @catch (NSException* exception) {
+        (void)exception;
+        glacier_metal_release_command_reservations(
+            ctx,
+            reserved_allocations);
+        return 4;
+    }
+
+    GlacierMetalCommandRecord* record =
+        (GlacierMetalCommandRecord*)calloc(
+            1,
+            sizeof(GlacierMetalCommandRecord));
+    if (!record) {
+        glacier_metal_release_command_reservations(
+            ctx,
+            reserved_allocations);
+        return 4;
+    }
+    record->owner = ctx;
+    memcpy(
+        record->submission_binding,
+        submission_binding,
+        sizeof(record->submission_binding));
+    record->command_buffer = cb;
+    record->packed = packed_buffer;
+    record->scales = scales_buffer;
+    record->input = input_buffer;
+    record->output = output_buffer;
+    record->allocations[0] = packed_allocation;
+    record->allocations[1] = scales_allocation;
+    record->allocations[2] = input_allocation;
+    record->allocations[3] = output_allocation;
+    record->current_allocated_before =
+        current_allocated_before;
+    record->completion_publication =
+        dispatch_group_create();
+    if (!record->completion_publication) {
+        glacier_metal_command_destroy(record);
+        glacier_metal_release_command_reservations(
+            ctx,
+            reserved_allocations);
+        return 4;
+    }
+    dispatch_group_enter(record->completion_publication);
+
+    int registry_inserted = 0;
+    @synchronized (ctx->device) {
+        int registry_ready =
+            ctx->next_command_generation != 0 &&
+            ctx->next_command_generation != UINT64_MAX &&
+            ctx->live_command_records != UINT64_MAX;
+        for (size_t index = 0; index < 4; index += 1) {
+            GlacierMetalBufferAllocation* allocation =
+                record->allocations[index];
+            if (!allocation || allocation->owner != ctx ||
+                allocation->active_command_references != 1)
+                registry_ready = 0;
+        }
+        if (registry_ready) {
+            memcpy(
+                record->token.context_nonce,
+                ctx->allocation_context_nonce,
+                sizeof(record->token.context_nonce));
+            record->token.generation =
+                ctx->next_command_generation;
+            ctx->next_command_generation += 1;
+            record->next = ctx->command_records;
+            ctx->command_records = record;
+            ctx->live_command_records += 1;
+
+            submission->token = record->token;
+            memcpy(
+                submission->submission_binding,
+                record->submission_binding,
+                sizeof(submission->submission_binding));
+            // Conservative until commit returns normally. The token is
+            // already caller-visible and registry-owned before invocation.
+            submission->disposition =
+                GLACIER_METAL_SUBMIT_SUBMITTED_OR_AMBIGUOUS;
+            registry_inserted = 1;
+        }
+    }
+    if (!registry_inserted) {
+        dispatch_group_leave(record->completion_publication);
+        glacier_metal_command_destroy(record);
+        glacier_metal_release_command_reservations(
+            ctx,
+            reserved_allocations);
+        return 4;
+    }
+    reservations_held = 0;
+
+    const GlacierMetalCommandToken callback_token =
+        record->token;
+    dispatch_group_t completion_publication =
+        record->completion_publication;
+    @try {
+        [cb addCompletedHandler:^(id<MTLCommandBuffer> completed) {
+            @autoreleasepool {
+                @try {
+                    @synchronized (ctx->device) {
+                        GlacierMetalCommandRecord** link =
+                            glacier_metal_command_link_locked(
+                                ctx,
+                                &callback_token);
+                        if (!link || (*link)->owner != ctx)
+                            return;
+                        glacier_metal_snapshot_completion_locked(
+                            ctx,
+                            *link,
+                            completed);
+                    }
+                } @finally {
+                    // Waiters cannot treat command-buffer completion as
+                    // registry authority until this publication fence opens.
+                    dispatch_group_leave(
+                        completion_publication);
+                }
+            }
+        }];
+    } @catch (NSException* exception) {
+        (void)exception;
+        int unlinked = 0;
+        @synchronized (ctx->device) {
+            unlinked =
+                glacier_metal_unlink_command_locked(
+                    ctx,
+                    record) == 0;
+        }
+        dispatch_group_leave(completion_publication);
+        if (!unlinked)
+            abort();
+        glacier_metal_command_destroy(record);
+        memset(submission, 0, sizeof(*submission));
+        submission->abi_version =
+            GLACIER_METAL_ASYNC_SUBMISSION_ABI;
+        return 4;
+    }
+
+    @synchronized (ctx->device) {
+        record->commit_invoked = 1;
+    }
+    @try {
+        [cb commit];
+        submission->disposition =
+            GLACIER_METAL_SUBMIT_SUBMITTED;
+    } @catch (NSException* exception) {
+        (void)exception;
+        // Invocation crossed the ambiguity boundary. The exact token and all
+        // references remain live for poll/wait or later quarantine.
+        submission->disposition =
+            GLACIER_METAL_SUBMIT_SUBMITTED_OR_AMBIGUOUS;
+    }
+    return 0;
+}
+
+int glacier_metal_registered_dispatch_poll(
+    GlacierMetalContext* ctx,
+    const GlacierMetalCommandToken* token,
+    const uint8_t submission_binding[32],
+    GlacierMetalAsyncCompletion* completion)
+{
+    if (completion) {
+        memset(completion, 0, sizeof(*completion));
+        completion->abi_version =
+            GLACIER_METAL_ASYNC_COMPLETION_ABI;
+    }
+    if (!ctx || !ctx->device || !token ||
+        token->generation == 0 || !submission_binding ||
+        glacier_metal_binding_is_zero(submission_binding) ||
+        !completion)
+        return 1;
+    @synchronized (ctx->device) {
+        GlacierMetalCommandRecord** link =
+            glacier_metal_command_link_locked(ctx, token);
+        if (!link || !glacier_metal_command_matches_locked(
+                ctx,
+                *link,
+                submission_binding))
+            return 2;
+        glacier_metal_fill_completion_locked(
+            *link,
+            completion);
+    }
+    return 0;
+}
+
+int glacier_metal_registered_dispatch_wait(
+    GlacierMetalContext* ctx,
+    const GlacierMetalCommandToken* token,
+    const uint8_t submission_binding[32],
+    GlacierMetalAsyncCompletion* completion)
+{
+    if (completion) {
+        memset(completion, 0, sizeof(*completion));
+        completion->abi_version =
+            GLACIER_METAL_ASYNC_COMPLETION_ABI;
+    }
+    if (!ctx || !ctx->device || !token ||
+        token->generation == 0 || !submission_binding ||
+        glacier_metal_binding_is_zero(submission_binding) ||
+        !completion)
+        return 1;
+
+    id<MTLCommandBuffer> command_buffer = nil;
+    dispatch_group_t completion_publication = nil;
+    @synchronized (ctx->device) {
+        GlacierMetalCommandRecord** link =
+            glacier_metal_command_link_locked(ctx, token);
+        if (!link || !glacier_metal_command_matches_locked(
+                ctx,
+                *link,
+                submission_binding))
+            return 2;
+        if ((*link)->completion_observed) {
+            glacier_metal_fill_completion_locked(
+                *link,
+                completion);
+            return 0;
+        }
+        // This local ARC strong reference keeps the command buffer alive
+        // while the registry monitor is deliberately not held.
+        command_buffer = (*link)->command_buffer;
+        completion_publication =
+            (*link)->completion_publication;
+        if (!completion_publication)
+            return 3;
+    }
+
+    int wait_returned = 0;
+    @try {
+        [command_buffer waitUntilCompleted];
+        wait_returned = 1;
+    } @catch (NSException* exception) {
+        (void)exception;
+        // The exact registry record remains authoritative. Re-read it below;
+        // a non-final status remains pending/unknown rather than becoming a
+        // manufactured terminal.
+    }
+    if (wait_returned)
+        dispatch_group_wait(
+            completion_publication,
+            DISPATCH_TIME_FOREVER);
+
+    @synchronized (ctx->device) {
+        GlacierMetalCommandRecord** link =
+            glacier_metal_command_link_locked(ctx, token);
+        if (!link || !glacier_metal_command_matches_locked(
+                ctx,
+                *link,
+                submission_binding))
+            return 2;
+        // Only the completed handler may publish terminal authority. In the
+        // exceptional wait path this therefore replays pending/unknown; after
+        // a normal wait the publication group guarantees the handler snapshot
+        // is already immutable.
+        glacier_metal_fill_completion_locked(
+            *link,
+            completion);
+    }
+    return 0;
+}
+
+int glacier_metal_registered_dispatch_finalize(
+    GlacierMetalContext* ctx,
+    const GlacierMetalCommandToken* token,
+    const uint8_t submission_binding[32],
+    const GlacierMetalAsyncCompletion* expected_completion)
+{
+    if (!ctx || !ctx->device || !token ||
+        token->generation == 0 || !submission_binding ||
+        glacier_metal_binding_is_zero(submission_binding) ||
+        !expected_completion ||
+        expected_completion->abi_version !=
+            GLACIER_METAL_ASYNC_COMPLETION_ABI ||
+        expected_completion->reserved != 0 ||
+        memcmp(
+            &expected_completion->token,
+            token,
+            sizeof(*token)) != 0 ||
+        memcmp(
+            expected_completion->submission_binding,
+            submission_binding,
+            sizeof(expected_completion->submission_binding)) != 0)
+        return 1;
+
+    GlacierMetalCommandRecord* record = NULL;
+    @synchronized (ctx->device) {
+        GlacierMetalCommandRecord** link =
+            glacier_metal_command_link_locked(ctx, token);
+        if (!link || !glacier_metal_command_matches_locked(
+                ctx,
+                *link,
+                submission_binding))
+            return 2;
+        GlacierMetalAsyncCompletion exact;
+        glacier_metal_fill_completion_locked(*link, &exact);
+        if ((exact.state != GLACIER_METAL_COMMAND_COMPLETED &&
+                exact.state != GLACIER_METAL_COMMAND_ERROR) ||
+            memcmp(
+                &exact,
+                expected_completion,
+                sizeof(exact)) != 0)
+            return 3;
+        record = *link;
+        if (glacier_metal_unlink_command_locked(
+                ctx,
+                record) != 0)
+            return 4;
+    }
+    glacier_metal_command_destroy(record);
+    return 0;
+}
+
+int glacier_metal_live_command_count(
+    GlacierMetalContext* ctx,
+    uint64_t* out)
+{
+    if (!ctx || !ctx->device || !out)
+        return 1;
+    @synchronized (ctx->device) {
+        *out = ctx->live_command_records;
+    }
     return 0;
 }
 
 int glacier_metal_int4_registered_output_read(
     GlacierMetalContext* ctx,
+    const GlacierMetalCommandToken* command_token,
+    const uint8_t submission_binding[32],
+    const GlacierMetalAsyncCompletion* expected_completion,
     const GlacierMetalBufferToken* output_token,
     float* output,
     uint64_t output_count)
 {
-    if (!ctx || !ctx->device || !output_token || !output ||
+    if (!ctx || !ctx->device || !command_token ||
+        command_token->generation == 0 ||
+        !submission_binding ||
+        glacier_metal_binding_is_zero(submission_binding) ||
+        !expected_completion ||
+        expected_completion->abi_version !=
+            GLACIER_METAL_ASYNC_COMPLETION_ABI ||
+        expected_completion->reserved != 0 ||
+        memcmp(
+            &expected_completion->token,
+            command_token,
+            sizeof(*command_token)) != 0 ||
+        memcmp(
+            expected_completion->submission_binding,
+            submission_binding,
+            sizeof(expected_completion->submission_binding)) != 0 ||
+        !output_token || !output ||
         output_count == 0 ||
         output_count > UINT64_MAX / sizeof(float))
         return 1;
@@ -1052,19 +1781,46 @@ int glacier_metal_int4_registered_output_read(
     void* output_contents = NULL;
     @try {
         @synchronized (ctx->device) {
-            GlacierMetalBufferAllocation* allocation =
-                glacier_metal_buffer_exact_locked(
-                    ctx, output_token, output_bytes);
-            if (!allocation)
+            GlacierMetalCommandRecord** link =
+                glacier_metal_command_link_locked(
+                    ctx,
+                    command_token);
+            if (!link ||
+                !glacier_metal_command_matches_locked(
+                    ctx,
+                    *link,
+                    submission_binding))
                 return 2;
+            GlacierMetalAsyncCompletion exact;
+            glacier_metal_fill_completion_locked(
+                *link,
+                &exact);
+            if (exact.state !=
+                    GLACIER_METAL_COMMAND_COMPLETED ||
+                memcmp(
+                    &exact,
+                    expected_completion,
+                    sizeof(exact)) != 0)
+                return 3;
+            GlacierMetalBufferAllocation* allocation =
+                (*link)->allocations[3];
+            if (!allocation ||
+                allocation->owner != ctx ||
+                allocation->active_command_references == 0 ||
+                memcmp(
+                    &allocation->token,
+                    output_token,
+                    sizeof(*output_token)) != 0 ||
+                allocation->resource_length != output_bytes)
+                return 4;
             output_buffer = allocation->buffer;
             output_contents = output_buffer.contents;
             if (!output_contents)
-                return 2;
+                return 4;
         }
     } @catch (NSException* exception) {
         (void)exception;
-        return 2;
+        return 5;
     }
     memcpy(output, output_contents, (size_t)output_bytes);
     return 0;

@@ -21,6 +21,11 @@ rejection branch explicitly.
 Metal INT4 attempt, replay-fenced request, and adapter-authorized rejection
 transcripts.  The oracle uses fixed literals and does not parse the Zig
 implementation, so shared self-hashing cannot hide field-order or width drift.
+
+``make_metal_async_dispatch_evidence_campaign`` extends that independent
+public transcript with a single-flight async ticket and all four deliberately
+nonterminal quarantine reason shapes.  Native handles and implementation
+status are not consulted.
 """
 
 from __future__ import annotations
@@ -65,6 +70,8 @@ DISPATCH_COMPLETION_ABI = 0x4744_5443_0000_0001
 METAL_PRE_SUBMIT_ATTEMPT_ABI = 0x474D_5041_0000_0001
 METAL_MATVEC_DISPATCH_REQUEST_ABI = 0x474D_4452_0000_0001
 METAL_PRE_SUBMIT_REJECTION_ABI = 0x474D_5052_0000_0001
+METAL_ASYNC_DISPATCH_TICKET_ABI = 0x474D_4154_0000_0001
+METAL_ASYNC_DISPATCH_QUARANTINE_ABI = 0x474D_4151_0000_0001
 
 TREE_DOMAIN = b"glacier-resource-lease-tree-v1\x00"
 NODE_DOMAIN = b"glacier-resource-lease-node-v1\x00"
@@ -111,6 +118,12 @@ METAL_MATVEC_DISPATCH_REQUEST_DOMAIN = (
 )
 METAL_PRE_SUBMIT_REJECTION_DOMAIN = (
     b"glacier-metal-matvec-pre-submit-rejection-v1\x00"
+)
+METAL_ASYNC_DISPATCH_TICKET_DOMAIN = (
+    b"glacier-metal-single-flight-async-ticket-v1\x00"
+)
+METAL_ASYNC_DISPATCH_QUARANTINE_DOMAIN = (
+    b"glacier-metal-async-dispatch-quarantine-v1\x00"
 )
 
 LEASE_TREE_INTEGRITY_DOMAIN = 0x6C65_6173_6574_7231
@@ -170,6 +183,33 @@ VALID_METAL_PRE_SUBMIT_REASONS = frozenset(
         METAL_INVALID_ROLE_MAPPING,
     )
 )
+
+METAL_ASYNC_SUBMISSION_AMBIGUOUS = 1
+METAL_ASYNC_COMPLETION_UNKNOWN = 2
+METAL_ASYNC_INVALID_COMPLETION = 3
+METAL_ASYNC_TERMINAL_COMMAND_ERROR = 4
+VALID_METAL_ASYNC_QUARANTINE_REASONS = frozenset(
+    (
+        METAL_ASYNC_SUBMISSION_AMBIGUOUS,
+        METAL_ASYNC_COMPLETION_UNKNOWN,
+        METAL_ASYNC_INVALID_COMPLETION,
+        METAL_ASYNC_TERMINAL_COMMAND_ERROR,
+    )
+)
+
+METAL_ASYNC_COMMIT_STARTED = 1
+METAL_ASYNC_SUBMITTED = 2
+METAL_ASYNC_TERMINAL_STATUS_OBSERVED = 3
+
+METAL_ASYNC_ERROR_NONE = 0
+METAL_ASYNC_ERROR_NATIVE_BRIDGE = 1
+METAL_ASYNC_ERROR_COMPLETION_VALIDATION = 2
+METAL_ASYNC_ERROR_COMMAND_BUFFER = 3
+
+METAL_ASYNC_COMMAND_STATUS_UNOBSERVED = U64_MAX
+METAL_ASYNC_COMMAND_STATUS_COMPLETED = 4
+METAL_ASYNC_COMMAND_STATUS_ERROR = 5
+METAL_ASYNC_SUBMISSION_AMBIGUOUS_ADAPTER_CODE = 1
 
 OUTCOME_CANCELLED = allocation.OUTCOME_CANCELLED
 OUTCOME_ALLOCATION_FAILED = allocation.OUTCOME_ALLOCATION_FAILED
@@ -532,6 +572,39 @@ class MetalMatvecDispatchRequestV1:
         MetalMatvecPreSubmitAttemptV1()
     )
     request_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
+class MetalAsyncDispatchTicketV1:
+    abi_version: int = METAL_ASYNC_DISPATCH_TICKET_ABI
+    ticket_generation: int = 0
+    queue_slot: int = 0
+    dispatch_generation: int = 0
+    dispatch_authority_sha256: Digest = ZERO_DIGEST
+    queue_authority_sha256: Digest = ZERO_DIGEST
+    request: MetalMatvecDispatchRequestV1 = (
+        MetalMatvecDispatchRequestV1()
+    )
+    pin_sha256: Digest = ZERO_DIGEST
+    submission_sha256: Digest = ZERO_DIGEST
+    ticket_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
+class MetalAsyncDispatchQuarantineV1:
+    abi_version: int = METAL_ASYNC_DISPATCH_QUARANTINE_ABI
+    reason: int = METAL_ASYNC_SUBMISSION_AMBIGUOUS
+    ticket: MetalAsyncDispatchTicketV1 = MetalAsyncDispatchTicketV1()
+    device_sha256: Digest = ZERO_DIGEST
+    placement_sha256: Digest = ZERO_DIGEST
+    native_disposition: int = METAL_ASYNC_COMMIT_STARTED
+    native_command_status: int = (
+        METAL_ASYNC_COMMAND_STATUS_UNOBSERVED
+    )
+    native_completion_observed: int = 0
+    error_domain_kind: int = METAL_ASYNC_ERROR_NATIVE_BRIDGE
+    error_code_bits: int = 0
+    quarantine_sha256: Digest = ZERO_DIGEST
 
 
 @dataclass(frozen=True)
@@ -2960,6 +3033,312 @@ def validate_metal_matvec_dispatch_request_v1(
         raise ContractError("invalid Metal matvec dispatch request")
 
 
+def metal_async_dispatch_ticket_root_v1(
+    ticket: MetalAsyncDispatchTicketV1,
+) -> Digest:
+    return _hash(
+        METAL_ASYNC_DISPATCH_TICKET_DOMAIN,
+        (
+            _le(
+                ticket.abi_version,
+                ticket.ticket_generation,
+                ticket.queue_slot,
+                ticket.dispatch_generation,
+            ),
+            _digest(ticket.dispatch_authority_sha256),
+            _digest(ticket.queue_authority_sha256),
+            _digest(ticket.request.request_sha256),
+            _digest(ticket.pin_sha256),
+            _digest(ticket.submission_sha256),
+        ),
+    )
+
+
+def validate_metal_async_dispatch_ticket_v1(
+    ticket: MetalAsyncDispatchTicketV1,
+) -> None:
+    validate_metal_matvec_dispatch_request_v1(ticket.request)
+    _u64s(
+        ticket.abi_version,
+        ticket.ticket_generation,
+        ticket.queue_slot,
+        ticket.dispatch_generation,
+    )
+    roots = (
+        ticket.dispatch_authority_sha256,
+        ticket.queue_authority_sha256,
+        ticket.pin_sha256,
+        ticket.submission_sha256,
+        ticket.ticket_sha256,
+    )
+    for root in roots:
+        _digest(root)
+    if (
+        ticket.abi_version != METAL_ASYNC_DISPATCH_TICKET_ABI
+        or ticket.ticket_generation in (0, U64_MAX)
+        or ticket.queue_slot != 0
+        or ticket.dispatch_generation == 0
+        or ticket.dispatch_authority_sha256 == ZERO_DIGEST
+        or ticket.queue_authority_sha256 == ZERO_DIGEST
+        or ticket.dispatch_authority_sha256
+        == ticket.queue_authority_sha256
+        or ticket.dispatch_authority_sha256
+        != ticket.request.dispatch_authority_sha256
+        or ticket.queue_authority_sha256
+        != ticket.request.queue_authority_sha256
+        or ticket.pin_sha256 == ZERO_DIGEST
+        or ticket.submission_sha256 == ZERO_DIGEST
+        or ticket.ticket_sha256 == ZERO_DIGEST
+        or ticket.ticket_sha256
+        != metal_async_dispatch_ticket_root_v1(ticket)
+    ):
+        raise ContractError("invalid Metal async dispatch ticket")
+
+
+def validate_metal_async_dispatch_ticket_for_dispatch_v1(
+    ticket: MetalAsyncDispatchTicketV1,
+    expected_ticket_generation: int,
+    request: MetalMatvecDispatchRequestV1,
+    pin: LeaseTreeDispatchPinV1,
+    submission_sha256: Digest,
+) -> None:
+    validate_metal_async_dispatch_ticket_v1(ticket)
+    validate_metal_matvec_dispatch_request_v1(request)
+    validate_dispatch_pin_v1(pin)
+    _u64(expected_ticket_generation)
+    _digest(submission_sha256)
+    if (
+        expected_ticket_generation in (0, U64_MAX)
+        or ticket.ticket_generation != expected_ticket_generation
+        or ticket.dispatch_generation != pin.dispatch_generation
+        or ticket.request != request
+        or request.request_sha256 != pin.dispatch_request_sha256
+        or ticket.pin_sha256 != pin.pin_sha256
+        or ticket.submission_sha256 != submission_sha256
+        or ticket.dispatch_authority_sha256
+        != pin.dispatch_authority_sha256
+        or ticket.queue_authority_sha256
+        != pin.queue_authority_sha256
+    ):
+        raise ContractError(
+            "Metal async ticket does not bind the exact dispatch"
+        )
+
+
+def make_metal_async_dispatch_ticket_v1(
+    ticket_generation: int,
+    request: MetalMatvecDispatchRequestV1,
+    pin: LeaseTreeDispatchPinV1,
+    submission_sha256: Digest,
+) -> MetalAsyncDispatchTicketV1:
+    validate_metal_matvec_dispatch_request_v1(request)
+    validate_dispatch_pin_v1(pin)
+    _u64(ticket_generation)
+    _digest(submission_sha256)
+    if (
+        ticket_generation in (0, U64_MAX)
+        or submission_sha256 == ZERO_DIGEST
+        or request.request_sha256 != pin.dispatch_request_sha256
+        or request.dispatch_authority_sha256
+        != pin.dispatch_authority_sha256
+        or request.queue_authority_sha256
+        != pin.queue_authority_sha256
+    ):
+        raise ContractError(
+            "invalid Metal async dispatch ticket binding"
+        )
+    result = MetalAsyncDispatchTicketV1(
+        ticket_generation=ticket_generation,
+        dispatch_generation=pin.dispatch_generation,
+        dispatch_authority_sha256=pin.dispatch_authority_sha256,
+        queue_authority_sha256=pin.queue_authority_sha256,
+        request=request,
+        pin_sha256=pin.pin_sha256,
+        submission_sha256=submission_sha256,
+    )
+    result = replace(
+        result,
+        ticket_sha256=metal_async_dispatch_ticket_root_v1(result),
+    )
+    validate_metal_async_dispatch_ticket_for_dispatch_v1(
+        result,
+        ticket_generation,
+        request,
+        pin,
+        submission_sha256,
+    )
+    return result
+
+
+def _metal_async_dispatch_quarantine_shape_valid(
+    value: MetalAsyncDispatchQuarantineV1,
+) -> bool:
+    if (
+        value.error_code_bits == 0
+        or value.native_completion_observed > 1
+    ):
+        return False
+    if value.reason == METAL_ASYNC_SUBMISSION_AMBIGUOUS:
+        return (
+            value.native_disposition == METAL_ASYNC_COMMIT_STARTED
+            and value.native_command_status
+            == METAL_ASYNC_COMMAND_STATUS_UNOBSERVED
+            and value.native_completion_observed == 0
+            and value.error_domain_kind
+            == METAL_ASYNC_ERROR_NATIVE_BRIDGE
+            and value.error_code_bits
+            == METAL_ASYNC_SUBMISSION_AMBIGUOUS_ADAPTER_CODE
+        )
+    if value.reason == METAL_ASYNC_COMPLETION_UNKNOWN:
+        return (
+            value.native_disposition == METAL_ASYNC_SUBMITTED
+            and value.error_domain_kind
+            == METAL_ASYNC_ERROR_NATIVE_BRIDGE
+        )
+    if value.reason == METAL_ASYNC_INVALID_COMPLETION:
+        return (
+            value.native_disposition
+            == METAL_ASYNC_TERMINAL_STATUS_OBSERVED
+            and value.native_command_status
+            == METAL_ASYNC_COMMAND_STATUS_COMPLETED
+            and value.native_completion_observed == 1
+            and value.error_domain_kind
+            == METAL_ASYNC_ERROR_COMPLETION_VALIDATION
+        )
+    if value.reason == METAL_ASYNC_TERMINAL_COMMAND_ERROR:
+        return (
+            value.native_disposition
+            == METAL_ASYNC_TERMINAL_STATUS_OBSERVED
+            and value.native_command_status
+            == METAL_ASYNC_COMMAND_STATUS_ERROR
+            and value.native_completion_observed == 1
+            and value.error_domain_kind
+            == METAL_ASYNC_ERROR_COMMAND_BUFFER
+        )
+    return False
+
+
+def metal_async_dispatch_quarantine_root_v1(
+    value: MetalAsyncDispatchQuarantineV1,
+) -> Digest:
+    return _hash(
+        METAL_ASYNC_DISPATCH_QUARANTINE_DOMAIN,
+        (
+            _le(value.abi_version, value.reason),
+            _digest(value.ticket.ticket_sha256),
+            _digest(value.device_sha256),
+            _digest(value.placement_sha256),
+            _le(
+                value.native_disposition,
+                value.native_command_status,
+                value.native_completion_observed,
+                value.error_domain_kind,
+                value.error_code_bits,
+            ),
+        ),
+    )
+
+
+def validate_metal_async_dispatch_quarantine_v1(
+    value: MetalAsyncDispatchQuarantineV1,
+) -> None:
+    validate_metal_async_dispatch_ticket_v1(value.ticket)
+    _u64s(
+        value.abi_version,
+        value.reason,
+        value.native_disposition,
+        value.native_command_status,
+        value.native_completion_observed,
+        value.error_domain_kind,
+        value.error_code_bits,
+    )
+    roots = (
+        value.device_sha256,
+        value.placement_sha256,
+        value.quarantine_sha256,
+    )
+    for root in roots:
+        _digest(root)
+    if (
+        value.abi_version != METAL_ASYNC_DISPATCH_QUARANTINE_ABI
+        or value.reason
+        not in VALID_METAL_ASYNC_QUARANTINE_REASONS
+        or value.device_sha256 == ZERO_DIGEST
+        or value.placement_sha256 == ZERO_DIGEST
+        or value.device_sha256 == value.placement_sha256
+        or not _metal_async_dispatch_quarantine_shape_valid(value)
+        or value.quarantine_sha256 == ZERO_DIGEST
+        or value.quarantine_sha256
+        != metal_async_dispatch_quarantine_root_v1(value)
+    ):
+        raise ContractError("invalid Metal async dispatch quarantine")
+
+
+def make_metal_async_dispatch_quarantine_v1(
+    ticket: MetalAsyncDispatchTicketV1,
+    device_sha256: Digest,
+    placement_sha256: Digest,
+    reason: int,
+    native_disposition: int,
+    native_command_status: int,
+    native_completion_observed: int,
+    error_domain_kind: int,
+    error_code_bits: int,
+) -> MetalAsyncDispatchQuarantineV1:
+    validate_metal_async_dispatch_ticket_v1(ticket)
+    result = MetalAsyncDispatchQuarantineV1(
+        reason=reason,
+        ticket=ticket,
+        device_sha256=_digest(device_sha256),
+        placement_sha256=_digest(placement_sha256),
+        native_disposition=native_disposition,
+        native_command_status=native_command_status,
+        native_completion_observed=native_completion_observed,
+        error_domain_kind=error_domain_kind,
+        error_code_bits=error_code_bits,
+    )
+    result = replace(
+        result,
+        quarantine_sha256=(
+            metal_async_dispatch_quarantine_root_v1(result)
+        ),
+    )
+    validate_metal_async_dispatch_quarantine_v1(result)
+    return result
+
+
+def validate_metal_async_dispatch_quarantine_for_ticket_v1(
+    value: MetalAsyncDispatchQuarantineV1,
+    ticket: MetalAsyncDispatchTicketV1,
+    device_sha256: Digest,
+    placement_sha256: Digest,
+) -> None:
+    validate_metal_async_dispatch_quarantine_v1(value)
+    validate_metal_async_dispatch_ticket_v1(ticket)
+    _digest(device_sha256)
+    _digest(placement_sha256)
+    if (
+        value.ticket != ticket
+        or value.device_sha256 != device_sha256
+        or value.placement_sha256 != placement_sha256
+    ):
+        raise ContractError(
+            "Metal async quarantine does not bind ticket and device"
+        )
+
+
+def validate_metal_async_dispatch_quarantine_replay_v1(
+    value: MetalAsyncDispatchQuarantineV1,
+    retained: MetalAsyncDispatchQuarantineV1,
+) -> None:
+    validate_metal_async_dispatch_quarantine_v1(value)
+    validate_metal_async_dispatch_quarantine_v1(retained)
+    if value != retained:
+        raise ContractError(
+            "Metal async quarantine replay is not byte-for-byte exact"
+        )
+
+
 def metal_matvec_pre_submit_rejection_root_v1(
     rejection: MetalMatvecPreSubmitRejectionV1,
 ) -> Digest:
@@ -4656,4 +5035,99 @@ def make_metal_matvec_pre_submit_rejection_campaign(
         pin=pin,
         terminal=terminal,
         rejection=rejection,
+    )
+
+
+@dataclass(frozen=True)
+class MetalAsyncDispatchEvidenceCampaignV1:
+    request: MetalMatvecDispatchRequestV1
+    pin: LeaseTreeDispatchPinV1
+    submission_sha256: Digest
+    ticket: MetalAsyncDispatchTicketV1
+    device_sha256: Digest
+    placement_sha256: Digest
+    quarantines: Tuple[MetalAsyncDispatchQuarantineV1, ...]
+
+
+def make_metal_async_dispatch_evidence_campaign(
+) -> MetalAsyncDispatchEvidenceCampaignV1:
+    """Build fixed async public evidence without consulting a Metal device."""
+
+    base = make_metal_matvec_pre_submit_rejection_campaign()
+    submission_sha256 = allocation.digest_v1(
+        b"async dispatch submission"
+    )
+    ticket = make_metal_async_dispatch_ticket_v1(
+        21,
+        base.request,
+        base.pin,
+        submission_sha256,
+    )
+    device_sha256 = allocation.digest_v1(b"async Metal device")
+    placement_sha256 = allocation.digest_v1(
+        b"async Metal placement"
+    )
+    shapes = (
+        (
+            METAL_ASYNC_SUBMISSION_AMBIGUOUS,
+            METAL_ASYNC_COMMIT_STARTED,
+            METAL_ASYNC_COMMAND_STATUS_UNOBSERVED,
+            0,
+            METAL_ASYNC_ERROR_NATIVE_BRIDGE,
+            METAL_ASYNC_SUBMISSION_AMBIGUOUS_ADAPTER_CODE,
+        ),
+        (
+            METAL_ASYNC_COMPLETION_UNKNOWN,
+            METAL_ASYNC_SUBMITTED,
+            77,
+            1,
+            METAL_ASYNC_ERROR_NATIVE_BRIDGE,
+            0x777,
+        ),
+        (
+            METAL_ASYNC_INVALID_COMPLETION,
+            METAL_ASYNC_TERMINAL_STATUS_OBSERVED,
+            METAL_ASYNC_COMMAND_STATUS_COMPLETED,
+            1,
+            METAL_ASYNC_ERROR_COMPLETION_VALIDATION,
+            0x202,
+        ),
+        (
+            METAL_ASYNC_TERMINAL_COMMAND_ERROR,
+            METAL_ASYNC_TERMINAL_STATUS_OBSERVED,
+            METAL_ASYNC_COMMAND_STATUS_ERROR,
+            1,
+            METAL_ASYNC_ERROR_COMMAND_BUFFER,
+            0x303,
+        ),
+    )
+    quarantines = tuple(
+        make_metal_async_dispatch_quarantine_v1(
+            ticket,
+            device_sha256,
+            placement_sha256,
+            reason,
+            disposition,
+            command_status,
+            completion_observed,
+            error_domain_kind,
+            error_code_bits,
+        )
+        for (
+            reason,
+            disposition,
+            command_status,
+            completion_observed,
+            error_domain_kind,
+            error_code_bits,
+        ) in shapes
+    )
+    return MetalAsyncDispatchEvidenceCampaignV1(
+        request=base.request,
+        pin=base.pin,
+        submission_sha256=submission_sha256,
+        ticket=ticket,
+        device_sha256=device_sha256,
+        placement_sha256=placement_sha256,
+        quarantines=quarantines,
     )
