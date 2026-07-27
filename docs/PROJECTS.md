@@ -158,39 +158,49 @@ externally serialize coordinator calls with every other mutation of them. See
 The bounded dispatch-lifetime follow-up is also complete. Fixed Bank pin
 storage retains the exact ordered allocation leaves, allocation release fails
 while any pin is active, the bound adapter must validate terminal evidence,
-and overlapping pins can complete out of order. The native gate adds one exact
-four-buffer Metal dispatch, a CPU-oracle comparison, completion
-acknowledgement, and final zero ownership. See
+and overlapping pins can complete out of order. The adapter-issued,
+generation-fenced `MetalMatvecDispatchRequestV1` root, never the raw attempt
+root, is the pin dispatch-request root. Core seals `DispatchPinIntentV1`, calls
+reserve before Bank mutation, aborts exactly on atomic acquisition failure, and
+validates the callback source before binding the lease, request, intent, and
+pin. The native gate adds one exact four-buffer Metal dispatch, waits, compares
+against a CPU oracle, privately settles completion, and ends with zero
+ownership. See
 [Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md).
+
+The bounded Metal no-submit follow-up is complete too. Valid preflight can
+submit or take the pure `cancelled_before_submit` path; malformed attempts can
+take exact `rejected_before_submit`. Both terminals carry zero submission,
+backend-completion, and output roots and use the same settlement. Rejection may
+inspect the native device and resources but creates and submits no command
+buffer. Cancellation is native-free after sealed lease/request/intent/pin
+binding. Core consumes the private Bank pin, then its private settlement
+callback atomically clears adapter state and records a replay tombstone. Public
+`acknowledgeDispatchCompletion` only verifies compatibility; it grants no
+authority and clears no state.
 
 Small next slices:
 
-- add asynchronous queue scheduling and completion delivery without weakening
-  the exact object-set pin;
-- add a safe pre-submit rejection transition for backend-specific malformed
-  geometry after pin acquisition;
-- prototype reserve/materialize/settle accounting if the post-creation
-  `MTLResource.allocatedSize` observation, rather than logical resource length,
-  must be charged;
-- add explicit device-loss, quarantine, and stale-selection rejection before a
-  fresh selection receipt;
-- add deterministic two-device partition planning without live multi-GPU
-  execution;
-- bind one stateless native candidate transaction to a selection receipt while
-  keeping publication atomic; or
-- add a new native backend capability projection only with CPU-oracle and
-  lifecycle evidence on the named device.
+- add asynchronous queue scheduling and completion delivery;
+- add device-loss quarantine and recovery under a fresh selection receipt;
+- add physical residency and direct device telemetry as separate authorities;
+- add more GPU backends with CPU-oracle/lifecycle gates and expand native
+  OS/device matrices.
 
 **Current boundary:** the completed LeaseTree follow-up keeps stable capability
 facts separate from dynamic observations, consumes the exact selection,
 reserves every allocation node before native creation, demonstrates
-free-before-uncharge recovery, and binds one exact object set to a synchronous
-submitted command on the executing Metal host. Physical residency remains a
-separate later contract. Device-loss recovery, general asynchronous and
-multi-GPU scheduling, telemetry, performance, retained device ranges, and
-native support remain unimplemented unless a slice supplies direct named
-evidence for that exact claim. Cross-compilation never counts as native
-support.
+free-before-uncharge recovery, binds one exact object set to a synchronous
+submitted command, and safely settles deterministic malformed pre-submit
+attempts or pure pre-submit cancellation on the executing Metal host. Portable
+Zig fake/state tests and the independent Python oracle are deterministic
+contract models and use no GPU. The native macOS gate uses a real `MTLDevice`
+and real `MTLBuffer` resources: the valid branch submits a command, waits, and
+checks the CPU oracle; reject/cancel retain real context/resources but issue
+zero GPU commands. Physical residency, device telemetry, device-loss recovery,
+general asynchronous scheduling, additional GPU backends, and broader native
+OS/device matrices remain unimplemented unless a slice supplies direct named
+evidence. Cross-compilation never counts as native support.
 
 ### Native observation adapters
 

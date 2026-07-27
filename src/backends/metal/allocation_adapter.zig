@@ -20,12 +20,19 @@ else
 pub const allocation = core.device_allocation_lease;
 pub const lease_tree = core.device_allocation_lease_tree;
 pub const device = core.device_capability_contract;
+const resource = core.resource_bank;
 pub const Digest = allocation.Digest;
 
 pub const adapter_abi: u64 = 0x474d_4141_0000_0001;
 pub const observation_abi: u64 = 0x474d_414f_0000_0001;
 pub const dispatch_observation_abi: u64 =
     0x474d_444f_0000_0001;
+pub const pre_submit_attempt_abi: u64 =
+    0x474d_5041_0000_0001;
+pub const matvec_dispatch_request_abi: u64 =
+    0x474d_4452_0000_0001;
+pub const pre_submit_rejection_abi: u64 =
+    0x474d_5052_0000_0001;
 
 const authority_domain =
     "glacier-metal-allocation-authority-v1\x00";
@@ -57,6 +64,12 @@ const dispatch_backend_completion_domain =
     "glacier-metal-dispatch-backend-completion-v1\x00";
 const dispatch_observation_domain =
     "glacier-metal-dispatch-observation-v1\x00";
+const pre_submit_attempt_domain =
+    "glacier-metal-matvec-pre-submit-attempt-v1\x00";
+const matvec_dispatch_request_domain =
+    "glacier-metal-matvec-dispatch-request-v1\x00";
+const pre_submit_rejection_domain =
+    "glacier-metal-matvec-pre-submit-rejection-v1\x00";
 const completed_command_buffer_status: u32 = 4;
 const supported_profile =
     device.OperationProfileBitsV1.matvec_int4_f32_bounded;
@@ -79,6 +92,7 @@ pub const Error =
         InvalidDispatchEvidence,
         DispatchBusy,
         DispatchUnresolved,
+        DispatchPreflightPassed,
         StaleObject,
         BufferTooSmall,
     };
@@ -162,10 +176,88 @@ pub const MetalLeaseTreeDispatchResultV1 = struct {
     terminal: lease_tree.DispatchTerminalEvidenceV1,
 };
 
+/// Deterministic precedence for failures proven before any Metal command is
+/// submitted. `invalid_role_mapping` additionally depends on the adapter's
+/// exact live allocation slots and is therefore adapter-authorized rather
+/// than independently derivable from this pointer-free attempt alone.
+pub const MetalMatvecPreSubmitRejectionReasonV1 = enum(u64) {
+    invalid_geometry = 1,
+    invalid_host_lengths = 2,
+    invalid_role_bindings = 3,
+    invalid_role_mapping = 4,
+    _,
+};
+
+/// Canonical pointer-free description of the arguments rejected before
+/// submission. Slice contents are intentionally absent because no upload or
+/// execution may occur on this transition.
+pub const MetalMatvecPreSubmitAttemptV1 = struct {
+    abi_version: u64 = pre_submit_attempt_abi,
+    group_size: u32 = 0,
+    in_features: u32 = 0,
+    out_features: u32 = 0,
+    reserved: u32 = 0,
+    packed_weights_bytes: u64 = 0,
+    scales_count: u64 = 0,
+    input_count: u64 = 0,
+    output_count: u64 = 0,
+    bindings: MetalMatvecAllocationBindingsV1 = .{},
+    attempt_sha256: Digest = allocation.zero_digest,
+};
+
+/// Adapter-issued one-shot request for one exact canonical matvec attempt.
+/// Request generation prevents an old pin from replaying the same attempt
+/// after a later request has completed on this adapter.
+pub const MetalMatvecDispatchRequestV1 = struct {
+    abi_version: u64 = matvec_dispatch_request_abi,
+    request_generation: u64 = 0,
+    dispatch_authority_sha256: Digest = allocation.zero_digest,
+    queue_authority_sha256: Digest = allocation.zero_digest,
+    attempt: MetalMatvecPreSubmitAttemptV1 = .{},
+    request_sha256: Digest = allocation.zero_digest,
+};
+
+/// Adapter-authorized diagnostic evidence for one exact pre-submit failure.
+/// The matching terminal is always `rejected_before_submit` with zero
+/// submission, backend-completion, and output roots.
+pub const MetalMatvecPreSubmitRejectionV1 = struct {
+    abi_version: u64 = pre_submit_rejection_abi,
+    reason: MetalMatvecPreSubmitRejectionReasonV1 =
+        .invalid_geometry,
+    dispatch_generation: u64 = 0,
+    allocation_count: u64 = 0,
+    materialized_bytes: u64 = 0,
+    pin_sha256: Digest = allocation.zero_digest,
+    backend_object_set_sha256: Digest = allocation.zero_digest,
+    request: MetalMatvecDispatchRequestV1 = .{},
+    terminal_sha256: Digest = allocation.zero_digest,
+    rejection_sha256: Digest = allocation.zero_digest,
+};
+
+pub const MetalMatvecPreSubmitRejectionResultV1 = struct {
+    rejection: MetalMatvecPreSubmitRejectionV1,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+};
+
+const AuthorizedDispatchEvidenceV1 = union(enum) {
+    submitted: MetalLeaseTreeDispatchObservationV1,
+    rejected_before_submit: MetalMatvecPreSubmitRejectionV1,
+    cancelled_before_submit: MetalMatvecDispatchRequestV1,
+};
+
 const AuthorizedDispatchTerminalV1 = struct {
     pin: lease_tree.LeaseTreeDispatchPinV1,
+    request: MetalMatvecDispatchRequestV1,
     terminal: lease_tree.DispatchTerminalEvidenceV1,
-    observation: MetalLeaseTreeDispatchObservationV1,
+    evidence: AuthorizedDispatchEvidenceV1,
+};
+
+const DispatchSettlementTombstoneV1 = struct {
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+    completion: lease_tree.LeaseTreeDispatchCompletionV1,
+    bank_permit: resource.LeasePinPermitV1,
+    bank_completion: resource.LeasePinCompletionV1,
 };
 
 const ValidatedMatvecDispatchSetV1 = struct {
@@ -308,12 +400,19 @@ pub const MetalAllocationAdapterV1 = struct {
     dispatch_authority_sha256: Digest,
     queue_authority_sha256: Digest,
     next_generation: u64 = 1,
+    next_matvec_request_generation: u64 = 1,
+    prepared_matvec_request: ?MetalMatvecDispatchRequestV1 = null,
+    reserved_dispatch_intent: ?lease_tree.DispatchPinIntentV1 = null,
+    aborted_dispatch_intent: ?lease_tree.DispatchPinIntentV1 = null,
+    bound_dispatch_pin: ?lease_tree.LeaseTreeDispatchPinV1 = null,
+    cancelled_prepared_request: ?MetalMatvecDispatchRequestV1 = null,
     used_resource_bytes: u64 = 0,
     observed_allocated_size_bytes: u64 = 0,
     active_admission_sha256: Digest = allocation.zero_digest,
     dispatch_unresolved: bool = false,
     authorized_terminal: ?AuthorizedDispatchTerminalV1 = null,
     terminal_validation_observed: bool = false,
+    settlement_tombstone: ?DispatchSettlementTombstoneV1 = null,
     allocate_calls: u64 = 0,
     free_calls: u64 = 0,
     inspect_calls: u64 = 0,
@@ -426,8 +525,8 @@ pub const MetalAllocationAdapterV1 = struct {
     }
 
     /// Bind a LeaseTree dispatch pin to this exact native adapter and its
-    /// single serial Metal queue. The callback validates, but never clears,
-    /// the private terminal authorization.
+    /// single serial Metal queue. Terminal validation alone never clears the
+    /// private authorization; only the post-Bank settlement callback does.
     pub fn dispatchInterface(
         self: *MetalAllocationAdapterV1,
     ) lease_tree.DispatchAdapterV1 {
@@ -435,8 +534,68 @@ pub const MetalAllocationAdapterV1 = struct {
             .context = self,
             .dispatch_authority_sha256 = self.dispatch_authority_sha256,
             .queue_authority_sha256 = self.queue_authority_sha256,
+            .reserve_dispatch_intent_fn = reserveDispatchIntentCallback,
+            .abort_dispatch_intent_fn = abortDispatchIntentCallback,
             .validate_terminal_fn = validateDispatchTerminalCallback,
+            .confirm_settlement_fn = confirmDispatchSettlementCallback,
         };
+    }
+
+    /// Prepare one replay-fenced request before acquiring a coordinator pin.
+    /// Repeating the exact attempt in prepared-only state returns the same
+    /// request. A different attempt or any intent/pin/terminal fence is
+    /// rejected without mutation.
+    pub fn prepareMatvecDispatchRequestV1(
+        self: *MetalAllocationAdapterV1,
+        attempt: MetalMatvecPreSubmitAttemptV1,
+    ) Error!MetalMatvecDispatchRequestV1 {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.prepareMatvecDispatchRequestUnlocked(
+            attempt,
+        );
+    }
+
+    /// Cancel one exact prepared-only request. Once a pin is bound or terminal
+    /// work begins, cancellation is no longer an authority transition.
+    pub fn cancelPreparedMatvecDispatchRequestV1(
+        self: *MetalAllocationAdapterV1,
+        request: MetalMatvecDispatchRequestV1,
+    ) Error!void {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.cancelPreparedMatvecDispatchRequestUnlocked(
+            request,
+        );
+    }
+
+    fn cancelPreparedMatvecDispatchRequestUnlocked(
+        self: *MetalAllocationAdapterV1,
+        request: MetalMatvecDispatchRequestV1,
+    ) Error!void {
+        try validateMetalMatvecDispatchRequestV1(request);
+        if (self.dispatch_unresolved or
+            self.authorized_terminal != null or
+            self.terminal_validation_observed or
+            self.reserved_dispatch_intent != null or
+            self.bound_dispatch_pin != null)
+            return Error.DispatchBusy;
+        if (self.prepared_matvec_request) |prepared| {
+            if (!std.meta.eql(prepared, request))
+                return Error.DispatchBusy;
+            self.prepared_matvec_request = null;
+            self.cancelled_prepared_request = request;
+            return;
+        }
+        if (self.cancelled_prepared_request) |cancelled| {
+            if (std.meta.eql(cancelled, request))
+                return;
+        }
+        return Error.StaleObject;
     }
 
     pub fn quote(
@@ -458,8 +617,8 @@ pub const MetalAllocationAdapterV1 = struct {
     /// Once native submission is attempted, any ambiguous backend error keeps
     /// the adapter blocked: no new dispatch or free is permitted because the
     /// queue may still reference the registered buffers. A successful call
-    /// returns terminal evidence but keeps the same block until
-    /// `acknowledgeDispatchCompletion()` validates the coordinator result.
+    /// returns terminal evidence; the coordinator's private settlement
+    /// callback atomically validates Bank release and clears the block.
     pub fn dispatchMatvecInt4Observed(
         self: *MetalAllocationAdapterV1,
         lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
@@ -481,7 +640,26 @@ pub const MetalAllocationAdapterV1 = struct {
             self.authorized_terminal != null or
             self.terminal_validation_observed)
             return Error.DispatchBusy;
+        if (self.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.pin, pin))
+                return Error.StaleObject;
+        }
 
+        const attempt = try makeMetalMatvecPreSubmitAttemptV1(
+            roles,
+            @intCast(packed_weights.len),
+            @intCast(scales.len),
+            @intCast(input.len),
+            @intCast(output.len),
+            group_size,
+            in_features,
+            out_features,
+        );
+        const request =
+            try self.requirePreparedMatvecRequestForPinUnlocked(
+                pin,
+                attempt,
+            );
         const geometry = try makeMatvecGeometryV1(
             group_size,
             in_features,
@@ -502,6 +680,10 @@ pub const MetalAllocationAdapterV1 = struct {
             pin,
             roles,
             geometry,
+        );
+        try self.bindPreparedMatvecRequestToPinUnlocked(
+            request,
+            pin,
         );
         const packed_input_sha256 =
             matvecPackedWeightsInputRootV1(packed_weights);
@@ -601,8 +783,9 @@ pub const MetalAllocationAdapterV1 = struct {
         ) catch return Error.InvalidDispatchEvidence;
         self.authorized_terminal = .{
             .pin = pin,
+            .request = request,
             .terminal = terminal,
-            .observation = observation,
+            .evidence = .{ .submitted = observation },
         };
         return .{
             .observation = observation,
@@ -610,32 +793,256 @@ pub const MetalAllocationAdapterV1 = struct {
         };
     }
 
-    /// Clear native queue ownership only after the coordinator has consumed
-    /// the exact private Bank pin and returned its matching completion.
+    /// Authorize abandonment of one exact acquired request before native
+    /// submission. This path depends only on sealed lease/pin/request/intent
+    /// bindings: it performs no live device inspection, constructs or submits
+    /// no command buffer, and never establishes native queue ownership. The
+    /// pin remains fenced until the coordinator's private settlement callback
+    /// confirms the exact Bank release.
+    pub fn cancelMatvecBeforeSubmitObserved(
+        self: *MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+    ) Error!lease_tree.DispatchTerminalEvidenceV1 {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.authorized_terminal) |authorized| {
+            switch (authorized.evidence) {
+                .cancelled_before_submit => |cancelled_request| {
+                    if (std.meta.eql(authorized.pin, pin) and
+                        std.meta.eql(
+                            cancelled_request,
+                            authorized.request,
+                        ))
+                    {
+                        const prepared =
+                            try self.requirePreparedMatvecRequestForPinUnlocked(
+                                pin,
+                                cancelled_request.attempt,
+                            );
+                        if (!std.meta.eql(
+                            prepared,
+                            cancelled_request,
+                        ))
+                            return Error.InvalidDispatchEvidence;
+                        try self.validateDispatchOwnershipBindingUnlocked(
+                            lease,
+                            pin,
+                        );
+                        try validateMetalMatvecCancellationForPinV1(
+                            cancelled_request,
+                            pin,
+                            authorized.terminal,
+                        );
+                        return authorized.terminal;
+                    }
+                },
+                .submitted, .rejected_before_submit => {},
+            }
+            return Error.DispatchBusy;
+        }
+        if (self.dispatch_unresolved or
+            self.terminal_validation_observed)
+            return Error.DispatchBusy;
+        if (self.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.pin, pin))
+                return Error.StaleObject;
+        }
+
+        const prepared = self.prepared_matvec_request orelse
+            return Error.InvalidDispatchEvidence;
+        const request =
+            try self.requirePreparedMatvecRequestForPinUnlocked(
+                pin,
+                prepared.attempt,
+            );
+        if (!std.meta.eql(prepared, request))
+            return Error.InvalidDispatchEvidence;
+        try self.validateDispatchOwnershipBindingUnlocked(
+            lease,
+            pin,
+        );
+        try self.bindPreparedMatvecRequestToPinUnlocked(
+            request,
+            pin,
+        );
+        const terminal = lease_tree.makeDispatchTerminalV1(
+            pin,
+            .cancelled_before_submit,
+            allocation.zero_digest,
+            allocation.zero_digest,
+            allocation.zero_digest,
+        ) catch return Error.InvalidDispatchEvidence;
+        try validateMetalMatvecCancellationForPinV1(
+            request,
+            pin,
+            terminal,
+        );
+
+        self.dispatch_unresolved = true;
+        self.authorized_terminal = .{
+            .pin = pin,
+            .request = request,
+            .terminal = terminal,
+            .evidence = .{
+                .cancelled_before_submit = request,
+            },
+        };
+        return terminal;
+    }
+
+    /// Authorize one exact malformed INT4 matvec attempt for the existing
+    /// coordinator completion path without touching the native command queue.
+    ///
+    /// The caller must prepare the exact attempt, then acquire `pin` with the
+    /// adapter-issued request root. A valid attempt returns
+    /// `DispatchPreflightPassed` and leaves that exact request/pin bound for
+    /// normal submission. Once authorized, allocation/free/new dispatch stay
+    /// blocked until the private settlement callback confirms the exact Bank
+    /// release.
+    pub fn rejectMatvecInt4BeforeSubmitObserved(
+        self: *MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        roles: MetalMatvecAllocationBindingsV1,
+        packed_weights: []const u8,
+        scales: []const f32,
+        input: []const f32,
+        output: []const f32,
+        group_size: u32,
+        in_features: u32,
+        out_features: u32,
+    ) Error!MetalMatvecPreSubmitRejectionResultV1 {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const attempt = try makeMetalMatvecPreSubmitAttemptV1(
+            roles,
+            @intCast(packed_weights.len),
+            @intCast(scales.len),
+            @intCast(input.len),
+            @intCast(output.len),
+            group_size,
+            in_features,
+            out_features,
+        );
+        if (self.authorized_terminal) |authorized| {
+            switch (authorized.evidence) {
+                .rejected_before_submit => |rejection| {
+                    if (std.meta.eql(authorized.pin, pin) and
+                        std.meta.eql(
+                            rejection.request.attempt,
+                            attempt,
+                        ))
+                        return .{
+                            .rejection = rejection,
+                            .terminal = authorized.terminal,
+                        };
+                },
+                .submitted, .cancelled_before_submit => {},
+            }
+            return Error.DispatchBusy;
+        }
+        if (self.dispatch_unresolved or
+            self.terminal_validation_observed)
+            return Error.DispatchBusy;
+        if (self.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.pin, pin))
+                return Error.StaleObject;
+        }
+        const request =
+            try self.requirePreparedMatvecRequestForPinUnlocked(
+                pin,
+                attempt,
+            );
+
+        // Prove that this exact pin still owns this adapter's complete live
+        // object set before classifying any caller-controlled malformed
+        // geometry, length, or role arguments as safe to reject.
+        try self.validateDispatchOwnershipUnlocked(lease, pin);
+        try self.bindPreparedMatvecRequestToPinUnlocked(
+            request,
+            pin,
+        );
+
+        var reason = try classifyStaticPreSubmitRejectionV1(
+            attempt,
+        );
+        if (reason == null) {
+            const geometry = try makeMatvecGeometryV1(
+                group_size,
+                in_features,
+                out_features,
+            );
+            if (self.validateDispatchRolesUnlocked(
+                roles,
+                geometry,
+            )) |_| {
+                return Error.DispatchPreflightPassed;
+            } else |_| {
+                reason = .invalid_role_mapping;
+            }
+        }
+
+        const terminal = lease_tree.makeDispatchTerminalV1(
+            pin,
+            .rejected_before_submit,
+            allocation.zero_digest,
+            allocation.zero_digest,
+            allocation.zero_digest,
+        ) catch return Error.InvalidDispatchEvidence;
+        const rejection = try makeMetalMatvecPreSubmitRejectionV1(
+            pin,
+            request,
+            reason.?,
+            terminal,
+        );
+        try validateMetalMatvecPreSubmitRejectionForPinV1(
+            rejection,
+            pin,
+            terminal,
+        );
+
+        // Native identity/allocation inspection may have occurred, but no
+        // command buffer was constructed or submitted and no queue ownership
+        // was established. Retain the same fail-closed allocation/free fence
+        // until private settlement.
+        self.dispatch_unresolved = true;
+        self.authorized_terminal = .{
+            .pin = pin,
+            .request = request,
+            .terminal = terminal,
+            .evidence = .{
+                .rejected_before_submit = rejection,
+            },
+        };
+        return .{
+            .rejection = rejection,
+            .terminal = terminal,
+        };
+    }
+
+    /// Compatibility acknowledgement. The private settlement callback is the
+    /// only state transition; this method is an exact idempotent tombstone
+    /// check and never clears adapter ownership.
     pub fn acknowledgeDispatchCompletion(
         self: *MetalAllocationAdapterV1,
         completion: lease_tree.LeaseTreeDispatchCompletionV1,
     ) Error!void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const authorized = self.authorized_terminal orelse
-            return Error.DispatchUnresolved;
-        lease_tree.validateDispatchCompletionForPinV1(
+        lease_tree.validateDispatchCompletionV1(
             completion,
-            authorized.pin,
-            authorized.terminal,
         ) catch return Error.InvalidDispatchEvidence;
-        validateMetalLeaseTreeDispatchObservationForPinV1(
-            authorized.observation,
-            authorized.pin,
-            authorized.terminal,
-        ) catch return Error.InvalidDispatchEvidence;
-        if (!self.dispatch_unresolved or
-            !self.terminal_validation_observed)
-            return Error.InvalidDispatchEvidence;
-        self.authorized_terminal = null;
-        self.dispatch_unresolved = false;
-        self.terminal_validation_observed = false;
+        const settled = self.settlement_tombstone orelse
+            return Error.DispatchUnresolved;
+        if (!std.meta.eql(settled.completion, completion))
+            return Error.DispatchUnresolved;
     }
 
     pub fn snapshot(
@@ -709,6 +1116,99 @@ pub const MetalAllocationAdapterV1 = struct {
         return copied;
     }
 
+    fn prepareMatvecDispatchRequestUnlocked(
+        self: *MetalAllocationAdapterV1,
+        attempt: MetalMatvecPreSubmitAttemptV1,
+    ) Error!MetalMatvecDispatchRequestV1 {
+        try validateMetalMatvecPreSubmitAttemptV1(attempt);
+        if (self.dispatch_unresolved or
+            self.authorized_terminal != null or
+            self.terminal_validation_observed or
+            self.reserved_dispatch_intent != null or
+            self.bound_dispatch_pin != null)
+            return Error.DispatchBusy;
+        if (self.prepared_matvec_request) |prepared| {
+            try validateMetalMatvecDispatchRequestV1(prepared);
+            if (std.meta.eql(prepared.attempt, attempt))
+                return prepared;
+            return Error.DispatchBusy;
+        }
+        if (self.next_matvec_request_generation == 0 or
+            self.next_matvec_request_generation ==
+                std.math.maxInt(u64))
+            return Error.GenerationExhausted;
+        const request = try makeMetalMatvecDispatchRequestV1(
+            self.next_matvec_request_generation,
+            self.dispatch_authority_sha256,
+            self.queue_authority_sha256,
+            attempt,
+        );
+        self.next_matvec_request_generation += 1;
+        self.prepared_matvec_request = request;
+        return request;
+    }
+
+    fn requirePreparedMatvecRequestForPinUnlocked(
+        self: *MetalAllocationAdapterV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        attempt: MetalMatvecPreSubmitAttemptV1,
+    ) Error!MetalMatvecDispatchRequestV1 {
+        try lease_tree.validateDispatchPinV1(pin);
+        try validateMetalMatvecPreSubmitAttemptV1(attempt);
+        const request = self.prepared_matvec_request orelse
+            return Error.InvalidDispatchEvidence;
+        const intent = self.reserved_dispatch_intent orelse
+            return Error.InvalidDispatchEvidence;
+        try validateMetalMatvecDispatchRequestV1(request);
+        if (!std.meta.eql(request.attempt, attempt) or
+            !device.digestEqual(
+                request.dispatch_authority_sha256,
+                self.dispatch_authority_sha256,
+            ) or !device.digestEqual(
+            request.queue_authority_sha256,
+            self.queue_authority_sha256,
+        ) or !device.digestEqual(
+            request.dispatch_authority_sha256,
+            pin.dispatch_authority_sha256,
+        ) or !device.digestEqual(
+            request.queue_authority_sha256,
+            pin.queue_authority_sha256,
+        ) or !device.digestEqual(
+            request.request_sha256,
+            pin.dispatch_request_sha256,
+        ))
+            return Error.InvalidDispatchEvidence;
+        if (self.bound_dispatch_pin) |bound| {
+            if (!std.meta.eql(bound, pin))
+                return Error.InvalidDispatchEvidence;
+        }
+        lease_tree.validateDispatchPinForIntentV1(
+            pin,
+            intent,
+        ) catch return Error.InvalidDispatchEvidence;
+        return request;
+    }
+
+    fn bindPreparedMatvecRequestToPinUnlocked(
+        self: *MetalAllocationAdapterV1,
+        request: MetalMatvecDispatchRequestV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+    ) Error!void {
+        const prepared =
+            try self.requirePreparedMatvecRequestForPinUnlocked(
+                pin,
+                request.attempt,
+            );
+        if (!std.meta.eql(prepared, request))
+            return Error.InvalidDispatchEvidence;
+        if (self.bound_dispatch_pin) |bound| {
+            if (!std.meta.eql(bound, pin))
+                return Error.InvalidDispatchEvidence;
+            return;
+        }
+        self.bound_dispatch_pin = pin;
+    }
+
     fn validateDispatchSetUnlocked(
         self: *MetalAllocationAdapterV1,
         lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
@@ -718,10 +1218,81 @@ pub const MetalAllocationAdapterV1 = struct {
     ) Error!ValidatedMatvecDispatchSetV1 {
         if (comptime !metal_enabled)
             return metal.MetalError.Unavailable;
+        try self.validateDispatchOwnershipUnlocked(
+            lease,
+            pin,
+        );
+        return self.validateDispatchRolesUnlocked(
+            bindings,
+            geometry,
+        );
+    }
+
+    fn validateDispatchOwnershipBindingUnlocked(
+        self: *MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+    ) Error!void {
         try lease_tree.validateLeaseV1(lease);
         try lease_tree.validateDispatchPinV1(pin);
-        try validateMatvecGeometryV1(geometry);
-        try validateMatvecBindingsV1(bindings);
+        if (lease.allocation_count != 4 or
+            pin.allocation_count != 4 or
+            !device.digestEqual(
+                lease.authority_sha256,
+                self.authority.authority_sha256,
+            ) or !device.digestEqual(
+            pin.authority_sha256,
+            self.authority.authority_sha256,
+        ) or lease.coordinator_epoch !=
+            pin.coordinator_epoch or
+            lease.generation != pin.allocation_generation or
+            !device.digestEqual(
+                lease.request_sha256,
+                pin.request_sha256,
+            ) or !device.digestEqual(
+            lease.admission_sha256,
+            pin.admission_sha256,
+        ) or !device.digestEqual(
+            lease.lease_sha256,
+            pin.lease_sha256,
+        ) or !device.digestEqual(
+            lease.parent_receipt_sha256,
+            pin.parent_receipt_sha256,
+        ) or !device.digestEqual(
+            lease.allocation_leaf_set_sha256,
+            pin.allocation_leaf_set_sha256,
+        ) or !device.digestEqual(
+            lease.backend_object_set_sha256,
+            pin.backend_object_set_sha256,
+        ) or lease.materialized_bytes !=
+            pin.pinned_device_bytes or
+            !std.meta.eql(lease.scope, pin.scope) or
+            lease.materialized_tree.tree_key !=
+                pin.pinned_tree.tree_key or
+            lease.materialized_tree.identity_generation !=
+                pin.pinned_tree.identity_generation or
+            !std.meta.eql(
+                lease.materialized_tree.parent,
+                pin.pinned_tree.parent,
+            ) or !device.digestEqual(
+            pin.dispatch_authority_sha256,
+            self.dispatch_authority_sha256,
+        ) or !device.digestEqual(
+            pin.queue_authority_sha256,
+            self.queue_authority_sha256,
+        ))
+            return Error.InvalidDispatchEvidence;
+    }
+
+    fn validateDispatchOwnershipUnlocked(
+        self: *MetalAllocationAdapterV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+    ) Error!void {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        try lease_tree.validateLeaseV1(lease);
+        try lease_tree.validateDispatchPinV1(pin);
         if (lease.allocation_count != 4 or
             pin.allocation_count != 4 or
             !device.digestEqual(
@@ -879,7 +1450,17 @@ pub const MetalAllocationAdapterV1 = struct {
             lease.backend_object_set_sha256,
         ))
             return Error.InvalidDispatchEvidence;
+    }
 
+    fn validateDispatchRolesUnlocked(
+        self: *MetalAllocationAdapterV1,
+        bindings: MetalMatvecAllocationBindingsV1,
+        geometry: MetalMatvecGeometryV1,
+    ) Error!ValidatedMatvecDispatchSetV1 {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        try validateMatvecGeometryV1(geometry);
+        try validateMatvecBindingsV1(bindings);
         const role_bindings = [_]Digest{
             bindings.packed_weights_sha256,
             bindings.scales_sha256,
@@ -954,11 +1535,105 @@ pub const MetalAllocationAdapterV1 = struct {
             !digestIsZero(self.active_admission_sha256) or
             self.dispatch_unresolved or
             self.authorized_terminal != null or
-            self.terminal_validation_observed)
+            self.terminal_validation_observed or
+            self.prepared_matvec_request != null or
+            self.reserved_dispatch_intent != null or
+            self.bound_dispatch_pin != null)
             return Error.InvalidConfiguration;
         for (self.slots) |slot| if (slot.live or
             !slot.native_token.isZero())
             return Error.InvalidConfiguration;
+    }
+
+    fn reserveDispatchIntentCallback(
+        context: *anyopaque,
+        intent: lease_tree.DispatchPinIntentV1,
+    ) lease_tree.DispatchCallbackError!void {
+        const self: *MetalAllocationAdapterV1 =
+            @ptrCast(@alignCast(context));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        lease_tree.validateDispatchPinIntentV1(
+            intent,
+        ) catch return lease_tree.DispatchCallbackError
+            .InvalidDispatchIntent;
+        const prepared = self.prepared_matvec_request orelse
+            return lease_tree.DispatchCallbackError
+                .InvalidDispatchIntent;
+        validateMetalMatvecDispatchRequestV1(
+            prepared,
+        ) catch return lease_tree.DispatchCallbackError
+            .InvalidDispatchIntent;
+        if (self.dispatch_unresolved or
+            self.authorized_terminal != null or
+            self.terminal_validation_observed or
+            self.bound_dispatch_pin != null or
+            !device.digestEqual(
+                prepared.request_sha256,
+                intent.dispatch_request_sha256,
+            ) or !device.digestEqual(
+            prepared.dispatch_authority_sha256,
+            intent.dispatch_authority_sha256,
+        ) or !device.digestEqual(
+            prepared.queue_authority_sha256,
+            intent.queue_authority_sha256,
+        ) or !device.digestEqual(
+            self.dispatch_authority_sha256,
+            intent.dispatch_authority_sha256,
+        ) or !device.digestEqual(
+            self.queue_authority_sha256,
+            intent.queue_authority_sha256,
+        ) or !device.digestEqual(
+            self.authority.authority_sha256,
+            intent.authority_sha256,
+        ) or !device.digestEqual(
+            self.active_admission_sha256,
+            intent.admission_sha256,
+        ) or intent.allocation_count != 4 or
+            intent.pinned_device_bytes != self.used_resource_bytes)
+            return lease_tree.DispatchCallbackError
+                .InvalidDispatchIntent;
+        if (self.reserved_dispatch_intent) |reserved| {
+            if (std.meta.eql(reserved, intent))
+                return;
+            return lease_tree.DispatchCallbackError
+                .InvalidDispatchIntent;
+        }
+        self.reserved_dispatch_intent = intent;
+    }
+
+    fn abortDispatchIntentCallback(
+        context: *anyopaque,
+        intent: lease_tree.DispatchPinIntentV1,
+    ) lease_tree.DispatchCallbackError!void {
+        const self: *MetalAllocationAdapterV1 =
+            @ptrCast(@alignCast(context));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        lease_tree.validateDispatchPinIntentV1(
+            intent,
+        ) catch return lease_tree.DispatchCallbackError
+            .InvalidDispatchIntent;
+        if (self.dispatch_unresolved or
+            self.authorized_terminal != null or
+            self.terminal_validation_observed or
+            self.bound_dispatch_pin != null)
+            return lease_tree.DispatchCallbackError
+                .InvalidDispatchIntent;
+        if (self.reserved_dispatch_intent) |reserved| {
+            if (!std.meta.eql(reserved, intent))
+                return lease_tree.DispatchCallbackError
+                    .InvalidDispatchIntent;
+            self.reserved_dispatch_intent = null;
+            self.aborted_dispatch_intent = intent;
+            return;
+        }
+        if (self.aborted_dispatch_intent) |aborted| {
+            if (std.meta.eql(aborted, intent))
+                return;
+        }
+        return lease_tree.DispatchCallbackError
+            .InvalidDispatchIntent;
     }
 
     fn validateDispatchTerminalCallback(
@@ -972,17 +1647,152 @@ pub const MetalAllocationAdapterV1 = struct {
         const authorized = self.authorized_terminal orelse
             return lease_tree.DispatchCallbackError
                 .InvalidTerminalEvidence;
+        const prepared =
+            self.requirePreparedMatvecRequestForPinUnlocked(
+                authorized.pin,
+                authorized.request.attempt,
+            ) catch return lease_tree.DispatchCallbackError
+                .InvalidTerminalEvidence;
+        const bound = self.bound_dispatch_pin orelse
+            return lease_tree.DispatchCallbackError
+                .InvalidTerminalEvidence;
         if (!self.dispatch_unresolved or
+            !std.meta.eql(prepared, authorized.request) or
+            !std.meta.eql(bound, authorized.pin) or
             !std.meta.eql(terminal, authorized.terminal))
             return lease_tree.DispatchCallbackError
                 .InvalidTerminalEvidence;
-        validateMetalLeaseTreeDispatchObservationForPinV1(
-            authorized.observation,
-            authorized.pin,
-            terminal,
-        ) catch return lease_tree.DispatchCallbackError
-            .InvalidTerminalEvidence;
+        switch (authorized.evidence) {
+            .submitted => |observation| {
+                validateMetalLeaseTreeDispatchObservationForPinV1(
+                    observation,
+                    authorized.pin,
+                    terminal,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidTerminalEvidence;
+            },
+            .rejected_before_submit => |rejection| {
+                validateMetalMatvecPreSubmitRejectionForPinV1(
+                    rejection,
+                    authorized.pin,
+                    terminal,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidTerminalEvidence;
+            },
+            .cancelled_before_submit => |cancelled_request| {
+                if (!std.meta.eql(
+                    cancelled_request,
+                    authorized.request,
+                ))
+                    return lease_tree.DispatchCallbackError
+                        .InvalidTerminalEvidence;
+                validateMetalMatvecCancellationForPinV1(
+                    cancelled_request,
+                    authorized.pin,
+                    terminal,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidTerminalEvidence;
+            },
+        }
         self.terminal_validation_observed = true;
+    }
+
+    fn confirmDispatchSettlementCallback(
+        context: *anyopaque,
+        pin: lease_tree.LeaseTreeDispatchPinV1,
+        terminal: lease_tree.DispatchTerminalEvidenceV1,
+        completion: lease_tree.LeaseTreeDispatchCompletionV1,
+        bank_permit: resource.LeasePinPermitV1,
+        bank_completion: resource.LeasePinCompletionV1,
+    ) lease_tree.DispatchCallbackError!void {
+        const self: *MetalAllocationAdapterV1 =
+            @ptrCast(@alignCast(context));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.settlement_tombstone) |settled| {
+            if (std.meta.eql(settled.pin, pin) and
+                std.meta.eql(settled.terminal, terminal) and
+                std.meta.eql(settled.completion, completion) and
+                std.meta.eql(settled.bank_permit, bank_permit) and
+                std.meta.eql(
+                    settled.bank_completion,
+                    bank_completion,
+                ))
+                return;
+        }
+        const authorized = self.authorized_terminal orelse
+            return lease_tree.DispatchCallbackError
+                .InvalidSettlementEvidence;
+        const prepared =
+            self.requirePreparedMatvecRequestForPinUnlocked(
+                authorized.pin,
+                authorized.request.attempt,
+            ) catch return lease_tree.DispatchCallbackError
+                .InvalidSettlementEvidence;
+        const bound = self.bound_dispatch_pin orelse
+            return lease_tree.DispatchCallbackError
+                .InvalidSettlementEvidence;
+        if (!self.dispatch_unresolved or
+            !self.terminal_validation_observed or
+            !std.meta.eql(pin, authorized.pin) or
+            !std.meta.eql(terminal, authorized.terminal) or
+            !std.meta.eql(prepared, authorized.request) or
+            !std.meta.eql(bound, authorized.pin))
+            return lease_tree.DispatchCallbackError
+                .InvalidSettlementEvidence;
+        switch (authorized.evidence) {
+            .submitted => |observation| {
+                validateMetalLeaseTreeDispatchObservationForPinV1(
+                    observation,
+                    pin,
+                    terminal,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+            },
+            .rejected_before_submit => |rejection| {
+                validateMetalMatvecPreSubmitRejectionForPinV1(
+                    rejection,
+                    pin,
+                    terminal,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+            },
+            .cancelled_before_submit => |cancelled_request| {
+                if (!std.meta.eql(
+                    cancelled_request,
+                    authorized.request,
+                ))
+                    return lease_tree.DispatchCallbackError
+                        .InvalidSettlementEvidence;
+                validateMetalMatvecCancellationForPinV1(
+                    cancelled_request,
+                    pin,
+                    terminal,
+                ) catch return lease_tree.DispatchCallbackError
+                    .InvalidSettlementEvidence;
+            },
+        }
+        lease_tree.validateDispatchSettlementForPinV1(
+            completion,
+            pin,
+            terminal,
+            bank_permit,
+            bank_completion,
+        ) catch return lease_tree.DispatchCallbackError
+            .InvalidSettlementEvidence;
+        self.settlement_tombstone = .{
+            .pin = pin,
+            .terminal = terminal,
+            .completion = completion,
+            .bank_permit = bank_permit,
+            .bank_completion = bank_completion,
+        };
+        self.authorized_terminal = null;
+        self.dispatch_unresolved = false;
+        self.terminal_validation_observed = false;
+        self.prepared_matvec_request = null;
+        self.reserved_dispatch_intent = null;
+        self.bound_dispatch_pin = null;
     }
 
     fn quoteCallback(
@@ -1036,7 +1846,10 @@ pub const MetalAllocationAdapterV1 = struct {
 
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
-            self.terminal_validation_observed)
+            self.terminal_validation_observed or
+            self.prepared_matvec_request != null or
+            self.reserved_dispatch_intent != null or
+            self.bound_dispatch_pin != null)
             return allocation.CallbackError.Unavailable;
         allocation.validateAllocationCallV1(call) catch
             return allocation.CallbackError.InvalidRequest;
@@ -1172,13 +1985,16 @@ pub const MetalAllocationAdapterV1 = struct {
             @ptrCast(@alignCast(context));
         self.mutex.lock();
         defer self.mutex.unlock();
-        // Core completion releases the Bank pin before the caller can return
-        // it here for acknowledgement. Retain native ownership across that
-        // narrow handoff so a premature LeaseTree release cannot free a
-        // command buffer's exact registered resources.
+        // Prepared or bound request state is an ownership fence. Core's
+        // private settlement callback clears it atomically with exact Bank
+        // completion validation, so no caller-controlled handoff window can
+        // free a command buffer's registered resources.
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
-            self.terminal_validation_observed)
+            self.terminal_validation_observed or
+            self.prepared_matvec_request != null or
+            self.reserved_dispatch_intent != null or
+            self.bound_dispatch_pin != null)
             return allocation.CallbackError.Unavailable;
         self.free_calls +|= 1;
 
@@ -1227,6 +2043,318 @@ pub const MetalAllocationAdapterV1 = struct {
             self.active_admission_sha256 = allocation.zero_digest;
     }
 };
+
+pub fn makeMetalMatvecPreSubmitAttemptV1(
+    bindings: MetalMatvecAllocationBindingsV1,
+    packed_weights_bytes: u64,
+    scales_count: u64,
+    input_count: u64,
+    output_count: u64,
+    group_size: u32,
+    in_features: u32,
+    out_features: u32,
+) Error!MetalMatvecPreSubmitAttemptV1 {
+    var result: MetalMatvecPreSubmitAttemptV1 = .{
+        .group_size = group_size,
+        .in_features = in_features,
+        .out_features = out_features,
+        .packed_weights_bytes = packed_weights_bytes,
+        .scales_count = scales_count,
+        .input_count = input_count,
+        .output_count = output_count,
+        .bindings = bindings,
+    };
+    result.attempt_sha256 =
+        metalMatvecPreSubmitAttemptRootV1(result);
+    try validateMetalMatvecPreSubmitAttemptV1(result);
+    return result;
+}
+
+pub fn metalMatvecPreSubmitAttemptRootV1(
+    attempt: MetalMatvecPreSubmitAttemptV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(pre_submit_attempt_domain);
+    hashU64(&hash, attempt.abi_version);
+    hashU32(&hash, attempt.group_size);
+    hashU32(&hash, attempt.in_features);
+    hashU32(&hash, attempt.out_features);
+    hashU32(&hash, attempt.reserved);
+    hashU64(&hash, attempt.packed_weights_bytes);
+    hashU64(&hash, attempt.scales_count);
+    hashU64(&hash, attempt.input_count);
+    hashU64(&hash, attempt.output_count);
+    hash.update(&attempt.bindings.packed_weights_sha256);
+    hash.update(&attempt.bindings.scales_sha256);
+    hash.update(&attempt.bindings.input_sha256);
+    hash.update(&attempt.bindings.output_sha256);
+    return finish(&hash);
+}
+
+pub fn validateMetalMatvecPreSubmitAttemptV1(
+    attempt: MetalMatvecPreSubmitAttemptV1,
+) Error!void {
+    if (attempt.abi_version != pre_submit_attempt_abi or
+        attempt.reserved != 0 or
+        digestIsZero(attempt.attempt_sha256) or
+        !device.digestEqual(
+            attempt.attempt_sha256,
+            metalMatvecPreSubmitAttemptRootV1(attempt),
+        ))
+        return Error.InvalidDispatchEvidence;
+}
+
+pub fn makeMetalMatvecDispatchRequestV1(
+    request_generation: u64,
+    dispatch_authority_sha256: Digest,
+    queue_authority_sha256: Digest,
+    attempt: MetalMatvecPreSubmitAttemptV1,
+) Error!MetalMatvecDispatchRequestV1 {
+    try validateMetalMatvecPreSubmitAttemptV1(attempt);
+    var result: MetalMatvecDispatchRequestV1 = .{
+        .request_generation = request_generation,
+        .dispatch_authority_sha256 = dispatch_authority_sha256,
+        .queue_authority_sha256 = queue_authority_sha256,
+        .attempt = attempt,
+    };
+    result.request_sha256 =
+        metalMatvecDispatchRequestRootV1(result);
+    try validateMetalMatvecDispatchRequestV1(result);
+    return result;
+}
+
+pub fn metalMatvecDispatchRequestRootV1(
+    request: MetalMatvecDispatchRequestV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(matvec_dispatch_request_domain);
+    hashU64(&hash, request.abi_version);
+    hashU64(&hash, request.request_generation);
+    hash.update(&request.dispatch_authority_sha256);
+    hash.update(&request.queue_authority_sha256);
+    hash.update(&request.attempt.attempt_sha256);
+    return finish(&hash);
+}
+
+pub fn validateMetalMatvecDispatchRequestV1(
+    request: MetalMatvecDispatchRequestV1,
+) Error!void {
+    try validateMetalMatvecPreSubmitAttemptV1(
+        request.attempt,
+    );
+    if (request.abi_version !=
+        matvec_dispatch_request_abi or
+        request.request_generation == 0 or
+        digestIsZero(request.dispatch_authority_sha256) or
+        digestIsZero(request.queue_authority_sha256) or
+        device.digestEqual(
+            request.dispatch_authority_sha256,
+            request.queue_authority_sha256,
+        ) or digestIsZero(request.request_sha256) or
+        !device.digestEqual(
+            request.request_sha256,
+            metalMatvecDispatchRequestRootV1(request),
+        ))
+        return Error.InvalidDispatchEvidence;
+}
+
+fn validateMetalMatvecCancellationForPinV1(
+    request: MetalMatvecDispatchRequestV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+) Error!void {
+    try validateMetalMatvecDispatchRequestV1(request);
+    lease_tree.validateDispatchTerminalForPinV1(
+        terminal,
+        pin,
+    ) catch return Error.InvalidDispatchEvidence;
+    if (terminal.outcome != .cancelled_before_submit or
+        !device.digestEqual(
+            request.request_sha256,
+            pin.dispatch_request_sha256,
+        ) or !device.digestEqual(
+        request.dispatch_authority_sha256,
+        pin.dispatch_authority_sha256,
+    ) or !device.digestEqual(
+        request.queue_authority_sha256,
+        pin.queue_authority_sha256,
+    ))
+        return Error.InvalidDispatchEvidence;
+}
+
+fn classifyStaticPreSubmitRejectionV1(
+    attempt: MetalMatvecPreSubmitAttemptV1,
+) Error!?MetalMatvecPreSubmitRejectionReasonV1 {
+    try validateMetalMatvecPreSubmitAttemptV1(attempt);
+    const geometry = makeMatvecGeometryV1(
+        attempt.group_size,
+        attempt.in_features,
+        attempt.out_features,
+    ) catch return .invalid_geometry;
+    if (attempt.packed_weights_bytes != geometry.packed_bytes or
+        attempt.scales_count != geometry.scale_count or
+        attempt.input_count != geometry.input_count or
+        attempt.output_count != geometry.output_count)
+        return .invalid_host_lengths;
+    validateMatvecBindingsV1(attempt.bindings) catch
+        return .invalid_role_bindings;
+    return null;
+}
+
+fn preSubmitRejectionReasonValid(
+    reason: MetalMatvecPreSubmitRejectionReasonV1,
+) bool {
+    return switch (reason) {
+        .invalid_geometry,
+        .invalid_host_lengths,
+        .invalid_role_bindings,
+        .invalid_role_mapping,
+        => true,
+        _ => false,
+    };
+}
+
+pub fn makeMetalMatvecPreSubmitRejectionV1(
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    request: MetalMatvecDispatchRequestV1,
+    reason: MetalMatvecPreSubmitRejectionReasonV1,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+) Error!MetalMatvecPreSubmitRejectionV1 {
+    try lease_tree.validateDispatchPinV1(pin);
+    try lease_tree.validateDispatchTerminalForPinV1(
+        terminal,
+        pin,
+    );
+    try validateMetalMatvecDispatchRequestV1(request);
+    const static_reason =
+        try classifyStaticPreSubmitRejectionV1(
+            request.attempt,
+        );
+    if (!preSubmitRejectionReasonValid(reason) or
+        !device.digestEqual(
+            request.request_sha256,
+            pin.dispatch_request_sha256,
+        ) or !device.digestEqual(
+        request.dispatch_authority_sha256,
+        pin.dispatch_authority_sha256,
+    ) or !device.digestEqual(
+        request.queue_authority_sha256,
+        pin.queue_authority_sha256,
+    ) or terminal.outcome != .rejected_before_submit or
+        (reason == .invalid_role_mapping and
+            static_reason != null) or
+        (reason != .invalid_role_mapping and
+            (static_reason == null or
+                static_reason.? != reason)))
+        return Error.InvalidDispatchEvidence;
+    var result: MetalMatvecPreSubmitRejectionV1 = .{
+        .reason = reason,
+        .dispatch_generation = pin.dispatch_generation,
+        .allocation_count = pin.allocation_count,
+        .materialized_bytes = pin.pinned_device_bytes,
+        .pin_sha256 = pin.pin_sha256,
+        .backend_object_set_sha256 = pin.backend_object_set_sha256,
+        .request = request,
+        .terminal_sha256 = terminal.terminal_sha256,
+    };
+    result.rejection_sha256 =
+        metalMatvecPreSubmitRejectionRootV1(result);
+    try validateMetalMatvecPreSubmitRejectionForPinV1(
+        result,
+        pin,
+        terminal,
+    );
+    return result;
+}
+
+pub fn metalMatvecPreSubmitRejectionRootV1(
+    rejection: MetalMatvecPreSubmitRejectionV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(pre_submit_rejection_domain);
+    hashU64(&hash, rejection.abi_version);
+    hashU64(&hash, @intFromEnum(rejection.reason));
+    hashU64(&hash, rejection.dispatch_generation);
+    hashU64(&hash, rejection.allocation_count);
+    hashU64(&hash, rejection.materialized_bytes);
+    hash.update(&rejection.pin_sha256);
+    hash.update(&rejection.backend_object_set_sha256);
+    hash.update(&rejection.request.request_sha256);
+    hash.update(&rejection.terminal_sha256);
+    return finish(&hash);
+}
+
+pub fn validateMetalMatvecPreSubmitRejectionV1(
+    rejection: MetalMatvecPreSubmitRejectionV1,
+) Error!void {
+    try validateMetalMatvecDispatchRequestV1(
+        rejection.request,
+    );
+    const static_reason =
+        try classifyStaticPreSubmitRejectionV1(
+            rejection.request.attempt,
+        );
+    if (rejection.abi_version != pre_submit_rejection_abi or
+        !preSubmitRejectionReasonValid(rejection.reason) or
+        (rejection.reason == .invalid_role_mapping and
+            static_reason != null) or
+        (rejection.reason != .invalid_role_mapping and
+            (static_reason == null or
+                static_reason.? != rejection.reason)) or
+        rejection.dispatch_generation == 0 or
+        rejection.allocation_count != 4 or
+        rejection.materialized_bytes <
+            rejection.allocation_count or
+        digestIsZero(rejection.pin_sha256) or
+        digestIsZero(
+            rejection.backend_object_set_sha256,
+        ) or digestIsZero(rejection.terminal_sha256) or
+        digestIsZero(rejection.rejection_sha256) or
+        !device.digestEqual(
+            rejection.rejection_sha256,
+            metalMatvecPreSubmitRejectionRootV1(rejection),
+        ))
+        return Error.InvalidDispatchEvidence;
+}
+
+pub fn validateMetalMatvecPreSubmitRejectionForPinV1(
+    rejection: MetalMatvecPreSubmitRejectionV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+) Error!void {
+    try validateMetalMatvecPreSubmitRejectionV1(rejection);
+    lease_tree.validateDispatchTerminalForPinV1(
+        terminal,
+        pin,
+    ) catch return Error.InvalidDispatchEvidence;
+    if (terminal.outcome != .rejected_before_submit or
+        !digestIsZero(terminal.submission_sha256) or
+        !digestIsZero(terminal.backend_completion_sha256) or
+        !digestIsZero(terminal.output_sha256) or
+        rejection.dispatch_generation != pin.dispatch_generation or
+        rejection.allocation_count != pin.allocation_count or
+        rejection.materialized_bytes != pin.pinned_device_bytes or
+        !device.digestEqual(
+            rejection.pin_sha256,
+            pin.pin_sha256,
+        ) or !device.digestEqual(
+        rejection.request.request_sha256,
+        pin.dispatch_request_sha256,
+    ) or !device.digestEqual(
+        rejection.request.dispatch_authority_sha256,
+        pin.dispatch_authority_sha256,
+    ) or !device.digestEqual(
+        rejection.request.queue_authority_sha256,
+        pin.queue_authority_sha256,
+    ) or !device.digestEqual(
+        rejection.backend_object_set_sha256,
+        pin.backend_object_set_sha256,
+    ) or !device.digestEqual(
+        rejection.terminal_sha256,
+        terminal.terminal_sha256,
+    ))
+        return Error.InvalidDispatchEvidence;
+}
 
 pub fn makeMatvecGeometryV1(
     group_size: u32,
@@ -2161,6 +3289,517 @@ test "Metal dispatch observation seals exact geometry roles telemetry and data" 
     );
 }
 
+test "Metal pre-submit attempts classify only deterministic validation failures" {
+    const bindings: MetalMatvecAllocationBindingsV1 = .{
+        .packed_weights_sha256 = testDispatchDigest("pre-submit packed binding"),
+        .scales_sha256 = testDispatchDigest("pre-submit scales binding"),
+        .input_sha256 = testDispatchDigest("pre-submit input binding"),
+        .output_sha256 = testDispatchDigest("pre-submit output binding"),
+    };
+    const valid = try makeMetalMatvecPreSubmitAttemptV1(
+        bindings,
+        1_184,
+        296,
+        64,
+        37,
+        8,
+        64,
+        37,
+    );
+    try std.testing.expect(
+        try classifyStaticPreSubmitRejectionV1(valid) == null,
+    );
+
+    const invalid_geometry =
+        try makeMetalMatvecPreSubmitAttemptV1(
+            bindings,
+            1_184,
+            296,
+            64,
+            37,
+            0,
+            64,
+            37,
+        );
+    try std.testing.expectEqual(
+        MetalMatvecPreSubmitRejectionReasonV1.invalid_geometry,
+        (try classifyStaticPreSubmitRejectionV1(
+            invalid_geometry,
+        )).?,
+    );
+
+    const invalid_lengths =
+        try makeMetalMatvecPreSubmitAttemptV1(
+            bindings,
+            1_185,
+            296,
+            64,
+            37,
+            8,
+            64,
+            37,
+        );
+    try std.testing.expectEqual(
+        MetalMatvecPreSubmitRejectionReasonV1.invalid_host_lengths,
+        (try classifyStaticPreSubmitRejectionV1(
+            invalid_lengths,
+        )).?,
+    );
+
+    var duplicate_bindings = bindings;
+    duplicate_bindings.output_sha256 =
+        duplicate_bindings.input_sha256;
+    const invalid_roles =
+        try makeMetalMatvecPreSubmitAttemptV1(
+            duplicate_bindings,
+            1_184,
+            296,
+            64,
+            37,
+            8,
+            64,
+            37,
+        );
+    try std.testing.expectEqual(
+        MetalMatvecPreSubmitRejectionReasonV1.invalid_role_bindings,
+        (try classifyStaticPreSubmitRejectionV1(
+            invalid_roles,
+        )).?,
+    );
+
+    var tampered = invalid_lengths;
+    tampered.output_count += 1;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalMatvecPreSubmitAttemptV1(tampered),
+    );
+}
+
+test "Metal matvec dispatch requests bind generation authorities and attempt" {
+    const dispatch_authority =
+        testDispatchDigest("request dispatch authority");
+    const queue_authority =
+        testDispatchDigest("request queue authority");
+    const attempt = try makeMetalMatvecPreSubmitAttemptV1(
+        .{
+            .packed_weights_sha256 = testDispatchDigest("request packed binding"),
+            .scales_sha256 = testDispatchDigest("request scales binding"),
+            .input_sha256 = testDispatchDigest("request input binding"),
+            .output_sha256 = testDispatchDigest("request output binding"),
+        },
+        1_184,
+        296,
+        64,
+        37,
+        8,
+        64,
+        37,
+    );
+    const first = try makeMetalMatvecDispatchRequestV1(
+        1,
+        dispatch_authority,
+        queue_authority,
+        attempt,
+    );
+    const second = try makeMetalMatvecDispatchRequestV1(
+        2,
+        dispatch_authority,
+        queue_authority,
+        attempt,
+    );
+    try validateMetalMatvecDispatchRequestV1(first);
+    try validateMetalMatvecDispatchRequestV1(second);
+    try std.testing.expect(!device.digestEqual(
+        first.request_sha256,
+        second.request_sha256,
+    ));
+
+    var tampered = first;
+    tampered.request_generation += 1;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalMatvecDispatchRequestV1(tampered),
+    );
+    tampered = first;
+    tampered.attempt.output_count += 1;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalMatvecDispatchRequestV1(tampered),
+    );
+    tampered = first;
+    tampered.request_sha256[0] ^= 1;
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        validateMetalMatvecDispatchRequestV1(tampered),
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchEvidence,
+        makeMetalMatvecDispatchRequestV1(
+            1,
+            dispatch_authority,
+            dispatch_authority,
+            attempt,
+        ),
+    );
+}
+
+test "Metal matvec request and rejection roots match cross-language golden" {
+    const attempt = try makeMetalMatvecPreSubmitAttemptV1(
+        .{
+            .packed_weights_sha256 = testDispatchDigest("request packed binding"),
+            .scales_sha256 = testDispatchDigest("request scales binding"),
+            .input_sha256 = testDispatchDigest("request input binding"),
+            .output_sha256 = testDispatchDigest("request output binding"),
+        },
+        1_184,
+        296,
+        64,
+        37,
+        8,
+        64,
+        37,
+    );
+    var expected_attempt: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &expected_attempt,
+        "b79371a76c12ca08d58980f5913fe33dda2aaca41e801d8a473b941a5b04e2cb",
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &expected_attempt,
+        &attempt.attempt_sha256,
+    );
+
+    const request = try makeMetalMatvecDispatchRequestV1(
+        1,
+        testDispatchDigest("request dispatch authority"),
+        testDispatchDigest("request queue authority"),
+        attempt,
+    );
+    var expected_request: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &expected_request,
+        "f89175ddd5b07db24854c8432a650449a023c9445cedbc86a75459305b2e4486",
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &expected_request,
+        &request.request_sha256,
+    );
+
+    var pin_sha256: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &pin_sha256,
+        "d8a9faa9bced09e52d1867afee4e2f2698d38d9dce277bd11aab403a9289f93c",
+    );
+    var backend_object_set_sha256: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &backend_object_set_sha256,
+        "6c658fa780e2e01102b38508bd2aa4b6f9218450eb6c9f5317a0a58a9ffe7418",
+    );
+    var terminal_sha256: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &terminal_sha256,
+        "a646ea614bd10b279e1f921440517633b200e959536f7d685f97310f6f099a6d",
+    );
+    var rejection: MetalMatvecPreSubmitRejectionV1 = .{
+        .reason = .invalid_role_mapping,
+        .dispatch_generation = 1,
+        .allocation_count = 4,
+        .materialized_bytes = 8_192,
+        .pin_sha256 = pin_sha256,
+        .backend_object_set_sha256 = backend_object_set_sha256,
+        .request = request,
+        .terminal_sha256 = terminal_sha256,
+    };
+    rejection.rejection_sha256 =
+        metalMatvecPreSubmitRejectionRootV1(rejection);
+    var expected_rejection: Digest = undefined;
+    _ = try std.fmt.hexToBytes(
+        &expected_rejection,
+        "64b4f359d932f74f3dc6e6cd3819b7e7d6d6fbc784f4a6ddef128268372b0f5c",
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &expected_rejection,
+        &rejection.rejection_sha256,
+    );
+    try validateMetalMatvecPreSubmitRejectionV1(
+        rejection,
+    );
+}
+
+test "Metal prepared matvec request is idempotent and generation fenced" {
+    var slots = [_]MetalAllocationSlotV1{.{}};
+    var adapter: MetalAllocationAdapterV1 = .{
+        .backend = @ptrFromInt(0x1000),
+        .authority = .{},
+        .slots = &slots,
+        .limits = .{},
+        .device_sha256 = allocation.zero_digest,
+        .placement_sha256 = allocation.zero_digest,
+        .adapter_nonce = 1,
+        .adapter_identity = .{},
+        .dispatch_authority_sha256 = testDispatchDigest("prepared dispatch authority"),
+        .queue_authority_sha256 = testDispatchDigest("prepared queue authority"),
+    };
+    const attempt = try makeMetalMatvecPreSubmitAttemptV1(
+        .{},
+        1,
+        2,
+        3,
+        4,
+        8,
+        16,
+        32,
+    );
+    const first =
+        try adapter.prepareMatvecDispatchRequestUnlocked(
+            attempt,
+        );
+    const replay =
+        try adapter.prepareMatvecDispatchRequestUnlocked(
+            attempt,
+        );
+    try std.testing.expectEqualDeep(first, replay);
+    try std.testing.expectEqual(@as(u64, 1), first.request_generation);
+    try std.testing.expectEqual(
+        @as(u64, 2),
+        adapter.next_matvec_request_generation,
+    );
+
+    const different = try makeMetalMatvecPreSubmitAttemptV1(
+        .{},
+        1,
+        2,
+        3,
+        5,
+        8,
+        16,
+        32,
+    );
+    try std.testing.expectError(
+        Error.DispatchBusy,
+        adapter.prepareMatvecDispatchRequestUnlocked(
+            different,
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        first,
+        adapter.prepared_matvec_request.?,
+    );
+
+    try adapter.cancelPreparedMatvecDispatchRequestUnlocked(
+        first,
+    );
+    try adapter.cancelPreparedMatvecDispatchRequestUnlocked(
+        first,
+    );
+    try std.testing.expect(
+        adapter.prepared_matvec_request == null,
+    );
+    const second =
+        try adapter.prepareMatvecDispatchRequestUnlocked(
+            attempt,
+        );
+    try std.testing.expectEqual(@as(u64, 2), second.request_generation);
+    try std.testing.expect(!device.digestEqual(
+        first.request_sha256,
+        second.request_sha256,
+    ));
+    try std.testing.expectError(
+        Error.DispatchBusy,
+        adapter.cancelPreparedMatvecDispatchRequestUnlocked(
+            first,
+        ),
+    );
+
+    adapter.dispatch_unresolved = true;
+    try std.testing.expectError(
+        Error.DispatchBusy,
+        adapter.prepareMatvecDispatchRequestUnlocked(
+            attempt,
+        ),
+    );
+    try std.testing.expectError(
+        Error.DispatchBusy,
+        adapter.cancelPreparedMatvecDispatchRequestUnlocked(
+            second,
+        ),
+    );
+    adapter.dispatch_unresolved = false;
+    try adapter.cancelPreparedMatvecDispatchRequestUnlocked(
+        second,
+    );
+    adapter.dispatch_unresolved = true;
+    try std.testing.expectError(
+        Error.DispatchBusy,
+        adapter.prepareMatvecDispatchRequestUnlocked(
+            attempt,
+        ),
+    );
+    adapter.dispatch_unresolved = false;
+    adapter.next_matvec_request_generation =
+        std.math.maxInt(u64);
+    try std.testing.expectError(
+        Error.GenerationExhausted,
+        adapter.prepareMatvecDispatchRequestUnlocked(
+            attempt,
+        ),
+    );
+}
+
+test "Metal dispatch intent reservation and abort are exact and replay safe" {
+    const authority_sha256 =
+        testDispatchDigest("intent allocation authority");
+    const admission_sha256 =
+        testDispatchDigest("intent admission");
+    var slots = [_]MetalAllocationSlotV1{.{}};
+    var adapter: MetalAllocationAdapterV1 = .{
+        .backend = @ptrFromInt(0x1000),
+        .authority = .{
+            .authority_sha256 = authority_sha256,
+        },
+        .slots = &slots,
+        .limits = .{},
+        .device_sha256 = allocation.zero_digest,
+        .placement_sha256 = allocation.zero_digest,
+        .adapter_nonce = 1,
+        .adapter_identity = .{},
+        .dispatch_authority_sha256 = testDispatchDigest("intent dispatch authority"),
+        .queue_authority_sha256 = testDispatchDigest("intent queue authority"),
+        .active_admission_sha256 = admission_sha256,
+        .used_resource_bytes = 8_192,
+    };
+    const attempt = try makeMetalMatvecPreSubmitAttemptV1(
+        .{},
+        1,
+        2,
+        3,
+        4,
+        8,
+        16,
+        32,
+    );
+    const first =
+        try adapter.prepareMatvecDispatchRequestUnlocked(
+            attempt,
+        );
+    var intent: lease_tree.DispatchPinIntentV1 = .{
+        .coordinator_epoch = 7,
+        .allocation_generation = 11,
+        .dispatch_generation = 13,
+        .allocation_count = 4,
+        .pinned_device_bytes = 8_192,
+        .authority_sha256 = authority_sha256,
+        .dispatch_authority_sha256 = adapter.dispatch_authority_sha256,
+        .queue_authority_sha256 = adapter.queue_authority_sha256,
+        .request_sha256 = testDispatchDigest("intent allocation request"),
+        .admission_sha256 = admission_sha256,
+        .lease_sha256 = testDispatchDigest("intent lease"),
+        .parent_receipt_sha256 = testDispatchDigest("intent parent"),
+        .allocation_leaf_set_sha256 = testDispatchDigest("intent leaves"),
+        .backend_object_set_sha256 = testDispatchDigest("intent objects"),
+        .scope_sha256 = testDispatchDigest("intent scope"),
+        .dispatch_request_sha256 = first.request_sha256,
+        .publication_binding_sha256 = testDispatchDigest("intent publication"),
+    };
+    intent.intent_sha256 =
+        lease_tree.dispatchPinIntentRootV1(intent);
+    const dispatch = adapter.dispatchInterface();
+    try dispatch.reserve_dispatch_intent_fn(
+        dispatch.context,
+        intent,
+    );
+    try dispatch.reserve_dispatch_intent_fn(
+        dispatch.context,
+        intent,
+    );
+    try std.testing.expectEqualDeep(
+        intent,
+        adapter.reserved_dispatch_intent.?,
+    );
+    try std.testing.expectError(
+        Error.DispatchBusy,
+        adapter.prepareMatvecDispatchRequestUnlocked(
+            attempt,
+        ),
+    );
+    try std.testing.expectError(
+        Error.DispatchBusy,
+        adapter.cancelPreparedMatvecDispatchRequestUnlocked(
+            first,
+        ),
+    );
+
+    var foreign = intent;
+    foreign.dispatch_generation += 1;
+    foreign.intent_sha256 =
+        lease_tree.dispatchPinIntentRootV1(foreign);
+    try std.testing.expectError(
+        lease_tree.DispatchCallbackError
+            .InvalidDispatchIntent,
+        dispatch.reserve_dispatch_intent_fn(
+            dispatch.context,
+            foreign,
+        ),
+    );
+    try std.testing.expectError(
+        lease_tree.DispatchCallbackError
+            .InvalidDispatchIntent,
+        dispatch.abort_dispatch_intent_fn(
+            dispatch.context,
+            foreign,
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        intent,
+        adapter.reserved_dispatch_intent.?,
+    );
+
+    try dispatch.abort_dispatch_intent_fn(
+        dispatch.context,
+        intent,
+    );
+    try dispatch.abort_dispatch_intent_fn(
+        dispatch.context,
+        intent,
+    );
+    try std.testing.expect(
+        adapter.reserved_dispatch_intent == null,
+    );
+    try adapter.cancelPreparedMatvecDispatchRequestUnlocked(
+        first,
+    );
+    const second =
+        try adapter.prepareMatvecDispatchRequestUnlocked(
+            attempt,
+        );
+    try std.testing.expect(
+        second.request_generation >
+            first.request_generation,
+    );
+    var second_intent = intent;
+    second_intent.dispatch_generation += 2;
+    second_intent.dispatch_request_sha256 =
+        second.request_sha256;
+    second_intent.intent_sha256 =
+        lease_tree.dispatchPinIntentRootV1(
+            second_intent,
+        );
+    try dispatch.reserve_dispatch_intent_fn(
+        dispatch.context,
+        second_intent,
+    );
+    try dispatch.abort_dispatch_intent_fn(
+        dispatch.context,
+        second_intent,
+    );
+    try adapter.cancelPreparedMatvecDispatchRequestUnlocked(
+        second,
+    );
+}
+
 test "disabled Metal adapter rejects every native entry point" {
     if (comptime metal_enabled)
         return error.SkipZigTest;
@@ -2199,9 +3838,61 @@ test "disabled Metal adapter rejects every native entry point" {
     const scales = [_]f32{};
     const input = [_]f32{};
     var output = [_]f32{};
+    const disabled_attempt =
+        try makeMetalMatvecPreSubmitAttemptV1(
+            .{},
+            0,
+            0,
+            0,
+            0,
+            1,
+            1,
+            1,
+        );
+    try std.testing.expectError(
+        metal.MetalError.Unavailable,
+        adapter.prepareMatvecDispatchRequestV1(
+            disabled_attempt,
+        ),
+    );
+    const disabled_request =
+        try makeMetalMatvecDispatchRequestV1(
+            1,
+            adapter.dispatch_authority_sha256,
+            adapter.queue_authority_sha256,
+            disabled_attempt,
+        );
+    try std.testing.expectError(
+        metal.MetalError.Unavailable,
+        adapter.cancelPreparedMatvecDispatchRequestV1(
+            disabled_request,
+        ),
+    );
+    try std.testing.expectError(
+        metal.MetalError.Unavailable,
+        adapter.cancelMatvecBeforeSubmitObserved(
+            .{},
+            .{},
+        ),
+    );
     try std.testing.expectError(
         metal.MetalError.Unavailable,
         adapter.dispatchMatvecInt4Observed(
+            .{},
+            .{},
+            .{},
+            &packed_input,
+            &scales,
+            &input,
+            &output,
+            1,
+            1,
+            1,
+        ),
+    );
+    try std.testing.expectError(
+        metal.MetalError.Unavailable,
+        adapter.rejectMatvecInt4BeforeSubmitObserved(
             .{},
             .{},
             .{},
@@ -2231,7 +3922,7 @@ test "disabled Metal adapter rejects every native entry point" {
     );
 }
 
-test "Metal dispatch ownership blocks allocation and free before acknowledge" {
+test "Metal dispatch ownership blocks allocation and free before settlement" {
     var slots = [_]MetalAllocationSlotV1{.{}};
     var adapter: MetalAllocationAdapterV1 = .{
         .backend = @ptrFromInt(0x1000),

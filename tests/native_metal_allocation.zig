@@ -221,6 +221,98 @@ fn makeDispatchFixture(
     };
 }
 
+fn completePreSubmitRejection(
+    coordinator: *tree_allocation.CoordinatorV1,
+    adapter: *metal_allocation.MetalAllocationAdapterV1,
+    backend: *engine.MetalBackend,
+    lease: tree_allocation.LeaseTreeDeviceAllocationLeaseV1,
+    roles: metal_allocation.MetalMatvecAllocationBindingsV1,
+    packed_weights: []const u8,
+    scales: []const f32,
+    input: []const f32,
+    output: []const f32,
+    group_size: u32,
+    in_features: u32,
+    out_features: u32,
+    expected_reason: metal_allocation
+        .MetalMatvecPreSubmitRejectionReasonV1,
+) !void {
+    const attempt =
+        try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+            roles,
+            @intCast(packed_weights.len),
+            @intCast(scales.len),
+            @intCast(input.len),
+            @intCast(output.len),
+            group_size,
+            in_features,
+            out_features,
+        );
+    const request =
+        try adapter.prepareMatvecDispatchRequestV1(attempt);
+    try testing.expectEqualDeep(
+        request,
+        try adapter.prepareMatvecDispatchRequestV1(attempt),
+    );
+    const pin = try coordinator.acquireDispatchPin(
+        lease,
+        adapter.dispatchInterface(),
+        request.request_sha256,
+    );
+    const dispatch_count_before =
+        backend.completedDispatchCount();
+    const rejected =
+        try adapter.rejectMatvecInt4BeforeSubmitObserved(
+            lease,
+            pin,
+            roles,
+            packed_weights,
+            scales,
+            input,
+            output,
+            group_size,
+            in_features,
+            out_features,
+        );
+    try testing.expectEqual(
+        expected_reason,
+        rejected.rejection.reason,
+    );
+    try testing.expectEqualDeep(
+        request,
+        rejected.rejection.request,
+    );
+    try metal_allocation
+        .validateMetalMatvecPreSubmitRejectionForPinV1(
+        rejected.rejection,
+        pin,
+        rejected.terminal,
+    );
+    try testing.expectEqual(
+        dispatch_count_before,
+        backend.completedDispatchCount(),
+    );
+    const completion = try coordinator.completeDispatchPin(
+        pin,
+        adapter.dispatchInterface(),
+        rejected.terminal,
+    );
+    try tree_allocation.validateDispatchCompletionForPinV1(
+        completion,
+        pin,
+        rejected.terminal,
+    );
+    try adapter.acknowledgeDispatchCompletion(completion);
+    try testing.expectEqual(
+        @as(usize, 0),
+        (try coordinator.snapshot()).active_dispatches,
+    );
+    try testing.expectEqual(
+        dispatch_count_before,
+        backend.completedDispatchCount(),
+    );
+}
+
 fn makeRequest(
     adapter: *metal_allocation.MetalAllocationAdapterV1,
     parent: resource.Receipt,
@@ -994,30 +1086,6 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
         try backend.nativeLiveBufferCount(),
     );
 
-    const pin = try coordinator.acquireDispatchPin(
-        lease,
-        adapter.dispatchInterface(),
-        digest("native Metal pinned dispatch request"),
-    );
-    try tree_allocation.validateDispatchPinV1(pin);
-    const allocation_snapshot_before_release =
-        adapter.snapshot();
-    try testing.expectError(
-        tree_allocation.Error.DispatchInFlight,
-        coordinator.release(
-            lease,
-            adapter.interface(),
-        ),
-    );
-    try testing.expectEqualDeep(
-        allocation_snapshot_before_release,
-        adapter.snapshot(),
-    );
-    try testing.expectEqual(
-        fixture.manifest.total_charged_bytes,
-        (try bank.snapshotV3()).used.device_bytes,
-    );
-
     var rng = std.Random.DefaultPrng.init(0x474c_4143_4945_52);
     var weights: [in_features * out_features]f32 =
         undefined;
@@ -1062,6 +1130,629 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
     var gpu_output = [_]f32{0} ** out_features;
     const dispatch_count_before =
         backend.completedDispatchCount();
+
+    const rejected_output = gpu_output[0 .. out_features - 1];
+    const rejected_attempt =
+        try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+            fixture.bindings,
+            @intCast(quantized.packed_bytes.len),
+            @intCast(quantized.scales.len),
+            @intCast(input.len),
+            @intCast(rejected_output.len),
+            group_size,
+            in_features,
+            out_features,
+        );
+    const cancelled_request =
+        try adapter.prepareMatvecDispatchRequestV1(
+            rejected_attempt,
+        );
+    const allocation_interface = adapter.interface();
+    try testing.expectError(
+        allocation.CallbackError.Unavailable,
+        allocation_interface.allocate_fn(
+            allocation_interface.context,
+            .{},
+        ),
+    );
+    try testing.expectError(
+        allocation.CallbackError.Unavailable,
+        allocation_interface.free_fn(
+            allocation_interface.context,
+            .{},
+        ),
+    );
+    try adapter.cancelPreparedMatvecDispatchRequestV1(
+        cancelled_request,
+    );
+    try adapter.cancelPreparedMatvecDispatchRequestV1(
+        cancelled_request,
+    );
+    const rejected_request =
+        try adapter.prepareMatvecDispatchRequestV1(
+            rejected_attempt,
+        );
+    try testing.expect(
+        rejected_request.request_generation >
+            cancelled_request.request_generation,
+    );
+    try testing.expect(!device.digestEqual(
+        rejected_request.request_sha256,
+        cancelled_request.request_sha256,
+    ));
+    try testing.expectEqualDeep(
+        rejected_request,
+        try adapter.prepareMatvecDispatchRequestV1(
+            rejected_attempt,
+        ),
+    );
+    const rejected_pin = try coordinator.acquireDispatchPin(
+        lease,
+        adapter.dispatchInterface(),
+        rejected_request.request_sha256,
+    );
+    try tree_allocation.validateDispatchPinV1(rejected_pin);
+    const allocation_snapshot_before_release =
+        adapter.snapshot();
+    try testing.expectError(
+        tree_allocation.Error.DispatchInFlight,
+        coordinator.release(
+            lease,
+            adapter.interface(),
+        ),
+    );
+    try testing.expectEqualDeep(
+        allocation_snapshot_before_release,
+        adapter.snapshot(),
+    );
+
+    // A structurally valid public terminal has no authority until the exact
+    // adapter records the matching deterministic pre-submit failure.
+    const unarmed_terminal =
+        try tree_allocation.makeDispatchTerminalV1(
+            rejected_pin,
+            .rejected_before_submit,
+            allocation.zero_digest,
+            allocation.zero_digest,
+            allocation.zero_digest,
+        );
+    try testing.expectError(
+        tree_allocation.Error.InvalidDispatchTerminal,
+        coordinator.completeDispatchPin(
+            rejected_pin,
+            adapter.dispatchInterface(),
+            unarmed_terminal,
+        ),
+    );
+    try testing.expectEqual(
+        @as(usize, 1),
+        (try coordinator.snapshot()).active_dispatches,
+    );
+
+    const rejected =
+        try adapter.rejectMatvecInt4BeforeSubmitObserved(
+            lease,
+            rejected_pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            rejected_output,
+            group_size,
+            in_features,
+            out_features,
+        );
+    try testing.expectEqual(
+        metal_allocation
+            .MetalMatvecPreSubmitRejectionReasonV1
+            .invalid_host_lengths,
+        rejected.rejection.reason,
+    );
+    try testing.expectEqualDeep(
+        rejected_request,
+        rejected.rejection.request,
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.cancelPreparedMatvecDispatchRequestV1(
+            rejected_request,
+        ),
+    );
+    try metal_allocation
+        .validateMetalMatvecPreSubmitRejectionForPinV1(
+        rejected.rejection,
+        rejected_pin,
+        rejected.terminal,
+    );
+    var reason_substitution = rejected.rejection;
+    reason_substitution.reason = .invalid_geometry;
+    reason_substitution.rejection_sha256 =
+        metal_allocation
+            .metalMatvecPreSubmitRejectionRootV1(
+            reason_substitution,
+        );
+    try testing.expectError(
+        metal_allocation.Error.InvalidDispatchEvidence,
+        metal_allocation
+            .validateMetalMatvecPreSubmitRejectionForPinV1(
+            reason_substitution,
+            rejected_pin,
+            rejected.terminal,
+        ),
+    );
+    var request_substitution = rejected.rejection;
+    request_substitution.request =
+        try metal_allocation.makeMetalMatvecDispatchRequestV1(
+            rejected_request.request_generation + 1,
+            rejected_request.dispatch_authority_sha256,
+            rejected_request.queue_authority_sha256,
+            rejected_request.attempt,
+        );
+    request_substitution.rejection_sha256 =
+        metal_allocation
+            .metalMatvecPreSubmitRejectionRootV1(
+            request_substitution,
+        );
+    try metal_allocation
+        .validateMetalMatvecPreSubmitRejectionV1(
+        request_substitution,
+    );
+    try testing.expectError(
+        metal_allocation.Error.InvalidDispatchEvidence,
+        metal_allocation
+            .validateMetalMatvecPreSubmitRejectionForPinV1(
+            request_substitution,
+            rejected_pin,
+            rejected.terminal,
+        ),
+    );
+    const cancelled_substitution =
+        try tree_allocation.makeDispatchTerminalV1(
+            rejected_pin,
+            .cancelled_before_submit,
+            allocation.zero_digest,
+            allocation.zero_digest,
+            allocation.zero_digest,
+        );
+    try testing.expectError(
+        tree_allocation.Error.InvalidDispatchTerminal,
+        coordinator.completeDispatchPin(
+            rejected_pin,
+            adapter.dispatchInterface(),
+            cancelled_substitution,
+        ),
+    );
+    try testing.expect(rejected.terminal.outcome ==
+        .rejected_before_submit);
+    try testing.expect(device.digestEqual(
+        rejected.terminal.submission_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expect(device.digestEqual(
+        rejected.terminal.backend_completion_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expect(device.digestEqual(
+        rejected.terminal.output_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expectEqual(
+        dispatch_count_before,
+        backend.completedDispatchCount(),
+    );
+    const dispatch_interface = adapter.dispatchInterface();
+    try dispatch_interface.validate_terminal_fn(
+        dispatch_interface.context,
+        rejected.terminal,
+    );
+    try testing.expectError(
+        metal_allocation.Error.InvalidDispatchEvidence,
+        adapter.acknowledgeDispatchCompletion(.{}),
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.prepareMatvecDispatchRequestV1(
+            rejected_attempt,
+        ),
+    );
+    const rejection_replay =
+        try adapter.rejectMatvecInt4BeforeSubmitObserved(
+            lease,
+            rejected_pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            rejected_output,
+            group_size,
+            in_features,
+            out_features,
+        );
+    try testing.expectEqualDeep(rejected, rejection_replay);
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.rejectMatvecInt4BeforeSubmitObserved(
+            lease,
+            rejected_pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            &gpu_output,
+            group_size,
+            in_features,
+            out_features,
+        ),
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.dispatchMatvecInt4Observed(
+            lease,
+            rejected_pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            &gpu_output,
+            group_size,
+            in_features,
+            out_features,
+        ),
+    );
+    try testing.expectError(
+        tree_allocation.Error.DispatchInFlight,
+        coordinator.release(
+            lease,
+            adapter.interface(),
+        ),
+    );
+    const rejection_completion =
+        try coordinator.completeDispatchPin(
+            rejected_pin,
+            adapter.dispatchInterface(),
+            rejected.terminal,
+        );
+    try tree_allocation.validateDispatchCompletionForPinV1(
+        rejection_completion,
+        rejected_pin,
+        rejected.terminal,
+    );
+    // The private settlement callback finalized A atomically, so B can be
+    // prepared before the compatibility acknowledgement of A.
+    const next_attempt =
+        try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+            fixture.bindings,
+            @intCast(quantized.packed_bytes.len),
+            @intCast(quantized.scales.len),
+            @intCast(input.len),
+            @intCast(gpu_output.len),
+            0,
+            in_features,
+            out_features,
+        );
+    const next_request =
+        try adapter.prepareMatvecDispatchRequestV1(
+            next_attempt,
+        );
+    try testing.expect(
+        next_request.request_generation >
+            rejected_request.request_generation,
+    );
+    try adapter.acknowledgeDispatchCompletion(
+        rejection_completion,
+    );
+    // Exact acknowledgement replay is harmless, but the consumed pin cannot
+    // authorize another rejection.
+    try adapter.acknowledgeDispatchCompletion(
+        rejection_completion,
+    );
+    try testing.expectError(
+        metal_allocation.Error.StaleObject,
+        adapter.rejectMatvecInt4BeforeSubmitObserved(
+            lease,
+            rejected_pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            rejected_output,
+            group_size,
+            in_features,
+            out_features,
+        ),
+    );
+    try testing.expectEqual(
+        dispatch_count_before,
+        backend.completedDispatchCount(),
+    );
+
+    try completePreSubmitRejection(
+        &coordinator,
+        &adapter,
+        &backend,
+        lease,
+        fixture.bindings,
+        quantized.packed_bytes,
+        quantized.scales,
+        &input,
+        &gpu_output,
+        0,
+        in_features,
+        out_features,
+        .invalid_geometry,
+    );
+    var duplicate_roles = fixture.bindings;
+    duplicate_roles.output_sha256 =
+        duplicate_roles.input_sha256;
+    const duplicate_attempt =
+        try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+            duplicate_roles,
+            @intCast(quantized.packed_bytes.len),
+            @intCast(quantized.scales.len),
+            @intCast(input.len),
+            @intCast(gpu_output.len),
+            group_size,
+            in_features,
+            out_features,
+        );
+    const duplicate_request =
+        try adapter.prepareMatvecDispatchRequestV1(
+            duplicate_attempt,
+        );
+    try testing.expect(
+        duplicate_request.request_generation >
+            rejected_request.request_generation,
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.prepareMatvecDispatchRequestV1(
+            rejected_attempt,
+        ),
+    );
+    // A has settled, B has settled, and C is now prepared. The old A pin
+    // cannot replay its attempt through either terminal path.
+    try testing.expectError(
+        metal_allocation.Error.InvalidDispatchEvidence,
+        adapter.rejectMatvecInt4BeforeSubmitObserved(
+            lease,
+            rejected_pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            rejected_output,
+            group_size,
+            in_features,
+            out_features,
+        ),
+    );
+    try testing.expectError(
+        metal_allocation.Error.InvalidDispatchEvidence,
+        adapter.dispatchMatvecInt4Observed(
+            lease,
+            rejected_pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            &gpu_output,
+            group_size,
+            in_features,
+            out_features,
+        ),
+    );
+    try completePreSubmitRejection(
+        &coordinator,
+        &adapter,
+        &backend,
+        lease,
+        duplicate_roles,
+        quantized.packed_bytes,
+        quantized.scales,
+        &input,
+        &gpu_output,
+        group_size,
+        in_features,
+        out_features,
+        .invalid_role_bindings,
+    );
+    var foreign_role = fixture.bindings;
+    foreign_role.output_sha256 =
+        digest("native Metal dispatch foreign output role");
+    try completePreSubmitRejection(
+        &coordinator,
+        &adapter,
+        &backend,
+        lease,
+        foreign_role,
+        quantized.packed_bytes,
+        quantized.scales,
+        &input,
+        &gpu_output,
+        group_size,
+        in_features,
+        out_features,
+        .invalid_role_mapping,
+    );
+
+    const dispatch_attempt =
+        try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+            fixture.bindings,
+            @intCast(quantized.packed_bytes.len),
+            @intCast(quantized.scales.len),
+            @intCast(input.len),
+            @intCast(gpu_output.len),
+            group_size,
+            in_features,
+            out_features,
+        );
+    const cancellation_request =
+        try adapter.prepareMatvecDispatchRequestV1(
+            dispatch_attempt,
+        );
+    const cancellation_pin =
+        try coordinator.acquireDispatchPin(
+            lease,
+            adapter.dispatchInterface(),
+            cancellation_request.request_sha256,
+        );
+    try testing.expectError(
+        metal_allocation.Error.DispatchPreflightPassed,
+        adapter.rejectMatvecInt4BeforeSubmitObserved(
+            lease,
+            cancellation_pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            &gpu_output,
+            group_size,
+            in_features,
+            out_features,
+        ),
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.cancelPreparedMatvecDispatchRequestV1(
+            cancellation_request,
+        ),
+    );
+
+    // Cancellation must not depend on a live device revalidation. Injected
+    // device-identity drift would fail the normal dispatch inspection path,
+    // but the exact sealed request/intent/pin can still be abandoned without
+    // constructing or submitting a command buffer.
+    const cancellation_terminal = cancellation: {
+        const original_device_sha256 =
+            adapter.device_sha256;
+        adapter.device_sha256[0] ^= 1;
+        defer adapter.device_sha256 =
+            original_device_sha256;
+        const first =
+            try adapter.cancelMatvecBeforeSubmitObserved(
+                lease,
+                cancellation_pin,
+            );
+        const replay =
+            try adapter.cancelMatvecBeforeSubmitObserved(
+                lease,
+                cancellation_pin,
+            );
+        try testing.expectEqualDeep(first, replay);
+        break :cancellation first;
+    };
+    try testing.expect(
+        cancellation_terminal.outcome ==
+            .cancelled_before_submit,
+    );
+    try testing.expect(device.digestEqual(
+        cancellation_terminal.submission_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expect(device.digestEqual(
+        cancellation_terminal.backend_completion_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expect(device.digestEqual(
+        cancellation_terminal.output_sha256,
+        allocation.zero_digest,
+    ));
+    try testing.expectEqual(
+        dispatch_count_before,
+        backend.completedDispatchCount(),
+    );
+    const cancellation_completion =
+        try coordinator.completeDispatchPin(
+            cancellation_pin,
+            adapter.dispatchInterface(),
+            cancellation_terminal,
+        );
+    try tree_allocation.validateDispatchCompletionForPinV1(
+        cancellation_completion,
+        cancellation_pin,
+        cancellation_terminal,
+    );
+    try adapter.acknowledgeDispatchCompletion(
+        cancellation_completion,
+    );
+    try testing.expectEqual(
+        @as(usize, 0),
+        (try coordinator.snapshot()).active_dispatches,
+    );
+    try testing.expectEqual(
+        dispatch_count_before,
+        backend.completedDispatchCount(),
+    );
+
+    const dispatch_request =
+        try adapter.prepareMatvecDispatchRequestV1(
+            dispatch_attempt,
+        );
+    try testing.expectEqualDeep(
+        dispatch_request,
+        try adapter.prepareMatvecDispatchRequestV1(
+            dispatch_attempt,
+        ),
+    );
+    try testing.expect(
+        dispatch_request.request_generation >
+            cancellation_request.request_generation,
+    );
+    try testing.expectError(
+        metal_allocation.Error.StaleObject,
+        adapter.cancelMatvecBeforeSubmitObserved(
+            lease,
+            cancellation_pin,
+        ),
+    );
+    const pin = try coordinator.acquireDispatchPin(
+        lease,
+        adapter.dispatchInterface(),
+        dispatch_request.request_sha256,
+    );
+    try tree_allocation.validateDispatchPinV1(pin);
+    try testing.expectError(
+        tree_allocation.Error.DispatchInFlight,
+        coordinator.release(
+            lease,
+            adapter.interface(),
+        ),
+    );
+    try testing.expectEqual(
+        fixture.manifest.total_charged_bytes,
+        (try bank.snapshotV3()).used.device_bytes,
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchPreflightPassed,
+        adapter.rejectMatvecInt4BeforeSubmitObserved(
+            lease,
+            pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            &gpu_output,
+            group_size,
+            in_features,
+            out_features,
+        ),
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.prepareMatvecDispatchRequestV1(
+            dispatch_attempt,
+        ),
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.cancelPreparedMatvecDispatchRequestV1(
+            dispatch_request,
+        ),
+    );
+    try testing.expectEqual(
+        dispatch_count_before,
+        backend.completedDispatchCount(),
+    );
     const dispatch_result =
         try adapter.dispatchMatvecInt4Observed(
             lease,
@@ -1092,6 +1783,28 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
     try testing.expectEqual(
         dispatch_count_before + 1,
         backend.completedDispatchCount(),
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.cancelMatvecBeforeSubmitObserved(
+            lease,
+            pin,
+        ),
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.rejectMatvecInt4BeforeSubmitObserved(
+            lease,
+            pin,
+            fixture.bindings,
+            quantized.packed_bytes,
+            quantized.scales,
+            &input,
+            rejected_output,
+            group_size,
+            in_features,
+            out_features,
+        ),
     );
     for (cpu_output.asF32(), gpu_output) |expected, actual|
         try testing.expectApproxEqAbs(expected, actual, 2e-5);

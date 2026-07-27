@@ -25,15 +25,27 @@ The dispatch contract closes that gap with two explicit phases:
 ```text
 live allocation lease
         │
-        │ acquire exact object-set pin
+        │ seal intent; reserve exact adapter request
+        │ before Bank mutation
         ▼
-LeaseTreeDispatchPinV1 ── submit/observe through exact adapter ──┐
+DispatchPinIntentV1
+        │
+        │ atomically acquire exact object-set pin
+        ▼
+LeaseTreeDispatchPinV1 ── submit / reject / cancel ──────────────┐
         │                                                        │
         │ release is rejected while the pin is active            │
         │                                                        ▼
-        └──────── exact terminal evidence ◀──────── backend completion
+        └──────── exact terminal evidence ◀── adapter observation or
+                                              no-submit authority
                                  │
                                  │ adapter validates terminal state
+                                 ▼
+                    consume private Bank pin
+                                 │
+                                 ▼
+                    private settlement callback
+                                 │
                                  ▼
                     LeaseTreeDispatchCompletionV1
                                  │
@@ -101,9 +113,62 @@ by both `maximum_dispatches` and the parent Receipt's `queue_slots`.
 
 Before mutation it revalidates the complete cached allocation evidence,
 ordered live object set, exact leaves, current tree, scope sum, and publication
-session. ResourceBank then atomically pins the entire leaf set. The coordinator
-retains the mutation-capable `LeasePinPermitV1` privately and returns only
-pointer-free `LeaseTreeDispatchPinV1` evidence.
+session. It then seals `DispatchPinIntentV1` over the lease, generation,
+authorities, request, scope, object set, and publication binding and sends that
+intent to the adapter's pre-Bank reserve callback. The coordinator snapshots
+and revalidates its callback-visible source boundaries. A callback failure
+cannot retain partial adapter state; source drift or an atomic Bank acquisition
+failure invokes the exact abort callback and revalidates the same boundaries.
+
+Only after a successful reservation does ResourceBank atomically pin the entire
+leaf set. The coordinator retains the mutation-capable `LeasePinPermitV1`
+privately, validates the acquired pin against the sealed intent, and returns
+only pointer-free `LeaseTreeDispatchPinV1` evidence.
+
+For the bounded Metal INT4 profile, the dispatch-request root is not an
+unstructured caller label. `MetalMatvecPreSubmitAttemptV1` canonically hashes
+the raw group/input/output geometry, host packed-weight/scales/input/output
+lengths, and all four semantic role-binding digests. Before pin acquisition the
+adapter issues a generation-fenced `MetalMatvecDispatchRequestV1` that binds
+the attempt plus dispatch and queue authorities. Its `request_sha256`, not the
+raw attempt root, is the pin's dispatch-request root. Submission, rejection,
+and cancellation all require that exact prepared request, reserved intent, and
+pin binding. Slice contents remain outside the attempt root; the submitted
+observation binds its input-content roots separately.
+
+### Metal pre-submit outcomes
+
+`rejectMatvecInt4BeforeSubmitObserved` handles only failures that the Metal
+adapter can prove occurred before a native command was submitted. It first
+revalidates the exact lease, intent-bound pin, prepared request, complete live
+object set, and adapter authority. It then applies deterministic reason
+precedence:
+
+1. `invalid_geometry`;
+2. `invalid_host_lengths`;
+3. `invalid_role_bindings`; or
+4. `invalid_role_mapping`, which additionally compares the canonical roles
+   with the adapter's exact live allocation slots.
+
+A valid attempt returns `DispatchPreflightPassed` and leaves the pin available
+for either normal submission or the exact pure
+`cancelMatvecBeforeSubmitObserved` path. Cancellation depends only on sealed
+lease, request, intent, and pin bindings. It performs no native device or
+resource inspection, constructs no command buffer, and establishes no native
+queue ownership.
+
+A proven malformed attempt produces
+`MetalMatvecPreSubmitRejectionV1` plus a `rejected_before_submit` terminal whose
+submission, backend-completion, and output roots are all zero. No upload,
+command-buffer construction, submission, or completed-command-count increment
+occurs. Classification may inspect the selected native device and live resource
+roles, but that inspection is not GPU command execution.
+
+Both pre-submit outcomes use the ordinary core settlement path with zero
+submission, backend-completion, and output roots. Allocation, free, and new
+dispatch remain blocked until private settlement succeeds. Repeating the
+identical rejection or cancellation before completion returns the identical
+terminal evidence. A consumed pin cannot authorize another terminal.
 
 ### Complete
 
@@ -117,20 +182,31 @@ pointer-free `LeaseTreeDispatchPinV1` evidence.
 - the unchanged allocation object set and publication binding; and
 - backend-specific terminal state through the bound adapter callback.
 
-Only after those checks does ResourceBank consume the private permit. The
-returned `LeaseTreeDispatchCompletionV1` binds the terminal evidence, Bank
-completion, resulting tree observation, and publication session.
+Only after those checks does ResourceBank consume the private permit. Core then
+constructs `LeaseTreeDispatchCompletionV1` and invokes the adapter's private
+settlement callback with the exact pin, terminal, completion, Bank permit, and
+Bank completion. The Metal callback validates the full composition, atomically
+clears its prepared request, intent, pin, terminal, and unresolved state, and
+records an exact replay tombstone. Core frees its dispatch slot only after that
+callback succeeds.
+
+If the private callback fails after Bank release, the coordinator retains a
+`settlement_pending` slot and retries the exact confirmation; it does not
+reacquire or consume the Bank pin again. The public Metal
+`acknowledgeDispatchCompletion` method is compatibility verification only: it
+checks the tombstone idempotently and grants no authority or state-clearing
+transition.
 
 Copied completion attempts and a permit copied across slot reuse are rejected.
 Overlapping pins may complete in any order without regressing the current tree
 generation.
 
-The adapter callback context and function must remain alive for every pin
-acquired through that adapter. The callback must not re-enter the coordinator
-and should be read-only and idempotent: a settlement conflict leaves the pin
-active, so a later completion retry may validate the same terminal again. The
-execution owner must also serialize the shared tree token and publication
-sequence exactly as required by the allocation coordinator.
+The adapter callback context and functions must remain alive for every pin
+acquired through that adapter. Callbacks must not re-enter the coordinator.
+Intent reservation, abort, terminal validation, and settlement confirmation
+are exact and idempotent for their respective inputs. The execution owner must
+also serialize the shared tree token and publication sequence exactly as
+required by the allocation coordinator.
 
 ## Terminal outcomes
 
@@ -169,6 +245,8 @@ The contract prefers a retained allocation over an unsafe release:
 - adapter validation failure leaves the pin active;
 - publication/session drift leaves the pin active;
 - Bank settlement conflict leaves the pin active;
+- a private post-Bank settlement-callback failure retains exact
+  `settlement_pending` evidence for retry rather than clearing adapter state;
 - generation or structural-revision exhaustion fails closed and may retain the
   pin rather than regress a tree token;
 - an unavailable pin registry fails before coordinator mutation; and
@@ -178,8 +256,12 @@ The contract prefers a retained allocation over an unsafe release:
 This can intentionally retain resources after ambiguous device failure.
 Quarantine and device-loss reconciliation are later authorities; this contract
 does not manufacture a successful completion from missing evidence.
-Backend-specific geometry and role validation should run before pin
-acquisition. An adapter that cannot prove a safe pre-submit rejection must
+The Metal helper can settle only its exact pure cancellation or canonical
+deterministic geometry/host-length/role rejection before submission. Errors
+after the native submission boundary, timeouts, unknown queue state, and device
+loss remain pinned until their own reconciliation authority proves a safe
+terminal state.
+Other adapters that cannot prove a safe pre-submit rejection must likewise
 retain the pin rather than infer one.
 
 ## Verification layers
@@ -187,17 +269,23 @@ retain the pin rather than infer one.
 The test suite separates claims instead of treating every test as a simulated
 device:
 
-1. **Portable deterministic tests** use a fake adapter to exhaustively cover
-   failure, tamper, stale-token, copied-permit, slot-reuse, out-of-order
-   completion, and acquire-versus-retire races.
+1. **Portable deterministic tests** use Zig fake adapters and state-machine
+   fixtures to cover intent reservation/abort, callback drift, failure,
+   tamper, stale-token, copied-permit, slot-reuse, pre-submit terminal,
+   settlement retry, out-of-order completion, and acquire-versus-retire races.
+   They call no Metal API and execute no GPU work.
 2. **Host integration tests** exercise the real ResourceBank, LeaseTree,
    mutexes, fixed storage, publication fences, and thread scheduling without
-   claiming accelerator execution.
-3. **Native Metal tests** allocate real Shared `MTLBuffer` resources, dispatch
-   the exact registry-owned buffers on the selected Metal device, wait for
-   command-buffer completion, compare output with a CPU oracle, and prove that
-   release is rejected until the hardware-backed terminal evidence consumes
-   the pin.
+   claiming accelerator execution. The independent Python oracle separately
+   rebuilds ABI roots and substitution checks; it also executes no GPU work.
+3. **Native Metal tests** open a real `MTLDevice`, create and inspect real Shared
+   `MTLBuffer` resources, dispatch the exact registry-owned buffers on the
+   selected device, wait for the real command buffer, compare output with a CPU
+   oracle, and prove that release is fenced through private settlement. The
+   rejection and cancellation cases retain the same real context and resource
+   ownership but intentionally submit zero GPU commands. Rejection may inspect
+   those resources; cancellation is native-free. Both settle through the same
+   private callback and return ownership to zero.
 
 Cross-compilation proves source and build portability only. It is never
 reported as native operating-system, driver, or accelerator evidence.
@@ -226,8 +314,6 @@ Contributor-ready extensions include:
 
 - device-loss inspection, quarantine, and safe terminal reconciliation;
 - bounded asynchronous completion delivery without weakening adapter identity;
-- an explicit pre-submit rejection helper for adapters that validate additional
-  geometry or role constraints after the generic pin contract;
 - additive snapshot capacity and active-pin telemetry;
 - separate published-reference authority for outputs retained after dispatch;
 - post-creation allocated-size settlement under a new accounting ABI;

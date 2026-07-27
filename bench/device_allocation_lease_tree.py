@@ -12,7 +12,15 @@ all roots are reproducible across processes and languages.
 
 ``make_dispatch_campaign`` takes an independent branch from that campaign's
 materialized lease through ordered allocation pinning, backend terminal
-evidence, pin release, and pointer-free completion evidence.
+evidence, pin release, and pointer-free completion evidence.  Its outcome
+parameter covers every core terminal shape while
+``make_rejected_before_submit_dispatch_campaign`` names the zero-native-root
+rejection branch explicitly.
+
+``make_metal_matvec_pre_submit_rejection_campaign`` independently mirrors the
+Metal INT4 attempt, replay-fenced request, and adapter-authorized rejection
+transcripts.  The oracle uses fixed literals and does not parse the Zig
+implementation, so shared self-hashing cannot hide field-order or width drift.
 """
 
 from __future__ import annotations
@@ -51,8 +59,12 @@ LEASE_ABI = 0x4744_544C_0000_0001
 RECOVERY_ABI = 0x4744_5452_0000_0001
 TERMINAL_ABI = 0x4744_5454_0000_0001
 DISPATCH_PIN_ABI = 0x4744_5450_0000_0001
+DISPATCH_PIN_INTENT_ABI = 0x4744_5449_0000_0001
 DISPATCH_TERMINAL_ABI = 0x4744_5444_0000_0001
 DISPATCH_COMPLETION_ABI = 0x4744_5443_0000_0001
+METAL_PRE_SUBMIT_ATTEMPT_ABI = 0x474D_5041_0000_0001
+METAL_MATVEC_DISPATCH_REQUEST_ABI = 0x474D_4452_0000_0001
+METAL_PRE_SUBMIT_REJECTION_ABI = 0x474D_5052_0000_0001
 
 TREE_DOMAIN = b"glacier-resource-lease-tree-v1\x00"
 NODE_DOMAIN = b"glacier-resource-lease-node-v1\x00"
@@ -78,6 +90,9 @@ BINDING_KEY_DOMAIN = (
     b"glacier-device-tree-allocation-binding-key-v1\x00"
 )
 DISPATCH_PIN_DOMAIN = b"glacier-device-tree-dispatch-pin-v1\x00"
+DISPATCH_PIN_INTENT_DOMAIN = (
+    b"glacier-device-tree-dispatch-pin-intent-v1\x00"
+)
 DISPATCH_TERMINAL_DOMAIN = (
     b"glacier-device-tree-dispatch-terminal-v1\x00"
 )
@@ -87,6 +102,15 @@ DISPATCH_COMPLETION_DOMAIN = (
 DISPATCH_OWNER_DOMAIN = b"glacier-device-tree-dispatch-owner-v1\x00"
 DISPATCH_PUBLICATION_DOMAIN = (
     b"glacier-device-tree-dispatch-publication-v1\x00"
+)
+METAL_PRE_SUBMIT_ATTEMPT_DOMAIN = (
+    b"glacier-metal-matvec-pre-submit-attempt-v1\x00"
+)
+METAL_MATVEC_DISPATCH_REQUEST_DOMAIN = (
+    b"glacier-metal-matvec-dispatch-request-v1\x00"
+)
+METAL_PRE_SUBMIT_REJECTION_DOMAIN = (
+    b"glacier-metal-matvec-pre-submit-rejection-v1\x00"
 )
 
 LEASE_TREE_INTEGRITY_DOMAIN = 0x6C65_6173_6574_7231
@@ -131,6 +155,19 @@ VALID_DISPATCH_OUTCOMES = frozenset(
         DISPATCH_CANCELLED_BEFORE_SUBMIT,
         DISPATCH_CANCELLED_AFTER_SUBMIT,
         DISPATCH_REJECTED_BEFORE_SUBMIT,
+    )
+)
+
+METAL_INVALID_GEOMETRY = 1
+METAL_INVALID_HOST_LENGTHS = 2
+METAL_INVALID_ROLE_BINDINGS = 3
+METAL_INVALID_ROLE_MAPPING = 4
+VALID_METAL_PRE_SUBMIT_REASONS = frozenset(
+    (
+        METAL_INVALID_GEOMETRY,
+        METAL_INVALID_HOST_LENGTHS,
+        METAL_INVALID_ROLE_BINDINGS,
+        METAL_INVALID_ROLE_MAPPING,
     )
 )
 
@@ -423,6 +460,29 @@ class LeaseTreeDispatchPinV1:
 
 
 @dataclass(frozen=True)
+class DispatchPinIntentV1:
+    abi_version: int = DISPATCH_PIN_INTENT_ABI
+    coordinator_epoch: int = 0
+    allocation_generation: int = 0
+    dispatch_generation: int = 0
+    allocation_count: int = 0
+    pinned_device_bytes: int = 0
+    authority_sha256: Digest = ZERO_DIGEST
+    dispatch_authority_sha256: Digest = ZERO_DIGEST
+    queue_authority_sha256: Digest = ZERO_DIGEST
+    request_sha256: Digest = ZERO_DIGEST
+    admission_sha256: Digest = ZERO_DIGEST
+    lease_sha256: Digest = ZERO_DIGEST
+    parent_receipt_sha256: Digest = ZERO_DIGEST
+    allocation_leaf_set_sha256: Digest = ZERO_DIGEST
+    backend_object_set_sha256: Digest = ZERO_DIGEST
+    scope_sha256: Digest = ZERO_DIGEST
+    dispatch_request_sha256: Digest = ZERO_DIGEST
+    publication_binding_sha256: Digest = ZERO_DIGEST
+    intent_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
 class DispatchTerminalEvidenceV1:
     abi_version: int = DISPATCH_TERMINAL_ABI
     outcome: int = DISPATCH_REJECTED_BEFORE_SUBMIT
@@ -435,6 +495,59 @@ class DispatchTerminalEvidenceV1:
     backend_completion_sha256: Digest = ZERO_DIGEST
     output_sha256: Digest = ZERO_DIGEST
     terminal_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
+class MetalMatvecAllocationBindingsV1:
+    packed_weights_sha256: Digest = ZERO_DIGEST
+    scales_sha256: Digest = ZERO_DIGEST
+    input_sha256: Digest = ZERO_DIGEST
+    output_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
+class MetalMatvecPreSubmitAttemptV1:
+    abi_version: int = METAL_PRE_SUBMIT_ATTEMPT_ABI
+    group_size: int = 0
+    in_features: int = 0
+    out_features: int = 0
+    reserved: int = 0
+    packed_weights_bytes: int = 0
+    scales_count: int = 0
+    input_count: int = 0
+    output_count: int = 0
+    bindings: MetalMatvecAllocationBindingsV1 = (
+        MetalMatvecAllocationBindingsV1()
+    )
+    attempt_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
+class MetalMatvecDispatchRequestV1:
+    abi_version: int = METAL_MATVEC_DISPATCH_REQUEST_ABI
+    request_generation: int = 0
+    dispatch_authority_sha256: Digest = ZERO_DIGEST
+    queue_authority_sha256: Digest = ZERO_DIGEST
+    attempt: MetalMatvecPreSubmitAttemptV1 = (
+        MetalMatvecPreSubmitAttemptV1()
+    )
+    request_sha256: Digest = ZERO_DIGEST
+
+
+@dataclass(frozen=True)
+class MetalMatvecPreSubmitRejectionV1:
+    abi_version: int = METAL_PRE_SUBMIT_REJECTION_ABI
+    reason: int = METAL_INVALID_GEOMETRY
+    dispatch_generation: int = 0
+    allocation_count: int = 0
+    materialized_bytes: int = 0
+    pin_sha256: Digest = ZERO_DIGEST
+    backend_object_set_sha256: Digest = ZERO_DIGEST
+    request: MetalMatvecDispatchRequestV1 = (
+        MetalMatvecDispatchRequestV1()
+    )
+    terminal_sha256: Digest = ZERO_DIGEST
+    rejection_sha256: Digest = ZERO_DIGEST
 
 
 @dataclass(frozen=True)
@@ -485,6 +598,12 @@ def _digest(value: Digest) -> Digest:
 def _le(*values: int) -> bytes:
     _u64s(*values)
     return struct.pack("<" + "Q" * len(values), *values)
+
+
+def _le32(*values: int) -> bytes:
+    for value in values:
+        _u32(value)
+    return struct.pack("<" + "I" * len(values), *values)
 
 
 def _hash(domain: bytes, chunks: Sequence[bytes]) -> Digest:
@@ -2217,6 +2336,176 @@ def dispatch_pin_root_v1(
     )
 
 
+def dispatch_pin_intent_root_v1(
+    value: DispatchPinIntentV1,
+) -> Digest:
+    return _hash(
+        DISPATCH_PIN_INTENT_DOMAIN,
+        (
+            _le(
+                value.abi_version,
+                value.coordinator_epoch,
+                value.allocation_generation,
+                value.dispatch_generation,
+                value.allocation_count,
+                value.pinned_device_bytes,
+            ),
+            _digest(value.authority_sha256),
+            _digest(value.dispatch_authority_sha256),
+            _digest(value.queue_authority_sha256),
+            _digest(value.request_sha256),
+            _digest(value.admission_sha256),
+            _digest(value.lease_sha256),
+            _digest(value.parent_receipt_sha256),
+            _digest(value.allocation_leaf_set_sha256),
+            _digest(value.backend_object_set_sha256),
+            _digest(value.scope_sha256),
+            _digest(value.dispatch_request_sha256),
+            _digest(value.publication_binding_sha256),
+        ),
+    )
+
+
+def make_dispatch_pin_intent_v1(
+    *,
+    coordinator_epoch: int,
+    allocation_generation: int,
+    dispatch_generation: int,
+    allocation_count: int,
+    pinned_device_bytes: int,
+    authority_sha256: Digest,
+    dispatch_authority_sha256: Digest,
+    queue_authority_sha256: Digest,
+    request_sha256: Digest,
+    admission_sha256: Digest,
+    lease_sha256: Digest,
+    parent_receipt_sha256: Digest,
+    allocation_leaf_set_sha256: Digest,
+    backend_object_set_sha256: Digest,
+    scope_sha256: Digest,
+    dispatch_request_sha256: Digest,
+    publication_binding_sha256: Digest,
+) -> DispatchPinIntentV1:
+    """Seal the pre-Bank reservation transcript from prepared inputs."""
+
+    result = DispatchPinIntentV1(
+        coordinator_epoch=coordinator_epoch,
+        allocation_generation=allocation_generation,
+        dispatch_generation=dispatch_generation,
+        allocation_count=allocation_count,
+        pinned_device_bytes=pinned_device_bytes,
+        authority_sha256=_digest(authority_sha256),
+        dispatch_authority_sha256=_digest(
+            dispatch_authority_sha256
+        ),
+        queue_authority_sha256=_digest(queue_authority_sha256),
+        request_sha256=_digest(request_sha256),
+        admission_sha256=_digest(admission_sha256),
+        lease_sha256=_digest(lease_sha256),
+        parent_receipt_sha256=_digest(parent_receipt_sha256),
+        allocation_leaf_set_sha256=_digest(
+            allocation_leaf_set_sha256
+        ),
+        backend_object_set_sha256=_digest(
+            backend_object_set_sha256
+        ),
+        scope_sha256=_digest(scope_sha256),
+        dispatch_request_sha256=_digest(
+            dispatch_request_sha256
+        ),
+        publication_binding_sha256=_digest(
+            publication_binding_sha256
+        ),
+    )
+    result = replace(
+        result,
+        intent_sha256=dispatch_pin_intent_root_v1(result),
+    )
+    validate_dispatch_pin_intent_v1(result)
+    return result
+
+
+def validate_dispatch_pin_intent_v1(
+    value: DispatchPinIntentV1,
+) -> None:
+    _u64s(
+        value.abi_version,
+        value.coordinator_epoch,
+        value.allocation_generation,
+        value.dispatch_generation,
+        value.allocation_count,
+        value.pinned_device_bytes,
+    )
+    roots = (
+        value.authority_sha256,
+        value.dispatch_authority_sha256,
+        value.queue_authority_sha256,
+        value.request_sha256,
+        value.admission_sha256,
+        value.lease_sha256,
+        value.parent_receipt_sha256,
+        value.allocation_leaf_set_sha256,
+        value.backend_object_set_sha256,
+        value.scope_sha256,
+        value.dispatch_request_sha256,
+        value.publication_binding_sha256,
+        value.intent_sha256,
+    )
+    for root in roots:
+        _digest(root)
+    if (
+        value.abi_version != DISPATCH_PIN_INTENT_ABI
+        or value.coordinator_epoch == 0
+        or value.allocation_generation == 0
+        or value.dispatch_generation == 0
+        or value.allocation_count == 0
+        or value.allocation_count > MAXIMUM_ALLOCATIONS
+        or value.pinned_device_bytes < value.allocation_count
+        or any(root == ZERO_DIGEST for root in roots)
+        or value.dispatch_authority_sha256
+        == value.queue_authority_sha256
+        or value.intent_sha256
+        != dispatch_pin_intent_root_v1(value)
+    ):
+        raise ContractError("invalid dispatch pin intent")
+
+
+def validate_dispatch_pin_for_intent_v1(
+    pin: LeaseTreeDispatchPinV1,
+    intent: DispatchPinIntentV1,
+) -> None:
+    validate_dispatch_pin_v1(pin)
+    validate_dispatch_pin_intent_v1(intent)
+    if (
+        pin.coordinator_epoch != intent.coordinator_epoch
+        or pin.allocation_generation
+        != intent.allocation_generation
+        or pin.dispatch_generation != intent.dispatch_generation
+        or pin.allocation_count != intent.allocation_count
+        or pin.pinned_device_bytes != intent.pinned_device_bytes
+        or pin.authority_sha256 != intent.authority_sha256
+        or pin.dispatch_authority_sha256
+        != intent.dispatch_authority_sha256
+        or pin.queue_authority_sha256
+        != intent.queue_authority_sha256
+        or pin.request_sha256 != intent.request_sha256
+        or pin.admission_sha256 != intent.admission_sha256
+        or pin.lease_sha256 != intent.lease_sha256
+        or pin.parent_receipt_sha256
+        != intent.parent_receipt_sha256
+        or pin.allocation_leaf_set_sha256
+        != intent.allocation_leaf_set_sha256
+        or pin.backend_object_set_sha256
+        != intent.backend_object_set_sha256
+        or lease_node_sha256_v1(pin.scope) != intent.scope_sha256
+        or pin.dispatch_request_sha256
+        != intent.dispatch_request_sha256
+        or pin.publication_binding_sha256
+        != intent.publication_binding_sha256
+    ):
+        raise ContractError("dispatch pin does not bind intent")
+
+
 def validate_dispatch_pin_v1(
     value: LeaseTreeDispatchPinV1,
 ) -> None:
@@ -2358,6 +2647,20 @@ def make_dispatch_terminal_v1(
     return result
 
 
+def make_rejected_before_submit_terminal_v1(
+    pin: LeaseTreeDispatchPinV1,
+) -> DispatchTerminalEvidenceV1:
+    """Make the exact zero-native-root pre-submit rejection for ``pin``."""
+
+    return make_dispatch_terminal_v1(
+        pin,
+        DISPATCH_REJECTED_BEFORE_SUBMIT,
+        ZERO_DIGEST,
+        ZERO_DIGEST,
+        ZERO_DIGEST,
+    )
+
+
 def validate_dispatch_terminal_v1(
     value: DispatchTerminalEvidenceV1,
 ) -> None:
@@ -2418,6 +2721,378 @@ def validate_dispatch_terminal_for_pin_v1(
         != pin.dispatch_request_sha256
     ):
         raise ContractError("dispatch terminal does not bind pin")
+
+
+def validate_rejected_before_submit_terminal_for_pin_v1(
+    terminal: DispatchTerminalEvidenceV1,
+    pin: LeaseTreeDispatchPinV1,
+) -> None:
+    """Require the exact rejection semantic in addition to core pin binding."""
+
+    validate_dispatch_terminal_for_pin_v1(terminal, pin)
+    if terminal.outcome != DISPATCH_REJECTED_BEFORE_SUBMIT:
+        raise ContractError(
+            "dispatch terminal is not a pre-submit rejection"
+        )
+
+
+def metal_matvec_pre_submit_attempt_root_v1(
+    attempt: MetalMatvecPreSubmitAttemptV1,
+) -> Digest:
+    """Mirror the Zig attempt transcript, including mixed u64/u32 widths."""
+
+    return _hash(
+        METAL_PRE_SUBMIT_ATTEMPT_DOMAIN,
+        (
+            _le(attempt.abi_version),
+            _le32(
+                attempt.group_size,
+                attempt.in_features,
+                attempt.out_features,
+                attempt.reserved,
+            ),
+            _le(
+                attempt.packed_weights_bytes,
+                attempt.scales_count,
+                attempt.input_count,
+                attempt.output_count,
+            ),
+            _digest(attempt.bindings.packed_weights_sha256),
+            _digest(attempt.bindings.scales_sha256),
+            _digest(attempt.bindings.input_sha256),
+            _digest(attempt.bindings.output_sha256),
+        ),
+    )
+
+
+def make_metal_matvec_pre_submit_attempt_v1(
+    bindings: MetalMatvecAllocationBindingsV1,
+    packed_weights_bytes: int,
+    scales_count: int,
+    input_count: int,
+    output_count: int,
+    group_size: int,
+    in_features: int,
+    out_features: int,
+) -> MetalMatvecPreSubmitAttemptV1:
+    result = MetalMatvecPreSubmitAttemptV1(
+        group_size=group_size,
+        in_features=in_features,
+        out_features=out_features,
+        packed_weights_bytes=packed_weights_bytes,
+        scales_count=scales_count,
+        input_count=input_count,
+        output_count=output_count,
+        bindings=bindings,
+    )
+    result = replace(
+        result,
+        attempt_sha256=metal_matvec_pre_submit_attempt_root_v1(
+            result
+        ),
+    )
+    validate_metal_matvec_pre_submit_attempt_v1(result)
+    return result
+
+
+def validate_metal_matvec_pre_submit_attempt_v1(
+    attempt: MetalMatvecPreSubmitAttemptV1,
+) -> None:
+    _u64s(
+        attempt.abi_version,
+        attempt.packed_weights_bytes,
+        attempt.scales_count,
+        attempt.input_count,
+        attempt.output_count,
+    )
+    _u32(attempt.group_size)
+    _u32(attempt.in_features)
+    _u32(attempt.out_features)
+    _u32(attempt.reserved)
+    roots = (
+        attempt.bindings.packed_weights_sha256,
+        attempt.bindings.scales_sha256,
+        attempt.bindings.input_sha256,
+        attempt.bindings.output_sha256,
+        attempt.attempt_sha256,
+    )
+    for root in roots:
+        _digest(root)
+    if (
+        attempt.abi_version != METAL_PRE_SUBMIT_ATTEMPT_ABI
+        or attempt.reserved != 0
+        or attempt.attempt_sha256 == ZERO_DIGEST
+        or attempt.attempt_sha256
+        != metal_matvec_pre_submit_attempt_root_v1(attempt)
+    ):
+        raise ContractError("invalid Metal matvec pre-submit attempt")
+
+
+def validate_metal_matvec_allocation_bindings_v1(
+    bindings: MetalMatvecAllocationBindingsV1,
+) -> None:
+    values = (
+        bindings.packed_weights_sha256,
+        bindings.scales_sha256,
+        bindings.input_sha256,
+        bindings.output_sha256,
+    )
+    for index, value in enumerate(values):
+        _digest(value)
+        if value == ZERO_DIGEST or value in values[:index]:
+            raise ContractError("invalid Metal matvec role bindings")
+
+
+def _metal_matvec_expected_counts_v1(
+    attempt: MetalMatvecPreSubmitAttemptV1,
+) -> Tuple[int, int, int, int]:
+    group_size = _u32(attempt.group_size)
+    in_features = _u32(attempt.in_features)
+    out_features = _u32(attempt.out_features)
+    if (
+        group_size == 0
+        or group_size & (group_size - 1) != 0
+        or in_features == 0
+        or out_features == 0
+    ):
+        raise ContractError("invalid Metal matvec geometry")
+    elements = in_features * out_features
+    if elements > U32_MAX:
+        raise ContractError("Metal matvec geometry exceeds u32 elements")
+    return (
+        (elements + 1) // 2,
+        (elements + group_size - 1) // group_size,
+        in_features,
+        out_features,
+    )
+
+
+def classify_metal_matvec_pre_submit_rejection_v1(
+    attempt: MetalMatvecPreSubmitAttemptV1,
+) -> Optional[int]:
+    validate_metal_matvec_pre_submit_attempt_v1(attempt)
+    try:
+        expected = _metal_matvec_expected_counts_v1(attempt)
+    except ContractError:
+        return METAL_INVALID_GEOMETRY
+    actual = (
+        attempt.packed_weights_bytes,
+        attempt.scales_count,
+        attempt.input_count,
+        attempt.output_count,
+    )
+    if actual != expected:
+        return METAL_INVALID_HOST_LENGTHS
+    try:
+        validate_metal_matvec_allocation_bindings_v1(
+            attempt.bindings
+        )
+    except ContractError:
+        return METAL_INVALID_ROLE_BINDINGS
+    return None
+
+
+def metal_matvec_dispatch_request_root_v1(
+    request: MetalMatvecDispatchRequestV1,
+) -> Digest:
+    return _hash(
+        METAL_MATVEC_DISPATCH_REQUEST_DOMAIN,
+        (
+            _le(
+                request.abi_version,
+                request.request_generation,
+            ),
+            _digest(request.dispatch_authority_sha256),
+            _digest(request.queue_authority_sha256),
+            _digest(request.attempt.attempt_sha256),
+        ),
+    )
+
+
+def make_metal_matvec_dispatch_request_v1(
+    request_generation: int,
+    dispatch_authority_sha256: Digest,
+    queue_authority_sha256: Digest,
+    attempt: MetalMatvecPreSubmitAttemptV1,
+) -> MetalMatvecDispatchRequestV1:
+    validate_metal_matvec_pre_submit_attempt_v1(attempt)
+    result = MetalMatvecDispatchRequestV1(
+        request_generation=request_generation,
+        dispatch_authority_sha256=_digest(
+            dispatch_authority_sha256
+        ),
+        queue_authority_sha256=_digest(queue_authority_sha256),
+        attempt=attempt,
+    )
+    result = replace(
+        result,
+        request_sha256=metal_matvec_dispatch_request_root_v1(
+            result
+        ),
+    )
+    validate_metal_matvec_dispatch_request_v1(result)
+    return result
+
+
+def validate_metal_matvec_dispatch_request_v1(
+    request: MetalMatvecDispatchRequestV1,
+) -> None:
+    validate_metal_matvec_pre_submit_attempt_v1(request.attempt)
+    _u64s(request.abi_version, request.request_generation)
+    roots = (
+        request.dispatch_authority_sha256,
+        request.queue_authority_sha256,
+        request.request_sha256,
+    )
+    for root in roots:
+        _digest(root)
+    if (
+        request.abi_version != METAL_MATVEC_DISPATCH_REQUEST_ABI
+        or request.request_generation == 0
+        or request.dispatch_authority_sha256 == ZERO_DIGEST
+        or request.queue_authority_sha256 == ZERO_DIGEST
+        or request.dispatch_authority_sha256
+        == request.queue_authority_sha256
+        or request.request_sha256 == ZERO_DIGEST
+        or request.request_sha256
+        != metal_matvec_dispatch_request_root_v1(request)
+    ):
+        raise ContractError("invalid Metal matvec dispatch request")
+
+
+def metal_matvec_pre_submit_rejection_root_v1(
+    rejection: MetalMatvecPreSubmitRejectionV1,
+) -> Digest:
+    return _hash(
+        METAL_PRE_SUBMIT_REJECTION_DOMAIN,
+        (
+            _le(
+                rejection.abi_version,
+                rejection.reason,
+                rejection.dispatch_generation,
+                rejection.allocation_count,
+                rejection.materialized_bytes,
+            ),
+            _digest(rejection.pin_sha256),
+            _digest(rejection.backend_object_set_sha256),
+            _digest(rejection.request.request_sha256),
+            _digest(rejection.terminal_sha256),
+        ),
+    )
+
+
+def validate_metal_matvec_pre_submit_rejection_v1(
+    rejection: MetalMatvecPreSubmitRejectionV1,
+) -> None:
+    validate_metal_matvec_dispatch_request_v1(rejection.request)
+    _u64s(
+        rejection.abi_version,
+        rejection.reason,
+        rejection.dispatch_generation,
+        rejection.allocation_count,
+        rejection.materialized_bytes,
+    )
+    roots = (
+        rejection.pin_sha256,
+        rejection.backend_object_set_sha256,
+        rejection.terminal_sha256,
+        rejection.rejection_sha256,
+    )
+    for root in roots:
+        _digest(root)
+    static_reason = classify_metal_matvec_pre_submit_rejection_v1(
+        rejection.request.attempt
+    )
+    role_mapping = rejection.reason == METAL_INVALID_ROLE_MAPPING
+    if (
+        rejection.abi_version != METAL_PRE_SUBMIT_REJECTION_ABI
+        or rejection.reason not in VALID_METAL_PRE_SUBMIT_REASONS
+        or (role_mapping and static_reason is not None)
+        or (
+            not role_mapping
+            and (
+                static_reason is None
+                or static_reason != rejection.reason
+            )
+        )
+        or rejection.dispatch_generation == 0
+        or rejection.allocation_count != 4
+        or rejection.materialized_bytes
+        < rejection.allocation_count
+        or rejection.pin_sha256 == ZERO_DIGEST
+        or rejection.backend_object_set_sha256 == ZERO_DIGEST
+        or rejection.terminal_sha256 == ZERO_DIGEST
+        or rejection.rejection_sha256 == ZERO_DIGEST
+        or rejection.rejection_sha256
+        != metal_matvec_pre_submit_rejection_root_v1(rejection)
+    ):
+        raise ContractError("invalid Metal matvec pre-submit rejection")
+
+
+def validate_metal_matvec_pre_submit_rejection_for_pin_v1(
+    rejection: MetalMatvecPreSubmitRejectionV1,
+    pin: LeaseTreeDispatchPinV1,
+    terminal: DispatchTerminalEvidenceV1,
+) -> None:
+    validate_metal_matvec_pre_submit_rejection_v1(rejection)
+    validate_dispatch_terminal_for_pin_v1(terminal, pin)
+    if (
+        terminal.outcome != DISPATCH_REJECTED_BEFORE_SUBMIT
+        or terminal.submission_sha256 != ZERO_DIGEST
+        or terminal.backend_completion_sha256 != ZERO_DIGEST
+        or terminal.output_sha256 != ZERO_DIGEST
+        or rejection.dispatch_generation != pin.dispatch_generation
+        or rejection.allocation_count != pin.allocation_count
+        or rejection.materialized_bytes != pin.pinned_device_bytes
+        or rejection.pin_sha256 != pin.pin_sha256
+        or rejection.request.request_sha256
+        != pin.dispatch_request_sha256
+        or rejection.request.dispatch_authority_sha256
+        != pin.dispatch_authority_sha256
+        or rejection.request.queue_authority_sha256
+        != pin.queue_authority_sha256
+        or rejection.backend_object_set_sha256
+        != pin.backend_object_set_sha256
+        or rejection.terminal_sha256 != terminal.terminal_sha256
+    ):
+        raise ContractError(
+            "Metal pre-submit rejection does not bind pin and terminal"
+        )
+
+
+def make_metal_matvec_pre_submit_rejection_v1(
+    pin: LeaseTreeDispatchPinV1,
+    request: MetalMatvecDispatchRequestV1,
+    reason: int,
+    terminal: DispatchTerminalEvidenceV1,
+) -> MetalMatvecPreSubmitRejectionV1:
+    validate_dispatch_pin_v1(pin)
+    validate_dispatch_terminal_for_pin_v1(terminal, pin)
+    validate_metal_matvec_dispatch_request_v1(request)
+    result = MetalMatvecPreSubmitRejectionV1(
+        reason=reason,
+        dispatch_generation=pin.dispatch_generation,
+        allocation_count=pin.allocation_count,
+        materialized_bytes=pin.pinned_device_bytes,
+        pin_sha256=pin.pin_sha256,
+        backend_object_set_sha256=(
+            pin.backend_object_set_sha256
+        ),
+        request=request,
+        terminal_sha256=terminal.terminal_sha256,
+    )
+    result = replace(
+        result,
+        rejection_sha256=metal_matvec_pre_submit_rejection_root_v1(
+            result
+        ),
+    )
+    validate_metal_matvec_pre_submit_rejection_for_pin_v1(
+        result,
+        pin,
+        terminal,
+    )
+    return result
 
 
 def dispatch_completion_root_v1(
@@ -3561,8 +4236,14 @@ class LeaseTreeDispatchCampaignV1:
     completion: LeaseTreeDispatchCompletionV1
 
 
-def make_dispatch_campaign() -> LeaseTreeDispatchCampaignV1:
-    """Branch from the materialized lease into one pinned queue dispatch."""
+def make_dispatch_campaign(
+    outcome: int = DISPATCH_SUCCEEDED,
+    *,
+    dispatch_authority_sha256: Optional[Digest] = None,
+    queue_authority_sha256: Optional[Digest] = None,
+    dispatch_request_sha256: Optional[Digest] = None,
+) -> LeaseTreeDispatchCampaignV1:
+    """Branch from a materialized lease through one terminal dispatch."""
 
     campaign = make_campaign()
     fixture = campaign.allocation_fixture
@@ -3573,23 +4254,54 @@ def make_dispatch_campaign() -> LeaseTreeDispatchCampaignV1:
     leaves = campaign.leaves_2
     claim = ClaimV1(device_bytes=lease.materialized_bytes)
     dispatch_generation = 1
-    dispatch_authority_sha256 = allocation.digest_v1(
-        b"LeaseTree dispatch authority"
+    if dispatch_authority_sha256 is None:
+        dispatch_authority_sha256 = allocation.digest_v1(
+            b"LeaseTree dispatch authority"
+        )
+    else:
+        dispatch_authority_sha256 = _digest(
+            dispatch_authority_sha256
+        )
+    if queue_authority_sha256 is None:
+        queue_authority_sha256 = allocation.digest_v1(
+            b"LeaseTree queue authority"
+        )
+    else:
+        queue_authority_sha256 = _digest(
+            queue_authority_sha256
+        )
+    if dispatch_request_sha256 is None:
+        dispatch_request_sha256 = allocation.digest_v1(
+            b"LeaseTree dispatch request"
+        )
+    else:
+        dispatch_request_sha256 = _digest(
+            dispatch_request_sha256
+        )
+    _u64(outcome)
+    if outcome not in VALID_DISPATCH_OUTCOMES:
+        raise ContractError("invalid dispatch campaign outcome")
+    submitted = outcome in (
+        DISPATCH_SUCCEEDED,
+        DISPATCH_TERMINAL_FAILURE,
+        DISPATCH_CANCELLED_AFTER_SUBMIT,
     )
-    queue_authority_sha256 = allocation.digest_v1(
-        b"LeaseTree queue authority"
+    submission_sha256 = (
+        allocation.digest_v1(b"LeaseTree dispatch submission")
+        if submitted
+        else ZERO_DIGEST
     )
-    dispatch_request_sha256 = allocation.digest_v1(
-        b"LeaseTree dispatch request"
+    backend_completion_sha256 = (
+        allocation.digest_v1(
+            b"LeaseTree dispatch backend completion"
+        )
+        if submitted
+        else ZERO_DIGEST
     )
-    submission_sha256 = allocation.digest_v1(
-        b"LeaseTree dispatch submission"
-    )
-    backend_completion_sha256 = allocation.digest_v1(
-        b"LeaseTree dispatch backend completion"
-    )
-    output_sha256 = allocation.digest_v1(
-        b"LeaseTree dispatch output"
+    output_sha256 = (
+        allocation.digest_v1(b"LeaseTree dispatch output")
+        if outcome == DISPATCH_SUCCEEDED
+        else ZERO_DIGEST
     )
     owner_key = dispatch_owner_key_v1(
         campaign.coordinator_epoch,
@@ -3720,7 +4432,7 @@ def make_dispatch_campaign() -> LeaseTreeDispatchCampaignV1:
     )
     terminal = make_dispatch_terminal_v1(
         pin,
-        DISPATCH_SUCCEEDED,
+        outcome,
         submission_sha256,
         backend_completion_sha256,
         output_sha256,
@@ -3820,4 +4532,128 @@ def make_dispatch_campaign() -> LeaseTreeDispatchCampaignV1:
         completed_tree=completed_tree,
         bank_completion=bank_completion,
         completion=completion,
+    )
+
+
+def make_rejected_before_submit_dispatch_campaign(
+) -> LeaseTreeDispatchCampaignV1:
+    """Build the exact core pre-submit rejection transcript branch."""
+
+    return make_dispatch_campaign(DISPATCH_REJECTED_BEFORE_SUBMIT)
+
+
+@dataclass(frozen=True)
+class MetalMatvecPreSubmitRejectionCampaignV1:
+    bindings: MetalMatvecAllocationBindingsV1
+    attempt: MetalMatvecPreSubmitAttemptV1
+    request: MetalMatvecDispatchRequestV1
+    intent: DispatchPinIntentV1
+    pin: LeaseTreeDispatchPinV1
+    terminal: DispatchTerminalEvidenceV1
+    rejection: MetalMatvecPreSubmitRejectionV1
+
+
+def make_metal_matvec_pre_submit_rejection_campaign(
+) -> MetalMatvecPreSubmitRejectionCampaignV1:
+    """Build a fixed Metal rejection transcript without loading Zig code."""
+
+    bindings = MetalMatvecAllocationBindingsV1(
+        packed_weights_sha256=allocation.digest_v1(
+            b"request packed binding"
+        ),
+        scales_sha256=allocation.digest_v1(
+            b"request scales binding"
+        ),
+        input_sha256=allocation.digest_v1(
+            b"request input binding"
+        ),
+        output_sha256=allocation.digest_v1(
+            b"request output binding"
+        ),
+    )
+    attempt = make_metal_matvec_pre_submit_attempt_v1(
+        bindings,
+        1_184,
+        296,
+        64,
+        37,
+        8,
+        64,
+        37,
+    )
+    dispatch_authority_sha256 = allocation.digest_v1(
+        b"request dispatch authority"
+    )
+    queue_authority_sha256 = allocation.digest_v1(
+        b"request queue authority"
+    )
+    request = make_metal_matvec_dispatch_request_v1(
+        1,
+        dispatch_authority_sha256,
+        queue_authority_sha256,
+        attempt,
+    )
+    dispatch = make_dispatch_campaign(
+        DISPATCH_REJECTED_BEFORE_SUBMIT,
+        dispatch_authority_sha256=dispatch_authority_sha256,
+        queue_authority_sha256=queue_authority_sha256,
+        dispatch_request_sha256=request.request_sha256,
+    )
+    pinned_tree = seal_lease_tree(
+        replace(
+            dispatch.pinned_tree,
+            active_nodes=5,
+            integrity=0,
+        )
+    )
+    pin_draft = replace(
+        dispatch.pin,
+        pinned_tree=pinned_tree,
+        allocation_count=4,
+        pin_sha256=ZERO_DIGEST,
+    )
+    pin = replace(
+        pin_draft,
+        pin_sha256=dispatch_pin_root_v1(pin_draft),
+    )
+    validate_dispatch_pin_v1(pin)
+    intent = make_dispatch_pin_intent_v1(
+        coordinator_epoch=pin.coordinator_epoch,
+        allocation_generation=pin.allocation_generation,
+        dispatch_generation=pin.dispatch_generation,
+        allocation_count=pin.allocation_count,
+        pinned_device_bytes=pin.pinned_device_bytes,
+        authority_sha256=pin.authority_sha256,
+        dispatch_authority_sha256=pin.dispatch_authority_sha256,
+        queue_authority_sha256=pin.queue_authority_sha256,
+        request_sha256=pin.request_sha256,
+        admission_sha256=pin.admission_sha256,
+        lease_sha256=pin.lease_sha256,
+        parent_receipt_sha256=pin.parent_receipt_sha256,
+        allocation_leaf_set_sha256=(
+            pin.allocation_leaf_set_sha256
+        ),
+        backend_object_set_sha256=pin.backend_object_set_sha256,
+        scope_sha256=lease_node_sha256_v1(pin.scope),
+        dispatch_request_sha256=pin.dispatch_request_sha256,
+        publication_binding_sha256=(
+            pin.publication_binding_sha256
+        ),
+    )
+    validate_dispatch_pin_for_intent_v1(pin, intent)
+    terminal = make_rejected_before_submit_terminal_v1(pin)
+    rejection = make_metal_matvec_pre_submit_rejection_v1(
+        pin,
+        request,
+        METAL_INVALID_ROLE_MAPPING,
+        terminal,
+    )
+    return MetalMatvecPreSubmitRejectionCampaignV1(
+        bindings=bindings,
+        attempt=attempt,
+        request=request,
+        intent=intent,
+        pin=pin,
+        terminal=terminal,
+        rejection=rejection,
     )

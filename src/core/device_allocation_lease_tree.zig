@@ -24,6 +24,8 @@ pub const lease_abi: u64 = 0x4744_544c_0000_0001;
 pub const recovery_abi: u64 = 0x4744_5452_0000_0001;
 pub const terminal_abi: u64 = 0x4744_5454_0000_0001;
 pub const dispatch_pin_abi: u64 = 0x4744_5450_0000_0001;
+pub const dispatch_pin_intent_abi: u64 =
+    0x4744_5449_0000_0001;
 pub const dispatch_terminal_abi: u64 = 0x4744_5444_0000_0001;
 pub const dispatch_completion_abi: u64 = 0x4744_5443_0000_0001;
 
@@ -37,6 +39,8 @@ const terminal_domain =
     "glacier-device-tree-allocation-terminal-v1\x00";
 const dispatch_pin_domain =
     "glacier-device-tree-dispatch-pin-v1\x00";
+const dispatch_pin_intent_domain =
+    "glacier-device-tree-dispatch-pin-intent-v1\x00";
 const dispatch_terminal_domain =
     "glacier-device-tree-dispatch-terminal-v1\x00";
 const dispatch_completion_domain =
@@ -92,7 +96,9 @@ pub const Error =
 
 pub const DispatchCallbackError = error{
     Unavailable,
+    InvalidDispatchIntent,
     InvalidTerminalEvidence,
+    InvalidSettlementEvidence,
 };
 
 /// Only terminal queue states may release a device-allocation pin. Pending,
@@ -124,13 +130,65 @@ pub const DispatchTerminalEvidenceV1 = struct {
     terminal_sha256: Digest = zero_digest,
 };
 
+/// Pre-Bank reservation of one exact adapter request. The intent closes the
+/// gap between request preparation and private Bank pin acquisition without
+/// claiming that a pin already exists.
+pub const DispatchPinIntentV1 = struct {
+    abi_version: u64 = dispatch_pin_intent_abi,
+    coordinator_epoch: u64 = 0,
+    allocation_generation: u64 = 0,
+    dispatch_generation: u64 = 0,
+    allocation_count: u64 = 0,
+    pinned_device_bytes: u64 = 0,
+    authority_sha256: Digest = zero_digest,
+    dispatch_authority_sha256: Digest = zero_digest,
+    queue_authority_sha256: Digest = zero_digest,
+    request_sha256: Digest = zero_digest,
+    admission_sha256: Digest = zero_digest,
+    lease_sha256: Digest = zero_digest,
+    parent_receipt_sha256: Digest = zero_digest,
+    allocation_leaf_set_sha256: Digest = zero_digest,
+    backend_object_set_sha256: Digest = zero_digest,
+    scope_sha256: Digest = zero_digest,
+    dispatch_request_sha256: Digest = zero_digest,
+    publication_binding_sha256: Digest = zero_digest,
+    intent_sha256: Digest = zero_digest,
+};
+
 pub const DispatchAdapterV1 = struct {
     context: *anyopaque,
     dispatch_authority_sha256: Digest,
     queue_authority_sha256: Digest,
+    /// Reserve one adapter-side request before ResourceBank is mutated.
+    /// Success must be idempotent for the exact intent; errors must not retain
+    /// partial state.
+    reserve_dispatch_intent_fn: *const fn (
+        context: *anyopaque,
+        intent: DispatchPinIntentV1,
+    ) DispatchCallbackError!void,
+    /// Undo the exact successful reservation when callback-source validation
+    /// or atomic Bank pin acquisition fails.
+    abort_dispatch_intent_fn: *const fn (
+        context: *anyopaque,
+        intent: DispatchPinIntentV1,
+    ) DispatchCallbackError!void,
+    /// Terminal authorization only. Calling this function directly never
+    /// proves that ResourceBank consumed the pin.
     validate_terminal_fn: *const fn (
         context: *anyopaque,
         terminal: DispatchTerminalEvidenceV1,
+    ) DispatchCallbackError!void,
+    /// Post-release capability confirmation. The coordinator alone retains
+    /// `bank_permit` and invokes this only after `bank_completion` exists.
+    /// Adapters must accept exact retries idempotently and must not call back
+    /// into the coordinator or Bank while this function runs.
+    confirm_settlement_fn: *const fn (
+        context: *anyopaque,
+        pin: LeaseTreeDispatchPinV1,
+        terminal: DispatchTerminalEvidenceV1,
+        completion: LeaseTreeDispatchCompletionV1,
+        bank_permit: resource.LeasePinPermitV1,
+        bank_completion: resource.LeasePinCompletionV1,
     ) DispatchCallbackError!void,
 };
 
@@ -292,6 +350,7 @@ comptime {
             @sizeOf(LeaseTreeDeviceAllocationLeaseV1) != 1080 or
             @sizeOf(LeaseTreeAllocationRecoveryV1) != 1056 or
             @sizeOf(LeaseTreeAllocationTerminalReceiptV1) != 1024 or
+            @sizeOf(DispatchPinIntentV1) != 464 or
             @sizeOf(DispatchTerminalEvidenceV1) != 280 or
             @sizeOf(LeaseTreeDispatchPinV1) != 1184 or
             @sizeOf(LeaseTreeDispatchCompletionV1) != 1016))
@@ -329,6 +388,7 @@ const ObjectStateV1 = enum(u8) {
 const DispatchSlotStateV1 = enum(u8) {
     free,
     pinned,
+    settlement_pending,
 };
 
 pub const maximum_dispatches: usize = 64;
@@ -352,11 +412,26 @@ pub const CoordinatorDispatchSlotV1 = struct {
     allocation_generation: u64 = 0,
     dispatch_generation: u64 = 0,
     adapter_context: ?*anyopaque = null,
+    adapter_reserve_dispatch_intent_fn: ?@TypeOf(
+        @as(DispatchAdapterV1, undefined)
+            .reserve_dispatch_intent_fn,
+    ) = null,
+    adapter_abort_dispatch_intent_fn: ?@TypeOf(
+        @as(DispatchAdapterV1, undefined)
+            .abort_dispatch_intent_fn,
+    ) = null,
     adapter_validate_terminal_fn: ?@TypeOf(
         @as(DispatchAdapterV1, undefined).validate_terminal_fn,
     ) = null,
+    adapter_confirm_settlement_fn: ?@TypeOf(
+        @as(DispatchAdapterV1, undefined).confirm_settlement_fn,
+    ) = null,
     bank_permit: ?resource.LeasePinPermitV1 = null,
+    intent: ?DispatchPinIntentV1 = null,
     pin: ?LeaseTreeDispatchPinV1 = null,
+    terminal: ?DispatchTerminalEvidenceV1 = null,
+    completion: ?LeaseTreeDispatchCompletionV1 = null,
+    bank_completion: ?resource.LeasePinCompletionV1 = null,
 };
 
 const CoordinatorBindingsV1 = struct {
@@ -627,11 +702,10 @@ pub const CoordinatorV1 = struct {
             .reserved => reserved_objects += 1,
             .live => live_objects += 1,
         };
-        for (self.dispatches) |dispatch| {
-            if (dispatch.state == .pinned) {
-                active_dispatches += 1;
-            }
-        }
+        for (self.dispatches) |dispatch| switch (dispatch.state) {
+            .free => {},
+            .pinned, .settlement_pending => active_dispatches += 1,
+        };
         return .{
             .coordinator_epoch = self.epoch,
             .next_generation = self.next_generation,
@@ -1048,6 +1122,17 @@ pub const CoordinatorV1 = struct {
         if (self.next_dispatch_generation == 0 or
             self.next_dispatch_generation == std.math.maxInt(u64))
             return Error.GenerationExhausted;
+        for (self.dispatches) |slot| {
+            if (slot.state == .free) continue;
+            const active_pin = slot.pin orelse
+                return Error.InvalidCoordinator;
+            if (slot.adapter_context == adapter.context and
+                digestEqual(
+                    active_pin.dispatch_request_sha256,
+                    dispatch_request_sha256,
+                ))
+                return Error.InvalidDispatchPin;
+        }
         const slot_index = for (self.dispatches, 0..) |slot, index| {
             if (slot.state == .free) {
                 if (!dispatchSlotCanonicalFree(slot))
@@ -1087,21 +1172,70 @@ pub const CoordinatorV1 = struct {
         }
 
         const dispatch_generation = self.next_dispatch_generation;
+        const intent = makeDispatchPinIntent(
+            self.admission,
+            self.lease,
+            self.scope,
+            adapter,
+            dispatch_generation,
+            dispatch_request_sha256,
+            dispatchPublicationBindingSha256V1(
+                self.tree.parent,
+                self.bound_request_epoch,
+                self.bound_session_id,
+                self.publication_sequence.*,
+            ),
+        );
+        const intent_source =
+            try self.captureDispatchValidationSource();
+        const reserve_intent_result =
+            adapter.reserve_dispatch_intent_fn(
+                adapter.context,
+                intent,
+            );
+        self.restoreDispatchValidationSourceAfterCallback(
+            intent_source,
+        );
+        reserve_intent_result catch {
+            try self.validateDispatchValidationSource(
+                intent_source,
+            );
+            return Error.InvalidDispatchPin;
+        };
+        self.validateDispatchValidationSource(
+            intent_source,
+        ) catch |validation_error| {
+            try self.abortDispatchIntentAndValidateSource(
+                intent_source,
+                adapter,
+                intent,
+            );
+            return validation_error;
+        };
+
         const owner_key = dispatchOwnerKeyV1(
             self.epoch,
             self.generation,
             dispatch_generation,
             dispatch_request_sha256,
         );
-        const acquired = try self.bank.acquireLeasePinsForSession(
-            self.tree.*,
-            self.scope,
-            self.request_epoch,
-            self.session_id,
-            self.publication_sequence.*,
-            owner_key,
-            leaves[0..@intCast(lease.allocation_count)],
-        );
+        const acquired =
+            self.bank.acquireLeasePinsForSession(
+                self.tree.*,
+                self.scope,
+                self.request_epoch,
+                self.session_id,
+                self.publication_sequence.*,
+                owner_key,
+                leaves[0..@intCast(lease.allocation_count)],
+            ) catch |acquire_error| {
+                try self.abortDispatchIntentAndValidateSource(
+                    intent_source,
+                    adapter,
+                    intent,
+                );
+                return acquire_error;
+            };
         self.tree.* = acquired.tree;
         const pin = makeDispatchPin(
             self.admission,
@@ -1111,13 +1245,23 @@ pub const CoordinatorV1 = struct {
             dispatch_generation,
             dispatch_request_sha256,
         );
+        validateDispatchPinForIntentV1(
+            pin,
+            intent,
+        ) catch @panic(
+            "constructed dispatch pin does not match reserved intent",
+        );
         self.dispatches[slot_index] = .{
             .state = .pinned,
             .allocation_generation = self.generation,
             .dispatch_generation = dispatch_generation,
             .adapter_context = adapter.context,
+            .adapter_reserve_dispatch_intent_fn = adapter.reserve_dispatch_intent_fn,
+            .adapter_abort_dispatch_intent_fn = adapter.abort_dispatch_intent_fn,
             .adapter_validate_terminal_fn = adapter.validate_terminal_fn,
+            .adapter_confirm_settlement_fn = adapter.confirm_settlement_fn,
             .bank_permit = acquired.permit,
+            .intent = intent,
             .pin = pin,
         };
         self.next_dispatch_generation += 1;
@@ -1125,8 +1269,11 @@ pub const CoordinatorV1 = struct {
     }
 
     /// Consume one private Bank pin only after the exact bound adapter
-    /// validates terminal queue evidence. Validation failure, pending work, or
-    /// a Bank settlement conflict leaves the pin active and retryable.
+    /// validates terminal queue evidence. After Bank release, the same
+    /// private permit is presented to the adapter as settlement authority.
+    /// Validation failure or a Bank conflict keeps the pin active; a failed
+    /// settlement confirmation keeps the completed slot retryable without
+    /// releasing the Bank pin twice.
     pub fn completeDispatchPin(
         self: *CoordinatorV1,
         pin: LeaseTreeDispatchPinV1,
@@ -1145,6 +1292,18 @@ pub const CoordinatorV1 = struct {
         try validateBoundDispatchAdapter(slot, adapter);
         try self.validateLiveObjectSet();
         try self.validateLiveAdmissionStorage();
+        if (slot.state == .settlement_pending) {
+            const stored_terminal = slot.terminal orelse
+                return Error.InvalidDispatchCompletion;
+            if (!std.meta.eql(terminal, stored_terminal))
+                return Error.InvalidDispatchTerminal;
+            return self.confirmDispatchSettlementUnlocked(
+                slot_index,
+                pin,
+                adapter,
+                terminal,
+            );
+        }
         const bank_permit = slot.bank_permit orelse
             return Error.InvalidDispatchPin;
         if (!bankPermitForDispatchPinValid(bank_permit, pin))
@@ -1202,6 +1361,91 @@ pub const CoordinatorV1 = struct {
                 self.publication_sequence.*,
             ),
         );
+        var settlement_slot = restored_slot;
+        settlement_slot.state = .settlement_pending;
+        settlement_slot.terminal = terminal;
+        settlement_slot.completion = completion;
+        settlement_slot.bank_completion = released.completion;
+        self.dispatches[restored_slot_index] = settlement_slot;
+        return self.confirmDispatchSettlementUnlocked(
+            restored_slot_index,
+            pin,
+            adapter,
+            terminal,
+        );
+    }
+
+    fn confirmDispatchSettlementUnlocked(
+        self: *CoordinatorV1,
+        slot_index: usize,
+        pin: LeaseTreeDispatchPinV1,
+        adapter: DispatchAdapterV1,
+        terminal: DispatchTerminalEvidenceV1,
+    ) Error!LeaseTreeDispatchCompletionV1 {
+        if (slot_index >= self.dispatches.len)
+            return Error.InvalidDispatchPin;
+        const slot = self.dispatches[slot_index];
+        try validateBoundDispatchAdapter(slot, adapter);
+        if (slot.state != .settlement_pending)
+            return Error.InvalidDispatchCompletion;
+        const stored_pin = slot.pin orelse
+            return Error.InvalidDispatchPin;
+        const stored_terminal = slot.terminal orelse
+            return Error.InvalidDispatchCompletion;
+        const completion = slot.completion orelse
+            return Error.InvalidDispatchCompletion;
+        const bank_permit = slot.bank_permit orelse
+            return Error.InvalidDispatchPin;
+        const bank_completion = slot.bank_completion orelse
+            return Error.InvalidDispatchCompletion;
+        if (!std.meta.eql(pin, stored_pin) or
+            !std.meta.eql(terminal, stored_terminal))
+            return Error.InvalidDispatchCompletion;
+        try validateDispatchSettlementForPinV1(
+            completion,
+            pin,
+            terminal,
+            bank_permit,
+            bank_completion,
+        );
+
+        const source = try self.captureDispatchValidationSource();
+        const callback_result = adapter.confirm_settlement_fn(
+            adapter.context,
+            pin,
+            terminal,
+            completion,
+            bank_permit,
+            bank_completion,
+        );
+        self.restoreDispatchValidationSourceAfterCallback(source);
+        callback_result catch
+            return Error.InvalidDispatchCompletion;
+        try self.validateDispatchValidationSource(source);
+        const restored_slot_index =
+            self.findDispatchSlot(pin) orelse
+            return Error.InvalidDispatchPin;
+        const restored_slot =
+            self.dispatches[restored_slot_index];
+        try validateBoundDispatchAdapter(restored_slot, adapter);
+        const restored_terminal = restored_slot.terminal orelse
+            return Error.InvalidDispatchCompletion;
+        const restored_completion = restored_slot.completion orelse
+            return Error.InvalidDispatchCompletion;
+        const restored_permit = restored_slot.bank_permit orelse
+            return Error.InvalidDispatchCompletion;
+        const restored_bank_completion =
+            restored_slot.bank_completion orelse
+            return Error.InvalidDispatchCompletion;
+        if (restored_slot.state != .settlement_pending or
+            !std.meta.eql(restored_terminal, terminal) or
+            !std.meta.eql(restored_completion, completion) or
+            !std.meta.eql(restored_permit, bank_permit) or
+            !std.meta.eql(
+                restored_bank_completion,
+                bank_completion,
+            ))
+            return Error.InvalidDispatchCompletion;
         self.dispatches[restored_slot_index] = .{};
         return completion;
     }
@@ -1705,6 +1949,23 @@ pub const CoordinatorV1 = struct {
         if (bank_drifted) self.bank = observed_bank;
     }
 
+    fn abortDispatchIntentAndValidateSource(
+        self: *CoordinatorV1,
+        source: DispatchValidationSourceV1,
+        adapter: DispatchAdapterV1,
+        intent: DispatchPinIntentV1,
+    ) Error!void {
+        const callback_result =
+            adapter.abort_dispatch_intent_fn(
+                adapter.context,
+                intent,
+            );
+        self.restoreDispatchValidationSourceAfterCallback(source);
+        try self.validateDispatchValidationSource(source);
+        callback_result catch
+            return Error.InvalidDispatchAdapter;
+    }
+
     fn validateDispatchValidationSource(
         self: *CoordinatorV1,
         source: DispatchValidationSourceV1,
@@ -1733,14 +1994,24 @@ pub const CoordinatorV1 = struct {
             ))
                 return Error.InvalidTransition;
             switch (dispatch.state) {
-                .free => {},
+                .free => if (!dispatchSlotCanonicalFree(dispatch))
+                    return Error.InvalidTransition,
                 .pinned => {
+                    const dispatch_intent = dispatch.intent orelse
+                        return Error.InvalidTransition;
                     const dispatch_pin = dispatch.pin orelse
                         return Error.InvalidTransition;
                     const dispatch_bank_permit =
                         dispatch.bank_permit orelse
                         return Error.InvalidTransition;
-                    try validateDispatchPinV1(dispatch_pin);
+                    if (dispatch.terminal != null or
+                        dispatch.completion != null or
+                        dispatch.bank_completion != null)
+                        return Error.InvalidTransition;
+                    try validateDispatchPinForIntentV1(
+                        dispatch_pin,
+                        dispatch_intent,
+                    );
                     if (!bankPermitForDispatchPinValid(
                         dispatch_bank_permit,
                         dispatch_pin,
@@ -1748,6 +2019,35 @@ pub const CoordinatorV1 = struct {
                         return Error.InvalidTransition;
                     try self.bank.validateLeasePin(
                         dispatch_bank_permit,
+                    );
+                },
+                .settlement_pending => {
+                    const dispatch_intent = dispatch.intent orelse
+                        return Error.InvalidTransition;
+                    const dispatch_pin = dispatch.pin orelse
+                        return Error.InvalidTransition;
+                    const dispatch_terminal =
+                        dispatch.terminal orelse
+                        return Error.InvalidTransition;
+                    const dispatch_completion =
+                        dispatch.completion orelse
+                        return Error.InvalidTransition;
+                    const dispatch_bank_permit =
+                        dispatch.bank_permit orelse
+                        return Error.InvalidTransition;
+                    const dispatch_bank_completion =
+                        dispatch.bank_completion orelse
+                        return Error.InvalidTransition;
+                    try validateDispatchPinForIntentV1(
+                        dispatch_pin,
+                        dispatch_intent,
+                    );
+                    try validateDispatchSettlementForPinV1(
+                        dispatch_completion,
+                        dispatch_pin,
+                        dispatch_terminal,
+                        dispatch_bank_permit,
+                        dispatch_bank_completion,
                     );
                 },
             }
@@ -2350,11 +2650,10 @@ pub const CoordinatorV1 = struct {
 
     fn activeDispatchCount(self: *const CoordinatorV1) usize {
         var count: usize = 0;
-        for (self.dispatches) |dispatch| {
-            if (dispatch.state == .pinned) {
-                count += 1;
-            }
-        }
+        for (self.dispatches) |dispatch| switch (dispatch.state) {
+            .free => {},
+            .pinned, .settlement_pending => count += 1,
+        };
         return count;
     }
 
@@ -2364,7 +2663,7 @@ pub const CoordinatorV1 = struct {
     ) ?usize {
         for (self.dispatches, 0..) |dispatch, index| {
             const dispatch_pin = dispatch.pin orelse continue;
-            if (dispatch.state == .pinned and
+            if (dispatch.state != .free and
                 dispatch.allocation_generation ==
                     pin.allocation_generation and
                 dispatch.dispatch_generation ==
@@ -2693,6 +2992,40 @@ fn makeLease(
         .materialized_bytes = object_set.total_allocated_bytes,
     };
     result.lease_sha256 = leaseRootV1(result);
+    return result;
+}
+
+fn makeDispatchPinIntent(
+    admission: LeaseTreeAllocationAdmissionV1,
+    lease: LeaseTreeDeviceAllocationLeaseV1,
+    scope: resource.LeaseNodeV1,
+    adapter: DispatchAdapterV1,
+    dispatch_generation: u64,
+    dispatch_request_sha256: Digest,
+    publication_binding_sha256: Digest,
+) DispatchPinIntentV1 {
+    var result: DispatchPinIntentV1 = .{
+        .coordinator_epoch = admission.coordinator_epoch,
+        .allocation_generation = admission.generation,
+        .dispatch_generation = dispatch_generation,
+        .allocation_count = lease.allocation_count,
+        .pinned_device_bytes = lease.materialized_bytes,
+        .authority_sha256 = admission.authority_sha256,
+        .dispatch_authority_sha256 = adapter.dispatch_authority_sha256,
+        .queue_authority_sha256 = adapter.queue_authority_sha256,
+        .request_sha256 = admission.request_sha256,
+        .admission_sha256 = admission.admission_sha256,
+        .lease_sha256 = lease.lease_sha256,
+        .parent_receipt_sha256 = admission.parent_receipt_sha256,
+        .allocation_leaf_set_sha256 = admission.allocation_leaf_set_sha256,
+        .backend_object_set_sha256 = lease.backend_object_set_sha256,
+        .scope_sha256 = leaseNodeSha256V1(scope),
+        .dispatch_request_sha256 = dispatch_request_sha256,
+        .publication_binding_sha256 = publication_binding_sha256,
+    };
+    result.intent_sha256 = dispatchPinIntentRootV1(result);
+    validateDispatchPinIntentV1(result) catch
+        @panic("constructed invalid dispatch pin intent");
     return result;
 }
 
@@ -3150,6 +3483,110 @@ pub fn dispatchTerminalRootV1(
     return finish(&hash);
 }
 
+pub fn validateDispatchPinIntentV1(
+    intent: DispatchPinIntentV1,
+) Error!void {
+    if (intent.abi_version != dispatch_pin_intent_abi or
+        intent.coordinator_epoch == 0 or
+        intent.allocation_generation == 0 or
+        intent.dispatch_generation == 0 or
+        intent.allocation_count == 0 or
+        intent.allocation_count > allocation.maximum_allocations or
+        intent.pinned_device_bytes < intent.allocation_count or
+        digestIsZero(intent.authority_sha256) or
+        digestIsZero(intent.dispatch_authority_sha256) or
+        digestIsZero(intent.queue_authority_sha256) or
+        digestEqual(
+            intent.dispatch_authority_sha256,
+            intent.queue_authority_sha256,
+        ) or digestIsZero(intent.request_sha256) or
+        digestIsZero(intent.admission_sha256) or
+        digestIsZero(intent.lease_sha256) or
+        digestIsZero(intent.parent_receipt_sha256) or
+        digestIsZero(intent.allocation_leaf_set_sha256) or
+        digestIsZero(intent.backend_object_set_sha256) or
+        digestIsZero(intent.scope_sha256) or
+        digestIsZero(intent.dispatch_request_sha256) or
+        digestIsZero(intent.publication_binding_sha256) or
+        digestIsZero(intent.intent_sha256) or
+        !digestEqual(
+            intent.intent_sha256,
+            dispatchPinIntentRootV1(intent),
+        ))
+        return Error.InvalidDispatchPin;
+}
+
+pub fn dispatchPinIntentRootV1(
+    intent: DispatchPinIntentV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(dispatch_pin_intent_domain);
+    hashU64(&hash, intent.abi_version);
+    hashU64(&hash, intent.coordinator_epoch);
+    hashU64(&hash, intent.allocation_generation);
+    hashU64(&hash, intent.dispatch_generation);
+    hashU64(&hash, intent.allocation_count);
+    hashU64(&hash, intent.pinned_device_bytes);
+    hash.update(&intent.authority_sha256);
+    hash.update(&intent.dispatch_authority_sha256);
+    hash.update(&intent.queue_authority_sha256);
+    hash.update(&intent.request_sha256);
+    hash.update(&intent.admission_sha256);
+    hash.update(&intent.lease_sha256);
+    hash.update(&intent.parent_receipt_sha256);
+    hash.update(&intent.allocation_leaf_set_sha256);
+    hash.update(&intent.backend_object_set_sha256);
+    hash.update(&intent.scope_sha256);
+    hash.update(&intent.dispatch_request_sha256);
+    hash.update(&intent.publication_binding_sha256);
+    return finish(&hash);
+}
+
+pub fn validateDispatchPinForIntentV1(
+    pin: LeaseTreeDispatchPinV1,
+    intent: DispatchPinIntentV1,
+) Error!void {
+    try validateDispatchPinV1(pin);
+    try validateDispatchPinIntentV1(intent);
+    if (pin.coordinator_epoch != intent.coordinator_epoch or
+        pin.allocation_generation != intent.allocation_generation or
+        pin.dispatch_generation != intent.dispatch_generation or
+        pin.allocation_count != intent.allocation_count or
+        pin.pinned_device_bytes != intent.pinned_device_bytes or
+        !digestEqual(pin.authority_sha256, intent.authority_sha256) or
+        !digestEqual(
+            pin.dispatch_authority_sha256,
+            intent.dispatch_authority_sha256,
+        ) or !digestEqual(
+        pin.queue_authority_sha256,
+        intent.queue_authority_sha256,
+    ) or !digestEqual(pin.request_sha256, intent.request_sha256) or
+        !digestEqual(
+            pin.admission_sha256,
+            intent.admission_sha256,
+        ) or !digestEqual(pin.lease_sha256, intent.lease_sha256) or
+        !digestEqual(
+            pin.parent_receipt_sha256,
+            intent.parent_receipt_sha256,
+        ) or !digestEqual(
+        pin.allocation_leaf_set_sha256,
+        intent.allocation_leaf_set_sha256,
+    ) or !digestEqual(
+        pin.backend_object_set_sha256,
+        intent.backend_object_set_sha256,
+    ) or !digestEqual(
+        leaseNodeSha256V1(pin.scope),
+        intent.scope_sha256,
+    ) or !digestEqual(
+        pin.dispatch_request_sha256,
+        intent.dispatch_request_sha256,
+    ) or !digestEqual(
+        pin.publication_binding_sha256,
+        intent.publication_binding_sha256,
+    ))
+        return Error.InvalidDispatchPin;
+}
+
 pub fn validateDispatchPinV1(
     pin: LeaseTreeDispatchPinV1,
 ) Error!void {
@@ -3343,6 +3780,38 @@ pub fn validateDispatchCompletionForPinV1(
             pin.pinned_tree.ceiling,
         ) or completion.completed_tree.active_nodes <
         pin.allocation_count + 1)
+        return Error.InvalidDispatchCompletion;
+}
+
+/// Bind a public dispatch completion to the exact coordinator-private Bank
+/// permit consumed for this pin. Static completion hashes alone are
+/// composition evidence; adapter settlement authority additionally requires
+/// this permit and its exact Bank-produced completion.
+pub fn validateDispatchSettlementForPinV1(
+    completion: LeaseTreeDispatchCompletionV1,
+    pin: LeaseTreeDispatchPinV1,
+    terminal: DispatchTerminalEvidenceV1,
+    bank_permit: resource.LeasePinPermitV1,
+    bank_completion: resource.LeasePinCompletionV1,
+) Error!void {
+    try validateDispatchCompletionForPinV1(
+        completion,
+        pin,
+        terminal,
+    );
+    const released: resource.LeasePinReleasedV1 = .{
+        .tree = completion.completed_tree,
+        .completion = bank_completion,
+    };
+    if (!bankPermitForDispatchPinValid(bank_permit, pin) or
+        !bankCompletionBindingValid(
+            released,
+            pin,
+            bank_permit,
+        ) or !digestEqual(
+        completion.bank_completion_sha256,
+        leasePinCompletionSha256V1(bank_completion),
+    ))
         return Error.InvalidDispatchCompletion;
 }
 
@@ -3789,15 +4258,32 @@ fn validateBoundDispatchAdapter(
     try validateDispatchAdapterV1(adapter);
     const context = slot.adapter_context orelse
         return Error.InvalidDispatchAdapter;
+    const reserve_dispatch_intent_fn =
+        slot.adapter_reserve_dispatch_intent_fn orelse
+        return Error.InvalidDispatchAdapter;
+    const abort_dispatch_intent_fn =
+        slot.adapter_abort_dispatch_intent_fn orelse
+        return Error.InvalidDispatchAdapter;
     const validate_terminal_fn =
         slot.adapter_validate_terminal_fn orelse
         return Error.InvalidDispatchAdapter;
+    const confirm_settlement_fn =
+        slot.adapter_confirm_settlement_fn orelse
+        return Error.InvalidDispatchAdapter;
     const pin = slot.pin orelse
         return Error.InvalidDispatchAdapter;
-    if (slot.state != .pinned or
+    const intent = slot.intent orelse
+        return Error.InvalidDispatchAdapter;
+    if (slot.state == .free or
         adapter.context != context or
+        @intFromPtr(adapter.reserve_dispatch_intent_fn) !=
+            @intFromPtr(reserve_dispatch_intent_fn) or
+        @intFromPtr(adapter.abort_dispatch_intent_fn) !=
+            @intFromPtr(abort_dispatch_intent_fn) or
         @intFromPtr(adapter.validate_terminal_fn) !=
             @intFromPtr(validate_terminal_fn) or
+        @intFromPtr(adapter.confirm_settlement_fn) !=
+            @intFromPtr(confirm_settlement_fn) or
         !digestEqual(
             adapter.dispatch_authority_sha256,
             pin.dispatch_authority_sha256,
@@ -3806,6 +4292,7 @@ fn validateBoundDispatchAdapter(
         pin.queue_authority_sha256,
     ))
         return Error.InvalidDispatchAdapter;
+    try validateDispatchPinForIntentV1(pin, intent);
 }
 
 fn dispatchSlotCanonicalFree(
@@ -4320,10 +4807,16 @@ const TestDispatchAdapter = struct {
     dispatch_authority_sha256: Digest = zero_digest,
     queue_authority_sha256: Digest = zero_digest,
     expected_terminal_sha256: Digest = zero_digest,
+    reject_intent: bool = false,
     reject_terminal: bool = false,
+    reject_settlement: bool = false,
+    intent_reserve_count: u64 = 0,
+    intent_abort_count: u64 = 0,
     callback_count: u64 = 0,
+    settlement_callback_count: u64 = 0,
     coordinator_to_drift: ?*CoordinatorV1 = null,
     drift_bank: ?*resource.Bank = null,
+    abort_drift_bank: ?*resource.Bank = null,
 
     fn interface(self: *@This()) DispatchAdapterV1 {
         return .{
@@ -4336,12 +4829,44 @@ const TestDispatchAdapter = struct {
                 testDigest("test dispatch queue authority")
             else
                 self.queue_authority_sha256,
+            .reserve_dispatch_intent_fn = reserveDispatchIntent,
+            .abort_dispatch_intent_fn = abortDispatchIntent,
             .validate_terminal_fn = validateTerminal,
+            .confirm_settlement_fn = confirmSettlement,
         };
     }
 
     fn expect(self: *@This(), terminal: DispatchTerminalEvidenceV1) void {
         self.expected_terminal_sha256 = terminal.terminal_sha256;
+    }
+
+    fn reserveDispatchIntent(
+        context: *anyopaque,
+        intent: DispatchPinIntentV1,
+    ) DispatchCallbackError!void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        self.intent_reserve_count += 1;
+        if (self.coordinator_to_drift) |coordinator| {
+            if (self.drift_bank) |bank| coordinator.bank = bank;
+        }
+        validateDispatchPinIntentV1(intent) catch
+            return DispatchCallbackError.InvalidDispatchIntent;
+        if (self.reject_intent)
+            return DispatchCallbackError.InvalidDispatchIntent;
+    }
+
+    fn abortDispatchIntent(
+        context: *anyopaque,
+        intent: DispatchPinIntentV1,
+    ) DispatchCallbackError!void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        self.intent_abort_count += 1;
+        if (self.coordinator_to_drift) |coordinator| {
+            if (self.abort_drift_bank) |bank|
+                coordinator.bank = bank;
+        }
+        validateDispatchPinIntentV1(intent) catch
+            return DispatchCallbackError.InvalidDispatchIntent;
     }
 
     fn validateTerminal(
@@ -4360,6 +4885,33 @@ const TestDispatchAdapter = struct {
                 self.expected_terminal_sha256,
             ))
             return DispatchCallbackError.InvalidTerminalEvidence;
+    }
+
+    fn confirmSettlement(
+        context: *anyopaque,
+        pin: LeaseTreeDispatchPinV1,
+        terminal: DispatchTerminalEvidenceV1,
+        completion: LeaseTreeDispatchCompletionV1,
+        bank_permit: resource.LeasePinPermitV1,
+        bank_completion: resource.LeasePinCompletionV1,
+    ) DispatchCallbackError!void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        self.settlement_callback_count += 1;
+        if (self.reject_settlement)
+            return DispatchCallbackError.InvalidSettlementEvidence;
+        validateDispatchSettlementForPinV1(
+            completion,
+            pin,
+            terminal,
+            bank_permit,
+            bank_completion,
+        ) catch return DispatchCallbackError.InvalidSettlementEvidence;
+        if (digestIsZero(self.expected_terminal_sha256) or
+            !digestEqual(
+                terminal.terminal_sha256,
+                self.expected_terminal_sha256,
+            ))
+            return DispatchCallbackError.InvalidSettlementEvidence;
     }
 };
 
@@ -4873,9 +5425,14 @@ fn expectGoldenDigest(
     encoded: []const u8,
     actual: Digest,
 ) !void {
-    var expected: Digest = undefined;
-    _ = try std.fmt.hexToBytes(&expected, encoded);
+    const expected = try testDigestFromHex(encoded);
     try std.testing.expectEqualDeep(expected, actual);
+}
+
+fn testDigestFromHex(encoded: []const u8) !Digest {
+    var result: Digest = undefined;
+    _ = try std.fmt.hexToBytes(&result, encoded);
+    return result;
 }
 
 test "LeaseTree device allocation charges materializes and releases exact wave" {
@@ -6736,6 +7293,60 @@ test "LeaseTree coordinator rejects receipt-funded ownership at init" {
     try bank.release(parent);
 }
 
+test "LeaseTree dispatch pin intent literal root matches the independent oracle" {
+    var intent: DispatchPinIntentV1 = .{
+        .abi_version = dispatch_pin_intent_abi,
+        .coordinator_epoch = 4_850_182_538_452_880_961,
+        .allocation_generation = 2,
+        .dispatch_generation = 1,
+        .allocation_count = 4,
+        .pinned_device_bytes = 8_192,
+        .authority_sha256 = try testDigestFromHex(
+            "9cb59d992fd5e0ada234f70f8113c1978ca576988144a62c1ccf554c1622820c",
+        ),
+        .dispatch_authority_sha256 = try testDigestFromHex(
+            "7c133b20a126f5c514dfca1284e7bcebd0799adaaeb650d5c19a4d34b92124e6",
+        ),
+        .queue_authority_sha256 = try testDigestFromHex(
+            "e795945fda0ec7122ae67609a1bd156ee628c79911b077d7f687c6818590b8eb",
+        ),
+        .request_sha256 = try testDigestFromHex(
+            "ade7fd932b2d2a3f827b0d3368735f38f65c207dcce035d637669a4a3d72f229",
+        ),
+        .admission_sha256 = try testDigestFromHex(
+            "c12e7846d353e09d42af842ed923b216c468d56eebe8ea0965caca50b45d7414",
+        ),
+        .lease_sha256 = try testDigestFromHex(
+            "3e2f35f71ccda404a2f6d9ebd18a1c7ffa0e88c2deccbcabd0e7557711b2211b",
+        ),
+        .parent_receipt_sha256 = try testDigestFromHex(
+            "2bb3c84cccbab6fd65e803e2dd645b3b825e8f433562ed8767c29dd7f8dd73b0",
+        ),
+        .allocation_leaf_set_sha256 = try testDigestFromHex(
+            "c8716b822035b0fa4c0716719b930c919018b5b72a526fc6f06c75184ddc42d4",
+        ),
+        .backend_object_set_sha256 = try testDigestFromHex(
+            "6c658fa780e2e01102b38508bd2aa4b6f9218450eb6c9f5317a0a58a9ffe7418",
+        ),
+        .scope_sha256 = try testDigestFromHex(
+            "50430f53e717d1c2412b27d10c27142c7599627a5d1837a7d0c9bb5335a470e8",
+        ),
+        .dispatch_request_sha256 = try testDigestFromHex(
+            "f89175ddd5b07db24854c8432a650449a023c9445cedbc86a75459305b2e4486",
+        ),
+        .publication_binding_sha256 = try testDigestFromHex(
+            "1248e6c72b4450976473bff890f6e3eb4a0a5f4ffa42474e84b0d03072080b3f",
+        ),
+    };
+    intent.intent_sha256 = dispatchPinIntentRootV1(intent);
+
+    try expectGoldenDigest(
+        "0dcf9b07e0e30fbabf97b5efa7cb9975bba2198e7fdaf82e128d47c7fe93ebaa",
+        intent.intent_sha256,
+    );
+    try validateDispatchPinIntentV1(intent);
+}
+
 test "LeaseTree dispatch literal roots match the independent oracle" {
     var harness: TestHarness = .{};
     try harness.initDispatchOne();
@@ -6856,6 +7467,176 @@ test "LeaseTree dispatch literal roots match the independent oracle" {
     try harness.close();
 }
 
+test "LeaseTree adapter-authorized pre-submit rejection consumes exact pin" {
+    var harness: TestHarness = .{};
+    try harness.initDispatchOne();
+    const first_admission = try harness.admit();
+    _ = try harness.coordinator.cancelAdmission(
+        first_admission,
+    );
+    const admission = try harness.admit();
+    const materialized = try harness.coordinator.materialize(
+        admission,
+        harness.backend.adapter(),
+        .{},
+    );
+    const lease = switch (materialized) {
+        .active => |value| value,
+        else => return error.TestUnexpectedResult,
+    };
+    var dispatch: TestDispatchAdapter = .{
+        .dispatch_authority_sha256 = testDigest("LeaseTree dispatch authority"),
+        .queue_authority_sha256 = testDigest("LeaseTree queue authority"),
+    };
+    const pin = try harness.coordinator.acquireDispatchPin(
+        lease,
+        dispatch.interface(),
+        testDigest("LeaseTree dispatch request"),
+    );
+    try expectGoldenDigest(
+        "2d9b5c285f548afcc5d94c74c2cd8bb820ef9735a1b3023ac0f43b896ea93dcc",
+        pin.pin_sha256,
+    );
+    const permit =
+        harness.coordinator_dispatches[0].bank_permit.?;
+    const terminal = try makeDispatchTerminalV1(
+        pin,
+        .rejected_before_submit,
+        zero_digest,
+        zero_digest,
+        zero_digest,
+    );
+    try expectGoldenDigest(
+        "da4a5b8a14278caa357a85ebadd79766cca848f60b94924e857321a4a984612a",
+        terminal.terminal_sha256,
+    );
+
+    // Public hashes are composition evidence only. Until this exact adapter
+    // records the terminal, the callback rejects it and the Bank pin remains.
+    try std.testing.expectError(
+        Error.InvalidDispatchTerminal,
+        harness.coordinator.completeDispatchPin(
+            pin,
+            dispatch.interface(),
+            terminal,
+        ),
+    );
+    try harness.bank.validateLeasePin(permit);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try harness.coordinator.snapshot()).active_dispatches,
+    );
+
+    dispatch.expect(terminal);
+    dispatch.reject_settlement = true;
+    const pinned_tree_generation = harness.tree.generation;
+    const pinned_structural_revision =
+        harness.tree.structural_revision;
+    try std.testing.expectError(
+        Error.InvalidDispatchCompletion,
+        harness.coordinator.completeDispatchPin(
+            pin,
+            dispatch.interface(),
+            terminal,
+        ),
+    );
+    try std.testing.expectError(
+        resource.Error.StaleReservation,
+        harness.bank.validateLeasePin(permit),
+    );
+    try std.testing.expect(
+        harness.tree.generation > pinned_tree_generation,
+    );
+    try std.testing.expect(
+        harness.tree.structural_revision >
+            pinned_structural_revision,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try harness.coordinator.snapshot()).active_dispatches,
+    );
+    try std.testing.expectError(
+        Error.DispatchInFlight,
+        harness.coordinator.release(
+            lease,
+            harness.backend.adapter(),
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        dispatch.settlement_callback_count,
+    );
+    const terminal_callbacks_after_bank_release =
+        dispatch.callback_count;
+    dispatch.reject_settlement = false;
+    const completion =
+        try harness.coordinator.completeDispatchPin(
+            pin,
+            dispatch.interface(),
+            terminal,
+        );
+    try std.testing.expectEqual(
+        terminal_callbacks_after_bank_release,
+        dispatch.callback_count,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 2),
+        dispatch.settlement_callback_count,
+    );
+    try validateDispatchCompletionForPinV1(
+        completion,
+        pin,
+        terminal,
+    );
+    try expectGoldenDigest(
+        "cbfe82c46465013a683fd0306e592cb021fc75bad5c1a4c0849824f37b6a58af",
+        leaseTreeSha256V1(completion.completed_tree),
+    );
+    try expectGoldenDigest(
+        "c8db4b240da276a4574d5e1086a8174286a74510f7d60e07f8cb12a3f07f0cae",
+        completion.bank_completion_sha256,
+    );
+    try expectGoldenDigest(
+        "30426046c9fc16eb063430173119def8933e3d2a6c3cf43b58e5e237717d25de",
+        completion.completion_sha256,
+    );
+    try std.testing.expectEqual(
+        DispatchTerminalOutcomeV1.rejected_before_submit,
+        completion.outcome,
+    );
+    try std.testing.expect(digestIsZero(
+        completion.submission_sha256,
+    ));
+    try std.testing.expect(digestIsZero(
+        completion.backend_completion_sha256,
+    ));
+    try std.testing.expect(digestIsZero(
+        completion.output_sha256,
+    ));
+    try std.testing.expectEqual(
+        lease.materialized_bytes,
+        (try harness.bank.snapshotV3()).used.device_bytes,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        (try harness.coordinator.snapshot()).active_dispatches,
+    );
+    try std.testing.expectError(
+        Error.InvalidDispatchPin,
+        harness.coordinator.completeDispatchPin(
+            pin,
+            dispatch.interface(),
+            terminal,
+        ),
+    );
+
+    _ = try harness.coordinator.release(
+        lease,
+        harness.backend.adapter(),
+    );
+    try harness.close();
+}
+
 test "LeaseTree dispatch pins fence release and complete out of order" {
     var harness: TestHarness = .{};
     try harness.initDispatch();
@@ -6867,6 +7648,19 @@ test "LeaseTree dispatch pins fence release and complete out of order" {
         testDigest("first dispatch request"),
     );
     try validateDispatchPinV1(first);
+    const tree_before_duplicate_request = harness.tree;
+    try std.testing.expectError(
+        Error.InvalidDispatchPin,
+        harness.coordinator.acquireDispatchPin(
+            lease,
+            dispatch.interface(),
+            first.dispatch_request_sha256,
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        tree_before_duplicate_request,
+        harness.tree,
+    );
 
     var coordinator_snapshot = try harness.coordinator.snapshot();
     try std.testing.expectEqual(
@@ -7051,12 +7845,136 @@ test "LeaseTree dispatch pins fence release and complete out of order" {
     try harness.close();
 }
 
+test "LeaseTree dispatch abort callback fences post-reserve source drift" {
+    var harness: TestHarness = .{};
+    try harness.initDispatch();
+    const lease = try materializeTestLease(&harness);
+
+    var reserve_fault_slots = [_]resource.Slot{.{}};
+    var reserve_fault_bank = try resource.Bank.init(
+        &reserve_fault_slots,
+        .{},
+        0x5253_565f_4452_4946,
+    );
+    var abort_fault_slots = [_]resource.Slot{.{}};
+    var abort_fault_bank = try resource.Bank.init(
+        &abort_fault_slots,
+        .{},
+        0x4142_545f_4452_4946,
+    );
+    var dispatch: TestDispatchAdapter = .{
+        .coordinator_to_drift = &harness.coordinator,
+        .drift_bank = &reserve_fault_bank,
+        .abort_drift_bank = &abort_fault_bank,
+    };
+    const tree_before = harness.tree;
+    const bank_before = try harness.bank.snapshotV3();
+
+    try std.testing.expectError(
+        Error.InvalidCoordinator,
+        harness.coordinator.acquireDispatchPin(
+            lease,
+            dispatch.interface(),
+            testDigest("post-reserve source drift"),
+        ),
+    );
+    try std.testing.expectEqualDeep(tree_before, harness.tree);
+    try std.testing.expectEqualDeep(
+        bank_before,
+        try harness.bank.snapshotV3(),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        dispatch.intent_reserve_count,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        dispatch.intent_abort_count,
+    );
+    try std.testing.expectEqual(
+        @as(*resource.Bank, &abort_fault_bank),
+        harness.coordinator.bank,
+    );
+
+    harness.coordinator.bank = &harness.bank;
+    const coordinator_snapshot =
+        try harness.coordinator.snapshot();
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        coordinator_snapshot.active_dispatches,
+    );
+    _ = try harness.coordinator.release(
+        lease,
+        harness.backend.adapter(),
+    );
+    try harness.close();
+}
+
+test "LeaseTree dispatch abort callback fences atomic Bank acquire failure" {
+    var harness: TestHarness = .{};
+    try harness.initDispatchWithoutBankPins();
+    const lease = try materializeTestLease(&harness);
+
+    var abort_fault_slots = [_]resource.Slot{.{}};
+    var abort_fault_bank = try resource.Bank.init(
+        &abort_fault_slots,
+        .{},
+        0x4142_545f_4241_4e4b,
+    );
+    var dispatch: TestDispatchAdapter = .{
+        .coordinator_to_drift = &harness.coordinator,
+        .abort_drift_bank = &abort_fault_bank,
+    };
+    const tree_before = harness.tree;
+    const bank_before = try harness.bank.snapshotV3();
+
+    try std.testing.expectError(
+        Error.InvalidCoordinator,
+        harness.coordinator.acquireDispatchPin(
+            lease,
+            dispatch.interface(),
+            testDigest("atomic Bank acquire failure"),
+        ),
+    );
+    try std.testing.expectEqualDeep(tree_before, harness.tree);
+    try std.testing.expectEqualDeep(
+        bank_before,
+        try harness.bank.snapshotV3(),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        dispatch.intent_reserve_count,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        dispatch.intent_abort_count,
+    );
+    try std.testing.expectEqual(
+        @as(*resource.Bank, &abort_fault_bank),
+        harness.coordinator.bank,
+    );
+
+    harness.coordinator.bank = &harness.bank;
+    const coordinator_snapshot =
+        try harness.coordinator.snapshot();
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        coordinator_snapshot.active_dispatches,
+    );
+    _ = try harness.coordinator.release(
+        lease,
+        harness.backend.adapter(),
+    );
+    try harness.close();
+}
+
 test "LeaseTree dispatch pin rejects missing authority tamper and callback drift" {
     var no_pins: TestHarness = .{};
     try no_pins.initDispatchWithoutBankPins();
     const no_pins_lease = try materializeTestLease(&no_pins);
     var no_pins_dispatch: TestDispatchAdapter = .{};
     const no_pins_tree = no_pins.tree;
+    const no_pins_bank = try no_pins.bank.snapshotV3();
     try std.testing.expectError(
         resource.Error.InvalidConfiguration,
         no_pins.coordinator.acquireDispatchPin(
@@ -7066,10 +7984,22 @@ test "LeaseTree dispatch pin rejects missing authority tamper and callback drift
         ),
     );
     try std.testing.expectEqualDeep(no_pins_tree, no_pins.tree);
+    try std.testing.expectEqualDeep(
+        no_pins_bank,
+        try no_pins.bank.snapshotV3(),
+    );
     const no_pins_snapshot = try no_pins.coordinator.snapshot();
     try std.testing.expectEqual(
         @as(usize, 0),
         no_pins_snapshot.active_dispatches,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        no_pins_dispatch.intent_reserve_count,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        no_pins_dispatch.intent_abort_count,
     );
     _ = try no_pins.coordinator.release(
         no_pins_lease,
@@ -7081,10 +8011,58 @@ test "LeaseTree dispatch pin rejects missing authority tamper and callback drift
     try harness.initDispatch();
     const lease = try materializeTestLease(&harness);
     var dispatch: TestDispatchAdapter = .{};
+    var fault_slots = [_]resource.Slot{.{}};
+    var fault_bank = try resource.Bank.init(
+        &fault_slots,
+        .{},
+        0x4452_4946_5442_414e,
+    );
+    dispatch.reject_intent = true;
+    dispatch.coordinator_to_drift = &harness.coordinator;
+    dispatch.drift_bank = &fault_bank;
+    const tree_before_rejected_intent = harness.tree;
+    try std.testing.expectError(
+        Error.InvalidCoordinator,
+        harness.coordinator.acquireDispatchPin(
+            lease,
+            dispatch.interface(),
+            testDigest("rejected dispatch intent"),
+        ),
+    );
+    try std.testing.expectEqualDeep(
+        tree_before_rejected_intent,
+        harness.tree,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        dispatch.intent_reserve_count,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        dispatch.intent_abort_count,
+    );
+    harness.coordinator.bank = &harness.bank;
+    dispatch.coordinator_to_drift = null;
+    dispatch.drift_bank = null;
+    dispatch.reject_intent = false;
     const pin = try harness.coordinator.acquireDispatchPin(
         lease,
         dispatch.interface(),
         testDigest("adversarial dispatch request"),
+    );
+    const intent = harness.coordinator_dispatches[0].intent.?;
+    try validateDispatchPinForIntentV1(pin, intent);
+    var substituted_intent = intent;
+    substituted_intent.dispatch_generation += 1;
+    substituted_intent.intent_sha256 =
+        dispatchPinIntentRootV1(substituted_intent);
+    try validateDispatchPinIntentV1(substituted_intent);
+    try std.testing.expectError(
+        Error.InvalidDispatchPin,
+        validateDispatchPinForIntentV1(
+            pin,
+            substituted_intent,
+        ),
     );
     const terminal = try makeDispatchTerminalV1(
         pin,
@@ -7116,12 +8094,6 @@ test "LeaseTree dispatch pin rejects missing authority tamper and callback drift
         ),
     );
 
-    var fault_slots = [_]resource.Slot{.{}};
-    var fault_bank = try resource.Bank.init(
-        &fault_slots,
-        .{},
-        0x4452_4946_5442_414e,
-    );
     dispatch.coordinator_to_drift = &harness.coordinator;
     dispatch.drift_bank = &fault_bank;
     try std.testing.expectError(

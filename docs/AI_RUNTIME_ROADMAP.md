@@ -154,8 +154,21 @@ adapter-quoted waves before allocation, retains private FreePermit recovery,
 and can pin the exact live object set across a bounded dispatch. One native
 Metal gate creates four real buffers, submits only those pinned resources,
 checks output against a CPU oracle, and releases them only after terminal
-completion. Physical residency, device-loss recovery, and production weight
-paging remain planned.
+completion. For the bounded INT4 profile, the adapter issues a
+generation-fenced `MetalMatvecDispatchRequestV1`; that sealed request root,
+never the raw attempt root, is the pin's dispatch-request root. Core seals
+`DispatchPinIntentV1`, calls reserve before Bank mutation, aborts exactly if
+atomic pin acquisition fails, and validates the callback source before binding
+the lease, request, intent, and pin. Valid preflight either submits or settles
+the pure `cancelled_before_submit` path; malformed attempts settle exact
+`rejected_before_submit`. Both no-submit terminals use zero submission,
+backend-completion, and output roots and the same private settlement path.
+Core consumes its private Bank pin, then the private callback atomically clears
+adapter state and records a replay tombstone. Public
+`acknowledgeDispatchCompletion` only verifies compatibility; it grants no
+authority and clears no state. Physical residency, device-loss
+quarantine/recovery, asynchronous queue scheduling, production weight paging,
+and additional GPU backends and native OS matrices remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
 cancellation returns the declared delta, and measured physical counters are
@@ -486,10 +499,21 @@ replay, exact adapter-quoted charge-before-allocate ordering, multi-buffer rollb
 cleanup recovery, and stale ownership fencing. Its native Metal adapter
 creates and directly inspects real per-object resources, releases them before
 uncharge, and proves generation-fenced slot reuse on the executing host. It
-does not claim residency. LeaseTree composition, optional post-creation
-`MTLResource.allocatedSize`-based settlement, physical residency, device-loss
-recovery, multi-device scheduling, direct CPU/device telemetry, native
-multi-platform campaigns, and performance evidence stay open.
+does not claim residency. The LeaseTree path binds each pin to the
+adapter-issued, generation-fenced `MetalMatvecDispatchRequestV1` root through a
+core-sealed `DispatchPinIntentV1`. Core reserves before Bank mutation and
+aborts exactly on atomic acquisition failure. Callback/source validation
+precedes the exact lease/request/intent/pin binding. Valid preflight can submit
+or produce pure `cancelled_before_submit`; malformed input can produce exact
+`rejected_before_submit`. Both no-submit terminals carry zero submission,
+backend-completion, and output roots and use the same settlement: core consumes
+the private Bank pin, then a private callback atomically clears adapter state
+and records a replay tombstone. Public `acknowledgeDispatchCompletion` is
+compatibility verification only. Rejection may inspect the native device and
+resources but creates and submits no command buffer; cancellation is
+native-free after the sealed binding. Asynchronous queue scheduling,
+device-loss quarantine/recovery, physical residency and device telemetry,
+additional GPU backends, and broader native OS/device matrices stay open.
 Contract validation requires a present logical CPU count of at least one and
 accepts signed physical temperatures down to, but never below, absolute zero.
 
@@ -577,7 +601,14 @@ reporting:
    frequency, and energy remain unsupported. A separate native allocation gate
    performs one four-buffer hardware-backed dispatch while an exact LeaseTree
    pin fences release, then compares output with a CPU oracle and closes all
-   ownership. Neither native gate is a performance benchmark. See
+   ownership. Portable Zig fake/state tests and the independent Python oracle
+   model this deterministic contract without a GPU. The native macOS Metal gate
+   uses a real `MTLDevice` and real `MTLBuffer` resources: its valid branch
+   submits a real command, waits, and checks a CPU oracle. Its reject and cancel
+   branches retain real context/resources but issue zero GPU commands;
+   rejection may inspect them, while cancellation logic remains native-free
+   after the sealed lease/request/intent/pin binding. Neither native gate is a
+   performance benchmark. See
    [Native Observation Contract](NATIVE_OBSERVATION.md).
 
    **W5b readiness progress — implemented, milestone open.** A successful

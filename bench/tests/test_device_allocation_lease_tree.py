@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
 import unittest
 
 from bench import device_allocation_lease as allocation
@@ -886,6 +886,795 @@ class DeviceAllocationLeaseTreeOracleTests(unittest.TestCase):
             ),
         }
         self.assertEqual(expected, actual)
+
+    def test_rejected_before_submit_goldens_release_exact_pin(
+        self,
+    ) -> None:
+        campaign = (
+            tree.make_rejected_before_submit_dispatch_campaign()
+        )
+        actual = {
+            "pin_sha256": campaign.pin.pin_sha256.hex(),
+            "terminal_sha256": campaign.terminal.terminal_sha256.hex(),
+            "bank_completion_sha256": (
+                tree.lease_pin_completion_sha256_v1(
+                    campaign.bank_completion
+                ).hex()
+            ),
+            "completed_tree_sha256": tree.lease_tree_sha256_v1(
+                campaign.completed_tree
+            ).hex(),
+            "completion_sha256": (
+                campaign.completion.completion_sha256.hex()
+            ),
+        }
+        expected = {
+            "pin_sha256": (
+                "2d9b5c285f548afcc5d94c74c2cd8bb8"
+                "20ef9735a1b3023ac0f43b896ea93dcc"
+            ),
+            "terminal_sha256": (
+                "da4a5b8a14278caa357a85ebadd79766"
+                "cca848f60b94924e857321a4a984612a"
+            ),
+            "bank_completion_sha256": (
+                "c8db4b240da276a4574d5e1086a81742"
+                "86a74510f7d60e07f8cb12a3f07f0cae"
+            ),
+            "completed_tree_sha256": (
+                "cbfe82c46465013a683fd0306e592cb0"
+                "21fc75bad5c1a4c0849824f37b6a58af"
+            ),
+            "completion_sha256": (
+                "30426046c9fc16eb063430173119def8"
+                "933e3d2a6c3cf43b58e5e237717d25de"
+            ),
+        }
+        self.assertEqual(expected, actual)
+        self.assertEqual(
+            tree.DISPATCH_REJECTED_BEFORE_SUBMIT,
+            campaign.terminal.outcome,
+        )
+        self.assertEqual(
+            (
+                tree.ZERO_DIGEST,
+                tree.ZERO_DIGEST,
+                tree.ZERO_DIGEST,
+            ),
+            (
+                campaign.terminal.submission_sha256,
+                campaign.terminal.backend_completion_sha256,
+                campaign.terminal.output_sha256,
+            ),
+        )
+        tree.validate_rejected_before_submit_terminal_for_pin_v1(
+            campaign.terminal,
+            campaign.pin,
+        )
+        tree.validate_dispatch_completion_for_bank_v1(
+            campaign.completion,
+            campaign.pin,
+            campaign.terminal,
+            campaign.permit,
+            campaign.bank_completion,
+        )
+        self.assertEqual(self.dispatch.pin, campaign.pin)
+        self.assertEqual(
+            self.dispatch.bank_completion,
+            campaign.bank_completion,
+        )
+        self.assertEqual(
+            self.dispatch.completed_tree,
+            campaign.completed_tree,
+        )
+        self.assertTrue(campaign.pin_slot.active)
+        self.assertEqual(
+            campaign.pinned_tree.current,
+            campaign.completed_tree.current,
+        )
+        self.assertEqual(
+            campaign.pinned_tree.active_nodes,
+            campaign.completed_tree.active_nodes,
+        )
+        self.assertNotEqual(
+            campaign.pinned_tree.state_digest,
+            campaign.completed_tree.state_digest,
+        )
+
+    def test_metal_pre_submit_evidence_has_fixed_independent_goldens(
+        self,
+    ) -> None:
+        campaign = (
+            tree.make_metal_matvec_pre_submit_rejection_campaign()
+        )
+        actual = {
+            "attempt_sha256": campaign.attempt.attempt_sha256.hex(),
+            "request_sha256": campaign.request.request_sha256.hex(),
+            "intent_sha256": campaign.intent.intent_sha256.hex(),
+            "pin_sha256": campaign.pin.pin_sha256.hex(),
+            "terminal_sha256": campaign.terminal.terminal_sha256.hex(),
+            "rejection_sha256": (
+                campaign.rejection.rejection_sha256.hex()
+            ),
+        }
+        expected = {
+            "attempt_sha256": (
+                "b79371a76c12ca08d58980f5913fe33d"
+                "da2aaca41e801d8a473b941a5b04e2cb"
+            ),
+            "request_sha256": (
+                "f89175ddd5b07db24854c8432a650449"
+                "a023c9445cedbc86a75459305b2e4486"
+            ),
+            "intent_sha256": (
+                "0dcf9b07e0e30fbabf97b5efa7cb9975"
+                "bba2198e7fdaf82e128d47c7fe93ebaa"
+            ),
+            "pin_sha256": (
+                "d8a9faa9bced09e52d1867afee4e2f26"
+                "98d38d9dce277bd11aab403a9289f93c"
+            ),
+            "terminal_sha256": (
+                "a646ea614bd10b279e1f921440517633b"
+                "200e959536f7d685f97310f6f099a6d"
+            ),
+            "rejection_sha256": (
+                "64b4f359d932f74f3dc6e6cd3819b7e"
+                "7d6d6fbc784f4a6ddef128268372b0f5c"
+            ),
+        }
+        self.assertEqual(expected, actual)
+        self.assertEqual(
+            tree.METAL_INVALID_ROLE_MAPPING,
+            campaign.rejection.reason,
+        )
+        self.assertEqual(
+            campaign.attempt,
+            campaign.request.attempt,
+        )
+        self.assertEqual(
+            campaign.request.request_sha256,
+            campaign.pin.dispatch_request_sha256,
+        )
+        self.assertEqual(
+            campaign.request.request_sha256,
+            campaign.intent.dispatch_request_sha256,
+        )
+        self.assertEqual(
+            (
+                tree.ZERO_DIGEST,
+                tree.ZERO_DIGEST,
+                tree.ZERO_DIGEST,
+            ),
+            (
+                campaign.terminal.submission_sha256,
+                campaign.terminal.backend_completion_sha256,
+                campaign.terminal.output_sha256,
+            ),
+        )
+        tree.validate_metal_matvec_pre_submit_attempt_v1(
+            campaign.attempt
+        )
+        tree.validate_metal_matvec_dispatch_request_v1(
+            campaign.request
+        )
+        tree.validate_dispatch_pin_for_intent_v1(
+            campaign.pin,
+            campaign.intent,
+        )
+        tree.validate_metal_matvec_pre_submit_rejection_for_pin_v1(
+            campaign.rejection,
+            campaign.pin,
+            campaign.terminal,
+        )
+
+    def test_metal_pre_submit_schema_field_order_is_explicit(
+        self,
+    ) -> None:
+        self.assertEqual(
+            (
+                "abi_version",
+                "coordinator_epoch",
+                "allocation_generation",
+                "dispatch_generation",
+                "allocation_count",
+                "pinned_device_bytes",
+                "authority_sha256",
+                "dispatch_authority_sha256",
+                "queue_authority_sha256",
+                "request_sha256",
+                "admission_sha256",
+                "lease_sha256",
+                "parent_receipt_sha256",
+                "allocation_leaf_set_sha256",
+                "backend_object_set_sha256",
+                "scope_sha256",
+                "dispatch_request_sha256",
+                "publication_binding_sha256",
+                "intent_sha256",
+            ),
+            tuple(
+                field.name
+                for field in fields(tree.DispatchPinIntentV1)
+            ),
+        )
+        self.assertEqual(
+            (
+                "abi_version",
+                "group_size",
+                "in_features",
+                "out_features",
+                "reserved",
+                "packed_weights_bytes",
+                "scales_count",
+                "input_count",
+                "output_count",
+                "bindings",
+                "attempt_sha256",
+            ),
+            tuple(
+                field.name
+                for field in fields(
+                    tree.MetalMatvecPreSubmitAttemptV1
+                )
+            ),
+        )
+        self.assertEqual(
+            (
+                "abi_version",
+                "request_generation",
+                "dispatch_authority_sha256",
+                "queue_authority_sha256",
+                "attempt",
+                "request_sha256",
+            ),
+            tuple(
+                field.name
+                for field in fields(
+                    tree.MetalMatvecDispatchRequestV1
+                )
+            ),
+        )
+        self.assertEqual(
+            (
+                "abi_version",
+                "reason",
+                "dispatch_generation",
+                "allocation_count",
+                "materialized_bytes",
+                "pin_sha256",
+                "backend_object_set_sha256",
+                "request",
+                "terminal_sha256",
+                "rejection_sha256",
+            ),
+            tuple(
+                field.name
+                for field in fields(
+                    tree.MetalMatvecPreSubmitRejectionV1
+                )
+            ),
+        )
+
+    def test_dispatch_pin_intent_tamper_and_substitution_fail_closed(
+        self,
+    ) -> None:
+        campaign = (
+            tree.make_metal_matvec_pre_submit_rejection_campaign()
+        )
+        intent = campaign.intent
+        foreign = allocation.digest_v1(
+            b"dispatch pin intent substitution"
+        )
+        unsealed_tampers = {
+            "abi_version": intent.abi_version + 1,
+            "coordinator_epoch": intent.coordinator_epoch + 1,
+            "allocation_generation": (
+                intent.allocation_generation + 1
+            ),
+            "dispatch_generation": intent.dispatch_generation + 1,
+            "allocation_count": intent.allocation_count + 1,
+            "pinned_device_bytes": intent.pinned_device_bytes + 1,
+            **{
+                field: foreign
+                for field in (
+                    "authority_sha256",
+                    "dispatch_authority_sha256",
+                    "queue_authority_sha256",
+                    "request_sha256",
+                    "admission_sha256",
+                    "lease_sha256",
+                    "parent_receipt_sha256",
+                    "allocation_leaf_set_sha256",
+                    "backend_object_set_sha256",
+                    "scope_sha256",
+                    "dispatch_request_sha256",
+                    "publication_binding_sha256",
+                    "intent_sha256",
+                )
+            },
+        }
+        self.assertEqual(
+            set(intent.__dataclass_fields__),
+            set(unsealed_tampers),
+        )
+        for field, value in unsealed_tampers.items():
+            with self.subTest(dispatch_pin_intent_field=field):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_dispatch_pin_intent_v1(
+                        replace(intent, **{field: value})
+                    )
+
+        with self.assertRaises(tree.ContractError):
+            tree.dispatch_pin_intent_root_v1(
+                replace(
+                    intent,
+                    pinned_device_bytes=tree.U64_MAX + 1,
+                )
+            )
+
+        def reseal_intent(**changes):
+            draft = replace(
+                intent,
+                **changes,
+                intent_sha256=tree.ZERO_DIGEST,
+            )
+            return replace(
+                draft,
+                intent_sha256=tree.dispatch_pin_intent_root_v1(
+                    draft
+                ),
+            )
+
+        substitutions = (
+            reseal_intent(
+                coordinator_epoch=intent.coordinator_epoch + 1
+            ),
+            reseal_intent(
+                allocation_generation=(
+                    intent.allocation_generation + 1
+                )
+            ),
+            reseal_intent(
+                dispatch_generation=intent.dispatch_generation + 1
+            ),
+            reseal_intent(
+                allocation_count=intent.allocation_count + 1
+            ),
+            reseal_intent(
+                pinned_device_bytes=intent.pinned_device_bytes + 1
+            ),
+            reseal_intent(authority_sha256=foreign),
+            reseal_intent(dispatch_authority_sha256=foreign),
+            reseal_intent(queue_authority_sha256=foreign),
+            reseal_intent(request_sha256=foreign),
+            reseal_intent(admission_sha256=foreign),
+            reseal_intent(lease_sha256=foreign),
+            reseal_intent(parent_receipt_sha256=foreign),
+            reseal_intent(allocation_leaf_set_sha256=foreign),
+            reseal_intent(backend_object_set_sha256=foreign),
+            reseal_intent(scope_sha256=foreign),
+            reseal_intent(dispatch_request_sha256=foreign),
+            reseal_intent(publication_binding_sha256=foreign),
+        )
+        for candidate in substitutions:
+            tree.validate_dispatch_pin_intent_v1(candidate)
+            with self.subTest(dispatch_pin_intent=candidate):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_dispatch_pin_for_intent_v1(
+                        campaign.pin,
+                        candidate,
+                    )
+
+        pin_draft = replace(
+            campaign.pin,
+            dispatch_request_sha256=foreign,
+            pin_sha256=tree.ZERO_DIGEST,
+        )
+        substituted_pin = replace(
+            pin_draft,
+            pin_sha256=tree.dispatch_pin_root_v1(pin_draft),
+        )
+        tree.validate_dispatch_pin_v1(substituted_pin)
+        with self.assertRaises(tree.ContractError):
+            tree.validate_dispatch_pin_for_intent_v1(
+                substituted_pin,
+                intent,
+            )
+
+    def test_metal_pre_submit_attempt_mirrors_widths_and_reason_order(
+        self,
+    ) -> None:
+        campaign = (
+            tree.make_metal_matvec_pre_submit_rejection_campaign()
+        )
+        attempt = campaign.attempt
+        foreign = allocation.digest_v1(
+            b"Metal attempt field substitution"
+        )
+        mutations = (
+            replace(attempt, abi_version=attempt.abi_version + 1),
+            replace(attempt, group_size=attempt.group_size + 1),
+            replace(attempt, in_features=attempt.in_features + 1),
+            replace(attempt, out_features=attempt.out_features + 1),
+            replace(attempt, reserved=1),
+            replace(
+                attempt,
+                packed_weights_bytes=attempt.packed_weights_bytes + 1,
+            ),
+            replace(attempt, scales_count=attempt.scales_count + 1),
+            replace(attempt, input_count=attempt.input_count + 1),
+            replace(attempt, output_count=attempt.output_count + 1),
+            replace(
+                attempt,
+                bindings=replace(
+                    attempt.bindings,
+                    packed_weights_sha256=foreign,
+                ),
+            ),
+            replace(
+                attempt,
+                bindings=replace(
+                    attempt.bindings,
+                    scales_sha256=foreign,
+                ),
+            ),
+            replace(
+                attempt,
+                bindings=replace(
+                    attempt.bindings,
+                    input_sha256=foreign,
+                ),
+            ),
+            replace(
+                attempt,
+                bindings=replace(
+                    attempt.bindings,
+                    output_sha256=foreign,
+                ),
+            ),
+        )
+        for candidate in mutations:
+            with self.subTest(metal_attempt_field=candidate):
+                self.assertNotEqual(
+                    attempt.attempt_sha256,
+                    tree.metal_matvec_pre_submit_attempt_root_v1(
+                        candidate
+                    ),
+                )
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_metal_matvec_pre_submit_attempt_v1(
+                        candidate
+                    )
+
+        with self.assertRaises(tree.ContractError):
+            tree.metal_matvec_pre_submit_attempt_root_v1(
+                replace(attempt, group_size=tree.U32_MAX + 1)
+            )
+        with self.assertRaises(tree.ContractError):
+            tree.metal_matvec_pre_submit_attempt_root_v1(
+                replace(
+                    attempt,
+                    packed_weights_bytes=tree.U64_MAX + 1,
+                )
+            )
+
+        invalid_geometry = (
+            tree.make_metal_matvec_pre_submit_attempt_v1(
+                attempt.bindings,
+                attempt.packed_weights_bytes,
+                attempt.scales_count,
+                attempt.input_count,
+                attempt.output_count,
+                0,
+                attempt.in_features,
+                attempt.out_features,
+            )
+        )
+        invalid_lengths = (
+            tree.make_metal_matvec_pre_submit_attempt_v1(
+                attempt.bindings,
+                attempt.packed_weights_bytes + 1,
+                attempt.scales_count,
+                attempt.input_count,
+                attempt.output_count,
+                attempt.group_size,
+                attempt.in_features,
+                attempt.out_features,
+            )
+        )
+        duplicate_bindings = replace(
+            attempt.bindings,
+            output_sha256=attempt.bindings.input_sha256,
+        )
+        invalid_bindings = (
+            tree.make_metal_matvec_pre_submit_attempt_v1(
+                duplicate_bindings,
+                attempt.packed_weights_bytes,
+                attempt.scales_count,
+                attempt.input_count,
+                attempt.output_count,
+                attempt.group_size,
+                attempt.in_features,
+                attempt.out_features,
+            )
+        )
+        self.assertEqual(
+            tree.METAL_INVALID_GEOMETRY,
+            tree.classify_metal_matvec_pre_submit_rejection_v1(
+                invalid_geometry
+            ),
+        )
+        self.assertEqual(
+            tree.METAL_INVALID_HOST_LENGTHS,
+            tree.classify_metal_matvec_pre_submit_rejection_v1(
+                invalid_lengths
+            ),
+        )
+        self.assertEqual(
+            tree.METAL_INVALID_ROLE_BINDINGS,
+            tree.classify_metal_matvec_pre_submit_rejection_v1(
+                invalid_bindings
+            ),
+        )
+        self.assertIsNone(
+            tree.classify_metal_matvec_pre_submit_rejection_v1(
+                attempt
+            )
+        )
+
+    def test_metal_dispatch_request_rejects_nested_substitution(
+        self,
+    ) -> None:
+        campaign = (
+            tree.make_metal_matvec_pre_submit_rejection_campaign()
+        )
+        request = campaign.request
+        foreign = allocation.digest_v1(
+            b"Metal request authority substitution"
+        )
+        attempt_draft = replace(
+            campaign.attempt,
+            bindings=replace(
+                campaign.attempt.bindings,
+                output_sha256=foreign,
+            ),
+            attempt_sha256=tree.ZERO_DIGEST,
+        )
+        different_attempt = replace(
+            attempt_draft,
+            attempt_sha256=(
+                tree.metal_matvec_pre_submit_attempt_root_v1(
+                    attempt_draft
+                )
+            ),
+        )
+        tree.validate_metal_matvec_pre_submit_attempt_v1(
+            different_attempt
+        )
+        request_mutations = (
+            replace(
+                request,
+                request_generation=request.request_generation + 1,
+            ),
+            replace(request, dispatch_authority_sha256=foreign),
+            replace(request, queue_authority_sha256=foreign),
+            replace(request, attempt=different_attempt),
+            replace(request, request_sha256=foreign),
+        )
+        for candidate in request_mutations:
+            with self.subTest(metal_request_field=candidate):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_metal_matvec_dispatch_request_v1(
+                        candidate
+                    )
+
+        equal_authority_draft = replace(
+            request,
+            queue_authority_sha256=(
+                request.dispatch_authority_sha256
+            ),
+            request_sha256=tree.ZERO_DIGEST,
+        )
+        equal_authority = replace(
+            equal_authority_draft,
+            request_sha256=(
+                tree.metal_matvec_dispatch_request_root_v1(
+                    equal_authority_draft
+                )
+            ),
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_matvec_dispatch_request_v1(
+                equal_authority
+            )
+        with self.assertRaises(tree.ContractError):
+            tree.metal_matvec_dispatch_request_root_v1(
+                replace(
+                    request,
+                    request_generation=tree.U64_MAX + 1,
+                )
+            )
+
+        coherent_request_drafts = (
+            replace(
+                request,
+                attempt=different_attempt,
+                request_sha256=tree.ZERO_DIGEST,
+            ),
+            replace(
+                request,
+                request_generation=request.request_generation + 1,
+                request_sha256=tree.ZERO_DIGEST,
+            ),
+        )
+        for request_draft in coherent_request_drafts:
+            substituted_request = replace(
+                request_draft,
+                request_sha256=(
+                    tree.metal_matvec_dispatch_request_root_v1(
+                        request_draft
+                    )
+                ),
+            )
+            tree.validate_metal_matvec_dispatch_request_v1(
+                substituted_request
+            )
+            rejection_draft = replace(
+                campaign.rejection,
+                request=substituted_request,
+                rejection_sha256=tree.ZERO_DIGEST,
+            )
+            substituted_rejection = replace(
+                rejection_draft,
+                rejection_sha256=(
+                    tree.metal_matvec_pre_submit_rejection_root_v1(
+                        rejection_draft
+                    )
+                ),
+            )
+            tree.validate_metal_matvec_pre_submit_rejection_v1(
+                substituted_rejection
+            )
+            with self.subTest(
+                coherent_request_substitution=substituted_request
+            ):
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_metal_matvec_pre_submit_rejection_for_pin_v1(
+                        substituted_rejection,
+                        campaign.pin,
+                        campaign.terminal,
+                    )
+
+    def test_metal_pre_submit_rejection_rejects_coherent_tamper(
+        self,
+    ) -> None:
+        campaign = (
+            tree.make_metal_matvec_pre_submit_rejection_campaign()
+        )
+        rejection = campaign.rejection
+        foreign = allocation.digest_v1(
+            b"Metal rejection evidence substitution"
+        )
+        drafts = (
+            replace(
+                rejection,
+                dispatch_generation=rejection.dispatch_generation + 1,
+                rejection_sha256=tree.ZERO_DIGEST,
+            ),
+            replace(
+                rejection,
+                materialized_bytes=rejection.materialized_bytes + 1,
+                rejection_sha256=tree.ZERO_DIGEST,
+            ),
+            replace(
+                rejection,
+                pin_sha256=foreign,
+                rejection_sha256=tree.ZERO_DIGEST,
+            ),
+            replace(
+                rejection,
+                backend_object_set_sha256=foreign,
+                rejection_sha256=tree.ZERO_DIGEST,
+            ),
+            replace(
+                rejection,
+                terminal_sha256=foreign,
+                rejection_sha256=tree.ZERO_DIGEST,
+            ),
+        )
+        for draft in drafts:
+            candidate = replace(
+                draft,
+                rejection_sha256=(
+                    tree.metal_matvec_pre_submit_rejection_root_v1(
+                        draft
+                    )
+                ),
+            )
+            with self.subTest(metal_rejection_field=draft):
+                tree.validate_metal_matvec_pre_submit_rejection_v1(
+                    candidate
+                )
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_metal_matvec_pre_submit_rejection_for_pin_v1(
+                        candidate,
+                        campaign.pin,
+                        campaign.terminal,
+                    )
+
+        invalid_count_draft = replace(
+            rejection,
+            allocation_count=3,
+            rejection_sha256=tree.ZERO_DIGEST,
+        )
+        invalid_count = replace(
+            invalid_count_draft,
+            rejection_sha256=(
+                tree.metal_matvec_pre_submit_rejection_root_v1(
+                    invalid_count_draft
+                )
+            ),
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_matvec_pre_submit_rejection_v1(
+                invalid_count
+            )
+
+        invalid_reason_draft = replace(
+            rejection,
+            reason=tree.METAL_INVALID_GEOMETRY,
+            rejection_sha256=tree.ZERO_DIGEST,
+        )
+        invalid_reason = replace(
+            invalid_reason_draft,
+            rejection_sha256=(
+                tree.metal_matvec_pre_submit_rejection_root_v1(
+                    invalid_reason_draft
+                )
+            ),
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_matvec_pre_submit_rejection_v1(
+                invalid_reason
+            )
+        with self.assertRaises(tree.ContractError):
+            tree.metal_matvec_pre_submit_rejection_root_v1(
+                replace(
+                    rejection,
+                    materialized_bytes=tree.U64_MAX + 1,
+                )
+            )
+
+        cancelled_terminal = tree.make_dispatch_terminal_v1(
+            campaign.pin,
+            tree.DISPATCH_CANCELLED_BEFORE_SUBMIT,
+            tree.ZERO_DIGEST,
+            tree.ZERO_DIGEST,
+            tree.ZERO_DIGEST,
+        )
+        terminal_draft = replace(
+            rejection,
+            terminal_sha256=cancelled_terminal.terminal_sha256,
+            rejection_sha256=tree.ZERO_DIGEST,
+        )
+        terminal_substitution = replace(
+            terminal_draft,
+            rejection_sha256=(
+                tree.metal_matvec_pre_submit_rejection_root_v1(
+                    terminal_draft
+                )
+            ),
+        )
+        tree.validate_metal_matvec_pre_submit_rejection_v1(
+            terminal_substitution
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_metal_matvec_pre_submit_rejection_for_pin_v1(
+                terminal_substitution,
+                campaign.pin,
+                cancelled_terminal,
+            )
 
     def test_dispatch_campaign_validates_and_preserves_legacy_roots(
         self,
@@ -2092,6 +2881,65 @@ class DeviceAllocationLeaseTreeOracleTests(unittest.TestCase):
             permit_a,
             bank_completion_a,
         )
+
+        rejected_terminal_b = (
+            tree.make_rejected_before_submit_terminal_v1(pin_b)
+        )
+        rejected_completion_b = tree.make_dispatch_completion_v1(
+            pin_b,
+            rejected_terminal_b,
+            after_b_tree,
+            permit_b,
+            bank_completion_b,
+        )
+        rejected_terminal_a = (
+            tree.make_rejected_before_submit_terminal_v1(pin_a)
+        )
+        rejected_completion_a = tree.make_dispatch_completion_v1(
+            pin_a,
+            rejected_terminal_a,
+            after_a_tree,
+            permit_a,
+            bank_completion_a,
+        )
+        tree.validate_dispatch_completion_for_bank_v1(
+            rejected_completion_b,
+            pin_b,
+            rejected_terminal_b,
+            permit_b,
+            bank_completion_b,
+        )
+        tree.validate_dispatch_completion_for_bank_v1(
+            rejected_completion_a,
+            pin_a,
+            rejected_terminal_a,
+            permit_a,
+            bank_completion_a,
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_dispatch_completion_for_bank_v1(
+                rejected_completion_b,
+                pin_b,
+                rejected_terminal_b,
+                permit_b,
+                bank_completion_a,
+            )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_dispatch_completion_for_bank_v1(
+                rejected_completion_a,
+                pin_a,
+                rejected_terminal_a,
+                permit_a,
+                bank_completion_b,
+            )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_dispatch_completion_for_bank_v1(
+                rejected_completion_b,
+                pin_a,
+                rejected_terminal_a,
+                permit_a,
+                bank_completion_a,
+            )
         self.assertEqual(2, parent.claim.queue_slots)
         self.assertGreater(
             completion_a.completed_tree.structural_revision,
@@ -2105,6 +2953,123 @@ class DeviceAllocationLeaseTreeOracleTests(unittest.TestCase):
             completion_b.completed_tree.state_digest,
             completion_a.completed_tree.state_digest,
         )
+
+    def test_rejected_before_submit_requires_zero_native_roots(
+        self,
+    ) -> None:
+        campaign = (
+            tree.make_rejected_before_submit_dispatch_campaign()
+        )
+        nonzero = allocation.digest_v1(
+            b"rejected dispatch native root substitution"
+        )
+        root_fields = (
+            "submission_sha256",
+            "backend_completion_sha256",
+            "output_sha256",
+        )
+        for field in root_fields:
+            with self.subTest(rejected_terminal_root=field):
+                roots = {
+                    candidate: tree.ZERO_DIGEST
+                    for candidate in root_fields
+                }
+                roots[field] = nonzero
+                with self.assertRaises(tree.ContractError):
+                    tree.make_dispatch_terminal_v1(
+                        campaign.pin,
+                        tree.DISPATCH_REJECTED_BEFORE_SUBMIT,
+                        roots["submission_sha256"],
+                        roots["backend_completion_sha256"],
+                        roots["output_sha256"],
+                    )
+
+                completion_draft = replace(
+                    campaign.completion,
+                    **{field: nonzero},
+                    completion_sha256=tree.ZERO_DIGEST,
+                )
+                completion = replace(
+                    completion_draft,
+                    completion_sha256=(
+                        tree.dispatch_completion_root_v1(
+                            completion_draft
+                        )
+                    ),
+                )
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_dispatch_completion_v1(completion)
+
+    def test_rejected_before_submit_semantic_binding_rejects_substitution(
+        self,
+    ) -> None:
+        campaign = (
+            tree.make_rejected_before_submit_dispatch_campaign()
+        )
+        cancelled = tree.make_dispatch_terminal_v1(
+            campaign.pin,
+            tree.DISPATCH_CANCELLED_BEFORE_SUBMIT,
+            tree.ZERO_DIGEST,
+            tree.ZERO_DIGEST,
+            tree.ZERO_DIGEST,
+        )
+        tree.validate_dispatch_terminal_for_pin_v1(
+            cancelled,
+            campaign.pin,
+        )
+        with self.assertRaises(tree.ContractError):
+            tree.validate_rejected_before_submit_terminal_for_pin_v1(
+                cancelled,
+                campaign.pin,
+            )
+
+        foreign = allocation.digest_v1(
+            b"rejected dispatch terminal substitution"
+        )
+        terminal_substitutions = (
+            {"dispatch_generation": campaign.pin.dispatch_generation + 1},
+            {"dispatch_authority_sha256": foreign},
+            {"queue_authority_sha256": foreign},
+            {"pin_sha256": foreign},
+            {"dispatch_request_sha256": foreign},
+        )
+        for changes in terminal_substitutions:
+            with self.subTest(rejected_terminal_substitution=changes):
+                draft = replace(
+                    campaign.terminal,
+                    **changes,
+                    terminal_sha256=tree.ZERO_DIGEST,
+                )
+                candidate = replace(
+                    draft,
+                    terminal_sha256=(
+                        tree.dispatch_terminal_root_v1(draft)
+                    ),
+                )
+                tree.validate_dispatch_terminal_v1(candidate)
+                with self.assertRaises(tree.ContractError):
+                    tree.validate_rejected_before_submit_terminal_for_pin_v1(
+                        candidate,
+                        campaign.pin,
+                    )
+
+        foreign_pin_draft = replace(
+            campaign.pin,
+            dispatch_request_sha256=foreign,
+            pin_sha256=tree.ZERO_DIGEST,
+        )
+        foreign_pin = replace(
+            foreign_pin_draft,
+            pin_sha256=tree.dispatch_pin_root_v1(
+                foreign_pin_draft
+            ),
+        )
+        tree.validate_dispatch_pin_v1(foreign_pin)
+        with self.assertRaises(tree.ContractError):
+            tree.validate_rejected_before_submit_terminal_for_pin_v1(
+                campaign.terminal,
+                foreign_pin,
+            )
 
     def test_dispatch_outcome_root_pairs_cover_all_terminal_paths(
         self,
@@ -2145,6 +3110,35 @@ class DeviceAllocationLeaseTreeOracleTests(unittest.TestCase):
         )
         for outcome, submission, backend, output in pairs:
             with self.subTest(dispatch_outcome=outcome):
+                outcome_campaign = tree.make_dispatch_campaign(
+                    outcome
+                )
+                self.assertEqual(
+                    outcome,
+                    outcome_campaign.terminal.outcome,
+                )
+                self.assertEqual(
+                    submission == tree.ZERO_DIGEST,
+                    outcome_campaign.terminal.submission_sha256
+                    == tree.ZERO_DIGEST,
+                )
+                self.assertEqual(
+                    backend == tree.ZERO_DIGEST,
+                    outcome_campaign.terminal.backend_completion_sha256
+                    == tree.ZERO_DIGEST,
+                )
+                self.assertEqual(
+                    output == tree.ZERO_DIGEST,
+                    outcome_campaign.terminal.output_sha256
+                    == tree.ZERO_DIGEST,
+                )
+                tree.validate_dispatch_completion_for_bank_v1(
+                    outcome_campaign.completion,
+                    outcome_campaign.pin,
+                    outcome_campaign.terminal,
+                    outcome_campaign.permit,
+                    outcome_campaign.bank_completion,
+                )
                 terminal = tree.make_dispatch_terminal_v1(
                     campaign.pin,
                     outcome,
@@ -2197,6 +3191,8 @@ class DeviceAllocationLeaseTreeOracleTests(unittest.TestCase):
                         backend,
                         output,
                     )
+        with self.assertRaises(tree.ContractError):
+            tree.make_dispatch_campaign(0)
 
 
 if __name__ == "__main__":

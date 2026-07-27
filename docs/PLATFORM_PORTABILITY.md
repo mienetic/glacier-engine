@@ -39,7 +39,7 @@ surface.
 
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
-| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | Portable deterministic capability selection binds one local discovery epoch and revalidates native Metal fingerprint/registry identity; the hard gates create and directly inspect real per-object Metal buffers, run one fixed 37x64 INT4 readiness dispatch, and check asymmetric FP16 tiled matmul shapes against CPU oracles, but no addressable result or device support range is retained | Development host, not a broad platform certification |
+| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | Portable Zig fake/state tests and an independent Python oracle model deterministic device contracts without a GPU; the native gates use a real `MTLDevice` and real `MTLBuffer` resources, submit and verify one fixed 37x64 INT4 valid branch, and retain zero-command reject/cancel branches, but no device support range is declared | Development host, not a broad platform certification |
 | Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is implemented; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is architecture-neutral; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
@@ -87,8 +87,24 @@ CPU-oracle correctness, Metal registry identity, `currentAllocatedSize`,
 command-buffer GPU timestamps, ownership closure, no fallback, and composed
 roots. Its allocation gate creates, inspects, and releases real buffers but
 also contains a separate four-buffer LeaseTree case that pins the exact object
-set, submits one real INT4 command, checks the CPU oracle, consumes completion,
-and returns ownership to zero. The corrected tiled FP16 matmul path is
+set. The adapter issues a generation-fenced
+`MetalMatvecDispatchRequestV1`; its root, never the raw attempt root, is the
+pin's dispatch-request root. Core seals `DispatchPinIntentV1`, calls reserve
+before Bank mutation, aborts exactly on atomic acquisition failure, and
+validates callback/source identity before binding the lease, request, intent,
+and pin. Valid preflight submits one real INT4 command, waits, and checks the
+CPU oracle, or it takes the pure `cancelled_before_submit` branch. A malformed
+attempt can take exact `rejected_before_submit`. Both no-submit terminals use
+zero submission, backend-completion, and output roots and the same settlement:
+core consumes the private Bank pin, then a private callback atomically clears
+adapter state and records a replay tombstone. Public
+`acknowledgeDispatchCompletion` only verifies compatibility; it grants no
+authority and clears no state. Rejection may inspect the real native
+device/resources but creates and submits no command buffer. Cancellation is
+native-free after the sealed binding even though its native gate retains real
+context/resources; both reject and cancel issue zero GPU commands. Portable
+Zig fake/state tests and the independent Python oracle model these deterministic
+contracts without a GPU. The corrected tiled FP16 matmul path is
 separately CPU-oracle-tested on asymmetric partial-edge shapes and rejects
 zero, overflowing, short, or oversized buffer geometry without caller-output
 mutation. These are bounded allocation/lifetime/correctness/readiness results,
@@ -433,8 +449,23 @@ the shared tree token and publication sequence; cross-thread use without that
 external serialization is outside the contract. Bounded exact object-set
 dispatch pins are implemented; asynchronous queue/stream scheduling, physical
 residency, loss/quarantine reconciliation, and multi-GPU
-partitioning/scheduling remain open. OS and accelerator support remain
-separate dimensions. See the
+partitioning/scheduling remain open. For the bounded Metal INT4 path, an
+adapter-issued, generation-fenced `MetalMatvecDispatchRequestV1` root is the pin
+dispatch-request root. Core seals the intent and reserves before Bank mutation;
+if that reserve succeeds but source validation drifts, or atomic Bank pin
+acquisition fails, core invokes the exact abort callback. A reserve error must
+retain no partial adapter state. Callback/source validation fences the bound
+lease/request/intent/pin. Valid preflight can submit or settle pure
+`cancelled_before_submit`; malformed attempts can settle exact
+`rejected_before_submit`. Both no-submit outcomes set `submission_sha256`,
+`backend_completion_sha256`, and `output_sha256` to zero and use private pin
+consumption followed by a private settlement callback that
+atomically clears adapter state and records the replay tombstone. The public
+acknowledgement is compatibility verification only. Rejection may inspect
+native device/resources without creating or submitting a command buffer;
+cancellation is native-free after binding. This does not cover errors after
+submission or device loss. OS and accelerator support remain separate
+dimensions. See the
 [device capability and selection contract](DEVICE_CAPABILITY_CONTRACT.md),
 [device allocation lease](DEVICE_ALLOCATION_LEASE.md),
 [LeaseTree device allocation](LEASE_TREE_DEVICE_ALLOCATION.md), and
@@ -526,8 +557,8 @@ Every promoted target must retain artifacts for the relevant gates.
 - the adapter refreshes or validates its discovery view, then revalidates the
   selected capability fingerprint and native device identity against the
   device used for native work;
-- real-device discovery, allocation failure, dispatch, fence, teardown, and
-  cancellation paths run;
+- real-device discovery, allocation failure, canonical pre-submit rejection,
+  dispatch, fence, teardown, and cancellation paths run;
 - outputs meet the declared numerical contract against the CPU oracle;
 - backend and driver/device identity are retained.
 
@@ -632,13 +663,19 @@ not represented as partial support.
   complete with fixed Bank pin storage, private permit custody, terminal
   completion evidence, release fencing, and one real four-buffer Metal
   dispatch; general asynchronous queue scheduling remains open;
-- add physical residency as a separate optional authority and evidence layer;
-- add explicit device-loss events, quarantine, and recovery under a fresh
-  selection receipt;
-- add deterministic multi-device partitioning and scheduling;
-- add backends only with CPU-oracle and lifecycle tests;
-- publish support by OS, architecture, device family, driver/runtime version,
-  element type, and operation rather than by backend name alone.
+- ~~add adapter-authorized pre-submit rejection after pin acquisition;~~
+  complete for the adapter-issued generation-fenced request, core-sealed
+  intent, reserve-before-Bank-mutation acquisition, exact abort after
+  post-reserve source drift or Bank acquisition failure, callback/source
+  validation, zero submission/backend-completion/output roots for rejection
+  and cancellation, private settlement and replay tombstone, and
+  compatibility-only public acknowledgement;
+- add asynchronous queue scheduling and completion delivery;
+- add explicit device-loss quarantine and recovery under a fresh selection
+  receipt;
+- add physical residency and direct device telemetry as separate authorities;
+- add more GPU backends with CPU-oracle/lifecycle gates and expand native
+  OS/device matrices.
 
 Exit: G5 and G6 evidence is retained for every advertised cell in the device
 matrix. The completed bounded selection, allocation-ownership, and readiness
@@ -658,6 +695,12 @@ support for any cross-compiled target. The fake lifecycles establish determinist
 failure/recovery semantics for both ChildLease and LeaseTree ownership. The
 native allocation gate additionally establishes direct resource creation,
 inspection, release, cancellation cleanup, generation reuse, and one bounded
-synchronous dispatch-lifetime fence on its executing host only. This document
-is an implementation plan and evidence ledger, not a declaration that every
-listed platform is currently supported.
+synchronous dispatch-lifetime fence on its executing host only. It also
+establishes exact zero-command rejection and pure cancellation before
+submission for the bounded Metal profile. Portable Zig fake/state tests and
+the Python oracle are contract models without a GPU; only the native macOS
+gate uses real Metal devices and buffers. That gate submits and waits only on
+the valid branch, while reject/cancel issue zero GPU commands. It does not
+establish post-submit or device-loss reconciliation. This document is an
+implementation plan and evidence ledger, not a declaration that every listed
+platform is currently supported.
