@@ -1512,9 +1512,13 @@ pub fn build(b: *std.Build) void {
         "native-metal-allocation-compile",
         "Compile the native macOS Metal allocation ownership gate",
     );
+    const native_metal_fault_test_step = b.step(
+        "native-metal-fault-test",
+        "Run the build-isolated native Metal fault and settlement gate",
+    );
     const native_metal_suite_test_step = b.step(
         "native-metal-suite-test",
-        "Run serialized Metal readiness, allocation, and correctness gates",
+        "Run serialized Metal readiness, allocation, fault, and correctness gates",
     );
     if (metal_shim != null and
         builtin.os.tag == .macos and
@@ -1639,6 +1643,26 @@ pub fn build(b: *std.Build) void {
             "config",
             config_mod,
         );
+        const native_metal_fault_control_mod = b.createModule(.{
+            .root_source_file = b.path(
+                "tests/support/metal_fault_control.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        });
+        native_metal_fault_control_mod.addImport(
+            "engine",
+            engine_mod,
+        );
+        native_metal_fault_control_mod.addImport(
+            "config",
+            config_mod,
+        );
+        native_metal_allocation_tests.root_module.addImport(
+            "metal_fault_control",
+            native_metal_fault_control_mod,
+        );
         native_metal_allocation_tests.linkLibC();
         native_metal_allocation_tests.linkLibrary(shim);
         native_metal_allocation_tests.linkFramework("Metal");
@@ -1656,13 +1680,143 @@ pub fn build(b: *std.Build) void {
         run_native_metal_allocation_suite.step.dependOn(
             &run_native_metal_observation_verifier.step,
         );
+
+        // The fault shim is a second, non-installed build of the same bridge.
+        // Its control symbols and state exist only when this private macro is
+        // set and never enter the normal engine module or production archive.
+        const fault_shim = b.addLibrary(.{
+            .name = "glacier_metal_fault_shim",
+            .root_module = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+        fault_shim.linkFramework("Metal");
+        fault_shim.linkFramework("Foundation");
+        fault_shim.root_module.addCSourceFile(.{
+            .file = b.path("src/backends/metal/shim.m"),
+            .flags = &.{
+                "-fobjc-arc",
+                "-ObjC",
+                "-DGLACIER_METAL_TEST_FAULTS=1",
+            },
+        });
+
+        const fault_opts = b.addOptions();
+        fault_opts.addOption(bool, "metal_enabled", true);
+        fault_opts.addOption(
+            [:0]const u8,
+            "metal_library_path",
+            metal_library_path,
+        );
+        fault_opts.addOption(
+            bool,
+            "metal_test_faults",
+            true,
+        );
+        const fault_config_mod = fault_opts.createModule();
+        const fault_engine_mod = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        });
+        fault_engine_mod.addImport("core", core_mod);
+        fault_engine_mod.addImport(
+            "config",
+            fault_config_mod,
+        );
+        fault_engine_mod.link_libc = true;
+        fault_engine_mod.linkLibrary(fault_shim);
+        fault_engine_mod.linkFramework("Metal", .{});
+        fault_engine_mod.linkFramework("Foundation", .{});
+        if (int4_neon) |lib|
+            fault_engine_mod.linkLibrary(lib);
+
+        const fault_control_mod = b.createModule(.{
+            .root_source_file = b.path(
+                "tests/support/metal_fault_control.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        });
+        fault_control_mod.addImport(
+            "engine",
+            fault_engine_mod,
+        );
+        fault_control_mod.addImport(
+            "config",
+            fault_config_mod,
+        );
+        const native_metal_fault_tests = b.addTest(.{
+            .name = "glacier-native-metal-fault-tests",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "tests/native_metal_allocation.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+            .filters = &.{
+                "fault-injected Metal terminal error settles after physical success",
+            },
+        });
+        native_metal_fault_tests.root_module.addImport(
+            "engine",
+            fault_engine_mod,
+        );
+        native_metal_fault_tests.root_module.addImport(
+            "config",
+            fault_config_mod,
+        );
+        native_metal_fault_tests.root_module.addImport(
+            "metal_fault_control",
+            fault_control_mod,
+        );
+        native_metal_fault_tests.linkLibC();
+        native_metal_fault_tests.linkLibrary(fault_shim);
+        native_metal_fault_tests.linkFramework("Metal");
+        native_metal_fault_tests.linkFramework("Foundation");
+
+        const check_metal_fault_symbols =
+            b.addSystemCommand(&.{"sh"});
+        check_metal_fault_symbols.addFileArg(
+            b.path("tools/check-metal-fault-isolation.sh"),
+        );
+        check_metal_fault_symbols.addArtifactArg(shim);
+        check_metal_fault_symbols.addArtifactArg(
+            fault_shim,
+        );
+
+        const run_native_metal_fault_tests =
+            b.addRunArtifact(native_metal_fault_tests);
+        run_native_metal_fault_tests.step.dependOn(
+            &native_metal_lib.step,
+        );
+        run_native_metal_fault_tests.step.dependOn(
+            &check_metal_fault_symbols.step,
+        );
+        const run_native_metal_fault_suite =
+            b.addRunArtifact(native_metal_fault_tests);
+        run_native_metal_fault_suite.step.dependOn(
+            &native_metal_lib.step,
+        );
+        run_native_metal_fault_suite.step.dependOn(
+            &check_metal_fault_symbols.step,
+        );
+        run_native_metal_fault_suite.step.dependOn(
+            &run_native_metal_allocation_suite.step,
+        );
         const run_native_metal_correctness_suite =
             b.addRunArtifact(metal_tests);
         run_native_metal_correctness_suite.step.dependOn(
             &native_metal_lib.step,
         );
         run_native_metal_correctness_suite.step.dependOn(
-            &run_native_metal_allocation_suite.step,
+            &run_native_metal_fault_suite.step,
         );
         native_metal_suite_test_step.dependOn(
             &run_native_metal_correctness_suite.step,
@@ -1672,6 +1826,9 @@ pub fn build(b: *std.Build) void {
         );
         native_metal_allocation_test_step.dependOn(
             &run_native_metal_allocation_tests.step,
+        );
+        native_metal_fault_test_step.dependOn(
+            &run_native_metal_fault_tests.step,
         );
     } else {
         const native_metal_failure = b.addFail(
@@ -1694,6 +1851,9 @@ pub fn build(b: *std.Build) void {
             &native_metal_failure.step,
         );
         native_metal_allocation_compile_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_fault_test_step.dependOn(
             &native_metal_failure.step,
         );
         native_metal_suite_test_step.dependOn(

@@ -37,6 +37,19 @@ before the first stable release.
 
 ### Added
 
+- Added a build-isolated native Metal fault/race gate. A real four-buffer INT4
+  command completes physically on the executing GPU before the private shim
+  publishes a one-shot command-buffer error overlay. The gate retains separate
+  physical and published snapshots, requires exactly one winner from two
+  concurrent arm attempts, preserves caller output, drives exact quarantine
+  and terminal-failure reconciliation, proves Bank-pin consumption before
+  native finalization, retries a lost settlement acknowledgement without
+  releasing Bank ownership twice, and returns command, pin, buffers, charge,
+  quarantine, and adapter state to zero. An `nm` allow/deny check requires the
+  two control symbols in the non-installed fault archive and forbids every
+  test-fault symbol in the production archive. This is deterministic injected
+  publication after physical success, not a physical hardware, driver, or
+  device-loss failure and not performance evidence.
 - Added **single-flight Metal async completion delivery** per allocation
   adapter. `MetalAsyncDispatchTicketV1` is a pointer-free, generation-fenced
   handoff from one exact submit to separate poll/wait observation. The native
@@ -54,8 +67,9 @@ before the first stable release.
   exact-finalizes that same native `.error` before clearing state. Ambiguous,
   unknown, and invalid completion remain sticky. Pure Zig and independent
   Python tests cover roots, mutation rejection, replay, and pre-settlement
-  retention; the real Metal gate remains a successful-command regression and
-  does not induce a hardware error. This does not impose a global native
+  retention; the ordinary allocation gate remains a successful-command
+  regression, while the separate private fault build supplies controlled
+  error-path coverage. This does not impose a global native
   queue-depth limit or provide physical device-loss recovery, general
   quarantine clearing, fresh selection, migration, or a multi-slot scheduler.
 - Added the first Stage-5

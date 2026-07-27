@@ -113,6 +113,11 @@ separately CPU-oracle-tested on asymmetric partial-edge shapes and rejects
 zero, overflowing, short, or oversized buffer geometry without caller-output
 mutation. These are bounded allocation/lifetime/correctness/readiness results,
 not throughput, latency, or performance results.
+The serialized suite also runs a build-isolated reconciliation gate: a real
+Metal command completes physically before a separate test-only `.error`
+overlay drives the production quarantine and settlement path. Production
+artifacts export no fault controls, and the overlay is not evidence of a
+physical device, driver, or hardware failure.
 `recommendedMaxWorkingSetSize` is capacity context only; physical-page
 commitment/reclamation and residency authority, device-loss recovery,
 multi-GPU scheduling, utilization, committed/resident bytes, queue depth,

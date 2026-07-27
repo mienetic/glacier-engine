@@ -206,12 +206,21 @@ release ownership; the same retained `.error` must survive Bank settlement and
 exact native finalization before private state is cleared. This is not physical
 device-loss detection or automatic migration.
 
+The **build-isolated native Metal fault/race gate** is complete. A second,
+non-installed shim build contains the test-only controls, while the production
+shim exports no fault-control symbols. Two threads race a context-local
+one-shot plan and deterministically produce one winner. The winning plan allows
+one real Metal command to complete physically as `.completed`, then publishes a
+test-only `.error` overlay while retaining separate physical and published
+facts. The adapter quarantines and reconciles the published error. The gate
+observes that the Bank pin is already consumed before native finalization,
+forces the first post-finalization confirmation to fail, and proves an exact
+`settlement_pending` retry clears coordinator state without releasing the Bank
+pin or finalizing the native record twice.
+
 Small next slices:
 
 - add physical device-loss inspection and safe recovery;
-- add a build-isolated native Metal fault/race harness that records physical
-  and injected completion facts separately and exports no production test
-  hooks;
 - add general quarantine clearing, fresh selection under a new receipt, and
   explicit migration policy;
 - add multi-slot queue scheduling and multi-device partitioning;
@@ -233,15 +242,19 @@ from completion observation, authenticates the completed command and output
 role, settles the Bank pin before native finalization, and checks the CPU
 oracle; reject/cancel retain real context/resources but issue zero GPU
 commands. Exact command-error reconciliation roots, tamper rejection, and
-pre-settlement retention are pure Zig and independent Python mirror contracts;
-the
-native Metal path remains a successful-command regression and does not induce
-or claim a hardware or driver error. Physical device-loss
-inspection/recovery, general quarantine clearing, fresh selection and
-migration, multi-slot scheduling, physical residency, direct device telemetry,
-additional GPU backends, performance evidence, and broader native OS/device
-matrices remain unimplemented unless a slice supplies direct named evidence.
-Cross-compilation never counts as native support.
+pre-settlement retention are covered by pure Zig and independent Python mirror
+contracts. The build-isolated native fault gate additionally runs a real,
+physically successful Metal command and overlays only its test-published result
+as `.error`; it keeps those fact planes separate and exports no fault controls
+from the production shim. The race and settlement retry are real host-thread
+and coordinator transitions, but the published error is deliberately injected.
+It is not a physical driver, hardware, or device-loss failure and is not
+performance evidence. Physical device-loss inspection/recovery, general
+quarantine clearing, fresh selection and migration, multi-slot scheduling,
+physical residency, direct device telemetry, additional GPU backends,
+performance evidence, and broader native OS/device matrices remain
+unimplemented unless a slice supplies direct named evidence. Cross-compilation
+never counts as native support.
 
 ### Native observation adapters
 

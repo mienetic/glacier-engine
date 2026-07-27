@@ -9,6 +9,7 @@
 const std = @import("std");
 const engine = @import("engine");
 const config = @import("config");
+const metal_fault_control = @import("metal_fault_control");
 
 const testing = std.testing;
 const allocation = engine.device_allocation_lease;
@@ -379,6 +380,135 @@ const NativeBufferWorker = struct {
                 self.failed.store(true, .release);
                 return;
             };
+        }
+    }
+};
+
+const MetalFaultArmWorker = struct {
+    backend: *engine.MetalBackend,
+    start: *std.atomic.Value(bool),
+    plan: ?metal_fault_control.FaultPlanV1 = null,
+    arm_error: ?metal_fault_control.Error = null,
+
+    fn run(self: *@This()) void {
+        while (!self.start.load(.acquire))
+            std.atomic.spinLoopHint();
+        self.plan =
+            metal_fault_control
+                .armNextCompletedAsCommandErrorV1(
+                self.backend,
+            ) catch |err| {
+                self.arm_error = err;
+                return;
+            };
+    }
+};
+
+const SettlementReplayDispatchAdapter = struct {
+    inner: tree_allocation.DispatchAdapterV1,
+    bank: *resource.Bank,
+    backend: *engine.MetalBackend,
+    expected_bank_permit: ?resource.LeasePinPermitV1 = null,
+    confirmation_calls: u64 = 0,
+    bank_consumed_before_native_finalize: bool = false,
+    native_finalized_before_retry: bool = false,
+    reject_first_confirmation: bool = true,
+
+    fn interface(self: *@This()) tree_allocation.DispatchAdapterV1 {
+        return .{
+            .context = self,
+            .dispatch_authority_sha256 = self.inner.dispatch_authority_sha256,
+            .queue_authority_sha256 = self.inner.queue_authority_sha256,
+            .reserve_dispatch_intent_fn = reserveDispatchIntent,
+            .abort_dispatch_intent_fn = abortDispatchIntent,
+            .validate_terminal_fn = validateTerminal,
+            .confirm_settlement_fn = confirmSettlement,
+        };
+    }
+
+    fn reserveDispatchIntent(
+        context: *anyopaque,
+        intent: tree_allocation.DispatchPinIntentV1,
+    ) tree_allocation.DispatchCallbackError!void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        return self.inner.reserve_dispatch_intent_fn(
+            self.inner.context,
+            intent,
+        );
+    }
+
+    fn abortDispatchIntent(
+        context: *anyopaque,
+        intent: tree_allocation.DispatchPinIntentV1,
+    ) tree_allocation.DispatchCallbackError!void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        return self.inner.abort_dispatch_intent_fn(
+            self.inner.context,
+            intent,
+        );
+    }
+
+    fn validateTerminal(
+        context: *anyopaque,
+        terminal: tree_allocation.DispatchTerminalEvidenceV1,
+    ) tree_allocation.DispatchCallbackError!void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        return self.inner.validate_terminal_fn(
+            self.inner.context,
+            terminal,
+        );
+    }
+
+    fn confirmSettlement(
+        context: *anyopaque,
+        pin: tree_allocation.LeaseTreeDispatchPinV1,
+        terminal: tree_allocation.DispatchTerminalEvidenceV1,
+        completion: tree_allocation.LeaseTreeDispatchCompletionV1,
+        bank_permit: resource.LeasePinPermitV1,
+        bank_completion: resource.LeasePinCompletionV1,
+    ) tree_allocation.DispatchCallbackError!void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        const first_confirmation =
+            self.reject_first_confirmation;
+        if (first_confirmation) {
+            const expected_permit =
+                self.expected_bank_permit orelse
+                return error.InvalidSettlementEvidence;
+            const bank_permit_consumed = blk: {
+                self.bank.validateLeasePin(
+                    bank_permit,
+                ) catch |err| {
+                    break :blk err ==
+                        resource.Error.StaleReservation;
+                };
+                break :blk false;
+            };
+            const native_commands =
+                self.backend.nativeLiveCommandCount() catch
+                    return error.Unavailable;
+            self.bank_consumed_before_native_finalize =
+                std.meta.eql(
+                    expected_permit,
+                    bank_permit,
+                ) and
+                bank_permit_consumed and
+                native_commands == 1;
+        }
+        try self.inner.confirm_settlement_fn(
+            self.inner.context,
+            pin,
+            terminal,
+            completion,
+            bank_permit,
+            bank_completion,
+        );
+        self.confirmation_calls += 1;
+        if (first_confirmation) {
+            self.native_finalized_before_retry =
+                (self.backend.nativeLiveCommandCount() catch
+                    return error.Unavailable) == 0;
+            self.reject_first_confirmation = false;
+            return error.InvalidSettlementEvidence;
         }
     }
 };
@@ -947,7 +1077,9 @@ test "real Metal buffers compose with LeaseTree free permits" {
     try testing.expect((try bank.snapshot()).used.isZero());
 }
 
-test "real Metal dispatch pins exact LeaseTree buffers until completion" {
+fn runRealMetalDispatchLifecycle(
+    comptime include_injected_fault: bool,
+) !void {
     if (!config.metal_enabled)
         return error.NativeMetalAllocationRequiresMetal;
 
@@ -1936,6 +2068,378 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
     );
     try adapter.acknowledgeDispatchCompletion(completion);
 
+    if (comptime include_injected_fault) {
+        const fault_request =
+            try adapter.prepareMatvecDispatchRequestV1(
+                dispatch_attempt,
+            );
+        var settlement_replay: SettlementReplayDispatchAdapter = .{
+            .inner = adapter.dispatchInterface(),
+            .bank = &bank,
+            .backend = &backend,
+        };
+        const fault_dispatch_interface =
+            settlement_replay.interface();
+        const fault_pin = try coordinator.acquireDispatchPin(
+            lease,
+            fault_dispatch_interface,
+            fault_request.request_sha256,
+        );
+        try tree_allocation.validateDispatchPinV1(fault_pin);
+        const fault_bank_permit =
+            coordinator_dispatches[0].bank_permit.?;
+        settlement_replay.expected_bank_permit =
+            fault_bank_permit;
+        try bank.validateLeasePin(fault_bank_permit);
+
+        // Two contenders race to arm one context-local next-command plan.
+        // The native device monitor must linearize exactly one winner while
+        // no global state or environment variable participates.
+        var fault_start =
+            std.atomic.Value(bool).init(false);
+        var left_arm: MetalFaultArmWorker = .{
+            .backend = &backend,
+            .start = &fault_start,
+        };
+        var right_arm: MetalFaultArmWorker = .{
+            .backend = &backend,
+            .start = &fault_start,
+        };
+        const left_thread = try std.Thread.spawn(
+            .{},
+            MetalFaultArmWorker.run,
+            .{&left_arm},
+        );
+        const right_thread = std.Thread.spawn(
+            .{},
+            MetalFaultArmWorker.run,
+            .{&right_arm},
+        ) catch |err| {
+            fault_start.store(true, .release);
+            left_thread.join();
+            return err;
+        };
+        fault_start.store(true, .release);
+        left_thread.join();
+        right_thread.join();
+        try testing.expect(
+            (left_arm.plan == null) !=
+                (right_arm.plan == null),
+        );
+        const fault_plan = if (left_arm.plan) |value|
+            value
+        else
+            right_arm.plan.?;
+        const rejected_arm_error =
+            if (left_arm.arm_error) |value|
+                value
+            else
+                right_arm.arm_error.?;
+        try testing.expect(
+            rejected_arm_error ==
+                metal_fault_control.Error.PlanAlreadyArmed,
+        );
+        try metal_fault_control.validateFaultPlanV1(
+            fault_plan,
+        );
+
+        var injected_output =
+            [_]f32{-1_234.5} ** out_features;
+        const injected_output_before = injected_output;
+        const fault_ticket =
+            try adapter.submitMatvecInt4AsyncObserved(
+                lease,
+                fault_pin,
+                fixture.bindings,
+                quantized.packed_bytes,
+                quantized.scales,
+                &input,
+                &injected_output,
+                group_size,
+                in_features,
+                out_features,
+            );
+        try metal_allocation.validateMetalAsyncDispatchTicketV1(
+            fault_ticket,
+        );
+        try testing.expectEqual(
+            @as(u64, 1),
+            try backend.nativeLiveCommandCount(),
+        );
+
+        const fault_wait =
+            try adapter.waitMatvecInt4AsyncObserved(
+                lease,
+                fault_pin,
+                fault_ticket,
+                &injected_output,
+            );
+        const quarantine = switch (fault_wait) {
+            .quarantined => |value| value,
+            .pending, .completed => return error.TestUnexpectedResult,
+        };
+        try testing.expectEqualSlices(
+            f32,
+            &injected_output_before,
+            &injected_output,
+        );
+        try testing.expect(
+            quarantine.reason == .terminal_command_error,
+        );
+        try testing.expect(
+            quarantine.native_disposition ==
+                .terminal_status_observed,
+        );
+        try testing.expectEqual(
+            @as(u64, 1),
+            quarantine.native_completion_observed,
+        );
+        try testing.expectEqual(
+            engine.metal_backend.error_command_buffer_status,
+            @as(u32, @intCast(
+                quarantine.native_command_status,
+            )),
+        );
+        try testing.expect(
+            quarantine.error_domain_kind == .command_buffer,
+        );
+        try testing.expectEqual(
+            @as(u64, @bitCast(
+                fault_plan.injected_error_code,
+            )),
+            quarantine.error_code_bits,
+        );
+
+        const completion_facts =
+            try metal_fault_control
+                .completionFactsForBindingV1(
+                &backend,
+                fault_ticket.ticket_sha256,
+            );
+        try testing.expectEqual(
+            fault_plan.plan_generation,
+            completion_facts.plan_generation,
+        );
+        try testing.expectEqual(
+            fault_plan.injected_error_code,
+            completion_facts.injected_error_code,
+        );
+        try testing.expectEqual(
+            @as(u32, 1),
+            completion_facts.fault_applied,
+        );
+        try testing.expect(
+            completion_facts.physical.state == .completed,
+        );
+        try testing.expect(
+            completion_facts.published.state == .@"error",
+        );
+        try testing.expectEqual(
+            @as(u64, 1),
+            try backend.nativeLiveCommandCount(),
+        );
+        try testing.expectEqual(
+            @as(usize, 1),
+            (try coordinator.snapshot()).active_dispatches,
+        );
+        try testing.expectEqual(
+            fixture.manifest.total_charged_bytes,
+            (try bank.snapshotV3()).used.device_bytes,
+        );
+        try testing.expectError(
+            tree_allocation.Error.DispatchInFlight,
+            coordinator.release(
+                lease,
+                adapter.interface(),
+            ),
+        );
+
+        const fault_terminal =
+            try adapter
+                .reconcileTerminalCommandFailureObserved(
+                lease,
+                fault_pin,
+                fault_ticket,
+            );
+        try testing.expectEqualDeep(
+            fault_terminal,
+            try adapter
+                .reconcileTerminalCommandFailureObserved(
+                lease,
+                fault_pin,
+                fault_ticket,
+            ),
+        );
+        try metal_allocation
+            .validateMetalAsyncDispatchTerminalFailureV1(
+            fault_terminal.failure,
+            fault_terminal.terminal,
+        );
+        try testing.expect(
+            fault_terminal.terminal.outcome ==
+                .terminal_failure,
+        );
+        try testing.expect(
+            !device.digestEqual(
+                fault_terminal.terminal
+                    .backend_completion_sha256,
+                allocation.zero_digest,
+            ),
+        );
+        try testing.expect(
+            device.digestEqual(
+                fault_terminal.terminal.output_sha256,
+                allocation.zero_digest,
+            ),
+        );
+        try testing.expectEqual(
+            @as(u64, 1),
+            try backend.nativeLiveCommandCount(),
+        );
+        try testing.expectEqual(
+            @as(usize, 1),
+            (try coordinator.snapshot()).active_dispatches,
+        );
+        try bank.validateLeasePin(fault_bank_permit);
+        try testing.expectEqual(
+            fixture.manifest.total_charged_bytes,
+            (try bank.snapshotV3()).used.device_bytes,
+        );
+        try testing.expectEqualDeep(
+            quarantine,
+            adapter.currentAsyncDispatchQuarantine().?,
+        );
+
+        // The first confirmation models a lost acknowledgement after the
+        // Bank pin was consumed and the exact native record was finalized.
+        // The coordinator must retain settlement_pending and replay only the
+        // private confirmation callback, never the Bank release.
+        try testing.expectError(
+            tree_allocation.Error.InvalidDispatchCompletion,
+            coordinator.completeDispatchPin(
+                fault_pin,
+                fault_dispatch_interface,
+                fault_terminal.terminal,
+            ),
+        );
+        try testing.expectEqual(
+            @as(u64, 1),
+            settlement_replay.confirmation_calls,
+        );
+        try testing.expect(
+            settlement_replay
+                .bank_consumed_before_native_finalize,
+        );
+        try testing.expect(
+            settlement_replay.native_finalized_before_retry,
+        );
+        try testing.expectEqual(
+            dispatch_count_before + 2,
+            backend.completedDispatchCount(),
+        );
+        try testing.expectEqual(
+            @as(u64, 0),
+            try backend.nativeLiveCommandCount(),
+        );
+        try testing.expectEqual(
+            @as(usize, 1),
+            (try coordinator.snapshot()).active_dispatches,
+        );
+        try testing.expectError(
+            resource.Error.StaleReservation,
+            bank.validateLeasePin(fault_bank_permit),
+        );
+        try testing.expect(
+            adapter.currentAsyncDispatchQuarantine() == null,
+        );
+        try testing.expectError(
+            tree_allocation.Error.DispatchInFlight,
+            coordinator.release(
+                lease,
+                adapter.interface(),
+            ),
+        );
+
+        const fault_completion =
+            try coordinator.completeDispatchPin(
+                fault_pin,
+                fault_dispatch_interface,
+                fault_terminal.terminal,
+            );
+        try tree_allocation.validateDispatchCompletionForPinV1(
+            fault_completion,
+            fault_pin,
+            fault_terminal.terminal,
+        );
+        try testing.expect(
+            fault_completion.outcome == .terminal_failure,
+        );
+        try testing.expect(
+            device.digestEqual(
+                fault_completion.output_sha256,
+                allocation.zero_digest,
+            ),
+        );
+        try testing.expectEqual(
+            @as(u64, 2),
+            settlement_replay.confirmation_calls,
+        );
+        try testing.expectEqual(
+            dispatch_count_before + 2,
+            backend.completedDispatchCount(),
+        );
+        try testing.expectEqual(
+            @as(u64, 0),
+            try backend.nativeLiveCommandCount(),
+        );
+        try testing.expectEqual(
+            @as(usize, 0),
+            (try coordinator.snapshot()).active_dispatches,
+        );
+        try testing.expect(
+            adapter.currentAsyncDispatchQuarantine() == null,
+        );
+        try testing.expectError(
+            metal_fault_control.Error.FactsUnavailable,
+            metal_fault_control
+                .completionFactsForBindingV1(
+                &backend,
+                fault_ticket.ticket_sha256,
+            ),
+        );
+        try adapter.acknowledgeDispatchCompletion(
+            fault_completion,
+        );
+        try adapter.acknowledgeDispatchCompletion(
+            fault_completion,
+        );
+        try testing.expectError(
+            metal_allocation.Error.StaleObject,
+            adapter.reconcileTerminalCommandFailureObserved(
+                lease,
+                fault_pin,
+                fault_ticket,
+            ),
+        );
+        try testing.expectError(
+            metal_allocation.Error.StaleObject,
+            adapter.pollMatvecInt4AsyncObserved(
+                lease,
+                fault_pin,
+                fault_ticket,
+                &injected_output,
+            ),
+        );
+        try testing.expectError(
+            tree_allocation.Error.InvalidDispatchPin,
+            coordinator.completeDispatchPin(
+                fault_pin,
+                fault_dispatch_interface,
+                fault_terminal.terminal,
+            ),
+        );
+    }
+
     const released = try coordinator.release(
         lease,
         adapter.interface(),
@@ -1966,6 +2470,16 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
     try bank.closeLeaseTree(tree);
     try bank.release(parent);
     try testing.expect((try bank.snapshot()).used.isZero());
+}
+
+test "real Metal dispatch pins exact LeaseTree buffers until completion" {
+    try runRealMetalDispatchLifecycle(false);
+}
+
+test "fault-injected Metal terminal error settles after physical success" {
+    if (comptime !metal_fault_control.enabled)
+        return error.SkipZigTest;
+    try runRealMetalDispatchLifecycle(true);
 }
 
 test "native Metal adapter rejects invalid logical lengths without allocation" {

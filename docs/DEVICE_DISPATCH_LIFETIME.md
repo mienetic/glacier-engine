@@ -266,6 +266,34 @@ are exact and idempotent for their respective inputs. The execution owner must
 also serialize the shared tree token and publication sequence exactly as
 required by the allocation coordinator.
 
+### Build-isolated native fault/race verification
+
+The native Metal fault gate is a separate test artifact, not production
+dispatch authority. Its shim is built with
+`GLACIER_METAL_TEST_FAULTS=1`; an isolation check requires the production shim
+to export no `glacier_metal_test_*` symbols. Plans are one-shot and local to one
+native context. When two host threads race to arm the same context, native
+synchronization admits exactly one winner.
+
+The winning plan first allows one real Metal command to complete physically as
+`.completed`. Its completion handler retains that physical snapshot and, only
+after validating physical success, creates a separate test-published `.error`
+snapshot. The adapter consumes only the published fact, so it follows the real
+quarantine and terminal-failure reconciliation path while the test can still
+prove that the device command itself succeeded.
+
+The same gate observes the first settlement-callback boundary dynamically:
+the Bank pin is already consumed, yet the native command record remains live.
+After exact native finalization and private state clearing, a test proxy rejects
+the first confirmation. Core therefore retains `settlement_pending`; an exact
+retry replays the same completion/tombstone, clears the coordinator slot, and
+does not release the Bank pin or finalize the native record again.
+
+These are native host-thread, GPU-execution, and coordinator-settlement facts,
+but the published error is a test-only overlay. The gate is not a physical
+driver, hardware, or device-loss fault, device-loss recovery, or performance
+test.
+
 ## Terminal outcomes
 
 The public terminal enum contains only states that make allocation reclamation
@@ -354,10 +382,15 @@ device:
    cases retain the same real context and resource ownership but intentionally
    submit zero GPU commands. Rejection may inspect those resources;
    cancellation is native-free. All three paths settle through the same private
-   callback and return ownership to zero. The native command path is a
-   successful-command regression; terminal-error evidence is covered by the
-   pure Zig and independent Python contract models, not by inducing or claiming
-   a hardware or driver failure.
+   callback and return ownership to zero.
+4. **Build-isolated native fault/race tests** run another real, physically
+   successful Metal command while publishing a separate test-only `.error`
+   overlay. They prove production-symbol isolation, a deterministic one-winner
+   arm race, separate physical/published completion facts, Bank-first
+   settlement, exact native finalization and state clearing, and
+   `settlement_pending` confirmation retry without a second Bank release or
+   native finalization. They do not induce or claim a physical driver,
+   hardware, or device-loss failure and provide no performance evidence.
 
 Cross-compilation proves source and build portability only. It is never
 reported as native operating-system, driver, or accelerator evidence.
@@ -379,6 +412,25 @@ tools/zig-with-ephemeral-cache.sh build \
   native-metal-allocation-test \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 ```
+
+Run the isolated publication-fault and settlement-race gate with:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-fault-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+Run all native device gates without overlap with:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-suite-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+The suite order is readiness → allocation ownership → fault/reconciliation →
+focused correctness.
 
 ## Open follow-up work
 

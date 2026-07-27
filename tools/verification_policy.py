@@ -63,6 +63,9 @@ POLICY_CONTROL_PATHS = {
     "tools/zig-with-ephemeral-cache.sh": frozenset(
         {"python-full", "shell-changed"}
     ),
+    "tools/check-metal-fault-isolation.sh": frozenset(
+        {"metal-native", "shell-changed"}
+    ),
 }
 
 SHARED_CODE_SUFFIXES = {
@@ -140,6 +143,7 @@ METAL_NATIVE_SOURCE_PATHS = {
     "tests/metal_correctness.zig",
     "tests/native_metal_allocation.zig",
     "tests/native_metal_observation.zig",
+    "tests/support/metal_fault_control.zig",
     "examples/native_metal_observation.zig",
     "bench/metal_kernel.zig",
 }

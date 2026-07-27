@@ -48,6 +48,7 @@ EXPECTED_METAL_NATIVE_SOURCE_PATHS = frozenset(
         "tests/metal_correctness.zig",
         "tests/native_metal_allocation.zig",
         "tests/native_metal_observation.zig",
+        "tests/support/metal_fault_control.zig",
         "examples/native_metal_observation.zig",
         "bench/metal_kernel.zig",
     }

@@ -14,7 +14,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Model | `.glacier`, `.glrt`, loader, prepared model | Validate source and execution layouts before use |
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Device selection | `DeviceCapabilityV1`, canonical inventory, plan-bound requirement, selection receipt | Choose one compatible present CPU or accelerator deterministically before admission without granting allocation, queue, dispatch, or publication authority |
-| Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, async ticket/quarantine/failure evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, bind per-adapter single-flight Metal completion to exact Bank settlement, and authorize one exact quarantined native `.error` as core `terminal_failure` without releasing ownership early; the native gate creates, dispatches through, and directly inspects real buffers without claiming residency, device-loss recovery, or general scheduling |
+| Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, async ticket/quarantine/failure evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, bind per-adapter single-flight Metal completion to exact Bank settlement, and authorize one exact quarantined native `.error` as core `terminal_failure` without releasing ownership early; native gates create, dispatch through, and directly inspect real buffers, while a production-symbol-isolated fault gate keeps physical success separate from a test-published error and proves exact settlement retry without claiming residency, physical device failure, device-loss recovery, general scheduling, or performance |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b/W4b-c/W4b-d | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, uncertain external-action handoff, generation-fenced fake reconciliation, and durable storage faults without presenting logical steps as native performance |
@@ -938,9 +938,25 @@ with no output root; quarantine, pin, charge, buffers, and native command stay
 live through Bank settlement, then the private callback exact-finalizes the
 same `.error` before private clearing. Ambiguity and unknown completion remain
 sticky. Portable Zig and independent Python tests model the error contract
-without GPU work; the native macOS gate uses a real `MTLDevice`, real
+without GPU work; the ordinary native macOS gate uses a real `MTLDevice`, real
 `MTLBuffer` resources, and a CPU output oracle as a successful-command
-regression, not an induced hardware-error test. Physical residency, physical
+regression.
+
+A separate non-installed fault shim is compiled only for the build-isolated
+native fault/race gate; the production shim is checked to export no
+fault-control symbols. Two host threads race a context-local one-shot plan and
+exactly one wins. The plan lets a real Metal command complete physically as
+`.completed`, retains that physical snapshot, and only then overlays the
+test-published snapshot as `.error`. The adapter therefore exercises
+quarantine and terminal-failure reconciliation without mislabeling the device
+outcome. At settlement, the gate observes the Bank pin consumed before the
+native record is finalized, then deliberately rejects the first confirmation
+after exact native finalization and state clearing. The coordinator retains
+`settlement_pending`; an exact retry replays the same tombstone and clears the
+slot without a second Bank release or native finalization.
+
+The overlay is not a physical command-buffer, driver, hardware, or device-loss
+fault and provides no performance evidence. Physical residency, physical
 device-loss inspection/recovery, general quarantine clearing, fresh selection
 and migration, multi-slot and multi-device scheduling, telemetry, performance,
 retained driver/device ranges, and native support on cross-compiled targets
@@ -1134,7 +1150,10 @@ fingerprint and registry identity, and fails
 rather than skipping when its one completed diagnostic dispatch cannot be
 observed. A separate native allocation gate exercises real-buffer ownership and
 per-adapter async submit/poll-or-wait/output-validation/settlement/finalization;
-portable contract tests do not execute GPU work.
+the build-isolated fault gate follows it with physical/published fact
+separation, one-winner arm racing, and settlement retry. The serialized native
+suite order is readiness → allocation ownership → fault/reconciliation →
+focused correctness. Portable contract tests do not execute GPU work.
 Execution, numerical, durable-recovery, and physical-resource validation still
 require real machines for each promoted platform.
 

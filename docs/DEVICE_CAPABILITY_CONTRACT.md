@@ -152,8 +152,8 @@ tools/zig-with-ephemeral-cache.sh build test \
 These portable Zig/Python and mutation-injection checks are deterministic
 contract tests. They do not emulate a Metal driver or claim hardware behavior.
 
-Native Metal readiness, allocation ownership, and correctness on a macOS
-Metal host:
+Native Metal readiness, allocation ownership, fault/reconciliation, and
+correctness on a macOS Metal host:
 
 ```bash
 metal_dir="$(mktemp -d)"
@@ -168,9 +168,12 @@ tools/zig-with-ephemeral-cache.sh build \
 That native command discovers the host's real `MTLDevice`, creates and directly
 inspects real lease-bound Metal buffers, compiles the actual Metal shaders,
 submits command buffers to the device, waits for completion, and compares
-output with CPU oracles. It is a bounded real-device
-allocation/correctness/readiness check, not a simulated GPU and not a
-performance or broad device-support result.
+output with CPU oracles. The build-isolated fault stage lets a real command
+complete physically before applying a separate test-only published-error
+overlay; it does not simulate the GPU and does not claim a physical device,
+driver, or hardware failure. This is bounded real-device
+allocation/correctness/readiness and reconciliation evidence, not a performance
+or broad device-support result.
 
 The portable contract also participates in the retained foreign-target compile
 profiles. Those builds prove source and ABI portability, not native driver,

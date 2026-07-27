@@ -41,7 +41,8 @@ thermal observations distinct.
 | `tools/zig-with-ephemeral-cache.sh test src/core/device_allocation_lease_tree.zig -OReleaseSafe` plus `python3 -m unittest bench.tests.test_device_allocation_lease_tree` | Portable dispatch-lifetime contract models: Zig fake-adapter/state tests cover sealed pre-Bank intent reservation and exact abort, callback/source drift, object-set pins, terminal shapes, `MetalAsyncDispatchTicketV1`, exact submit replay, pending ownership retention, sticky nonterminal quarantine, private settlement retry, slot release, and allocation fencing; the independent Python oracle rebuilds the ticket/quarantine ABI roots and rejects coherent substitutions. These deterministic tests open no device, create no native resource, and execute no GPU command. |
 | `tools/zig-with-ephemeral-cache.sh build native-metal-observation-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Hard native macOS Metal diagnostic-readiness gate: exactly one real GPU dispatch total for a fixed synthetic 37x64 INT4 matrix-vector operation, CPU-oracle correctness, completed command-buffer GPU timestamps, registry-bound device/placement identity, `currentAllocatedSize`, zero leaked ownership, explicit no fallback, composed observation/run/dispatch roots, and an independent live-output verifier; no throughput, latency, performance, utilization, residency, queue, thermal, frequency, power, energy, cryptographic-origin, broad-device, or multi-OS claim |
 | `tools/zig-with-ephemeral-cache.sh build native-metal-allocation-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Hard native macOS Metal allocation and dispatch-lifetime gate: opens a real `MTLDevice` and creates/inspects real Shared `MTLBuffer` resources through ChildLease and LeaseTree coordinators; verifies exact logical precharge/reserve/release, private FreePermit settlement, partial-allocation cancellation, per-object device/length/`allocatedSize`, foreign/stale-token rejection, distinct adapter authorities, registry balance, and generation-fenced reuse. Its four-buffer profile uses an adapter-issued generation-fenced `MetalMatvecDispatchRequestV1` root plus sealed pre-Bank `DispatchPinIntentV1`; the valid branch separately submits, polls or waits, validates exact completed output, settles Bank ownership, finalizes the retained native command, and checks a CPU oracle. Malformed attempts may inspect the real context/resources but construct and submit no command buffer; the valid pure-cancellation branch performs no native inspection. Both no-submit branches produce zero submission/backend/output roots, execute zero GPU commands, and share the private Bank-pin/adapter settlement and replay tombstone. Public acknowledgement only verifies the settled tombstone. Sticky quarantine detects ambiguous/unknown/invalid/error outcomes but does not reconcile or clear them. No device-loss recovery, multi-slot scheduling, residency, heap, performance, broad-device, or multi-OS claim. |
-| `tools/zig-with-ephemeral-cache.sh build native-metal-suite-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Serialized native macOS device suite: readiness → allocation ownership → focused correctness, with no overlap between those device gates; it combines their evidence boundaries and does not create a benchmark or retained native artifact |
+| `tools/zig-with-ephemeral-cache.sh build native-metal-fault-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Build-isolated native macOS Metal fault/reconciliation conformance: verifies the production shim exports no fault-control symbols and the non-installed fault shim exposes its bounded test ABI; two host threads race a context-local one-shot plan with exactly one winner; one real command physically completes successfully while physical facts and a test-published `.error` overlay remain separate. The adapter quarantines and reconciles the published error, proves Bank-first settlement while the native record is live, exact-finalizes and clears native state, then retries a deliberately rejected first confirmation from `settlement_pending` without a second Bank release or native finalization. This is not a physical driver, hardware, or device-loss fault and is not performance evidence. |
+| `tools/zig-with-ephemeral-cache.sh build native-metal-suite-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Serialized native macOS device suite: readiness → allocation ownership → fault/reconciliation → focused correctness, with no overlap between those device gates; it combines their evidence boundaries and does not create a benchmark or retained native artifact |
 | `zig build lane-publication-demo -Dmetal=false` | One-token prepare/commit/abort with KV, RNG, sampler, output, schedule, and resource roots |
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
 | `tools/zig-with-ephemeral-cache.sh build test -Doptimize=ReleaseSafe -Dmetal=false -j2` | Full retained suite, including receipt-funded prepared-text activation at sequence `N`, one uninterrupted/restored synthetic-model transition comparison, and target teardown to zero |
@@ -197,10 +198,21 @@ completion delivery for that successful host run. Separate portable Zig/Python
 checks authorize one exact quarantined command-buffer `.error` as core
 `terminal_failure`, reject substitutions, and retain ownership before
 settlement; they are deterministic contract models and execute no GPU work.
-The native gate does not induce or claim a hardware or driver error. Neither
-layer measures throughput or latency or establishes residency, multi-slot queue
-scheduling, physical device-loss recovery, automatic migration, or physical
-reclaim behavior.
+
+The build-isolated native fault gate adds a real successful Metal execution
+without relabeling the physical outcome. It records the physical `.completed`
+snapshot separately, then applies a test-only `.error` overlay to the published
+snapshot. The real adapter path quarantines and reconciles that published fact.
+The same gate uses a real two-thread arm race and actual coordinator settlement
+retry to prove one winner, Bank-first release, exact native finalization/state
+clearing, and no double release or finalization after the first confirmation is
+deliberately rejected. Production artifacts expose no fault controls.
+
+The overlay does not induce or prove a physical command-buffer, driver,
+hardware, or device-loss fault. None of these conformance layers measures
+throughput or latency or establishes residency, multi-slot queue scheduling,
+physical device-loss recovery, automatic migration, or physical reclaim
+behavior.
 
 All commands should normally use `-Doptimize=ReleaseSafe` when validating
 contracts. None requires a real credential. Portable evidence is

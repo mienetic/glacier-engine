@@ -120,6 +120,42 @@ tree token and publication sequence. The owner must externally serialize
 coordinator calls with every other mutation of those shared values; the
 coordinator does not make unsynchronized owners or threads safe.
 
+## Build-isolated fault and settlement gate
+
+The native fault/race gate links a second, non-installed build of the
+Objective-C shim with `GLACIER_METAL_TEST_FAULTS=1`. The production shim is
+checked to export no `glacier_metal_test_*` symbols; only the test artifact
+exposes the bounded plan/facts ABI. Fault plans are context-local and one-shot,
+with no environment-variable or process-global control. Two host threads race
+to arm one context, and synchronization at the native device admits exactly one
+winner while the loser receives `PlanAlreadyArmed`.
+
+The admitted plan does not make Metal fail physically. It submits one real
+four-buffer command, waits for the native command buffer to complete
+successfully, and retains the physical `.completed` snapshot, GPU start/end
+timestamps, and device allocation observation. Only after validating that exact
+physical success does the test-only completion handler publish a separate
+`.error` snapshot with a nonzero internal command-buffer error. The native
+registry retains both fact planes, and exact finalization compares against the
+published snapshot used by the adapter. Host output remains unpublished and
+unchanged.
+
+The adapter observes the published error, installs quarantine, and reconciles
+the matching terminal failure. At the first settlement-callback entry, the gate
+proves the Bank pin is already consumed while the native command record is still
+live. The callback then exact-finalizes that record and clears the async slot,
+quarantine, request, pin, and terminal state. A test proxy deliberately rejects
+the first confirmation after successful native finalization, so the coordinator
+retains `settlement_pending`. Repeating `completeDispatchPin` replays the same
+private completion and tombstone, clears the coordinator slot, and performs
+neither a second Bank release nor a second native finalization.
+
+This gate is native conformance evidence for production-symbol isolation,
+host-thread arm racing, real successful GPU execution, and the exact
+reconciliation/settlement lifecycle. The published error is a test-only
+overlay. It is not evidence of a physical driver, hardware, or device-loss
+fault, device-loss recovery, or performance.
+
 ## Byte meanings
 
 The adapter deliberately keeps logical accounting and native observation
@@ -251,6 +287,14 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 ```
 
+Run the build-isolated fault/race and settlement gate with:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-fault-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
 The separate readiness/correctness gates compile real Metal shaders, submit
 real command buffers, wait for completion, and compare GPU results with CPU
 oracles:
@@ -263,7 +307,8 @@ tools/zig-with-ephemeral-cache.sh build \
 ```
 
 For one non-overlapping verification run, the aggregate step serializes the
-native device gates as readiness → allocation → correctness:
+native device gates as readiness → allocation ownership → fault/reconciliation
+→ focused correctness:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build \
@@ -280,23 +325,22 @@ native allocation gate now includes one correctness-only pinned dispatch for
 that exact profile; it is not yet a generic allocation-only Metal profile or a
 performance gate.
 
-The next native validation slice is a build-isolated Metal fault/race harness.
-It must record physical observations separately from injected overlays and
-must export no fault-control symbols or test hooks in production artifacts.
-
 ## Claim boundary
 
 This slice establishes direct Metal resource creation, per-object inspection,
 adapter ownership, logical precharge, release ordering, and generation-fenced
 reuse plus per-adapter single-flight async completion delivery on the host that
-executes the hard gate. It separately establishes the pointer-free
-authorization and pre-settlement retention contract for exact terminal command
-errors through pure Zig and independent Python mirror tests; the native gate is
-a successful-command regression. It
-does not establish:
+executes the hard gates. It establishes the pointer-free authorization and
+pre-settlement retention contract for exact terminal command errors through
+pure Zig and independent Python mirror tests. The build-isolated native gate
+then exercises that reconciliation path after a real command physically
+completes successfully, using a separately recorded test-only publication
+overlay and exact coordinator retry. It does not establish:
 
 - physical residency or reclaim completion;
 - heap allocation or fragmentation accounting;
+- a physical command-buffer, driver, hardware, or device-loss failure from the
+  test-published error;
 - physical device-loss inspection or recovery, general quarantine clearing,
   fresh selection, or automatic migration;
 - multi-slot queue scheduling, a global native queue-depth limit, queue-depth
