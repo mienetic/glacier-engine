@@ -911,10 +911,13 @@ pub const MetalBackend = struct {
     ctx: *MetalContext,
     initial_device_info: MetalDeviceInfo = .{},
     initial_lifecycle_source_identity: MetalDeviceLifecycleSourceIdentity = .{},
+    last_consumed_lifecycle_snapshot: ?MetalDeviceLifecycleSnapshot = null,
     live_weight_count: u64 = 0,
     live_buffer_count: u64 = 0,
+    loss_retirement_armed: bool = false,
     completed_dispatch_count: u64 = 0,
     compatibility_unresolved_submission: ?MetalAsyncSubmission = null,
+    lifecycle_mutex: std.Thread.Mutex = .{},
     compatibility_dispatch_mutex: std.Thread.Mutex = .{},
     allocation_mutex: std.Thread.Mutex = .{},
 
@@ -985,6 +988,14 @@ pub const MetalBackend = struct {
     pub fn deviceLifecycleSnapshot(
         self: *MetalBackend,
     ) MetalError!MetalDeviceLifecycleSnapshot {
+        self.lifecycle_mutex.lock();
+        defer self.lifecycle_mutex.unlock();
+        return self.deviceLifecycleSnapshotUnlocked();
+    }
+
+    fn deviceLifecycleSnapshotUnlocked(
+        self: *MetalBackend,
+    ) MetalError!MetalDeviceLifecycleSnapshot {
         var result: MetalDeviceLifecycleSnapshot = .{};
         if (glacier_metal_device_lifecycle_snapshot(
             self.ctx,
@@ -1000,6 +1011,8 @@ pub const MetalBackend = struct {
     pub fn deviceLifecycleSourceIdentity(
         self: *MetalBackend,
     ) MetalError!MetalDeviceLifecycleSourceIdentity {
+        self.lifecycle_mutex.lock();
+        defer self.lifecycle_mutex.unlock();
         var result: MetalDeviceLifecycleSourceIdentity = .{};
         if (glacier_metal_device_lifecycle_source_identity(
             self.ctx,
@@ -1018,17 +1031,33 @@ pub const MetalBackend = struct {
         expected: MetalDeviceLifecycleSnapshot,
     ) MetalError!u64 {
         try validateMetalDeviceLifecycleSnapshot(expected);
+        self.lifecycle_mutex.lock();
+        defer self.lifecycle_mutex.unlock();
         var consumed_event_sequence: u64 = 0;
         const status = glacier_metal_device_lifecycle_consume(
             self.ctx,
             &expected,
             &consumed_event_sequence,
         );
-        return consumedLifecycleSequenceForStatus(
+        const consumed = try consumedLifecycleSequenceForStatus(
             status,
             expected.event_sequence,
             consumed_event_sequence,
         );
+        self.last_consumed_lifecycle_snapshot = expected;
+        return consumed;
+    }
+
+    /// Return the exact native snapshot most recently consumed through this
+    /// backend instance. This is process-local replay state, not a new
+    /// observation and does not advance the native lifecycle cursor.
+    pub fn lastConsumedDeviceLifecycleSnapshot(
+        self: *MetalBackend,
+    ) MetalError!MetalDeviceLifecycleSnapshot {
+        self.lifecycle_mutex.lock();
+        defer self.lifecycle_mutex.unlock();
+        return self.last_consumed_lifecycle_snapshot orelse
+            MetalError.InvalidObservation;
     }
 
     /// Fail closed for new allocation or dispatch work after Metal requests
@@ -1172,6 +1201,8 @@ pub const MetalBackend = struct {
         try self.requireDeviceAcceptingWork();
         self.allocation_mutex.lock();
         defer self.allocation_mutex.unlock();
+        if (self.loss_retirement_armed)
+            return MetalError.DeviceLost;
         const limits = try self.allocationLimits();
         if (requested_length == 0 or
             requested_length > limits.max_buffer_length)
@@ -1185,7 +1216,7 @@ pub const MetalBackend = struct {
             return MetalError.AllocationFailed;
         if (token.isZero())
             @panic("Metal shim returned a zero successful token");
-        const info = self.inspectBufferAllocation(token) catch {
+        const info = self.inspectBufferAllocationUnlocked(token) catch {
             self.releaseCreatedBufferOrPanic(token);
             return MetalError.AllocationFailed;
         };
@@ -1210,6 +1241,17 @@ pub const MetalBackend = struct {
     /// Observe the exact live resource. `allocated_size` is per-object Metal
     /// evidence, not a device-wide delta and not a residency claim.
     pub fn inspectBufferAllocation(
+        self: *MetalBackend,
+        token: MetalBufferToken,
+    ) MetalError!MetalBufferInfo {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        if (self.loss_retirement_armed)
+            return MetalError.DeviceLost;
+        return self.inspectBufferAllocationUnlocked(token);
+    }
+
+    fn inspectBufferAllocationUnlocked(
         self: *MetalBackend,
         token: MetalBufferToken,
     ) MetalError!MetalBufferInfo {
@@ -1238,6 +1280,122 @@ pub const MetalBackend = struct {
     ) MetalError!void {
         self.allocation_mutex.lock();
         defer self.allocation_mutex.unlock();
+        return self.releaseBufferAllocationTokenUnlocked(token);
+    }
+
+    /// Atomically close this backend context to new persistent native
+    /// ownership after the adapter and Coordinator validated one exact live
+    /// object set. The fence is monotone and intentionally survives receipt
+    /// completion.
+    pub fn armLossRetirementFence(
+        self: *MetalBackend,
+        expected_live_buffers: u64,
+    ) MetalError!void {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        if (self.loss_retirement_armed)
+            return MetalError.InvalidObservation;
+        if (expected_live_buffers == 0 or
+            self.live_weight_count != 0 or
+            self.live_buffer_count != expected_live_buffers or
+            try self.nativeLiveBufferCountUnlocked() !=
+                expected_live_buffers or
+            try self.nativeLiveCommandCountUnlocked() != 0)
+            return MetalError.InvalidObservation;
+        self.loss_retirement_armed = true;
+    }
+
+    /// Drop one exact retained buffer strong reference after the same native
+    /// lifecycle source has reached a sticky lost state. This path reads only
+    /// lifecycle state and the private token registry; it deliberately does
+    /// not query `MTLBuffer` or `MTLDevice` properties after loss. Releasing
+    /// the Objective-C reference is ownership settlement, not evidence of
+    /// physical reclaim or residency change.
+    pub fn releaseBufferAllocationAfterLifecycleLoss(
+        self: *MetalBackend,
+        token: MetalBufferToken,
+        expected_source_identity: MetalDeviceLifecycleSourceIdentity,
+        minimum_event_sequence: u64,
+    ) MetalError!void {
+        _ = try self.requireStickyDeviceLost(
+            expected_source_identity,
+            minimum_event_sequence,
+        );
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        return self.releaseBufferAllocationTokenUnlocked(token);
+    }
+
+    /// Revalidate the retained observer source without consuming its current
+    /// level-triggered snapshot. A same-source snapshot may have advanced
+    /// beyond `minimum_event_sequence`; sticky source bits must still resolve
+    /// to a terminal lost state.
+    pub fn requireStickyDeviceLost(
+        self: *MetalBackend,
+        expected_source_identity: MetalDeviceLifecycleSourceIdentity,
+        minimum_event_sequence: u64,
+    ) MetalError!MetalDeviceLifecycleSnapshot {
+        self.lifecycle_mutex.lock();
+        defer self.lifecycle_mutex.unlock();
+        return self.requireStickyDeviceLostUnlocked(
+            expected_source_identity,
+            minimum_event_sequence,
+        );
+    }
+
+    /// Atomically bind a retirement check to the exact snapshot previously
+    /// consumed by this backend, then read the current sticky source without
+    /// consuming it. A caller-resealed same-source observation cannot
+    /// substitute another sequence or evidence snapshot.
+    pub fn requireStickyDeviceLostForConsumedSnapshot(
+        self: *MetalBackend,
+        expected_source_identity: MetalDeviceLifecycleSourceIdentity,
+        expected_consumed: MetalDeviceLifecycleSnapshot,
+    ) MetalError!MetalDeviceLifecycleSnapshot {
+        try validateMetalDeviceLifecycleSnapshot(expected_consumed);
+        self.lifecycle_mutex.lock();
+        defer self.lifecycle_mutex.unlock();
+        const retained = self.last_consumed_lifecycle_snapshot orelse
+            return MetalError.InvalidObservation;
+        if (!std.meta.eql(retained, expected_consumed))
+            return MetalError.InvalidObservation;
+        return self.requireStickyDeviceLostUnlocked(
+            expected_source_identity,
+            expected_consumed.event_sequence,
+        );
+    }
+
+    fn requireStickyDeviceLostUnlocked(
+        self: *MetalBackend,
+        expected_source_identity: MetalDeviceLifecycleSourceIdentity,
+        minimum_event_sequence: u64,
+    ) MetalError!MetalDeviceLifecycleSnapshot {
+        try validateMetalDeviceLifecycleSourceIdentity(
+            expected_source_identity,
+        );
+        if (minimum_event_sequence == 0 or
+            !std.meta.eql(
+                expected_source_identity,
+                self.initial_lifecycle_source_identity,
+            ))
+            return MetalError.InvalidObservation;
+        const snapshot = try self.deviceLifecycleSnapshotUnlocked();
+        if (snapshot.registry_id !=
+            expected_source_identity.registry_id or
+            snapshot.observer_generation !=
+                expected_source_identity.observer_generation or
+            snapshot.event_sequence < minimum_event_sequence)
+            return MetalError.InvalidObservation;
+        return switch (try effectiveMetalDeviceLifecycleEventKind(snapshot)) {
+            .removed, .command_buffer_removed => snapshot,
+            else => MetalError.InvalidObservation,
+        };
+    }
+
+    fn releaseBufferAllocationTokenUnlocked(
+        self: *MetalBackend,
+        token: MetalBufferToken,
+    ) MetalError!void {
         if (token.isZero() or self.live_buffer_count == 0)
             return MetalError.InvalidObservation;
         if (glacier_metal_buffer_release(self.ctx, &token) != 0)
@@ -1297,6 +1455,10 @@ pub const MetalBackend = struct {
         out: []u8,
         num_elements: u32,
     ) MetalError!void {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        if (self.loss_retirement_armed)
+            return MetalError.DeviceLost;
         try self.requireDeviceAcceptingWork();
         const header_size: usize = 16;
         if (payload.len < header_size) return MetalError.DispatchFailed;
@@ -1344,6 +1506,10 @@ pub const MetalBackend = struct {
         k: u32,
         n: u32,
     ) MetalError!void {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        if (self.loss_retirement_armed)
+            return MetalError.DeviceLost;
         try self.requireDeviceAcceptingWork();
         if (m == 0 or k == 0 or n == 0)
             return MetalError.MatmulFailed;
@@ -1391,6 +1557,12 @@ pub const MetalBackend = struct {
         in_features: u32,
         out_features: u32,
     ) MetalError!*MetalInt4Weight {
+        self.compatibility_dispatch_mutex.lock();
+        defer self.compatibility_dispatch_mutex.unlock();
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        if (self.loss_retirement_armed)
+            return MetalError.DeviceLost;
         try self.requireDeviceAcceptingWork();
         const result = glacier_metal_int4_weight_create(
             self.ctx,
@@ -1414,6 +1586,10 @@ pub const MetalBackend = struct {
     }
 
     pub fn destroyInt4Weight(self: *MetalBackend, weight: *MetalInt4Weight) void {
+        self.compatibility_dispatch_mutex.lock();
+        defer self.compatibility_dispatch_mutex.unlock();
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
         glacier_metal_int4_weight_destroy(weight);
         if (self.live_weight_count > 0) self.live_weight_count -= 1;
     }
@@ -1424,6 +1600,12 @@ pub const MetalBackend = struct {
         input: []const f32,
         output: []f32,
     ) MetalError!void {
+        self.compatibility_dispatch_mutex.lock();
+        defer self.compatibility_dispatch_mutex.unlock();
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        if (self.loss_retirement_armed)
+            return MetalError.DeviceLost;
         try self.requireDeviceAcceptingWork();
         if (self.completed_dispatch_count ==
             std.math.maxInt(u64))
@@ -1456,6 +1638,12 @@ pub const MetalBackend = struct {
         input: []const f32,
         output: []f32,
     ) MetalError!MetalDispatchTelemetry {
+        self.compatibility_dispatch_mutex.lock();
+        defer self.compatibility_dispatch_mutex.unlock();
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        if (self.loss_retirement_armed)
+            return MetalError.DeviceLost;
         try self.requireDeviceAcceptingWork();
         if (self.completed_dispatch_count ==
             std.math.maxInt(u64))
@@ -1525,15 +1713,16 @@ pub const MetalBackend = struct {
 
         self.allocation_mutex.lock();
         defer self.allocation_mutex.unlock();
-        if (self.completed_dispatch_count ==
-            std.math.maxInt(u64))
+        if (self.loss_retirement_armed or
+            self.completed_dispatch_count ==
+                std.math.maxInt(u64))
             return MetalError.DispatchFailed;
 
         const infos = [4]MetalBufferInfo{
-            try self.inspectBufferAllocation(packed_token),
-            try self.inspectBufferAllocation(scales_token),
-            try self.inspectBufferAllocation(input_token),
-            try self.inspectBufferAllocation(output_token),
+            try self.inspectBufferAllocationUnlocked(packed_token),
+            try self.inspectBufferAllocationUnlocked(scales_token),
+            try self.inspectBufferAllocationUnlocked(input_token),
+            try self.inspectBufferAllocationUnlocked(output_token),
         };
         const expected_lengths = [4]u64{
             geometry.packed_bytes,
@@ -1854,7 +2043,9 @@ pub const MetalBackend = struct {
         return telemetry;
     }
 
-    pub fn liveWeightCount(self: MetalBackend) u64 {
+    pub fn liveWeightCount(self: *MetalBackend) u64 {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
         return self.live_weight_count;
     }
 

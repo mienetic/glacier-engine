@@ -76,6 +76,45 @@ consumption on the no-event path for that host session. It did not exercise a
 physical removal-requested or removed callback; transition and error-path
 coverage is deterministic synthetic/model evidence.
 
+## Loss-bound retirement
+
+Device-loss Retirement V1 composes the accepted lifecycle transition with one
+exact selected LeaseTree allocation. Its portable 544-byte plan binds the
+selection, allocation authority, lease, leaf/object sets, recovery generation,
+and adapter-local challenge. The challenge is a digest binding, not native free
+authority.
+
+The production adapter arms its private permit only after full plan replay,
+an exact match against the native snapshot previously consumed for that
+observation, and a read-only revalidation of the same currently sticky native
+loss source. A caller-resealed sequence, native tuple, or evidence root rejects.
+It accepts native removed notification or exact native command-buffer removal;
+synthetic loss cannot enter this path. Arming fails while any prepared,
+reserved, pinned, submitted, terminal-validation, native-command, or quarantine
+state remains.
+
+Once armed, the normal LeaseTree coordinator owns the release transaction. Its
+private `FreePermit` remains the sole logical-accounting authority. For each
+exact live slot, the loss path revalidates the private permit and token, checks
+the retained lifecycle state, and drops the registry's strong `MTLBuffer`
+reference without querying a live `MTLBuffer` or `MTLDevice` property. Partial
+free failure retains the remaining objects and coordinator recovery state.
+Only after all references are dropped does Bank settlement return the logical
+bytes.
+
+The resulting 440-byte receipt binds the ordinary
+`released` / `normal_release` terminal, exact logical bytes, reference count,
+and adapter settlement. It explicitly carries zero physical-reclaim,
+output-publication, migration, and reset authority. Exact completion replay
+returns a private tombstone; foreign replay rejects.
+
+The build-isolated test path is intentionally different. It creates real Metal
+buffers but arms an explicitly synthetic, test-only loss permit, then exercises
+the same LeaseTree free and strong-reference release lifecycle. This proves
+native ownership cleanup on the executing host. It does not reproduce a
+hardware removal callback or prove physical reclamation. See
+[Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md).
+
 For the bounded LeaseTree dispatch profile, the same adapter also binds four
 exact live objects to packed weights, scales, input, and output roles. One
 adapter-owned slot retains one exact request and a pointer-free,
@@ -154,8 +193,9 @@ Bank settlement. The private callback then exact-finalizes the same native
 
 Submission ambiguity, unknown completion, and invalid completion still lack
 terminal authority and remain sticky. Source-bound lifecycle observation does
-not infer a dispatch terminal, release dead resources, clear quarantine,
-migrate work, select a fresh device, or provide multi-slot scheduling.
+not infer a dispatch terminal. The separate retirement path can release only
+an already quiesced allocation; it cannot clear this quarantine, migrate work,
+select a fresh device, or provide multi-slot scheduling.
 
 The native hard gate now exercises both coordinators. The LeaseTree path uses
 distinct admission/lease/recovery/terminal evidence and keeps its allocation
@@ -386,14 +426,17 @@ overlay and exact coordinator retry. Separately, the lifecycle slice
 establishes real observer installation, initial selected-device membership,
 source-specific sticky removal facts, exact code `11` classification, and
 fail-closed new work. Its M1 evidence is the unchanged no-event path around a
-successful command. It does not establish:
+successful command. Loss-bound retirement additionally releases real buffer
+references and settles logical ownership in the isolated build under an
+explicitly synthetic test-only loss permit. It does not establish:
 
 - physical residency or reclaim completion;
 - heap allocation or fragmentation accounting;
 - a physical command-buffer, driver, hardware, or device-loss failure from the
   test-published error;
-- a physical removal-callback campaign or safe dead-resource recovery;
-- general quarantine clearing, fresh selection, or automatic migration;
+- a physical removal-callback campaign;
+- in-flight/quarantine reconciliation, fresh selection, or automatic
+  migration;
 - multi-slot queue scheduling, a global native queue-depth limit, queue-depth
   evidence, or transfer ownership;
 - inferred terminal state or quarantine reconciliation after ambiguous queue

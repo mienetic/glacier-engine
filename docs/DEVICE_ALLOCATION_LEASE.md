@@ -26,7 +26,10 @@ prior present inventory entry with a newer `unavailable` or `lost` entry. That
 observation layer fails new work closed but grants no allocation cleanup,
 quarantine clearing, or migration authority. Allocation ownership therefore
 remains charged and fenced until this contract's existing release/recovery
-rules, or a future dead-resource authority, resolve it.
+rules resolve it. The separate
+[Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md) protocol now composes
+only the execution-owned LeaseTree path with an exact `lost` transition and
+does not change this ChildLease ABI.
 
 V1 accepts only a present accelerator selection with allocation capability and
 `fallback_used == 0`. “Backend-neutral” describes the portable contract shape;
@@ -308,8 +311,8 @@ The next accelerator-runtime work is intentionally split:
 1. add a reserve/materialize/settle ABI if the post-creation
    `MTLResource.allocatedSize` observation must be charged rather than V1
    logical resource length;
-2. connect source-bound lifecycle transition evidence to a conservative
-   dead-resource retirement/quarantine policy and mandatory fresh selection;
+2. reconcile retained in-flight/quarantined work after loss and require a fresh
+   selection before any successor execution;
 3. add deterministic two-device partition planning before live multi-device
    execution;
 4. add residency as a separate optional authority and evidence contract;

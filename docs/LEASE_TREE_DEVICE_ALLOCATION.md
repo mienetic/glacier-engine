@@ -164,6 +164,15 @@ retryable. A backend with ambiguous release or device-loss outcomes needs a
 later inspect/reconcile and quarantine authority; this coordinator does not
 guess.
 
+Device-loss Retirement V1 now reuses this exact release state machine for an
+already quiesced allocation. A Coordinator-owned arm boundary validates its
+retained lease, object set, leaves, adapter identity, Bank state, and absence
+of dispatch while holding the coordinator lock, then publishes the adapter's
+private loss permit before unlocking. The later ordinary `release` therefore
+drops native references before committing the same FreePermit. This does not
+resolve an ambiguous free or an in-flight/quarantined dispatch. See
+[Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md).
+
 ## Evidence boundary
 
 The new public values are distinct from the ChildLease evidence family:
@@ -269,7 +278,7 @@ not yet establish:
 
 - physical residency or reclaim completion;
 - post-creation `allocatedSize` settlement;
-- ambiguous device-loss reconciliation and quarantine;
+- in-flight or ambiguous device-loss reconciliation and quarantine;
 - asynchronous queue scheduling, transfer ownership, or queue-depth evidence;
 - concurrent materialized leases in one adapter context;
 - multi-device partitioning and scheduling;

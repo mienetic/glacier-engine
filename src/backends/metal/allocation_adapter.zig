@@ -10,16 +10,23 @@ const std = @import("std");
 const core = @import("core");
 const config = @import("config");
 const metal = @import("backend.zig");
+const metal_lifecycle = @import("device_lifecycle_adapter.zig");
 const native = @import("native_observer.zig");
 
 const metal_enabled = if (@hasDecl(config, "metal_enabled"))
     config.metal_enabled
 else
     false;
+const metal_test_faults = if (@hasDecl(config, "metal_test_faults"))
+    config.metal_test_faults
+else
+    false;
 
 pub const allocation = core.device_allocation_lease;
 pub const lease_tree = core.device_allocation_lease_tree;
 pub const device = core.device_capability_contract;
+pub const lifecycle = core.device_lifecycle_contract;
+pub const loss_retirement = core.device_loss_retirement;
 const resource = core.resource_bank;
 pub const Digest = allocation.Digest;
 
@@ -86,6 +93,10 @@ const async_dispatch_failure_backend_completion_domain =
     "glacier-metal-async-failure-backend-completion-v1\x00";
 const async_dispatch_terminal_failure_domain =
     "glacier-metal-async-dispatch-terminal-failure-v1\x00";
+const loss_retirement_adapter_challenge_domain =
+    "glacier-metal-loss-retirement-adapter-challenge-v1\x00";
+const loss_retirement_settlement_domain =
+    "glacier-metal-loss-retirement-settlement-v1\x00";
 const completed_command_buffer_status: u32 = 4;
 pub const async_native_command_status_unobserved: u64 =
     std.math.maxInt(u64);
@@ -109,6 +120,9 @@ pub const Error =
     allocation.Error ||
     lease_tree.Error ||
     device.Error ||
+    lifecycle.Error ||
+    loss_retirement.Error ||
+    metal_lifecycle.Error ||
     metal.MetalError ||
     error{
         InvalidConfiguration,
@@ -470,6 +484,55 @@ pub const MetalAllocationSnapshotV1 = struct {
     inspect_calls: u64,
 };
 
+const LossRetirementModeV1 = enum {
+    production,
+    synthetic_test,
+};
+
+/// Same-process destructive authority retained only after the portable plan
+/// and this exact native adapter have both accepted the loss. Public hashes
+/// alone never select the no-property-read free path.
+const MetalLossRetirementPermitV1 = struct {
+    plan: loss_retirement.LossRetirementPlanV1,
+    plan_sha256: Digest,
+    lease_sha256: Digest,
+    authority_sha256: Digest,
+    selected_capability_sha256: Digest,
+    device_sha256: Digest,
+    placement_sha256: Digest,
+    source_instance_sha256: Digest,
+    source_identity: metal.MetalDeviceLifecycleSourceIdentity,
+    minimum_event_sequence: u64,
+    reference_release_count: u64 = 0,
+    mode: LossRetirementModeV1,
+};
+
+const MetalLossRetirementTombstoneV1 = struct {
+    plan: loss_retirement.LossRetirementPlanV1,
+    terminal: lease_tree.LeaseTreeAllocationTerminalReceiptV1,
+    receipt: loss_retirement.LossRetirementReceiptV1,
+};
+
+const MetalLossRetirementChallengeContextV1 = struct {
+    adapter: *MetalAllocationAdapterV1,
+    observation: lifecycle.ObservationV1,
+    result: ?Digest = null,
+};
+
+const MetalLossRetirementArmContextV1 = struct {
+    adapter: *MetalAllocationAdapterV1,
+    plan: loss_retirement.LossRetirementPlanV1,
+    observation: lifecycle.ObservationV1,
+    transition: lifecycle.TransitionReceiptV1,
+    source_cursor: lifecycle.SourceCursorV1,
+    requirement: device.DeviceRequirementV1,
+    selection: device.DeviceSelectionReceiptV1,
+    prior_inventory: []const device.DeviceInventoryEntryV1,
+    selected_entry: device.DeviceInventoryEntryV1,
+    successor_entry: device.DeviceInventoryEntryV1,
+    mode: LossRetirementModeV1,
+};
+
 fn expectedAllocationCapabilityV1(
     info: metal.MetalDeviceInfo,
     limits: metal.MetalAllocationLimits,
@@ -554,6 +617,7 @@ pub const MetalAllocationAdapterV1 = struct {
     adapter_identity: metal.MetalAllocationAdapterIdentity,
     dispatch_authority_sha256: Digest,
     queue_authority_sha256: Digest,
+    self_address: usize = 0,
     next_generation: u64 = 1,
     next_matvec_request_generation: u64 = 1,
     next_async_ticket_generation: u64 = 1,
@@ -571,6 +635,8 @@ pub const MetalAllocationAdapterV1 = struct {
     authorized_terminal: ?AuthorizedDispatchTerminalV1 = null,
     terminal_validation_observed: bool = false,
     settlement_tombstone: ?DispatchSettlementTombstoneV1 = null,
+    loss_retirement_permit: ?MetalLossRetirementPermitV1 = null,
+    loss_retirement_tombstone: ?MetalLossRetirementTombstoneV1 = null,
     allocate_calls: u64 = 0,
     free_calls: u64 = 0,
     inspect_calls: u64 = 0,
@@ -673,6 +739,7 @@ pub const MetalAllocationAdapterV1 = struct {
     pub fn interface(
         self: *MetalAllocationAdapterV1,
     ) allocation.AdapterV1 {
+        self.bindAddressOrPanic();
         return .{
             .context = self,
             .authority = self.authority,
@@ -682,12 +749,558 @@ pub const MetalAllocationAdapterV1 = struct {
         };
     }
 
+    /// Derive the adapter-local challenge composed into a portable retirement
+    /// plan. The digest names this exact adapter instance, live lease, device,
+    /// placement, and lifecycle observation; it grants no free authority.
+    pub fn lossRetirementAdapterChallengeV1(
+        self: *MetalAllocationAdapterV1,
+        coordinator: *lease_tree.CoordinatorV1,
+        bound_adapter: allocation.AdapterV1,
+        observation: lifecycle.ObservationV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    ) Error!Digest {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        try self.validateAddress();
+        if (observation.abi_version != lifecycle.observation_abi or
+            observation.observed_state != .lost or
+            digestIsZero(observation.observation_sha256) or
+            !device.digestEqual(
+                observation.observation_sha256,
+                lifecycle.observationRootV1(observation),
+            ))
+            return Error.InvalidObservation;
+        var context: MetalLossRetirementChallengeContextV1 = .{
+            .adapter = self,
+            .observation = observation,
+        };
+        try coordinator.withQuiescedRetirementBindingV1(
+            lease,
+            .{
+                .context = &context,
+                .allocation_adapter = bound_adapter,
+                .arm_fn = lossRetirementChallengeCallback,
+            },
+        );
+        return context.result orelse Error.InvalidConfiguration;
+    }
+
+    /// Arm the production no-property-read reference-release path. Portable
+    /// evidence is fully replayed first, then the exact retained native
+    /// lifecycle source is checked in its current sticky lost state without a
+    /// second consume.
+    pub fn armLossRetirementV1(
+        self: *MetalAllocationAdapterV1,
+        coordinator: *lease_tree.CoordinatorV1,
+        bound_adapter: allocation.AdapterV1,
+        plan: loss_retirement.LossRetirementPlanV1,
+        observation: lifecycle.ObservationV1,
+        transition: lifecycle.TransitionReceiptV1,
+        source_cursor: lifecycle.SourceCursorV1,
+        requirement: device.DeviceRequirementV1,
+        selection: device.DeviceSelectionReceiptV1,
+        prior_inventory: []const device.DeviceInventoryEntryV1,
+        selected_entry: device.DeviceInventoryEntryV1,
+        successor_entry: device.DeviceInventoryEntryV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    ) Error!void {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        try self.validateAddress();
+        try loss_retirement.validateLossRetirementPlanV1(
+            plan,
+            observation,
+            transition,
+            source_cursor,
+            requirement,
+            selection,
+            prior_inventory,
+            selected_entry,
+            successor_entry,
+            self.authority,
+            lease,
+        );
+        try loss_retirement
+            .requireProductionEligibleLossRetirementPlanV1(
+            plan,
+            observation,
+            transition,
+        );
+        var context: MetalLossRetirementArmContextV1 = .{
+            .adapter = self,
+            .plan = plan,
+            .observation = observation,
+            .transition = transition,
+            .source_cursor = source_cursor,
+            .requirement = requirement,
+            .selection = selection,
+            .prior_inventory = prior_inventory,
+            .selected_entry = selected_entry,
+            .successor_entry = successor_entry,
+            .mode = .production,
+        };
+        coordinator.withQuiescedRetirementBindingV1(
+            lease,
+            .{
+                .context = &context,
+                .allocation_adapter = bound_adapter,
+                .arm_fn = lossRetirementArmCallback,
+            },
+        ) catch |err| return mapCoordinatorRetirementError(err);
+    }
+
+    /// Fault-build-only arm for deterministic tests over real MTLBuffers.
+    /// Synthetic evidence can never enter the production arm above, and this
+    /// entry point is unavailable unless `metal_test_faults` was compiled in.
+    pub fn armSyntheticLossRetirementForTestV1(
+        self: *MetalAllocationAdapterV1,
+        coordinator: *lease_tree.CoordinatorV1,
+        bound_adapter: allocation.AdapterV1,
+        plan: loss_retirement.LossRetirementPlanV1,
+        observation: lifecycle.ObservationV1,
+        transition: lifecycle.TransitionReceiptV1,
+        source_cursor: lifecycle.SourceCursorV1,
+        requirement: device.DeviceRequirementV1,
+        selection: device.DeviceSelectionReceiptV1,
+        prior_inventory: []const device.DeviceInventoryEntryV1,
+        selected_entry: device.DeviceInventoryEntryV1,
+        successor_entry: device.DeviceInventoryEntryV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    ) Error!void {
+        if (comptime !metal_enabled or !metal_test_faults)
+            return metal.MetalError.Unavailable;
+        try self.validateAddress();
+        try loss_retirement.validateLossRetirementPlanV1(
+            plan,
+            observation,
+            transition,
+            source_cursor,
+            requirement,
+            selection,
+            prior_inventory,
+            selected_entry,
+            successor_entry,
+            self.authority,
+            lease,
+        );
+        if (plan.source != .test_injected or
+            plan.evidence_class != .synthetic or
+            observation.source != .test_injected or
+            observation.evidence_class != .synthetic or
+            transition.source != .test_injected or
+            transition.evidence_class != .synthetic or
+            loss_retirement.lossRetirementPlanProductionEligibleV1(
+                plan,
+                observation,
+                transition,
+            ))
+            return Error.InvalidLossRetirementPlan;
+        var context: MetalLossRetirementArmContextV1 = .{
+            .adapter = self,
+            .plan = plan,
+            .observation = observation,
+            .transition = transition,
+            .source_cursor = source_cursor,
+            .requirement = requirement,
+            .selection = selection,
+            .prior_inventory = prior_inventory,
+            .selected_entry = selected_entry,
+            .successor_entry = successor_entry,
+            .mode = .synthetic_test,
+        };
+        coordinator.withQuiescedRetirementBindingV1(
+            lease,
+            .{
+                .context = &context,
+                .allocation_adapter = bound_adapter,
+                .arm_fn = lossRetirementArmCallback,
+            },
+        ) catch |err| return mapCoordinatorRetirementError(err);
+    }
+
+    /// Close an armed retirement only after the ordinary LeaseTree release is
+    /// terminal and both adapter and native registries contain no retained
+    /// object. `terminal` must come from the exact bound same-process
+    /// Coordinator. Its structural digest is composition evidence, not
+    /// authentication or Bank attestation for an untrusted caller. Exact
+    /// completion replay returns the retained tombstone.
+    pub fn completeLossRetirementV1(
+        self: *MetalAllocationAdapterV1,
+        plan: loss_retirement.LossRetirementPlanV1,
+        terminal: lease_tree.LeaseTreeAllocationTerminalReceiptV1,
+    ) Error!loss_retirement.LossRetirementReceiptV1 {
+        if (comptime !metal_enabled)
+            return metal.MetalError.Unavailable;
+        try self.validateAddress();
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.loss_retirement_tombstone) |retained| {
+            if (std.meta.eql(retained.plan, plan) and
+                std.meta.eql(retained.terminal, terminal))
+            {
+                try loss_retirement.validateLossRetirementReceiptV1(
+                    retained.receipt,
+                    plan,
+                    terminal,
+                );
+                return retained.receipt;
+            }
+            return Error.StaleObject;
+        }
+        const permit = self.loss_retirement_permit orelse
+            return Error.InvalidConfiguration;
+        try loss_retirement.validateLossRetirementPlanReplayV1(
+            plan,
+            permit.plan,
+        );
+        try self.requireLossRetirementQuiescedUnlocked();
+        if (self.used_resource_bytes != 0 or
+            self.observed_allocated_size_bytes != 0 or
+            !digestIsZero(self.active_admission_sha256) or
+            permit.reference_release_count != plan.allocation_count)
+            return Error.InvalidConfiguration;
+        for (self.slots) |slot| if (slot.live or
+            !slot.native_token.isZero())
+            return Error.InvalidConfiguration;
+        const backend_live_buffers = self.backend.liveBufferCount();
+        const native_live_buffers =
+            try self.backend.nativeLiveBufferCount();
+        const native_live_commands =
+            try self.backend.nativeLiveCommandCount();
+        const backend_live_weights =
+            self.backend.liveWeightCount();
+        if (backend_live_buffers != 0 or
+            native_live_buffers != 0 or
+            native_live_commands != 0 or
+            backend_live_weights != 0)
+            return Error.InvalidConfiguration;
+        const adapter_settlement_sha256 =
+            lossRetirementSettlementRootV1(
+                self,
+                plan,
+                terminal,
+                permit.reference_release_count,
+                backend_live_buffers,
+                native_live_buffers,
+                native_live_commands,
+                backend_live_weights,
+            );
+        if (digestIsZero(adapter_settlement_sha256))
+            return Error.InvalidConfiguration;
+        const receipt =
+            try loss_retirement.makeLossRetirementReceiptV1(
+                plan,
+                terminal,
+                adapter_settlement_sha256,
+                permit.reference_release_count,
+            );
+        self.loss_retirement_permit = null;
+        self.loss_retirement_tombstone = .{
+            .plan = plan,
+            .terminal = terminal,
+            .receipt = receipt,
+        };
+        return receipt;
+    }
+
+    fn requireLossRetirementQuiescedUnlocked(
+        self: *MetalAllocationAdapterV1,
+    ) Error!void {
+        if (self.dispatch_unresolved or
+            self.async_dispatch != null or
+            self.async_quarantine != null or
+            self.authorized_terminal != null or
+            self.terminal_validation_observed or
+            self.prepared_matvec_request != null or
+            self.reserved_dispatch_intent != null or
+            self.bound_dispatch_pin != null or
+            try self.backend.nativeLiveCommandCount() != 0)
+            return Error.DispatchBusy;
+    }
+
+    fn bindAddressOrPanic(self: *MetalAllocationAdapterV1) void {
+        const address = @intFromPtr(self);
+        if (self.self_address == 0) {
+            self.self_address = address;
+        } else if (self.self_address != address) {
+            @panic("Metal allocation adapter moved after interface binding");
+        }
+    }
+
+    fn validateAddress(
+        self: *MetalAllocationAdapterV1,
+    ) Error!void {
+        if (self.self_address == 0 or
+            self.self_address != @intFromPtr(self))
+            return Error.InvalidConfiguration;
+    }
+
+    fn armLossRetirementFromCoordinatorUnlocked(
+        self: *MetalAllocationAdapterV1,
+        context: MetalLossRetirementArmContextV1,
+        retained_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        retained_object_set: allocation.BackendObjectSetV1,
+        retained_calls: []const allocation.AllocationCallV1,
+        retained_objects: []const allocation.BackendObjectV1,
+    ) Error!void {
+        try loss_retirement.validateLossRetirementPlanV1(
+            context.plan,
+            context.observation,
+            context.transition,
+            context.source_cursor,
+            context.requirement,
+            context.selection,
+            context.prior_inventory,
+            context.selected_entry,
+            context.successor_entry,
+            self.authority,
+            retained_lease,
+        );
+        switch (context.mode) {
+            .production => try loss_retirement
+                .requireProductionEligibleLossRetirementPlanV1(
+                context.plan,
+                context.observation,
+                context.transition,
+            ),
+            .synthetic_test => {
+                if (comptime !metal_test_faults)
+                    return metal.MetalError.Unavailable;
+                if (context.plan.source != .test_injected or
+                    context.plan.evidence_class != .synthetic or
+                    context.observation.source != .test_injected or
+                    context.observation.evidence_class != .synthetic or
+                    context.transition.source != .test_injected or
+                    context.transition.evidence_class != .synthetic or
+                    loss_retirement
+                        .lossRetirementPlanProductionEligibleV1(
+                        context.plan,
+                        context.observation,
+                        context.transition,
+                    ))
+                    return Error.InvalidLossRetirementPlan;
+            },
+        }
+        if (self.loss_retirement_permit) |retained| {
+            if (retained.mode != context.mode or
+                !std.meta.eql(retained.plan, context.plan) or
+                !device.digestEqual(
+                    retained.lease_sha256,
+                    retained_lease.lease_sha256,
+                ))
+                return Error.DispatchBusy;
+            if (context.mode == .production)
+                _ = try metal_lifecycle
+                    .validateStickyNativeLossForRetirementV1(
+                    self.backend,
+                    context.observation,
+                );
+            return;
+        }
+        if (self.loss_retirement_tombstone != null)
+            return Error.StaleObject;
+        try self.requireLossRetirementQuiescedUnlocked();
+        try self.validateLossRetirementAdapterBindingUnlocked(
+            context.plan,
+            context.observation,
+            context.selected_entry,
+            retained_lease,
+            retained_object_set,
+            retained_calls,
+            retained_objects,
+        );
+        var source_identity: metal.MetalDeviceLifecycleSourceIdentity = .{};
+        if (context.mode == .production) {
+            _ = try metal_lifecycle
+                .validateStickyNativeLossForRetirementV1(
+                self.backend,
+                context.observation,
+            );
+            source_identity =
+                self.backend.initialDeviceLifecycleSourceIdentity();
+        }
+        try self.backend.armLossRetirementFence(
+            context.plan.allocation_count,
+        );
+        self.loss_retirement_permit = .{
+            .plan = context.plan,
+            .plan_sha256 = context.plan.plan_sha256,
+            .lease_sha256 = retained_lease.lease_sha256,
+            .authority_sha256 = self.authority.authority_sha256,
+            .selected_capability_sha256 = self.authority.selected_capability_sha256,
+            .device_sha256 = self.device_sha256,
+            .placement_sha256 = self.placement_sha256,
+            .source_instance_sha256 = context.observation.source_instance_sha256,
+            .source_identity = source_identity,
+            .minimum_event_sequence = context.observation.source_sequence,
+            .mode = context.mode,
+        };
+    }
+
+    fn validateLossRetirementAdapterBindingUnlocked(
+        self: *MetalAllocationAdapterV1,
+        plan: loss_retirement.LossRetirementPlanV1,
+        observation: lifecycle.ObservationV1,
+        selected_entry: device.DeviceInventoryEntryV1,
+        lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+        retained_object_set: allocation.BackendObjectSetV1,
+        retained_calls: []const allocation.AllocationCallV1,
+        retained_objects: []const allocation.BackendObjectV1,
+    ) Error!void {
+        allocation.validateObjectSetForAdmissionRootV1(
+            retained_object_set,
+            lease.admission_sha256,
+            self.authority.authority_sha256,
+            lease.allocation_count,
+            lease.materialized_bytes,
+            retained_calls,
+            retained_objects,
+        ) catch return Error.InvalidConfiguration;
+        const expected_challenge =
+            lossRetirementAdapterChallengeRootV1(
+                self,
+                observation,
+                lease,
+            );
+        if (!device.digestEqual(
+            plan.adapter_challenge_sha256,
+            expected_challenge,
+        ) or !device.digestEqual(
+            plan.allocation_authority_sha256,
+            self.authority.authority_sha256,
+        ) or !device.digestEqual(
+            plan.allocation_lease_sha256,
+            lease.lease_sha256,
+        ) or !device.digestEqual(
+            plan.selected_capability_sha256,
+            self.authority.selected_capability_sha256,
+        ) or !device.digestEqual(
+            selected_entry.capability.device_sha256,
+            self.device_sha256,
+        ) or !device.digestEqual(
+            selected_entry.capability.placement_sha256,
+            self.placement_sha256,
+        ) or !device.digestEqual(
+            lease.admission_sha256,
+            self.active_admission_sha256,
+        ) or !device.digestEqual(
+            lease.backend_object_set_sha256,
+            retained_object_set.object_set_sha256,
+        ) or retained_calls.len !=
+            @as(usize, @intCast(lease.allocation_count)) or
+            retained_objects.len != retained_calls.len or
+            self.backend.liveWeightCount() != 0 or
+            plan.allocation_count >
+                @as(u64, @intCast(self.slots.len)))
+            return Error.InvalidConfiguration;
+
+        var live_count: u64 = 0;
+        var live_bytes: u64 = 0;
+        var observed_bytes: u64 = 0;
+        var ordered_calls =
+            [_]allocation.AllocationCallV1{.{}} **
+            allocation.maximum_allocations;
+        var ordered_objects =
+            [_]allocation.BackendObjectV1{.{}} **
+            allocation.maximum_allocations;
+        var ordinal_seen =
+            [_]bool{false} ** allocation.maximum_allocations;
+        for (self.slots) |slot| {
+            if (!slot.live) {
+                if (!slot.native_token.isZero())
+                    return Error.InvalidConfiguration;
+                continue;
+            }
+            allocation.validateAllocationCallV1(slot.call) catch
+                return Error.InvalidConfiguration;
+            allocation.validateBackendObjectV1(
+                slot.object,
+                slot.call,
+            ) catch return Error.InvalidConfiguration;
+            if (slot.native_token.isZero() or
+                !device.digestEqual(
+                    slot.call.authority_sha256,
+                    self.authority.authority_sha256,
+                ) or !device.digestEqual(
+                slot.call.admission_sha256,
+                lease.admission_sha256,
+            ) or slot.call.charged_bytes !=
+                slot.object.allocated_bytes or
+                slot.native_info.device_registry_id !=
+                    self.limits.device_registry_id or
+                slot.native_info.requested_length !=
+                    slot.call.requested_bytes or
+                slot.native_info.resource_length !=
+                    slot.call.charged_bytes)
+                return Error.InvalidConfiguration;
+            const ordinal = std.math.cast(
+                usize,
+                slot.call.ordinal,
+            ) orelse return Error.InvalidConfiguration;
+            if (ordinal >=
+                @as(usize, @intCast(plan.allocation_count)) or
+                ordinal_seen[ordinal])
+                return Error.InvalidConfiguration;
+            ordinal_seen[ordinal] = true;
+            ordered_calls[ordinal] = slot.call;
+            ordered_objects[ordinal] = slot.object;
+            live_count = std.math.add(u64, live_count, 1) catch
+                return Error.InvalidConfiguration;
+            live_bytes = std.math.add(
+                u64,
+                live_bytes,
+                slot.call.charged_bytes,
+            ) catch return Error.InvalidConfiguration;
+            observed_bytes = std.math.add(
+                u64,
+                observed_bytes,
+                slot.native_info.allocated_size,
+            ) catch return Error.InvalidConfiguration;
+        }
+        if (live_count != plan.allocation_count or
+            live_count != lease.allocation_count or
+            live_bytes != plan.materialized_bytes or
+            live_bytes != lease.materialized_bytes or
+            live_bytes != self.used_resource_bytes or
+            observed_bytes != self.observed_allocated_size_bytes or
+            self.backend.liveBufferCount() != live_count or
+            try self.backend.nativeLiveBufferCount() != live_count)
+            return Error.InvalidConfiguration;
+        const object_count: usize = @intCast(live_count);
+        for (retained_calls, 0..) |call, ordinal|
+            if (!std.meta.eql(call, ordered_calls[ordinal]) or
+                !std.meta.eql(
+                    retained_objects[ordinal],
+                    ordered_objects[ordinal],
+                ))
+                return Error.InvalidConfiguration;
+        const object_set =
+            allocation.makeObjectSetForAdmissionRootV1(
+                lease.admission_sha256,
+                self.authority.authority_sha256,
+                live_count,
+                live_bytes,
+                ordered_calls[0..object_count],
+                ordered_objects[0..object_count],
+            ) catch return Error.InvalidConfiguration;
+        if (!std.meta.eql(object_set, retained_object_set) or
+            !device.digestEqual(
+                object_set.object_set_sha256,
+                lease.backend_object_set_sha256,
+            ) or !device.digestEqual(
+            object_set.object_set_sha256,
+            plan.backend_object_set_sha256,
+        ))
+            return Error.InvalidConfiguration;
+    }
+
     /// Bind a LeaseTree dispatch pin to this exact native adapter and its
     /// single serial Metal queue. Terminal validation alone never clears the
     /// private authorization; only the post-Bank settlement callback does.
     pub fn dispatchInterface(
         self: *MetalAllocationAdapterV1,
     ) lease_tree.DispatchAdapterV1 {
+        self.bindAddressOrPanic();
         return .{
             .context = self,
             .dispatch_authority_sha256 = self.dispatch_authority_sha256,
@@ -739,6 +1352,8 @@ pub const MetalAllocationAdapterV1 = struct {
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
+            self.loss_retirement_permit != null or
+            self.loss_retirement_tombstone != null or
             self.reserved_dispatch_intent != null or
             self.bound_dispatch_pin != null)
             return Error.DispatchBusy;
@@ -812,6 +1427,9 @@ pub const MetalAllocationAdapterV1 = struct {
             digestIsZero(vector_input_sha256))
             return Error.InvalidDispatchEvidence;
 
+        if (self.loss_retirement_permit != null or
+            self.loss_retirement_tombstone != null)
+            return Error.DispatchBusy;
         if (self.async_dispatch) |pending| {
             try validateMetalAsyncDispatchTicketForDispatchV1(
                 pending.ticket,
@@ -1888,6 +2506,9 @@ pub const MetalAllocationAdapterV1 = struct {
             return metal.MetalError.Unavailable;
         self.mutex.lock();
         defer self.mutex.unlock();
+        if (self.loss_retirement_permit != null or
+            self.loss_retirement_tombstone != null)
+            return Error.DispatchBusy;
         var live_count: usize = 0;
         for (self.slots) |slot| if (slot.live) {
             live_count += 1;
@@ -1932,6 +2553,8 @@ pub const MetalAllocationAdapterV1 = struct {
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
+            self.loss_retirement_permit != null or
+            self.loss_retirement_tombstone != null or
             self.reserved_dispatch_intent != null or
             self.bound_dispatch_pin != null)
             return Error.DispatchBusy;
@@ -2341,6 +2964,7 @@ pub const MetalAllocationAdapterV1 = struct {
         if (self.used_resource_bytes != 0 or
             self.observed_allocated_size_bytes != 0 or
             !digestIsZero(self.active_admission_sha256) or
+            self.loss_retirement_permit != null or
             self.dispatch_unresolved or
             self.async_dispatch != null or
             self.async_quarantine != null or
@@ -2363,6 +2987,8 @@ pub const MetalAllocationAdapterV1 = struct {
             @ptrCast(@alignCast(context));
         self.mutex.lock();
         defer self.mutex.unlock();
+        self.validateAddress() catch
+            return lease_tree.DispatchCallbackError.Unavailable;
         lease_tree.validateDispatchPinIntentV1(
             intent,
         ) catch return lease_tree.DispatchCallbackError
@@ -2377,6 +3003,8 @@ pub const MetalAllocationAdapterV1 = struct {
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
+            self.loss_retirement_permit != null or
+            self.loss_retirement_tombstone != null or
             self.bound_dispatch_pin != null or
             !device.digestEqual(
                 prepared.request_sha256,
@@ -2839,6 +3467,8 @@ pub const MetalAllocationAdapterV1 = struct {
         if (self.dispatch_unresolved or
             self.authorized_terminal != null or
             self.terminal_validation_observed or
+            self.loss_retirement_permit != null or
+            self.loss_retirement_tombstone != null or
             self.prepared_matvec_request != null or
             self.reserved_dispatch_intent != null or
             self.bound_dispatch_pin != null)
@@ -2977,6 +3607,8 @@ pub const MetalAllocationAdapterV1 = struct {
             @ptrCast(@alignCast(context));
         self.mutex.lock();
         defer self.mutex.unlock();
+        self.validateAddress() catch
+            return allocation.CallbackError.Unavailable;
         // Prepared or bound request state is an ownership fence. Core's
         // private settlement callback clears it atomically with exact Bank
         // completion validation, so no caller-controlled handoff window can
@@ -3011,17 +3643,64 @@ pub const MetalAllocationAdapterV1 = struct {
         const native_token = slot.native_token;
         if (native_token.isZero())
             return allocation.CallbackError.Unavailable;
-        const inspected = self.backend.inspectBufferAllocation(
-            native_token,
-        ) catch return allocation.CallbackError.Unavailable;
-        if (!std.meta.eql(inspected, slot.native_info))
-            return allocation.CallbackError.Unavailable;
+        if (self.loss_retirement_permit) |permit| {
+            if (!device.digestEqual(
+                permit.plan_sha256,
+                permit.plan.plan_sha256,
+            ) or !device.digestEqual(
+                permit.lease_sha256,
+                permit.plan.allocation_lease_sha256,
+            ) or !device.digestEqual(
+                permit.authority_sha256,
+                self.authority.authority_sha256,
+            ) or !device.digestEqual(
+                permit.selected_capability_sha256,
+                self.authority.selected_capability_sha256,
+            ) or !device.digestEqual(
+                permit.device_sha256,
+                self.device_sha256,
+            ) or !device.digestEqual(
+                permit.placement_sha256,
+                self.placement_sha256,
+            ) or !device.digestEqual(
+                permit.source_instance_sha256,
+                permit.plan.source_instance_sha256,
+            ) or !device.digestEqual(
+                slot.call.admission_sha256,
+                self.active_admission_sha256,
+            ) or permit.reference_release_count >=
+                permit.plan.allocation_count)
+                return allocation.CallbackError.Unavailable;
+            switch (permit.mode) {
+                .production => self.backend
+                    .releaseBufferAllocationAfterLifecycleLoss(
+                    native_token,
+                    permit.source_identity,
+                    permit.minimum_event_sequence,
+                ) catch return allocation.CallbackError.Unavailable,
+                .synthetic_test => {
+                    if (comptime !metal_test_faults)
+                        return allocation.CallbackError.Unavailable;
+                    self.backend.destroyBufferAllocation(
+                        native_token,
+                    ) catch return allocation.CallbackError.Unavailable;
+                },
+            }
+            if (self.loss_retirement_permit) |*retained|
+                retained.reference_release_count += 1;
+        } else {
+            const inspected = self.backend.inspectBufferAllocation(
+                native_token,
+            ) catch return allocation.CallbackError.Unavailable;
+            if (!std.meta.eql(inspected, slot.native_info))
+                return allocation.CallbackError.Unavailable;
 
-        // Objective-C strong-reference release is synchronous and non-failing.
-        // This proves adapter ownership relinquishment, not driver reclamation
-        // or physical residency change.
-        self.backend.destroyBufferAllocation(native_token) catch
-            return allocation.CallbackError.Unavailable;
+            // Objective-C strong-reference release is synchronous and
+            // non-failing. This proves adapter ownership relinquishment, not
+            // driver reclamation or physical residency change.
+            self.backend.destroyBufferAllocation(native_token) catch
+                return allocation.CallbackError.Unavailable;
+        }
         self.used_resource_bytes -= slot.call.charged_bytes;
         self.observed_allocated_size_bytes -=
             slot.native_info.allocated_size;
@@ -3035,6 +3714,96 @@ pub const MetalAllocationAdapterV1 = struct {
             self.active_admission_sha256 = allocation.zero_digest;
     }
 };
+
+fn lossRetirementChallengeCallback(
+    context_ptr: *anyopaque,
+    retained_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    retained_object_set: allocation.BackendObjectSetV1,
+    retained_calls: []const allocation.AllocationCallV1,
+    retained_objects: []const allocation.BackendObjectV1,
+) lease_tree.RetirementBindingCallbackError!void {
+    const context: *MetalLossRetirementChallengeContextV1 =
+        @ptrCast(@alignCast(context_ptr));
+    const self = context.adapter;
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    self.validateAddress() catch
+        return error.InvalidRetirementBinding;
+    if (self.loss_retirement_permit != null or
+        self.loss_retirement_tombstone != null)
+        return error.Busy;
+    allocation.validateObjectSetForAdmissionRootV1(
+        retained_object_set,
+        retained_lease.admission_sha256,
+        self.authority.authority_sha256,
+        retained_lease.allocation_count,
+        retained_lease.materialized_bytes,
+        retained_calls,
+        retained_objects,
+    ) catch return error.InvalidRetirementBinding;
+    if (!device.digestEqual(
+        retained_lease.authority_sha256,
+        self.authority.authority_sha256,
+    ) or !device.digestEqual(
+        retained_lease.selected_capability_sha256,
+        self.authority.selected_capability_sha256,
+    ) or !device.digestEqual(
+        retained_lease.admission_sha256,
+        self.active_admission_sha256,
+    ) or !device.digestEqual(
+        retained_lease.backend_object_set_sha256,
+        retained_object_set.object_set_sha256,
+    ) or self.backend.liveWeightCount() != 0)
+        return error.InvalidRetirementBinding;
+    context.result = lossRetirementAdapterChallengeRootV1(
+        self,
+        context.observation,
+        retained_lease,
+    );
+}
+
+fn lossRetirementArmCallback(
+    context_ptr: *anyopaque,
+    retained_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    retained_object_set: allocation.BackendObjectSetV1,
+    retained_calls: []const allocation.AllocationCallV1,
+    retained_objects: []const allocation.BackendObjectV1,
+) lease_tree.RetirementBindingCallbackError!void {
+    const context: *MetalLossRetirementArmContextV1 =
+        @ptrCast(@alignCast(context_ptr));
+    const self = context.adapter;
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    self.validateAddress() catch
+        return error.InvalidRetirementBinding;
+    self.armLossRetirementFromCoordinatorUnlocked(
+        context.*,
+        retained_lease,
+        retained_object_set,
+        retained_calls,
+        retained_objects,
+    ) catch |err| return mapRetirementCallbackError(err);
+}
+
+fn mapRetirementCallbackError(
+    err: anyerror,
+) lease_tree.RetirementBindingCallbackError {
+    return switch (err) {
+        error.DispatchBusy => error.Busy,
+        error.Unavailable => error.Unavailable,
+        else => error.InvalidRetirementBinding,
+    };
+}
+
+fn mapCoordinatorRetirementError(
+    err: lease_tree.Error,
+) Error {
+    return switch (err) {
+        error.RetirementAdapterBusy => Error.DispatchBusy,
+        error.RetirementAdapterUnavailable => metal.MetalError.Unavailable,
+        else => err,
+    };
+}
 
 pub fn makeMetalMatvecPreSubmitAttemptV1(
     bindings: MetalMatvecAllocationBindingsV1,
@@ -4658,6 +5427,71 @@ fn makeObservationV1(
     };
     result.observation_sha256 = observationRootV1(result);
     return result;
+}
+
+fn lossRetirementAdapterChallengeRootV1(
+    adapter: *const MetalAllocationAdapterV1,
+    observation: lifecycle.ObservationV1,
+    lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(loss_retirement_adapter_challenge_domain);
+    hashU64(&hash, adapter_abi);
+    hash.update(&adapter.authority.authority_sha256);
+    hash.update(&adapter.authority.backend_authority_sha256);
+    hashU64(&hash, adapter.adapter_nonce);
+    hashU64(&hash, adapter.adapter_identity.abi_version);
+    for (adapter.adapter_identity.context_nonce) |word|
+        hashU64(&hash, word);
+    hashU64(&hash, adapter.adapter_identity.adapter_instance);
+    hash.update(&adapter.device_sha256);
+    hash.update(&adapter.placement_sha256);
+    hash.update(&lease.admission_sha256);
+    hash.update(&lease.lease_sha256);
+    hash.update(&lease.allocation_leaf_set_sha256);
+    hash.update(&lease.backend_object_set_sha256);
+    hashU64(&hash, lease.allocation_count);
+    hashU64(&hash, lease.materialized_bytes);
+    hashU64(&hash, @intFromEnum(observation.source));
+    hashU64(&hash, @intFromEnum(observation.evidence_class));
+    hashU64(&hash, observation.source_sequence);
+    hash.update(&observation.source_instance_sha256);
+    hash.update(&observation.observation_sha256);
+    return finish(&hash);
+}
+
+fn lossRetirementSettlementRootV1(
+    adapter: *const MetalAllocationAdapterV1,
+    plan: loss_retirement.LossRetirementPlanV1,
+    terminal: lease_tree.LeaseTreeAllocationTerminalReceiptV1,
+    reference_release_count: u64,
+    backend_live_buffers: u64,
+    native_live_buffers: u64,
+    native_live_commands: u64,
+    backend_live_weights: u64,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(loss_retirement_settlement_domain);
+    hashU64(&hash, adapter_abi);
+    hash.update(&plan.plan_sha256);
+    hash.update(&terminal.terminal_sha256);
+    hash.update(&adapter.authority.authority_sha256);
+    hash.update(&adapter.device_sha256);
+    hash.update(&adapter.placement_sha256);
+    hashU64(&hash, adapter.adapter_identity.abi_version);
+    for (adapter.adapter_identity.context_nonce) |word|
+        hashU64(&hash, word);
+    hashU64(&hash, adapter.adapter_identity.adapter_instance);
+    hashU64(&hash, reference_release_count);
+    // These zeroes are explicit adapter/native registry observations at
+    // completion, not a claim about physical pages or reusable capacity.
+    hashU64(&hash, adapter.used_resource_bytes);
+    hashU64(&hash, adapter.observed_allocated_size_bytes);
+    hashU64(&hash, backend_live_buffers);
+    hashU64(&hash, native_live_buffers);
+    hashU64(&hash, native_live_commands);
+    hashU64(&hash, backend_live_weights);
+    return finish(&hash);
 }
 
 fn backendAuthorityRootV1(

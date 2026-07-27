@@ -16,6 +16,7 @@ const allocation = engine.device_allocation_lease;
 const tree_allocation = engine.device_allocation_lease_tree;
 const device = engine.device_capability_contract;
 const lifecycle = engine.device_lifecycle_contract;
+const retirement = engine.device_loss_retirement;
 const resource = engine.resource_bank;
 const metal_allocation = engine.metal_allocation_adapter;
 const metal_lifecycle = engine.metal_device_lifecycle_adapter;
@@ -538,7 +539,9 @@ const NativeTreeObserverAdapter = struct {
     expected_device_bytes: u64,
     allocation_count: usize,
     expect_free_authorized: bool = true,
+    reject_next_free: bool = false,
     ordering_violation: bool = false,
+    free_attempts: u64 = 0,
     free_calls: u64 = 0,
 
     fn interface(self: *@This()) allocation.AdapterV1 {
@@ -577,6 +580,7 @@ const NativeTreeObserverAdapter = struct {
         object: allocation.BackendObjectV1,
     ) allocation.CallbackError!void {
         const self: *@This() = @ptrCast(@alignCast(context));
+        self.free_attempts += 1;
         const snapshot = self.bank.snapshotV3() catch {
             self.ordering_violation = true;
             return allocation.CallbackError.Unavailable;
@@ -590,6 +594,10 @@ const NativeTreeObserverAdapter = struct {
         } else if (snapshot.reserved_unmaterialized_allocations !=
             self.allocation_count)
             self.ordering_violation = true;
+        if (self.reject_next_free) {
+            self.reject_next_free = false;
+            return allocation.CallbackError.Unavailable;
+        }
         try self.inner.free_fn(self.inner.context, object);
         self.free_calls += 1;
     }
@@ -1127,6 +1135,461 @@ test "real Metal buffers compose with LeaseTree free permits" {
     try testing.expectEqual(@as(u64, 6), final_snapshot.inspect_calls);
     try testing.expectEqual(@as(u64, 8), observed_adapter.free_calls);
     try testing.expect(!observed_adapter.ordering_violation);
+    try bank.closePublicationSession(
+        parent,
+        301,
+        session_id,
+        publication_sequence,
+    );
+    try bank.closeLeaseTree(tree);
+    try bank.release(parent);
+    try testing.expect((try bank.snapshot()).used.isZero());
+}
+
+test "fault-only synthetic loss retires real Metal references with recovery" {
+    if (comptime !metal_fault_control.enabled)
+        return error.SkipZigTest;
+    if (!config.metal_enabled)
+        return error.NativeMetalAllocationRequiresMetal;
+
+    var backend = try engine.MetalBackend.init(
+        engine.metal_library_path,
+    );
+    defer backend.deinit();
+    const inventory_entry =
+        try metal_allocation.makeAllocationInventoryEntryV1(
+            &backend,
+            113,
+            0,
+            1 * 1024 * 1024,
+        );
+    var native_slots =
+        [_]metal_allocation.MetalAllocationSlotV1{.{}} ** 3;
+    var adapter =
+        try metal_allocation.MetalAllocationAdapterV1.init(
+            &backend,
+            inventory_entry,
+            213,
+            0x4c6f_7373_5265_7469,
+            &native_slots,
+        );
+    const fixture = try makeFixture(&adapter, inventory_entry);
+
+    var bank_slots = [_]resource.Slot{.{}};
+    var tree_roots = [_]resource.LeaseTreeRootSlot{.{}};
+    var tree_nodes = [_]resource.LeaseNodeSlot{.{}} ** 4;
+    var bank = try resource.Bank.initWithLeaseTreeStorage(
+        &bank_slots,
+        &tree_roots,
+        &tree_nodes,
+        .{
+            .host_bytes = 1_024,
+            .capsule_bytes = 1_024,
+            .device_bytes = fixture.manifest.total_charged_bytes,
+            .queue_slots = 1,
+        },
+        413,
+    );
+    const parent = try bank.commit(
+        try bank.reserve(513, .{
+            .capsule_bytes = 64,
+            .queue_slots = 1,
+        }),
+    );
+    const opened = try bank.openLeaseTree(
+        parent,
+        0x4c6f_7373_526f_6f74,
+        0x4c6f_7373_4175_7468,
+        .{
+            .device_bytes = fixture.manifest.total_charged_bytes,
+        },
+    );
+    const scoped = try bank.openLeaseScope(
+        opened,
+        0x4c6f_7373_5363_6f70,
+        0x4c6f_7373_5465_6e74,
+        .{
+            .device_bytes = fixture.manifest.total_charged_bytes,
+        },
+    );
+    var tree = scoped.tree;
+    var session_byte: u8 = 0;
+    const session_id = @intFromPtr(&session_byte);
+    var publication_sequence: u64 = 0;
+    try bank.bindPublicationSessionWithLeaseTree(
+        tree,
+        301,
+        session_id,
+    );
+    var coordinator_objects =
+        [_]tree_allocation.CoordinatorObjectSlotV1{.{}} ** 3;
+    var coordinator: tree_allocation.CoordinatorV1 = .{};
+    try coordinator.init(
+        613,
+        &bank,
+        &tree,
+        scoped.scope,
+        301,
+        session_id,
+        &publication_sequence,
+        &coordinator_objects,
+    );
+    const request = try makeRequest(&adapter, parent, fixture);
+    var observed_adapter = NativeTreeObserverAdapter{
+        .inner = adapter.interface(),
+        .bank = &bank,
+        .expected_device_bytes = fixture.manifest.total_charged_bytes,
+        .allocation_count = fixture.entries.len,
+    };
+    const admission = try coordinator.admit(
+        observed_adapter.interface(),
+        request,
+        fixture.selection,
+        fixture.requirement,
+        &fixture.inventory,
+        parent,
+        fixture.manifest,
+        &fixture.entries,
+    );
+    const materialized = try coordinator.materialize(
+        admission,
+        observed_adapter.interface(),
+        .{},
+    );
+    const lease = switch (materialized) {
+        .active => |value| value,
+        else => return error.TestUnexpectedResult,
+    };
+    try testing.expectEqual(@as(u64, 3), backend.liveBufferCount());
+    try testing.expectEqual(
+        @as(u64, 3),
+        try backend.nativeLiveBufferCount(),
+    );
+    const retained_native_token = native_slots[0].native_token;
+    try testing.expect(!retained_native_token.isZero());
+
+    const source_cursor: lifecycle.SourceCursorV1 = .{
+        .source_instance_sha256 = digest(
+            "fault-only Metal loss source instance",
+        ),
+        .last_sequence = 0,
+    };
+    const observation = try lifecycle.makeObservationV1(
+        inventory_entry,
+        &fixture.inventory,
+        source_cursor.source_instance_sha256,
+        1,
+        .test_injected,
+        digest("fault-only Metal loss evidence"),
+        0,
+        0,
+        0,
+    );
+    const successor_entry = try lifecycle.makeSuccessorEntryV1(
+        observation,
+        inventory_entry,
+        &fixture.inventory,
+        source_cursor,
+        inventory_entry.discovery_epoch + 1,
+    );
+    const transition = try lifecycle.makeTransitionReceiptV1(
+        observation,
+        inventory_entry,
+        &fixture.inventory,
+        successor_entry,
+        source_cursor,
+    );
+    var copied_adapter = adapter;
+    try testing.expectError(
+        metal_allocation.Error.InvalidConfiguration,
+        copied_adapter.lossRetirementAdapterChallengeV1(
+            &coordinator,
+            observed_adapter.interface(),
+            observation,
+            lease,
+        ),
+    );
+    var forged_object_set_lease = lease;
+    forged_object_set_lease.backend_object_set_sha256 =
+        digest("forged loss backend object set");
+    forged_object_set_lease.lease_sha256 =
+        tree_allocation.leaseRootV1(forged_object_set_lease);
+    try testing.expectError(
+        tree_allocation.Error.InvalidTransition,
+        adapter.lossRetirementAdapterChallengeV1(
+            &coordinator,
+            observed_adapter.interface(),
+            observation,
+            forged_object_set_lease,
+        ),
+    );
+    var forged_leaf_set_lease = lease;
+    forged_leaf_set_lease.allocation_leaf_set_sha256 =
+        digest("forged loss allocation leaf set");
+    forged_leaf_set_lease.lease_sha256 =
+        tree_allocation.leaseRootV1(forged_leaf_set_lease);
+    try testing.expectError(
+        tree_allocation.Error.InvalidTransition,
+        adapter.lossRetirementAdapterChallengeV1(
+            &coordinator,
+            observed_adapter.interface(),
+            observation,
+            forged_leaf_set_lease,
+        ),
+    );
+    var forged_request_lease = lease;
+    forged_request_lease.request_sha256 =
+        digest("forged loss allocation request");
+    forged_request_lease.lease_sha256 =
+        tree_allocation.leaseRootV1(forged_request_lease);
+    try testing.expectError(
+        tree_allocation.Error.InvalidTransition,
+        adapter.lossRetirementAdapterChallengeV1(
+            &coordinator,
+            observed_adapter.interface(),
+            observation,
+            forged_request_lease,
+        ),
+    );
+    try testing.expectEqual(@as(u64, 3), backend.liveBufferCount());
+    try testing.expectEqual(@as(u64, 0), adapter.snapshot().free_calls);
+
+    const adapter_challenge =
+        try adapter.lossRetirementAdapterChallengeV1(
+            &coordinator,
+            observed_adapter.interface(),
+            observation,
+            lease,
+        );
+    const plan = try retirement.makeLossRetirementPlanV1(
+        observation,
+        transition,
+        source_cursor,
+        fixture.requirement,
+        fixture.selection,
+        &fixture.inventory,
+        inventory_entry,
+        successor_entry,
+        adapter.authority,
+        lease,
+        1,
+        adapter_challenge,
+    );
+    const forged_leaf_plan =
+        try retirement.makeLossRetirementPlanV1(
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            adapter.authority,
+            forged_leaf_set_lease,
+            1,
+            adapter_challenge,
+        );
+    try testing.expectError(
+        tree_allocation.Error.InvalidTransition,
+        adapter.armSyntheticLossRetirementForTestV1(
+            &coordinator,
+            observed_adapter.interface(),
+            forged_leaf_plan,
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            forged_leaf_set_lease,
+        ),
+    );
+    try testing.expectError(
+        retirement.Error.ProductionEvidenceRequired,
+        adapter.armLossRetirementV1(
+            &coordinator,
+            observed_adapter.interface(),
+            plan,
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            lease,
+        ),
+    );
+
+    const geometry = try metal_allocation.makeMatvecGeometryV1(
+        8,
+        64,
+        37,
+    );
+    const prepared_attempt =
+        try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+            .{
+                .packed_weights_sha256 = digest("loss prepared packed"),
+                .scales_sha256 = digest("loss prepared scales"),
+                .input_sha256 = digest("loss prepared input"),
+                .output_sha256 = digest("loss prepared output"),
+            },
+            geometry.packed_bytes,
+            geometry.scale_count,
+            geometry.input_count,
+            geometry.output_count,
+            geometry.group_size,
+            geometry.in_features,
+            geometry.out_features,
+        );
+    const prepared =
+        try adapter.prepareMatvecDispatchRequestV1(
+            prepared_attempt,
+        );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.armSyntheticLossRetirementForTestV1(
+            &coordinator,
+            observed_adapter.interface(),
+            plan,
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            lease,
+        ),
+    );
+    try adapter.cancelPreparedMatvecDispatchRequestV1(prepared);
+
+    try adapter.armSyntheticLossRetirementForTestV1(
+        &coordinator,
+        observed_adapter.interface(),
+        plan,
+        observation,
+        transition,
+        source_cursor,
+        fixture.requirement,
+        fixture.selection,
+        &fixture.inventory,
+        inventory_entry,
+        successor_entry,
+        lease,
+    );
+    try adapter.armSyntheticLossRetirementForTestV1(
+        &coordinator,
+        observed_adapter.interface(),
+        plan,
+        observation,
+        transition,
+        source_cursor,
+        fixture.requirement,
+        fixture.selection,
+        &fixture.inventory,
+        inventory_entry,
+        successor_entry,
+        lease,
+    );
+    try testing.expectError(
+        engine.metal_backend.MetalError.DeviceLost,
+        backend.inspectBufferAllocation(retained_native_token),
+    );
+    try testing.expectError(
+        engine.metal_backend.MetalError.DeviceLost,
+        backend.createBufferAllocation(64),
+    );
+    try testing.expectEqual(@as(u64, 0), backend.liveWeightCount());
+    const inspect_calls_after_arm =
+        adapter.snapshot().inspect_calls;
+    var forbidden_observations =
+        [_]metal_allocation.MetalAllocationObservationV1{.{}} ** 3;
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.copyLiveObservations(&forbidden_observations),
+    );
+    try testing.expectEqual(
+        inspect_calls_after_arm,
+        adapter.snapshot().inspect_calls,
+    );
+
+    observed_adapter.reject_next_free = true;
+    const first_release = try coordinator.release(
+        lease,
+        observed_adapter.interface(),
+    );
+    const recovery = switch (first_release) {
+        .recovery_required => |value| value,
+        .terminal => return error.TestUnexpectedResult,
+    };
+    try tree_allocation.validateRecoveryV1(recovery);
+    try testing.expectEqual(
+        tree_allocation.RecoveryPhaseV1.free_authorized,
+        recovery.phase,
+    );
+    try testing.expectEqual(@as(u64, 1), backend.liveBufferCount());
+    try testing.expectEqual(
+        @as(u64, 1),
+        try backend.nativeLiveBufferCount(),
+    );
+    try testing.expectEqual(@as(u64, 3), observed_adapter.free_attempts);
+    try testing.expectEqual(@as(u64, 2), observed_adapter.free_calls);
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.copyLiveObservations(&forbidden_observations),
+    );
+    try testing.expectEqual(
+        inspect_calls_after_arm,
+        adapter.snapshot().inspect_calls,
+    );
+
+    const retried = try coordinator.retryRecovery(
+        recovery,
+        observed_adapter.interface(),
+    );
+    const terminal = switch (retried) {
+        .terminal => |value| value,
+        .recovery_required => return error.TestUnexpectedResult,
+    };
+    const receipt = try adapter.completeLossRetirementV1(
+        plan,
+        terminal,
+    );
+    try retirement.validateLossRetirementReceiptV1(
+        receipt,
+        plan,
+        terminal,
+    );
+    try testing.expectEqual(plan.allocation_count, receipt.reference_release_count);
+    try testing.expectEqual(@as(u64, 0), receipt.physical_reclaim_observed);
+    try testing.expectEqual(
+        plan.materialized_bytes,
+        receipt.returned_logical_device_bytes,
+    );
+    try testing.expectEqualDeep(
+        receipt,
+        try adapter.completeLossRetirementV1(plan, terminal),
+    );
+    try testing.expectEqual(@as(u64, 0), backend.liveBufferCount());
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveBufferCount(),
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectEqual(@as(u64, 4), observed_adapter.free_attempts);
+    try testing.expectEqual(@as(u64, 3), observed_adapter.free_calls);
+    try testing.expect(!observed_adapter.ordering_violation);
+    try adapter.validateEmpty();
+
     try bank.closePublicationSession(
         parent,
         301,

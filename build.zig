@@ -1762,6 +1762,8 @@ pub fn build(b: *std.Build) void {
             }),
             .filters = &.{
                 "fault-injected Metal terminal error settles after physical success",
+                "fault-only synthetic loss retires real Metal references with recovery",
+                "retirement binds exact consumed native loss snapshot",
             },
         });
         native_metal_fault_tests.root_module.addImport(

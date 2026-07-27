@@ -15,7 +15,8 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Execution | CPU kernels, optional Metal backend, DecodePlan, sealed media plans | Produce candidate activations, KV rows, tokens, tensors, or media outputs under explicit bounds |
 | Device selection | `DeviceCapabilityV1`, canonical inventory, plan-bound requirement, selection receipt | Choose one compatible present CPU or accelerator deterministically before admission without granting allocation, queue, dispatch, or publication authority |
 | Device lifecycle observation | `ObservationV1`, `TransitionReceiptV1`, native Metal lifecycle snapshot | Bind a source-specific native or synthetic fact to one exact prior present inventory and derive only a capability- and policy-preserving newer `unavailable` or `lost` entry; fail new native work closed without granting release, quarantine-clear, fresh-selection, recovery, or migration authority |
-| Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, async ticket/quarantine/failure evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, bind per-adapter single-flight Metal completion to exact Bank settlement, and authorize one exact quarantined native `.error` as core `terminal_failure` without releasing ownership early; native gates create, dispatch through, and directly inspect real buffers, while a production-symbol-isolated fault gate keeps physical success separate from a test-published error and proves exact settlement retry without claiming residency, physical device failure, device-loss recovery, general scheduling, or performance |
+| Device-loss retirement | `LossRetirementPlanV1`, private native permit, ordinary LeaseTree release, `LossRetirementReceiptV1` | Bind one exact lost source and quiesced allocation, drop retained native references before logical Bank uncharge without post-loss property reads, and grant no physical-reclaim, output, migration, reset, or residency authority |
+| Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, async ticket/quarantine/failure evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, bind per-adapter single-flight Metal completion to exact Bank settlement, and authorize one exact quarantined native `.error` as core `terminal_failure` without releasing ownership early; native gates create, dispatch through, and directly inspect real buffers, while production-symbol-isolated fault gates keep physical success or real resources separate from test-only overlays and prove exact settlement retry without claiming residency, physical device failure, general scheduling, or performance |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
 | Schedule | `LaneWeave` | Admit requests and issue deterministic service permits |
 | Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b/W4b-c/W4b-d | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, uncertain external-action handoff, generation-fenced fake reconciliation, and durable storage faults without presenting logical steps as native performance |
@@ -972,6 +973,17 @@ without GPU work; the ordinary native macOS gate uses a real `MTLDevice`, real
 `MTLBuffer` resources, and a CPU output oracle as a successful-command
 regression.
 
+Device-loss Retirement V1 composes these previously separate layers only for
+an already quiesced allocation. A pointer-free plan binds an exact accepted
+`lost` transition to the historical selection, allocation authority, live
+LeaseTree lease, leaf/object sets, recovery generation, and adapter challenge.
+The production Metal adapter then requires the same sticky native source and
+drops exact buffer strong references without post-loss device or buffer
+property reads. The existing coordinator remains the sole FreePermit
+authority, so native release precedes logical uncharge and partial failure
+remains retryable. The receipt explicitly grants no output, migration, reset,
+residency, or physical-reclaim authority.
+
 A separate non-installed fault shim is compiled only for the build-isolated
 native fault/race gate; the production shim is checked to export no
 fault-control symbols. Two host threads race a context-local one-shot plan and
@@ -992,13 +1004,16 @@ snapshot around one real successful command. A native two-thread race requires
 one exact initial-snapshot consumption and one stale result while the snapshot
 remains readable; neither result is a physical removal callback.
 Portable transition and error-path tests are deterministic synthetic/model
-evidence rather than physical-removal evidence.
-Physical residency, safe dead-resource recovery, general quarantine clearing,
+evidence rather than physical-removal evidence. The isolated native retirement
+gate uses real buffers under an explicitly synthetic test-only loss permit; it
+proves reference cleanup, not physical removal or reclaim.
+Physical residency, in-flight/quarantine reconciliation,
 fresh selection and migration, multi-slot and multi-device scheduling,
 telemetry, performance, retained driver/device ranges, and native support on
 cross-compiled targets remain open. See
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md),
-[Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md), and
+[Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md),
+[Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md), and
 [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md).
 
 ## Native observation flow

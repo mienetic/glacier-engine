@@ -1,7 +1,7 @@
 # Device Lifecycle Observation V1
 
 Device Lifecycle Observation V1 records source-specific device availability
-changes without granting resource-release or recovery authority. It composes
+changes without itself granting resource-release or recovery authority. It composes
 with the existing capability inventory and deterministic selection contract:
 an observation can replace one exact present entry with an `unavailable` or
 `lost` successor in a strictly newer discovery epoch, after which normal
@@ -69,6 +69,10 @@ raw native command fields, so it cannot be presented as a physical failure.
 
 Neither contract grants allocation, dispatch, free, unpin, quarantine-clear,
 context-reset, fresh-selection, migration, or output-publication authority.
+The separate [Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md) protocol
+may consume an exact `lost` transition as one input to a private,
+quiescence-checked release flow; the observation alone remains
+non-authoritative.
 
 ## Native Metal observation
 
@@ -155,21 +159,25 @@ not a physical command-buffer, driver, hardware, or device-loss failure.
 
 The M1 GPU used for the native gate is built in. No physical
 removal-requested or removed callback was exercised, so this milestone does
-not claim a removable-device campaign or safe recovery from one. Loss
-transitions and error paths are covered by deterministic synthetic/model tests,
-not by pretending that the built-in GPU was physically removed.
+not claim a removable-device campaign. Device-loss Retirement V1 now supports
+loss-bound cleanup of an exact quiesced allocation: production requires the
+same live sticky native loss source, while the isolated native test releases
+real buffers under an explicitly synthetic test-only permit. That proves
+reference release and logical settlement, not a physical removal event,
+residency change, or complete recovery campaign.
 
 Still open:
 
 - retain removal-requested and removed callbacks on suitable removable
   hardware;
-- define safe retirement or abandonment of dead native resources;
-- reconcile or clear quarantines without releasing ownership early;
+- reconcile or clear retained in-flight/quarantined work without releasing
+  ownership early;
 - create and validate a fresh inventory and selection receipt;
 - create a fresh backend context and rehydrate model/input state; and
 - authorize explicit migration without reusing stale device authority.
 
 See [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md),
 [Device Allocation Lease V1](DEVICE_ALLOCATION_LEASE.md),
+[Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md),
 [Device Dispatch Lifetime](DEVICE_DISPATCH_LIFETIME.md), and
 [Native Metal Allocation Adapter](NATIVE_METAL_ALLOCATION.md).

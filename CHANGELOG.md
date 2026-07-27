@@ -37,6 +37,23 @@ before the first stable release.
 
 ### Added
 
+- Added **Device-loss Retirement V1**. A fixed 544-byte plan composes one exact
+  `lost` observation and transition with the selected inventory entry,
+  allocation authority, live LeaseTree lease, leaf/object sets, recovery
+  generation, and adapter-local challenge. Production Metal arming accepts
+  only the same live sticky native removal source; synthetic evidence is
+  structurally testable but production-ineligible. Retirement refuses active
+  dispatch, command, or quarantine state, then uses the existing coordinator's
+  private `FreePermit` path to drop exact native strong references before
+  returning logical bytes. The post-loss release path reads neither live
+  `MTLDevice` nor `MTLBuffer` properties. Its fixed 440-byte receipt binds the
+  ordinary `released` / `normal_release` terminal and forces physical reclaim,
+  output, migration, and reset authority to zero. Portable Zig tests and an
+  independent Python oracle cover stable roots and rejection semantics. The
+  build-isolated macOS gate creates real Metal buffers and exercises real
+  reference release and logical settlement under an explicitly synthetic,
+  test-only loss permit; it does not reproduce or claim physical device
+  removal, residency change, or driver reclamation.
 - Added **Device-loss Observation V1**. Pointer-free observations and
   transition receipts bind source-specific native or synthetic evidence to an
   exact prior present inventory and derive only a capability- and
@@ -60,8 +77,8 @@ before the first stable release.
   work. A real native two-thread consumption race requires one consumed and one
   stale result while the snapshot remains readable; it does not reproduce
   physical removal. Hashes verify composition and integrity, not authenticity
-  or attestation. Physical callback campaigns,
-  safe dead-resource recovery, fresh selection, and migration remain open.
+  or attestation. Physical callback campaigns, retained in-flight/quarantine
+  reconciliation, fresh selection, and migration remain open.
 - Added a build-isolated native Metal fault/race gate. A real four-buffer INT4
   command completes physically on the executing GPU before the private shim
   publishes a one-shot command-buffer error overlay. The gate retains separate

@@ -324,6 +324,14 @@ in-flight dispatch, release its pin or charge, clear quarantine, create a fresh
 selection, or migrate work. See
 [Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md).
 
+The separate [Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md) path now
+handles only an allocation that is already quiesced. It binds the exact
+accepted loss to the selected allocation lease, refuses every retained
+dispatch/command/quarantine state, and uses the ordinary coordinator release
+so native references drop before Bank uncharge. It does not invent a terminal
+for an in-flight dispatch and therefore does not weaken the pin rules in this
+document.
+
 The actual built-in M1 development-host gate proved initial membership and an
 unchanged no-event lifecycle snapshot around one real successful Metal
 command. A native two-thread race requires one exact initial-snapshot
@@ -385,9 +393,10 @@ The Metal path now detects ambiguous or unsafe post-submit observations and
 records sticky quarantine. One exact retained native command-buffer `.error`
 may now be authorized as core `terminal_failure` and settled without publishing
 output; it remains pinned until Bank settlement and exact native error
-finalization both succeed. Source-bound device-loss observation now exists, but
-safe dead-resource recovery, general quarantine clearing, fresh selection, and
-automatic migration remain later authorities. This contract does not
+finalization both succeed. Source-bound device-loss observation and
+loss-bound retirement of an already quiesced allocation now exist, but
+in-flight/quarantine reconciliation, fresh selection, and automatic migration
+remain later authorities. This contract does not
 manufacture a successful completion from missing evidence. Ambiguous
 submissions, invalid or unknown completion, timeouts, and device loss remain
 pinned until a separate reconciliation authority proves a safe terminal state.
@@ -433,7 +442,12 @@ device:
    settlement, exact native finalization and state clearing, and
    `settlement_pending` confirmation retry without a second Bank release or
    native finalization. They do not induce or claim a physical driver,
-   hardware, or device-loss failure and provide no performance evidence.
+   hardware, or device-loss failure and provide no performance evidence. The
+   same isolated configuration separately creates real buffers and retires
+   their native strong references through the ordinary LeaseTree release under
+   an explicitly synthetic test-only loss permit. That proves ownership
+   cleanup and logical settlement, not a reproduced removal or physical
+   reclamation.
 
 Cross-compilation proves source and build portability only. It is never
 reported as native operating-system, driver, or accelerator evidence.
@@ -484,9 +498,9 @@ Contributor-ready extensions include:
 
 - retain physical removal-requested and removed callbacks on removable
   hardware;
-- add safe dead-resource recovery without inferring release or reclaim;
-- general quarantine clearing, fresh device selection, and explicit migration
-  policy;
+- reconcile retained in-flight/quarantined work after device loss without
+  inferring output or completion;
+- add fresh device selection and explicit migration policy;
 - bounded multi-slot completion scheduling without weakening adapter identity;
 - additive snapshot capacity and active-pin telemetry;
 - separate published-reference authority for outputs retained after dispatch;

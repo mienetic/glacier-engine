@@ -121,6 +121,84 @@ pub fn observeCurrentLifecycleV1(
     );
 }
 
+/// Revalidate a previously consumed production loss observation against the
+/// same level-triggered native source without consuming it again. The current
+/// snapshot may have a newer sequence, but the source instance must be exact
+/// and its sticky bits must still contain the loss fact named by the
+/// observation.
+pub fn validateStickyNativeLossForRetirementV1(
+    backend: *metal.MetalBackend,
+    observation: lifecycle.ObservationV1,
+) Error!metal.MetalDeviceLifecycleSnapshot {
+    const info = backend.initialDeviceInfo();
+    const source_identity =
+        backend.initialDeviceLifecycleSourceIdentity();
+    const consumed =
+        try backend.lastConsumedDeviceLifecycleSnapshot();
+    const required_source_bit =
+        try validateConsumedNativeLossObservationV1(
+            info,
+            source_identity,
+            consumed,
+            observation,
+        );
+    const snapshot =
+        try backend.requireStickyDeviceLostForConsumedSnapshot(
+            source_identity,
+            consumed,
+        );
+    if (snapshot.source_bits & required_source_bit == 0 or
+        snapshot.event_sequence < consumed.event_sequence)
+        return Error.InvalidObservation;
+    return snapshot;
+}
+
+fn validateConsumedNativeLossObservationV1(
+    info: metal.MetalDeviceInfo,
+    source_identity: metal.MetalDeviceLifecycleSourceIdentity,
+    consumed: metal.MetalDeviceLifecycleSnapshot,
+    observation: lifecycle.ObservationV1,
+) Error!u32 {
+    if (observation.abi_version != lifecycle.observation_abi or
+        observation.evidence_class != .native or
+        observation.observed_state != .lost or
+        device.digestIsZero(observation.observation_sha256) or
+        !device.digestEqual(
+            observation.observation_sha256,
+            lifecycle.observationRootV1(observation),
+        ))
+        return Error.InvalidObservation;
+    const required_source_bit: u32 = switch (observation.source) {
+        .removed_notification => metal.MetalDeviceLifecycleSourceBits.removed,
+        .command_buffer_device_removed => metal.MetalDeviceLifecycleSourceBits.command_buffer_removed,
+        else => return Error.InvalidObservation,
+    };
+    const projection = try projectNativeSourceV1(consumed);
+    if (consumed.event_sequence != observation.source_sequence or
+        projection.source != observation.source or
+        projection.command_status !=
+            observation.native_command_status or
+        projection.error_domain_kind !=
+            observation.native_error_domain_kind or
+        projection.error_code_bits !=
+            observation.native_error_code_bits or
+        !device.digestEqual(
+            observation.evidence_sha256,
+            try metalDeviceLifecycleSnapshotEvidenceRootV1(
+                consumed,
+            ),
+        ) or !device.digestEqual(
+        observation.source_instance_sha256,
+        try metalDeviceLifecycleSourceInstanceRootV1(
+            info,
+            source_identity,
+            consumed,
+        ),
+    ))
+        return Error.InvalidObservation;
+    return required_source_bit;
+}
+
 fn claimSnapshotV1(
     backend: *metal.MetalBackend,
     info: metal.MetalDeviceInfo,
@@ -726,6 +804,78 @@ test "Metal sticky lifecycle sources map to monotone observations" {
         device.InventoryStateV1.lost,
         sticky_claim.observation.observed_state,
     );
+}
+
+test "retirement binds exact consumed native loss snapshot" {
+    const info = testMetalDeviceInfo();
+    const capability = try testCapabilityV1(info);
+    const prior = try testInventoryEntryV1(capability);
+    const inventory = [_]device.DeviceInventoryEntryV1{prior};
+    const cases = [_]metal.MetalDeviceLifecycleEventKind{
+        .removed,
+        .command_buffer_removed,
+    };
+    for (cases) |event_kind| {
+        const consumed = testLifecycleSnapshot(event_kind);
+        const source_identity = testSourceIdentity(consumed);
+        const claim = try projectLifecycleSnapshotV1(
+            info,
+            source_identity,
+            consumed,
+            prior,
+            &inventory,
+            try cursorBeforeSnapshot(info, consumed),
+        );
+        _ = try validateConsumedNativeLossObservationV1(
+            info,
+            source_identity,
+            consumed,
+            claim.observation,
+        );
+
+        var forged = claim.observation;
+        forged.source_sequence += 1;
+        forged.observation_sha256 =
+            lifecycle.observationRootV1(forged);
+        try std.testing.expectError(
+            Error.InvalidObservation,
+            validateConsumedNativeLossObservationV1(
+                info,
+                source_identity,
+                consumed,
+                forged,
+            ),
+        );
+
+        forged = claim.observation;
+        forged.evidence_sha256 =
+            device.digestV1("forged consumed Metal snapshot");
+        forged.observation_sha256 =
+            lifecycle.observationRootV1(forged);
+        try std.testing.expectError(
+            Error.InvalidObservation,
+            validateConsumedNativeLossObservationV1(
+                info,
+                source_identity,
+                consumed,
+                forged,
+            ),
+        );
+
+        forged = claim.observation;
+        forged.native_error_code_bits +%= 1;
+        forged.observation_sha256 =
+            lifecycle.observationRootV1(forged);
+        try std.testing.expectError(
+            Error.InvalidObservation,
+            validateConsumedNativeLossObservationV1(
+                info,
+                source_identity,
+                consumed,
+                forged,
+            ),
+        );
+    }
 }
 
 test "Metal lifecycle cursor accepts gaps and rejects replay or reset" {

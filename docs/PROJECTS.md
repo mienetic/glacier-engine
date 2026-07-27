@@ -220,6 +220,19 @@ command-buffer-removed fact only from exact native status/domain/code
 `5/1/11` before any test overlay. New allocation/dispatch work then fails
 closed. Synthetic injected evidence remains explicitly synthetic.
 
+The **Device-loss Retirement V1** follow-up is complete for one exact quiesced
+allocation. A pointer-free plan binds the accepted `lost` transition to the
+selected capability, allocation authority, live LeaseTree lease, leaf/object
+sets, recovery generation, and adapter challenge. Production Metal arming
+requires the same retained sticky native source and releases exact buffer
+strong references without post-loss device or buffer property reads. The
+existing coordinator keeps the private FreePermit, so logical bytes return
+only after all references are dropped. Its receipt grants no output, migration,
+reset, residency, or physical-reclaim authority. Portable Zig/Python coverage
+is deterministic; the isolated native test uses real buffers with an
+explicitly synthetic test-only loss permit and does not claim hardware
+removal.
+
 The **build-isolated native Metal fault/race gate** is complete. A second,
 non-installed shim build contains the test-only controls, while the production
 shim exports no fault-control symbols. Two threads race a context-local
@@ -235,9 +248,9 @@ pin or finalizing the native record twice.
 Small next slices:
 
 - exercise removal-requested and removed callbacks on removable hardware;
-- add safe dead-resource recovery without inferring release or reclaim;
-- add general quarantine clearing, fresh selection under a new receipt, and
-  explicit migration policy;
+- reconcile retained in-flight/quarantined work after loss without inferring a
+  terminal or output;
+- add fresh selection under a new receipt and explicit migration policy;
 - add multi-slot queue scheduling and multi-device partitioning;
 - add physical residency and direct device telemetry as separate authorities;
 - add more GPU backends with CPU-oracle/lifecycle gates and expand native
@@ -267,8 +280,10 @@ It is not a physical driver, hardware, or device-loss failure and is not
 performance evidence. Separately, the built-in M1 development-host lifecycle
 gate proves observer installation, initial selected-device membership, and an
 unchanged no-event snapshot around one real successful Metal command. It did
-not exercise a physical removal callback. Safe dead-resource recovery, general
-quarantine clearing, fresh selection and migration, multi-slot scheduling,
+not exercise a physical removal callback. Quiesced-allocation retirement now
+releases real references in the isolated native gate under synthetic loss;
+physical-callback evidence, in-flight/quarantine reconciliation, fresh
+selection and migration, multi-slot scheduling,
 physical residency, direct device telemetry, additional GPU backends,
 performance evidence, and broader native OS/device matrices remain
 unimplemented unless a slice supplies direct named evidence. Cross-compilation

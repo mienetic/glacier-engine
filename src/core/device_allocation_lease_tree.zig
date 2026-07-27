@@ -86,6 +86,9 @@ pub const Error =
         InvalidDispatchPin,
         InvalidDispatchTerminal,
         InvalidDispatchCompletion,
+        InvalidRetirementBinding,
+        RetirementAdapterBusy,
+        RetirementAdapterUnavailable,
         InvalidTreeBinding,
         InvalidExclusiveScope,
         DispatchSlotsExhausted,
@@ -99,6 +102,12 @@ pub const DispatchCallbackError = error{
     InvalidDispatchIntent,
     InvalidTerminalEvidence,
     InvalidSettlementEvidence,
+};
+
+pub const RetirementBindingCallbackError = error{
+    InvalidRetirementBinding,
+    Busy,
+    Unavailable,
 };
 
 /// Only terminal queue states may release a device-allocation pin. Pending,
@@ -190,6 +199,24 @@ pub const DispatchAdapterV1 = struct {
         bank_permit: resource.LeasePinPermitV1,
         bank_completion: resource.LeasePinCompletionV1,
     ) DispatchCallbackError!void,
+};
+
+/// Same-process callback through which the coordinator presents its exact
+/// retained live lease and object set to one already-bound allocation
+/// adapter. These values grant no Bank authority; the callback may only
+/// establish adapter-private retirement state. The call/object slices borrow
+/// coordinator stack storage only for the callback duration and must not be
+/// retained.
+pub const RetirementBindingAdapterV1 = struct {
+    context: *anyopaque,
+    allocation_adapter: allocation.AdapterV1,
+    arm_fn: *const fn (
+        context: *anyopaque,
+        retained_lease: LeaseTreeDeviceAllocationLeaseV1,
+        retained_object_set: allocation.BackendObjectSetV1,
+        retained_calls: []const allocation.AllocationCallV1,
+        retained_objects: []const allocation.BackendObjectV1,
+    ) RetirementBindingCallbackError!void,
 };
 
 /// Reservation evidence returned only after ResourceBank has atomically
@@ -1448,6 +1475,66 @@ pub const CoordinatorV1 = struct {
             return Error.InvalidDispatchCompletion;
         self.dispatches[restored_slot_index] = .{};
         return completion;
+    }
+
+    /// Invoke one narrow adapter callback with the coordinator's exact private
+    /// live lease and object set. The coordinator remains locked across the
+    /// callback, so dispatch acquisition and ordinary release cannot cross the
+    /// binding boundary. No Bank permit or native-free authority is exposed.
+    ///
+    /// The callback must not re-enter this coordinator. Lock order is
+    /// coordinator then adapter, matching allocation and dispatch callbacks.
+    pub fn withQuiescedRetirementBindingV1(
+        self: *CoordinatorV1,
+        lease: LeaseTreeDeviceAllocationLeaseV1,
+        adapter: RetirementBindingAdapterV1,
+    ) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.validateLease(lease);
+        if (self.activeDispatchCount() != 0)
+            return Error.DispatchInFlight;
+        try self.validateAdapter(adapter.allocation_adapter);
+        try self.bank.validateAdditiveLeaseTree(self.tree.*);
+        try self.bank.validatePublicationSession(
+            self.tree.parent,
+            self.request_epoch,
+            self.session_id,
+            self.publication_sequence.*,
+        );
+        try self.validateLiveObjectSet();
+        try self.validateLiveAdmissionStorage();
+        try self.bank.validateLeaseScopeSubtreeClaim(
+            self.tree.*,
+            self.scope,
+            .{ .device_bytes = lease.materialized_bytes },
+        );
+        for (self.objects[0..@intCast(lease.allocation_count)]) |object|
+            try self.bank.validateLeaseNode(self.tree.*, object.leaf);
+
+        var retained_calls: [allocation.maximum_allocations]allocation.AllocationCallV1 =
+            undefined;
+        var retained_objects: [allocation.maximum_allocations]allocation.BackendObjectV1 =
+            undefined;
+        const count: usize = @intCast(self.lease.allocation_count);
+        for (self.objects[0..count], 0..) |object, ordinal| {
+            if (object.state != .live or
+                object.ordinal != @as(u64, @intCast(ordinal)))
+                return Error.InvalidRetirementBinding;
+            retained_calls[ordinal] = object.call;
+            retained_objects[ordinal] = object.object;
+        }
+        adapter.arm_fn(
+            adapter.context,
+            self.lease,
+            self.object_set,
+            retained_calls[0..count],
+            retained_objects[0..count],
+        ) catch |err| return switch (err) {
+            error.InvalidRetirementBinding => Error.InvalidRetirementBinding,
+            error.Busy => Error.RetirementAdapterBusy,
+            error.Unavailable => Error.RetirementAdapterUnavailable,
+        };
     }
 
     /// Reclaim one complete exclusive scope. All coordinator, adapter, object,
@@ -4928,6 +5015,169 @@ fn materializeTestLease(
         .active => |lease| lease,
         else => error.TestUnexpectedResult,
     };
+}
+
+const TestRetirementBindingObserver = struct {
+    expected_lease: LeaseTreeDeviceAllocationLeaseV1,
+    expected_object_set: allocation.BackendObjectSetV1,
+    callback_count: u64 = 0,
+
+    fn interface(
+        self: *@This(),
+        adapter: allocation.AdapterV1,
+    ) RetirementBindingAdapterV1 {
+        return .{
+            .context = self,
+            .allocation_adapter = adapter,
+            .arm_fn = callback,
+        };
+    }
+
+    fn callback(
+        context: *anyopaque,
+        retained_lease: LeaseTreeDeviceAllocationLeaseV1,
+        retained_object_set: allocation.BackendObjectSetV1,
+        retained_calls: []const allocation.AllocationCallV1,
+        retained_objects: []const allocation.BackendObjectV1,
+    ) RetirementBindingCallbackError!void {
+        const self: *@This() = @ptrCast(@alignCast(context));
+        allocation.validateObjectSetForAdmissionRootV1(
+            retained_object_set,
+            retained_lease.admission_sha256,
+            retained_lease.authority_sha256,
+            retained_lease.allocation_count,
+            retained_lease.materialized_bytes,
+            retained_calls,
+            retained_objects,
+        ) catch return error.InvalidRetirementBinding;
+        if (!std.meta.eql(retained_lease, self.expected_lease) or
+            !std.meta.eql(
+                retained_object_set,
+                self.expected_object_set,
+            ))
+            return error.InvalidRetirementBinding;
+        self.callback_count += 1;
+    }
+};
+
+test "quiesced retirement binding uses exact coordinator lease and adapter" {
+    var harness: TestHarness = .{};
+    try harness.init();
+    const lease = try materializeTestLease(&harness);
+    var observer: TestRetirementBindingObserver = .{
+        .expected_lease = lease,
+        .expected_object_set = harness.coordinator.object_set,
+    };
+    try harness.coordinator.withQuiescedRetirementBindingV1(
+        lease,
+        observer.interface(harness.backend.adapter()),
+    );
+    try std.testing.expectEqual(@as(u64, 1), observer.callback_count);
+
+    const mutations = [_]struct {
+        field: enum { object_set, leaf_set, request },
+        digest: Digest,
+    }{
+        .{
+            .field = .object_set,
+            .digest = testDigest("forged retirement object set"),
+        },
+        .{
+            .field = .leaf_set,
+            .digest = testDigest("forged retirement leaf set"),
+        },
+        .{
+            .field = .request,
+            .digest = testDigest("forged retirement request"),
+        },
+    };
+    for (mutations) |mutation| {
+        var forged = lease;
+        switch (mutation.field) {
+            .object_set => forged.backend_object_set_sha256 = mutation.digest,
+            .leaf_set => forged.allocation_leaf_set_sha256 = mutation.digest,
+            .request => forged.request_sha256 = mutation.digest,
+        }
+        forged.lease_sha256 = leaseRootV1(forged);
+        try validateLeaseV1(forged);
+        try std.testing.expectError(
+            Error.InvalidTransition,
+            harness.coordinator.withQuiescedRetirementBindingV1(
+                forged,
+                observer.interface(harness.backend.adapter()),
+            ),
+        );
+    }
+    try std.testing.expectEqual(@as(u64, 1), observer.callback_count);
+
+    var foreign = CountingQuoteAdapter{
+        .inner = harness.backend.adapter(),
+    };
+    try std.testing.expectError(
+        allocation.Error.InvalidAdapter,
+        harness.coordinator.withQuiescedRetirementBindingV1(
+            lease,
+            observer.interface(foreign.interface()),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 1), observer.callback_count);
+
+    const released = try harness.coordinator.release(
+        lease,
+        harness.backend.adapter(),
+    );
+    _ = switch (released) {
+        .terminal => |terminal| terminal,
+        else => return error.TestUnexpectedResult,
+    };
+    try harness.close();
+}
+
+test "quiesced retirement binding rejects an active dispatch pin" {
+    var harness: TestHarness = .{};
+    try harness.initDispatchOne();
+    const lease = try materializeTestLease(&harness);
+    var observer: TestRetirementBindingObserver = .{
+        .expected_lease = lease,
+        .expected_object_set = harness.coordinator.object_set,
+    };
+    var dispatch: TestDispatchAdapter = .{};
+    const pin = try harness.coordinator.acquireDispatchPin(
+        lease,
+        dispatch.interface(),
+        testDigest("retirement active dispatch request"),
+    );
+    try std.testing.expectError(
+        Error.DispatchInFlight,
+        harness.coordinator.withQuiescedRetirementBindingV1(
+            lease,
+            observer.interface(harness.backend.adapter()),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 0), observer.callback_count);
+
+    const terminal = try makeDispatchTerminalV1(
+        pin,
+        .succeeded,
+        testDigest("retirement active submission"),
+        testDigest("retirement active completion"),
+        testDigest("retirement active output"),
+    );
+    dispatch.expect(terminal);
+    _ = try harness.coordinator.completeDispatchPin(
+        pin,
+        dispatch.interface(),
+        terminal,
+    );
+    const released = try harness.coordinator.release(
+        lease,
+        harness.backend.adapter(),
+    );
+    _ = switch (released) {
+        .terminal => |value| value,
+        else => return error.TestUnexpectedResult,
+    };
+    try harness.close();
 }
 
 const CancelAtBoundary = struct {

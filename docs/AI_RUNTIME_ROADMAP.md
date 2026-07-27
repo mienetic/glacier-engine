@@ -143,13 +143,25 @@ while deriving a newer `unavailable` or `lost` successor. Their hashes verify
 composition and integrity, not authenticity or attestation.
 See [Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md).
 
-Promotion gate: the plan fully predicts memory and output ceilings, the backend
-confirms exact capability identity, and unsupported combinations fail before
-visible state or output changes.
+Device-loss Retirement V1 is the completed loss-bound ownership follow-up for
+one exact quiesced allocation. Its fixed-width plan composes the accepted
+`lost` transition with selection, allocation authority, LeaseTree lease,
+leaf/object sets, recovery generation, and a private adapter challenge.
+Production Metal arming requires the same live sticky native loss source and
+drops exact buffer strong references without reading live device or buffer
+properties after loss. The existing coordinator retains FreePermit authority,
+so logical charge returns only after every release succeeds. The receipt
+explicitly grants no physical-reclaim, output, migration, reset, or residency
+authority. See [Device-loss Retirement V1](DEVICE_LOSS_RETIREMENT.md).
+
+Capability-selection/execution promotion gate: the execution plan fully
+predicts memory and output ceilings, the backend confirms exact capability
+identity, and unsupported combinations fail before visible state or output
+changes.
 
 The selection receipt is decision evidence only. Physical-page commitment,
-reclamation, and residency authority/evidence, safe dead-resource recovery,
-general quarantine clearing, fresh selection/migration, multi-GPU
+reclamation, and residency authority/evidence, in-flight/quarantine
+reconciliation, fresh selection/migration, multi-GPU
 partitioning/scheduling, direct telemetry, performance evidence, native device
 ranges, and native support on cross-compiled targets remain open.
 
@@ -204,8 +216,10 @@ tombstone. Ambiguity, unknown, and invalid completion remain sticky. Public
 authority and clears no state. This terminal-error sidecar does not classify
 device loss or migrate work on its own. The separate lifecycle layer observes
 source-bound removal signals and fails new work closed without making this
-dispatch path a recovery authority. Physical residency, safe dead-resource
-recovery, general quarantine clearing and fresh selection, multi-slot and
+dispatch path a recovery authority. A separate retirement path can now close
+an already quiesced loss-bound allocation through ordinary FreePermit
+settlement, but cannot terminalize retained work. Physical residency,
+in-flight/quarantine reconciliation and fresh selection, multi-slot and
 multi-device scheduling, production weight paging, additional GPU backends,
 and native OS matrices remain planned.
 
@@ -577,8 +591,11 @@ the built-in M1 development host, the snapshot stayed at initial membership
 around a real successful command. A native two-thread exact-consumption race
 required one consumed result and one stale result while leaving the snapshot
 readable. None of those loss sources occurred. Transition and error paths are
-covered by deterministic synthetic/model tests. A removable-hardware callback
-campaign, safe dead-resource recovery, fresh selection and migration,
+covered by deterministic synthetic/model tests. The isolated native retirement
+gate separately releases real buffers under an explicitly synthetic test-only
+loss permit; it proves ownership cleanup, not physical removal. A
+removable-hardware callback campaign, in-flight/quarantine reconciliation,
+fresh selection and migration,
 multi-slot and multi-device scheduling,
 physical residency and device telemetry, additional GPU backends, and broader
 native OS/device matrices stay open.
