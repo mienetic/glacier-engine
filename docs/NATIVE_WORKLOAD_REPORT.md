@@ -26,6 +26,18 @@ authenticate who captured the observations. Native publication additionally
 requires an addressable artifact, its source commit, a clean capture state,
 and the declared machine-state envelope.
 
+The hard native Metal verifier creates a fresh 256-bit challenge for every
+invocation and passes it through a dedicated, sanitized environment variable;
+the runner accepts no command-line arguments. The runner binds that challenge
+and a domain-separated build identity derived from the producer ABI, its exact
+executable SHA-256, and the external `shaders.metallib` SHA-256 into the
+scenario. The verifier hashes both files before and after execution, rejects
+replacement during the run, and requires exact build and challenge identities
+in the emitted wire. This prevents stale-wire replay and accidental host or GPU
+program substitution. It remains execution binding rather than cryptographic
+code attestation: a retained wire is still self-asserted evidence whose source
+commit and capture manifest must be published separately.
+
 Outcome labels and opaque roots are producer assertions unless an external
 receipt verifier is supplied for the named backend. The independent verifier
 proves that those assertions are internally composed, ordered, summarized, and
@@ -181,12 +193,80 @@ all semantic roots, exact summary recomputation, unsupported-metric rules, and
 closure. The independent verifier must parse the wire itself rather than trust
 a producer-generated JSON projection.
 
-The first native accelerator producer targets a finite closed-loop,
-concurrency-two Metal campaign over a fixed INT4 matrix-vector profile. It must
-reuse one persistent eight-buffer lease, retain warmup and measured requests,
-precompute CPU oracles outside the measured interval, use the production Metal
-shim, and finish with zero ownership. Its result is scoped to that exact
-machine and campaign; cross-compilation is not native execution evidence.
+The first native accelerator producer is implemented as a finite closed-loop,
+two-logical-slot Metal campaign over a fixed INT4 matrix-vector profile. It
+uses the production allocation and dispatch adapter, not a fake backend or a
+simulated device. One run reuses a persistent eight-buffer lease charged at
+5,544 logical device bytes and emits exactly 20 records: 4 warmup and 16
+measured 37x64 requests, each carrying 2,368 work units. The producer
+precomputes two CPU oracles before the campaign timer starts, submits both
+requests in each pair before waiting for either, validates every output within
+an absolute error of `2e-5`, deliberately settles slot 1 before slot 0, and
+reuses the slots only after both settle.
+
+The producer keeps one global monotonic host sequence, retains Metal
+`GPUStartTime`/`GPUEndTime` only as a same-command device duration, and samples
+`currentAllocatedSize` as device-wide allocated-byte context. It revalidates
+device lifecycle and identity, forbids fallback, requires unique
+generation-fenced request/ticket/pin/dispatch/submission/terminal/completion
+roots, and seals no report until Bank, pin, dispatch, native-command, and
+native-buffer ownership are all zero. An error after native submission fails
+closed and emits no partial wire; retained live state remains process-scoped
+for higher-level recovery.
+
+The two slots prove bounded logical ownership, capacity, settlement isolation,
+and generation-fenced reuse. They do not prove physical GPU parallelism,
+hardware queue occupancy, or command completion order. `currentAllocatedSize`
+does not prove committed or resident memory. Utilization, physical queue depth,
+residency, power, energy, temperature, frequency, and physical parallelism
+remain `unsupported`. The result is scoped to that exact machine and campaign;
+cross-compilation is not native execution evidence.
+
+## Implemented producers and gates
+
+The portable W6a reference remains the device-free conformance producer:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-workload-report-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+tools/zig-with-ephemeral-cache.sh build native-workload-report-cross-compile \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
+Those commands exercise and cross-compile the codec and synthetic runner. They
+do not execute a native GPU workload.
+
+The W6b producer is compiled and executed only by a native macOS Metal gate:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-metal-workload-report-compile \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+tools/zig-with-ephemeral-cache.sh build native-metal-workload-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+The compile step opens no device. The test runner emits only the 17,996-byte
+raw V1 wire. The standard-library Python verifier first applies the
+backend-neutral decoder and complete summary/root recomputation, then enforces
+the exact native campaign profile, pair lifecycle, generation-root uniqueness,
+CPU-oracle bound, metric availability, and terminal closure. It bounds process
+time and output size, rejects nonempty stderr, supplies a fresh 256-bit
+challenge, and verifies the exact runner and Metal-library SHA-256 values
+before and after execution. To retain an artifact, choose an explicit path:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-metal-workload-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2 \
+  -Dnative-metal-report-output=artifacts/native-metal-workload-report.bin
+```
+
+The verifier writes that path atomically only after the complete wire and
+native profile pass. Without the option, the hard gate validates the live
+campaign but intentionally retains no file. The serialized
+`native-metal-suite-test` uses
+`-Dnative-metal-suite-report-output=PATH` instead; focused and suite retention
+options are mutually exclusive in one build invocation so independent
+campaigns cannot race to replace one artifact.
 
 ## Normative V1 wire
 

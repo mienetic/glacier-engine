@@ -41,6 +41,8 @@ bench/results/*
 !bench/results/action-outbox-conformance-v1.json
 !bench/results/action-outbox-store-conformance-v1.json
 !bench/results/native-observation-conformance-v1.json
+!bench/results/native-metal-workload-report-macos-arm64-2026-07-28.bin
+!bench/results/native-metal-workload-report-macos-arm64-2026-07-28.manifest.json
 
 # Python
 __pycache__/

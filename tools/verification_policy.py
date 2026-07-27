@@ -137,6 +137,7 @@ AARCH64_CPU_SOURCE_PATHS = {
 
 METAL_NATIVE_SOURCE_PATHS = {
     "src/backends/metal/native_observer.zig",
+    "src/backends/metal/native_workload_report.zig",
     "src/backends/metal/shaders/dequant.metal",
     "src/backends/metal/shaders/matmul.metal",
     "src/backends/metal/shim.m",
@@ -145,6 +146,7 @@ METAL_NATIVE_SOURCE_PATHS = {
     "tests/native_metal_observation.zig",
     "tests/support/metal_fault_control.zig",
     "examples/native_metal_observation.zig",
+    "examples/native_metal_workload_report.zig",
     "bench/metal_kernel.zig",
 }
 
@@ -610,7 +612,11 @@ def _decision_for_path(path: str) -> PathDecision:
 
     if suffix == ".py":
         python_flags = {"python-changed", "python-full"}
-        if lower == "bench/native_metal_readiness.py":
+        if lower in {
+            "bench/native_metal_readiness.py",
+            "bench/native_metal_workload_report.py",
+            "bench/tests/test_native_metal_workload_report.py",
+        }:
             python_flags.add("metal-native")
         return PathDecision(
             path,

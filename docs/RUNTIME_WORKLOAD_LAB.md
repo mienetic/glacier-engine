@@ -22,13 +22,16 @@ dispatch/status driver, and a bounded same-process fake authority with an
 opaque synthetic credential. W5a now adds a portable native-observation
 contract, a family-neutral fail-closed runner, a download-free retained
 three-profile/six-item workload, and a shared bounded macOS host observer.
-W6a now adds the portable, allocation-free raw-record/summary/closure report
-wire, a deterministic synthetic reference runner, and independent Python
-recomputation. Provider, stateful, streaming, batched, preemptible,
-device-backed, live-service, and OS-isolated real-credential profiles, direct
-physical CPU/device adapters, a production-native multi-request report
-producer, retained native load evidence, soak campaigns, and native platform
-replication remain staged work.
+W6a adds the portable, allocation-free raw-record/summary/closure report wire,
+a deterministic synthetic reference runner, and independent Python
+recomputation. W6b connects that wire to a fixed production-native macOS Metal
+campaign with twenty real GPU dispatches, CPU-oracle correctness, exact
+two-slot logical ownership, same-command device timing, sampled allocated-size
+context, optional post-verification artifact retention, and terminal zero
+ownership. Provider, stateful, streaming, batched, preemptible, device-backed,
+live-service, and OS-isolated real-credential profiles, direct physical
+CPU/device adapters, retained multi-machine load matrices, soak campaigns, and
+native platform replication remain staged work.
 A logical driver step is never reported as a millisecond, and a logical
 resource claim is never reported as RSS, device residency, energy, or
 temperature.
@@ -190,7 +193,8 @@ Results from different modes are not merged into one headline number.
     Metal gate performs exactly one real GPU dispatch in total. Logical CPU
     count must remain positive; signed physical temperatures may not fall below
     absolute zero. W5b remains open for the unsupported physical metrics and
-    retained native campaign evidence. Separately, the native allocation suite
+    broader retained native observer coverage. Separately, the native
+    allocation suite
     now includes a bounded two-slot pressure proof over real commands and
     disjoint buffers: two native command records coexist, exact replay adds no
     record, a third request rejects before native mutation, both commands and
@@ -205,7 +209,7 @@ Results from different modes are not merged into one headline number.
     Cross-host parser tests, an unretained local native pass, and
     cross-compilation remain narrower than retained campaign evidence and do
     not complete this slice.
-- [ ] **W6 — Native workload reports.**
+- [x] **W6 — Native workload reports.**
   - [x] **W6a — Portable report foundation.** The versioned allocation-free
     wire binds one scenario, every warmup and measured raw request, a summary
     recomputed only from the measured cohort, and an exact zero-orphan closure.
@@ -219,12 +223,22 @@ Results from different modes are not merged into one headline number.
     cross-compile for Linux x86_64/AArch64, Windows x86_64, and FreeBSD x86_64.
     Cross-building these targets is portability evidence, not native execution.
     See [Native Workload Report](NATIVE_WORKLOAD_REPORT.md).
-  - [ ] **W6b — Bounded native producer and evidence.** Connect the fixed
-    two-slot production Metal path to W6a, retain every request and an
-    addressable report for the declared campaign, and preserve correctness,
-    fallback, clock-domain, and ownership closure. Physical queue occupancy,
-    utilization, power, residency, thermal, frequency, energy, and parallelism
-    remain unsupported unless a named native observer supplies them.
+  - [x] **W6b — Bounded native producer and evidence.** The fixed
+    production Metal path now feeds the unchanged W6a wire. One closed-loop run
+    emits 4 warmup and 16 measured records for real 37x64 INT4 matrix-vector
+    commands over two logical adapter slots and one persistent eight-buffer,
+    5,544-byte logical lease. Both commands in each pair submit before either
+    wait; every output passes a precomputed CPU oracle within `2e-5`, slot 1
+    deliberately settles before slot 0, and the next pair starts only after
+    both settle. A global host sequence, separate same-command GPU timestamps,
+    device/lifecycle identity, sampled `currentAllocatedSize`, generation roots,
+    no fallback, balanced flows, and zero terminal ownership are independently
+    verified. The raw wire is retained only when an output path is explicitly
+    requested and only after verification. Logical slots do not prove physical
+    parallelism or hardware queue occupancy, and `currentAllocatedSize` is not
+    residency. Physical queue depth, utilization, power, residency, thermal,
+    frequency, energy, and parallelism remain unsupported unless a named
+    native observer supplies them.
 - [ ] **W7 — Soak and disruption.** Run bounded campaigns under a fixed fault
   schedule and prove recovery, bounded growth, exact publication, and zero
   leaked ownership.
@@ -341,9 +355,21 @@ two real commands. Both commands submit and complete, pass their CPU oracles,
 and remain retained until B is deliberately settled before A. The native
 registry reaches two records, replay stays at two, a third request is
 capacity-rejected before native mutation, and final command, pin, and buffer
-counts are zero. This is the native runtime target for the pending W6b report
-producer; it is not itself a report, latency, throughput, utilization,
-queue-depth, physical-parallel, or completion-order result.
+counts are zero. This remains allocation/lifetime conformance rather than a
+report, latency, throughput, utilization, queue-depth, physical-parallel, or
+completion-order result.
+
+W6b now exercises the same production allocation and dispatch boundaries as a
+finite report campaign. It reuses one persistent eight-buffer lease for 10
+pairs: 2 warmup pairs and 8 measured pairs. Each pair reaches two live logical
+adapter slots before waiting, all 20 outputs pass their CPU oracles, B settles
+before A, and both slots settle before reuse. Every raw request, lifecycle
+event, semantic root, device duration, allocated-size sample, and ownership
+fact enters the versioned W6 wire before independent portable and native-profile
+verification. This is real Metal execution on the invoking native macOS host,
+not a simulated GPU environment. The two-slot schedule still does not observe
+physical queue occupancy or prove that the GPU executed the commands
+simultaneously.
 
 The readiness report records Metal registry identity, pre/post
 `currentAllocatedSize`, and command-buffer GPU timestamps.
@@ -355,12 +381,16 @@ authenticate the capture's origin.
 
 W0 and W1 do not exercise this Metal path. A successful readiness invocation is
 diagnostic evidence for only that exact host session; it is not a throughput,
-latency, performance, or broad device-support result. The repository does not
-yet retain an addressable native Metal result, so implementation evidence and
-retained native campaign evidence remain distinct. Run the gate with:
+latency, performance, or broad device-support result. The readiness gate does
+not retain an addressable result. The W6b report gate can retain its raw wire,
+but only at an explicitly requested path after complete verification, so
+implementation evidence and retained campaign evidence remain distinct. Run
+the gates with:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build native-metal-observation-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+tools/zig-with-ephemeral-cache.sh build native-metal-workload-report-test \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 ```
 
@@ -369,11 +399,13 @@ Platform and backend truth remains governed by
 
 ## Native report contract
 
-The implemented W6a report retains every request before aggregation in a fixed
-little-endian binary wire. Its scenario binds the workload/profile, artifact,
-build, machine, backend, device, placement, host/device observer and clock
-identities, campaign mode, warmup/measured counts, logical in-flight target,
-adapter queue count, flow count, challenge, and summary algorithm.
+The implemented W6 report retains every request before aggregation in a fixed
+little-endian binary wire. W6a defines the backend-neutral codec and synthetic
+reference; W6b supplies the first production-native Metal producer without
+changing the wire. Its scenario binds the workload/profile, artifact, build,
+machine, backend, device, placement, host/device observer and clock identities,
+campaign mode, warmup/measured counts, logical in-flight target, adapter queue
+count, flow count, challenge, and summary algorithm.
 
 Each raw record retains its cohort, flow, outcome, work units, optional adapter
 slot, the host-observed lifecycle from arrival through settlement, semantic
@@ -399,8 +431,10 @@ Host CPU time, RSS, device duration, allocated-size context, utilization,
 physical queue depth, residency, power, energy, temperature, frequency, and
 physical parallelism have fixed availability-bearing metric positions.
 Unavailable metrics remain missing, denied, or unsupported rather than present
-zeroes. The initial synthetic producer keeps direct physical metrics
-unsupported.
+zeroes. The synthetic producer keeps direct physical metrics unsupported. The
+native Metal producer makes device duration and sampled allocated-size context
+present, while utilization, physical queue depth, residency, power, energy,
+temperature, frequency, and physical parallelism remain unsupported.
 
 The closure requires zero logical Bank usage, active pins, active dispatches,
 native commands, and native buffers; equal acquisition/completion counts; and
@@ -425,6 +459,35 @@ production CPU or GPU workload. The last command only cross-compiles the codec
 tests and runner; it does not execute them on the foreign operating systems. See
 [Native Workload Report](NATIVE_WORKLOAD_REPORT.md) for the exact wire and
 claim boundary.
+
+Run the real production-native Metal campaign on a native macOS Metal host:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-metal-workload-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+This executes 20 real GPU commands through the production adapter and verifies
+the resulting raw wire twice: first against the portable contract and then
+against the exact native campaign profile. Add
+`-Dnative-metal-report-output=PATH` to retain the raw wire atomically after
+verification. The command is a correctness and evidence gate, not a
+performance benchmark.
+
+When retention is requested from the serialized `native-metal-suite-test`, use
+`-Dnative-metal-suite-report-output=PATH`. It is mutually exclusive with the
+focused gate's `-Dnative-metal-report-output=PATH` in one build invocation, so
+two independently challenged campaigns cannot race to publish one file.
+
+For each hard-gate invocation, the verifier generates a fresh 256-bit challenge
+and supplies it through a dedicated, sanitized environment variable. The
+zero-argument runner binds that value and a domain-separated build identity
+over the producer ABI, its exact executable SHA-256, and the external
+`shaders.metallib` SHA-256 into the scenario. The verifier hashes both files
+before and after the run, rejecting replacement, stale-wire replay, and
+identity mismatch. These controls bind a live capture to one invocation and
+one host/GPU program pair; they do not turn the self-asserted report into
+cryptographic code attestation.
 
 ## Promotion gate
 
@@ -454,9 +517,9 @@ Independent contributions can add:
    metric-specific signed ranges;
 6. a bounded device observer slice for placement, host submit/sync timing,
    fallback detection, and explicit device-time value-clock identity;
-7. one bounded production-native workload producer that feeds the completed
-   W6a report without weakening its raw-record, clock, availability, or closure
-   rules;
+7. one additional bounded production-native CPU or accelerator producer that
+   feeds the completed W6 report without weakening its raw-record, clock,
+   availability, correctness, or closure rules;
 8. one bounded fault injector with an explicit authority ceiling; or
 9. a native replication recipe for one supported backend.
 

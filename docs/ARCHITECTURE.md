@@ -1178,11 +1178,35 @@ snapshot before and after a real successful GPU command. This is no-event
 observer evidence only: no removal-requested, removed, or exact code `11` event
 occurred. Portable synthetic lifecycle tests remain a separate evidence class.
 
+The W6 workload-report plane is a separate host-side evidence layer. Its
+backend-neutral allocation-free wire retains one scenario, every warmup and
+measured request, a measured-only summary, and terminal closure. The first
+production-native producer binds caller-owned fixed storage to the Metal
+allocation adapter, ResourceBank, and LeaseTree coordinator, materializes one
+persistent eight-buffer lease, and runs ten two-request pairs through the
+production INT4 dispatch path. Each pair is fully submitted before waiting,
+every output is compared with a precomputed CPU oracle, slot 1 settles before
+slot 0, and the next pair cannot begin until both slots are free. The report is
+sealed only after all logical and native ownership reaches zero. Host
+monotonic events and Metal command-buffer timestamps remain separate clock
+domains. The two adapter slots express logical ownership and reuse, not
+physical parallelism; `currentAllocatedSize` remains allocation context rather
+than residency, and all unobserved physical metrics stay unsupported. A
+standard-library verifier recomputes the generic wire before enforcing the
+exact native profile, and optional artifact publication occurs only after both
+layers pass.
+
 The independent Python verifier checks bounded semantic composition and
 corruption in the self-asserted live capture; it does not provide cryptographic
-authenticity. No addressable native Metal result is retained in the repository,
-so implementation, a passing local native invocation, and retained campaign
-evidence remain separate levels. W5b stays open. See
+authenticity. Its hard gate supplies a fresh 256-bit challenge through a
+sanitized environment variable to a zero-argument runner and derives the
+scenario build identity from the producer ABI, exact runner SHA-256, and
+external `shaders.metallib` SHA-256. Both files are hashed before and after
+execution. Stale replay and host/GPU program replacement are rejected, but this
+remains execution binding rather than code attestation. No addressable native
+Metal result is retained in the repository, so implementation, a passing local
+native invocation, and retained campaign evidence remain separate levels. W5b
+stays open. See
 [Native Observation Contract](NATIVE_OBSERVATION.md).
 
 ## Provider execution flow

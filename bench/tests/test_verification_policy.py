@@ -42,6 +42,7 @@ EXPECTED_AARCH64_CPU_SOURCE_PATHS = frozenset(
 EXPECTED_METAL_NATIVE_SOURCE_PATHS = frozenset(
     {
         "src/backends/metal/native_observer.zig",
+        "src/backends/metal/native_workload_report.zig",
         "src/backends/metal/shaders/dequant.metal",
         "src/backends/metal/shaders/matmul.metal",
         "src/backends/metal/shim.m",
@@ -50,6 +51,7 @@ EXPECTED_METAL_NATIVE_SOURCE_PATHS = frozenset(
         "tests/native_metal_observation.zig",
         "tests/support/metal_fault_control.zig",
         "examples/native_metal_observation.zig",
+        "examples/native_metal_workload_report.zig",
         "bench/metal_kernel.zig",
     }
 )
@@ -160,6 +162,34 @@ class VerificationPolicyTests(unittest.TestCase):
                 {"python-changed", "python-full", "metal-native"}
             ),
         )
+
+    def test_native_metal_workload_report_paths_select_hardware_gate(self):
+        for changed_path in (
+            "src/backends/metal/native_workload_report.zig",
+            "examples/native_metal_workload_report.zig",
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    plan.flags,
+                    frozenset({"metal-native"}),
+                )
+        for changed_path in (
+            "bench/native_metal_workload_report.py",
+            "bench/tests/test_native_metal_workload_report.py",
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    plan.flags,
+                    frozenset(
+                        {
+                            "python-changed",
+                            "python-full",
+                            "metal-native",
+                        }
+                    ),
+                )
 
     def test_retained_fixture_selects_python_without_zig(self):
         plan = self.assert_targets(["bench/results/reference.json"], ())

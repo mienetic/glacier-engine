@@ -32,6 +32,30 @@ pub fn build(b: *std.Build) void {
     ) orelse "zig-out/metal";
     if (metal_output_dir.len == 0)
         @panic("-Dmetal-output-dir must not be empty");
+    const native_metal_report_output = b.option(
+        []const u8,
+        "native-metal-report-output",
+        "Optional path that retains the focused native Metal workload report wire",
+    );
+    if (native_metal_report_output) |path| {
+        if (path.len == 0)
+            @panic("-Dnative-metal-report-output must not be empty");
+    }
+    const native_metal_suite_report_output = b.option(
+        []const u8,
+        "native-metal-suite-report-output",
+        "Optional path that retains the serialized-suite native Metal workload report wire",
+    );
+    if (native_metal_suite_report_output) |path| {
+        if (path.len == 0)
+            @panic("-Dnative-metal-suite-report-output must not be empty");
+    }
+    if (native_metal_report_output != null and
+        native_metal_suite_report_output != null)
+        @panic(
+            "-Dnative-metal-report-output and " ++
+                "-Dnative-metal-suite-report-output are mutually exclusive",
+        );
     const metal_library_path = b.allocator.dupeZ(
         u8,
         b.fmt("{s}/shaders.metallib", .{metal_output_dir}),
@@ -1692,9 +1716,17 @@ pub fn build(b: *std.Build) void {
         "native-metal-fault-test",
         "Run the build-isolated native Metal fault and settlement gate",
     );
+    const native_metal_workload_report_test_step = b.step(
+        "native-metal-workload-report-test",
+        "Run one hard production-native Metal workload report gate",
+    );
+    const native_metal_workload_report_compile_step = b.step(
+        "native-metal-workload-report-compile",
+        "Compile the production-native Metal workload report producer",
+    );
     const native_metal_suite_test_step = b.step(
         "native-metal-suite-test",
-        "Run serialized Metal readiness, allocation, fault, and correctness gates",
+        "Run serialized Metal readiness, allocation, workload-report, fault, and correctness gates",
     );
     if (metal_shim != null and
         builtin.os.tag == .macos and
@@ -1857,6 +1889,107 @@ pub fn build(b: *std.Build) void {
             &run_native_metal_observation_verifier.step,
         );
 
+        // W6b emits one raw, independently decoded report from twenty real
+        // production-adapter dispatches. The standalone and serialized-suite
+        // runners are distinct so the focused gate does not pull in the
+        // allocation suite, while either invocation still executes the
+        // campaign exactly once.
+        const native_metal_workload_report_exe = b.addExecutable(.{
+            .name = "glacier-native-metal-workload-report",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_metal_workload_report.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+        native_metal_workload_report_exe.root_module.addImport(
+            "engine",
+            engine_mod,
+        );
+        native_metal_workload_report_exe.linkLibC();
+        native_metal_workload_report_exe.linkLibrary(shim);
+        native_metal_workload_report_exe.linkFramework("Metal");
+        native_metal_workload_report_exe.linkFramework("Foundation");
+        native_metal_workload_report_compile_step.dependOn(
+            &native_metal_workload_report_exe.step,
+        );
+
+        const run_native_metal_workload_report_model =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "unittest",
+                "bench.tests.test_native_metal_workload_report",
+            });
+        run_native_metal_workload_report_model.setCwd(b.path("."));
+        run_native_metal_workload_report_model.setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_native_metal_workload_report_model.setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+        run_native_metal_workload_report_model.step.dependOn(
+            &run_native_workload_report_model.step,
+        );
+
+        const run_native_metal_workload_report_verifier =
+            b.addSystemCommand(&.{"python3"});
+        const run_native_metal_workload_report_suite =
+            b.addSystemCommand(&.{"python3"});
+        for ([_]*std.Build.Step.Run{
+            run_native_metal_workload_report_verifier,
+            run_native_metal_workload_report_suite,
+        }) |run_report| {
+            run_report.setCwd(b.path("."));
+            run_report.setEnvironmentVariable(
+                "PYTHONDONTWRITEBYTECODE",
+                "1",
+            );
+            run_report.setEnvironmentVariable(
+                "PYTHONPATH",
+                ".",
+            );
+            run_report.addFileArg(
+                b.path("bench/native_metal_workload_report.py"),
+            );
+            run_report.addArg("--runner");
+            run_report.addArtifactArg(
+                native_metal_workload_report_exe,
+            );
+            run_report.addArg("--metallib");
+            run_report.addArg(metal_library_path);
+            run_report.step.dependOn(&native_metal_lib.step);
+            run_report.step.dependOn(
+                &run_native_metal_workload_report_model.step,
+            );
+            run_report.step.dependOn(
+                &run_native_workload_report_tests.step,
+            );
+        }
+        if (native_metal_report_output) |path| {
+            run_native_metal_workload_report_verifier.addArg(
+                "--output",
+            );
+            run_native_metal_workload_report_verifier.addArg(path);
+        }
+        if (native_metal_suite_report_output) |path| {
+            run_native_metal_workload_report_suite.addArg(
+                "--output",
+            );
+            run_native_metal_workload_report_suite.addArg(path);
+        }
+        run_native_metal_workload_report_suite.step.dependOn(
+            &run_native_metal_allocation_suite.step,
+        );
+        native_metal_workload_report_test_step.dependOn(
+            &run_native_metal_workload_report_verifier.step,
+        );
+
         // The fault shim is a second, non-installed build of the same bridge.
         // Its control symbols and state exist only when this private macro is
         // set and never enter the normal engine module or production archive.
@@ -1992,7 +2125,7 @@ pub fn build(b: *std.Build) void {
             &check_metal_fault_symbols.step,
         );
         run_native_metal_fault_suite.step.dependOn(
-            &run_native_metal_allocation_suite.step,
+            &run_native_metal_workload_report_suite.step,
         );
         const run_native_metal_correctness_suite =
             b.addRunArtifact(metal_tests);
@@ -2038,6 +2171,12 @@ pub fn build(b: *std.Build) void {
             &native_metal_failure.step,
         );
         native_metal_fault_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_workload_report_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_workload_report_compile_step.dependOn(
             &native_metal_failure.step,
         );
         native_metal_suite_test_step.dependOn(

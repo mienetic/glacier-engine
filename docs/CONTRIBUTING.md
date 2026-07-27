@@ -91,7 +91,7 @@ narrow change never hides the checks required by another changed path.
 | FreeBSD-specific runtime | Native ReleaseSafe plus the retained FreeBSD target |
 | Shared POSIX runtime | Native ReleaseSafe, explicit Darwin evidence, both Linux targets, and FreeBSD; the Darwin label reuses the native suite instead of compiling twice |
 | Darwin- or macOS-specific runtime | Native Darwin ReleaseSafe tests; a non-Darwin skip is not passing evidence |
-| Metal backend | Serialized native Darwin Metal suite, including production-symbol isolation and the build-isolated fault/race gate; a non-Darwin skip is not passing evidence |
+| Metal backend | Serialized native Darwin Metal suite, including the production-native workload report, production-symbol isolation, and the build-isolated fault/race gate; a non-Darwin skip is not passing evidence |
 | Unknown input under a code tree | Conservatively use every retained target |
 | Concurrency or locking | Zig modes above, ThreadSanitizer where supported, fault/recovery tests |
 | On-disk or wire ABI | Encoder/decoder tests, golden fixture, mutation/reorder/truncation tests, independent verifier |
@@ -116,6 +116,10 @@ zig build test -Doptimize=ReleaseSafe -Dmetal=false -Dsanitize-thread=true
 
 tools/zig-with-ephemeral-cache.sh build \
   native-metal-fault-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-workload-report-test \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 
 tools/zig-with-ephemeral-cache.sh build \
@@ -175,10 +179,15 @@ executables. `zig build run` also builds only the CLI. Metal-only changes use
 one native Darwin Zig invocation containing the serialized
 `native-metal-suite-test` plus the orthogonal device and host-tool compile
 profiles. The aggregate runs diagnostic readiness, real-resource allocation
-ownership, build-isolated fault/reconciliation, and focused correctness without
-overlap; the readiness sub-gate retains its one-dispatch contract. Metal
-assertions run, the production CLI plus diagnostics cannot escape compilation,
-and all roots share one shader-library build step.
+ownership, one production-native 20-dispatch workload report,
+build-isolated fault/reconciliation, and focused correctness without overlap;
+the readiness sub-gate retains its one-dispatch contract. Metal assertions
+run, the production CLI plus diagnostics cannot escape compilation, and all
+roots share one shader-library build step. The workload report's two adapter
+slots are logical ownership facts rather than a physical-parallel claim, and
+its `currentAllocatedSize` samples are allocation context rather than
+residency. Physical metrics remain unsupported unless a named observer
+supplies them.
 Verification uses one protected temporary workspace, shared private Zig cache
 directories, temporary target prefixes, `-j2`, and repository fixtures only.
 No persistent repository cache is needed. The quick profile intentionally

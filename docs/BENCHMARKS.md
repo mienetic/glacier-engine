@@ -18,10 +18,13 @@ claim boundary.
 Passing a conformance demo does not establish throughput, physical memory,
 energy, or production reliability.
 
-The portable W6a report contract is integrated; its production-native
-multi-request producer and retained load evidence remain staged. The CPU/GPU
-observer, native producer, and soak/disruption sequence are defined in the
-[Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md), with the exact W6a boundary in
+The portable W6a report contract and the bounded W6b production-native Metal
+producer are integrated. W6b runs a fixed real-GPU campaign on a native macOS
+Metal host and can retain the independently verified raw wire when an output
+path is requested. Broader retained machine matrices, direct physical
+telemetry, and soak/disruption evidence remain staged. The sequence is defined
+in the [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md), with the exact wire,
+producer, and claim boundary in
 [Native Workload Report](NATIVE_WORKLOAD_REPORT.md). Accelerator results must
 keep host, device, synchronization, placement, residency, fallback, power, and
 thermal observations distinct.
@@ -42,6 +45,7 @@ thermal observations distinct.
 | `zig build native-observation-test -Dmetal=false` | W5a fixed portable observer ABI and family-neutral runner: explicit present/missing/denied/unsupported, stable source identity separate from per-event provenance, nonzero unavailable-reason identity and no present-reason identity (all-zero fixed field), host/accelerator planes, sample-clock identity on every record and value-clock identity only on present time-valued metrics, fail-closed probe and pre-run admission, retained post-run contamination, correctness/zero-orphan/fallback gates, a download-free three-profile/six-item report checked independently, shared macOS system parsers and native read-only macOS smoke on Darwin, plus a platform-neutral JSON validator and bounded Linux available-memory adapter model; no throughput, latency, direct GPU/power/thermal, or multi-OS native claim |
 | `tools/zig-with-ephemeral-cache.sh build native-workload-report-test -Dmetal=false -Doptimize=ReleaseSafe -j2` | W6a portable report conformance: a versioned allocation-free scenario/raw-record/summary/closure wire, a deterministic two-warmup/four-measured synthetic runner, measured-only counts and nearest-rank distributions, exact throughput rational and logical in-flight/fairness facts, availability-bearing metric slots, zero-orphan closure, rejection of a one-bit mutation at every byte plus truncation/extension/reorder/duplicate/semantic forgeries, and independent standard-library Python decode/recomputation of the live raw wire; it opens no device and is not native load or performance evidence |
 | `tools/zig-with-ephemeral-cache.sh build native-workload-report-cross-compile -Dmetal=false -Doptimize=ReleaseSafe -j2` | Compile-only W6a codec-test and reference-runner coverage for Linux x86_64/AArch64 GNU, Windows x86_64 GNU, and FreeBSD x86_64; it does not execute those binaries and is not native evidence for any foreign target |
+| `tools/zig-with-ephemeral-cache.sh build native-metal-workload-report-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | W6b hard production-native macOS Metal report gate: 4 warmup plus 16 measured real 37x64 INT4 matrix-vector dispatches, two logical adapter slots and flows, both requests in each pair submitted before either wait, per-request CPU-oracle error at most `2e-5`, generation-fenced slot reuse, direct same-command GPU timing, sampled `currentAllocatedSize` context, independent portable-plus-profile wire verification, and terminal zero ownership. It is one exact correctness/evidence campaign, not throughput or latency evidence; logical slot coexistence is not physical GPU parallelism or hardware queue occupancy, `currentAllocatedSize` is not residency, and direct physical metrics remain unsupported. Add `-Dnative-metal-report-output=PATH` to retain the raw wire only after complete verification. |
 | `tools/zig-with-ephemeral-cache.sh test src/core/device_lifecycle_contract.zig -OReleaseSafe` | Pointer-free Device-loss Observation V1: every source/state mapping, exact status/domain/code `5/1/11` classification, explicit native versus synthetic evidence, canonical prior-inventory recomputation, present-to-newer-unavailable/lost transition receipts, capability/policy preservation, selection exclusion, and mutation/replay/substitution rejection. This deterministic contract gate opens no Metal device and proves no physical failure or recovery. |
 | `tools/zig-with-ephemeral-cache.sh test src/core/device_loss_dispatch_reconciliation.zig -OReleaseSafe` plus `python3 -m unittest bench.tests.test_device_loss_dispatch_reconciliation` | Device-loss Dispatch Reconciliation Phase A contract models: fixed pointer-free 440-byte retention, 240-byte plan, and 448-byte receipt values; exact lifecycle, selection, lease, active-pin, terminal-failure, dispatch-completion, and Bank-completion replay; stable independent roots; native-only production eligibility for command-specific `5/1/11`; synthetic structural coverage; replay and authority-drift rejection; and separate later allocation retirement. These deterministic gates open no Metal device, execute no GPU work, and do not prove physical device loss. |
 | `tools/zig-with-ephemeral-cache.sh test src/core/device_loss_dispatch_callback_retirement.zig -OReleaseSafe` plus `python3 -m unittest bench.tests.test_device_loss_dispatch_callback_retirement` | Device-loss Dispatch Callback Retirement Phase B contract models: fixed pointer-free 464-byte retention, 240-byte plan, 408-byte callback fence, and 504-byte receipt; exact pending/submission-ambiguous/completion-unknown/invalid-completion shapes; callback-detached/record-retained fencing without callback-exit inference; dedicated zero-output ownership-retired terminal; Bank/native settlement composition; production-native eligibility; and mutation, substitution, duplicate, foreign, replay, and late-settlement rejection. These deterministic gates open no Metal device and execute no GPU work. |
@@ -51,7 +55,7 @@ thermal observations distinct.
 | `tools/zig-with-ephemeral-cache.sh build native-metal-correctness-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Native Metal correctness and lifecycle no-event gate: installs the real per-context device observer, confirms selected-device initial membership, runs one real GPU command, and requires the lifecycle snapshot to remain unchanged around that successful command. The completed development-host run used a built-in M1 GPU; it did not exercise removal-requested, removed, or exact code `11`, and proves no safe recovery or migration. |
 | `tools/zig-with-ephemeral-cache.sh build native-metal-allocation-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Hard native macOS Metal allocation and dispatch-lifetime gate: opens a real `MTLDevice` and creates/inspects real Shared `MTLBuffer` resources through ChildLease and LeaseTree coordinators; verifies exact logical precharge/reserve/release, private FreePermit settlement, partial-allocation cancellation, per-object device/length/`allocatedSize`, foreign/stale-token rejection, distinct adapter authorities, registry balance, and generation-fenced reuse. Its four-buffer profile uses an adapter-issued generation-fenced `MetalMatvecDispatchRequestV1` root plus sealed pre-Bank `DispatchPinIntentV1`; the valid branch separately submits, polls or waits, validates exact completed output, settles Bank ownership, finalizes the retained native command, and checks a CPU oracle. Malformed attempts may inspect the real context/resources but construct and submit no command buffer; the valid pure-cancellation branch performs no native inspection. Both no-submit branches produce zero submission/backend/output roots, execute zero GPU commands, and share the private Bank-pin/adapter settlement and replay tombstone. Public acknowledgement only verifies the settled tombstone. Sticky quarantine detects ambiguous/unknown/invalid/error outcomes but does not reconcile or clear them. No device-loss recovery, multi-slot scheduling, residency, heap, performance, broad-device, or multi-OS claim. |
 | `tools/zig-with-ephemeral-cache.sh build native-metal-fault-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Build-isolated native macOS Metal fault/reconciliation/retirement conformance: verifies production-symbol isolation; races the Phase A one-shot overlay with exactly one winner; keeps physical success separate from a synthetic code-`11`-shaped publication; proves Bank-first Phase A finalization and confirmation retry; and separately releases a real-buffer allocation under synthetic loss. The Phase B matrix submits real commands over four real buffers for pending, submission-ambiguous, completion-unknown, and invalid-completion ownership. It combines a held handler, a post-commit ambiguous disposition authenticated by the native record, a valid unknown projection that changes only `callback_fault` after independently verified physical success, and an exact completed-output-read rejection before caller memory is written. It derives retention through the adapter, consumes each Bank pin before exact native unlink, replays each tombstone, preserves caller output, and performs allocation release separately. Identity-matched production 256-byte retirement-telemetry snapshots verify successful fresh/replayed prepare and commit deltas, live prepared ownership, detach-before-exit, frozen native fact buckets, exact one-record/four-reference retirement, tombstones, generations, and unchanged rejected operations. Adapter-only receipt replay is correctly absent from native commit-replay telemetry. Separate backend validator tests cover canonical mutation and sticky-saturation snapshot shapes; they do not constitute runtime native saturation evidence. The seams and loss/error controls are synthetic and test-only: this gate does not reproduce physical removal or driver/hardware failure and is not output-recovery, migration, reset, physical-reclaim, residency, queue-depth, utilization, power, thermal, frequency, energy, or performance evidence. |
-| `tools/zig-with-ephemeral-cache.sh build native-metal-suite-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Serialized native macOS device suite: readiness → allocation ownership → fault/reconciliation → focused correctness and lifecycle no-event validation, with no overlap between those device gates; it combines their evidence boundaries and does not create a benchmark or retained native artifact |
+| `tools/zig-with-ephemeral-cache.sh build native-metal-suite-test -Dmetal=true -Doptimize=ReleaseSafe -j2` | Serialized native macOS device suite: readiness → allocation ownership → production-native workload report → fault/reconciliation → focused correctness and lifecycle no-event validation, with no overlap between those device gates; it combines their evidence boundaries and does not create a benchmark. Suite report retention remains explicit through `-Dnative-metal-suite-report-output=PATH`; that option and the focused gate's `-Dnative-metal-report-output=PATH` are mutually exclusive in one build invocation. |
 | `zig build lane-publication-demo -Dmetal=false` | One-token prepare/commit/abort with KV, RNG, sampler, output, schedule, and resource roots |
 | `zig build lane-contiguous-demo -Dmetal=false` | Concrete contiguous KV row publication and portable receipt |
 | `tools/zig-with-ephemeral-cache.sh build test -Doptimize=ReleaseSafe -Dmetal=false -j2` | Full retained suite, including receipt-funded prepared-text activation at sequence `N`, one uninterrupted/restored synthetic-model transition comparison, and target teardown to zero |
@@ -179,8 +183,29 @@ portability for the codec and deterministic runner only. They execute no
 production-native workload, produce no retained machine artifact, and do not
 establish CPU or GPU performance, physical concurrency, queue depth,
 utilization, residency, power, thermal, frequency, energy, or native behavior
-on a foreign target. The first bounded production Metal producer remains W6b.
-See [Native Workload Report](NATIVE_WORKLOAD_REPORT.md).
+on a foreign target.
+
+W6b is a separate hard native macOS Metal conformance gate. Its fixed
+closed-loop campaign reuses one persistent eight-buffer lease for 20 real
+production-adapter dispatches: 4 warmup and 16 measured requests, balanced
+across two logical slots. Both requests in each pair submit before either is
+waited, every result is compared with a precomputed CPU oracle, and each pair
+settles fully before the slots are reused. The producer keeps one global host
+monotonic sequence, retains the Metal command-buffer start/end clock
+separately, rejects lifecycle or identity drift, and fails closed without
+publishing a partial report after an ambiguous native submission.
+
+The portable verifier first recomputes the wire and summary. A second native
+profile verifier then checks the exact geometry, flow balance, generation
+roots, same-command device durations, sampled `currentAllocatedSize` context,
+and zero Bank/pin/dispatch/command/buffer closure. An explicitly requested
+artifact is written only after both verification layers pass. This proves the
+composition and correctness of that exact captured campaign. It does not
+authenticate the producer, establish performance, reveal hardware queue
+occupancy, prove physical GPU parallelism, or turn `currentAllocatedSize` into
+residency. Utilization, physical queue depth, residency, power, energy,
+temperature, frequency, and physical parallelism remain unsupported. See
+[Native Workload Report](NATIVE_WORKLOAD_REPORT.md).
 
 The separate native Metal gate is readiness conformance, not a microbenchmark.
 It performs exactly one real GPU dispatch across the full gate for one fixed
@@ -221,6 +246,16 @@ historical attestation. A passing invocation is native evidence for that exact
 host session, but no addressable Metal result is currently retained in the
 repository. Implementation evidence and retained native campaign evidence must
 therefore remain separate, and W5b remains open.
+
+The W6b hard gate also supplies a fresh 256-bit challenge through a dedicated,
+sanitized environment variable and accepts no runner arguments. The runner
+binds the challenge and a domain-separated build identity over the producer
+ABI, its exact executable SHA-256, and the external `shaders.metallib` SHA-256
+into the scenario. The verifier hashes both files before and after execution
+and rejects a changed host program, changed GPU program, stale replay, or
+identity mismatch. This strengthens live-run binding but is not cryptographic
+code attestation, so a retained artifact still requires a separate source
+commit and capture manifest.
 
 The native Metal allocation gate is separate real-resource conformance. Its
 ChildLease and LeaseTree cases create and inspect direct Shared `MTLBuffer`
@@ -880,6 +915,8 @@ tools/zig-with-ephemeral-cache.sh build native-workload-report-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 tools/zig-with-ephemeral-cache.sh build native-workload-report-compile \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
+tools/zig-with-ephemeral-cache.sh build native-metal-workload-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
 zig build test -Doptimize=Debug -Dmetal=false
 zig build test -Doptimize=ReleaseSafe -Dmetal=false
 zig build test -Doptimize=ReleaseFast -Dmetal=false

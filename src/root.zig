@@ -177,6 +177,8 @@ pub const metal_device_lifecycle_adapter =
     @import("backends/metal/device_lifecycle_adapter.zig");
 pub const metal_native_observer =
     @import("backends/metal/native_observer.zig");
+pub const metal_native_workload_report =
+    @import("backends/metal/native_workload_report.zig");
 
 pub const CpuBackend = cpu_backend.CpuBackend;
 pub const MetalBackend = metal_backend.MetalBackend;
@@ -184,6 +186,8 @@ pub const MetalAllocationAdapter = metal_allocation_adapter;
 pub const MetalDeviceLifecycleAdapter =
     metal_device_lifecycle_adapter;
 pub const MetalNativeObserver = metal_native_observer;
+pub const MetalNativeWorkloadReport =
+    metal_native_workload_report;
 
 /// Build-time flag from build.zig. When false, the Metal bindings are still
 /// compiled (so the API surface stays stable) but tests that need a real
