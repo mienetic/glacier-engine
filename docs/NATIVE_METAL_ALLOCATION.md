@@ -262,6 +262,17 @@ Allocation ownership and its logical charge stay live until a separate
 allocation release. See
 [Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md).
 
+The production shim provides a separate read-only
+`MetalDispatchRetirementTelemetryV1` ABI. Its fixed 256-byte snapshot binds the
+native registry ID and context nonce to successful fresh/replayed
+prepare/commit counts, live prepared ownership, callback detachment, frozen
+completion/state/disposition/authorization buckets, retired command and
+four-reference totals, retained tombstones, generations, and sticky
+per-counter saturation. It is read under the existing device registry monitor
+without acquiring the callback gate. No snapshot field is consumed as
+retirement, completion, output, Bank, allocation-release, migration, reset,
+residency, or reclaim authority.
+
 The native hard gate now exercises both coordinators. The LeaseTree path uses
 distinct admission/lease/recovery/terminal evidence and keeps its allocation
 batch and FreePermit private. See
@@ -561,8 +572,7 @@ explicitly synthetic test-only loss permit. It does not establish:
 - a physical command-buffer, driver, hardware, or device-loss failure from the
   test-published error;
 - a physical removal-callback campaign;
-- direct callback-retirement telemetry or an additional-backend Phase B
-  implementation;
+- an additional-backend Phase B implementation;
 - fresh selection or automatic migration;
 - multi-slot queue scheduling, a global native queue-depth limit, queue-depth
   evidence, or transfer ownership;

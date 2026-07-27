@@ -110,7 +110,8 @@ pending, submission-ambiguous, completion-unknown, and invalid-completion
 retirement end to end without constructing the adapter retention by hand. This
 is not evidence of physical removal, driver or hardware failure, recovered
 output, performance, residency, migration, reset, or physical reclaim. Later
-work includes removable-hardware callback campaigns, direct telemetry,
-fresh-device selection, explicit migration policy, multiple queue slots,
-multi-device scheduling, additional GPU backends, and retained native
-OS/device matrices.
+work includes removable-hardware callback campaigns, direct physical device
+telemetry, fresh-device selection, explicit migration policy, multiple queue
+slots, multi-device scheduling, additional GPU backends, and retained native
+OS/device matrices. Direct Phase B retirement-protocol telemetry is separately
+integrated and grants no reconciliation authority.

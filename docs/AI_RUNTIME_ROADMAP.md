@@ -162,8 +162,9 @@ changes.
 The selection receipt is decision evidence only. Physical-page commitment,
 reclamation, and residency authority/evidence, fresh selection/migration,
 multi-GPU
-partitioning/scheduling, direct telemetry, performance evidence, native device
-ranges, and native support on cross-compiled targets remain open.
+partitioning/scheduling, direct physical telemetry, performance evidence,
+native device ranges, and native support on cross-compiled targets remain
+open.
 
 ### 3. Resource plane
 
@@ -254,9 +255,20 @@ removal, driver or hardware failure, output recovery, performance, residency,
 migration, reset, or physical reclaim. See
 [Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md).
 
+The Metal backend now retains direct Phase B protocol telemetry separately
+from that authority. Its production 256-byte
+`MetalDispatchRetirementTelemetryV1` snapshot binds native registry/context
+identity to successful unique/replayed prepare and commit transitions, live
+prepared ownership, callback detachment, frozen native fact buckets, exact
+record/reference/tombstone totals, retirement generations, and sticky
+saturation. Reads and failed operations do not advance it. It is diagnostic
+only: these logical/native ownership counters are not physical residency,
+utilization, queue, power, thermal, frequency, energy, performance, callback
+exit, completion, output, release, or migration evidence.
+
 Physical residency, fresh selection, multi-slot and multi-device scheduling,
-production weight paging, direct telemetry, additional GPU backends, and
-native OS matrices remain planned.
+production weight paging, direct physical device telemetry, additional GPU
+backends, and native OS matrices remain planned.
 
 Promotion gate: every retained allocation is owned, every rejection and
 cancellation returns the declared delta, and measured physical counters are

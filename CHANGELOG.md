@@ -37,6 +37,22 @@ before the first stable release.
 
 ### Added
 
+- Added production **Metal Dispatch Retirement Telemetry V1**. The fixed
+  256-byte `MetalDispatchRetirementTelemetryV1` snapshot binds one native
+  context nonce and device registry ID to successful unique/replayed prepare
+  and commit counts, live prepared ownership, callback detachment,
+  completion-observation and native-state buckets, submission disposition,
+  native-loss versus synthetic-test authorization, exact native record and
+  four-reference retirement totals, retained tombstones, retirement
+  generations, and per-counter sticky saturation. The snapshot is collected
+  under the existing native registry monitor, never acquires the callback
+  gate, and cannot arm, authorize, settle, clear, or publish anything. Native
+  real-command coverage checks the four Phase B retained-state paths, exact
+  replay deltas, detach-before-exit, and unchanged failed operations; the
+  retained-state seams and loss authorization remain explicitly synthetic.
+  This is protocol telemetry, not evidence of physical removal, command
+  success, output recovery, residency or reclaim, queue depth, performance,
+  utilization, power, thermal state, frequency, or energy.
 - Added **Device-loss Dispatch Callback Retirement Phase B** for exact
   `pending`, `submission_ambiguous`, `completion_unknown`, and
   `invalid_completion` Metal dispatch ownership after accepted device loss.
@@ -181,8 +197,9 @@ before the first stable release.
   exact operation without coupling readiness to unrelated kernels.
   This slice grants no physical allocation, residency, queue,
   dispatch, or publication authority and does not establish device-loss
-  recovery, multi-GPU scheduling, direct telemetry, performance, retained
-  device ranges, or native support from cross-compilation.
+  recovery, multi-GPU scheduling, direct physical device telemetry,
+  performance, retained device ranges, or native support from
+  cross-compilation.
 - Added the first W5a native-observation slice. A pointer-free fixed-size
   contract separates host and accelerator planes, binds every metric to an
   explicit `present`, `missing`, `denied`, or `unsupported` state plus unit,

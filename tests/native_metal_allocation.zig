@@ -24,6 +24,8 @@ const retirement = engine.device_loss_retirement;
 const resource = engine.resource_bank;
 const metal_allocation = engine.metal_allocation_adapter;
 const metal_lifecycle = engine.metal_device_lifecycle_adapter;
+const DispatchRetirementTelemetry =
+    engine.metal_backend.MetalDispatchRetirementTelemetryV1;
 
 const Fixture = struct {
     inventory: [1]device.DeviceInventoryEntryV1,
@@ -46,6 +48,43 @@ fn digest(bytes: []const u8) allocation.Digest {
     var result: allocation.Digest = undefined;
     std.crypto.hash.sha2.Sha256.hash(bytes, &result, .{});
     return result;
+}
+
+fn initialDispatchRetirementTelemetry(
+    backend: *engine.MetalBackend,
+) !DispatchRetirementTelemetry {
+    const snapshot = try backend.dispatchRetirementTelemetry();
+    try engine.metal_backend
+        .validateMetalDispatchRetirementTelemetryV1(snapshot);
+    try testing.expectEqualDeep(
+        DispatchRetirementTelemetry{
+            .device_registry_id = backend.initialDeviceInfo().registry_id,
+            .context_nonce = backend.initialDeviceLifecycleSourceIdentity()
+                .context_nonce,
+        },
+        snapshot,
+    );
+    try testing.expectEqualDeep(
+        snapshot,
+        try backend.dispatchRetirementTelemetry(),
+    );
+    return snapshot;
+}
+
+fn expectDispatchRetirementTelemetry(
+    backend: *engine.MetalBackend,
+    expected: DispatchRetirementTelemetry,
+) !void {
+    const snapshot = try backend.dispatchRetirementTelemetry();
+    try engine.metal_backend
+        .validateMetalDispatchRetirementTelemetryV1(snapshot);
+    try testing.expectEqualDeep(expected, snapshot);
+    // Observation itself must not advance the source sequence or mutate any
+    // ownership counter.
+    try testing.expectEqualDeep(
+        snapshot,
+        try backend.dispatchRetirementTelemetry(),
+    );
 }
 
 const held_callback_group_size: u32 = 8;
@@ -1749,6 +1788,8 @@ fn runRealMetalDispatchLifecycle(
         .backend = &backend,
     };
     defer backend_cleanup.run();
+    const retirement_telemetry_before =
+        try initialDispatchRetirementTelemetry(&backend);
     const inventory_entry =
         try metal_allocation.makeAllocationInventoryEntryV1(
             &backend,
@@ -2727,6 +2768,12 @@ fn runRealMetalDispatchLifecycle(
     try testing.expect(
         backend.compatibilityUnresolvedSubmission() == null,
     );
+    // An ordinary exact completion is finalized through the normal command
+    // path and must not be counted as callback-retirement activity.
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        retirement_telemetry_before,
+    );
 
     var armed_loss_retirement_plan: ?retirement.LossRetirementPlanV1 = null;
     if (comptime include_injected_fault) {
@@ -3312,6 +3359,13 @@ fn runRealMetalDispatchLifecycle(
         armed_loss_retirement_plan = retirement_plan;
     }
 
+    // The optional command-error reconciliation above is Phase A, not the
+    // callback-detached Phase B path, so it is telemetry-neutral as well.
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        retirement_telemetry_before,
+    );
+
     const released = try coordinator.release(
         lease,
         adapter.interface(),
@@ -3399,6 +3453,8 @@ test "held Metal callback permits retirement and wait releases allocation mutex"
         engine.metal_library_path,
     );
     defer backend.deinit();
+    var expected_retirement_telemetry =
+        try initialDispatchRetirementTelemetry(&backend);
 
     // First wave: keep the completion handler before its callback gate while
     // waitRegisteredDispatch blocks on native publication. The waiter must
@@ -3476,6 +3532,12 @@ test "held Metal callback permits retirement and wait releases allocation mutex"
     try testing.expect(
         wait_finished_while_allocation_locked,
     );
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    const completed_dispatches_before_retirement =
+        backend.completedDispatchCount();
 
     // Second wave: physical completion reaches the deliberately held block,
     // but no callback projection exists yet. Prepare must freeze pending,
@@ -3502,18 +3564,29 @@ test "held Metal callback permits retirement and wait releases allocation mutex"
     try metal_fault_control.waitForHeldCompletionCallback(
         &backend,
     );
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
     const permit =
         try backend
             .prepareRegisteredDispatchRetirementForSyntheticLossTest(
             retirement_submission,
         );
-    try testing.expectEqualDeep(
-        permit,
-        try metal_fault_control
-            .prepareRegisteredDispatchRetirementForTest(
-            &backend,
-            retirement_submission,
-        ),
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.prepared_retirement_count += 1;
+    expected_retirement_telemetry.live_prepared_retirement_count += 1;
+    expected_retirement_telemetry.callback_detached_count += 1;
+    expected_retirement_telemetry.completion_unobserved_prepare_count += 1;
+    expected_retirement_telemetry.pending_prepare_count += 1;
+    expected_retirement_telemetry.submitted_prepare_count += 1;
+    expected_retirement_telemetry.synthetic_test_prepare_count += 1;
+    expected_retirement_telemetry
+        .highest_prepared_retirement_generation =
+        permit.retirement_generation;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
     );
     try testing.expect(
         permit.authorization_kind == .synthetic_test,
@@ -3524,6 +3597,23 @@ test "held Metal callback permits retirement and wait releases allocation mutex"
     try testing.expectEqual(
         @as(u64, 1),
         try backend.nativeLiveCommandCount(),
+    );
+    // The exact live-record prepare is an ownership-neutral native replay.
+    try testing.expectEqualDeep(
+        permit,
+        try metal_fault_control
+            .prepareRegisteredDispatchRetirementForTest(
+            &backend,
+            retirement_submission,
+        ),
+    );
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.prepare_replay_count += 1;
+    expected_retirement_telemetry
+        .prepare_live_record_replay_count += 1;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
     );
     try testing.expectError(
         engine.metal_backend.MetalError.InvalidObservation,
@@ -3552,12 +3642,62 @@ test "held Metal callback permits retirement and wait releases allocation mutex"
             &backend,
         ),
     );
+    // The injected final-boundary failure retains the same prepared record and
+    // is deliberately absent from successful-operation telemetry.
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
+    );
 
     const retirement_receipt =
         try backend.commitRegisteredDispatchRetirement(permit);
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.committed_retirement_count += 1;
+    expected_retirement_telemetry.live_prepared_retirement_count -= 1;
+    expected_retirement_telemetry.retired_native_command_count += 1;
+    expected_retirement_telemetry
+        .released_allocation_reference_count += 4;
+    expected_retirement_telemetry.retained_tombstone_count += 1;
+    expected_retirement_telemetry
+        .highest_committed_retirement_generation =
+        permit.retirement_generation;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    const replayed_retirement_receipt =
+        try backend.commitRegisteredDispatchRetirement(permit);
     try testing.expectEqualDeep(
         retirement_receipt,
-        try backend.commitRegisteredDispatchRetirement(permit),
+        replayed_retirement_receipt,
+    );
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.commit_replay_count += 1;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    // Preparing the same exact tombstoned command replays its frozen permit;
+    // it cannot detach again or recreate live native ownership.
+    try testing.expectEqualDeep(
+        permit,
+        try metal_fault_control
+            .prepareRegisteredDispatchRetirementForTest(
+            &backend,
+            retirement_submission,
+        ),
+    );
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.prepare_replay_count += 1;
+    expected_retirement_telemetry
+        .prepare_tombstone_replay_count += 1;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
     );
     try testing.expectEqualDeep(
         metal_fault_control.RetirementCommitFactsV1{
@@ -3584,6 +3724,14 @@ test "held Metal callback permits retirement and wait releases allocation mutex"
         &backend,
     );
     retirement_hold_active = false;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
+    );
 
     const recovery_token =
         try backend.createBufferAllocation(64);
@@ -3591,6 +3739,10 @@ test "held Metal callback permits retirement and wait releases allocation mutex"
     try testing.expectEqual(
         @as(u64, 0),
         try backend.nativeLiveBufferCount(),
+    );
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
     );
 }
 
@@ -3612,6 +3764,10 @@ fn runPhaseBRetainedStateE2E(
         engine.metal_library_path,
     );
     defer backend.deinit();
+    var expected_retirement_telemetry =
+        try initialDispatchRetirementTelemetry(&backend);
+    const completed_dispatches_before_retirement =
+        backend.completedDispatchCount();
     const inventory_entry =
         try metal_allocation.makeAllocationInventoryEntryV1(
             &backend,
@@ -3856,6 +4012,16 @@ fn runPhaseBRetainedStateE2E(
         try backend.nativeLiveCommandCount(),
     );
     try bank.validateLeasePin(bank_permit);
+    // Submission/completion classification retains native ownership but is not
+    // itself retirement activity.
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
+    );
 
     const expected_reason: metal_allocation
         .MetalAsyncDispatchQuarantineReasonV1 =
@@ -4072,6 +4238,10 @@ fn runPhaseBRetainedStateE2E(
             @as(u64, 1),
             try backend.nativeLiveCommandCount(),
         );
+        try expectDispatchRetirementTelemetry(
+            &backend,
+            expected_retirement_telemetry,
+        );
     }
 
     const source_cursor: lifecycle.SourceCursorV1 = .{
@@ -4189,6 +4359,89 @@ fn runPhaseBRetainedStateE2E(
             pin,
             ticket,
         );
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.prepared_retirement_count += 1;
+    expected_retirement_telemetry.live_prepared_retirement_count += 1;
+    expected_retirement_telemetry.callback_detached_count += 1;
+    expected_retirement_telemetry.synthetic_test_prepare_count += 1;
+    expected_retirement_telemetry
+        .highest_prepared_retirement_generation =
+        retirement_result.fence.native_retirement_generation;
+    switch (retained_case) {
+        .submission_ambiguous => {
+            expected_retirement_telemetry
+                .completion_unobserved_prepare_count += 1;
+            expected_retirement_telemetry.pending_prepare_count += 1;
+            expected_retirement_telemetry
+                .submitted_or_ambiguous_prepare_count += 1;
+        },
+        .completion_unknown => {
+            expected_retirement_telemetry
+                .completion_observed_prepare_count += 1;
+            expected_retirement_telemetry.unknown_prepare_count += 1;
+            expected_retirement_telemetry.submitted_prepare_count += 1;
+        },
+        .invalid_completion => {
+            // The adapter classifies the rejected output read as invalid;
+            // native telemetry faithfully retains the underlying completed
+            // callback snapshot without relabelling that native state.
+            expected_retirement_telemetry
+                .completion_observed_prepare_count += 1;
+            expected_retirement_telemetry.completed_prepare_count += 1;
+            expected_retirement_telemetry.submitted_prepare_count += 1;
+        },
+    }
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    // Exact adapter replay is served by its retained permit and does not
+    // re-enter the native prepare boundary.
+    try testing.expectEqualDeep(
+        retirement_result,
+        try adapter
+            .armSyntheticLossDispatchCallbackRetirementForTestV1(
+            &coordinator,
+            dispatch_interface,
+            plan,
+            retention,
+            observation,
+            transition,
+            source_cursor,
+            fixture.requirement,
+            fixture.selection,
+            &fixture.inventory,
+            inventory_entry,
+            successor_entry,
+            lease,
+            pin,
+            ticket,
+        ),
+    );
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    // The same native submission does cross the native boundary and is
+    // classified as one live-record prepare replay.
+    const native_permit =
+        try metal_fault_control
+            .prepareRegisteredDispatchRetirementForTest(
+            &backend,
+            fault_facts.published_submission,
+        );
+    try testing.expectEqual(
+        retirement_result.fence.native_retirement_generation,
+        native_permit.retirement_generation,
+    );
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.prepare_replay_count += 1;
+    expected_retirement_telemetry
+        .prepare_live_record_replay_count += 1;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
     try loss_dispatch_callback_retirement
         .validateLossDispatchCallbackFenceV1(
         retirement_result.fence,
@@ -4264,10 +4517,13 @@ fn runPhaseBRetainedStateE2E(
         try backend.nativeLiveCommandCount(),
     );
 
-    // The wrapper observes the Bank permit already consumed while native
-    // command ownership is still live, then rejects the acknowledgement
-    // after the adapter unlinks. Coordinator retry must replay only the
-    // private confirmation and never consume Bank/native ownership twice.
+    // Consume the Bank permit, then fail the first native commit at its final
+    // boundary. The prepared record and every telemetry counter must remain
+    // unchanged so the exact settlement can be retried.
+    try metal_fault_control
+        .armNextDispatchRetirementCommitFailure(
+        &backend,
+    );
     try testing.expectError(
         tree_allocation.Error.InvalidDispatchCompletion,
         coordinator.completeDispatchPin(
@@ -4277,21 +4533,21 @@ fn runPhaseBRetainedStateE2E(
         ),
     );
     try testing.expectEqual(
-        @as(u64, 1),
+        @as(u64, 0),
         settlement_replay.confirmation_calls,
     );
     try testing.expect(
         settlement_replay.bank_consumed_before_native_finalize,
     );
     try testing.expect(
-        settlement_replay.native_finalized_before_retry,
+        !settlement_replay.native_finalized_before_retry,
     );
     try testing.expectError(
         resource.Error.StaleReservation,
         bank.validateLeasePin(bank_permit),
     );
     try testing.expectEqual(
-        @as(u64, 0),
+        @as(u64, 1),
         try backend.nativeLiveCommandCount(),
     );
     try testing.expectEqualDeep(
@@ -4309,13 +4565,116 @@ fn runPhaseBRetainedStateE2E(
         metal_fault_control.RetirementCommitFactsV1{
             .abi_version = metal_fault_control.retirement_commit_facts_abi,
             .commit_attempt_count = 1,
+            .injected_failure_count = 1,
+        },
+        try metal_fault_control.dispatchRetirementCommitFacts(
+            &backend,
+        ),
+    );
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
+    );
+    try testing.expectEqualSlices(
+        f32,
+        &output_before,
+        &output,
+    );
+
+    // The retry commits the one retained native record, but the wrapper then
+    // rejects the private acknowledgement. This isolates a successful native
+    // commit from the later adapter-local coordinator replay.
+    try testing.expectError(
+        tree_allocation.Error.InvalidDispatchCompletion,
+        coordinator.completeDispatchPin(
+            pin,
+            dispatch_interface,
+            retirement_result.terminal,
+        ),
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        settlement_replay.confirmation_calls,
+    );
+    try testing.expect(
+        settlement_replay.native_finalized_before_retry,
+    );
+    try testing.expectEqual(
+        @as(usize, 1),
+        (try coordinator.snapshot()).active_dispatches,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectEqualDeep(
+        metal_fault_control.RetirementCommitFactsV1{
+            .abi_version = metal_fault_control.retirement_commit_facts_abi,
+            .commit_attempt_count = 2,
+            .injected_failure_count = 1,
             .committed_retirement_count = 1,
         },
         try metal_fault_control.dispatchRetirementCommitFacts(
             &backend,
         ),
     );
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.committed_retirement_count += 1;
+    expected_retirement_telemetry.live_prepared_retirement_count -= 1;
+    expected_retirement_telemetry.retired_native_command_count += 1;
+    expected_retirement_telemetry
+        .released_allocation_reference_count += 4;
+    expected_retirement_telemetry.retained_tombstone_count += 1;
+    expected_retirement_telemetry
+        .highest_committed_retirement_generation =
+        native_permit.retirement_generation;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
+    );
 
+    const native_replay_receipt =
+        try backend.commitRegisteredDispatchRetirement(
+            native_permit,
+        );
+    try engine.metal_backend
+        .validateMetalRegisteredDispatchRetirementReceipt(
+        native_replay_receipt,
+        native_permit,
+    );
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.commit_replay_count += 1;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqualDeep(
+        native_permit,
+        try metal_fault_control
+            .prepareRegisteredDispatchRetirementForTest(
+            &backend,
+            fault_facts.published_submission,
+        ),
+    );
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.prepare_replay_count += 1;
+    expected_retirement_telemetry
+        .prepare_tombstone_replay_count += 1;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+
+    // Only the private adapter confirmation is replayed here. Native commit
+    // telemetry and native fault-control facts must remain unchanged.
     const completion = try coordinator.completeDispatchPin(
         pin,
         dispatch_interface,
@@ -4352,12 +4711,22 @@ fn runPhaseBRetainedStateE2E(
     try testing.expectEqualDeep(
         metal_fault_control.RetirementCommitFactsV1{
             .abi_version = metal_fault_control.retirement_commit_facts_abi,
-            .commit_attempt_count = 1,
+            .commit_attempt_count = 3,
+            .injected_failure_count = 1,
             .committed_retirement_count = 1,
+            .replay_count = 1,
         },
         try metal_fault_control.dispatchRetirementCommitFacts(
             &backend,
         ),
+    );
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
     );
 
     const receipt =
@@ -4428,6 +4797,15 @@ fn runPhaseBRetainedStateE2E(
     );
     try adapter.acknowledgeDispatchCompletion(completion);
     try adapter.acknowledgeDispatchCompletion(completion);
+    // Public receipt and acknowledgement replays are adapter-local.
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
+    );
 
     try testing.expectEqualSlices(
         f32,
@@ -4456,6 +4834,14 @@ fn runPhaseBRetainedStateE2E(
         );
         callback_hold_active = false;
     }
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
+    );
 
     const released = try coordinator.release(
         lease,
@@ -4481,6 +4867,14 @@ fn runPhaseBRetainedStateE2E(
         try backend.nativeLiveBufferCount(),
     );
     try adapter.validateEmpty();
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
+    );
 
     const recovery_token =
         try backend.createBufferAllocation(64);
@@ -4488,6 +4882,10 @@ fn runPhaseBRetainedStateE2E(
     try testing.expectEqual(
         @as(u64, 0),
         try backend.nativeLiveBufferCount(),
+    );
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
     );
 
     try bank.closePublicationSession(
@@ -4523,6 +4921,10 @@ test "synthetic loss settles pending adapter dispatch through callback retiremen
         engine.metal_library_path,
     );
     defer backend.deinit();
+    var expected_retirement_telemetry =
+        try initialDispatchRetirementTelemetry(&backend);
+    const completed_dispatches_before_retirement =
+        backend.completedDispatchCount();
     const inventory_entry =
         try metal_allocation.makeAllocationInventoryEntryV1(
             &backend,
@@ -4725,6 +5127,17 @@ test "synthetic loss settles pending adapter dispatch through callback retiremen
     try testing.expectEqual(
         fixture.manifest.total_charged_bytes,
         (try bank.snapshotV3()).used.device_bytes,
+    );
+    // A physically finished command whose callback is still held has not
+    // entered callback-retirement. Telemetry and ordinary completion facts
+    // therefore remain at their context baseline.
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
     );
 
     // Exercise the public adapter wait path, not merely the native backend
@@ -4941,6 +5354,21 @@ test "synthetic loss settles pending adapter dispatch through callback retiremen
             pin,
             ticket,
         );
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.prepared_retirement_count += 1;
+    expected_retirement_telemetry.live_prepared_retirement_count += 1;
+    expected_retirement_telemetry.callback_detached_count += 1;
+    expected_retirement_telemetry.completion_unobserved_prepare_count += 1;
+    expected_retirement_telemetry.pending_prepare_count += 1;
+    expected_retirement_telemetry.submitted_prepare_count += 1;
+    expected_retirement_telemetry.synthetic_test_prepare_count += 1;
+    expected_retirement_telemetry
+        .highest_prepared_retirement_generation =
+        retirement_result.fence.native_retirement_generation;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
     try testing.expectEqualDeep(
         retirement_result,
         try adapter
@@ -4961,6 +5389,12 @@ test "synthetic loss settles pending adapter dispatch through callback retiremen
             pin,
             ticket,
         ),
+    );
+    // This replay is resolved by the adapter's retained permit and never
+    // crosses the native prepare boundary.
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
     );
     try loss_dispatch_callback_retirement
         .validateLossDispatchCallbackFenceV1(
@@ -5116,6 +5550,14 @@ test "synthetic loss settles pending adapter dispatch through callback retiremen
             &backend,
         ),
     );
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
+    );
 
     const completion = try coordinator.completeDispatchPin(
         pin,
@@ -5157,6 +5599,24 @@ test "synthetic loss settles pending adapter dispatch through callback retiremen
         try metal_fault_control.dispatchRetirementCommitFacts(
             &backend,
         ),
+    );
+    expected_retirement_telemetry.snapshot_sequence += 1;
+    expected_retirement_telemetry.committed_retirement_count += 1;
+    expected_retirement_telemetry.live_prepared_retirement_count -= 1;
+    expected_retirement_telemetry.retired_native_command_count += 1;
+    expected_retirement_telemetry
+        .released_allocation_reference_count += 4;
+    expected_retirement_telemetry.retained_tombstone_count += 1;
+    expected_retirement_telemetry
+        .highest_committed_retirement_generation =
+        retirement_result.fence.native_retirement_generation;
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
     );
     try testing.expect(
         !adapter_wait_finished.load(.acquire),
@@ -5237,6 +5697,10 @@ test "synthetic loss settles pending adapter dispatch through callback retiremen
             &backend,
         ),
     );
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
     var foreign_completion = completion;
     foreign_completion.completion_sha256[0] ^= 1;
     try testing.expectError(
@@ -5249,6 +5713,10 @@ test "synthetic loss settles pending adapter dispatch through callback retiremen
     );
     try adapter.acknowledgeDispatchCompletion(completion);
     try adapter.acknowledgeDispatchCompletion(completion);
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
 
     // Dispatch ownership is gone, but allocation ownership and its Bank
     // charge are deliberately still live until the separate lease release.
@@ -5256,6 +5724,14 @@ test "synthetic loss settles pending adapter dispatch through callback retiremen
         f32,
         &output_before,
         &output,
+    );
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
     );
     try testing.expectEqual(
         fixture.manifest.total_charged_bytes,
@@ -5326,6 +5802,14 @@ test "synthetic loss settles pending adapter dispatch through callback retiremen
         try backend.nativeLiveBufferCount(),
     );
     try adapter.validateEmpty();
+    try expectDispatchRetirementTelemetry(
+        &backend,
+        expected_retirement_telemetry,
+    );
+    try testing.expectEqual(
+        completed_dispatches_before_retirement,
+        backend.completedDispatchCount(),
+    );
 
     try bank.closePublicationSession(
         parent,

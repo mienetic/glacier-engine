@@ -17,6 +17,7 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Device lifecycle observation | `ObservationV1`, `TransitionReceiptV1`, native Metal lifecycle snapshot | Bind a source-specific native or synthetic fact to one exact prior present inventory and derive only a capability- and policy-preserving newer `unavailable` or `lost` entry; fail new native work closed without granting release, quarantine-clear, fresh-selection, recovery, or migration authority |
 | Device-loss dispatch reconciliation Phase A | `LossDispatchRetentionV1`, `LossDispatchReconciliationPlanV1`, exact terminal/completion settlement, `LossDispatchReconciliationReceiptV1` | Join one exact command-specific native `5/1/11` loss to its retained terminal-failure dispatch and settle the Bank pin before exact native-command finalization without granting output, migration, reset, or reclaim authority |
 | Device-loss dispatch callback retirement Phase B | `LossDispatchCallbackRetentionV1`, `LossDispatchCallbackRetirementPlanV1`, `LossDispatchCallbackFenceV1`, `LossDispatchCallbackRetirementReceiptV1`, ARC-owned native callback gate | Detach the exact callback target without waiting for callback exit while retaining the native command record, authorize only zero-output ownership retirement, settle the Bank pin before exact native unlink, and preserve replay while leaving allocation retirement separate |
+| Phase B retirement diagnostics | `MetalDispatchRetirementTelemetryV1`, production native snapshot | Directly observe successful native prepare/commit transitions and replay, frozen native facts, detachment, live/retired ownership, tombstones, generations, and saturation without becoming lifecycle, retirement, completion, output, release, or migration authority |
 | Device-loss retirement | `LossRetirementPlanV1`, private native permit, ordinary LeaseTree release, `LossRetirementReceiptV1` | Bind one exact lost source and quiesced allocation, drop retained native references before logical Bank uncharge without post-loss property reads, and grant no physical-reclaim, output, migration, reset, or residency authority |
 | Device allocation and dispatch contracts | Adapter-quoted manifest, `ResourceBank.ChildLease`, additive `LeaseTree`, exact object-set pins, async ticket/quarantine/failure evidence, opaque object set, live/recovery/terminal receipts | Charge exact replayed accounting bytes before callbacks, retain charge through cleanup uncertainty, reject stale or substituted ownership, bind per-adapter single-flight Metal completion to exact Bank settlement, and authorize one exact quarantined native `.error` as core `terminal_failure` without releasing ownership early; native gates create, dispatch through, and directly inspect real buffers, while production-symbol-isolated fault gates keep physical success or real resources separate from test-only overlays and prove exact settlement retry without claiming residency, physical device failure, general scheduling, or performance |
 | Resource | `ResourceBank`, additive and receipt-funded `LeaseTree` modes | Reserve exact logical capacity and track allocation ownership without ambiguous duplicate charge |
@@ -1010,6 +1011,18 @@ It does not prove
 physical removal, driver or hardware failure, output recovery, migration,
 reset, physical reclaim, residency, or performance.
 
+The production native context also exposes the fixed 256-byte
+`MetalDispatchRetirementTelemetryV1` snapshot. Device registry ID and context
+nonce bind its successful unique/replayed prepare and commit counters to one
+source. Completion-observation, native-state, disposition, authorization,
+callback-detachment, live-record, unlink/reference, tombstone, and generation
+buckets are frozen at the exact native transitions; rejected operations and
+reads do not advance the sequence, and counters saturate independently with a
+sticky overflow mask. Collection takes the native registry monitor but not the
+callback gate. The snapshot is diagnostic and cannot replace any Phase B
+authority or prove callback exit, physical loss, completion/output, allocation
+release, migration, reset, residency, reclaim, queue depth, or performance.
+
 Device-loss Retirement V1 composes these previously separate layers only for
 an already quiesced allocation. A pointer-free plan binds an exact accepted
 `lost` transition to the historical selection, allocation authority, live
@@ -1045,8 +1058,9 @@ evidence rather than physical-removal evidence. The isolated native retirement
 gate uses real buffers under an explicitly synthetic test-only loss permit; it
 proves reference cleanup, not physical removal or reclaim.
 Physical residency, fresh selection and migration, multi-slot and multi-device
-scheduling, telemetry, performance, retained driver/device ranges, removable
-hardware campaigns, and native support on cross-compiled targets remain open.
+scheduling, physical device telemetry, performance, retained driver/device
+ranges, removable hardware campaigns, and native support on cross-compiled
+targets remain open.
 Cross-target builds are compile evidence only. See
 [Device Capability and Selection](DEVICE_CAPABILITY_CONTRACT.md),
 [Device Lifecycle Observation V1](DEVICE_LIFECYCLE.md),

@@ -22,6 +22,7 @@ registered_wait_symbol='_glacier_metal_test_wait_for_registered_dispatch_waiter'
 hold_release_symbol='_glacier_metal_test_release_held_completion_callback'
 retirement_fail_symbol='_glacier_metal_test_arm_next_dispatch_retirement_commit_failure'
 retirement_facts_symbol='_glacier_metal_test_dispatch_retirement_commit_facts'
+retirement_telemetry_symbol='_glacier_metal_dispatch_retirement_telemetry_v1'
 
 production_symbols=$(/usr/bin/nm -gU "$production_shim")
 if printf '%s\n' "$production_symbols" |
@@ -31,6 +32,16 @@ if printf '%s\n' "$production_symbols" |
 fi
 
 fault_symbols=$(/usr/bin/nm -gU "$fault_shim")
+if ! printf '%s\n' "$production_symbols" |
+    /usr/bin/grep -q "${retirement_telemetry_symbol}\$"; then
+    echo "production Metal shim is missing $retirement_telemetry_symbol" >&2
+    exit 1
+fi
+if ! printf '%s\n' "$fault_symbols" |
+    /usr/bin/grep -q "${retirement_telemetry_symbol}\$"; then
+    echo "fault Metal shim is missing $retirement_telemetry_symbol" >&2
+    exit 1
+fi
 for required_symbol in \
     "$arm_symbol" \
     "$ambiguous_symbol" \

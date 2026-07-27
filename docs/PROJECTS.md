@@ -276,6 +276,16 @@ recovery, performance, residency, migration, reset, or physical-reclaim
 evidence. Allocation retirement remains separate. See
 [Device-loss Dispatch Callback Retirement](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md).
 
+Direct Phase B protocol telemetry is also complete for the Metal backend. The
+production shim exposes a fixed 256-byte, registry/context-identity-bound
+snapshot of successful unique/replayed prepare and commit transitions, live
+prepared ownership, callback detachment, frozen native facts, native-loss
+versus synthetic-test authorization, exact native unlink/reference totals,
+tombstones, generations, and sticky saturation. Reads and rejected operations
+do not advance it. The snapshot is diagnostic only and does not authorize
+callback exit, completion/output, Bank settlement, allocation release,
+migration, reset, physical reclaim, residency, or performance.
+
 The **build-isolated native Metal fault/race gate** is complete. A second,
 non-installed shim build contains the test-only controls, while the production
 shim exports no fault-control symbols. Two threads race a context-local
@@ -291,12 +301,11 @@ pin or finalizing the native record twice.
 Small next slices:
 
 - exercise removal-requested and removed callbacks on removable hardware;
-- add direct Phase B retirement telemetry without weakening its callback,
-  lock-order, or authority boundary;
 - port Phase B to an additional GPU backend with the same portable evidence;
 - add fresh selection under a new receipt and explicit migration policy;
 - add multi-slot queue scheduling and multi-device partitioning;
-- add physical residency and direct device telemetry as separate authorities;
+- add physical residency and direct physical device telemetry as separate
+  authorities;
 - add more GPU backends with CPU-oracle/lifecycle gates and expand native
   OS/device matrices;
 - retain performance evidence under declared campaigns.
@@ -342,7 +351,7 @@ Bank-first native unlink, replay, and later handler release under synthetic
 state/loss controls. That is native callback/record ownership evidence, not
 physical loss, output recovery, residency, migration, reclaim, or performance
 evidence. Physical-callback evidence, fresh selection and migration, multi-slot
-scheduling, physical residency, direct device telemetry, additional GPU
+scheduling, physical residency, direct physical device telemetry, additional GPU
 backends, performance evidence, and broader native OS/device matrices remain
 unimplemented unless a slice supplies direct named evidence. Cross-compilation
 never counts as native support.

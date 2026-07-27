@@ -32,6 +32,8 @@ pub const dispatch_retirement_permit_abi: u64 =
     0x474d_5250_0000_0001;
 pub const dispatch_retirement_receipt_abi: u64 =
     0x474d_5252_0000_0001;
+pub const dispatch_retirement_telemetry_abi: u64 =
+    0x474d_5254_0000_0001;
 pub const completed_command_buffer_status: u32 = 4;
 pub const error_command_buffer_status: u32 = 5;
 pub const device_removed_command_buffer_error: i64 = 11;
@@ -227,6 +229,37 @@ pub const MetalDispatchRetirementAuthorizationKind = enum(u32) {
     _,
 };
 
+/// Sticky per-counter saturation bits for
+/// `MetalDispatchRetirementTelemetryV1`. A set bit requires its counter to
+/// remain frozen at `maxInt(u64)` for the rest of the native context lifetime.
+pub const MetalDispatchRetirementTelemetryOverflow = struct {
+    pub const snapshot_sequence: u64 = @as(u64, 1) << 0;
+    pub const prepared_retirement: u64 = @as(u64, 1) << 1;
+    pub const prepare_replay: u64 = @as(u64, 1) << 2;
+    pub const prepare_live_record_replay: u64 = @as(u64, 1) << 3;
+    pub const prepare_tombstone_replay: u64 = @as(u64, 1) << 4;
+    pub const committed_retirement: u64 = @as(u64, 1) << 5;
+    pub const commit_replay: u64 = @as(u64, 1) << 6;
+    pub const live_prepared_retirement: u64 = @as(u64, 1) << 7;
+    pub const callback_detached: u64 = @as(u64, 1) << 8;
+    pub const completion_unobserved_prepare: u64 = @as(u64, 1) << 9;
+    pub const completion_observed_prepare: u64 = @as(u64, 1) << 10;
+    pub const pending_prepare: u64 = @as(u64, 1) << 11;
+    pub const completed_prepare: u64 = @as(u64, 1) << 12;
+    pub const error_prepare: u64 = @as(u64, 1) << 13;
+    pub const unknown_prepare: u64 = @as(u64, 1) << 14;
+    pub const submitted_prepare: u64 = @as(u64, 1) << 15;
+    pub const submitted_or_ambiguous_prepare: u64 =
+        @as(u64, 1) << 16;
+    pub const native_loss_prepare: u64 = @as(u64, 1) << 17;
+    pub const synthetic_test_prepare: u64 = @as(u64, 1) << 18;
+    pub const retired_native_command: u64 = @as(u64, 1) << 19;
+    pub const released_allocation_reference: u64 =
+        @as(u64, 1) << 20;
+    pub const retained_tombstone: u64 = @as(u64, 1) << 21;
+    pub const all: u64 = (@as(u64, 1) << 22) - 1;
+};
+
 /// Pointer-free authorization produced while the native command record and
 /// all four allocation references remain retained. This is ownership
 /// authority only; `native_state` is a frozen callback projection and is not
@@ -272,6 +305,41 @@ pub const MetalRegisteredDispatchRetirementReceipt = extern struct {
     callback_fault: u32 = 0,
     callback_detached: u32 = 0,
     reserved: u32 = 0,
+};
+
+/// Pointer-free, context-lifetime operational facts for native callback-safe
+/// retirement. These aggregates are diagnostic only: they do not authorize
+/// retirement, completion, output publication, or replay.
+pub const MetalDispatchRetirementTelemetryV1 = extern struct {
+    abi_version: u64 = dispatch_retirement_telemetry_abi,
+    device_registry_id: u64 = 0,
+    context_nonce: [4]u64 = [_]u64{0} ** 4,
+    snapshot_sequence: u64 = 0,
+    prepared_retirement_count: u64 = 0,
+    prepare_replay_count: u64 = 0,
+    prepare_live_record_replay_count: u64 = 0,
+    prepare_tombstone_replay_count: u64 = 0,
+    committed_retirement_count: u64 = 0,
+    commit_replay_count: u64 = 0,
+    live_prepared_retirement_count: u64 = 0,
+    callback_detached_count: u64 = 0,
+    completion_unobserved_prepare_count: u64 = 0,
+    completion_observed_prepare_count: u64 = 0,
+    pending_prepare_count: u64 = 0,
+    completed_prepare_count: u64 = 0,
+    error_prepare_count: u64 = 0,
+    unknown_prepare_count: u64 = 0,
+    submitted_prepare_count: u64 = 0,
+    submitted_or_ambiguous_prepare_count: u64 = 0,
+    native_loss_prepare_count: u64 = 0,
+    synthetic_test_prepare_count: u64 = 0,
+    retired_native_command_count: u64 = 0,
+    released_allocation_reference_count: u64 = 0,
+    retained_tombstone_count: u64 = 0,
+    highest_prepared_retirement_generation: u64 = 0,
+    highest_committed_retirement_generation: u64 = 0,
+    overflow_mask: u64 = 0,
+    reserved: u64 = 0,
 };
 
 comptime {
@@ -370,6 +438,59 @@ comptime {
         ) != 240)
         @compileError(
             "MetalRegisteredDispatchRetirementReceipt ABI layout changed",
+        );
+    if (@sizeOf(MetalDispatchRetirementTelemetryV1) != 256 or
+        @alignOf(MetalDispatchRetirementTelemetryV1) != 8 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "device_registry_id",
+        ) != 8 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "context_nonce",
+        ) != 16 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "snapshot_sequence",
+        ) != 48 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "prepared_retirement_count",
+        ) != 56 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "committed_retirement_count",
+        ) != 88 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "pending_prepare_count",
+        ) != 136 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "submitted_prepare_count",
+        ) != 168 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "native_loss_prepare_count",
+        ) != 184 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "retired_native_command_count",
+        ) != 200 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "highest_prepared_retirement_generation",
+        ) != 224 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "overflow_mask",
+        ) != 240 or
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "reserved",
+        ) != 248)
+        @compileError(
+            "MetalDispatchRetirementTelemetryV1 ABI layout changed",
         );
 }
 
@@ -535,6 +656,10 @@ extern "C" fn glacier_metal_registered_dispatch_retirement_commit(
     ctx: *MetalContext,
     permit: *const MetalRegisteredDispatchRetirementPermit,
     receipt: *MetalRegisteredDispatchRetirementReceipt,
+) c_int;
+extern "C" fn glacier_metal_dispatch_retirement_telemetry_v1(
+    ctx: *MetalContext,
+    telemetry: *MetalDispatchRetirementTelemetryV1,
 ) c_int;
 extern "C" fn glacier_metal_live_command_count(
     ctx: *MetalContext,
@@ -916,6 +1041,370 @@ pub fn validateMetalRegisteredDispatchRetirementReceipt(
         receipt.callback_detached !=
             expected_permit.callback_detached or
         receipt.reserved != 0)
+        return MetalError.InvalidObservation;
+}
+
+fn retirementTelemetryCounterFrozenIfOverflowed(
+    overflow_mask: u64,
+    overflow_bit: u64,
+    value: u64,
+) bool {
+    return overflow_mask & overflow_bit == 0 or
+        value == std.math.maxInt(u64);
+}
+
+fn retirementTelemetryAnyOverflowed(
+    overflow_mask: u64,
+    overflow_bits: u64,
+) bool {
+    return overflow_mask & overflow_bits != 0;
+}
+
+fn retirementTelemetryAdd(
+    lhs: u64,
+    rhs: u64,
+) MetalError!u64 {
+    return std.math.add(u64, lhs, rhs) catch
+        MetalError.InvalidObservation;
+}
+
+/// Validate one immutable native retirement-telemetry snapshot. Exact
+/// arithmetic invariants remain mandatory until one of their participating
+/// counters saturates. Saturation is explicit, per-counter, and sticky.
+pub fn validateMetalDispatchRetirementTelemetryV1(
+    telemetry: MetalDispatchRetirementTelemetryV1,
+) MetalError!void {
+    const overflow =
+        MetalDispatchRetirementTelemetryOverflow;
+    if (telemetry.abi_version !=
+        dispatch_retirement_telemetry_abi or
+        telemetry.device_registry_id == 0 or
+        (telemetry.context_nonce[0] == 0 and
+            telemetry.context_nonce[1] == 0 and
+            telemetry.context_nonce[2] == 0 and
+            telemetry.context_nonce[3] == 0) or
+        telemetry.overflow_mask & ~overflow.all != 0 or
+        telemetry.reserved != 0 or
+        telemetry.highest_prepared_retirement_generation ==
+            std.math.maxInt(u64) or
+        telemetry.highest_committed_retirement_generation ==
+            std.math.maxInt(u64))
+        return MetalError.InvalidObservation;
+
+    const frozen_counters = [_]struct {
+        bit: u64,
+        value: u64,
+    }{
+        .{
+            .bit = overflow.snapshot_sequence,
+            .value = telemetry.snapshot_sequence,
+        },
+        .{
+            .bit = overflow.prepared_retirement,
+            .value = telemetry.prepared_retirement_count,
+        },
+        .{
+            .bit = overflow.prepare_replay,
+            .value = telemetry.prepare_replay_count,
+        },
+        .{
+            .bit = overflow.prepare_live_record_replay,
+            .value = telemetry.prepare_live_record_replay_count,
+        },
+        .{
+            .bit = overflow.prepare_tombstone_replay,
+            .value = telemetry.prepare_tombstone_replay_count,
+        },
+        .{
+            .bit = overflow.committed_retirement,
+            .value = telemetry.committed_retirement_count,
+        },
+        .{
+            .bit = overflow.commit_replay,
+            .value = telemetry.commit_replay_count,
+        },
+        .{
+            .bit = overflow.live_prepared_retirement,
+            .value = telemetry.live_prepared_retirement_count,
+        },
+        .{
+            .bit = overflow.callback_detached,
+            .value = telemetry.callback_detached_count,
+        },
+        .{
+            .bit = overflow.completion_unobserved_prepare,
+            .value = telemetry.completion_unobserved_prepare_count,
+        },
+        .{
+            .bit = overflow.completion_observed_prepare,
+            .value = telemetry.completion_observed_prepare_count,
+        },
+        .{
+            .bit = overflow.pending_prepare,
+            .value = telemetry.pending_prepare_count,
+        },
+        .{
+            .bit = overflow.completed_prepare,
+            .value = telemetry.completed_prepare_count,
+        },
+        .{
+            .bit = overflow.error_prepare,
+            .value = telemetry.error_prepare_count,
+        },
+        .{
+            .bit = overflow.unknown_prepare,
+            .value = telemetry.unknown_prepare_count,
+        },
+        .{
+            .bit = overflow.submitted_prepare,
+            .value = telemetry.submitted_prepare_count,
+        },
+        .{
+            .bit = overflow.submitted_or_ambiguous_prepare,
+            .value = telemetry.submitted_or_ambiguous_prepare_count,
+        },
+        .{
+            .bit = overflow.native_loss_prepare,
+            .value = telemetry.native_loss_prepare_count,
+        },
+        .{
+            .bit = overflow.synthetic_test_prepare,
+            .value = telemetry.synthetic_test_prepare_count,
+        },
+        .{
+            .bit = overflow.retired_native_command,
+            .value = telemetry.retired_native_command_count,
+        },
+        .{
+            .bit = overflow.released_allocation_reference,
+            .value = telemetry.released_allocation_reference_count,
+        },
+        .{
+            .bit = overflow.retained_tombstone,
+            .value = telemetry.retained_tombstone_count,
+        },
+    };
+    for (frozen_counters) |counter| {
+        if (!retirementTelemetryCounterFrozenIfOverflowed(
+            telemetry.overflow_mask,
+            counter.bit,
+            counter.value,
+        ))
+            return MetalError.InvalidObservation;
+    }
+
+    const replay_bits =
+        overflow.prepare_replay |
+        overflow.prepare_live_record_replay |
+        overflow.prepare_tombstone_replay;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        replay_bits,
+    )) {
+        const replay_sum = try retirementTelemetryAdd(
+            telemetry.prepare_live_record_replay_count,
+            telemetry.prepare_tombstone_replay_count,
+        );
+        if (telemetry.prepare_replay_count != replay_sum)
+            return MetalError.InvalidObservation;
+    }
+
+    const sequence_bits =
+        overflow.snapshot_sequence |
+        overflow.prepared_retirement |
+        overflow.prepare_replay |
+        overflow.committed_retirement |
+        overflow.commit_replay;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        sequence_bits,
+    )) {
+        var expected_sequence = try retirementTelemetryAdd(
+            telemetry.prepared_retirement_count,
+            telemetry.prepare_replay_count,
+        );
+        expected_sequence = try retirementTelemetryAdd(
+            expected_sequence,
+            telemetry.committed_retirement_count,
+        );
+        expected_sequence = try retirementTelemetryAdd(
+            expected_sequence,
+            telemetry.commit_replay_count,
+        );
+        if (telemetry.snapshot_sequence != expected_sequence)
+            return MetalError.InvalidObservation;
+    }
+
+    const live_bits =
+        overflow.prepared_retirement |
+        overflow.committed_retirement |
+        overflow.live_prepared_retirement;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        live_bits,
+    )) {
+        if (telemetry.committed_retirement_count >
+            telemetry.prepared_retirement_count or
+            telemetry.live_prepared_retirement_count !=
+                telemetry.prepared_retirement_count -
+                    telemetry.committed_retirement_count)
+            return MetalError.InvalidObservation;
+    }
+
+    const detached_bits =
+        overflow.prepared_retirement |
+        overflow.callback_detached;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        detached_bits,
+    ) and telemetry.callback_detached_count !=
+        telemetry.prepared_retirement_count)
+        return MetalError.InvalidObservation;
+
+    const unobserved_bits =
+        overflow.completion_unobserved_prepare |
+        overflow.pending_prepare;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        unobserved_bits,
+    ) and telemetry.completion_unobserved_prepare_count !=
+        telemetry.pending_prepare_count)
+        return MetalError.InvalidObservation;
+
+    const observed_bits =
+        overflow.completion_observed_prepare |
+        overflow.completed_prepare |
+        overflow.error_prepare |
+        overflow.unknown_prepare;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        observed_bits,
+    )) {
+        var observed_sum = try retirementTelemetryAdd(
+            telemetry.completed_prepare_count,
+            telemetry.error_prepare_count,
+        );
+        observed_sum = try retirementTelemetryAdd(
+            observed_sum,
+            telemetry.unknown_prepare_count,
+        );
+        if (telemetry.completion_observed_prepare_count !=
+            observed_sum)
+            return MetalError.InvalidObservation;
+    }
+
+    const completion_bits =
+        overflow.prepared_retirement |
+        overflow.completion_unobserved_prepare |
+        overflow.completion_observed_prepare;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        completion_bits,
+    )) {
+        const completion_sum = try retirementTelemetryAdd(
+            telemetry.completion_unobserved_prepare_count,
+            telemetry.completion_observed_prepare_count,
+        );
+        if (telemetry.prepared_retirement_count != completion_sum)
+            return MetalError.InvalidObservation;
+    }
+
+    const disposition_bits =
+        overflow.prepared_retirement |
+        overflow.submitted_prepare |
+        overflow.submitted_or_ambiguous_prepare;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        disposition_bits,
+    )) {
+        const disposition_sum = try retirementTelemetryAdd(
+            telemetry.submitted_prepare_count,
+            telemetry.submitted_or_ambiguous_prepare_count,
+        );
+        if (telemetry.prepared_retirement_count !=
+            disposition_sum)
+            return MetalError.InvalidObservation;
+    }
+
+    const authorization_bits =
+        overflow.prepared_retirement |
+        overflow.native_loss_prepare |
+        overflow.synthetic_test_prepare;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        authorization_bits,
+    )) {
+        const authorization_sum = try retirementTelemetryAdd(
+            telemetry.native_loss_prepare_count,
+            telemetry.synthetic_test_prepare_count,
+        );
+        if (telemetry.prepared_retirement_count !=
+            authorization_sum)
+            return MetalError.InvalidObservation;
+    }
+
+    const retired_bits =
+        overflow.committed_retirement |
+        overflow.retired_native_command;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        retired_bits,
+    ) and telemetry.retired_native_command_count !=
+        telemetry.committed_retirement_count)
+        return MetalError.InvalidObservation;
+
+    const tombstone_bits =
+        overflow.committed_retirement |
+        overflow.retained_tombstone;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        tombstone_bits,
+    ) and telemetry.retained_tombstone_count !=
+        telemetry.committed_retirement_count)
+        return MetalError.InvalidObservation;
+
+    const reference_bits =
+        overflow.committed_retirement |
+        overflow.released_allocation_reference;
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        reference_bits,
+    )) {
+        const expected_references = std.math.mul(
+            u64,
+            telemetry.committed_retirement_count,
+            4,
+        ) catch return MetalError.InvalidObservation;
+        if (telemetry.released_allocation_reference_count !=
+            expected_references)
+            return MetalError.InvalidObservation;
+    }
+
+    if (telemetry.highest_committed_retirement_generation >
+        telemetry.highest_prepared_retirement_generation)
+        return MetalError.InvalidObservation;
+    if (telemetry.overflow_mask &
+        overflow.prepared_retirement == 0 and
+        telemetry.highest_prepared_retirement_generation !=
+            telemetry.prepared_retirement_count)
+        return MetalError.InvalidObservation;
+    if (telemetry.overflow_mask &
+        overflow.committed_retirement == 0)
+    {
+        if ((telemetry.committed_retirement_count == 0 and
+            telemetry.highest_committed_retirement_generation != 0) or
+            (telemetry.committed_retirement_count != 0 and
+                (telemetry.highest_committed_retirement_generation <
+                    telemetry.committed_retirement_count or
+                    telemetry.highest_committed_retirement_generation == 0)))
+            return MetalError.InvalidObservation;
+    }
+    if (!retirementTelemetryAnyOverflowed(
+        telemetry.overflow_mask,
+        live_bits,
+    ) and telemetry.live_prepared_retirement_count == 0 and
+        telemetry.highest_committed_retirement_generation !=
+            telemetry.highest_prepared_retirement_generation)
         return MetalError.InvalidObservation;
 }
 
@@ -1720,6 +2209,39 @@ pub const MetalBackend = struct {
         return self.nativeLiveCommandCountUnlocked();
     }
 
+    fn dispatchRetirementTelemetryUnlocked(
+        self: *MetalBackend,
+    ) MetalError!MetalDispatchRetirementTelemetryV1 {
+        var telemetry: MetalDispatchRetirementTelemetryV1 = .{};
+        if (glacier_metal_dispatch_retirement_telemetry_v1(
+            self.ctx,
+            &telemetry,
+        ) != 0)
+            return MetalError.InvalidObservation;
+        try validateMetalDispatchRetirementTelemetryV1(telemetry);
+        if (telemetry.device_registry_id !=
+            self.initial_device_info.registry_id or
+            !std.mem.eql(
+                u64,
+                &telemetry.context_nonce,
+                &self.initial_lifecycle_source_identity.context_nonce,
+            ))
+            return MetalError.InvalidObservation;
+        return telemetry;
+    }
+
+    /// Read one coherent, pointer-free native callback-retirement telemetry
+    /// snapshot. The allocation mutex preserves the public
+    /// allocation-mutex -> native-device-monitor lock order; the snapshot is
+    /// diagnostic and never participates in retirement authority.
+    pub fn dispatchRetirementTelemetry(
+        self: *MetalBackend,
+    ) MetalError!MetalDispatchRetirementTelemetryV1 {
+        self.allocation_mutex.lock();
+        defer self.allocation_mutex.unlock();
+        return self.dispatchRetirementTelemetryUnlocked();
+    }
+
     /// Dispatch the INT4→FP16 dequant kernel. `out` must be at least
     /// `num_elements * 2` bytes. Returns the decoded FP16 bytes.
     pub fn dequantInt4(
@@ -2473,6 +2995,303 @@ const MutatingOutputReader = struct {
         return 0;
     }
 };
+
+fn testDispatchRetirementTelemetryV1() MetalDispatchRetirementTelemetryV1 {
+    return .{
+        .device_registry_id = 73,
+        .context_nonce = .{ 11, 12, 13, 14 },
+        .snapshot_sequence = 11,
+        .prepared_retirement_count = 4,
+        .prepare_replay_count = 2,
+        .prepare_live_record_replay_count = 1,
+        .prepare_tombstone_replay_count = 1,
+        .committed_retirement_count = 4,
+        .commit_replay_count = 1,
+        .live_prepared_retirement_count = 0,
+        .callback_detached_count = 4,
+        .completion_unobserved_prepare_count = 1,
+        .completion_observed_prepare_count = 3,
+        .pending_prepare_count = 1,
+        .completed_prepare_count = 1,
+        .error_prepare_count = 1,
+        .unknown_prepare_count = 1,
+        .submitted_prepare_count = 3,
+        .submitted_or_ambiguous_prepare_count = 1,
+        .native_loss_prepare_count = 3,
+        .synthetic_test_prepare_count = 1,
+        .retired_native_command_count = 4,
+        .released_allocation_reference_count = 16,
+        .retained_tombstone_count = 4,
+        .highest_prepared_retirement_generation = 4,
+        .highest_committed_retirement_generation = 4,
+    };
+}
+
+test "dispatch retirement telemetry V1 ABI stays pointer-free and exact" {
+    try std.testing.expectEqual(
+        @as(usize, 256),
+        @sizeOf(MetalDispatchRetirementTelemetryV1),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 8),
+        @alignOf(MetalDispatchRetirementTelemetryV1),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 16),
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "context_nonce",
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 48),
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "snapshot_sequence",
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 88),
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "committed_retirement_count",
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 240),
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "overflow_mask",
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 248),
+        @offsetOf(
+            MetalDispatchRetirementTelemetryV1,
+            "reserved",
+        ),
+    );
+
+    const empty: MetalDispatchRetirementTelemetryV1 = .{
+        .device_registry_id = 73,
+        .context_nonce = .{ 11, 12, 13, 14 },
+    };
+    try validateMetalDispatchRetirementTelemetryV1(empty);
+    try validateMetalDispatchRetirementTelemetryV1(
+        testDispatchRetirementTelemetryV1(),
+    );
+}
+
+test "dispatch retirement telemetry V1 validates each successful boundary" {
+    var telemetry: MetalDispatchRetirementTelemetryV1 = .{
+        .device_registry_id = 73,
+        .context_nonce = .{ 11, 12, 13, 14 },
+    };
+    try validateMetalDispatchRetirementTelemetryV1(telemetry);
+
+    telemetry.snapshot_sequence = 1;
+    telemetry.prepared_retirement_count = 1;
+    telemetry.live_prepared_retirement_count = 1;
+    telemetry.callback_detached_count = 1;
+    telemetry.completion_unobserved_prepare_count = 1;
+    telemetry.pending_prepare_count = 1;
+    telemetry.submitted_prepare_count = 1;
+    telemetry.native_loss_prepare_count = 1;
+    telemetry.highest_prepared_retirement_generation = 1;
+    try validateMetalDispatchRetirementTelemetryV1(telemetry);
+
+    telemetry.snapshot_sequence = 2;
+    telemetry.prepare_replay_count = 1;
+    telemetry.prepare_live_record_replay_count = 1;
+    try validateMetalDispatchRetirementTelemetryV1(telemetry);
+
+    telemetry.snapshot_sequence = 3;
+    telemetry.committed_retirement_count = 1;
+    telemetry.live_prepared_retirement_count = 0;
+    telemetry.retired_native_command_count = 1;
+    telemetry.released_allocation_reference_count = 4;
+    telemetry.retained_tombstone_count = 1;
+    telemetry.highest_committed_retirement_generation = 1;
+    try validateMetalDispatchRetirementTelemetryV1(telemetry);
+
+    telemetry.snapshot_sequence = 4;
+    telemetry.commit_replay_count = 1;
+    try validateMetalDispatchRetirementTelemetryV1(telemetry);
+
+    telemetry.snapshot_sequence = 5;
+    telemetry.prepare_replay_count = 2;
+    telemetry.prepare_tombstone_replay_count = 1;
+    try validateMetalDispatchRetirementTelemetryV1(telemetry);
+}
+
+test "dispatch retirement telemetry V1 rejects invariant mutations" {
+    const valid = testDispatchRetirementTelemetryV1();
+
+    var mutated = valid;
+    mutated.abi_version +%= 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.device_registry_id = 0;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.context_nonce = .{ 0, 0, 0, 0 };
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.snapshot_sequence += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.prepare_replay_count += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.live_prepared_retirement_count += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.callback_detached_count += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.completion_observed_prepare_count += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.pending_prepare_count += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.submitted_prepare_count += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.native_loss_prepare_count += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.retired_native_command_count += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.released_allocation_reference_count += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.retained_tombstone_count += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.highest_prepared_retirement_generation += 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.highest_committed_retirement_generation -= 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.overflow_mask =
+        MetalDispatchRetirementTelemetryOverflow.all + 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+    mutated = valid;
+    mutated.reserved = 1;
+    try std.testing.expectError(
+        MetalError.InvalidObservation,
+        validateMetalDispatchRetirementTelemetryV1(mutated),
+    );
+}
+
+test "dispatch retirement telemetry V1 saturation bits freeze exact counters" {
+    const overflow =
+        MetalDispatchRetirementTelemetryOverflow;
+    const SaturationCase = struct {
+        field_name: []const u8,
+        bit: u64,
+    };
+    const cases = [_]SaturationCase{
+        .{ .field_name = "snapshot_sequence", .bit = overflow.snapshot_sequence },
+        .{ .field_name = "prepared_retirement_count", .bit = overflow.prepared_retirement },
+        .{ .field_name = "prepare_replay_count", .bit = overflow.prepare_replay },
+        .{ .field_name = "prepare_live_record_replay_count", .bit = overflow.prepare_live_record_replay },
+        .{ .field_name = "prepare_tombstone_replay_count", .bit = overflow.prepare_tombstone_replay },
+        .{ .field_name = "committed_retirement_count", .bit = overflow.committed_retirement },
+        .{ .field_name = "commit_replay_count", .bit = overflow.commit_replay },
+        .{ .field_name = "live_prepared_retirement_count", .bit = overflow.live_prepared_retirement },
+        .{ .field_name = "callback_detached_count", .bit = overflow.callback_detached },
+        .{ .field_name = "completion_unobserved_prepare_count", .bit = overflow.completion_unobserved_prepare },
+        .{ .field_name = "completion_observed_prepare_count", .bit = overflow.completion_observed_prepare },
+        .{ .field_name = "pending_prepare_count", .bit = overflow.pending_prepare },
+        .{ .field_name = "completed_prepare_count", .bit = overflow.completed_prepare },
+        .{ .field_name = "error_prepare_count", .bit = overflow.error_prepare },
+        .{ .field_name = "unknown_prepare_count", .bit = overflow.unknown_prepare },
+        .{ .field_name = "submitted_prepare_count", .bit = overflow.submitted_prepare },
+        .{ .field_name = "submitted_or_ambiguous_prepare_count", .bit = overflow.submitted_or_ambiguous_prepare },
+        .{ .field_name = "native_loss_prepare_count", .bit = overflow.native_loss_prepare },
+        .{ .field_name = "synthetic_test_prepare_count", .bit = overflow.synthetic_test_prepare },
+        .{ .field_name = "retired_native_command_count", .bit = overflow.retired_native_command },
+        .{ .field_name = "released_allocation_reference_count", .bit = overflow.released_allocation_reference },
+        .{ .field_name = "retained_tombstone_count", .bit = overflow.retained_tombstone },
+    };
+
+    var observed_bits: u64 = 0;
+    inline for (cases) |case| {
+        try std.testing.expectEqual(
+            @as(u64, 0),
+            observed_bits & case.bit,
+        );
+        observed_bits |= case.bit;
+
+        var saturated = testDispatchRetirementTelemetryV1();
+        @field(saturated, case.field_name) =
+            std.math.maxInt(u64);
+        saturated.overflow_mask = case.bit;
+        try validateMetalDispatchRetirementTelemetryV1(saturated);
+
+        @field(saturated, case.field_name) -= 1;
+        try std.testing.expectError(
+            MetalError.InvalidObservation,
+            validateMetalDispatchRetirementTelemetryV1(saturated),
+        );
+    }
+    try std.testing.expectEqual(overflow.all, observed_bits);
+}
 
 test "invalid completed observation is counted before output publication" {
     var completed_dispatch_count: u64 = 0;

@@ -32,6 +32,8 @@
     0x474d525000000001ULL
 #define GLACIER_METAL_DISPATCH_RETIREMENT_RECEIPT_ABI \
     0x474d525200000001ULL
+#define GLACIER_METAL_DISPATCH_RETIREMENT_TELEMETRY_ABI \
+    0x474d525400000001ULL
 
 #define GLACIER_METAL_RETIREMENT_NATIVE_LOSS 1U
 #define GLACIER_METAL_RETIREMENT_SYNTHETIC_TEST 2U
@@ -84,6 +86,56 @@
 #define GLACIER_METAL_ERROR_DOMAIN_NONE 0U
 #define GLACIER_METAL_ERROR_DOMAIN_COMMAND_BUFFER 1U
 #define GLACIER_METAL_ERROR_DOMAIN_OTHER 2U
+
+// Sticky per-counter saturation facts. Telemetry is diagnostic only: an
+// exhausted counter freezes at UINT64_MAX and never blocks ownership
+// retirement or receipt replay.
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_SNAPSHOT_SEQUENCE \
+    (1ULL << 0)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_PREPARED \
+    (1ULL << 1)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_PREPARE_REPLAY \
+    (1ULL << 2)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_PREPARE_LIVE_REPLAY \
+    (1ULL << 3)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_PREPARE_TOMBSTONE_REPLAY \
+    (1ULL << 4)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_COMMITTED \
+    (1ULL << 5)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_COMMIT_REPLAY \
+    (1ULL << 6)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_LIVE_PREPARED \
+    (1ULL << 7)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_CALLBACK_DETACHED \
+    (1ULL << 8)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_COMPLETION_UNOBSERVED \
+    (1ULL << 9)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_COMPLETION_OBSERVED \
+    (1ULL << 10)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_PENDING \
+    (1ULL << 11)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_COMPLETED \
+    (1ULL << 12)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_ERROR \
+    (1ULL << 13)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_UNKNOWN \
+    (1ULL << 14)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_SUBMITTED \
+    (1ULL << 15)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_SUBMITTED_OR_AMBIGUOUS \
+    (1ULL << 16)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_NATIVE_LOSS \
+    (1ULL << 17)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_SYNTHETIC_TEST \
+    (1ULL << 18)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_RETIRED_NATIVE_COMMAND \
+    (1ULL << 19)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_RELEASED_ALLOCATION_REFERENCE \
+    (1ULL << 20)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_RETAINED_TOMBSTONE \
+    (1ULL << 21)
+#define GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_ALL \
+    ((1ULL << 22) - 1ULL)
 
 typedef struct GlacierMetalBufferAllocation
     GlacierMetalBufferAllocation;
@@ -208,6 +260,43 @@ typedef struct {
     uint32_t callback_detached;
     uint32_t reserved;
 } GlacierMetalDispatchRetirementReceipt;
+
+// Context-lifetime, pointer-free operational telemetry. State, disposition,
+// completion-observation, and authorization buckets freeze the exact native
+// permit projection once per unique prepare. They are not completion or
+// output authority and never enter a Phase-B permit, receipt, or evidence
+// digest.
+typedef struct {
+    uint64_t abi_version;
+    uint64_t device_registry_id;
+    uint64_t context_nonce[4];
+    uint64_t snapshot_sequence;
+    uint64_t prepared_retirement_count;
+    uint64_t prepare_replay_count;
+    uint64_t prepare_live_record_replay_count;
+    uint64_t prepare_tombstone_replay_count;
+    uint64_t committed_retirement_count;
+    uint64_t commit_replay_count;
+    uint64_t live_prepared_retirement_count;
+    uint64_t callback_detached_count;
+    uint64_t completion_unobserved_prepare_count;
+    uint64_t completion_observed_prepare_count;
+    uint64_t pending_prepare_count;
+    uint64_t completed_prepare_count;
+    uint64_t error_prepare_count;
+    uint64_t unknown_prepare_count;
+    uint64_t submitted_prepare_count;
+    uint64_t submitted_or_ambiguous_prepare_count;
+    uint64_t native_loss_prepare_count;
+    uint64_t synthetic_test_prepare_count;
+    uint64_t retired_native_command_count;
+    uint64_t released_allocation_reference_count;
+    uint64_t retained_tombstone_count;
+    uint64_t highest_prepared_retirement_generation;
+    uint64_t highest_committed_retirement_generation;
+    uint64_t overflow_mask;
+    uint64_t reserved;
+} GlacierMetalDispatchRetirementTelemetryV1;
 
 // The Metal notification block captures this ARC-owned object and never the
 // malloc-owned GlacierMetalContext. MTLRemoveDeviceObserver releases the block
@@ -338,6 +427,8 @@ struct GlacierMetalContext {
     uint64_t next_command_retirement_generation;
     uint64_t live_buffer_allocations;
     uint64_t live_command_records;
+    GlacierMetalDispatchRetirementTelemetryV1
+        dispatch_retirement_telemetry;
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
     uint64_t next_test_fault_plan_generation;
@@ -598,6 +689,57 @@ _Static_assert(offsetof(
         GlacierMetalDispatchRetirementReceipt,
         completion_observed) == 240,
     "GlacierMetalDispatchRetirementReceipt state offset changed");
+_Static_assert(
+    sizeof(GlacierMetalDispatchRetirementTelemetryV1) == 256,
+    "GlacierMetalDispatchRetirementTelemetryV1 ABI size changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        device_registry_id) == 8,
+    "GlacierMetalDispatchRetirementTelemetryV1 registry offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        context_nonce) == 16,
+    "GlacierMetalDispatchRetirementTelemetryV1 nonce offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        snapshot_sequence) == 48,
+    "GlacierMetalDispatchRetirementTelemetryV1 sequence offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        prepared_retirement_count) == 56,
+    "GlacierMetalDispatchRetirementTelemetryV1 prepare offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        committed_retirement_count) == 88,
+    "GlacierMetalDispatchRetirementTelemetryV1 commit offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        pending_prepare_count) == 136,
+    "GlacierMetalDispatchRetirementTelemetryV1 state offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        submitted_prepare_count) == 168,
+    "GlacierMetalDispatchRetirementTelemetryV1 disposition offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        native_loss_prepare_count) == 184,
+    "GlacierMetalDispatchRetirementTelemetryV1 authorization offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        retired_native_command_count) == 200,
+    "GlacierMetalDispatchRetirementTelemetryV1 ownership offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        highest_prepared_retirement_generation) == 224,
+    "GlacierMetalDispatchRetirementTelemetryV1 generation offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        overflow_mask) == 240,
+    "GlacierMetalDispatchRetirementTelemetryV1 overflow offset changed");
+_Static_assert(offsetof(
+        GlacierMetalDispatchRetirementTelemetryV1,
+        reserved) == 248,
+    "GlacierMetalDispatchRetirementTelemetryV1 reserved offset changed");
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
 _Static_assert(sizeof(GlacierMetalTestFaultPlanV1) == 32,
@@ -1668,6 +1810,272 @@ static void glacier_metal_fill_dispatch_retirement_receipt_locked(
     out->callback_detached = 1;
 }
 
+// All retirement telemetry mutations occur under @synchronized(ctx->device).
+// Saturation is sticky and deliberately non-fallible: diagnostics cannot
+// weaken callback detachment, native unlink, or exact replay.
+static void
+glacier_metal_retirement_telemetry_add_locked(
+    GlacierMetalContext* ctx,
+    uint64_t* field,
+    uint64_t delta,
+    uint64_t overflow_bit)
+{
+    if (!ctx || !field || delta == 0 ||
+        overflow_bit == 0 ||
+        (overflow_bit &
+            ~GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_ALL) != 0 ||
+        (overflow_bit & (overflow_bit - 1)) != 0)
+        abort();
+    GlacierMetalDispatchRetirementTelemetryV1* telemetry =
+        &ctx->dispatch_retirement_telemetry;
+    if ((telemetry->overflow_mask & overflow_bit) != 0) {
+        *field = UINT64_MAX;
+        return;
+    }
+    if (*field > UINT64_MAX - delta) {
+        *field = UINT64_MAX;
+        telemetry->overflow_mask |= overflow_bit;
+        return;
+    }
+    *field += delta;
+}
+
+static void
+glacier_metal_retirement_telemetry_decrement_live_locked(
+    GlacierMetalContext* ctx)
+{
+    if (!ctx) abort();
+    GlacierMetalDispatchRetirementTelemetryV1* telemetry =
+        &ctx->dispatch_retirement_telemetry;
+    if ((telemetry->overflow_mask &
+            GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_LIVE_PREPARED) != 0)
+    {
+        telemetry->live_prepared_retirement_count = UINT64_MAX;
+        return;
+    }
+    if (telemetry->live_prepared_retirement_count == 0)
+        abort();
+    telemetry->live_prepared_retirement_count -= 1;
+}
+
+static void
+glacier_metal_retirement_telemetry_record_prepare_replay_locked(
+    GlacierMetalContext* ctx,
+    int tombstone_replay)
+{
+    GlacierMetalDispatchRetirementTelemetryV1* telemetry =
+        &ctx->dispatch_retirement_telemetry;
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->snapshot_sequence,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_SNAPSHOT_SEQUENCE);
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->prepare_replay_count,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_PREPARE_REPLAY);
+    if (tombstone_replay) {
+        glacier_metal_retirement_telemetry_add_locked(
+            ctx,
+            &telemetry->prepare_tombstone_replay_count,
+            1,
+            GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_PREPARE_TOMBSTONE_REPLAY);
+    } else {
+        glacier_metal_retirement_telemetry_add_locked(
+            ctx,
+            &telemetry->prepare_live_record_replay_count,
+            1,
+            GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_PREPARE_LIVE_REPLAY);
+    }
+}
+
+static void
+glacier_metal_retirement_telemetry_record_prepare_locked(
+    GlacierMetalContext* ctx,
+    const GlacierMetalDispatchRetirementPermit* permit)
+{
+    if (!ctx ||
+        !glacier_metal_dispatch_retirement_permit_valid(permit))
+        abort();
+    GlacierMetalDispatchRetirementTelemetryV1* telemetry =
+        &ctx->dispatch_retirement_telemetry;
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->snapshot_sequence,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_SNAPSHOT_SEQUENCE);
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->prepared_retirement_count,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_PREPARED);
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->live_prepared_retirement_count,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_LIVE_PREPARED);
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->callback_detached_count,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_CALLBACK_DETACHED);
+
+    if (permit->completion_observed == 0) {
+        glacier_metal_retirement_telemetry_add_locked(
+            ctx,
+            &telemetry->completion_unobserved_prepare_count,
+            1,
+            GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_COMPLETION_UNOBSERVED);
+    } else {
+        glacier_metal_retirement_telemetry_add_locked(
+            ctx,
+            &telemetry->completion_observed_prepare_count,
+            1,
+            GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_COMPLETION_OBSERVED);
+    }
+
+    switch (permit->native_state) {
+        case GLACIER_METAL_COMMAND_PENDING:
+            glacier_metal_retirement_telemetry_add_locked(
+                ctx,
+                &telemetry->pending_prepare_count,
+                1,
+                GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_PENDING);
+            break;
+        case GLACIER_METAL_COMMAND_COMPLETED:
+            glacier_metal_retirement_telemetry_add_locked(
+                ctx,
+                &telemetry->completed_prepare_count,
+                1,
+                GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_COMPLETED);
+            break;
+        case GLACIER_METAL_COMMAND_ERROR:
+            glacier_metal_retirement_telemetry_add_locked(
+                ctx,
+                &telemetry->error_prepare_count,
+                1,
+                GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_ERROR);
+            break;
+        case GLACIER_METAL_COMMAND_UNKNOWN:
+            glacier_metal_retirement_telemetry_add_locked(
+                ctx,
+                &telemetry->unknown_prepare_count,
+                1,
+                GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_UNKNOWN);
+            break;
+        default:
+            abort();
+    }
+
+    switch (permit->submission_disposition) {
+        case GLACIER_METAL_SUBMIT_SUBMITTED:
+            glacier_metal_retirement_telemetry_add_locked(
+                ctx,
+                &telemetry->submitted_prepare_count,
+                1,
+                GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_SUBMITTED);
+            break;
+        case GLACIER_METAL_SUBMIT_SUBMITTED_OR_AMBIGUOUS:
+            glacier_metal_retirement_telemetry_add_locked(
+                ctx,
+                &telemetry->submitted_or_ambiguous_prepare_count,
+                1,
+                GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_SUBMITTED_OR_AMBIGUOUS);
+            break;
+        default:
+            abort();
+    }
+
+    switch (permit->authorization_kind) {
+        case GLACIER_METAL_RETIREMENT_NATIVE_LOSS:
+            glacier_metal_retirement_telemetry_add_locked(
+                ctx,
+                &telemetry->native_loss_prepare_count,
+                1,
+                GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_NATIVE_LOSS);
+            break;
+        case GLACIER_METAL_RETIREMENT_SYNTHETIC_TEST:
+            glacier_metal_retirement_telemetry_add_locked(
+                ctx,
+                &telemetry->synthetic_test_prepare_count,
+                1,
+                GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_SYNTHETIC_TEST);
+            break;
+        default:
+            abort();
+    }
+
+    if (permit->retirement_generation >
+        telemetry->highest_prepared_retirement_generation)
+    {
+        telemetry->highest_prepared_retirement_generation =
+            permit->retirement_generation;
+    }
+}
+
+static void
+glacier_metal_retirement_telemetry_record_commit_replay_locked(
+    GlacierMetalContext* ctx)
+{
+    GlacierMetalDispatchRetirementTelemetryV1* telemetry =
+        &ctx->dispatch_retirement_telemetry;
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->snapshot_sequence,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_SNAPSHOT_SEQUENCE);
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->commit_replay_count,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_COMMIT_REPLAY);
+}
+
+static void
+glacier_metal_retirement_telemetry_record_commit_locked(
+    GlacierMetalContext* ctx,
+    const GlacierMetalDispatchRetirementPermit* permit)
+{
+    if (!ctx ||
+        !glacier_metal_dispatch_retirement_permit_valid(permit))
+        abort();
+    GlacierMetalDispatchRetirementTelemetryV1* telemetry =
+        &ctx->dispatch_retirement_telemetry;
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->snapshot_sequence,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_SNAPSHOT_SEQUENCE);
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->committed_retirement_count,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_COMMITTED);
+    glacier_metal_retirement_telemetry_decrement_live_locked(ctx);
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->retired_native_command_count,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_RETIRED_NATIVE_COMMAND);
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->released_allocation_reference_count,
+        4,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_RELEASED_ALLOCATION_REFERENCE);
+    glacier_metal_retirement_telemetry_add_locked(
+        ctx,
+        &telemetry->retained_tombstone_count,
+        1,
+        GLACIER_METAL_RETIREMENT_TELEMETRY_OVERFLOW_RETAINED_TOMBSTONE);
+    if (permit->retirement_generation >
+        telemetry->highest_committed_retirement_generation)
+    {
+        telemetry->highest_committed_retirement_generation =
+            permit->retirement_generation;
+    }
+}
+
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
 static int glacier_metal_test_fault_plan_valid(
@@ -2134,6 +2542,26 @@ GlacierMetalContext* glacier_metal_init(const char* metallib_path) {
             sizeof(ctx->allocation_context_nonce));
     } while (glacier_metal_nonce_is_zero(
         ctx->allocation_context_nonce));
+    ctx->dispatch_retirement_telemetry.abi_version =
+        GLACIER_METAL_DISPATCH_RETIREMENT_TELEMETRY_ABI;
+    GlacierMetalDeviceLifecycleState* telemetry_lifecycle_state =
+        ctx->device_lifecycle_state;
+    if (!telemetry_lifecycle_state) {
+        (void)glacier_metal_context_destroy(ctx);
+        return NULL;
+    }
+    @synchronized (telemetry_lifecycle_state) {
+        ctx->dispatch_retirement_telemetry.device_registry_id =
+            telemetry_lifecycle_state->snapshot.registry_id;
+    }
+    if (ctx->dispatch_retirement_telemetry.device_registry_id == 0) {
+        (void)glacier_metal_context_destroy(ctx);
+        return NULL;
+    }
+    memcpy(
+        ctx->dispatch_retirement_telemetry.context_nonce,
+        ctx->allocation_context_nonce,
+        sizeof(ctx->dispatch_retirement_telemetry.context_nonce));
     ctx->next_allocation_adapter_instance = 1;
     ctx->next_buffer_generation = 1;
     ctx->next_command_generation = 1;
@@ -4225,6 +4653,9 @@ glacier_metal_registered_dispatch_retirement_prepare_internal(
                     source,
                     minimum_event_sequence))
                 return 3;
+            glacier_metal_retirement_telemetry_record_prepare_replay_locked(
+                ctx,
+                1);
             *permit = (*retired)->permit;
             return 0;
         }
@@ -4270,6 +4701,9 @@ glacier_metal_registered_dispatch_retirement_prepare_internal(
                         source,
                         minimum_event_sequence))
                     return 2;
+                glacier_metal_retirement_telemetry_record_prepare_replay_locked(
+                    ctx,
+                    1);
                 *permit = (*retired)->permit;
                 return 0;
             }
@@ -4285,6 +4719,9 @@ glacier_metal_registered_dispatch_retirement_prepare_internal(
                         source,
                         minimum_event_sequence))
                     return 3;
+                glacier_metal_retirement_telemetry_record_prepare_replay_locked(
+                    ctx,
+                    0);
                 *permit = record->retirement_permit;
                 return 0;
             }
@@ -4324,6 +4761,9 @@ glacier_metal_registered_dispatch_retirement_prepare_internal(
             // already inside the gate completed its registry access first; a
             // later callback observes NULL and cannot reach `ctx`.
             callback_gate->owner = NULL;
+            glacier_metal_retirement_telemetry_record_prepare_locked(
+                ctx,
+                &prepared);
             *permit = prepared;
         }
     }
@@ -4401,6 +4841,8 @@ int glacier_metal_registered_dispatch_retirement_commit(
     GLACIER_METAL_TEST_FAULTS == 1
             ctx->test_retirement_commit_replay_count += 1;
 #endif
+            glacier_metal_retirement_telemetry_record_commit_replay_locked(
+                ctx);
             *receipt = (*retired)->receipt;
             return 0;
         }
@@ -4432,6 +4874,8 @@ int glacier_metal_registered_dispatch_retirement_commit(
     GLACIER_METAL_TEST_FAULTS == 1
             ctx->test_retirement_commit_replay_count += 1;
 #endif
+            glacier_metal_retirement_telemetry_record_commit_replay_locked(
+                ctx);
             *receipt = (*retired)->receipt;
             free(candidate);
             return 0;
@@ -4537,10 +4981,30 @@ int glacier_metal_registered_dispatch_retirement_commit(
             candidate->next =
                 ctx->command_retirement_tombstones;
             ctx->command_retirement_tombstones = candidate;
+            glacier_metal_retirement_telemetry_record_commit_locked(
+                ctx,
+                permit);
             *receipt = candidate->receipt;
         }
     }
     glacier_metal_command_destroy(record);
+    return 0;
+}
+
+int glacier_metal_dispatch_retirement_telemetry_v1(
+    GlacierMetalContext* ctx,
+    GlacierMetalDispatchRetirementTelemetryV1* out)
+{
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        out->abi_version =
+            GLACIER_METAL_DISPATCH_RETIREMENT_TELEMETRY_ABI;
+    }
+    if (!ctx || !ctx->device || !out)
+        return 1;
+    @synchronized (ctx->device) {
+        *out = ctx->dispatch_retirement_telemetry;
+    }
     return 0;
 }
 

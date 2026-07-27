@@ -295,7 +295,7 @@ V1 deliberately does not provide:
 - concurrent materialized leases within one adapter context;
 - multi-device partitioning;
 - retained device/driver support ranges;
-- direct telemetry; or
+- direct physical allocation/device telemetry; or
 - latency, throughput, power, thermal, or energy evidence.
 
 `ResourceBank` opts into either the `ChildLease` sidecar or the `LeaseTree`

@@ -167,8 +167,9 @@ tools/zig-with-ephemeral-cache.sh build \
 - retain a real removal callback artifact on removable hardware;
 - extend the separate integrated
   [Phase B dispatch callback-retirement protocol](DEVICE_LOSS_DISPATCH_CALLBACK_RETIREMENT.md)
-  to additional GPU backends and direct telemetry without combining it with
-  allocation retirement;
+  to additional GPU backends without combining it with allocation retirement;
+- add direct physical residency and device telemetry under authorities
+  separate from the integrated Phase B protocol snapshot;
 - create a fresh inventory and deterministic replacement selection;
 - define explicit retry, restart, and migration policy;
 - add separate physical residency and reclaim evidence;

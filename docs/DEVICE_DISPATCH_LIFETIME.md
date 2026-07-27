@@ -305,6 +305,19 @@ pin before the post-Bank adapter callback commits the exact native unlink.
 Exact replay returns the stored tombstone without a second Bank consumption or
 native unlink.
 
+The production native boundary also exposes a read-only 256-byte
+`MetalDispatchRetirementTelemetryV1` snapshot. Registry ID plus context nonce
+bind successful unique/replayed prepare and commit transitions to their
+source. Direct buckets freeze completion observation, native command state,
+submission disposition, and native-loss versus synthetic-test authorization
+at unique prepare; live-prepared, callback-detached, retired-record,
+four-reference-release, tombstone, and generation counters expose the
+successful ownership lifecycle. Rejected operations do not increment it,
+reads do not change it, and independently saturating counters retain a sticky
+overflow mask. The snapshot takes only the native registry monitor and is
+diagnostic: it never grants callback-exit, completion, output, Bank, release,
+selection, migration, reset, residency, or reclaim authority.
+
 Allocation ownership remains separate: Phase B clears the dispatch slot and
 command-held references, not the allocation lease, allocation-owned native
 references, logical device-byte charge, physical pages, or residency. See
@@ -622,8 +635,6 @@ Contributor-ready extensions include:
 
 - retain physical removal-requested and removed callbacks on removable
   hardware;
-- add direct Phase B retirement telemetry without weakening its callback,
-  lock-order, or authority boundaries;
 - add fresh device selection and explicit migration policy;
 - bounded multi-slot completion scheduling without weakening adapter identity;
 - additive snapshot capacity and active-pin telemetry;

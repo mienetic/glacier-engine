@@ -214,12 +214,21 @@ recovery, performance, residency, migration, reset, or physical reclaim. The
 dedicated terminal has zero output authority, and allocation retirement remains
 separate.
 
+Its production native diagnostic surface now includes the identity-bound
+256-byte `MetalDispatchRetirementTelemetryV1` snapshot. Successful unique and
+replayed prepare/commit operations directly update completion/state,
+disposition, native-versus-synthetic authorization, detachment, live-record,
+unlink/reference, tombstone, and retirement-generation facts. Failed
+operations and reads leave the sequence unchanged; counters saturate
+independently with sticky overflow identity. This snapshot cannot stand in for
+the lifecycle observation or transition, cannot authorize Phase B, and does
+not infer callback exit, successful completion, output, allocation release,
+fresh selection, or migration.
+
 Still open:
 
 - retain removal-requested and removed callbacks on suitable removable
   hardware;
-- retain direct Phase B telemetry without weakening the callback-detachment
-  boundary;
 - create and validate a fresh inventory and selection receipt;
 - create a fresh backend context and rehydrate model/input state; and
 - authorize explicit migration without reusing stale device authority.
