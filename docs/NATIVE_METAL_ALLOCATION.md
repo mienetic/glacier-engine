@@ -550,8 +550,8 @@ tools/zig-with-ephemeral-cache.sh build \
 ```
 
 For one non-overlapping verification run, the aggregate step serializes the
-native device gates as readiness → allocation ownership → fault/reconciliation
-→ focused correctness:
+native device gates as readiness → allocation ownership → production workload
+report → controlled disruption → fault/reconciliation → focused correctness:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build \

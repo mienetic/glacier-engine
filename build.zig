@@ -50,6 +50,15 @@ pub fn build(b: *std.Build) void {
         if (path.len == 0)
             @panic("-Dnative-metal-suite-report-output must not be empty");
     }
+    const native_metal_disruption_report_output = b.option(
+        []const u8,
+        "native-metal-disruption-report-output",
+        "Optional path that retains the focused native Metal disruption report wire",
+    );
+    if (native_metal_disruption_report_output) |path| {
+        if (path.len == 0)
+            @panic("-Dnative-metal-disruption-report-output must not be empty");
+    }
     if (native_metal_report_output != null and
         native_metal_suite_report_output != null)
         @panic(
@@ -1724,9 +1733,17 @@ pub fn build(b: *std.Build) void {
         "native-metal-workload-report-compile",
         "Compile the production-native Metal workload report producer",
     );
+    const native_metal_disruption_report_test_step = b.step(
+        "native-metal-disruption-report-test",
+        "Run one hard production-native Metal disruption report gate",
+    );
+    const native_metal_disruption_report_compile_step = b.step(
+        "native-metal-disruption-report-compile",
+        "Compile the production-native Metal disruption report producer",
+    );
     const native_metal_suite_test_step = b.step(
         "native-metal-suite-test",
-        "Run serialized Metal readiness, allocation, workload-report, fault, and correctness gates",
+        "Run serialized Metal readiness, allocation, workload-report, disruption, fault, and correctness gates",
     );
     if (metal_shim != null and
         builtin.os.tag == .macos and
@@ -1990,6 +2007,99 @@ pub fn build(b: *std.Build) void {
             &run_native_metal_workload_report_verifier.step,
         );
 
+        // W7a retains every controlled cancellation and every real recovery
+        // dispatch in a separate fixed campaign. The suite command is chained
+        // after W6b so only one native disruption campaign is in flight.
+        const native_metal_disruption_report_exe = b.addExecutable(.{
+            .name = "glacier-native-metal-disruption-report",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_metal_disruption_report.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+        native_metal_disruption_report_exe.root_module.addImport(
+            "engine",
+            engine_mod,
+        );
+        native_metal_disruption_report_exe.linkLibC();
+        native_metal_disruption_report_exe.linkLibrary(shim);
+        native_metal_disruption_report_exe.linkFramework("Metal");
+        native_metal_disruption_report_exe.linkFramework("Foundation");
+        native_metal_disruption_report_compile_step.dependOn(
+            &native_metal_disruption_report_exe.step,
+        );
+
+        const run_native_metal_disruption_report_model =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "unittest",
+                "bench.tests.test_native_metal_disruption_report",
+            });
+        run_native_metal_disruption_report_model.setCwd(b.path("."));
+        run_native_metal_disruption_report_model.setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_native_metal_disruption_report_model.setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+        run_native_metal_disruption_report_model.step.dependOn(
+            &run_native_metal_workload_report_model.step,
+        );
+
+        const run_native_metal_disruption_report_verifier =
+            b.addSystemCommand(&.{"python3"});
+        const run_native_metal_disruption_report_suite =
+            b.addSystemCommand(&.{"python3"});
+        for ([_]*std.Build.Step.Run{
+            run_native_metal_disruption_report_verifier,
+            run_native_metal_disruption_report_suite,
+        }) |run_report| {
+            run_report.setCwd(b.path("."));
+            run_report.setEnvironmentVariable(
+                "PYTHONDONTWRITEBYTECODE",
+                "1",
+            );
+            run_report.setEnvironmentVariable(
+                "PYTHONPATH",
+                ".",
+            );
+            run_report.addFileArg(
+                b.path("bench/native_metal_disruption_report.py"),
+            );
+            run_report.addArg("--runner");
+            run_report.addArtifactArg(
+                native_metal_disruption_report_exe,
+            );
+            run_report.addArg("--metallib");
+            run_report.addArg(metal_library_path);
+            run_report.step.dependOn(&native_metal_lib.step);
+            run_report.step.dependOn(
+                &run_native_metal_disruption_report_model.step,
+            );
+            run_report.step.dependOn(
+                &run_native_workload_report_tests.step,
+            );
+        }
+        if (native_metal_disruption_report_output) |path| {
+            run_native_metal_disruption_report_verifier.addArg(
+                "--output",
+            );
+            run_native_metal_disruption_report_verifier.addArg(path);
+        }
+        run_native_metal_disruption_report_suite.step.dependOn(
+            &run_native_metal_workload_report_suite.step,
+        );
+        native_metal_disruption_report_test_step.dependOn(
+            &run_native_metal_disruption_report_verifier.step,
+        );
+
         // The fault shim is a second, non-installed build of the same bridge.
         // Its control symbols and state exist only when this private macro is
         // set and never enter the normal engine module or production archive.
@@ -2125,7 +2235,7 @@ pub fn build(b: *std.Build) void {
             &check_metal_fault_symbols.step,
         );
         run_native_metal_fault_suite.step.dependOn(
-            &run_native_metal_workload_report_suite.step,
+            &run_native_metal_disruption_report_suite.step,
         );
         const run_native_metal_correctness_suite =
             b.addRunArtifact(metal_tests);
@@ -2177,6 +2287,12 @@ pub fn build(b: *std.Build) void {
             &native_metal_failure.step,
         );
         native_metal_workload_report_compile_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_disruption_report_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_disruption_report_compile_step.dependOn(
             &native_metal_failure.step,
         );
         native_metal_suite_test_step.dependOn(

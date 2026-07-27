@@ -118,6 +118,15 @@ separately CPU-oracle-tested on asymmetric partial-edge shapes and rejects
 zero, overflowing, short, or oversized buffer geometry without caller-output
 mutation. These are bounded allocation/lifetime/correctness/readiness results,
 not throughput, latency, or performance results.
+W7a adds a finite controlled-disruption campaign on the same production path.
+Its 50 fixed epochs retain 250 ordered records around 100 CPU-oracle-checked
+real commands, 50 cancel-before-submit outcomes, 50 malformed pre-submit
+rejections, and 50 full-two-slot capacity rejections. Every epoch returns to
+the same persistent eight-buffer boundary before reuse, and final closure
+proves 200/200 pins with zero live ownership. Those branches are controlled
+runtime conditions, not physical removal, driver crash, power loss,
+duration-bounded soak, performance, residency, utilization, or physical
+parallelism evidence.
 The serialized suite also runs a build-isolated reconciliation gate: a real
 Metal command completes physically before a separate test-only `.error`
 overlay drives the production quarantine and settlement path. Production
@@ -130,8 +139,9 @@ temperature, frequency, power, and energy remain open or unsupported. The
 verifier checks composition/corruption of self-asserted live output, not
 cryptographic origin. No W5 readiness result or device range is retained here;
 the separate W6b production-workload wire covers one exact Apple M1 session
-only. Cross-compilation remains source/build evidence rather than native OS or
-device support. W5b and non-macOS native observer coverage remain open.
+only. W7a executes on demand but does not yet have a committed retained machine
+artifact. Cross-compilation remains source/build evidence rather than native
+OS or device support. W5b and non-macOS native observer coverage remain open.
 
 Run the serialized native device suite on macOS with:
 

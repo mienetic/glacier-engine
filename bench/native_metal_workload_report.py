@@ -719,6 +719,8 @@ def _bounded_runner_output(
     command: Sequence[str],
     timeout_seconds: float = RUNNER_TIMEOUT_SECONDS,
     challenge_sha256: Optional[bytes] = None,
+    max_stdout_bytes: int = MAX_STDOUT_BYTES,
+    challenge_environment: str = CHALLENGE_ENVIRONMENT,
 ) -> Tuple[int, bytes, bytes]:
     """Capture both pipes with strict bounds and terminate the process group."""
 
@@ -733,6 +735,19 @@ def _bounded_runner_output(
     if not valid_timeout:
         raise NativeMetalReportError("runner timeout must be positive")
     _require(
+        not isinstance(max_stdout_bytes, bool)
+        and isinstance(max_stdout_bytes, int)
+        and max_stdout_bytes > 0,
+        "runner stdout bound must be a positive integer",
+    )
+    _require(
+        isinstance(challenge_environment, str)
+        and bool(challenge_environment)
+        and "=" not in challenge_environment
+        and "\x00" not in challenge_environment,
+        "runner challenge environment name is invalid",
+    )
+    _require(
         bool(command)
         and all(isinstance(item, str) and item for item in command),
         "missing or invalid native runner command",
@@ -743,7 +758,7 @@ def _bounded_runner_output(
             challenge_sha256,
             "native runner challenge",
         )
-        environment[CHALLENGE_ENVIRONMENT] = challenge.hex()
+        environment[challenge_environment] = challenge.hex()
     try:
         process = subprocess.Popen(
             list(command),
@@ -808,7 +823,7 @@ def _bounded_runner_output(
             args=(
                 process.stdout,
                 stdout,
-                MAX_STDOUT_BYTES,
+                max_stdout_bytes,
                 "stdout",
                 readers_done[0],
             ),
@@ -896,7 +911,7 @@ def _bounded_runner_output(
         kind, detail = failure[0]
         if kind == "bound":
             maximum = (
-                MAX_STDOUT_BYTES if detail == "stdout" else MAX_STDERR_BYTES
+                max_stdout_bytes if detail == "stdout" else MAX_STDERR_BYTES
             )
             raise NativeMetalReportError(
                 "native runner %s exceeded %d byte bound"

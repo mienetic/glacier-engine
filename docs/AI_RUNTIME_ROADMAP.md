@@ -784,13 +784,30 @@ reporting:
    CPU and device utilization, host/device memory separately, accelerator
    submit/device/synchronization timing, fallback status, power/thermal/energy
    when available, and output-quality policy.
-3. **Soak and disruption** runs a bounded long-duration campaign with a fixed
-   fault schedule for process restart, adapter loss, storage pressure, and
-   cancellation storms, then proves recovery, bounded growth, and zero leaked
-   ownership. Prepared-text additions should cover repeated handoffs, source
-   death before generation two, target death before generation three,
-   idempotent-sink replay, selector corruption, lease contention, and recovery
-   memory growth without relabeling fail-closed unavailability as success.
+3. **Soak and disruption — W7a controlled recovery implemented; W7 remains
+   open.** The first production-native Metal slice runs 50 fixed epochs and
+   retains 250 raw records around 100 real GPU commands. Each epoch settles an
+   admitted cancellation and one exact malformed pre-submit rejection, then
+   submits both bounded logical lanes, proves that a distinct full-slot request
+   preserves the named public snapshots, tickets, and request/ticket
+   generation cursors, completes both commands against CPU oracles, revalidates
+   device/placement identity, and returns to the same persistent-allocation
+   boundary. The portable and exact profile verifiers recompute the
+   five-record outcome pattern, 25-event schedule, summary, action/evidence
+   commitments, generation-bound capacity roots, unique generation roots,
+   200/200 Bank-pin closure, and final zero ownership. These are controlled
+   software disruptions; they are
+   not physical device-loss, driver-failure, power, residency, or performance
+   evidence. See
+   [Native Metal controlled-disruption report](NATIVE_METAL_DISRUPTION_REPORT.md).
+   W7b must add duration-bounded segmented campaigns with fixed process
+   restart, adapter-loss, storage-pressure, and cancellation-storm schedules,
+   then prove recovery and bounded growth with explicit synthetic-versus-
+   physical provenance. Prepared-text additions should cover repeated
+   handoffs, source death before generation two, target death before generation
+   three, idempotent-sink replay, selector corruption, lease contention, and
+   recovery memory growth without relabeling fail-closed unavailability as
+   success.
 
 Native open-loop arrival-rate campaigns and closed-loop concurrency campaigns
 must remain distinct from each other and from deterministic logical-step

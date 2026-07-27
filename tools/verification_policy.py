@@ -145,6 +145,7 @@ METAL_NATIVE_SOURCE_PATHS = {
     "tests/native_metal_allocation.zig",
     "tests/native_metal_observation.zig",
     "tests/support/metal_fault_control.zig",
+    "examples/native_metal_disruption_report.zig",
     "examples/native_metal_observation.zig",
     "examples/native_metal_workload_report.zig",
     "bench/metal_kernel.zig",
@@ -613,8 +614,10 @@ def _decision_for_path(path: str) -> PathDecision:
     if suffix == ".py":
         python_flags = {"python-changed", "python-full"}
         if lower in {
+            "bench/native_metal_disruption_report.py",
             "bench/native_metal_readiness.py",
             "bench/native_metal_workload_report.py",
+            "bench/tests/test_native_metal_disruption_report.py",
             "bench/tests/test_native_metal_workload_report.py",
         }:
             python_flags.add("metal-native")

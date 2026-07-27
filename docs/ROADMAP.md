@@ -37,8 +37,8 @@ evidence. The plane and model-family sequence is specified in the
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated; outer inspection prototype | Crash-recoverable journal, compact evidence join, and a deterministic read-only inspector for outer framing/checksum and self-asserted fields | Optional caller-supplied nested-composition inspection, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, target-specific affected-path selection with named core/CPU/durable/device/host-tool profiles, a complete consumer compile closure, and full per-target fallback, one shared DAG per selected target, a CLI-only default install with opt-in benchmarks, full production/benchmark/test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Separate durable POSIX authority from the transitional core; promote verification profiles into distributable products; add native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; then add mobile lifecycle gates and a reduced edge profile |
-| Benchmark evidence | W6a portable report and W6b production-native Metal producer integrated with W5a, a bounded Linux host source, native macOS Metal diagnostic readiness, allocation/pinned-dispatch ownership, bounded two-slot lifetime evidence, lifecycle no-event evidence, and build-isolated fault/reconciliation conformance | Paired harnesses, machine envelope, fixed native-observation ABI, a shared bounded macOS host observer, strict bounded Linux `MemAvailable` parsing, one fixed readiness Metal dispatch, and a production-native closed-loop report campaign with 4 warmup plus 16 measured 37x64 INT4 requests, two logical adapter slots, CPU-oracle correctness, direct same-command GPU timing, sampled `currentAllocatedSize` context, independent wire/profile verification, one retained 2026-07-28 macOS arm64 capture, optional further post-verification retention, and terminal zero ownership; logical slot coexistence is not physical parallelism, `currentAllocatedSize` is not residency, and unsupported physical metrics remain unavailable | Retain reproducible native Linux and broader Metal campaign matrices; run a removable-hardware notification campaign; add direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters; and add reproducible native machines |
-| Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, W5a, bounded W5b Linux-source and macOS Metal readiness implementations, the native bounded two-slot Metal lifetime proof, W6a portable reports, and the W6b production-native Metal producer integrated; W4b, W5, W7, and W8 remain open | W6b feeds the unchanged report contract from twenty real production-adapter GPU dispatches, submits each two-request pair before waiting, checks every result against a CPU oracle, retains host/device clock domains separately, verifies generation-fenced reuse and zero ownership, and now has one retained verified macOS arm64 wire; it makes no performance, hardware-queue, residency, utilization, or physical-parallel claim | Next: remaining W4 profiles, retained native Linux and broader Metal observer/campaign evidence, direct physical CPU/GPU adapters, W7 soak/disruption, and W8 native multi-OS replication |
+| Benchmark evidence | W6a portable reports, W6b production-native Metal reports, and W7a controlled-disruption recovery integrated with W5a, a bounded Linux host source, native macOS Metal diagnostic readiness, allocation/pinned-dispatch ownership, bounded two-slot lifetime evidence, lifecycle no-event evidence, and build-isolated fault/reconciliation conformance | Paired harnesses, machine envelope, fixed native-observation ABI, strict Linux `MemAvailable` parsing, one fixed readiness dispatch, the retained W6b 20-command capture, and a separate 50-epoch W7a campaign retaining 250 records around 100 real Metal commands, 50 pre-submit cancellations, 50 malformed pre-submit rejections, 50 full-slot rejections, CPU-oracle correctness, direct same-command GPU timing, bounded persistent ownership, independent wire/profile verification, and 200/200 terminal pin closure; controlled disruptions are not physical faults, logical slots are not physical parallelism, and `currentAllocatedSize` is not residency | Retain reproducible native Linux and broader Metal campaign matrices; add duration-bounded segmented soak, process/storage/cancellation disruption, removable-hardware notification, direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters; and add reproducible native machines |
+| Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, W5a, bounded W5b Linux-source and macOS Metal readiness implementations, the native bounded two-slot proof, W6a/W6b reports, and W7a native controlled-disruption recovery integrated; W4b, W5, W7b, and W8 remain open | W7a feeds the unchanged report contract from 50 fixed epochs, requires two controlled pre-submit outcomes to settle before each real two-command Metal pair, proves a distinct full-slot request preserves the named public snapshots, tickets, and generation cursors, verifies both GPU outputs against CPU oracles, revalidates device/placement identity per epoch, retains exact host/device clock domains and schedule identities, and closes with zero ownership; it makes no duration-soak, physical-fault, performance, hardware-queue, residency, utilization, or physical-parallel claim | Next: remaining W4 profiles, retained native Linux and broader Metal observer/campaign evidence, direct physical CPU/GPU adapters, W7b duration-bounded and broader disruption campaigns, and W8 native multi-OS replication |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
 ## P0 — Open-source usability
@@ -521,6 +521,28 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   and companion manifest in `bench/results/`, captured from clean source commit
   `36011d4`; it is diagnostic evidence for that exact session, not a
   performance or replication result.
+- [x] Add the W7a production-native controlled-disruption report and hard gate
+  without changing the W6 wire. One fixed 50-epoch campaign retains 250 raw
+  records around 100 real 37x64 INT4 Metal commands, 50 admitted cancellations
+  before submit, 50 admitted malformed-length rejections, and 50 distinct
+  full-slot requests rejected while preserving the named public allocation
+  snapshot, exact tickets and generation cursors, Bank, coordinator, command,
+  buffer, and completed-dispatch observations. Every epoch settles both
+  pre-submit outcomes, submits both logical GPU lanes before the capacity
+  probe, checks both outputs against CPU oracles, settles lane 1 before lane 0,
+  revalidates device/placement identity, and returns to one persistent
+  eight-buffer, 5,544-byte logical lease with zero active pin, dispatch,
+  command, quarantine, or unresolved submission. The independent profile
+  verifier first runs the portable verifier, then recomputes the exact
+  five-record/25-event schedule, scenario identities, measured summary,
+  generation-bound capacity roots, admitted action/evidence commitments,
+  unique generation roots, and 200/200 terminal Bank-pin closure. The producer
+  validates the opaque malformed-input rejection receipt; the verifier binds
+  but does not reconstruct its private fields. This is finite controlled
+  recovery, not a duration-bounded soak, physical device/driver/power fault,
+  performance result, residency observation, or physical-parallelism claim.
+  See
+  [Native Metal controlled-disruption report](NATIVE_METAL_DISRUPTION_REPORT.md).
 - [ ] Retain native per-OS mixed-family load and bounded soak campaigns with
   CPU/GPU identity and placement, host/device timing, memory residency, power,
   thermal, backend, fault-schedule, memory-growth, recovery, and zero-orphan
@@ -551,6 +573,10 @@ readiness, verification, and nonclaim rules.
 See [Native Workload Report](NATIVE_WORKLOAD_REPORT.md) for the W6 wire,
 summary algorithm, independent-verification boundary, portable and
 production-native gates, retention boundary, and physical-evidence nonclaims.
+See
+[Native Metal controlled-disruption report](NATIVE_METAL_DISRUPTION_REPORT.md)
+for the W7a schedule, native-versus-controlled evidence boundary, recovery
+checks, and remaining duration-soak work.
 See [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md) for the W0–W8 workload,
 native-observation, resilience, and platform-replication sequence.
 See [Platform Portability](PLATFORM_PORTABILITY.md) for the evidence matrix,

@@ -28,10 +28,15 @@ recomputation. W6b connects that wire to a fixed production-native macOS Metal
 campaign with twenty real GPU dispatches, CPU-oracle correctness, exact
 two-slot logical ownership, same-command device timing, sampled allocated-size
 context, optional post-verification artifact retention, and terminal zero
-ownership. Provider, stateful, streaming, batched, preemptible, device-backed,
-live-service, and OS-isolated real-credential profiles, direct physical
-CPU/device adapters, retained multi-machine load matrices, soak campaigns, and
-native platform replication remain staged work.
+ownership. W7a reuses the unchanged wire for 50 fixed controlled-disruption
+epochs around 100 real Metal commands, retaining cancellation, malformed
+pre-submit rejection, full-slot rejection, same-epoch recovery, bounded
+ownership, and terminal closure without treating injected conditions as
+physical device faults. Provider, stateful, streaming, batched, preemptible,
+device-backed, live-service, and OS-isolated real-credential profiles, direct
+physical CPU/device adapters, retained multi-machine load matrices,
+duration-bounded soak and physical-fault campaigns, and native platform
+replication remain staged work.
 A logical driver step is never reported as a millisecond, and a logical
 resource claim is never reported as RSS, device residency, energy, or
 temperature.
@@ -248,6 +253,33 @@ Results from different modes are not merged into one headline number.
 - [ ] **W7 — Soak and disruption.** Run bounded campaigns under a fixed fault
   schedule and prove recovery, bounded growth, exact publication, and zero
   leaked ownership.
+  - [x] **W7a — Native controlled-disruption recovery.** One fixed
+    production-native macOS Metal campaign executes 50 epochs and retains 250
+    raw W6 records: 50 admitted cancellations before submit, 50 admitted
+    malformed-length rejections, 100 completed real GPU commands, and 50
+    distinct requests rejected while both logical adapter slots are live. Each
+    epoch settles the two pre-submit outcomes before submitting both GPU lanes;
+    the full-slot probe must preserve the public allocation snapshot, exact
+    active tickets and generation cursors, Bank, coordinator, buffers,
+    commands, and completed-dispatch count; both commands then pass their CPU
+    oracles and settle lane 1 before lane 0. The next epoch begins only at the
+    reusable eight-buffer, 5,544-byte logical-lease boundary with no active
+    pin, dispatch, command, quarantine, or unresolved submission. A separate
+    profile verifier recomputes the exact schedule identities, outcomes,
+    event ordering, measured summary, 200/200 Bank-pin closure,
+    generation-bound capacity roots, and action/evidence commitments over the
+    admitted actual roots after the portable verifier accepts the wire. See
+    [Native Metal controlled-disruption report](NATIVE_METAL_DISRUPTION_REPORT.md).
+    The three controlled branches submit no GPU command and do not represent
+    physical device loss, driver failure, power loss, residency loss, or a
+    performance result.
+  - [ ] **W7b — Duration-bounded soak and broader disruption.** Add segmented
+    long-duration campaigns with fixed restart, adapter-loss, storage-pressure,
+    and cancellation-storm schedules; retained progress checkpoints; direct
+    memory-growth observations where available; and explicit synthetic versus
+    physical-fault provenance. Include prepared-text repeated handoff,
+    source/target death, idempotent sink replay, selector corruption, and lease
+    contention without relabelling fail-closed unavailability as recovery.
 - [ ] **W8 — Native platform replication.** Retain independently verifiable
   campaigns on every claimed operating system and backend. Cross-compilation
   does not count as native workload evidence.
@@ -479,6 +511,21 @@ against the exact native campaign profile. Add
 `-Dnative-metal-report-output=PATH` to retain the raw wire atomically after
 verification. The command is a correctness and evidence gate, not a
 performance benchmark.
+
+Run the W7a production-native controlled-disruption campaign separately:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-disruption-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+This executes 100 real GPU commands inside 50 fixed recovery epochs and
+retains all successful and controlled non-submit outcomes in 250 raw records.
+Add `-Dnative-metal-disruption-report-output=PATH` for atomic retention after
+both verification layers pass. It is a finite recovery and ownership
+campaign, not a duration-bounded soak, physical-fault test, or performance
+benchmark.
 
 When retention is requested from the serialized `native-metal-suite-test`, use
 `-Dnative-metal-suite-report-output=PATH`. It is mutually exclusive with the

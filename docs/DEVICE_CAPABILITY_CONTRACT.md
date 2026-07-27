@@ -158,8 +158,8 @@ tools/zig-with-ephemeral-cache.sh build test \
 These portable Zig/Python and mutation-injection checks are deterministic
 contract tests. They do not emulate a Metal driver or claim hardware behavior.
 
-Native Metal readiness, allocation ownership, fault/reconciliation, and
-correctness on a macOS Metal host:
+Native Metal readiness, allocation ownership, workload reporting, controlled
+disruption, fault/reconciliation, and correctness on a macOS Metal host:
 
 ```bash
 metal_dir="$(mktemp -d)"

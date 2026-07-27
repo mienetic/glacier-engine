@@ -50,6 +50,7 @@ EXPECTED_METAL_NATIVE_SOURCE_PATHS = frozenset(
         "tests/native_metal_allocation.zig",
         "tests/native_metal_observation.zig",
         "tests/support/metal_fault_control.zig",
+        "examples/native_metal_disruption_report.zig",
         "examples/native_metal_observation.zig",
         "examples/native_metal_workload_report.zig",
         "bench/metal_kernel.zig",
@@ -177,6 +178,32 @@ class VerificationPolicyTests(unittest.TestCase):
         for changed_path in (
             "bench/native_metal_workload_report.py",
             "bench/tests/test_native_metal_workload_report.py",
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    plan.flags,
+                    frozenset(
+                        {
+                            "python-changed",
+                            "python-full",
+                            "metal-native",
+                        }
+                    ),
+                )
+
+    def test_native_metal_disruption_report_paths_select_hardware_gate(self):
+        plan = self.assert_targets(
+            ["examples/native_metal_disruption_report.zig"],
+            (),
+        )
+        self.assertEqual(
+            plan.flags,
+            frozenset({"metal-native"}),
+        )
+        for changed_path in (
+            "bench/native_metal_disruption_report.py",
+            "bench/tests/test_native_metal_disruption_report.py",
         ):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())

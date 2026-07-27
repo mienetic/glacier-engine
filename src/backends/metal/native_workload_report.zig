@@ -9,9 +9,10 @@
 //! `StorageV1` is caller-owned because the Metal allocation adapter, Resource
 //! Bank, and LeaseTree coordinator become address-bound as soon as the first
 //! interface is exposed.  Do not move or copy a storage value after calling
-//! `runV1`.  On an error after native submission the storage and backend remain
-//! live so a higher-level recovery authority can inspect the retained state;
-//! no report is sealed and no wire is published.
+//! `runV1` or `runControlledDisruptionV1`. On an error after native submission
+//! the storage and backend remain live so a higher-level recovery authority
+//! can inspect the retained state; no report is sealed and no wire is
+//! published.
 
 const std = @import("std");
 const core = @import("core");
@@ -27,6 +28,7 @@ pub const resource = core.resource_bank;
 pub const Digest = native_report.Digest;
 
 pub const producer_abi: u64 = 0x4757_364d_0000_0001;
+pub const disruption_producer_abi: u64 = 0x4757_374d_0000_0001;
 pub const in_features: usize = 64;
 pub const out_features: usize = 37;
 pub const group_size: usize = 8;
@@ -59,10 +61,77 @@ pub const encoded_bytes: usize =
     native_report.minimum_encoded_bytes +
     record_count * native_report.record_wire_bytes;
 
+pub const disruption_warmup_epoch_count: usize = 2;
+pub const disruption_measured_epoch_count: usize = 48;
+pub const disruption_epoch_count: usize =
+    disruption_warmup_epoch_count +
+    disruption_measured_epoch_count;
+pub const disruption_records_per_epoch: usize = 5;
+pub const disruption_warmup_record_count: usize =
+    disruption_warmup_epoch_count *
+    disruption_records_per_epoch;
+pub const disruption_measured_record_count: usize =
+    disruption_measured_epoch_count *
+    disruption_records_per_epoch;
+pub const disruption_record_count: usize =
+    disruption_epoch_count *
+    disruption_records_per_epoch;
+pub const disruption_completed_dispatch_count: usize =
+    disruption_epoch_count * flow_count;
+pub const disruption_cancelled_count: usize =
+    disruption_epoch_count;
+pub const disruption_failed_count: usize =
+    disruption_epoch_count;
+pub const disruption_capacity_rejected_count: usize =
+    disruption_epoch_count;
+pub const disruption_pin_count: usize =
+    disruption_epoch_count * 4;
+pub const disruption_encoded_bytes: usize =
+    native_report.minimum_encoded_bytes +
+    disruption_record_count * native_report.record_wire_bytes;
+pub const storage_record_capacity: usize =
+    disruption_record_count;
+pub const storage_wire_capacity: usize =
+    disruption_encoded_bytes;
+
+const DisruptionActionV1 = enum(u64) {
+    cancel_before_submit = 1,
+    malformed_pre_submit = 2,
+    completed_lane0 = 3,
+    completed_lane1 = 4,
+    full_capacity_rejection = 5,
+};
+
+const DisruptionActionDetailV1 = enum(u64) {
+    cancelled_before_submit = 1,
+    invalid_host_lengths = 2,
+};
+
+const disruption_admitted_presence: u8 =
+    native_report.event_arrival |
+    native_report.event_admission |
+    native_report.event_terminal |
+    native_report.event_settlement;
+
+const DisruptionRootRoleV1 = enum(u64) {
+    request = 1,
+    terminal = 2,
+    completion = 3,
+    timing_unsupported = 4,
+    allocation_unsupported = 5,
+    action_evidence = 6,
+};
+
 comptime {
     if (record_count != 20 or work_units_per_record != 2_368 or
         persistent_device_bytes != 5_544)
         @compileError("native Metal workload geometry changed");
+    if (disruption_epoch_count != 50 or
+        disruption_record_count != 250 or
+        disruption_completed_dispatch_count != 100 or
+        disruption_pin_count != 200 or
+        disruption_record_count > native_report.max_records)
+        @compileError("native Metal disruption schedule changed");
 }
 
 pub const RunConfigV1 = struct {
@@ -128,8 +197,8 @@ pub const StorageV1 = struct {
     inputs: [flow_count][in_features]f32 = undefined,
     oracles: [flow_count][out_features]f32 = undefined,
     outputs: [flow_count][out_features]f32 = undefined,
-    records: [record_count]native_report.RecordV1 = undefined,
-    wire: [encoded_bytes]u8 = undefined,
+    records: [storage_record_capacity]native_report.RecordV1 = undefined,
+    wire: [storage_wire_capacity]u8 = undefined,
 };
 
 const FixtureV1 = struct {
@@ -195,10 +264,52 @@ pub fn runV1(
 
 pub const run = runV1;
 
+/// Run the fixed W7 controlled-disruption campaign. The storage binding and
+/// retained-failure semantics are identical to `runV1`.
+pub fn runControlledDisruptionV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    config: RunConfigV1,
+) !ArtifactV1 {
+    if (storage.state != .empty) return error.StorageAlreadyBound;
+    if (digestIsZero(config.build_sha256) or
+        digestIsZero(config.challenge_sha256))
+        return error.InvalidIdentity;
+    storage.state = .running;
+    storage.backend = backend;
+    errdefer storage.state = .failed_retained;
+
+    return runBoundCampaignV1(
+        storage,
+        backend,
+        config,
+        .controlled_disruption,
+    );
+}
+
+const CampaignKindV1 = enum {
+    native_workload,
+    controlled_disruption,
+};
+
 fn runBoundV1(
     storage: *StorageV1,
     backend: *metal.MetalBackend,
     config: RunConfigV1,
+) !ArtifactV1 {
+    return runBoundCampaignV1(
+        storage,
+        backend,
+        config,
+        .native_workload,
+    );
+}
+
+fn runBoundCampaignV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    config: RunConfigV1,
+    campaign: CampaignKindV1,
 ) !ArtifactV1 {
     if (backend.liveBufferCount() != 0 or
         try backend.nativeLiveBufferCount() != 0 or
@@ -234,12 +345,20 @@ fn runBoundV1(
     if (logical_cpu_count == 0)
         return error.InvalidHostIdentity;
 
-    const scenario = try makeScenarioV1(
-        storage,
-        initial_device,
-        logical_cpu_count,
-        config,
-    );
+    const scenario = switch (campaign) {
+        .native_workload => try makeScenarioV1(
+            storage,
+            initial_device,
+            logical_cpu_count,
+            config,
+        ),
+        .controlled_disruption => try makeControlledDisruptionScenarioV1(
+            storage,
+            initial_device,
+            logical_cpu_count,
+            config,
+        ),
+    };
     const inventory_entry =
         try metal_allocation.makeAllocationInventoryEntryV1(
             backend,
@@ -322,7 +441,14 @@ fn runBoundV1(
     );
     const allocation_request = try allocation.makeRequestV1(
         0x5736_5251_4550,
-        digestV1("glacier-w6-metal-campaign-owner-v1\x00"),
+        switch (campaign) {
+            .native_workload => digestV1(
+                "glacier-w6-metal-campaign-owner-v1\x00",
+            ),
+            .controlled_disruption => digestV1(
+                "glacier-w7-metal-controlled-disruption-owner-v1\x00",
+            ),
+        },
         storage.adapter.authority,
         fixture.selection,
         fixture.requirement,
@@ -361,63 +487,91 @@ fn runBoundV1(
     var clock: EventClockV1 = .{
         .timer = try std.time.Timer.start(),
     };
-    for (0..pair_count) |pair_index| {
-        try validateLifecycleSnapshot(
-            backend,
-            initial_lifecycle,
-            try backend.deviceLifecycleSnapshot(),
-        );
-        var pending: [flow_count]PendingRecordV1 = undefined;
-        for (0..flow_count) |flow| {
-            pending[flow] = try startLaneV1(
-                storage,
-                campaign_lease,
-                fixture,
-                pair_index,
-                flow,
-                &clock,
-            );
-        }
-        try validatePairActiveV1(
-            storage,
-            backend,
-            pair_index,
-            &pending,
-        );
-        for (0..flow_count) |flow| {
-            try finishLaneV1(
-                storage,
-                campaign_lease,
-                flow,
-                &pending[flow],
-                &clock,
-            );
-        }
-        // Deliberately settle B before A.  This proves the two logical
-        // adapter lanes do not depend on submission-order settlement; it is
-        // still not evidence of physical GPU completion order.
-        var reverse_flow: usize = flow_count;
-        while (reverse_flow != 0) {
-            reverse_flow -= 1;
-            try settleLaneV1(
+    switch (campaign) {
+        .native_workload => {
+            for (0..pair_count) |pair_index| {
+                try validateLifecycleSnapshot(
+                    backend,
+                    initial_lifecycle,
+                    try backend.deviceLifecycleSnapshot(),
+                );
+                var pending: [flow_count]PendingRecordV1 =
+                    undefined;
+                for (0..flow_count) |flow| {
+                    pending[flow] = try startLaneV1(
+                        storage,
+                        campaign_lease,
+                        fixture,
+                        pair_index * flow_count + flow,
+                        if (pair_index < warmup_pair_count)
+                            .warmup
+                        else
+                            .measured,
+                        flow,
+                        &clock,
+                    );
+                }
+                try validatePairActiveV1(
+                    storage,
+                    backend,
+                    (pair_index + 1) * flow_count,
+                    pair_index * flow_count,
+                    &pending,
+                );
+                for (0..flow_count) |flow| {
+                    try finishLaneV1(
+                        storage,
+                        campaign_lease,
+                        flow,
+                        &pending[flow],
+                        &clock,
+                    );
+                }
+                // Deliberately settle B before A.  This proves the two
+                // logical adapter lanes do not depend on submission-order
+                // settlement; it is still not evidence of physical GPU
+                // completion order.
+                var reverse_flow: usize = flow_count;
+                while (reverse_flow != 0) {
+                    reverse_flow -= 1;
+                    try settleLaneV1(
+                        storage,
+                        backend,
+                        scenario,
+                        reverse_flow,
+                        &pending[reverse_flow],
+                        &clock,
+                    );
+                }
+                try validatePairSettledV1(
+                    storage,
+                    backend,
+                    (pair_index + 1) * flow_count,
+                    &pending,
+                );
+            }
+        },
+        .controlled_disruption => {
+            try runControlledDisruptionEpochsV1(
                 storage,
                 backend,
+                campaign_lease,
+                fixture,
                 scenario,
-                reverse_flow,
-                &pending[reverse_flow],
+                initial_lifecycle,
+                initial_device,
+                initial_device.recommended_max_working_set_size,
+                completed_dispatches_before,
                 &clock,
             );
-        }
-        try validatePairSettledV1(
-            storage,
-            backend,
-            pair_index,
-            &pending,
-        );
+        },
     }
 
-    if (clock.sequence !=
-        record_count * native_report.event_count)
+    const expected_event_count: u64 = switch (campaign) {
+        .native_workload => record_count * native_report.event_count,
+        .controlled_disruption => disruption_epoch_count * 25,
+    };
+    if (clock.sequence != expected_event_count)
         return error.InvalidEventSequence;
     const released = try storage.coordinator.release(
         campaign_lease,
@@ -448,17 +602,27 @@ fn runBoundV1(
     try storage.bank.closeLeaseTree(storage.tree);
     try storage.bank.release(parent);
     const final_bank = try storage.bank.snapshotV4();
+    const expected_pin_count: u64 = switch (campaign) {
+        .native_workload => record_count,
+        .controlled_disruption => disruption_pin_count,
+    };
+    const expected_dispatch_count: u64 = switch (campaign) {
+        .native_workload => record_count,
+        .controlled_disruption => disruption_completed_dispatch_count,
+    };
     if (!final_bank.used.isZero() or
         final_bank.active_reservations != 0 or
         final_bank.committed_receipts != 0 or
         final_bank.active_lease_trees != 0 or
         final_bank.active_lease_nodes != 0 or
         final_bank.active_lease_pin_slots != 0 or
-        final_bank.lease_pin_acquisitions != record_count or
-        final_bank.lease_pin_completions != record_count)
+        final_bank.lease_pin_acquisitions !=
+            expected_pin_count or
+        final_bank.lease_pin_completions !=
+            expected_pin_count)
         return error.InvalidTerminalClosure;
     if (backend.completedDispatchCount() !=
-        completed_dispatches_before + record_count)
+        completed_dispatches_before + expected_dispatch_count)
         return error.InvalidDispatchCount;
     if (!std.meta.eql(
         retirement_before,
@@ -471,31 +635,33 @@ fn runBoundV1(
         try backend.deviceLifecycleSnapshot(),
     );
     const final_device = try backend.deviceInfo();
-    if (!std.mem.eql(
-        u8,
-        &native_observer.deviceIdentityV1(initial_device),
-        &native_observer.deviceIdentityV1(final_device),
-    ) or !std.mem.eql(
-        u8,
-        &native_observer.placementIdentityV1(initial_device),
-        &native_observer.placementIdentityV1(final_device),
-    ))
-        return error.InvalidMetalIdentity;
+    try validateDeviceAndPlacementIdentityV1(
+        initial_device,
+        final_device,
+    );
 
     const closure = try native_report.makeClosureV1(
         final_bank.lease_pin_acquisitions,
         final_bank.lease_pin_completions,
     );
+    const campaign_record_count: usize = switch (campaign) {
+        .native_workload => record_count,
+        .controlled_disruption => disruption_record_count,
+    };
+    const campaign_encoded_bytes: usize = switch (campaign) {
+        .native_workload => encoded_bytes,
+        .controlled_disruption => disruption_encoded_bytes,
+    };
     const sealed = try native_report.sealV1(
         scenario,
-        &storage.records,
+        storage.records[0..campaign_record_count],
         closure,
     );
     const wire = try native_report.encodeV1(
         sealed,
-        &storage.wire,
+        storage.wire[0..campaign_encoded_bytes],
     );
-    if (wire.len != encoded_bytes)
+    if (wire.len != campaign_encoded_bytes)
         return error.InvalidEncodedLength;
 
     storage.parent = null;
@@ -556,6 +722,44 @@ fn workloadIdentityV1() Digest {
     return finishHash(&hash);
 }
 
+fn hashControlledDisruptionScheduleV1(
+    hash: *std.crypto.hash.sha2.Sha256,
+) void {
+    hashU64(hash, disruption_producer_abi);
+    hashU64(hash, disruption_warmup_epoch_count);
+    hashU64(hash, disruption_measured_epoch_count);
+    hashU64(hash, disruption_records_per_epoch);
+    hashU64(hash, flow_count);
+    hashU64(
+        hash,
+        metal_allocation.maximum_async_dispatch_slots,
+    );
+    hashU64(hash, persistent_device_bytes);
+    inline for (std.meta.fields(DisruptionActionV1)) |field| {
+        hashU64(hash, field.value);
+    }
+}
+
+fn controlledDisruptionIdentityV1() Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7-metal-controlled-disruption-schedule-v1\x00",
+    );
+    hashControlledDisruptionScheduleV1(&hash);
+    return finishHash(&hash);
+}
+
+fn controlledDisruptionWorkloadIdentityV1() Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update("glacier-w7-metal-native-workload-v1\x00");
+    hashU64(&hash, disruption_producer_abi);
+    hashU64(&hash, in_features);
+    hashU64(&hash, out_features);
+    hashU64(&hash, group_size);
+    hashU64(&hash, work_units_per_record);
+    return finishHash(&hash);
+}
+
 fn profileIdentityV1() Digest {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
     hash.update("glacier-w6-metal-native-profile-v1\x00");
@@ -565,6 +769,16 @@ fn profileIdentityV1() Digest {
     hashU64(&hash, flow_count);
     hashU64(&hash, metal_allocation.maximum_async_dispatch_slots);
     hashU64(&hash, persistent_device_bytes);
+    return finishHash(&hash);
+}
+
+fn controlledDisruptionProfileIdentityV1() Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7-metal-controlled-disruption-profile-v1\x00",
+    );
+    hash.update(&controlledDisruptionIdentityV1());
+    hashControlledDisruptionScheduleV1(&hash);
     return finishHash(&hash);
 }
 
@@ -582,9 +796,29 @@ fn backendIdentityV1() Digest {
     return finishHash(&hash);
 }
 
+fn controlledDisruptionBackendIdentityV1() Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update("glacier-w7-metal-production-backend-v1\x00");
+    hashU64(&hash, disruption_producer_abi);
+    hashU64(&hash, metal.device_info_abi);
+    hashU64(&hash, metal.dispatch_observation_abi);
+    hashU64(&hash, metal.async_submission_abi);
+    hashU64(&hash, metal.async_completion_abi);
+    hashU64(&hash, metal_allocation.adapter_abi);
+    hashU64(&hash, metal_allocation.observation_abi);
+    hashU64(&hash, metal_allocation.dispatch_observation_abi);
+    return finishHash(&hash);
+}
+
 fn hostSourceIdentityV1() Digest {
     return digestV1(
         "std.time.Timer.read+global-sequence/metal-workload-v1",
+    );
+}
+
+fn controlledDisruptionHostSourceIdentityV1() Digest {
+    return digestV1(
+        "std.time.Timer.read+global-sequence/metal-disruption-v1",
     );
 }
 
@@ -615,6 +849,93 @@ fn artifactIdentityV1(
         for (storage.oracles[flow]) |value|
             hashF32(&hash, value);
     }
+    return finishHash(&hash);
+}
+
+fn controlledDisruptionArtifactIdentityV1(
+    storage: *const StorageV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7-metal-controlled-disruption-artifact-v1\x00",
+    );
+    hashU64(&hash, disruption_producer_abi);
+    hash.update(&artifactIdentityV1(storage));
+    return finishHash(&hash);
+}
+
+fn controlledDisruptionRecordRootV1(
+    scenario: native_report.ScenarioV1,
+    epoch_index: usize,
+    action: DisruptionActionV1,
+    role: DisruptionRootRoleV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7-metal-controlled-disruption-record-v1\x00",
+    );
+    hash.update(&scenario.profile_sha256);
+    hashU64(&hash, disruption_producer_abi);
+    hashU64(&hash, epoch_index);
+    hashU64(&hash, @intFromEnum(action));
+    hashU64(&hash, @intFromEnum(role));
+    return finishHash(&hash);
+}
+
+fn controlledDisruptionAdmittedCommitmentV1(
+    scenario: native_report.ScenarioV1,
+    epoch_index: usize,
+    action: DisruptionActionV1,
+    detail: DisruptionActionDetailV1,
+    outcome: native_report.OutcomeV1,
+    flow: usize,
+    request_sha256: Digest,
+    pin_sha256: Digest,
+    terminal_sha256: Digest,
+    completion_sha256: Digest,
+    action_evidence_sha256: Digest,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7-metal-controlled-disruption-admitted-v1\x00",
+    );
+    hash.update(&scenario.profile_sha256);
+    hashU64(&hash, disruption_producer_abi);
+    hashU64(&hash, epoch_index);
+    hashU64(&hash, @intFromEnum(action));
+    hashU64(&hash, @intFromEnum(detail));
+    hashU64(&hash, @intFromEnum(outcome));
+    hashU64(&hash, flow);
+    hash.update(&request_sha256);
+    hash.update(&pin_sha256);
+    hash.update(&terminal_sha256);
+    hash.update(&completion_sha256);
+    hash.update(&action_evidence_sha256);
+    return finishHash(&hash);
+}
+
+fn controlledDisruptionCapacityRootV1(
+    scenario: native_report.ScenarioV1,
+    epoch_index: usize,
+    role: DisruptionRootRoleV1,
+    generations: metal_allocation.MetalDispatchGenerationSnapshotV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7-metal-controlled-disruption-capacity-v1\x00",
+    );
+    hash.update(&scenario.profile_sha256);
+    hashU64(&hash, disruption_producer_abi);
+    hashU64(&hash, epoch_index);
+    hashU64(
+        &hash,
+        @intFromEnum(
+            DisruptionActionV1.full_capacity_rejection,
+        ),
+    );
+    hashU64(&hash, @intFromEnum(role));
+    hashU64(&hash, generations.next_request_generation);
+    hashU64(&hash, generations.next_ticket_generation);
     return finishHash(&hash);
 }
 
@@ -666,6 +987,41 @@ fn makeScenarioV1(
     });
 }
 
+fn makeControlledDisruptionScenarioV1(
+    storage: *const StorageV1,
+    info: metal.MetalDeviceInfo,
+    logical_cpu_count: u64,
+    config: RunConfigV1,
+) !native_report.ScenarioV1 {
+    const device_sha256 =
+        native_observer.deviceIdentityV1(info);
+    return native_report.makeScenarioV1(.{
+        .mode = .closed,
+        .evidence = .production_native,
+        .warmup_count = disruption_warmup_record_count,
+        .measured_count = disruption_measured_record_count,
+        .max_in_flight = flow_count,
+        .queue_count = flow_count,
+        .flow_count = flow_count,
+        .workload_sha256 = controlledDisruptionWorkloadIdentityV1(),
+        .profile_sha256 = controlledDisruptionProfileIdentityV1(),
+        .artifact_sha256 = controlledDisruptionArtifactIdentityV1(storage),
+        .build_sha256 = config.build_sha256,
+        .machine_sha256 = native_observer.machineIdentityV1(
+            logical_cpu_count,
+            device_sha256,
+        ),
+        .backend_sha256 = controlledDisruptionBackendIdentityV1(),
+        .device_sha256 = device_sha256,
+        .placement_sha256 = native_observer.placementIdentityV1(info),
+        .host_source_sha256 = controlledDisruptionHostSourceIdentityV1(),
+        .host_clock_sha256 = hostClockIdentityV1(),
+        .device_source_sha256 = native_observer.sourceIdentityV1(),
+        .device_clock_sha256 = deviceClockIdentityV1(),
+        .challenge_sha256 = config.challenge_sha256,
+    });
+}
+
 fn validateLifecycleSnapshot(
     backend: *metal.MetalBackend,
     initial: metal.MetalDeviceLifecycleSnapshot,
@@ -682,6 +1038,22 @@ fn validateLifecycleSnapshot(
         current.removal_requested != 0 or
         current.removed != 0)
         return error.NativeLifecycleChanged;
+}
+
+fn validateDeviceAndPlacementIdentityV1(
+    initial: metal.MetalDeviceInfo,
+    current: metal.MetalDeviceInfo,
+) !void {
+    if (!std.mem.eql(
+        u8,
+        &native_observer.deviceIdentityV1(initial),
+        &native_observer.deviceIdentityV1(current),
+    ) or !std.mem.eql(
+        u8,
+        &native_observer.placementIdentityV1(initial),
+        &native_observer.placementIdentityV1(current),
+    ))
+        return error.InvalidMetalIdentity;
 }
 
 fn fillPayloadV1(storage: *StorageV1) void {
@@ -859,7 +1231,8 @@ fn startLaneV1(
     storage: *StorageV1,
     campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
     fixture: FixtureV1,
-    pair_index: usize,
+    ordinal: usize,
+    cohort: native_report.CohortV1,
     flow: usize,
     clock: *EventClockV1,
 ) !PendingRecordV1 {
@@ -868,8 +1241,7 @@ fn startLaneV1(
         storage.lanes[flow].pin != null or
         storage.lanes[flow].ticket != null)
         return error.InvalidLaneState;
-    const ordinal: usize = pair_index * flow_count + flow;
-    if (ordinal >= record_count)
+    if (ordinal >= storage.records.len)
         return error.InvalidRecordOrdinal;
     storage.outputs[flow] =
         [_]f32{-8_765.25} ** out_features;
@@ -953,10 +1325,7 @@ fn startLaneV1(
 
     return .{
         .ordinal = @intCast(ordinal),
-        .cohort = if (pair_index < warmup_pair_count)
-            .warmup
-        else
-            .measured,
+        .cohort = cohort,
         .flow_id = @intCast(flow),
         .host = host,
         .request = request,
@@ -969,7 +1338,8 @@ fn startLaneV1(
 fn validatePairActiveV1(
     storage: *StorageV1,
     backend: *metal.MetalBackend,
-    pair_index: usize,
+    expected_acquisitions: u64,
+    expected_completions: u64,
     pending: *const [flow_count]PendingRecordV1,
 ) !void {
     const coordinator_snapshot =
@@ -978,9 +1348,9 @@ fn validatePairActiveV1(
     if (coordinator_snapshot.active_dispatches != flow_count or
         bank_snapshot.active_lease_pin_slots != flow_count or
         bank_snapshot.lease_pin_acquisitions !=
-            (pair_index + 1) * flow_count or
+            expected_acquisitions or
         bank_snapshot.lease_pin_completions !=
-            pair_index * flow_count or
+            expected_completions or
         try backend.nativeLiveCommandCount() != flow_count)
         return error.InvalidPairOwnership;
     if (pending[0].ticket.queue_slot != 0 or
@@ -1014,6 +1384,23 @@ fn validatePairActiveV1(
 }
 
 fn finishLaneV1(
+    storage: *StorageV1,
+    campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    flow: usize,
+    pending: *PendingRecordV1,
+    clock: *EventClockV1,
+) !void {
+    try observeLaneV1(
+        storage,
+        campaign_lease,
+        flow,
+        pending,
+        clock,
+    );
+    pending.host.terminal = try clock.next();
+}
+
+fn observeLaneV1(
     storage: *StorageV1,
     campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
     flow: usize,
@@ -1097,7 +1484,6 @@ fn finishLaneV1(
             .correct
         else
             .incorrect;
-    pending.host.terminal = try clock.next();
     pending.result = result;
 }
 
@@ -1227,7 +1613,7 @@ fn settleLaneV1(
 fn validatePairSettledV1(
     storage: *StorageV1,
     backend: *metal.MetalBackend,
-    pair_index: usize,
+    expected_pin_count: u64,
     pending: *const [flow_count]PendingRecordV1,
 ) !void {
     const coordinator_snapshot =
@@ -1236,9 +1622,9 @@ fn validatePairSettledV1(
     if (coordinator_snapshot.active_dispatches != 0 or
         bank_snapshot.active_lease_pin_slots != 0 or
         bank_snapshot.lease_pin_acquisitions !=
-            (pair_index + 1) * flow_count or
+            expected_pin_count or
         bank_snapshot.lease_pin_completions !=
-            (pair_index + 1) * flow_count or
+            expected_pin_count or
         try backend.nativeLiveCommandCount() != 0 or
         pending[1].host.submit_return.sequence >=
             pending[0].host.first_output.sequence or
@@ -1259,4 +1645,942 @@ fn validatePairSettledV1(
             ) != null)
             return error.InvalidLaneState;
     }
+}
+
+fn disruptionCohortV1(
+    epoch_index: usize,
+) native_report.CohortV1 {
+    return if (epoch_index <
+        disruption_warmup_epoch_count)
+        .warmup
+    else
+        .measured;
+}
+
+fn disruptionUnavailableTimingV1(
+    scenario: native_report.ScenarioV1,
+    epoch_index: usize,
+    action: DisruptionActionV1,
+) native_report.DeviceTimingV1 {
+    return .{
+        .availability = .unsupported,
+        .source_sha256 = scenario.device_source_sha256,
+        .clock_sha256 = scenario.device_clock_sha256,
+        .reason_sha256 = controlledDisruptionRecordRootV1(
+            scenario,
+            epoch_index,
+            action,
+            .timing_unsupported,
+        ),
+    };
+}
+
+fn disruptionUnavailableAllocationV1(
+    scenario: native_report.ScenarioV1,
+    epoch_index: usize,
+    action: DisruptionActionV1,
+) native_report.AllocatedContextV1 {
+    return .{
+        .availability = .unsupported,
+        .source_sha256 = scenario.device_source_sha256,
+        .reason_sha256 = controlledDisruptionRecordRootV1(
+            scenario,
+            epoch_index,
+            action,
+            .allocation_unsupported,
+        ),
+    };
+}
+
+fn writeAdmittedDisruptionRecordV1(
+    storage: *StorageV1,
+    scenario: native_report.ScenarioV1,
+    epoch_index: usize,
+    ordinal: usize,
+    action: DisruptionActionV1,
+    detail: DisruptionActionDetailV1,
+    outcome: native_report.OutcomeV1,
+    flow: usize,
+    host: native_report.HostEventsV1,
+    request: metal_allocation.MetalMatvecDispatchRequestV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    terminal: lease_tree.DispatchTerminalEvidenceV1,
+    completion: lease_tree.LeaseTreeDispatchCompletionV1,
+    action_evidence_sha256: Digest,
+    bank_used_before: u64,
+    bank_used_after: u64,
+) !void {
+    if (ordinal >= disruption_record_count or
+        (outcome != .cancelled and outcome != .failed) or
+        flow >= flow_count or
+        digestIsZero(action_evidence_sha256) or
+        host.presence_mask != disruption_admitted_presence or
+        bank_used_before != persistent_device_bytes or
+        bank_used_after != bank_used_before)
+        return error.InvalidDisruptionRecord;
+    const expected_shape =
+        (action == .cancel_before_submit and
+            detail == .cancelled_before_submit and
+            outcome == .cancelled and flow == 0) or
+        (action == .malformed_pre_submit and
+            detail == .invalid_host_lengths and
+            outcome == .failed and flow == 1);
+    if (!expected_shape) return error.InvalidDisruptionRecord;
+    const admitted_commitment =
+        controlledDisruptionAdmittedCommitmentV1(
+            scenario,
+            epoch_index,
+            action,
+            detail,
+            outcome,
+            flow,
+            request.request_sha256,
+            pin.pin_sha256,
+            terminal.terminal_sha256,
+            completion.completion_sha256,
+            action_evidence_sha256,
+        );
+    storage.records[ordinal] = try native_report.makeRecordV1(.{
+        .ordinal = @intCast(ordinal),
+        .cohort = disruptionCohortV1(epoch_index),
+        .outcome = outcome,
+        .correctness = .not_applicable,
+        .fallback = false,
+        .flow_id = @intCast(flow),
+        .work_units = work_units_per_record,
+        .adapter_queue_slot = 0,
+        .host = host,
+        .roots = .{
+            .request_sha256 = request.request_sha256,
+            .pin_sha256 = pin.pin_sha256,
+            .terminal_sha256 = terminal.terminal_sha256,
+            .completion_sha256 = completion.completion_sha256,
+        },
+        .device_timing = .{
+            .availability = .unsupported,
+            .source_sha256 = scenario.device_source_sha256,
+            .clock_sha256 = scenario.device_clock_sha256,
+            .reason_sha256 = admitted_commitment,
+        },
+        .allocated_context = .{
+            .availability = .unsupported,
+            .source_sha256 = scenario.device_source_sha256,
+            .reason_sha256 = action_evidence_sha256,
+        },
+        .logical = .{
+            .bank_acquisitions = 1,
+            .bank_completions = 1,
+            .bank_used_before = bank_used_before,
+            .bank_used_after_settlement = bank_used_after,
+            .pin_count_before = 1,
+            .pin_count_after_settlement = 0,
+            .dispatch_count_before = 0,
+            .dispatch_count_after_settlement = 0,
+            .native_command_count_before = 0,
+            .native_command_count_after_settlement = 0,
+        },
+    });
+}
+
+fn runCancellationDisruptionV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    fixture: FixtureV1,
+    scenario: native_report.ScenarioV1,
+    epoch_index: usize,
+    ordinal: usize,
+    clock: *EventClockV1,
+) !void {
+    var host: native_report.HostEventsV1 = .{
+        .presence_mask = disruption_admitted_presence,
+    };
+    host.arrival = try clock.next();
+    const bank_before = try storage.bank.snapshotV4();
+    const coordinator_before =
+        try storage.coordinator.snapshot();
+    if (bank_before.used.device_bytes !=
+        persistent_device_bytes or
+        bank_before.active_lease_pin_slots != 0 or
+        coordinator_before.active_dispatches != 0 or
+        try backend.nativeLiveCommandCount() != 0)
+        return error.InvalidDisruptionBoundary;
+
+    const attempt =
+        try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+            fixture.bindings[0],
+            storage.packed_weights.len,
+            storage.scales.len,
+            storage.inputs[0].len,
+            storage.outputs[0].len,
+            group_size,
+            in_features,
+            out_features,
+        );
+    const request =
+        try storage.adapter.prepareMatvecDispatchRequestV1(
+            attempt,
+        );
+    if (request.request_generation !=
+        @as(u64, @intCast(epoch_index * 4 + 1)))
+        return error.InvalidRequestGeneration;
+    const pin = try storage.coordinator.acquireDispatchPin(
+        campaign_lease,
+        storage.adapter.dispatchInterface(),
+        request.request_sha256,
+    );
+    try lease_tree.validateDispatchPinV1(pin);
+    host.admission = try clock.next();
+    const bank_acquired = try storage.bank.snapshotV4();
+    if (bank_acquired.lease_pin_acquisitions !=
+        bank_before.lease_pin_acquisitions + 1 or
+        bank_acquired.lease_pin_completions !=
+            bank_before.lease_pin_completions or
+        bank_acquired.active_lease_pin_slots != 1 or
+        bank_acquired.used.device_bytes !=
+            bank_before.used.device_bytes or
+        (try storage.coordinator.snapshot())
+            .active_dispatches != 1 or
+        try backend.nativeLiveCommandCount() != 0)
+        return error.InvalidBankPinFacts;
+
+    const terminal =
+        try storage.adapter.cancelMatvecBeforeSubmitObserved(
+            campaign_lease,
+            pin,
+        );
+    try lease_tree.validateDispatchTerminalForPinV1(
+        terminal,
+        pin,
+    );
+    if (terminal.outcome != .cancelled_before_submit)
+        return error.InvalidDisruptionOutcome;
+    host.terminal = try clock.next();
+    const completion =
+        try storage.coordinator.completeDispatchPin(
+            pin,
+            storage.adapter.dispatchInterface(),
+            terminal,
+        );
+    try lease_tree.validateDispatchCompletionForPinV1(
+        completion,
+        pin,
+        terminal,
+    );
+    try storage.adapter.acknowledgeDispatchCompletion(
+        completion,
+    );
+    host.settlement = try clock.next();
+    const bank_after = try storage.bank.snapshotV4();
+    if (bank_after.lease_pin_acquisitions !=
+        bank_acquired.lease_pin_acquisitions or
+        bank_after.lease_pin_completions !=
+            bank_acquired.lease_pin_completions + 1 or
+        bank_after.active_lease_pin_slots != 0 or
+        (try storage.coordinator.snapshot())
+            .active_dispatches != 0 or
+        try backend.nativeLiveCommandCount() != 0)
+        return error.InvalidSettlementFacts;
+    try writeAdmittedDisruptionRecordV1(
+        storage,
+        scenario,
+        epoch_index,
+        ordinal,
+        .cancel_before_submit,
+        .cancelled_before_submit,
+        .cancelled,
+        0,
+        host,
+        request,
+        pin,
+        terminal,
+        completion,
+        controlledDisruptionRecordRootV1(
+            scenario,
+            epoch_index,
+            .cancel_before_submit,
+            .action_evidence,
+        ),
+        bank_before.used.device_bytes,
+        bank_after.used.device_bytes,
+    );
+}
+
+fn runMalformedRejectionDisruptionV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    fixture: FixtureV1,
+    scenario: native_report.ScenarioV1,
+    epoch_index: usize,
+    ordinal: usize,
+    clock: *EventClockV1,
+) !void {
+    var host: native_report.HostEventsV1 = .{
+        .presence_mask = disruption_admitted_presence,
+    };
+    host.arrival = try clock.next();
+    const bank_before = try storage.bank.snapshotV4();
+    if (bank_before.used.device_bytes !=
+        persistent_device_bytes or
+        bank_before.active_lease_pin_slots != 0 or
+        (try storage.coordinator.snapshot())
+            .active_dispatches != 0 or
+        try backend.nativeLiveCommandCount() != 0)
+        return error.InvalidDisruptionBoundary;
+
+    const malformed_output =
+        storage.outputs[1][0 .. out_features - 1];
+    const attempt =
+        try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+            fixture.bindings[1],
+            storage.packed_weights.len,
+            storage.scales.len,
+            storage.inputs[1].len,
+            malformed_output.len,
+            group_size,
+            in_features,
+            out_features,
+        );
+    const request =
+        try storage.adapter.prepareMatvecDispatchRequestV1(
+            attempt,
+        );
+    if (request.request_generation !=
+        @as(u64, @intCast(epoch_index * 4 + 2)))
+        return error.InvalidRequestGeneration;
+    const pin = try storage.coordinator.acquireDispatchPin(
+        campaign_lease,
+        storage.adapter.dispatchInterface(),
+        request.request_sha256,
+    );
+    try lease_tree.validateDispatchPinV1(pin);
+    host.admission = try clock.next();
+    const bank_acquired = try storage.bank.snapshotV4();
+    if (bank_acquired.lease_pin_acquisitions !=
+        bank_before.lease_pin_acquisitions + 1 or
+        bank_acquired.lease_pin_completions !=
+            bank_before.lease_pin_completions or
+        bank_acquired.active_lease_pin_slots != 1 or
+        bank_acquired.used.device_bytes !=
+            bank_before.used.device_bytes or
+        (try storage.coordinator.snapshot())
+            .active_dispatches != 1 or
+        try backend.nativeLiveCommandCount() != 0)
+        return error.InvalidBankPinFacts;
+
+    const rejected =
+        try storage.adapter.rejectMatvecInt4BeforeSubmitObserved(
+            campaign_lease,
+            pin,
+            fixture.bindings[1],
+            &storage.packed_weights,
+            &storage.scales,
+            &storage.inputs[1],
+            malformed_output,
+            group_size,
+            in_features,
+            out_features,
+        );
+    try metal_allocation
+        .validateMetalMatvecPreSubmitRejectionForPinV1(
+        rejected.rejection,
+        pin,
+        rejected.terminal,
+    );
+    if (rejected.rejection.reason != .invalid_host_lengths or
+        rejected.terminal.outcome != .rejected_before_submit)
+        return error.InvalidDisruptionOutcome;
+    host.terminal = try clock.next();
+    const completion =
+        try storage.coordinator.completeDispatchPin(
+            pin,
+            storage.adapter.dispatchInterface(),
+            rejected.terminal,
+        );
+    try lease_tree.validateDispatchCompletionForPinV1(
+        completion,
+        pin,
+        rejected.terminal,
+    );
+    try storage.adapter.acknowledgeDispatchCompletion(
+        completion,
+    );
+    host.settlement = try clock.next();
+    const bank_after = try storage.bank.snapshotV4();
+    if (bank_after.lease_pin_acquisitions !=
+        bank_acquired.lease_pin_acquisitions or
+        bank_after.lease_pin_completions !=
+            bank_acquired.lease_pin_completions + 1 or
+        bank_after.active_lease_pin_slots != 0 or
+        (try storage.coordinator.snapshot())
+            .active_dispatches != 0 or
+        try backend.nativeLiveCommandCount() != 0)
+        return error.InvalidSettlementFacts;
+    try writeAdmittedDisruptionRecordV1(
+        storage,
+        scenario,
+        epoch_index,
+        ordinal,
+        .malformed_pre_submit,
+        .invalid_host_lengths,
+        .failed,
+        1,
+        host,
+        request,
+        pin,
+        rejected.terminal,
+        completion,
+        rejected.rejection.rejection_sha256,
+        bank_before.used.device_bytes,
+        bank_after.used.device_bytes,
+    );
+}
+
+fn startControlledPairV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    fixture: FixtureV1,
+    epoch_index: usize,
+    ordinal_base: usize,
+    clock: *EventClockV1,
+) ![flow_count]PendingRecordV1 {
+    var pending: [flow_count]PendingRecordV1 = undefined;
+    for (0..flow_count) |flow| {
+        if (storage.lanes[flow].request != null or
+            storage.lanes[flow].pin != null or
+            storage.lanes[flow].ticket != null)
+            return error.InvalidLaneState;
+        storage.outputs[flow] =
+            [_]f32{-8_765.25} ** out_features;
+        pending[flow] = .{
+            .ordinal = @intCast(ordinal_base + flow),
+            .cohort = disruptionCohortV1(epoch_index),
+            .flow_id = @intCast(flow),
+            .request = undefined,
+            .pin = undefined,
+            .ticket = undefined,
+        };
+        pending[flow].host.arrival = try clock.next();
+    }
+
+    for (0..flow_count) |flow| {
+        const bank_before = try storage.bank.snapshotV4();
+        const attempt =
+            try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+                fixture.bindings[flow],
+                storage.packed_weights.len,
+                storage.scales.len,
+                storage.inputs[flow].len,
+                storage.outputs[flow].len,
+                group_size,
+                in_features,
+                out_features,
+            );
+        const request =
+            try storage.adapter.prepareMatvecDispatchRequestV1(
+                attempt,
+            );
+        if (request.request_generation !=
+            @as(
+                u64,
+                @intCast(epoch_index * 4 + 3 + flow),
+            ))
+            return error.InvalidRequestGeneration;
+        storage.lanes[flow].request = request;
+        const pin = try storage.coordinator.acquireDispatchPin(
+            campaign_lease,
+            storage.adapter.dispatchInterface(),
+            request.request_sha256,
+        );
+        storage.lanes[flow].pin = pin;
+        try lease_tree.validateDispatchPinV1(pin);
+        pending[flow].host.admission = try clock.next();
+        const bank_after = try storage.bank.snapshotV4();
+        if (bank_after.lease_pin_acquisitions !=
+            bank_before.lease_pin_acquisitions + 1 or
+            bank_after.lease_pin_completions !=
+                bank_before.lease_pin_completions or
+            bank_after.active_lease_pin_slots != flow + 1 or
+            bank_after.used.device_bytes !=
+                bank_before.used.device_bytes)
+            return error.InvalidBankPinFacts;
+        pending[flow].request = request;
+        pending[flow].pin = pin;
+        pending[flow].bank_used_before =
+            bank_before.used.device_bytes;
+    }
+
+    // Service entry is recorded for both admitted lanes before either
+    // submission returns. This makes the fixed two-lane schedule explicit
+    // without claiming physical command overlap.
+    for (0..flow_count) |flow| {
+        pending[flow].host.first_service =
+            try clock.next();
+    }
+    for (0..flow_count) |flow| {
+        const ticket =
+            try storage.adapter.submitMatvecInt4AsyncObserved(
+                campaign_lease,
+                pending[flow].pin,
+                fixture.bindings[flow],
+                &storage.packed_weights,
+                &storage.scales,
+                &storage.inputs[flow],
+                &storage.outputs[flow],
+                group_size,
+                in_features,
+                out_features,
+            );
+        storage.lanes[flow].ticket = ticket;
+        pending[flow].ticket = ticket;
+        pending[flow].host.submit_return =
+            try clock.next();
+        try metal_allocation
+            .validateMetalAsyncDispatchTicketV1(ticket);
+        if (ticket.ticket_generation !=
+            @as(
+                u64,
+                @intCast(epoch_index * 2 + 1 + flow),
+            ) or ticket.queue_slot != flow or
+            !std.meta.eql(
+                storage.adapter
+                    .currentAsyncDispatchTicketForQueueSlotV1(
+                    flow,
+                ) orelse return error.InvalidLaneState,
+                ticket,
+            ) or storage.adapter
+            .currentAsyncDispatchQuarantineForQueueSlotV1(
+            flow,
+        ) != null)
+            return error.InvalidLaneState;
+    }
+
+    if ((try storage.coordinator.snapshot())
+        .active_dispatches != flow_count or
+        (try storage.bank.snapshotV4())
+            .active_lease_pin_slots != flow_count or
+        try backend.nativeLiveCommandCount() != flow_count or
+        pending[0].request.request_generation >=
+            pending[1].request.request_generation or
+        pending[0].pin.dispatch_generation >=
+            pending[1].pin.dispatch_generation or
+        pending[0].ticket.ticket_generation >=
+            pending[1].ticket.ticket_generation)
+        return error.InvalidPairOwnership;
+    return pending;
+}
+
+fn runCapacityDisruptionV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    fixture: FixtureV1,
+    scenario: native_report.ScenarioV1,
+    epoch_index: usize,
+    ordinal: usize,
+    pending: *const [flow_count]PendingRecordV1,
+    clock: *EventClockV1,
+) !void {
+    var host: native_report.HostEventsV1 = .{
+        .presence_mask = native_report.capacity_rejected_presence,
+    };
+    host.arrival = try clock.next();
+
+    const adapter_before = storage.adapter.snapshot();
+    const generations_before =
+        storage.adapter.dispatchGenerationSnapshotV1();
+    const expected_generations: metal_allocation.MetalDispatchGenerationSnapshotV1 = .{
+        .next_request_generation = @intCast(epoch_index * 4 + 5),
+        .next_ticket_generation = @intCast(epoch_index * 2 + 3),
+    };
+    if (!std.meta.eql(
+        generations_before,
+        expected_generations,
+    ))
+        return error.InvalidRequestGeneration;
+    const bank_before = try storage.bank.snapshotV4();
+    const coordinator_before =
+        try storage.coordinator.snapshot();
+    const native_commands_before =
+        try backend.nativeLiveCommandCount();
+    const native_buffers_before =
+        try backend.nativeLiveBufferCount();
+    const logical_buffers_before =
+        backend.liveBufferCount();
+    const completed_before =
+        backend.completedDispatchCount();
+    const tickets_before = [flow_count]metal_allocation.MetalAsyncDispatchTicketV1{
+        storage.adapter
+            .currentAsyncDispatchTicketForQueueSlotV1(0) orelse
+            return error.InvalidLaneState,
+        storage.adapter
+            .currentAsyncDispatchTicketForQueueSlotV1(1) orelse
+            return error.InvalidLaneState,
+    };
+    if (!std.meta.eql(tickets_before[0], pending[0].ticket) or
+        !std.meta.eql(tickets_before[1], pending[1].ticket) or
+        native_commands_before != flow_count)
+        return error.InvalidPairOwnership;
+
+    const distinct_attempt =
+        try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+            fixture.bindings[0],
+            storage.packed_weights.len,
+            storage.scales.len,
+            storage.inputs[0].len,
+            out_features - 2,
+            group_size,
+            in_features,
+            out_features,
+        );
+    if (storage.adapter.prepareMatvecDispatchRequestV1(
+        distinct_attempt,
+    )) |_| {
+        return error.CapacityAttemptUnexpectedlyAdmitted;
+    } else |err| switch (err) {
+        error.DispatchBusy => {},
+        else => return err,
+    }
+    const generations_after =
+        storage.adapter.dispatchGenerationSnapshotV1();
+    if (!std.meta.eql(
+        generations_before,
+        generations_after,
+    ) or !std.meta.eql(
+        generations_after,
+        expected_generations,
+    ))
+        return error.CapacityRejectionMutatedState;
+    host.terminal = try clock.next();
+
+    const adapter_after = storage.adapter.snapshot();
+    const bank_after = try storage.bank.snapshotV4();
+    const coordinator_after =
+        try storage.coordinator.snapshot();
+    const tickets_after = [flow_count]metal_allocation.MetalAsyncDispatchTicketV1{
+        storage.adapter
+            .currentAsyncDispatchTicketForQueueSlotV1(0) orelse
+            return error.InvalidLaneState,
+        storage.adapter
+            .currentAsyncDispatchTicketForQueueSlotV1(1) orelse
+            return error.InvalidLaneState,
+    };
+    if (!std.meta.eql(adapter_before, adapter_after) or
+        !std.meta.eql(bank_before, bank_after) or
+        !std.meta.eql(
+            coordinator_before,
+            coordinator_after,
+        ) or !std.meta.eql(tickets_before, tickets_after) or
+        try backend.nativeLiveCommandCount() !=
+            native_commands_before or
+        try backend.nativeLiveBufferCount() !=
+            native_buffers_before or
+        backend.liveBufferCount() !=
+            logical_buffers_before or
+        backend.completedDispatchCount() != completed_before)
+        return error.CapacityRejectionMutatedState;
+    host.settlement = try clock.next();
+
+    storage.records[ordinal] = try native_report.makeRecordV1(.{
+        .ordinal = @intCast(ordinal),
+        .cohort = disruptionCohortV1(epoch_index),
+        .outcome = .capacity_rejected,
+        .correctness = .not_applicable,
+        .fallback = false,
+        .flow_id = 0,
+        .work_units = work_units_per_record,
+        .adapter_queue_slot = native_report.no_queue_slot,
+        .host = host,
+        .roots = .{
+            .request_sha256 = controlledDisruptionCapacityRootV1(
+                scenario,
+                epoch_index,
+                .request,
+                generations_before,
+            ),
+            .terminal_sha256 = controlledDisruptionCapacityRootV1(
+                scenario,
+                epoch_index,
+                .terminal,
+                generations_before,
+            ),
+            .completion_sha256 = controlledDisruptionCapacityRootV1(
+                scenario,
+                epoch_index,
+                .completion,
+                generations_before,
+            ),
+        },
+        .device_timing = disruptionUnavailableTimingV1(
+            scenario,
+            epoch_index,
+            .full_capacity_rejection,
+        ),
+        .allocated_context = disruptionUnavailableAllocationV1(
+            scenario,
+            epoch_index,
+            .full_capacity_rejection,
+        ),
+    });
+}
+
+fn validateControlledEpochScheduleV1(
+    storage: *const StorageV1,
+    epoch_index: usize,
+) !void {
+    const base = epoch_index *
+        disruption_records_per_epoch;
+    const sequence_base: u64 = epoch_index * 25;
+    const cancelled = storage.records[base];
+    const rejected = storage.records[base + 1];
+    const lane_a = storage.records[base + 2];
+    const lane_b = storage.records[base + 3];
+    const capacity = storage.records[base + 4];
+    const expected = [_]u64{
+        cancelled.host.arrival.sequence,
+        cancelled.host.admission.sequence,
+        cancelled.host.terminal.sequence,
+        cancelled.host.settlement.sequence,
+        rejected.host.arrival.sequence,
+        rejected.host.admission.sequence,
+        rejected.host.terminal.sequence,
+        rejected.host.settlement.sequence,
+        lane_a.host.arrival.sequence,
+        lane_b.host.arrival.sequence,
+        lane_a.host.admission.sequence,
+        lane_b.host.admission.sequence,
+        lane_a.host.first_service.sequence,
+        lane_b.host.first_service.sequence,
+        lane_a.host.submit_return.sequence,
+        lane_b.host.submit_return.sequence,
+        capacity.host.arrival.sequence,
+        capacity.host.terminal.sequence,
+        capacity.host.settlement.sequence,
+        lane_a.host.first_output.sequence,
+        lane_b.host.first_output.sequence,
+        lane_a.host.terminal.sequence,
+        lane_b.host.terminal.sequence,
+        lane_b.host.settlement.sequence,
+        lane_a.host.settlement.sequence,
+    };
+    for (expected, 0..) |actual, offset| {
+        if (actual != sequence_base + offset + 1)
+            return error.InvalidEventSequence;
+    }
+    if (cancelled.outcome != .cancelled or
+        cancelled.flow_id != 0 or
+        cancelled.adapter_queue_slot != 0 or
+        rejected.outcome != .failed or
+        rejected.flow_id != 1 or
+        rejected.adapter_queue_slot != 0 or
+        lane_a.outcome != .completed or
+        lane_a.flow_id != 0 or
+        lane_a.adapter_queue_slot != 0 or
+        lane_b.outcome != .completed or
+        lane_b.flow_id != 1 or
+        lane_b.adapter_queue_slot != 1 or
+        capacity.outcome != .capacity_rejected or
+        capacity.flow_id != 0 or
+        capacity.adapter_queue_slot !=
+            native_report.no_queue_slot)
+        return error.InvalidDisruptionOutcome;
+}
+
+fn validateControlledEpochBoundaryV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    initial_lifecycle: metal.MetalDeviceLifecycleSnapshot,
+    initial_device: metal.MetalDeviceInfo,
+    epoch_index: usize,
+    completed_dispatches_before: u64,
+) !void {
+    try validateLifecycleSnapshot(
+        backend,
+        initial_lifecycle,
+        try backend.deviceLifecycleSnapshot(),
+    );
+    try validateDeviceAndPlacementIdentityV1(
+        initial_device,
+        try backend.deviceInfo(),
+    );
+    const adapter_snapshot = storage.adapter.snapshot();
+    const bank_snapshot = try storage.bank.snapshotV4();
+    const coordinator_snapshot =
+        try storage.coordinator.snapshot();
+    const expected_pin_count: u64 =
+        (epoch_index + 1) * 4;
+    if (adapter_snapshot.live_objects != flow_count * 4 or
+        adapter_snapshot.materialized_leases != 1 or
+        adapter_snapshot.used_resource_bytes !=
+            persistent_device_bytes or
+        backend.liveBufferCount() != flow_count * 4 or
+        try backend.nativeLiveBufferCount() !=
+            flow_count * 4 or
+        try backend.nativeLiveCommandCount() != 0 or
+        bank_snapshot.used.device_bytes !=
+            persistent_device_bytes or
+        bank_snapshot.active_lease_pin_slots != 0 or
+        bank_snapshot.lease_pin_acquisitions !=
+            expected_pin_count or
+        bank_snapshot.lease_pin_completions !=
+            expected_pin_count or
+        !coordinator_snapshot.live_lease or
+        coordinator_snapshot.active_dispatches != 0 or
+        backend.completedDispatchCount() !=
+            completed_dispatches_before +
+                (epoch_index + 1) * flow_count or
+        backend.compatibilityUnresolvedSubmission() != null)
+        return error.InvalidDisruptionBoundary;
+    for (0..flow_count) |flow| {
+        if (storage.lanes[flow].request != null or
+            storage.lanes[flow].pin != null or
+            storage.lanes[flow].ticket != null or
+            storage.adapter
+                .currentAsyncDispatchTicketForQueueSlotV1(
+                flow,
+            ) != null or
+            storage.adapter
+                .currentAsyncDispatchQuarantineForQueueSlotV1(
+                flow,
+            ) != null)
+            return error.InvalidLaneState;
+    }
+}
+
+fn runControlledDisruptionEpochsV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    fixture: FixtureV1,
+    scenario: native_report.ScenarioV1,
+    initial_lifecycle: metal.MetalDeviceLifecycleSnapshot,
+    initial_device: metal.MetalDeviceInfo,
+    recommended_max_working_set_size: u64,
+    completed_dispatches_before: u64,
+    clock: *EventClockV1,
+) !void {
+    if (recommended_max_working_set_size == 0)
+        return error.InvalidAllocatedContext;
+    var allocated_context_high_water: u64 = 0;
+    for (0..disruption_epoch_count) |epoch_index| {
+        const base = epoch_index *
+            disruption_records_per_epoch;
+        try runCancellationDisruptionV1(
+            storage,
+            backend,
+            campaign_lease,
+            fixture,
+            scenario,
+            epoch_index,
+            base,
+            clock,
+        );
+        try runMalformedRejectionDisruptionV1(
+            storage,
+            backend,
+            campaign_lease,
+            fixture,
+            scenario,
+            epoch_index,
+            base + 1,
+            clock,
+        );
+        var pending = try startControlledPairV1(
+            storage,
+            backend,
+            campaign_lease,
+            fixture,
+            epoch_index,
+            base + 2,
+            clock,
+        );
+        const bank_active = try storage.bank.snapshotV4();
+        if (bank_active.lease_pin_acquisitions !=
+            epoch_index * 4 + 4 or
+            bank_active.lease_pin_completions !=
+                epoch_index * 4 + 2)
+            return error.InvalidBankPinFacts;
+        try runCapacityDisruptionV1(
+            storage,
+            backend,
+            fixture,
+            scenario,
+            epoch_index,
+            base + 4,
+            &pending,
+            clock,
+        );
+
+        // Observe A then B, publish terminals A then B, and deliberately
+        // settle B before A.
+        for (0..flow_count) |flow| {
+            try observeLaneV1(
+                storage,
+                campaign_lease,
+                flow,
+                &pending[flow],
+                clock,
+            );
+        }
+        for (0..flow_count) |flow| {
+            pending[flow].host.terminal =
+                try clock.next();
+        }
+        var reverse_flow: usize = flow_count;
+        while (reverse_flow != 0) {
+            reverse_flow -= 1;
+            try settleLaneV1(
+                storage,
+                backend,
+                scenario,
+                reverse_flow,
+                &pending[reverse_flow],
+                clock,
+            );
+        }
+        try validatePairSettledV1(
+            storage,
+            backend,
+            (epoch_index + 1) * 4,
+            &pending,
+        );
+
+        for (0..flow_count) |flow| {
+            const allocated =
+                storage.records[base + 2 + flow]
+                    .allocated_context;
+            if (allocated.availability != .present or
+                allocated.before_bytes == 0 or
+                allocated.after_bytes == 0 or
+                allocated.before_bytes >
+                    recommended_max_working_set_size or
+                allocated.after_bytes >
+                    recommended_max_working_set_size)
+                return error.InvalidAllocatedContext;
+            allocated_context_high_water = @max(
+                allocated_context_high_water,
+                @max(
+                    allocated.before_bytes,
+                    allocated.after_bytes,
+                ),
+            );
+        }
+        try validateControlledEpochScheduleV1(
+            storage,
+            epoch_index,
+        );
+        try validateControlledEpochBoundaryV1(
+            storage,
+            backend,
+            initial_lifecycle,
+            initial_device,
+            epoch_index,
+            completed_dispatches_before,
+        );
+    }
+    if (allocated_context_high_water == 0 or
+        allocated_context_high_water >
+            recommended_max_working_set_size)
+        return error.InvalidAllocatedContext;
 }

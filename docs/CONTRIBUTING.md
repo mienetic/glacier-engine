@@ -91,7 +91,7 @@ narrow change never hides the checks required by another changed path.
 | FreeBSD-specific runtime | Native ReleaseSafe plus the retained FreeBSD target |
 | Shared POSIX runtime | Native ReleaseSafe, explicit Darwin evidence, both Linux targets, and FreeBSD; the Darwin label reuses the native suite instead of compiling twice |
 | Darwin- or macOS-specific runtime | Native Darwin ReleaseSafe tests; a non-Darwin skip is not passing evidence |
-| Metal backend | Serialized native Darwin Metal suite, including the production-native workload report, production-symbol isolation, and the build-isolated fault/race gate; a non-Darwin skip is not passing evidence |
+| Metal backend | Serialized native Darwin Metal suite, including the production-native workload report, controlled-disruption campaign, production-symbol isolation, and the build-isolated fault/race gate; a non-Darwin skip is not passing evidence |
 | Unknown input under a code tree | Conservatively use every retained target |
 | Concurrency or locking | Zig modes above, ThreadSanitizer where supported, fault/recovery tests |
 | On-disk or wire ABI | Encoder/decoder tests, golden fixture, mutation/reorder/truncation tests, independent verifier |
@@ -120,6 +120,10 @@ tools/zig-with-ephemeral-cache.sh build \
 
 tools/zig-with-ephemeral-cache.sh build \
   native-metal-workload-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-disruption-report-test \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 
 tools/zig-with-ephemeral-cache.sh build \

@@ -521,6 +521,14 @@ pub const MetalAllocationSnapshotV1 = struct {
     inspect_calls: u64,
 };
 
+/// Read-only cursors for the two generation-fenced dispatch namespaces.
+/// These values grant no dispatch authority. They let a bounded campaign
+/// prove that a rejected request did not consume either generation.
+pub const MetalDispatchGenerationSnapshotV1 = struct {
+    next_request_generation: u64,
+    next_ticket_generation: u64,
+};
+
 const LossRetirementModeV1 = enum {
     production,
     synthetic_test,
@@ -4796,6 +4804,17 @@ pub const MetalAllocationAdapterV1 = struct {
             .allocate_calls = self.allocate_calls,
             .free_calls = self.free_calls,
             .inspect_calls = self.inspect_calls,
+        };
+    }
+
+    pub fn dispatchGenerationSnapshotV1(
+        self: *MetalAllocationAdapterV1,
+    ) MetalDispatchGenerationSnapshotV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return .{
+            .next_request_generation = self.next_matvec_request_generation,
+            .next_ticket_generation = self.next_async_ticket_generation,
         };
     }
 
@@ -11443,11 +11462,17 @@ test "Metal prepared matvec request is idempotent and generation fenced" {
         16,
         32,
     );
+    const generation_before =
+        adapter.dispatchGenerationSnapshotV1();
     try std.testing.expectError(
         Error.DispatchBusy,
         adapter.prepareMatvecDispatchRequestUnlocked(
             saturated,
         ),
+    );
+    try std.testing.expectEqualDeep(
+        generation_before,
+        adapter.dispatchGenerationSnapshotV1(),
     );
     try std.testing.expectEqualDeep(
         first,

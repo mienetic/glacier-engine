@@ -648,8 +648,8 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 ```
 
-The suite order is readiness → allocation ownership → fault/reconciliation →
-focused correctness.
+The suite order is readiness → allocation ownership → production workload
+report → controlled disruption → fault/reconciliation → focused correctness.
 
 ## Open follow-up work
 

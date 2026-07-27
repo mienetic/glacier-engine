@@ -1297,10 +1297,13 @@ fingerprint and registry identity, and fails
 rather than skipping when its one completed diagnostic dispatch cannot be
 observed. A separate native allocation gate exercises real-buffer ownership and
 per-adapter async submit/poll-or-wait/output-validation/settlement/finalization;
-the build-isolated fault gate follows it with physical/published fact
-separation, one-winner arm racing, and settlement retry. The serialized native
-suite order is readiness → allocation ownership → fault/reconciliation →
-focused correctness. Portable contract tests do not execute GPU work.
+the production workload and controlled-disruption gates follow with
+correctness-gated commands and independently verified evidence; the
+build-isolated fault gate then covers physical/published fact separation,
+one-winner arm racing, and settlement retry. The serialized native suite order
+is readiness → allocation ownership → production workload report → controlled
+disruption → fault/reconciliation → focused correctness. Portable contract
+tests do not execute GPU work.
 Execution, numerical, durable-recovery, and physical-resource validation still
 require real machines for each promoted platform.
 
