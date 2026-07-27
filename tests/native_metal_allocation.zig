@@ -4203,6 +4203,395 @@ fn runBoundedTwoSlotMetalDispatchProof() !void {
         bank.validateLeasePin(bank_permit_b),
     );
 
+    // Reuse both logical adapter slots under the same eight-buffer lease.
+    // Tombstones from round one remain available for exact acknowledgement,
+    // but they are not live slot ownership. The new request, coordinator-pin,
+    // and adapter-ticket generations fence each reused slot. These are
+    // runtime ownership facts only and make no claim about physical GPU
+    // concurrency.
+    gpu_output_a = output_sentinel_values;
+    gpu_output_b = output_sentinel_values;
+    const request_a_round_two =
+        try adapter.prepareMatvecDispatchRequestV1(attempt_a);
+    try testing.expect(
+        request_a_round_two.request_generation >
+            request_b.request_generation,
+    );
+    const pin_a_round_two = try coordinator.acquireDispatchPin(
+        lease,
+        adapter.dispatchInterface(),
+        request_a_round_two.request_sha256,
+    );
+    try tree_allocation.validateDispatchPinV1(pin_a_round_two);
+    try testing.expect(
+        pin_a_round_two.dispatch_generation >
+            pin_b.dispatch_generation,
+    );
+    const ticket_a_round_two =
+        try adapter.submitMatvecInt4AsyncObserved(
+            lease,
+            pin_a_round_two,
+            fixture.bindings[0],
+            quantized.packed_bytes,
+            quantized.scales,
+            &input_a,
+            &gpu_output_a,
+            group_size,
+            in_features,
+            out_features,
+        );
+    try metal_allocation.validateMetalAsyncDispatchTicketV1(
+        ticket_a_round_two,
+    );
+    try testing.expectEqual(
+        ticket_a.queue_slot,
+        ticket_a_round_two.queue_slot,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        ticket_a_round_two.queue_slot,
+    );
+    try testing.expect(
+        ticket_a_round_two.ticket_generation >
+            ticket_b.ticket_generation,
+    );
+    try testing.expect(
+        ticket_a_round_two.dispatch_generation >
+            ticket_b.dispatch_generation,
+    );
+
+    const request_b_round_two =
+        try adapter.prepareMatvecDispatchRequestV1(attempt_b);
+    try testing.expect(
+        request_b_round_two.request_generation >
+            request_a_round_two.request_generation,
+    );
+    const pin_b_round_two = try coordinator.acquireDispatchPin(
+        lease,
+        adapter.dispatchInterface(),
+        request_b_round_two.request_sha256,
+    );
+    try tree_allocation.validateDispatchPinV1(pin_b_round_two);
+    try testing.expect(
+        pin_b_round_two.dispatch_generation >
+            pin_a_round_two.dispatch_generation,
+    );
+    const ticket_b_round_two =
+        try adapter.submitMatvecInt4AsyncObserved(
+            lease,
+            pin_b_round_two,
+            fixture.bindings[1],
+            quantized.packed_bytes,
+            quantized.scales,
+            &input_b,
+            &gpu_output_b,
+            group_size,
+            in_features,
+            out_features,
+        );
+    try metal_allocation.validateMetalAsyncDispatchTicketV1(
+        ticket_b_round_two,
+    );
+    try testing.expectEqual(
+        ticket_b.queue_slot,
+        ticket_b_round_two.queue_slot,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        ticket_b_round_two.queue_slot,
+    );
+    try testing.expect(
+        ticket_b_round_two.ticket_generation >
+            ticket_a_round_two.ticket_generation,
+    );
+    try testing.expect(
+        ticket_b_round_two.dispatch_generation >
+            ticket_a_round_two.dispatch_generation,
+    );
+    try testing.expectEqualDeep(
+        ticket_a_round_two,
+        adapter.currentAsyncDispatchTicketForQueueSlotV1(0).?,
+    );
+    try testing.expectEqualDeep(
+        ticket_b_round_two,
+        adapter.currentAsyncDispatchTicketForQueueSlotV1(1).?,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectEqual(
+        @as(usize, 2),
+        activeLeasePinCount(&pin_slots),
+    );
+    try testing.expectEqual(
+        @as(usize, 2),
+        (try coordinator.snapshot()).active_dispatches,
+    );
+    const bank_round_two_active = try bank.snapshotV4();
+    try testing.expectEqual(
+        @as(usize, 2),
+        bank_round_two_active.active_lease_pin_slots,
+    );
+    try testing.expectEqual(
+        @as(u64, 4),
+        bank_round_two_active.lease_pin_acquisitions,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        bank_round_two_active.lease_pin_completions,
+    );
+
+    // A ticket retained from round one cannot observe or submit against the
+    // newer dispatch generation occupying the same logical slot. Rejection
+    // occurs before output publication or native command creation.
+    var stale_output_a = output_sentinel_values;
+    var stale_output_b = output_sentinel_values;
+    try testing.expectError(
+        metal_allocation.Error.InvalidDispatchEvidence,
+        adapter.pollMatvecInt4AsyncObserved(
+            lease,
+            pin_a,
+            ticket_a,
+            &stale_output_a,
+        ),
+    );
+    try testing.expectError(
+        metal_allocation.Error.InvalidDispatchEvidence,
+        adapter.pollMatvecInt4AsyncObserved(
+            lease,
+            pin_b,
+            ticket_b,
+            &stale_output_b,
+        ),
+    );
+    try testing.expectEqualSlices(
+        f32,
+        output_sentinel_values[0..],
+        stale_output_a[0..],
+    );
+    try testing.expectEqualSlices(
+        f32,
+        output_sentinel_values[0..],
+        stale_output_b[0..],
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.submitMatvecInt4AsyncObserved(
+            lease,
+            pin_a,
+            fixture.bindings[0],
+            quantized.packed_bytes,
+            quantized.scales,
+            &input_a,
+            &gpu_output_a,
+            group_size,
+            in_features,
+            out_features,
+        ),
+    );
+    try testing.expectError(
+        metal_allocation.Error.DispatchBusy,
+        adapter.submitMatvecInt4AsyncObserved(
+            lease,
+            pin_b,
+            fixture.bindings[1],
+            quantized.packed_bytes,
+            quantized.scales,
+            &input_b,
+            &gpu_output_b,
+            group_size,
+            in_features,
+            out_features,
+        ),
+    );
+
+    // Exact completion acknowledgement from round one remains an idempotent
+    // tombstone lookup. It cannot finalize either new native command or
+    // consume either new Bank pin.
+    try adapter.acknowledgeDispatchCompletion(completion_a);
+    try adapter.acknowledgeDispatchCompletion(completion_b);
+    try testing.expectEqualDeep(
+        ticket_a_round_two,
+        adapter.currentAsyncDispatchTicketForQueueSlotV1(0).?,
+    );
+    try testing.expectEqualDeep(
+        ticket_b_round_two,
+        adapter.currentAsyncDispatchTicketForQueueSlotV1(1).?,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectEqual(
+        dispatch_count_before + 2,
+        backend.completedDispatchCount(),
+    );
+    try testing.expectEqual(
+        @as(usize, 2),
+        activeLeasePinCount(&pin_slots),
+    );
+    try testing.expectEqual(
+        @as(usize, 2),
+        (try coordinator.snapshot()).active_dispatches,
+    );
+
+    const waited_a_round_two =
+        try adapter.waitMatvecInt4AsyncObserved(
+            lease,
+            pin_a_round_two,
+            ticket_a_round_two,
+            &gpu_output_a,
+        );
+    const result_a_round_two = switch (waited_a_round_two) {
+        .completed => |value| value,
+        .pending, .quarantined => return error.TestUnexpectedResult,
+    };
+    try metal_allocation
+        .validateMetalLeaseTreeDispatchPayloadV1(
+        result_a_round_two.observation,
+        quantized.packed_bytes,
+        quantized.scales,
+        &input_a,
+        &gpu_output_a,
+    );
+    try metal_allocation
+        .validateMetalLeaseTreeDispatchObservationForPinV1(
+        result_a_round_two.observation,
+        pin_a_round_two,
+        result_a_round_two.terminal,
+    );
+    for (cpu_output_a.asF32(), gpu_output_a) |expected, actual|
+        try testing.expectApproxEqAbs(expected, actual, 2e-5);
+
+    const waited_b_round_two =
+        try adapter.waitMatvecInt4AsyncObserved(
+            lease,
+            pin_b_round_two,
+            ticket_b_round_two,
+            &gpu_output_b,
+        );
+    const result_b_round_two = switch (waited_b_round_two) {
+        .completed => |value| value,
+        .pending, .quarantined => return error.TestUnexpectedResult,
+    };
+    try metal_allocation
+        .validateMetalLeaseTreeDispatchPayloadV1(
+        result_b_round_two.observation,
+        quantized.packed_bytes,
+        quantized.scales,
+        &input_b,
+        &gpu_output_b,
+    );
+    try metal_allocation
+        .validateMetalLeaseTreeDispatchObservationForPinV1(
+        result_b_round_two.observation,
+        pin_b_round_two,
+        result_b_round_two.terminal,
+    );
+    for (cpu_output_b.asF32(), gpu_output_b) |expected, actual|
+        try testing.expectApproxEqAbs(expected, actual, 2e-5);
+    try testing.expectEqual(
+        @as(u64, 2),
+        try backend.nativeLiveCommandCount(),
+    );
+
+    const completion_a_round_two =
+        try coordinator.completeDispatchPin(
+            pin_a_round_two,
+            adapter.dispatchInterface(),
+            result_a_round_two.terminal,
+        );
+    try tree_allocation.validateDispatchCompletionForPinV1(
+        completion_a_round_two,
+        pin_a_round_two,
+        result_a_round_two.terminal,
+    );
+    try adapter.acknowledgeDispatchCompletion(
+        completion_a_round_two,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectEqual(
+        @as(usize, 1),
+        activeLeasePinCount(&pin_slots),
+    );
+    try testing.expectEqual(
+        @as(usize, 1),
+        (try coordinator.snapshot()).active_dispatches,
+    );
+
+    const completion_b_round_two =
+        try coordinator.completeDispatchPin(
+            pin_b_round_two,
+            adapter.dispatchInterface(),
+            result_b_round_two.terminal,
+        );
+    try tree_allocation.validateDispatchCompletionForPinV1(
+        completion_b_round_two,
+        pin_b_round_two,
+        result_b_round_two.terminal,
+    );
+    try adapter.acknowledgeDispatchCompletion(
+        completion_b_round_two,
+    );
+    try testing.expectEqual(
+        dispatch_count_before + 4,
+        backend.completedDispatchCount(),
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        try backend.nativeLiveCommandCount(),
+    );
+    try testing.expectEqual(
+        @as(usize, 0),
+        activeLeasePinCount(&pin_slots),
+    );
+    try testing.expectEqual(
+        @as(usize, 0),
+        (try coordinator.snapshot()).active_dispatches,
+    );
+    try testing.expect(
+        adapter.currentAsyncDispatchTicketForQueueSlotV1(0) == null,
+    );
+    try testing.expect(
+        adapter.currentAsyncDispatchTicketForQueueSlotV1(1) == null,
+    );
+    const bank_round_two_settled = try bank.snapshotV4();
+    try testing.expectEqual(
+        @as(usize, 0),
+        bank_round_two_settled.active_lease_pin_slots,
+    );
+    try testing.expectEqual(
+        @as(usize, 2),
+        bank_round_two_settled.peak_active_lease_pin_slots,
+    );
+    try testing.expectEqual(
+        @as(u64, 4),
+        bank_round_two_settled.lease_pin_acquisitions,
+    );
+    try testing.expectEqual(
+        @as(u64, 4),
+        bank_round_two_settled.lease_pin_completions,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        bank_round_two_settled
+            .reserved_lease_pin_completion_generations,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        bank_round_two_settled
+            .reserved_lease_pin_completion_structural_revisions,
+    );
+    try testing.expectEqual(@as(u64, 8), backend.liveBufferCount());
+    try testing.expectEqual(
+        @as(u64, 8),
+        try backend.nativeLiveBufferCount(),
+    );
+
     const released = try coordinator.release(
         lease,
         adapter.interface(),
@@ -4259,7 +4648,7 @@ test "real Metal dispatch pins exact LeaseTree buffers until completion" {
     try runRealMetalDispatchLifecycle(false);
 }
 
-test "bounded two-slot Metal dispatch settles out of order without native replay" {
+test "bounded two-slot Metal dispatch settles out of order and reuses generation-fenced slots" {
     try runBoundedTwoSlotMetalDispatchProof();
 }
 
