@@ -1008,6 +1008,14 @@ class VerificationPolicyTests(unittest.TestCase):
             1,
             source.count('"profile-complete-compile"'),
         )
+        self.assertEqual(
+            1,
+            source.count('"native-metal-suite-compile"'),
+        )
+        self.assertEqual(
+            1,
+            source.count('"host-runtime-compile"'),
+        )
         self.assertIn('"install-benchmarks"', source)
         self.assertIn('"native-metal-correctness-test"', source)
         self.assertEqual(
@@ -1052,6 +1060,30 @@ class VerificationPolicyTests(unittest.TestCase):
             "    );",
             source,
         )
+        self.assertIn(
+            "profile_host_tool_compile_step.dependOn(\n"
+            "        runtime_support_inspector_compile_step,\n"
+            "    );",
+            source,
+        )
+        self.assertIn(
+            "test_compile_step.dependOn(profile_core_compile_step)",
+            source,
+        )
+        self.assertIn(
+            "test_compile_step.dependOn("
+            "profile_host_tool_compile_step)",
+            source,
+        )
+        self.assertIn(
+            "host_runtime_compile_step.dependOn(test_compile_step)",
+            source,
+        )
+        self.assertIn(
+            "host_runtime_compile_step.dependOn("
+            "contract_c_compile_step)",
+            source,
+        )
         self.assertNotIn(
             "profile_durable_compile_step.dependOn("
             "profile_cpu_compile_step)",
@@ -1077,6 +1109,93 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertEqual(
             1,
             source.count("buildMetalLib(b, metal_output_dir)"),
+        )
+        frontier_start = source.index(
+            "for ([_]*std.Build.Step.Compile{"
+        )
+        frontier_source = source[
+            frontier_start : source.index(
+                "const run_native_metal_inflight_process_kill_report",
+                frontier_start,
+            )
+        ]
+        for artifact in (
+            "metal_tests",
+            "native_metal_inflight_process_kill_ready_tests",
+            "native_metal_observation_tests",
+            "native_metal_observation_exe",
+            "native_metal_allocation_tests",
+            "native_workload_report_tests",
+            "native_workload_campaign_tests",
+            "native_metal_workload_report_exe",
+            "native_metal_disruption_report_exe",
+            "native_metal_cancellation_storm_report_exe",
+            "native_metal_soak_worker_exe",
+            "native_metal_inflight_process_kill_worker_exe",
+            "native_metal_fault_tests",
+        ):
+            with self.subTest(native_metal_compile_artifact=artifact):
+                self.assertIn(artifact, frontier_source)
+        self.assertIn(
+            "}) |artifact| {\n"
+            "            native_metal_suite_compile_step.dependOn(\n"
+            "                &artifact.step,\n"
+            "            );\n"
+            "        }",
+            frontier_source,
+        )
+        self.assertIn(
+            "check_metal_fault_symbols.expectExitCode(0)",
+            source,
+        )
+        metal_lib_start = source.index("fn buildMetalLib(")
+        metal_lib_source = source[
+            metal_lib_start : source.index(
+                "/// Compile src/backends/metal/shim.m",
+                metal_lib_start,
+            )
+        ]
+        self.assertEqual(
+            4,
+            metal_lib_source.count("addOutputFileArg("),
+        )
+        self.assertIn(
+            "compile_dequant.addFileArg(",
+            metal_lib_source,
+        )
+        self.assertIn(
+            "compile_matmul.addFileArg(",
+            metal_lib_source,
+        )
+        self.assertIn(
+            "compile_metallib.addFileArg(dequant_air)",
+            metal_lib_source,
+        )
+        self.assertIn(
+            "compile_metallib.addFileArg(matmul_air)",
+            metal_lib_source,
+        )
+        self.assertIn(
+            "const module_cache_dir = b.cache_root.join(",
+            metal_lib_source,
+        )
+        self.assertEqual(
+            2,
+            metal_lib_source.count("-fmodules-cache-path={s}"),
+        )
+        self.assertIn(
+            'b.path("tools/metal-toolchain-identity.sh")',
+            metal_lib_source,
+        )
+        self.assertIn(
+            "capture_toolchain_identity.has_side_effects = true",
+            metal_lib_source,
+        )
+        self.assertEqual(
+            3,
+            metal_lib_source.count(
+                "addFileInput(toolchain_identity)"
+            ),
         )
         self.assertIn(
             "run_native_metal_correctness_tests.step.dependOn(\n"
@@ -1500,6 +1619,16 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             '&& [ "${2:-}" = "test" ]; then\n'
             "    exit 23\n"
             "fi\n"
+            'if [ -n "${VERIFY_INTEGRATION_FAIL_HOST_COMPILE:-}" ] '
+            '&& [ "${1:-}" = "build" ] '
+            '&& [ "${2:-}" = "host-runtime-compile" ]; then\n'
+            "    exit 29\n"
+            "fi\n"
+            'if [ -n "${VERIFY_INTEGRATION_FAIL_METAL_COMPILE:-}" ] '
+            '&& [ "${1:-}" = "build" ] '
+            '&& [ "${2:-}" = "native-metal-suite-compile" ]; then\n'
+            "    exit 31\n"
+            "fi\n"
             "exit 0\n",
         )
         self.make_fake_command(
@@ -1590,10 +1719,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             compile_calls = [
                 line
                 for line in calls
-                if line.startswith(
-                    "build profile-device-compile "
-                    "profile-host-tool-compile "
-                )
+                if line.startswith("build native-metal-suite-compile ")
             ]
             native_calls = [
                 line
@@ -1611,10 +1737,80 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 self.assertIn(" --cache-dir ", call)
                 self.assertIn(" --global-cache-dir ", call)
                 self.assertIn(" --prefix ", call)
+            compile_tokens = compile_calls[0].split()
+            native_tokens = native_calls[0].split()
+            for option in (
+                "--cache-dir",
+                "--global-cache-dir",
+                "--prefix",
+            ):
+                with self.subTest(shared_metal_option=option):
+                    self.assertEqual(
+                        compile_tokens[compile_tokens.index(option) + 1],
+                        native_tokens[native_tokens.index(option) + 1],
+                    )
+            self.assertEqual(
+                next(
+                    token
+                    for token in compile_tokens
+                    if token.startswith("-Dmetal-output-dir=")
+                ),
+                next(
+                    token
+                    for token in native_tokens
+                    if token.startswith("-Dmetal-output-dir=")
+                ),
+            )
             self.assertIn(" -j2 ", compile_calls[0])
             self.assertIn(" -j1 ", native_calls[0])
-            self.assertNotIn("profile-device-compile", native_calls[0])
-            self.assertNotIn("profile-host-tool-compile", native_calls[0])
+            self.assertNotIn(
+                "native-metal-suite-compile",
+                native_calls[0],
+            )
+
+    def test_native_metal_compile_failure_suppresses_hardware_phase(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            self.make_fake_command(
+                root / "fake-bin" / "uname",
+                "printf 'Darwin\\n'\n",
+            )
+            metal_benchmark = repository / "bench" / "metal_kernel.zig"
+            metal_benchmark.write_text("", encoding="ascii")
+            environment["VERIFY_INTEGRATION_FAIL_METAL_COMPILE"] = "1"
+
+            result = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn(
+                "FAIL  native/metal: exit 31",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            self.assertEqual(
+                1,
+                sum(
+                    line.startswith("build native-metal-suite-compile ")
+                    for line in calls
+                ),
+                calls,
+            )
+            self.assertFalse(
+                any(
+                    line.startswith("build native-metal-suite-test ")
+                    for line in calls
+                ),
+                calls,
+            )
 
     def test_workload_report_uses_one_portable_non_metal_build_graph(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -2203,10 +2399,78 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             calls = Path(
                 environment["VERIFY_INTEGRATION_ZIG_LOG"]
             ).read_text(encoding="ascii").splitlines()
+            compile_calls = [
+                line
+                for line in calls
+                if line.startswith("build host-runtime-compile ")
+                and " -Dtarget=" not in line
+            ]
+            runtime_calls = [
+                line
+                for line in calls
+                if line.startswith("build test contract-interop-test ")
+            ]
+            self.assertEqual(1, len(compile_calls), calls)
+            self.assertEqual(1, len(runtime_calls), calls)
+            self.assertLess(
+                calls.index(compile_calls[0]),
+                calls.index(runtime_calls[0]),
+            )
+            self.assertFalse(
+                any(
+                    line.startswith("build contract-interop-test ")
+                    or line.startswith("build package-module-test ")
+                    for line in calls
+                ),
+                calls,
+            )
             self.assertEqual(
                 1,
                 sum(
                     line.startswith(
+                        "build native-workload-store-fault-test "
+                    )
+                    for line in calls
+                ),
+                calls,
+            )
+
+    def test_full_compile_failure_suppresses_runtime_and_hard_campaign(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, _, environment = self.make_repository(root)
+            environment["VERIFY_INTEGRATION_FAIL_HOST_COMPILE"] = "1"
+
+            result = self.run_full(repository, environment)
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn(
+                "FAIL  compile/host-test-frontier: exit 29",
+                result.stdout,
+            )
+            self.assertIn(
+                "SKIP  native/workload-store-fault: host test compile "
+                "frontier failed",
+                result.stdout,
+            )
+            calls = Path(
+                environment["VERIFY_INTEGRATION_ZIG_LOG"]
+            ).read_text(encoding="ascii").splitlines()
+            self.assertEqual(
+                1,
+                sum(
+                    line.startswith("build host-runtime-compile ")
+                    and " -Dtarget=" not in line
+                    for line in calls
+                ),
+                calls,
+            )
+            self.assertFalse(
+                any(
+                    line.startswith("build test contract-interop-test ")
+                    or line.startswith(
                         "build native-workload-store-fault-test "
                     )
                     for line in calls
@@ -2242,22 +2506,32 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout + result.stderr,
             )
             self.assertIn(
-                "PASS  native/releasesafe-suite:",
+                "PASS  native/releasesafe-suite: covered by the shared "
+                "host runtime DAG",
                 result.stdout,
             )
             self.assertIn(
-                "PASS  native/darwin: covered by "
-                "native/releasesafe-suite",
+                "PASS  native/darwin: covered by the shared host "
+                "runtime DAG",
                 result.stdout,
             )
+            calls = zig_log.read_text(encoding="ascii").splitlines()
+            compile_calls = [
+                line
+                for line in calls
+                if line.startswith("build host-runtime-compile ")
+            ]
             native_test_calls = [
                 line
-                for line in zig_log.read_text(
-                    encoding="ascii"
-                ).splitlines()
-                if line.startswith("build test ")
+                for line in calls
+                if line.startswith("build test contract-interop-test ")
             ]
+            self.assertEqual(1, len(compile_calls), compile_calls)
             self.assertEqual(1, len(native_test_calls), native_test_calls)
+            self.assertLess(
+                calls.index(compile_calls[0]),
+                calls.index(native_test_calls[0]),
+            )
 
             zig_log.write_text("", encoding="ascii")
             failure_environment = dict(environment)
@@ -2269,12 +2543,17 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             self.assertNotEqual(0, failed.returncode)
             self.assertIn(
-                "FAIL  native/releasesafe-suite: exit 23",
+                "FAIL  host/runtime-dag: exit 23",
                 failed.stdout,
             )
             self.assertIn(
-                "FAIL  native/darwin: covering "
-                "native/releasesafe-suite failed",
+                "SKIP  native/releasesafe-suite: shared host runtime "
+                "DAG failed",
+                failed.stdout,
+            )
+            self.assertIn(
+                "FAIL  native/darwin: covering host compile or runtime "
+                "DAG failed",
                 failed.stdout,
             )
             failed_native_test_calls = [
@@ -2282,7 +2561,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 for line in zig_log.read_text(
                     encoding="ascii"
                 ).splitlines()
-                if line.startswith("build test ")
+                if line.startswith("build test contract-interop-test ")
             ]
             self.assertEqual(
                 1,
@@ -2329,7 +2608,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 for line in zig_log.read_text(
                     encoding="ascii"
                 ).splitlines()
-                if line.startswith("build test ")
+                if line.startswith("build test contract-interop-test ")
             ]
             self.assertEqual(1, len(native_test_calls), native_test_calls)
 
@@ -2366,8 +2645,8 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 arm64.stdout + arm64.stderr,
             )
             self.assertIn(
-                "PASS  native/darwin-aarch64: covered by "
-                "native/releasesafe-suite",
+                "PASS  native/darwin-aarch64: covered by the shared "
+                "host runtime DAG",
                 arm64.stdout,
             )
             arm64_native_test_calls = [
@@ -2375,7 +2654,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 for line in zig_log.read_text(
                     encoding="ascii"
                 ).splitlines()
-                if line.startswith("build test ")
+                if line.startswith("build test contract-interop-test ")
             ]
             self.assertEqual(
                 1,

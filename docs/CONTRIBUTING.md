@@ -226,11 +226,28 @@ pointers execute once. Naming `install` remains required for a full plan
 because Zig does not select its default step after another top-level step is
 named. The default install now contains only the production CLI; use
 `zig build install-benchmarks` to stage all benchmark and diagnostic
-executables. `zig build run` also builds only the CLI. Metal-only changes first
-complete the orthogonal device and host-tool compile profiles, then run
-`native-metal-suite-test` as a separate `-j1` hardware phase against the same
-temporary cache. The aggregate runs diagnostic readiness, real-resource allocation
-ownership, one production-native 20-dispatch workload report,
+executables. `zig build run` also builds only the CLI.
+
+The quick profile passes its compatible contract and package roots to one Zig
+invocation. The full profile first runs `host-runtime-compile`, which closes
+over the complete `test-compile` graph and the C/C++/Python contract artifacts
+needed by the subsequent host runtime DAG. A compile failure stops the broad
+runtime phase, while a successful frontier warms the same private caches used
+by the subsequent `test` and contract roots. This separates build failures from
+runtime failures without recompiling each compatible root in an independent
+cold process.
+
+Metal-only changes first complete `native-metal-suite-compile`. That frontier
+includes the device and host-tool profiles, every distinct native suite
+executable and test, the cacheable shader library, and the isolated fault-symbol
+check. Its shader cache identity tracks the selected Xcode tools, SDK settings,
+and Metal standard-library contents rather than trusting a stale persistent
+toolchain result. `tools/verify.sh` then runs `native-metal-suite-test` as a
+separate `-j1` hardware phase with the same temporary cache, Metal output
+directory, and prefix. The compile frontier therefore finishes before thermal
+admission and real device work. The aggregate runs diagnostic readiness,
+real-resource
+allocation ownership, one production-native 20-dispatch workload report,
 controlled disruption, the W7b-b3 paired-thread cancellation-storm profile,
 the W7b-a segmented soak, the W7b-b1 post-segment process-kill profile,
 the W7b-b4 controlled in-flight process-kill profile, build-isolated
@@ -267,12 +284,18 @@ The separate
 uses real host processes and filesystem calls with controlled errno injection;
 it runs no model or GPU command and grants no physical-storage or power-loss
 claim.
-Verification uses one protected temporary workspace, shared private Zig cache
-directories, temporary target prefixes, `-j2`, and repository fixtures only.
-No persistent repository cache is needed. The quick profile intentionally
-marks broad native, Python, Rust, sanitizer, and cross-target work as skipped;
-it is a contributor smoke gate, not evidence that those matrices passed. The
-matrix profile intentionally retains full
+Verification uses one protected temporary workspace, shared private Zig and
+SDK compiler-module cache directories, temporary target prefixes, `-j2` for
+compile and portable work, `-j1` for the serialized Metal hardware phase, and
+repository fixtures only.
+The caches are reused across compatible compile and runtime phases, then
+removed with the workspace on normal exit so repeated target matrices do not
+grow a repository cache. Foreign configurations are not merged into one Zig
+graph: each selected target receives exactly one invocation containing its
+audited root union. No persistent repository cache is needed. The quick profile
+intentionally marks broad native, Python, Rust, sanitizer, and cross-target work
+as skipped; it is a contributor smoke gate, not evidence that those matrices
+passed. The matrix profile intentionally retains full
 `install install-benchmarks test-compile` coverage for all four targets.
 
 Record an unsupported ThreadSanitizer environment as **not run**, not passed.

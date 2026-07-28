@@ -147,20 +147,30 @@ chmod 700 "$verification_root" || {
     echo "FAIL  verifier/cache: cannot protect temporary workspace" >&2
     exit 1
 }
-mkdir "$verification_root/logs" || {
-    echo "FAIL  verifier/cache: cannot create temporary log directory" >&2
+mkdir \
+    "$verification_root/logs" \
+    "$verification_root/clang-module-cache" \
+    "$verification_root/swift-module-cache" || {
+    echo "FAIL  verifier/cache: cannot create temporary directories" >&2
     exit 1
 }
 
 ZIG_LOCAL_CACHE_DIR="$verification_root/zig-local"
 ZIG_GLOBAL_CACHE_DIR="$verification_root/zig-global"
+CLANG_MODULE_CACHE_PATH="$verification_root/clang-module-cache"
+SWIFT_MODULECACHE_PATH="$verification_root/swift-module-cache"
 verification_prefix="$verification_root/prefix"
 affected_paths_file="$verification_root/affected.paths0"
 affected_flags_file="$verification_root/affected.flags"
 selected_targets_file="$verification_root/selected.targets"
 selected_target_steps_file="$verification_root/selected.target-steps"
 PYTHONDONTWRITEBYTECODE=1
-export ZIG_LOCAL_CACHE_DIR ZIG_GLOBAL_CACHE_DIR PYTHONDONTWRITEBYTECODE
+export \
+    ZIG_LOCAL_CACHE_DIR \
+    ZIG_GLOBAL_CACHE_DIR \
+    CLANG_MODULE_CACHE_PATH \
+    SWIFT_MODULECACHE_PATH \
+    PYTHONDONTWRITEBYTECODE
 
 active_pid=
 
@@ -242,15 +252,15 @@ run_zig_build() {
 }
 
 run_zig_metal_build() {
-    zig build profile-device-compile \
-        profile-host-tool-compile \
+    zig build native-metal-suite-compile \
         -Dmetal-output-dir="$verification_root/metal" \
         -Doptimize=ReleaseSafe \
         -Dmetal=true \
         -j2 \
         --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
         --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" \
-        --prefix "$verification_root/prefix-metal"
+        --prefix "$verification_root/prefix-metal" ||
+        return $?
     zig build native-metal-suite-test \
         -Dmetal-output-dir="$verification_root/metal" \
         -Doptimize=ReleaseSafe \
@@ -313,15 +323,21 @@ run_or_reuse_native_suite() {
     native_gate=$1
     if [ "$native_full_status" = "0" ]; then
         record_pass "$native_gate" \
-            "covered by native/releasesafe-suite"
-    elif [ "$native_full_status" = "unavailable" ]; then
+            "covered by the shared host runtime DAG"
+    elif [ "$native_full_status" = "unavailable-zig" ]; then
         record_native_unavailable "$native_gate" \
             "requires a working zig executable"
+    elif [ "$native_full_status" = "unavailable-python" ]; then
+        record_native_unavailable "$native_gate" \
+            "requires a working python3 executable"
     elif [ "$native_full_status" != "not-run" ]; then
         record_fail "$native_gate" \
-            "covering native/releasesafe-suite failed"
-    elif [ "$has_zig" -eq 1 ]; then
+            "covering host compile or runtime DAG failed"
+    elif [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
         run_gate "$native_gate" run_zig_build test
+    elif [ "$has_zig" -eq 1 ]; then
+        record_native_unavailable "$native_gate" \
+            "requires a working python3 executable"
     else
         record_native_unavailable "$native_gate" \
             "requires a working zig executable"
@@ -561,6 +577,23 @@ elif [ "$profile" = "matrix" ]; then
     fi
 fi
 
+run_native_full=0
+run_python_full=0
+case "$profile" in
+    full | matrix)
+        run_native_full=1
+        run_python_full=1
+        ;;
+    affected)
+        if [ "$affected_plan_ready" -eq 1 ] && plan_has "native-full"; then
+            run_native_full=1
+        fi
+        if [ "$affected_plan_ready" -eq 1 ] && plan_has "python-full"; then
+            run_python_full=1
+        fi
+        ;;
+esac
+
 if [ "$has_zig" -eq 1 ]; then
     run_gate "format/zig" \
         zig fmt --check build.zig src bench examples tests
@@ -575,18 +608,32 @@ else
     record_skip "policy/public-markdown" "requires a working python3 executable"
 fi
 
-if [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
-    run_gate "interop/c-cpp-python" \
-        run_zig_build contract-interop-test
+if [ "$run_native_full" -eq 1 ]; then
+    :
+elif [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
+    run_gate "host/quick-dag" \
+        run_zig_build contract-interop-test package-module-test
+    host_quick_status=$last_gate_status
+    if [ "$host_quick_status" -eq 0 ]; then
+        record_pass "interop/c-cpp-python" \
+            "covered by the shared host Zig DAG"
+        record_pass "package/modules" \
+            "covered by the shared host Zig DAG"
+    else
+        record_skip "interop/c-cpp-python" \
+            "shared host Zig DAG failed"
+        record_skip "package/modules" \
+            "shared host Zig DAG failed"
+    fi
 else
     record_skip "interop/c-cpp-python" "requires both zig and python3"
-fi
-
-if [ "$has_zig" -eq 1 ]; then
-    run_gate "package/modules" \
-        run_zig_build package-module-test
-else
-    record_skip "package/modules" "requires a working zig executable"
+    if [ "$has_zig" -eq 1 ]; then
+        run_gate "package/modules" \
+            run_zig_build package-module-test
+    else
+        record_skip "package/modules" \
+            "requires a working zig executable"
+    fi
 fi
 
 if [ "$profile" = "affected" ] &&
@@ -634,32 +681,68 @@ if [ "$profile" = "affected" ] &&
     fi
 fi
 
-run_native_full=0
-run_python_full=0
 native_full_status=not-run
-case "$profile" in
-    full | matrix)
-        run_native_full=1
-        run_python_full=1
-        ;;
-    affected)
-        if [ "$affected_plan_ready" -eq 1 ] && plan_has "native-full"; then
-            run_native_full=1
-        fi
-        if [ "$affected_plan_ready" -eq 1 ] && plan_has "python-full"; then
-            run_python_full=1
-        fi
-        ;;
-esac
+host_compile_status=not-run
 
 if [ "$run_native_full" -eq 1 ]; then
     if [ "$has_zig" -eq 1 ]; then
-        run_gate "native/releasesafe-suite" \
-            run_zig_build test
-        native_full_status=$last_gate_status
+        run_gate "compile/host-test-frontier" \
+            run_zig_build host-runtime-compile
+        host_compile_status=$last_gate_status
+        if [ "$host_compile_status" -eq 0 ]; then
+            if [ "$has_python" -eq 1 ]; then
+                run_gate "host/runtime-dag" \
+                    run_zig_build test contract-interop-test
+                native_full_status=$last_gate_status
+                if [ "$native_full_status" -eq 0 ]; then
+                    record_pass "native/releasesafe-suite" \
+                        "covered by the shared host runtime DAG"
+                    record_pass "interop/c-cpp-python" \
+                        "covered by the shared host runtime DAG"
+                    record_pass "package/modules" \
+                        "covered by the shared host runtime DAG"
+                else
+                    record_skip "native/releasesafe-suite" \
+                        "shared host runtime DAG failed"
+                    record_skip "interop/c-cpp-python" \
+                        "shared host runtime DAG failed"
+                    record_skip "package/modules" \
+                        "shared host runtime DAG failed"
+                fi
+            else
+                native_full_status=unavailable-python
+                record_skip "host/runtime-dag" \
+                    "requires a working python3 executable"
+                record_skip "native/releasesafe-suite" \
+                    "requires a working python3 executable"
+                record_skip "interop/c-cpp-python" \
+                    "requires a working python3 executable"
+                run_gate "package/modules" \
+                    run_zig_build package-module-test
+            fi
+        else
+            native_full_status=compile-failed
+            record_skip "host/runtime-dag" \
+                "host test compile frontier failed"
+            record_skip "native/releasesafe-suite" \
+                "host test compile frontier failed"
+            record_skip "interop/c-cpp-python" \
+                "host test compile frontier failed"
+            record_skip "package/modules" \
+                "host test compile frontier failed"
+        fi
     else
-        native_full_status=unavailable
-        record_skip "native/releasesafe-suite" "requires a working zig executable"
+        native_full_status=unavailable-zig
+        record_skip "compile/host-test-frontier" \
+            "requires a working zig executable"
+        record_skip "host/runtime-dag" \
+            "requires a working zig executable"
+        record_skip "native/releasesafe-suite" \
+            "requires a working zig executable"
+        record_skip "interop/c-cpp-python" \
+            "requires a working zig executable"
+        record_skip "package/modules" \
+            "requires a working zig executable"
     fi
 elif [ "$profile" = "quick" ]; then
     record_skip "native/releasesafe-suite" "quick profile; run tools/verify.sh full"
@@ -695,7 +778,12 @@ case "$profile" in
         ;;
 esac
 
-if [ "$run_workload_store_fault" -eq 1 ]; then
+if [ "$run_workload_store_fault" -eq 1 ] &&
+    [ "$host_compile_status" != "not-run" ] &&
+    [ "$host_compile_status" -ne 0 ]; then
+    record_skip "native/workload-store-fault" \
+        "host test compile frontier failed"
+elif [ "$run_workload_store_fault" -eq 1 ]; then
     case "$host_name" in
         Darwin | Linux | FreeBSD)
             if [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then

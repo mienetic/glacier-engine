@@ -706,8 +706,17 @@ correctness gates serially on macOS with:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build native-metal-suite-test \
-  -Dmetal=true -Doptimize=ReleaseSafe -j2
+  -Dmetal=true -Doptimize=ReleaseSafe -j1
 ```
+
+For affected-path verification, `tools/verify.sh` first runs the compile-only
+`native-metal-suite-compile` frontier. That root covers every executable and
+test consumed by the serialized suite, the host/device compile profiles, the
+cacheable Metal shader library, and fault-symbol isolation. Only after it
+passes does the verifier enter the separate `-j1` hardware phase using the same
+temporary caches, Metal output directory, and install prefix. This keeps
+expected compile work ahead of thermal admission and real GPU execution. The
+focused command above remains useful when only the native suite is being run.
 
 The focused soak/process-kill gates and serialized suite require two admitted
 AC-power, low-power-off, nominal-thermal snapshots ten seconds apart before
@@ -918,8 +927,22 @@ tools/verify.sh
 
 Every gate is reported as `PASS`, `FAIL`, or `SKIP` with a reason. The default
 quick profile verifies formatting, public-document policy, package imports, and
-the Zig/C/C++/Python contract chain. Use `tools/verify.sh full` to add the broad
-native ReleaseSafe and Python suites plus the optional Rust gate.
+the Zig/C/C++/Python contract chain. Its compatible Zig roots share one build
+DAG instead of starting a compiler process for each gate. Use
+`tools/verify.sh full` to add the broad native ReleaseSafe and Python suites
+plus the optional Rust gate. The full profile compiles the complete host test
+and contract frontier through `host-runtime-compile` first; runtime tests start
+only after that compile-only gate succeeds, and their compatible roots likewise
+share one Zig DAG.
+
+All Zig invocations in one verifier run reuse the same private local and global
+caches. Clang, Swift, and Metal compiler module caches are rooted in that same
+temporary workspace rather than a user-level cache. The verifier removes those
+caches, logs, prefixes, and generated Metal products on handled exit, which
+bounds disk growth without giving up reuse between its compile and runtime
+phases. Foreign targets remain separate because each target has a distinct
+build configuration, but all selected roots for one target are compiled by one
+target-specific invocation.
 
 Build the portable CLI and run one deterministic, model-free publication demo:
 

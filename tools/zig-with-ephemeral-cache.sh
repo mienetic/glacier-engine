@@ -42,7 +42,14 @@ cache_root=$(mktemp -d "$cache_parent/glacier-zig-cache.XXXXXX")
 chmod 700 "$cache_root"
 ZIG_LOCAL_CACHE_DIR="$cache_root/local"
 ZIG_GLOBAL_CACHE_DIR="$cache_root/global"
-export ZIG_LOCAL_CACHE_DIR ZIG_GLOBAL_CACHE_DIR
+CLANG_MODULE_CACHE_PATH="$cache_root/clang-module-cache"
+SWIFT_MODULECACHE_PATH="$cache_root/swift-module-cache"
+mkdir "$CLANG_MODULE_CACHE_PATH" "$SWIFT_MODULECACHE_PATH"
+export \
+    ZIG_LOCAL_CACHE_DIR \
+    ZIG_GLOBAL_CACHE_DIR \
+    CLANG_MODULE_CACHE_PATH \
+    SWIFT_MODULECACHE_PATH
 zig_pid=
 
 cleanup_cache() {

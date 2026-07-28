@@ -1173,6 +1173,12 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&contract_c_consumer.step);
     test_compile_step.dependOn(&contract_c_shared_consumer.step);
     test_compile_step.dependOn(&contract_cpp_consumer.step);
+    const host_runtime_compile_step = b.step(
+        "host-runtime-compile",
+        "Compile the complete host test and contract runtime closure",
+    );
+    host_runtime_compile_step.dependOn(test_compile_step);
+    host_runtime_compile_step.dependOn(contract_c_compile_step);
 
     // Stateless generated W2 scenarios exercise the unchanged W0 workload
     // and W1 scheduled-media contracts. The focused gate compares the native
@@ -2119,6 +2125,10 @@ pub fn build(b: *std.Build) void {
         "native-metal-inflight-process-kill-report-compile",
         "Compile the event-blocked native Metal victim worker",
     );
+    const native_metal_suite_compile_step = b.step(
+        "native-metal-suite-compile",
+        "Compile and statically validate every native Metal suite artifact",
+    );
     const native_metal_suite_test_step = b.step(
         "native-metal-suite-test",
         "Run serialized Metal gates with bounded admission before thermal-sensitive campaigns",
@@ -2181,12 +2191,13 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(
         &run_native_metal_inflight_process_kill_report_model.step,
     );
-    if (metal_shim != null and
+    const native_metal_build_available =
+        metal_shim != null and
         builtin.os.tag == .macos and
         target.result.cpu.arch == builtin.cpu.arch and
         target.result.os.tag == builtin.os.tag and
-        target.result.abi == builtin.abi)
-    {
+        target.result.abi == builtin.abi;
+    if (native_metal_build_available) {
         const shim = metal_shim.?;
         const native_metal_lib = metal_lib.?;
         const native_metal_observation_tests = b.addTest(.{
@@ -3014,6 +3025,59 @@ pub fn build(b: *std.Build) void {
         check_metal_fault_symbols.addArtifactArg(
             fault_shim,
         );
+        check_metal_fault_symbols.expectExitCode(0);
+
+        // Compile every distinct artifact consumed by the serialized suite
+        // before any native process or GPU command runs. Repeated references
+        // below are intentional: named focused compile roots stay complete,
+        // while this explicit inventory prevents a new suite consumer from
+        // being hidden behind a runtime step.
+        for ([_]*std.Build.Step.Compile{
+            metal_tests,
+            native_metal_inflight_process_kill_ready_tests,
+            native_metal_observation_tests,
+            native_metal_observation_exe,
+            native_metal_allocation_tests,
+            native_workload_report_tests,
+            native_workload_campaign_tests,
+            native_metal_workload_report_exe,
+            native_metal_disruption_report_exe,
+            native_metal_cancellation_storm_report_exe,
+            native_metal_soak_worker_exe,
+            native_metal_inflight_process_kill_worker_exe,
+            native_metal_fault_tests,
+        }) |artifact| {
+            native_metal_suite_compile_step.dependOn(
+                &artifact.step,
+            );
+        }
+        native_metal_suite_compile_step.dependOn(
+            native_metal_observation_compile_step,
+        );
+        native_metal_suite_compile_step.dependOn(
+            native_metal_allocation_compile_step,
+        );
+        native_metal_suite_compile_step.dependOn(
+            native_metal_workload_report_compile_step,
+        );
+        native_metal_suite_compile_step.dependOn(
+            native_metal_disruption_report_compile_step,
+        );
+        native_metal_suite_compile_step.dependOn(
+            native_metal_cancellation_storm_report_compile_step,
+        );
+        native_metal_suite_compile_step.dependOn(
+            native_metal_soak_report_compile_step,
+        );
+        native_metal_suite_compile_step.dependOn(
+            native_metal_inflight_process_kill_report_compile_step,
+        );
+        native_metal_suite_compile_step.dependOn(
+            &native_metal_lib.step,
+        );
+        native_metal_suite_compile_step.dependOn(
+            &check_metal_fault_symbols.step,
+        );
 
         const run_native_metal_inflight_process_kill_report =
             b.addSystemCommand(&.{"python3"});
@@ -3178,6 +3242,9 @@ pub fn build(b: *std.Build) void {
             &native_metal_failure.step,
         );
         native_metal_suite_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_suite_compile_step.dependOn(
             &native_metal_failure.step,
         );
     }
@@ -5719,6 +5786,14 @@ pub fn build(b: *std.Build) void {
     profile_host_tool_compile_step.dependOn(
         &generated_media_evidence_inspector_exe.step,
     );
+    if (native_metal_build_available) {
+        native_metal_suite_compile_step.dependOn(
+            profile_device_compile_step,
+        );
+        native_metal_suite_compile_step.dependOn(
+            profile_host_tool_compile_step,
+        );
+    }
 
     // Keep the compatibility umbrella authoritative while allowing affected
     // verification to name only the smaller roots above.
@@ -5790,38 +5865,97 @@ fn buildMetalLib(
     b: *std.Build,
     output_dir: []const u8,
 ) *std.Build.Step.Run {
-    const mkdir = b.addSystemCommand(&.{ "mkdir", "-p", output_dir });
-    const dequant_air = b.fmt("{s}/dequant.air", .{output_dir});
-    const matmul_air = b.fmt("{s}/matmul.air", .{output_dir});
-    const metallib = b.fmt(
+    const metallib_path = b.fmt(
         "{s}/shaders.metallib",
         .{output_dir},
     );
-
-    // Compile both dequant and matmul shaders into separate .air files,
-    // then link them into a single .metallib.
-    const compile_dequant = b.addSystemCommand(&.{
-        "xcrun",         "-sdk", "macosx",                                   "metal",
-        "-std=metal3.0", "-c",   "src/backends/metal/shaders/dequant.metal", "-o",
-        dequant_air,
+    const module_cache_dir = b.cache_root.join(
+        b.allocator,
+        &.{"metal-module-cache"},
+    ) catch @panic("OOM");
+    const prepare_directories = b.addSystemCommand(&.{
+        "mkdir",
+        "-p",
+        output_dir,
+        module_cache_dir,
     });
-    compile_dequant.step.dependOn(&mkdir.step);
+    const capture_toolchain_identity = b.addSystemCommand(&.{"sh"});
+    capture_toolchain_identity.addFileArg(
+        b.path("tools/metal-toolchain-identity.sh"),
+    );
+    const toolchain_identity =
+        capture_toolchain_identity.addOutputFileArg(
+            "metal-toolchain.identity",
+        );
+    capture_toolchain_identity.has_side_effects = true;
+
+    // Declare source and product paths through Step.Run so Zig can cache the
+    // expensive shader compiler and linker stages across build invocations.
+    // The always-refreshed identity input invalidates those products after a
+    // selected Xcode, SDK, compiler, linker, or Metal standard-library change.
+    const compile_dequant = b.addSystemCommand(&.{
+        "xcrun",
+        "-sdk",
+        "macosx",
+        "metal",
+        "-std=metal3.0",
+        "-c",
+    });
+    compile_dequant.addArg(b.fmt(
+        "-fmodules-cache-path={s}",
+        .{module_cache_dir},
+    ));
+    compile_dequant.addFileArg(
+        b.path("src/backends/metal/shaders/dequant.metal"),
+    );
+    compile_dequant.addArg("-o");
+    const dequant_air =
+        compile_dequant.addOutputFileArg("dequant.air");
+    compile_dequant.addFileInput(toolchain_identity);
+    compile_dequant.step.dependOn(&prepare_directories.step);
 
     const compile_matmul = b.addSystemCommand(&.{
-        "xcrun",         "-sdk", "macosx",                                  "metal",
-        "-std=metal3.0", "-c",   "src/backends/metal/shaders/matmul.metal", "-o",
-        matmul_air,
+        "xcrun",
+        "-sdk",
+        "macosx",
+        "metal",
+        "-std=metal3.0",
+        "-c",
     });
-    compile_matmul.step.dependOn(&mkdir.step);
+    compile_matmul.addArg(b.fmt(
+        "-fmodules-cache-path={s}",
+        .{module_cache_dir},
+    ));
+    compile_matmul.addFileArg(
+        b.path("src/backends/metal/shaders/matmul.metal"),
+    );
+    compile_matmul.addArg("-o");
+    const matmul_air =
+        compile_matmul.addOutputFileArg("matmul.air");
+    compile_matmul.addFileInput(toolchain_identity);
+    compile_matmul.step.dependOn(&prepare_directories.step);
 
     const compile_metallib = b.addSystemCommand(&.{
-        "xcrun",    "-sdk",      "macosx",
-        "metallib", dequant_air, matmul_air,
-        "-o",       metallib,
+        "xcrun",
+        "-sdk",
+        "macosx",
+        "metallib",
     });
-    compile_metallib.step.dependOn(&compile_dequant.step);
-    compile_metallib.step.dependOn(&compile_matmul.step);
-    return compile_metallib;
+    compile_metallib.addFileArg(dequant_air);
+    compile_metallib.addFileArg(matmul_air);
+    compile_metallib.addArg("-o");
+    const cached_metallib =
+        compile_metallib.addOutputFileArg("shaders.metallib");
+    compile_metallib.addFileInput(toolchain_identity);
+
+    // The runtime ABI intentionally retains a stable, caller-selected path.
+    // Materializing the cached library is cheap and keeps that public path
+    // independent from Zig's content-addressed cache layout.
+    const materialize = b.addSystemCommand(&.{ "cp", "-f" });
+    materialize.addFileArg(cached_metallib);
+    materialize.addArg(metallib_path);
+    materialize.step.dependOn(&prepare_directories.step);
+    return materialize;
 }
 
 /// Compile src/backends/metal/shim.m into the selected Metal output directory.
