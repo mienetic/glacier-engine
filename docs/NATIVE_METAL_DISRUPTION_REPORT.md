@@ -86,12 +86,16 @@ process-scoped and publishes no partial wire.
 This finite campaign proves bounded repeated recovery for its declared
 schedule. Duration-bounded segmented-soak, post-segment process-kill,
 publication-call store-fault, and concurrent-caller cancellation-storm
-coverage are separate W7 profiles with their own claim boundaries. Supervisor
-and in-flight-command interruption, recovery-process faults, and physical
-storage, removable-device, and power campaigns remain open without relabelling
+coverage are separate W7 profiles with their own claim boundaries. W7b-b4
+separately combines a controlled fault-shim event barrier with a real PID-only
+process kill and fresh production Metal control. Supervisor death,
+recovery-process faults, active-kernel interruption, and physical storage,
+removable-device, and power campaigns remain open without relabelling
 controlled faults as hardware observations. See the
 [Native Metal Cancellation-Storm Report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md)
-for the fixed pre-submit concurrent-caller profile.
+for the fixed pre-submit concurrent-caller profile and the
+[Native Metal In-Flight Process-Kill Report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md)
+for the controlled event-blocked process-death boundary.
 
 ## Run the hard gate
 

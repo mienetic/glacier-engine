@@ -23,6 +23,9 @@ hold_release_symbol='_glacier_metal_test_release_held_completion_callback'
 retirement_fail_symbol='_glacier_metal_test_arm_next_dispatch_retirement_commit_failure'
 retirement_facts_symbol='_glacier_metal_test_dispatch_retirement_commit_facts'
 retirement_telemetry_symbol='_glacier_metal_dispatch_retirement_telemetry_v1'
+inflight_arm_symbol='_glacier_metal_test_arm_next_inflight_event_barrier_v1'
+inflight_wait_symbol='_glacier_metal_test_wait_for_inflight_event_barrier_v1'
+inflight_facts_symbol='_glacier_metal_test_inflight_event_barrier_facts_v1'
 
 production_symbols=$(/usr/bin/nm -gU "$production_shim")
 if printf '%s\n' "$production_symbols" |
@@ -55,7 +58,10 @@ for required_symbol in \
     "$registered_wait_symbol" \
     "$hold_release_symbol" \
     "$retirement_fail_symbol" \
-    "$retirement_facts_symbol"; do
+    "$retirement_facts_symbol" \
+    "$inflight_arm_symbol" \
+    "$inflight_wait_symbol" \
+    "$inflight_facts_symbol"; do
     if ! printf '%s\n' "$fault_symbols" |
         /usr/bin/grep -q "${required_symbol}\$"; then
         echo "fault Metal shim is missing $required_symbol" >&2

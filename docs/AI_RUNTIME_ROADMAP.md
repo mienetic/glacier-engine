@@ -784,7 +784,7 @@ reporting:
    CPU and device utilization, host/device memory separately, accelerator
    submit/device/synchronization timing, fallback status, power/thermal/energy
    when available, and output-quality policy.
-3. **Soak and disruption — W7a, W7b-a, W7b-b1, W7b-b2, and W7b-b3
+3. **Soak and disruption — W7a, W7b-a, W7b-b1 through W7b-b4
    implemented; remaining W7b-b work is open.**
    W7a runs 50 fixed production-native Metal epochs and retains 250 raw records
    around 100 real GPU commands. Each epoch settles an admitted cancellation
@@ -814,6 +814,22 @@ reporting:
    lock overlap, physical GPU parallelism, kernel cancellation, preemption, or
    performance. See
    [Native Metal cancellation-storm report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md).
+
+   W7b-b4 adds a controlled in-flight process-kill boundary. A fault-linked
+   victim registers and commits one real INT4 command whose private
+   `MTLSharedEvent` sequence signals `1` after compute and waits for `2`. The
+   controller accepts the exact 512-byte ready frame only while command status
+   is committed or scheduled, completion is unobserved, and four native
+   buffers, one native command, and four allocation references remain live. It
+   then sends real `SIGKILL` to that PID only, requires exact wait status `-9`
+   and EOF, and launches a distinct production-linked W6 process whose 20 real
+   Metal commands must pass CPU oracles. The event barrier exists only in the
+   build-isolated fault shim and is controlled synthetic evidence; the Metal
+   work, OS kill, and fresh control are real. It does not prove active-kernel
+   interruption or preemption, victim-output recovery, state preservation,
+   complete driver reclamation, physical device loss, performance, or physical
+   GPU telemetry. See
+   [Native Metal in-flight process-kill report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md).
 
    W7b-a adds the fixed segmented production-native Metal soak. Twelve paced
    segments run across two worker processes, six per process with one planned
@@ -865,15 +881,18 @@ reporting:
 
    These completed slices prove finite controlled software disruption, the
    ready-before-release boundary with pre-submit cancellation, correctness,
-   ownership closure, clean restart, one post-segment process kill, prepared
-   store roll-forward, fsync-bounded same-filesystem process-restart
-   continuity, and bounded observed growth for the invoking host.
+   ownership closure, clean restart, one post-segment process kill, one
+   controlled event-blocked in-flight process kill followed by a fresh
+   production control, prepared store roll-forward, fsync-bounded
+   same-filesystem process-restart continuity, and bounded observed growth for
+   the invoking host.
    They are not latency or throughput benchmarks, indefinite no-leak proofs,
-   in-flight command recovery, physical residency measurements, or physical
-   device-loss, driver, power, or storage-failure evidence. W7b-b remains open
-   for supervisor and in-flight process death, recovery-process interruption,
-   adapter loss, physical storage/power, and physical-device-fault schedules
-   with explicit synthetic-versus-physical provenance. Prepared-text
+   active-kernel interruption or recovery, physical residency measurements, or
+   physical device-loss, driver, power, or storage-failure evidence. W7b-b
+   remains open for supervisor death, recovery-process interruption,
+   active-kernel and adapter faults, physical storage/power, and
+   physical-device-fault schedules with explicit synthetic-versus-physical
+   provenance. Prepared-text
    additions should cover repeated handoffs, source death before generation
    two, target death before generation three, idempotent-sink replay, selector
    corruption, lease contention, and recovery memory growth without

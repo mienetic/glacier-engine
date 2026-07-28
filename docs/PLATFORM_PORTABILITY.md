@@ -135,6 +135,17 @@ execute real Metal commands and pass CPU oracles. The barrier proves the
 ready-before-release boundary, not simultaneous scheduling or execution,
 critical-section overlap, GPU parallelism, kernel cancellation, preemption, or
 performance.
+W7b-b4 separately validates a real host-process death while one registered
+Metal command remains nonterminal at a controlled event boundary. The
+fault-linked victim reports committed-or-scheduled status, completion
+unobserved, four live native buffers, one live command, and four active
+allocation references before the controller sends real PID-only `SIGKILL` and
+requires `-9` plus EOF. A distinct production-linked W6 process then completes
+20 CPU-oracle-checked real Metal commands. The private `MTLSharedEvent` signal
+`1`/wait `2` barrier is build-isolated and synthetic; the command, OS kill, and
+fresh control are real. This proves no active-kernel interruption, output or
+state recovery, complete resource reclamation, device loss, performance, or
+physical GPU telemetry.
 The serialized suite also runs a build-isolated reconciliation gate: a real
 Metal command completes physically before a separate test-only `.error`
 overlay drives the production quarantine and settlement path. Production
@@ -147,10 +158,10 @@ temperature, frequency, power, and energy remain open or unsupported. The
 verifier checks composition/corruption of self-asserted live output, not
 cryptographic origin. No W5 readiness result or device range is retained here;
 the separate W6b production-workload wire covers one exact Apple M1 session
-only. W7a and W7b-b3 execute on demand but do not yet have committed retained
-machine artifacts. Cross-compilation remains source/build evidence rather than
-native OS or device support. W5b and non-macOS native observer coverage remain
-open.
+only. W7a, W7b-b3, and W7b-b4 execute on demand but do not yet have committed
+retained machine artifacts. Cross-compilation remains source/build evidence
+rather than native OS or device support. W5b and non-macOS native observer
+coverage remain open.
 
 Run the serialized native device suite on macOS with:
 

@@ -37,8 +37,8 @@ evidence. The plane and model-family sequence is specified in the
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated; outer inspection prototype | Crash-recoverable journal, compact evidence join, and a deterministic read-only inspector for outer framing/checksum and self-asserted fields | Optional caller-supplied nested-composition inspection, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, target-specific affected-path selection with named core/CPU/durable/device/host-tool profiles, a complete consumer compile closure, and full per-target fallback, one shared DAG per selected target, a CLI-only default install with opt-in benchmarks, full production/benchmark/test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Separate durable POSIX authority from the transitional core; promote verification profiles into distributable products; add native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; then add mobile lifecycle gates and a reduced edge profile |
-| Benchmark evidence | W6a portable reports, W6b production-native Metal reports, W7a controlled-disruption recovery, W7b-b3 cancellation-storm concurrent-caller evidence, W7b-a segmented soak, W7b-b1 post-segment process-kill recovery, and the W7b-b2 production-publisher/reference-recovery campaign integrated with W5a, a bounded Linux host source, native macOS Metal diagnostic readiness, allocation/pinned-dispatch ownership, bounded two-slot lifetime evidence, lifecycle no-event evidence, and build-isolated fault/reconciliation conformance | Paired harnesses, machine envelope, fixed native-observation ABI, strict Linux `MemAvailable` parsing, one fixed readiness dispatch, the retained W6b 20-command capture, the 50-epoch W7a campaign, the 208-record W7b-b3 profile with 128 zero-command cancellations, 64 zero-command capacity probes, 16 real controls, and 144/144 closure, two fixed native Metal segmented W7b profiles, and a separate 27-phase store matrix with 27 real writer deaths, 54 controlled errno cases, one clean control, exact prepared roll-forward, repeated fresh recovery, strict audit, and a dual-verifier binary report; the storage errors are synthetic and the store gate runs no GPU work | Retain reproducible native Linux and broader accelerator campaign matrices; complete W7b-b supervisor/in-flight/recovery-process and physical storage/device/power work; add removable-hardware notification plus direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters; and add reproducible native machines |
-| Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, W5a, bounded W5b Linux-source and macOS Metal readiness implementations, the native bounded two-slot proof, W6a/W6b reports, W7a native controlled-disruption recovery, W7b-b3 cancellation-storm concurrent callers, W7b-a segmented soak, W7b-b1 process-kill recovery, and the W7b-b2 production-publisher/reference-recovery campaign integrated; W4b, W5, the remaining W7b-b work, and W8 remain open | In each of 64 W7b-b3 waves, both real host threads reach the ready barrier before one shared release store; the campaign proves 128 cancellations and 64 capacity probes submit no GPU command, and checks 16 real Metal controls. W7b-a chains 12 independently verified W7 reports across two clean worker generations; W7b-b1 kills the first quiescent worker with real `SIGKILL` and completes in a fresh GPU process; W7b-b2 separately kills production store writers or injects deterministic storage errors at all 27 publication calls and permits only an exact prepared successor. The GPU gates and storage gate keep physical versus controlled provenance separate and grant no arbitrary append/resume authority | Next: remaining W4 profiles, retained native Linux and broader accelerator observer/campaign evidence, direct physical CPU/GPU adapters, W7b-b supervisor/in-flight/recovery-process and physical storage/device/power campaigns, replay-safe prepared-text sinks, and W8 native multi-OS replication |
+| Benchmark evidence | W6a portable reports, W6b production-native Metal reports, W7a controlled-disruption recovery, W7b-b3 cancellation-storm concurrent-caller evidence, W7b-b4 controlled in-flight process-kill evidence, W7b-a segmented soak, W7b-b1 post-segment process-kill recovery, and the W7b-b2 production-publisher/reference-recovery campaign integrated with W5a, a bounded Linux host source, native macOS Metal diagnostic readiness, allocation/pinned-dispatch ownership, bounded two-slot lifetime evidence, lifecycle no-event evidence, and build-isolated fault/reconciliation conformance | Paired harnesses, machine envelope, fixed native-observation ABI, strict Linux `MemAvailable` parsing, one fixed readiness dispatch, the retained W6b 20-command capture, the 50-epoch W7a campaign, the 208-record W7b-b3 profile with 128 zero-command cancellations, 64 zero-command capacity probes, 16 real controls, and 144/144 closure, the W7b-b4 exact 512-byte pre-kill frame with one real event-blocked command followed by real PID-only `SIGKILL`, exact `-9`/EOF, and a fresh 20-command production control, two fixed native Metal segmented W7b profiles, and a separate 27-phase store matrix with 27 real writer deaths, 54 controlled errno cases, one clean control, exact prepared roll-forward, repeated fresh recovery, strict audit, and a dual-verifier binary report; controlled barriers and storage errors remain separate from physical fault evidence | Retain reproducible native Linux and broader accelerator campaign matrices; complete W7b-b supervisor/recovery-process, active-kernel, adapter, and physical storage/device/power work; add removable-hardware notification plus direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters; and add reproducible native machines |
+| Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, W5a, bounded W5b Linux-source and macOS Metal readiness implementations, the native bounded two-slot proof, W6a/W6b reports, W7a native controlled-disruption recovery, W7b-b3 cancellation-storm concurrent callers, W7b-b4 controlled in-flight process kill, W7b-a segmented soak, W7b-b1 process-kill recovery, and the W7b-b2 production-publisher/reference-recovery campaign integrated; W4b, W5, the remaining W7b-b work, and W8 remain open | In each of 64 W7b-b3 waves, both real host threads reach the ready barrier before one shared release store. W7b-b4 validates one real registered command at a synthetic event barrier before real PID-only `SIGKILL`, then checks 20 real commands in a distinct production process. W7b-a chains 12 independently verified W7 reports across two clean worker generations; W7b-b1 kills the first quiescent worker with real `SIGKILL` and completes in a fresh GPU process; W7b-b2 separately kills production store writers or injects deterministic storage errors at all 27 publication calls and permits only an exact prepared successor. The GPU gates and storage gate keep physical versus controlled provenance separate and grant no arbitrary append/resume authority | Next: remaining W4 profiles, retained native Linux and broader accelerator observer/campaign evidence, direct physical CPU/GPU adapters, W7b-b supervisor/recovery-process, active-kernel, adapter, and physical storage/device/power campaigns, replay-safe prepared-text sinks, and W8 native multi-OS replication |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
 ## P0 — Open-source usability
@@ -600,8 +600,22 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   cancellation, preemption, or performance.
   See the
   [Native Metal cancellation-storm report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md).
-- [ ] Complete the remaining W7b-b work with supervisor and in-flight-command
-  death boundaries, recovery-process interruption,
+- [x] Complete W7b-b4 with a controlled in-flight process-kill boundary. A
+  fault-linked victim registers one real INT4 command that signals a private
+  `MTLSharedEvent` at `1` after compute and waits for `2`. Its exact 512-byte
+  frame is accepted only while status is committed or scheduled, completion is
+  unobserved, and four native buffers, one command, and four allocation
+  references remain live. The controller validates the frame, sends real
+  PID-only `SIGKILL`, requires exact status `-9` and EOF, then launches a
+  distinct production-linked W6 process that completes 20 CPU-oracle-checked
+  real Metal commands. The build-isolated event barrier is controlled and
+  synthetic; the Metal commands, process kill, and fresh control are real. This
+  does not prove active-kernel interruption, victim-output recovery, state
+  preservation, complete driver reclamation, physical device loss, performance,
+  or physical GPU telemetry. See the
+  [Native Metal in-flight process-kill report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md).
+- [ ] Complete the remaining W7b-b work with supervisor death,
+  recovery-process interruption, active-kernel and adapter faults,
   physical quota/media/controller exhaustion, removable-hardware, driver, and
   power-fault campaigns; retain exact fault schedules, recovery/closure
   evidence, and only those physical metrics supplied by direct observers.
@@ -640,7 +654,10 @@ checks. See the
 [Native Metal cancellation-storm report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md)
 for the W7b-b3 paired-thread ready-before-release boundary, zero-command
 cancellation/capacity records, real control commands, and explicit nonclaims.
-See
+See the
+[Native Metal in-flight process-kill report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md)
+for the W7b-b4 controlled event barrier, exact ready frame, real PID-only
+`SIGKILL`, and fresh production W6 control. See
 [Native Metal segmented soak report](NATIVE_METAL_SOAK_REPORT.md) for the
 W7b-a campaign codec, two-generation schedule, durable store, offline
 verification, memory-observation boundary, and remaining W7b-b work.
@@ -1596,11 +1613,16 @@ six-segment phase, durable-prefix re-read, and fresh Metal worker completion.
 W7b-b3 separately adds 64 paired-thread release waves with 128
 cancel-before-submit records, 64 capacity probes, 16 correctness-gated real
 Metal controls, and 144/144 closure; it does not prove lock overlap, submitted
-GPU-command cancellation, physical parallelism, or performance. W7b-b1 does
-not interrupt an in-flight command or prove driver reclamation. W5b
+GPU-command cancellation, physical parallelism, or performance. W7b-b4 adds a
+separate real PID-only process kill after a fault-linked victim reports one
+committed-or-scheduled, completion-unobserved command held at a controlled
+`MTLSharedEvent` boundary, followed by a fresh production-linked 20-command W6
+control. Its barrier is synthetic and it proves no active-kernel interruption,
+victim-output recovery, state preservation, or complete driver reclamation.
+W7b-b1 remains quiescent and does not interrupt an in-flight command. W5b
 remains open for direct physical observers and broader native coverage; the
-remaining W7b-b storage, supervisor, in-flight, recovery-process, adapter, and
-physical fault campaigns remain open.
+remaining W7b-b storage, supervisor, recovery-process, active-kernel, adapter,
+and physical fault campaigns remain open.
 
 The Stage-5 device capability slice separately binds stable Metal facts to a
 portable capability fingerprint, one local discovery epoch, and the dispatch

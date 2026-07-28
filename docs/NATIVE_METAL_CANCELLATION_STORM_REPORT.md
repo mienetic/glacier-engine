@@ -111,9 +111,12 @@ It does not prove:
 - device removal, driver failure, reset, migration, or power loss; or
 - native behavior on a cross-compiled or non-macOS target.
 
-Supervisor death, in-flight process or command death, recovery-process
-interruption, adapter loss, physical storage/power disruption, and physical
-device-fault schedules remain separate W7b work.
+The separate
+[Native Metal In-Flight Process-Kill Report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md)
+covers one controlled event-blocked command and real victim-process kill.
+Supervisor death, recovery-process interruption, active-kernel and adapter
+faults, physical storage/power disruption, and physical device-fault schedules
+remain separate W7b work.
 
 ## Run the gates
 

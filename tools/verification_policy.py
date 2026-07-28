@@ -159,6 +159,7 @@ METAL_NATIVE_SOURCE_PATHS = {
     "tests/support/metal_fault_control.zig",
     "examples/native_metal_cancellation_storm_report.zig",
     "examples/native_metal_disruption_report.zig",
+    "examples/native_metal_inflight_process_kill_worker.zig",
     "examples/native_metal_observation.zig",
     "examples/native_metal_soak_worker.zig",
     "examples/native_metal_workload_report.zig",
@@ -166,6 +167,7 @@ METAL_NATIVE_SOURCE_PATHS = {
 }
 
 METAL_PORTABLE_SOURCE_PATHS = {
+    "src/core/native_metal_inflight_process_kill_ready.zig",
     "src/backends/metal/allocation_adapter.zig",
     "src/backends/metal/backend.zig",
 }
@@ -664,13 +666,17 @@ def _decision_for_path(path: str) -> PathDecision:
     if suffix == ".py":
         python_flags = {"python-changed", "python-full"}
         if lower in {
+            "bench/native_environment_admission.py",
             "bench/native_metal_cancellation_storm_report.py",
             "bench/native_metal_disruption_report.py",
+            "bench/native_metal_inflight_process_kill_report.py",
             "bench/native_metal_readiness.py",
             "bench/native_metal_soak_report.py",
             "bench/native_metal_workload_report.py",
+            "bench/tests/test_native_environment_admission.py",
             "bench/tests/test_native_metal_cancellation_storm_report.py",
             "bench/tests/test_native_metal_disruption_report.py",
+            "bench/tests/test_native_metal_inflight_process_kill_report.py",
             "bench/tests/test_native_metal_soak_protocol.py",
             "bench/tests/test_native_metal_soak_report.py",
             "bench/tests/test_native_metal_workload_report.py",

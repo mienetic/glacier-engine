@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define GLACIER_METAL_DEVICE_INFO_ABI 0x474d444900000001ULL
 #define GLACIER_METAL_DISPATCH_ABI 0x474d445200000001ULL
@@ -69,6 +70,12 @@
     0x474d464300000002ULL
 #define GLACIER_METAL_TEST_RETIREMENT_COMMIT_FACTS_ABI \
     0x474d524600000001ULL
+#define GLACIER_METAL_TEST_INFLIGHT_BARRIER_PLAN_ABI \
+    0x474d494200000001ULL
+#define GLACIER_METAL_TEST_INFLIGHT_BARRIER_FACTS_ABI \
+    0x474d494600000001ULL
+#define GLACIER_METAL_TEST_INFLIGHT_BARRIER_SIGNAL_VALUE 1ULL
+#define GLACIER_METAL_TEST_INFLIGHT_BARRIER_WAIT_VALUE 2ULL
 #define GLACIER_METAL_TEST_COMPLETED_AS_COMMAND_ERROR 1U
 #define GLACIER_METAL_TEST_REAL_COMMIT_AS_AMBIGUOUS 2U
 #define GLACIER_METAL_TEST_COMPLETED_AS_UNKNOWN 3U
@@ -385,6 +392,37 @@ typedef struct {
     uint32_t reserved;
 } GlacierMetalTestRetirementCommitFactsV1;
 
+// One-shot authority for a real registered command buffer to signal value 1
+// after its compute encoder and then wait for unreachable value 2. The event
+// and every Objective-C pointer remain private to the fault-linked process.
+typedef struct {
+    uint64_t abi_version;
+    uint64_t barrier_generation;
+    uint64_t signal_value;
+    uint64_t wait_value;
+} GlacierMetalTestInflightBarrierPlanV1;
+
+// Pointer-free snapshot accepted only while the exact event-blocked command
+// remains registered, normally submitted, completion-unobserved, and owner of
+// all four registered allocations.
+typedef struct {
+    uint64_t abi_version;
+    uint64_t barrier_generation;
+    GlacierMetalCommandToken token;
+    uint8_t submission_binding[32];
+    uint64_t shared_event_signaled_value;
+    uint64_t signal_value;
+    uint64_t wait_value;
+    uint64_t device_registry_id;
+    uint64_t live_buffer_count;
+    uint64_t live_command_count;
+    uint64_t active_allocation_reference_count;
+    uint32_t submission_disposition;
+    uint32_t command_buffer_status;
+    uint32_t commit_invoked;
+    uint32_t completion_observed;
+} GlacierMetalTestInflightBarrierFactsV1;
+
 // Deterministic late-callback control for the private fault shim. The
 // completion block captures this ARC object, so retirement may destroy the
 // native command record while the callback is held without retaining or
@@ -436,6 +474,11 @@ struct GlacierMetalContext {
     uint32_t test_fault_plan_armed;
     GlacierMetalTestCallbackHold* test_active_callback_hold;
     uint32_t test_callback_hold_armed;
+    uint64_t next_test_inflight_barrier_generation;
+    GlacierMetalTestInflightBarrierPlanV1
+        armed_test_inflight_barrier;
+    id<MTLSharedEvent> test_inflight_barrier_event;
+    uint32_t test_inflight_barrier_armed;
     uint64_t test_retirement_commit_attempt_count;
     uint64_t test_retirement_commit_injected_failure_count;
     uint64_t test_retirement_committed_count;
@@ -507,6 +550,9 @@ struct GlacierMetalCommandRecord {
     GlacierMetalTestCompletionFactsV2 test_completion_facts;
     uint32_t test_completion_facts_ready;
     GlacierMetalTestCallbackHold* test_callback_hold;
+    GlacierMetalTestInflightBarrierPlanV1
+        test_inflight_barrier_plan;
+    id<MTLSharedEvent> test_inflight_barrier_event;
 #endif
 };
 
@@ -786,6 +832,26 @@ _Static_assert(offsetof(
         GlacierMetalTestRetirementCommitFactsV1,
         failure_armed) == 40,
     "GlacierMetalTestRetirementCommitFactsV1 armed offset changed");
+_Static_assert(sizeof(GlacierMetalTestInflightBarrierPlanV1) == 32,
+    "GlacierMetalTestInflightBarrierPlanV1 ABI size changed");
+_Static_assert(offsetof(
+        GlacierMetalTestInflightBarrierPlanV1,
+        signal_value) == 16,
+    "GlacierMetalTestInflightBarrierPlanV1 signal offset changed");
+_Static_assert(sizeof(GlacierMetalTestInflightBarrierFactsV1) == 160,
+    "GlacierMetalTestInflightBarrierFactsV1 ABI size changed");
+_Static_assert(offsetof(
+        GlacierMetalTestInflightBarrierFactsV1,
+        token) == 16,
+    "GlacierMetalTestInflightBarrierFactsV1 token offset changed");
+_Static_assert(offsetof(
+        GlacierMetalTestInflightBarrierFactsV1,
+        shared_event_signaled_value) == 88,
+    "GlacierMetalTestInflightBarrierFactsV1 event offset changed");
+_Static_assert(offsetof(
+        GlacierMetalTestInflightBarrierFactsV1,
+        submission_disposition) == 144,
+    "GlacierMetalTestInflightBarrierFactsV1 state offset changed");
 
 static GlacierMetalTestCallbackHold*
 glacier_metal_test_callback_hold_create(void)
@@ -1497,6 +1563,7 @@ static void glacier_metal_command_destroy(
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
     record->test_callback_hold = nil;
+    record->test_inflight_barrier_event = nil;
 #endif
     memset(record->allocations, 0, sizeof(record->allocations));
     free(record);
@@ -1513,6 +1580,9 @@ static int glacier_metal_context_destroy(GlacierMetalContext* ctx) {
     GLACIER_METAL_TEST_FAULTS == 1
     if (ctx->test_active_callback_hold)
         return 1;
+    if (ctx->test_inflight_barrier_armed != 0)
+        return 1;
+    ctx->test_inflight_barrier_event = nil;
 #endif
     for (GlacierMetalBufferAllocation* allocation =
             ctx->buffer_allocations;
@@ -2569,6 +2639,7 @@ GlacierMetalContext* glacier_metal_init(const char* metallib_path) {
 #if defined(GLACIER_METAL_TEST_FAULTS) && \
     GLACIER_METAL_TEST_FAULTS == 1
     ctx->next_test_fault_plan_generation = 1;
+    ctx->next_test_inflight_barrier_generation = 1;
 #endif
     ctx->queue = [ctx->device newCommandQueue];
     if (!ctx->queue) {
@@ -2972,6 +3043,225 @@ int glacier_metal_test_completion_facts_for_binding_v2(
             *out = *match;
     }
     return result;
+}
+
+int glacier_metal_test_arm_next_inflight_event_barrier_v1(
+    GlacierMetalContext* ctx,
+    GlacierMetalTestInflightBarrierPlanV1* out)
+{
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        out->abi_version =
+            GLACIER_METAL_TEST_INFLIGHT_BARRIER_PLAN_ABI;
+    }
+    if (!ctx || !ctx->device || !out)
+        return 1;
+    if (glacier_metal_device_lifecycle_begin_admission(ctx) != 0)
+        return 5;
+
+    int result = 0;
+    id<MTLSharedEvent> event = nil;
+    @try {
+        if (@available(macOS 10.14, *)) {
+            event = [ctx->device newSharedEvent];
+            if (event)
+                event.signaledValue = 0;
+        }
+    } @catch (NSException* exception) {
+        (void)exception;
+        event = nil;
+    }
+    if (!event) {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+        return 3;
+    }
+
+    @try {
+        @synchronized (ctx->device) {
+            if (ctx->test_inflight_barrier_armed != 0 ||
+                ctx->test_inflight_barrier_event ||
+                ctx->command_records ||
+                ctx->live_command_records != 0 ||
+                ctx->test_callback_hold_armed != 0 ||
+                ctx->test_active_callback_hold ||
+                ctx->test_fault_plan_armed != 0)
+            {
+                result = 2;
+            } else if (
+                ctx->next_test_inflight_barrier_generation == 0 ||
+                ctx->next_test_inflight_barrier_generation ==
+                    UINT64_MAX)
+            {
+                result = 4;
+            } else {
+                GlacierMetalTestInflightBarrierPlanV1 plan;
+                memset(&plan, 0, sizeof(plan));
+                plan.abi_version =
+                    GLACIER_METAL_TEST_INFLIGHT_BARRIER_PLAN_ABI;
+                plan.barrier_generation =
+                    ctx->next_test_inflight_barrier_generation;
+                plan.signal_value =
+                    GLACIER_METAL_TEST_INFLIGHT_BARRIER_SIGNAL_VALUE;
+                plan.wait_value =
+                    GLACIER_METAL_TEST_INFLIGHT_BARRIER_WAIT_VALUE;
+                ctx->next_test_inflight_barrier_generation += 1;
+                ctx->armed_test_inflight_barrier = plan;
+                ctx->test_inflight_barrier_event = event;
+                ctx->test_inflight_barrier_armed = 1;
+                *out = plan;
+            }
+        }
+    } @catch (NSException* exception) {
+        (void)exception;
+        result = 5;
+    } @finally {
+        glacier_metal_device_lifecycle_end_admission(ctx);
+    }
+    return result;
+}
+
+static int glacier_metal_test_inflight_event_barrier_facts_locked(
+    GlacierMetalContext* ctx,
+    GlacierMetalTestInflightBarrierFactsV1* out)
+{
+    GlacierMetalCommandRecord* match = NULL;
+    for (GlacierMetalCommandRecord* record =
+            ctx->command_records;
+         record;
+         record = record->next)
+    {
+        if (!record->test_inflight_barrier_event)
+            continue;
+        if (match)
+            return 3;
+        match = record;
+    }
+    if (!match)
+        return 2;
+
+    const GlacierMetalTestInflightBarrierPlanV1* plan =
+        &match->test_inflight_barrier_plan;
+    if (plan->abi_version !=
+            GLACIER_METAL_TEST_INFLIGHT_BARRIER_PLAN_ABI ||
+        plan->barrier_generation == 0 ||
+        plan->signal_value !=
+            GLACIER_METAL_TEST_INFLIGHT_BARRIER_SIGNAL_VALUE ||
+        plan->wait_value !=
+            GLACIER_METAL_TEST_INFLIGHT_BARRIER_WAIT_VALUE ||
+        !match->command_buffer)
+        return 5;
+
+    uint64_t active_references = 0;
+    for (size_t index = 0; index < 4; index += 1) {
+        GlacierMetalBufferAllocation* allocation =
+            match->allocations[index];
+        if (!allocation || allocation->owner != ctx ||
+            allocation->active_command_references != 1)
+            return 5;
+        active_references +=
+            allocation->active_command_references;
+    }
+
+    const uint64_t signaled_value =
+        match->test_inflight_barrier_event.signaledValue;
+    const uint32_t command_status =
+        (uint32_t)match->command_buffer.status;
+    if (signaled_value < plan->signal_value)
+        return 4;
+    if (signaled_value >= plan->wait_value ||
+        ctx->live_buffer_allocations != 4 ||
+        ctx->live_command_records != 1 ||
+        match->next ||
+        active_references != 4 ||
+        match->submission_disposition !=
+            GLACIER_METAL_SUBMIT_SUBMITTED ||
+        match->commit_invoked != 1 ||
+        match->completion_observed != 0 ||
+        (command_status != MTLCommandBufferStatusCommitted &&
+            command_status != MTLCommandBufferStatusScheduled))
+        return 5;
+
+    memset(out, 0, sizeof(*out));
+    out->abi_version =
+        GLACIER_METAL_TEST_INFLIGHT_BARRIER_FACTS_ABI;
+    out->barrier_generation =
+        plan->barrier_generation;
+    out->token = match->token;
+    memcpy(
+        out->submission_binding,
+        match->submission_binding,
+        sizeof(out->submission_binding));
+    out->shared_event_signaled_value = signaled_value;
+    out->signal_value = plan->signal_value;
+    out->wait_value = plan->wait_value;
+    out->device_registry_id = ctx->device.registryID;
+    out->live_buffer_count = ctx->live_buffer_allocations;
+    out->live_command_count = ctx->live_command_records;
+    out->active_allocation_reference_count =
+        active_references;
+    out->submission_disposition =
+        match->submission_disposition;
+    out->command_buffer_status = command_status;
+    out->commit_invoked = match->commit_invoked;
+    out->completion_observed = match->completion_observed;
+    return 0;
+}
+
+int glacier_metal_test_inflight_event_barrier_facts_v1(
+    GlacierMetalContext* ctx,
+    GlacierMetalTestInflightBarrierFactsV1* out)
+{
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        out->abi_version =
+            GLACIER_METAL_TEST_INFLIGHT_BARRIER_FACTS_ABI;
+    }
+    if (!ctx || !ctx->device || !out)
+        return 1;
+
+    int result = 0;
+    @try {
+        @synchronized (ctx->device) {
+            result =
+                glacier_metal_test_inflight_event_barrier_facts_locked(
+                    ctx,
+                    out);
+        }
+    } @catch (NSException* exception) {
+        (void)exception;
+        result = 5;
+    }
+    return result;
+}
+
+int glacier_metal_test_wait_for_inflight_event_barrier_v1(
+    GlacierMetalContext* ctx,
+    GlacierMetalTestInflightBarrierFactsV1* out)
+{
+    if (out) {
+        memset(out, 0, sizeof(*out));
+        out->abi_version =
+            GLACIER_METAL_TEST_INFLIGHT_BARRIER_FACTS_ABI;
+    }
+    if (!ctx || !ctx->device || !out)
+        return 1;
+
+    const struct timespec interval = {
+        .tv_sec = 0,
+        .tv_nsec = 1000000,
+    };
+    for (uint32_t attempt = 0; attempt < 5000; attempt += 1) {
+        const int result =
+            glacier_metal_test_inflight_event_barrier_facts_v1(
+                ctx,
+                out);
+        if (result == 0)
+            return 0;
+        if (result != 4)
+            return result;
+        (void)nanosleep(&interval, NULL);
+    }
+    return 6;
 }
 
 int glacier_metal_test_arm_next_completion_callback_hold(
@@ -4015,6 +4305,46 @@ glacier_metal_int4_registered_buffers_submit_async_admitted(
         __builtin_ctz(group_size),
     };
 
+#if defined(GLACIER_METAL_TEST_FAULTS) && \
+    GLACIER_METAL_TEST_FAULTS == 1
+    GlacierMetalTestInflightBarrierPlanV1
+        test_inflight_barrier_plan;
+    memset(
+        &test_inflight_barrier_plan,
+        0,
+        sizeof(test_inflight_barrier_plan));
+    id<MTLSharedEvent> test_inflight_barrier_event = nil;
+    @synchronized (ctx->device) {
+        if (ctx->test_inflight_barrier_armed != 0) {
+            if (!ctx->test_inflight_barrier_event ||
+                ctx->armed_test_inflight_barrier.abi_version !=
+                    GLACIER_METAL_TEST_INFLIGHT_BARRIER_PLAN_ABI ||
+                ctx->armed_test_inflight_barrier
+                        .barrier_generation == 0 ||
+                ctx->armed_test_inflight_barrier.signal_value !=
+                    GLACIER_METAL_TEST_INFLIGHT_BARRIER_SIGNAL_VALUE ||
+                ctx->armed_test_inflight_barrier.wait_value !=
+                    GLACIER_METAL_TEST_INFLIGHT_BARRIER_WAIT_VALUE)
+            {
+                glacier_metal_release_command_reservations(
+                    ctx,
+                    reserved_allocations);
+                return 4;
+            }
+            test_inflight_barrier_plan =
+                ctx->armed_test_inflight_barrier;
+            test_inflight_barrier_event =
+                ctx->test_inflight_barrier_event;
+            memset(
+                &ctx->armed_test_inflight_barrier,
+                0,
+                sizeof(ctx->armed_test_inflight_barrier));
+            ctx->test_inflight_barrier_event = nil;
+            ctx->test_inflight_barrier_armed = 0;
+        }
+    }
+#endif
+
     id<MTLCommandBuffer> cb = nil;
     @try {
         cb = [ctx->queue commandBuffer];
@@ -4043,6 +4373,26 @@ glacier_metal_int4_registered_buffers_submit_async_admitted(
              threadsPerThreadgroup:
                 MTLSizeMake(pipeline_width, 1, 1)];
         [enc endEncoding];
+#if defined(GLACIER_METAL_TEST_FAULTS) && \
+    GLACIER_METAL_TEST_FAULTS == 1
+        if (test_inflight_barrier_event) {
+            if (@available(macOS 10.14, *)) {
+                [cb
+                    encodeSignalEvent:test_inflight_barrier_event
+                                value:test_inflight_barrier_plan
+                                          .signal_value];
+                [cb
+                    encodeWaitForEvent:test_inflight_barrier_event
+                                value:test_inflight_barrier_plan
+                                          .wait_value];
+            } else {
+                glacier_metal_release_command_reservations(
+                    ctx,
+                    reserved_allocations);
+                return 4;
+            }
+        }
+#endif
     } @catch (NSException* exception) {
         (void)exception;
         glacier_metal_release_command_reservations(
@@ -4077,6 +4427,13 @@ glacier_metal_int4_registered_buffers_submit_async_admitted(
     record->allocations[3] = output_allocation;
     record->current_allocated_before =
         current_allocated_before;
+#if defined(GLACIER_METAL_TEST_FAULTS) && \
+    GLACIER_METAL_TEST_FAULTS == 1
+    record->test_inflight_barrier_plan =
+        test_inflight_barrier_plan;
+    record->test_inflight_barrier_event =
+        test_inflight_barrier_event;
+#endif
     record->callback_gate =
         [[GlacierMetalCommandCallbackGate alloc] init];
     if (!record->callback_gate) {
@@ -4128,6 +4485,13 @@ glacier_metal_int4_registered_buffers_submit_async_admitted(
             ctx->next_command_generation != 0 &&
             ctx->next_command_generation != UINT64_MAX &&
             ctx->live_command_records != UINT64_MAX;
+#if defined(GLACIER_METAL_TEST_FAULTS) && \
+    GLACIER_METAL_TEST_FAULTS == 1
+        if (record->test_inflight_barrier_event &&
+            (ctx->command_records ||
+                ctx->live_command_records != 0))
+            registry_ready = 0;
+#endif
         for (size_t index = 0; index < 4; index += 1) {
             GlacierMetalBufferAllocation* allocation =
                 record->allocations[index];

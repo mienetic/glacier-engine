@@ -39,7 +39,11 @@ Metal allocation context within each process generation. W7b-b3 adds 64
 paired-thread cancellation waves around the same bounded production adapter:
 128 cancel-before-submit outcomes and 64 capacity probes submit no GPU command,
 while 16 real Metal controls preserve CPU-oracle correctness and the complete
-208-record campaign closes 144/144 pins. Provider, stateful,
+208-record campaign closes 144/144 pins. W7b-b4 adds one controlled
+event-blocked in-flight process kill: a fault-linked victim reports one real
+registered command and four live buffers before real PID-only `SIGKILL`, then
+a distinct production-linked W6 process completes 20 real Metal commands.
+Provider, stateful,
 streaming, batched, preemptible, device-backed, live-service, and OS-isolated
 real-credential profiles, direct physical CPU/device adapters, retained
 multi-machine load matrices, broader disruption and physical-fault campaigns,
@@ -363,8 +367,22 @@ Results from different modes are not merged into one headline number.
     critical-section overlap, GPU parallelism, post-submit kernel cancellation,
     preemption, performance, or a physical fault. See the
     [Native Metal cancellation-storm report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md).
+  - [x] **W7b-b4 — Controlled in-flight process kill.** A fault-linked victim
+    registers one real INT4 command that signals a private `MTLSharedEvent` at
+    `1` after compute and waits for `2`. Its exact 512-byte ready frame must show
+    committed-or-scheduled nonterminal status, completion unobserved, four live
+    native buffers, one live command, and four active allocation references.
+    Only after verifying the exact PID and frame does the controller send real
+    PID-only `SIGKILL`, require status `-9` and exact EOF, and launch a distinct
+    production-linked W6 process that completes 20 CPU-oracle-checked real Metal
+    commands. The build-isolated event barrier is controlled and synthetic;
+    the Metal command, OS kill, and fresh control are real. This proves no
+    active-kernel interruption, victim-output recovery, state preservation,
+    complete driver reclamation, physical device loss, performance, or direct
+    GPU telemetry. See the
+    [Native Metal in-flight process-kill report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md).
   - [ ] **W7b-b — Remaining broader disruption.** Add bounded supervisor and
-    in-flight-command kill, recovery-process interruption, adapter-loss,
+    recovery-process interruption, active-kernel and adapter-loss,
     physical storage/power, and
     physical-device fault schedules with explicit
     synthetic-versus-physical provenance. Include prepared-text repeated
@@ -636,6 +654,24 @@ after both verification layers pass. See
 The ready-before-release boundary does not prove simultaneous scheduling or
 execution, lock overlap, physical GPU parallelism, or kernel cancellation.
 
+Run the W7b-b4 in-flight process-kill campaign separately:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-inflight-process-kill-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+The victim uses a build-isolated controlled event barrier around one real
+registered INT4 command. After validating the exact 512-byte ready frame, the
+controller sends real PID-only `SIGKILL`, requires `-9` and EOF, and verifies a
+fresh production-linked 20-command W6 control. Add
+`-Dnative-metal-inflight-process-kill-report-output=PATH` for retention after
+complete verification. See the
+[Native Metal in-flight process-kill report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md).
+This gate does not prove active-kernel interruption, output recovery, state
+preservation, or complete driver reclamation.
+
 Run the W7b-a segmented production-native Metal soak separately:
 
 ```sh
@@ -726,6 +762,7 @@ and nonclaims. See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md),
 [Scheduled Media Pressure](SCHEDULED_MEDIA_PRESSURE.md), and
 [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md), plus the
 [Native Observation Contract](NATIVE_OBSERVATION.md),
-[Native Workload Report](NATIVE_WORKLOAD_REPORT.md), and
+[Native Workload Report](NATIVE_WORKLOAD_REPORT.md),
 [Native Metal Process-Kill Recovery Report](NATIVE_METAL_PROCESS_KILL_REPORT.md),
-[Benchmark and Evidence Guide](BENCHMARKS.md) for the existing foundations.
+[Native Metal In-Flight Process-Kill Report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md),
+and [Benchmark and Evidence Guide](BENCHMARKS.md) for the existing foundations.

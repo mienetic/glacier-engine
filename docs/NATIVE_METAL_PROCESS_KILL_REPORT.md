@@ -117,6 +117,14 @@ a descendant that ignores `SIGTERM` cannot survive the gate. Watchdog
 termination is always failure and is distinct from the one scheduled worker
 kill.
 
+Before either the focused gate or serialized suite launches this supervisor,
+the build orchestration requires two explicit observations confirming AC
+power, low-power mode off, and nominal thermal state ten seconds apart within
+a bounded 180-second window. The wait occurs only before native work. The
+campaign's own retained before and after environment boundaries remain
+authoritative, and a thermal excursion during the campaign is not cooled away
+and retried.
+
 ## Running the gates
 
 Run the portable campaign codec/model and pure supervisor tests:
@@ -178,7 +186,11 @@ The separate
 [Native Workload Store-Fault Report](NATIVE_WORKLOAD_STORE_FAULT_REPORT.md)
 covers controlled publication-call failures, while the
 [Native Metal Cancellation-Storm Report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md)
-covers fixed pre-submit concurrent callers. Supervisor and in-flight-command
-interruption, recovery-process faults, adapter loss, physical storage/device
-faults, power disruption, and replay-safe prepared-text output sinks remain
-later W7b-b work.
+covers fixed pre-submit concurrent callers. The separate
+[Native Metal In-Flight Process-Kill Report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md)
+kills a fault-linked victim while one real registered command remains
+nonterminal at a controlled event barrier, then runs a fresh production
+control. It does not change this profile's quiescent claim boundary or prove
+active-kernel interruption. Supervisor death, recovery-process faults,
+active-kernel and adapter faults, physical storage/device faults, power
+disruption, and replay-safe prepared-text output sinks remain later W7b-b work.

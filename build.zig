@@ -90,6 +90,17 @@ pub fn build(b: *std.Build) void {
                 "-Dnative-metal-process-kill-output-dir must not be empty",
             );
     }
+    const native_metal_inflight_process_kill_report_output = b.option(
+        []const u8,
+        "native-metal-inflight-process-kill-report-output",
+        "Optional path that retains the verified event-blocked native Metal process-kill report",
+    );
+    if (native_metal_inflight_process_kill_report_output) |path| {
+        if (path.len == 0)
+            @panic(
+                "-Dnative-metal-inflight-process-kill-report-output must not be empty",
+            );
+    }
     const native_workload_store_fault_output = b.option(
         []const u8,
         "native-workload-store-fault-output",
@@ -2082,7 +2093,7 @@ pub fn build(b: *std.Build) void {
     );
     const native_metal_soak_report_test_step = b.step(
         "native-metal-soak-report-test",
-        "Run the hard 60-second segmented native Metal soak gate",
+        "Admit the environment, then run the hard 60-second segmented native Metal soak gate",
     );
     const native_metal_soak_report_pure_test_step = b.step(
         "native-metal-soak-report-pure-test",
@@ -2094,11 +2105,81 @@ pub fn build(b: *std.Build) void {
     );
     const native_metal_process_kill_report_test_step = b.step(
         "native-metal-process-kill-report-test",
-        "Run the hard native Metal post-segment SIGKILL recovery gate",
+        "Admit the environment, then run the hard native Metal post-segment SIGKILL recovery gate",
+    );
+    const native_metal_inflight_process_kill_report_test_step = b.step(
+        "native-metal-inflight-process-kill-report-test",
+        "Run the hard event-blocked native Metal process-kill gate",
+    );
+    const native_metal_inflight_process_kill_report_pure_test_step = b.step(
+        "native-metal-inflight-process-kill-report-pure-test",
+        "Run pure event-blocked process-kill ready-frame tests",
+    );
+    const native_metal_inflight_process_kill_report_compile_step = b.step(
+        "native-metal-inflight-process-kill-report-compile",
+        "Compile the event-blocked native Metal victim worker",
     );
     const native_metal_suite_test_step = b.step(
         "native-metal-suite-test",
-        "Run serialized Metal readiness, allocation, workload-report, disruption, cancellation-storm, soak, process-kill, fault, and correctness gates",
+        "Run serialized Metal gates with bounded admission before thermal-sensitive campaigns",
+    );
+
+    const native_metal_inflight_process_kill_ready_mod = b.createModule(.{
+        .root_source_file = b.path(
+            "src/core/native_metal_inflight_process_kill_ready.zig",
+        ),
+        .target = target,
+        .optimize = optimize,
+    });
+    const native_metal_inflight_process_kill_ready_tests = b.addTest(.{
+        .name = "glacier-native-metal-inflight-process-kill-ready-tests",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/native_metal_inflight_process_kill_ready.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_native_metal_inflight_process_kill_ready_tests =
+        b.addRunArtifact(
+            native_metal_inflight_process_kill_ready_tests,
+        );
+    native_metal_inflight_process_kill_report_pure_test_step.dependOn(
+        &run_native_metal_inflight_process_kill_ready_tests.step,
+    );
+    const run_native_metal_inflight_process_kill_report_model =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_native_metal_inflight_process_kill_report",
+        });
+    run_native_metal_inflight_process_kill_report_model.setCwd(
+        b.path("."),
+    );
+    run_native_metal_inflight_process_kill_report_model
+        .setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_native_metal_inflight_process_kill_report_model
+        .setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_native_metal_inflight_process_kill_report_model.step.dependOn(
+        &run_native_metal_inflight_process_kill_ready_tests.step,
+    );
+    native_metal_inflight_process_kill_report_pure_test_step.dependOn(
+        &run_native_metal_inflight_process_kill_report_model.step,
+    );
+    test_step.dependOn(
+        &run_native_metal_inflight_process_kill_ready_tests.step,
+    );
+    test_step.dependOn(
+        &run_native_metal_inflight_process_kill_report_model.step,
     );
     if (metal_shim != null and
         builtin.os.tag == .macos and
@@ -2587,6 +2668,7 @@ pub fn build(b: *std.Build) void {
                 "python3",
                 "-m",
                 "unittest",
+                "bench.tests.test_native_environment_admission",
                 "bench.tests.test_native_metal_soak_report",
                 "bench.tests.test_native_metal_soak_protocol",
             });
@@ -2611,6 +2693,54 @@ pub fn build(b: *std.Build) void {
         native_metal_soak_report_pure_test_step.dependOn(
             &run_native_workload_campaign_tests.step,
         );
+
+        const run_native_metal_soak_environment_admission =
+            b.addSystemCommand(&.{"python3"});
+        const run_native_metal_soak_environment_admission_suite =
+            b.addSystemCommand(&.{"python3"});
+        const run_native_metal_process_kill_environment_admission =
+            b.addSystemCommand(&.{"python3"});
+        const run_native_metal_process_kill_environment_admission_suite =
+            b.addSystemCommand(&.{"python3"});
+        for ([_]*std.Build.Step.Run{
+            run_native_metal_soak_environment_admission,
+            run_native_metal_soak_environment_admission_suite,
+            run_native_metal_process_kill_environment_admission,
+            run_native_metal_process_kill_environment_admission_suite,
+        }) |run_admission| {
+            run_admission.setCwd(b.path("."));
+            run_admission.setEnvironmentVariable(
+                "PYTHONDONTWRITEBYTECODE",
+                "1",
+            );
+            run_admission.setEnvironmentVariable(
+                "PYTHONPATH",
+                ".",
+            );
+            run_admission.addFileArg(
+                b.path("bench/native_environment_admission.py"),
+            );
+            run_admission.addArgs(&.{
+                "--timeout-seconds",
+                "180",
+                "--interval-seconds",
+                "10",
+                "--consecutive-samples",
+                "2",
+            });
+            run_admission.step.dependOn(
+                &native_metal_lib.step,
+            );
+            run_admission.step.dependOn(
+                &native_metal_soak_worker_exe.step,
+            );
+            run_admission.step.dependOn(
+                &run_native_metal_soak_report_model.step,
+            );
+            run_admission.step.dependOn(
+                &run_native_workload_campaign_tests.step,
+            );
+        }
 
         const run_native_metal_soak_report_verifier =
             b.addSystemCommand(&.{"python3"});
@@ -2652,11 +2782,17 @@ pub fn build(b: *std.Build) void {
         }
         // The supervisor always closes the live writer and launches a fresh
         // offline-verifier process. The option above changes retention only.
+        run_native_metal_soak_report_verifier.step.dependOn(
+            &run_native_metal_soak_environment_admission.step,
+        );
         native_metal_soak_report_test_step.dependOn(
             &run_native_metal_soak_report_verifier.step,
         );
-        run_native_metal_soak_report_suite.step.dependOn(
+        run_native_metal_soak_environment_admission_suite.step.dependOn(
             &run_native_metal_cancellation_storm_report_suite.step,
+        );
+        run_native_metal_soak_report_suite.step.dependOn(
+            &run_native_metal_soak_environment_admission_suite.step,
         );
 
         // W7b-b1 preserves the W7b-a geometry but seals a distinct schedule:
@@ -2704,11 +2840,18 @@ pub fn build(b: *std.Build) void {
             );
             run_native_metal_process_kill_report.addArg(path);
         }
+        run_native_metal_process_kill_report.step.dependOn(
+            &run_native_metal_process_kill_environment_admission.step,
+        );
         native_metal_process_kill_report_test_step.dependOn(
             &run_native_metal_process_kill_report.step,
         );
-        run_native_metal_process_kill_report_suite.step.dependOn(
+        run_native_metal_process_kill_environment_admission_suite.step
+            .dependOn(
             &run_native_metal_soak_report_suite.step,
+        );
+        run_native_metal_process_kill_report_suite.step.dependOn(
+            &run_native_metal_process_kill_environment_admission_suite.step,
         );
 
         // The fault shim is a second, non-installed build of the same bridge.
@@ -2780,6 +2923,49 @@ pub fn build(b: *std.Build) void {
             "config",
             fault_config_mod,
         );
+
+        const native_metal_inflight_process_kill_worker_exe =
+            b.addExecutable(.{
+                .name = "glacier-native-metal-inflight-process-kill-worker",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path(
+                        "examples/native_metal_inflight_process_kill_worker.zig",
+                    ),
+                    .target = target,
+                    .optimize = optimize,
+                    .sanitize_thread = sanitize_thread,
+                }),
+            });
+        native_metal_inflight_process_kill_worker_exe.root_module.addImport(
+            "engine",
+            fault_engine_mod,
+        );
+        native_metal_inflight_process_kill_worker_exe.root_module.addImport(
+            "config",
+            fault_config_mod,
+        );
+        native_metal_inflight_process_kill_worker_exe.root_module.addImport(
+            "metal_fault_control",
+            fault_control_mod,
+        );
+        native_metal_inflight_process_kill_worker_exe.root_module.addImport(
+            "native_metal_inflight_process_kill_ready",
+            native_metal_inflight_process_kill_ready_mod,
+        );
+        native_metal_inflight_process_kill_worker_exe.linkLibC();
+        native_metal_inflight_process_kill_worker_exe.linkLibrary(
+            fault_shim,
+        );
+        native_metal_inflight_process_kill_worker_exe.linkFramework(
+            "Metal",
+        );
+        native_metal_inflight_process_kill_worker_exe.linkFramework(
+            "Foundation",
+        );
+        native_metal_inflight_process_kill_report_compile_step.dependOn(
+            &native_metal_inflight_process_kill_worker_exe.step,
+        );
+
         const native_metal_fault_tests = b.addTest(.{
             .name = "glacier-native-metal-fault-tests",
             .root_module = b.createModule(.{
@@ -2829,6 +3015,67 @@ pub fn build(b: *std.Build) void {
             fault_shim,
         );
 
+        const run_native_metal_inflight_process_kill_report =
+            b.addSystemCommand(&.{"python3"});
+        const run_native_metal_inflight_process_kill_report_suite =
+            b.addSystemCommand(&.{"python3"});
+        for ([_]*std.Build.Step.Run{
+            run_native_metal_inflight_process_kill_report,
+            run_native_metal_inflight_process_kill_report_suite,
+        }) |run_report| {
+            run_report.setCwd(b.path("."));
+            run_report.setEnvironmentVariable(
+                "PYTHONDONTWRITEBYTECODE",
+                "1",
+            );
+            run_report.setEnvironmentVariable(
+                "PYTHONPATH",
+                ".",
+            );
+            run_report.addFileArg(
+                b.path(
+                    "bench/native_metal_inflight_process_kill_report.py",
+                ),
+            );
+            run_report.addArg("--victim");
+            run_report.addArtifactArg(
+                native_metal_inflight_process_kill_worker_exe,
+            );
+            run_report.addArg("--victim-metallib");
+            run_report.addArg(metal_library_path);
+            run_report.addArg("--recovery-runner");
+            run_report.addArtifactArg(
+                native_metal_workload_report_exe,
+            );
+            run_report.addArg("--recovery-metallib");
+            run_report.addArg(metal_library_path);
+            run_report.step.dependOn(&native_metal_lib.step);
+            run_report.step.dependOn(
+                &check_metal_fault_symbols.step,
+            );
+            run_report.step.dependOn(
+                &run_native_metal_inflight_process_kill_report_model.step,
+            );
+            run_report.step.dependOn(
+                &run_native_metal_workload_report_model.step,
+            );
+            run_report.step.dependOn(
+                &run_native_workload_report_tests.step,
+            );
+        }
+        if (native_metal_inflight_process_kill_report_output) |path| {
+            run_native_metal_inflight_process_kill_report.addArg(
+                "--output",
+            );
+            run_native_metal_inflight_process_kill_report.addArg(path);
+        }
+        native_metal_inflight_process_kill_report_test_step.dependOn(
+            &run_native_metal_inflight_process_kill_report.step,
+        );
+        run_native_metal_inflight_process_kill_report_suite.step.dependOn(
+            &run_native_metal_process_kill_report_suite.step,
+        );
+
         const run_native_metal_fault_tests =
             b.addRunArtifact(native_metal_fault_tests);
         run_native_metal_fault_tests.step.dependOn(
@@ -2846,7 +3093,7 @@ pub fn build(b: *std.Build) void {
             &check_metal_fault_symbols.step,
         );
         run_native_metal_fault_suite.step.dependOn(
-            &run_native_metal_process_kill_report_suite.step,
+            &run_native_metal_inflight_process_kill_report_suite.step,
         );
         const run_native_metal_correctness_suite =
             b.addRunArtifact(metal_tests);
@@ -2922,6 +3169,12 @@ pub fn build(b: *std.Build) void {
             &native_metal_failure.step,
         );
         native_metal_process_kill_report_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_inflight_process_kill_report_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_inflight_process_kill_report_compile_step.dependOn(
             &native_metal_failure.step,
         );
         native_metal_suite_test_step.dependOn(
@@ -5442,6 +5695,9 @@ pub fn build(b: *std.Build) void {
         "Compile accelerator-facing tests and diagnostics",
     );
     profile_device_compile_step.dependOn(&metal_tests.step);
+    profile_device_compile_step.dependOn(
+        &native_metal_inflight_process_kill_ready_tests.step,
+    );
     profile_device_compile_step.dependOn(
         &metal_kernel_bench_exe.step,
     );

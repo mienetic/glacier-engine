@@ -24,6 +24,14 @@ pub const completion_facts_v2_abi: u64 =
     0x474d_4643_0000_0002;
 pub const retirement_commit_facts_abi: u64 =
     0x474d_5246_0000_0001;
+pub const inflight_barrier_plan_abi: u64 =
+    0x474d_4942_0000_0001;
+pub const inflight_barrier_facts_abi: u64 =
+    0x474d_4946_0000_0001;
+pub const inflight_barrier_signal_value: u64 = 1;
+pub const inflight_barrier_wait_value: u64 = 2;
+pub const command_buffer_status_committed: u32 = 2;
+pub const command_buffer_status_scheduled: u32 = 3;
 pub const completed_as_command_error: u32 = 1;
 pub const real_commit_as_ambiguous: u32 = 2;
 pub const completed_as_unknown: u32 = 3;
@@ -45,6 +53,12 @@ pub const Error = error{
     CallbackHoldTimeout,
     RegisteredWaiterUnavailable,
     RegisteredWaiterTimeout,
+    InflightBarrierConflict,
+    InflightBarrierUnavailable,
+    InflightBarrierUnsupported,
+    InflightBarrierGenerationExhausted,
+    InflightBarrierPending,
+    InflightBarrierTimeout,
     InvalidFacts,
 };
 
@@ -95,6 +109,31 @@ pub const RetirementCommitFactsV1 = extern struct {
     reserved: u32 = 0,
 };
 
+pub const InflightBarrierPlanV1 = extern struct {
+    abi_version: u64 = 0,
+    barrier_generation: u64 = 0,
+    signal_value: u64 = 0,
+    wait_value: u64 = 0,
+};
+
+pub const InflightBarrierFactsV1 = extern struct {
+    abi_version: u64 = 0,
+    barrier_generation: u64 = 0,
+    token: metal.MetalCommandToken = .{},
+    submission_binding: [32]u8 = [_]u8{0} ** 32,
+    shared_event_signaled_value: u64 = 0,
+    signal_value: u64 = 0,
+    wait_value: u64 = 0,
+    device_registry_id: u64 = 0,
+    live_buffer_count: u64 = 0,
+    live_command_count: u64 = 0,
+    active_allocation_reference_count: u64 = 0,
+    submission_disposition: u32 = 0,
+    command_buffer_status: u32 = 0,
+    commit_invoked: u32 = 0,
+    completion_observed: u32 = 0,
+};
+
 comptime {
     if (@sizeOf(FaultPlanV1) != 32 or
         @offsetOf(FaultPlanV1, "injected_error_code") != 24)
@@ -123,6 +162,24 @@ comptime {
         @offsetOf(RetirementCommitFactsV1, "failure_armed") != 40)
         @compileError(
             "Metal test retirement-commit facts ABI layout changed",
+        );
+    if (@sizeOf(InflightBarrierPlanV1) != 32 or
+        @offsetOf(InflightBarrierPlanV1, "signal_value") != 16)
+        @compileError(
+            "Metal test inflight-barrier plan ABI layout changed",
+        );
+    if (@sizeOf(InflightBarrierFactsV1) != 160 or
+        @offsetOf(InflightBarrierFactsV1, "token") != 16 or
+        @offsetOf(
+            InflightBarrierFactsV1,
+            "shared_event_signaled_value",
+        ) != 88 or
+        @offsetOf(
+            InflightBarrierFactsV1,
+            "submission_disposition",
+        ) != 144)
+        @compileError(
+            "Metal test inflight-barrier facts ABI layout changed",
         );
 }
 
@@ -177,6 +234,18 @@ extern "C" fn glacier_metal_test_arm_next_dispatch_retirement_commit_failure(
 extern "C" fn glacier_metal_test_dispatch_retirement_commit_facts(
     ctx: *metal.MetalContext,
     out: *RetirementCommitFactsV1,
+) c_int;
+extern "C" fn glacier_metal_test_arm_next_inflight_event_barrier_v1(
+    ctx: *metal.MetalContext,
+    out: *InflightBarrierPlanV1,
+) c_int;
+extern "C" fn glacier_metal_test_inflight_event_barrier_facts_v1(
+    ctx: *metal.MetalContext,
+    out: *InflightBarrierFactsV1,
+) c_int;
+extern "C" fn glacier_metal_test_wait_for_inflight_event_barrier_v1(
+    ctx: *metal.MetalContext,
+    out: *InflightBarrierFactsV1,
 ) c_int;
 
 pub fn validateFaultPlanV1(plan: FaultPlanV1) Error!void {
@@ -636,6 +705,141 @@ pub fn completionFactsForBindingV2(
         submission_binding,
     );
     return facts;
+}
+
+pub fn validateInflightBarrierPlanV1(
+    plan: InflightBarrierPlanV1,
+) Error!void {
+    if (plan.abi_version != inflight_barrier_plan_abi or
+        plan.barrier_generation == 0 or
+        plan.barrier_generation == std.math.maxInt(u64) or
+        plan.signal_value != inflight_barrier_signal_value or
+        plan.wait_value != inflight_barrier_wait_value or
+        plan.signal_value >= plan.wait_value)
+        return Error.InvalidFacts;
+}
+
+pub fn submissionFromInflightBarrierFactsV1(
+    facts: InflightBarrierFactsV1,
+) Error!metal.MetalAsyncSubmission {
+    const disposition: metal.MetalAsyncSubmissionDisposition =
+        @enumFromInt(facts.submission_disposition);
+    const submission: metal.MetalAsyncSubmission = .{
+        .token = facts.token,
+        .submission_binding = facts.submission_binding,
+        .disposition = disposition,
+    };
+    metal.validateMetalAsyncSubmission(
+        submission,
+    ) catch return Error.InvalidFacts;
+    return submission;
+}
+
+pub fn validateInflightBarrierFactsV1(
+    facts: InflightBarrierFactsV1,
+    expected_plan: InflightBarrierPlanV1,
+) Error!void {
+    try validateInflightBarrierPlanV1(expected_plan);
+    if (facts.abi_version != inflight_barrier_facts_abi or
+        facts.barrier_generation !=
+            expected_plan.barrier_generation or
+        facts.shared_event_signaled_value !=
+            inflight_barrier_signal_value or
+        facts.signal_value != expected_plan.signal_value or
+        facts.wait_value != expected_plan.wait_value or
+        facts.shared_event_signaled_value >= facts.wait_value or
+        facts.device_registry_id == 0 or
+        facts.live_buffer_count != 4 or
+        facts.live_command_count != 1 or
+        facts.active_allocation_reference_count != 4 or
+        facts.submission_disposition !=
+            @intFromEnum(
+                metal.MetalAsyncSubmissionDisposition.submitted,
+            ) or
+        (facts.command_buffer_status !=
+            command_buffer_status_committed and
+            facts.command_buffer_status !=
+                command_buffer_status_scheduled) or
+        facts.commit_invoked != 1 or
+        facts.completion_observed != 0)
+        return Error.InvalidFacts;
+    _ = try submissionFromInflightBarrierFactsV1(facts);
+}
+
+pub fn armNextInflightEventBarrierV1(
+    backend: *engine.MetalBackend,
+) Error!InflightBarrierPlanV1 {
+    if (comptime !enabled) return Error.Unavailable;
+    var plan: InflightBarrierPlanV1 = .{};
+    switch (glacier_metal_test_arm_next_inflight_event_barrier_v1(
+        backend.ctx,
+        &plan,
+    )) {
+        0 => {},
+        1, 5 => return Error.InvalidControl,
+        2 => return Error.InflightBarrierConflict,
+        3 => return Error.InflightBarrierUnsupported,
+        4 => return Error.InflightBarrierGenerationExhausted,
+        else => return Error.InvalidControl,
+    }
+    try validateInflightBarrierPlanV1(plan);
+    return plan;
+}
+
+fn inflightBarrierFactsResultV1(
+    result: c_int,
+    facts: InflightBarrierFactsV1,
+    expected_plan: InflightBarrierPlanV1,
+) Error!InflightBarrierFactsV1 {
+    switch (result) {
+        0 => {},
+        1, 5 => return Error.InvalidControl,
+        2, 3 => return Error.InflightBarrierUnavailable,
+        4 => return Error.InflightBarrierPending,
+        6 => return Error.InflightBarrierTimeout,
+        else => return Error.InvalidControl,
+    }
+    try validateInflightBarrierFactsV1(
+        facts,
+        expected_plan,
+    );
+    return facts;
+}
+
+pub fn inflightEventBarrierFactsV1(
+    backend: *engine.MetalBackend,
+    expected_plan: InflightBarrierPlanV1,
+) Error!InflightBarrierFactsV1 {
+    if (comptime !enabled) return Error.Unavailable;
+    var facts: InflightBarrierFactsV1 = .{};
+    const result =
+        glacier_metal_test_inflight_event_barrier_facts_v1(
+            backend.ctx,
+            &facts,
+        );
+    return inflightBarrierFactsResultV1(
+        result,
+        facts,
+        expected_plan,
+    );
+}
+
+pub fn waitForInflightEventBarrierV1(
+    backend: *engine.MetalBackend,
+    expected_plan: InflightBarrierPlanV1,
+) Error!InflightBarrierFactsV1 {
+    if (comptime !enabled) return Error.Unavailable;
+    var facts: InflightBarrierFactsV1 = .{};
+    const result =
+        glacier_metal_test_wait_for_inflight_event_barrier_v1(
+            backend.ctx,
+            &facts,
+        );
+    return inflightBarrierFactsResultV1(
+        result,
+        facts,
+        expected_plan,
+    );
 }
 
 /// Test-build-only authority for exercising the callback-safe retirement

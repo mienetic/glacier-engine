@@ -242,13 +242,20 @@ run_zig_build() {
 }
 
 run_zig_metal_build() {
-    zig build native-metal-suite-test \
-        profile-device-compile \
+    zig build profile-device-compile \
         profile-host-tool-compile \
         -Dmetal-output-dir="$verification_root/metal" \
         -Doptimize=ReleaseSafe \
         -Dmetal=true \
         -j2 \
+        --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
+        --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" \
+        --prefix "$verification_root/prefix-metal"
+    zig build native-metal-suite-test \
+        -Dmetal-output-dir="$verification_root/metal" \
+        -Doptimize=ReleaseSafe \
+        -Dmetal=true \
+        -j1 \
         --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
         --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" \
         --prefix "$verification_root/prefix-metal"

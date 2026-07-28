@@ -136,6 +136,14 @@ current checkpoint generation, and the final after snapshot when complete.
 Partial prefixes retain exactly one before-boundary object; a complete campaign
 retains exactly one before and one later after-boundary object.
 
+The focused build gates and serialized Metal suite add a bounded stabilization
+step before launching this supervisor. It requires two explicit admitted
+environment observations ten seconds apart and gives the host at most 180
+seconds to reach that state after compile and model-test prerequisites finish.
+Timeout is a failure. This pre-run stabilization is orchestration only: the
+campaign still captures and retains its own strict before and after boundaries,
+and it never waits for a thermal excursion to clear after native work begins.
+
 Recovery and offline verification bound each lowercase content-addressed
 filename to its bytes, require canonical ASCII JSON, revalidate the environment
 schema, uniquely resolve the selector envelope, and, for a complete campaign,
@@ -261,3 +269,10 @@ real `SIGKILL` after ordinal 5 (the sixth segment) is fully verified and
 quiescent, then continues through a fresh Metal worker. That extends
 process-boundary evidence, but still does not claim in-flight command recovery
 or a physical GPU/driver/power fault.
+
+The separate
+[in-flight process-kill profile](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md)
+validates one real registered command at a build-isolated controlled
+`MTLSharedEvent` boundary before real PID-only `SIGKILL`, then runs a distinct
+production-linked W6 control. It proves no active-kernel interruption, victim
+output or state recovery, complete driver reclamation, or physical fault.

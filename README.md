@@ -416,24 +416,38 @@ formats, and independent verifiers.
   admitted pins. The barrier proves the ready-before-release boundary, not
   simultaneous scheduling or execution, critical-section overlap, physical GPU
   parallelism, kernel cancellation, or performance.
+  W7b-b4 adds a separate in-flight process-death boundary. A build-isolated
+  fault shim commits one real registered INT4 command that signals a private
+  `MTLSharedEvent` at `1` and waits for `2`. The victim publishes a verified
+  512-byte ready frame only while the command is committed or scheduled,
+  completion remains unobserved, and four native buffers, one command, and four
+  allocation references remain live. The controller then sends real PID-only
+  `SIGKILL`, requires status `-9` and exact EOF, and launches a distinct
+  production-linked W6 process that completes 20 CPU-oracle-checked real Metal
+  commands. The event barrier is controlled and synthetic; the Metal work,
+  process death, and fresh control are real. This does not prove active-kernel
+  interruption, victim-output recovery, state preservation, or complete driver
+  reclamation.
   Process RSS is a host observation. Metal `currentAllocatedSize` is retained
   only as device-wide allocation context and is not GPU residency, owned
   memory, utilization, or physical-parallelism evidence. The forced restart is
   post-segment, not an in-flight command or physical-device fault. Remaining
-  W7b-b work covers supervisor and in-flight process death, recovery-process
-  interruption, adapter loss, physical quota/media/power faults, and native
-  multi-filesystem replication.
+  W7b-b work covers supervisor death, recovery-process interruption,
+  active-kernel and adapter faults, physical quota/media/power faults, and
+  native multi-filesystem replication.
   The first retained native machine result is the
   [2026-07-28 macOS arm64 wire](bench/results/native-metal-workload-report-macos-arm64-2026-07-28.bin)
   with its
   [capture manifest](bench/results/native-metal-workload-report-macos-arm64-2026-07-28.manifest.json);
   it is diagnostic evidence for that exact session, not a performance or
-  replication claim. See
-  [Native Workload Report](docs/NATIVE_WORKLOAD_REPORT.md) and
+  replication claim. See the
+  [Native Workload Report](docs/NATIVE_WORKLOAD_REPORT.md),
   [Native Metal Disruption Report](docs/NATIVE_METAL_DISRUPTION_REPORT.md),
   [Native Metal Cancellation-Storm Report](docs/NATIVE_METAL_CANCELLATION_STORM_REPORT.md),
-  [Native Metal Segmented Soak Report](docs/NATIVE_METAL_SOAK_REPORT.md), and
-  [Native Metal Process-Kill Recovery](docs/NATIVE_METAL_PROCESS_KILL_REPORT.md).
+  [Native Metal Segmented Soak Report](docs/NATIVE_METAL_SOAK_REPORT.md),
+  [Native Metal Process-Kill Recovery](docs/NATIVE_METAL_PROCESS_KILL_REPORT.md),
+  and
+  [Native Metal In-Flight Process-Kill Report](docs/NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md).
   The accelerator-independent publication/recovery slice is documented in the
   [Native Workload Store-Fault Report](docs/NATIVE_WORKLOAD_STORE_FAULT_REPORT.md).
 - **Deterministic device selection.** A portable, pointer-free
@@ -686,13 +700,21 @@ evidence gaps. See the
 [native Metal allocation adapter](docs/NATIVE_METAL_ALLOCATION.md).
 
 Run the fail-closed native readiness, allocation, production workload-report,
-controlled-disruption, cancellation-storm, segmented-soak, forced-process-restart,
-fault-settlement, and correctness gates serially on macOS with:
+controlled-disruption, cancellation-storm, segmented-soak,
+forced-process-restart, in-flight process-kill, fault-settlement, and
+correctness gates serially on macOS with:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build native-metal-suite-test \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 ```
+
+The focused soak/process-kill gates and serialized suite require two admitted
+AC-power, low-power-off, nominal-thermal snapshots ten seconds apart before
+each 60-second campaign. Admission must complete within a 180-second monotonic
+deadline; each production environment probe is separately bounded. The
+campaign then retains its own before/after environment boundaries and does not
+cool down or retry a thermal excursion that occurs during native work.
 
 Add `-Dnative-metal-report-output=PATH` to the focused W6b report gate, or
 `-Dnative-metal-suite-report-output=PATH` to the serialized suite, only when
@@ -714,6 +736,21 @@ It retains 128 zero-command cancel-before-submit outcomes, 64 zero-command
 capacity probes, and 16 real Metal controls across paired real host threads.
 Omit the output option for an ephemeral verified wire. See the
 [Native Metal Cancellation-Storm Report](docs/NATIVE_METAL_CANCELLATION_STORM_REPORT.md).
+
+Run the focused W7b-b4 in-flight process-kill gate with:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-inflight-process-kill-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2 \
+  -Dnative-metal-inflight-process-kill-report-output=PATH
+```
+
+The victim's private event barrier is fault-shim-only and controlled. The
+registered INT4 command, PID-only `SIGKILL`, exact `-9` wait status, EOF, and
+fresh production-linked 20-command W6 control are real. Omit the output option
+for an ephemeral verified report. See the
+[Native Metal In-Flight Process-Kill Report](docs/NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md).
 
 Run W7b-a
 directly, with optional verified-store retention, using:
@@ -974,10 +1011,10 @@ hardware-independent surface without those native backend dependencies.
 | Scheduling | Exact admission, deterministic weighted QoS, one fixed and 32 generated bounded mixed-media open-loop pressure cases, a separately versioned finite-source deterministic closed-loop campaign with FIFO next-step replacement and exact replay, final-quantum image/audio/video media transactions, deterministic exact-signature shrinking, one mixed typed vision/audio/temporal-video workload with typed result publication under the scheduler-owned receipt, and one atomic process-local typed tool transaction profile | Family-aware batching, preemption, multi-device placement, provider/stateful/live-tool workload profiles, and broader multi-tenant campaigns |
 | Device runtime | Portable capability selection, Device-loss Observation V1, command-specific Device-loss Dispatch Reconciliation Phase A, callback-safe Dispatch Callback Retirement Phase B, and loss-bound quiesced-resource retirement; canonical present-to-newer-unavailable/lost transitions; fixed 440/240/448-byte Phase A evidence and 464/240/408/504-byte Phase B retention/plan/fence/receipt evidence; native-only production authorization with same-source sticky-loss revalidation; exact active-pin binding without exposing the Bank permit; ARC-owned callback-gate detachment without a callback-exit prerequisite; dedicated zero-output `ownership_retired_after_device_loss`; Bank-first settlement, exact native unlink, replay tombstones, confirmation retry, a production 256-byte identity-bound direct retirement-telemetry snapshot, and additive pin-aware SnapshotV4 with completion headroom; real Metal commands and buffers under CPU-oracle gates; build-isolated synthetic loss/error and held-callback controls with production-symbol isolation; adapter-quoted allocation, exact charge-before-allocate accounting, ChildLease and additive LeaseTree ownership, bounded object-set pins, two isolated async slots with exact replay and out-of-order settlement, sticky quarantine, pre-submit rejection/cancellation, direct Metal length/`allocatedSize` observation, generation-fenced reuse, sibling isolation, and asymmetric FP16 tiled-matmul correctness | Retain requested/removed callback artifacts on removable hardware; add fresh selection and explicit migration policy; then dynamic multi-device queue scheduling, separate physical residency and direct physical telemetry, additional GPU backends, retained native OS/device matrices, and performance evidence under declared campaigns |
 | Providers | Context packing, gateway, transport harness, settlement and cost wires, a read-only outer-envelope inspector, and a pointer-free ActionOutbox adapter contract exercised by a same-process fake authority whose portable values contain no credentials or payload bytes | Pluggable live adapters outside the credential-free core, OS-isolated credential handling, and optional caller-supplied full-composition inspection |
-| Evidence | Hash-chained events, independent Python verifiers, a scheduled-media execution sidecar with exact receipt/output replay, compact provider evidence join, an experimental read-only provider outer-envelope inspector, a generated-media inspector with exact optional format-sidecar validation, independent ActionOutbox dispatch/status model tests with live canonical Zig-report parity, a fixed native-observation contract with availability, stable source identity, per-event provenance, unavailable-reason identity, per-record sample-clock identity, and value-clock identity for present time metrics, a versioned allocation-free W6a raw-record/summary/closure report codec with deterministic reference runner and independent recomputation, a W6b production-native macOS Metal producer with one retained independently verified 20-record machine result after zero-ownership closure, a W7a finite controlled-disruption producer with 250 ordered records and 100 correctness-gated native Metal commands, the W7b-b3 208-record native cancellation-storm profile with 16 correctness-gated controls, the W7b-a canonical segmented-soak campaign, the W7b-b1 sealed post-segment process-kill profile, and the W7b-b2 production-publisher/reference-recovery 81-fault/one-control campaign with independent binary-report verification | Token transaction inspector, provider nested-composition workflow, privacy-safe export and retention policy, retained native campaign matrices, remaining W7b-b supervisor/in-flight/recovery-process and physical disruption evidence, direct CPU/GPU utilization, residency, thermal, frequency, power, and energy adapters, and native multi-OS evidence |
+| Evidence | Hash-chained events, independent Python verifiers, a scheduled-media execution sidecar with exact receipt/output replay, compact provider evidence join, an experimental read-only provider outer-envelope inspector, a generated-media inspector with exact optional format-sidecar validation, independent ActionOutbox dispatch/status model tests with live canonical Zig-report parity, a fixed native-observation contract with availability, stable source identity, per-event provenance, unavailable-reason identity, per-record sample-clock identity, and value-clock identity for present time metrics, a versioned allocation-free W6a raw-record/summary/closure report codec with deterministic reference runner and independent recomputation, a W6b production-native macOS Metal producer with one retained independently verified 20-record machine result after zero-ownership closure, a W7a finite controlled-disruption producer with 250 ordered records and 100 correctness-gated native Metal commands, the W7b-b3 208-record native cancellation-storm profile with 16 correctness-gated controls, the W7b-b4 real PID-kill boundary around one controlled event-blocked registered command plus a fresh 20-command production control, the W7b-a canonical segmented-soak campaign, the W7b-b1 sealed post-segment process-kill profile, and the W7b-b2 production-publisher/reference-recovery 81-fault/one-control campaign with independent binary-report verification | Token transaction inspector, provider nested-composition workflow, privacy-safe export and retention policy, retained native campaign matrices, remaining W7b-b supervisor/recovery-process, active-kernel, adapter, and physical disruption evidence, direct CPU/GPU utilization, residency, thermal, frequency, power, and energy adapters, and native multi-OS evidence |
 | Multimodal | Shared identity/timeline, bounded decode/transforms, scheduler-coupled final-quantum image/audio/video transactions and typed perception results, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, typed producer/raw-output admission, host replay of exact deterministic source-model/materializer transitions, validated bounded PNG/WAVE/APNG profiles, and an integrated additive format-conformance sidecar with a maximum-entry repeated-modality composed oracle | External video-timeline normalization, production encoder/container adapters and broader profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, additional model/materializer profiles, and authorized physical playback/display and quality evidence |
-| Platforms | Native macOS development-host evidence, including the 49-death ActionOutbox POSIX recovery campaign, the 27-death/54-injected-error workload-store production-publisher/reference-recovery campaign, and on-demand Metal diagnostic-readiness, allocation-ownership, production workload-report, controlled-disruption, cancellation-storm, segmented-soak, and post-segment process-kill gates; affected-path verification with target-specific core/CPU/durable/device/host-tool compile profiles, a complete consumer compile closure for shared APIs, full per-target fallback, and one shared DAG per selected target; full opt-in production, benchmark/diagnostic, and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64; a CLI-only default install plus opt-in benchmark installation; a bounded Linux available-memory adapter implementation with native retention still pending; exported package modules; compile-time adapter-availability inventory; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64 | Separate the transitional core from durable POSIX authority and turn verification profiles into distributable products; replicate workload-store recovery natively on POSIX filesystems; run native Linux/Windows/FreeBSD CPU, observer, mapping, recovery, telemetry, and packaging gates; implement the Windows durable-file adapter; then add mobile and reduced edge profiles |
-| Runtime Workload Lab | W0 deterministic mixed-media open-loop conformance, W1 scheduler-coupled media execution, the W2 four-seed/32-case generated corpus, W3 finite-source closed-loop conformance, W4a mixed typed-perception conformance, the W4b-a typed tool transaction, W4b-b ActionOutbox record recovery, the W4b-c durable POSIX store, W4b-d generation-fenced fake dispatch/status, W5a native observation, a bounded Linux host-source implementation, native macOS Metal readiness, pinned-allocation and bounded two-slot pressure gates, the portable W6a raw-record/summary/closure foundation, the W6b production-native 20-request Metal report producer, W7a finite controlled disruption, W7b-b3 paired-thread concurrent-caller cancellation, W7b-a bounded segmented soak, W7b-b1 quiescent-worker process kill, and the W7b-b2 production-publisher/reference-recovery campaign-store process-death/error roll-forward cover overload, fairness, timeout, cancellation, turnover, typed publication/effect delivery, uncertain external handoff, fenced safe retry, deterministic crash modeling, explicit machine-state availability, fail-closed pre-run admission, retained post-run contamination, strict unavailable-not-zero behavior, independently recomputed workload evidence, correctness-gated accelerator dispatches, clean and forced worker restart, canonical checkpoint publication/offline audit, and controlled recovery without performance or physical-residency claims | Complete W7b-b supervisor/in-flight/recovery-process and physical device/storage/power campaigns; retain native Linux and broader accelerator campaign matrices; add trustworthy direct CPU/GPU metrics where platform sources exist; then W8 multi-OS replication |
+| Platforms | Native macOS development-host evidence, including the 49-death ActionOutbox POSIX recovery campaign, the 27-death/54-injected-error workload-store production-publisher/reference-recovery campaign, and on-demand Metal diagnostic-readiness, allocation-ownership, production workload-report, controlled-disruption, cancellation-storm, segmented-soak, post-segment process-kill, and controlled in-flight process-kill gates; affected-path verification with target-specific core/CPU/durable/device/host-tool compile profiles, a complete consumer compile closure for shared APIs, full per-target fallback, and one shared DAG per selected target; full opt-in production, benchmark/diagnostic, and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64; a CLI-only default install plus opt-in benchmark installation; a bounded Linux available-memory adapter implementation with native retention still pending; exported package modules; compile-time adapter-availability inventory; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64 | Separate the transitional core from durable POSIX authority and turn verification profiles into distributable products; replicate workload-store recovery natively on POSIX filesystems; run native Linux/Windows/FreeBSD CPU, observer, mapping, recovery, telemetry, and packaging gates; implement the Windows durable-file adapter; then add mobile and reduced edge profiles |
+| Runtime Workload Lab | W0 deterministic mixed-media open-loop conformance, W1 scheduler-coupled media execution, the W2 four-seed/32-case generated corpus, W3 finite-source closed-loop conformance, W4a mixed typed-perception conformance, the W4b-a typed tool transaction, W4b-b ActionOutbox record recovery, the W4b-c durable POSIX store, W4b-d generation-fenced fake dispatch/status, W5a native observation, a bounded Linux host-source implementation, native macOS Metal readiness, pinned-allocation and bounded two-slot pressure gates, the portable W6a raw-record/summary/closure foundation, the W6b production-native 20-request Metal report producer, W7a finite controlled disruption, W7b-b3 paired-thread concurrent-caller cancellation, W7b-b4 controlled event-blocked in-flight process kill with a fresh production control, W7b-a bounded segmented soak, W7b-b1 quiescent-worker process kill, and the W7b-b2 production-publisher/reference-recovery campaign-store process-death/error roll-forward cover overload, fairness, timeout, cancellation, turnover, typed publication/effect delivery, uncertain external handoff, fenced safe retry, deterministic crash modeling, explicit machine-state availability, fail-closed pre-run admission, retained post-run contamination, strict unavailable-not-zero behavior, independently recomputed workload evidence, correctness-gated accelerator dispatches, clean and forced worker restart, canonical checkpoint publication/offline audit, and controlled recovery without performance or physical-residency claims | Complete W7b-b supervisor/recovery-process, active-kernel, adapter, and physical device/storage/power campaigns; retain native Linux and broader accelerator campaign matrices; add trustworthy direct CPU/GPU metrics where platform sources exist; then W8 multi-OS replication |
 | Tooling | Zig build, exported `glacier`/`glacier_core` package modules, deterministic demos, benchmark harnesses, five domain compile profiles plus one complete consumer-closure profile, CLI-only default install, and opt-in benchmark installation | Distributable product profiles, installer, stable library API, and simpler fixture workflow |
 
 The R1d prepared-text path binds a request-profile manifest, not a stable

@@ -52,6 +52,7 @@ EXPECTED_METAL_NATIVE_SOURCE_PATHS = frozenset(
         "tests/support/metal_fault_control.zig",
         "examples/native_metal_cancellation_storm_report.zig",
         "examples/native_metal_disruption_report.zig",
+        "examples/native_metal_inflight_process_kill_worker.zig",
         "examples/native_metal_observation.zig",
         "examples/native_metal_soak_worker.zig",
         "examples/native_metal_workload_report.zig",
@@ -61,6 +62,7 @@ EXPECTED_METAL_NATIVE_SOURCE_PATHS = frozenset(
 
 EXPECTED_METAL_PORTABLE_SOURCE_PATHS = frozenset(
     {
+        "src/core/native_metal_inflight_process_kill_ready.zig",
         "src/backends/metal/allocation_adapter.zig",
         "src/backends/metal/backend.zig",
     }
@@ -269,26 +271,71 @@ class VerificationPolicyTests(unittest.TestCase):
                     ),
                 )
 
+    def test_native_metal_inflight_process_kill_paths_select_hardware_gate(
+        self,
+    ):
+        plan = self.assert_targets(
+            ["examples/native_metal_inflight_process_kill_worker.zig"],
+            (),
+        )
+        self.assertEqual(
+            plan.flags,
+            frozenset({"metal-native"}),
+        )
+        plan = self.assert_targets(
+            ["src/core/native_metal_inflight_process_kill_ready.zig"],
+            policy.RETAINED_TARGETS,
+        )
+        self.assertEqual(
+            plan.flags,
+            frozenset(
+                {"metal-native", "native-full", "python-full"},
+            ),
+        )
+        self.assertEqual(
+            {target_plan.steps for target_plan in plan.target_plans},
+            {("profile-device-compile",)},
+        )
+        for changed_path in (
+            "bench/native_metal_inflight_process_kill_report.py",
+            "bench/tests/test_native_metal_inflight_process_kill_report.py",
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    plan.flags,
+                    frozenset(
+                        {
+                            "python-changed",
+                            "python-full",
+                            "metal-native",
+                        }
+                    ),
+                )
+
     def test_native_metal_soak_paths_select_hardware_gate(self):
         plan = self.assert_targets(
             ["examples/native_metal_soak_worker.zig"],
             (),
         )
         self.assertEqual(plan.flags, frozenset({"metal-native"}))
-        plan = self.assert_targets(
-            ["bench/tests/test_native_metal_soak_protocol.py"],
-            (),
-        )
-        self.assertEqual(
-            plan.flags,
-            frozenset(
-                {
-                    "python-changed",
-                    "python-full",
-                    "metal-native",
-                }
-            ),
-        )
+        for changed_path in (
+            "bench/native_environment_admission.py",
+            "bench/tests/test_native_environment_admission.py",
+            "bench/tests/test_native_metal_soak_protocol.py",
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    plan.flags,
+                    frozenset(
+                        {
+                            "python-changed",
+                            "python-full",
+                            "metal-native",
+                        }
+                    ),
+                )
         for changed_path in sorted(EXPECTED_WORKLOAD_STORE_FAULT_METAL_PATHS):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
@@ -1017,6 +1064,12 @@ class VerificationPolicyTests(unittest.TestCase):
         )
         self.assertIn(
             "profile_device_compile_step.dependOn(\n"
+            "        &native_metal_inflight_process_kill_ready_tests.step,\n"
+            "    );",
+            source,
+        )
+        self.assertIn(
+            "profile_device_compile_step.dependOn(\n"
             "        &metal_kernel_bench_exe.step,\n"
             "    );",
             source,
@@ -1506,7 +1559,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             timeout=30,
         )
 
-    def test_native_metal_gate_compiles_device_consumers_in_same_graph(self):
+    def test_native_metal_gate_separates_compile_and_hardware_phases(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             repository, merge_base, environment = self.make_repository(root)
@@ -1529,24 +1582,39 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout + result.stderr,
             )
             self.assertIn("PASS  native/metal:", result.stdout)
-            metal_calls = [
-                line
-                for line in Path(
-                    environment["VERIFY_INTEGRATION_ZIG_LOG"]
-                )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
                 .read_text(encoding="ascii")
                 .splitlines()
+            )
+            compile_calls = [
+                line
+                for line in calls
                 if line.startswith(
-                    "build native-metal-suite-test "
-                    "profile-device-compile "
+                    "build profile-device-compile "
                     "profile-host-tool-compile "
                 )
             ]
-            self.assertEqual(1, len(metal_calls), metal_calls)
-            self.assertIn(
-                "-Dmetal-output-dir=",
-                metal_calls[0],
+            native_calls = [
+                line
+                for line in calls
+                if line.startswith("build native-metal-suite-test ")
+            ]
+            self.assertEqual(1, len(compile_calls), compile_calls)
+            self.assertEqual(1, len(native_calls), native_calls)
+            self.assertLess(
+                calls.index(compile_calls[0]),
+                calls.index(native_calls[0]),
             )
+            for call in (*compile_calls, *native_calls):
+                self.assertIn("-Dmetal-output-dir=", call)
+                self.assertIn(" --cache-dir ", call)
+                self.assertIn(" --global-cache-dir ", call)
+                self.assertIn(" --prefix ", call)
+            self.assertIn(" -j2 ", compile_calls[0])
+            self.assertIn(" -j1 ", native_calls[0])
+            self.assertNotIn("profile-device-compile", native_calls[0])
+            self.assertNotIn("profile-host-tool-compile", native_calls[0])
 
     def test_workload_report_uses_one_portable_non_metal_build_graph(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

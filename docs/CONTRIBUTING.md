@@ -75,8 +75,10 @@ narrow change never hides the checks required by another changed path.
 | Portable workload report/campaign codec, verifier, or focused test | Changed-file Python syntax where applicable plus the portable workload report test, native compile, and four-target cross-compile gate; no hard native campaign unless another changed path selects one |
 | W7b-b2 store-fault campaign (`bench/native_workload_store_fault_campaign.py` and `bench/tests/test_native_workload_store_fault_campaign.py`) | Changed-file Python syntax plus the hard native POSIX store-fault gate on Darwin, Linux, or FreeBSD; no foreign Zig target |
 | Production campaign-store publisher (`bench/native_metal_soak_report.py` and `bench/tests/test_native_metal_soak_report.py`) | Changed-file Python syntax, full Python discovery, the hard native POSIX store-fault gate, and the serialized native Darwin Metal suite; no foreign Zig target |
+| Native environment admission helper or focused test | Changed-file Python syntax, full Python discovery, and the serialized native Darwin Metal suite; no foreign target or performance claim |
 | Native Metal cancellation-storm Zig producer | Serialized native Darwin Metal suite; no foreign Zig target or foreign GPU-execution claim |
 | Native Metal cancellation-storm Python verifier or focused test | Changed-file Python syntax, full Python discovery, and the serialized native Darwin Metal suite; no foreign Zig target or foreign GPU-execution claim |
+| Native Metal in-flight process-kill worker, controller, ready frame, or focused test | Ready-frame/controller model checks plus the serialized native Darwin Metal suite; changed Python also receives syntax and full discovery; no foreign GPU-execution claim |
 | POSIX shell script | Syntax under its declared `sh` or `bash` shebang |
 | Retained Rust interop consumer | Native Rust contract gate only; `rustc` is required, but foreign Zig targets cannot compile or validate this runtime consumer |
 | Other Rust build input | Native Rust contract gate, native ReleaseSafe, Python discovery, and every retained target until its build graph is classified |
@@ -97,7 +99,7 @@ narrow change never hides the checks required by another changed path.
 | FreeBSD-specific runtime | Native ReleaseSafe plus the retained FreeBSD target |
 | Shared POSIX runtime | Native ReleaseSafe, explicit Darwin evidence, both Linux targets, and FreeBSD; the Darwin label reuses the native suite instead of compiling twice |
 | Darwin- or macOS-specific runtime | Native Darwin ReleaseSafe tests; a non-Darwin skip is not passing evidence |
-| Metal backend | Serialized native Darwin Metal suite, including the production-native workload report, controlled-disruption campaign, 60-second segmented-soak campaign, post-segment process-kill campaign, production-symbol isolation, and the build-isolated fault/race gate; a non-Darwin skip is not passing evidence |
+| Metal backend | Serialized native Darwin Metal suite, including the production-native workload report, controlled-disruption campaign, 60-second segmented-soak campaign, post-segment process-kill campaign, controlled in-flight process-kill campaign, production-symbol isolation, and the build-isolated fault/race gate; a non-Darwin skip is not passing evidence |
 | Unknown input under a code tree | Conservatively use every retained target |
 | Concurrency or locking | Zig modes above, ThreadSanitizer where supported, fault/recovery tests |
 | On-disk or wire ABI | Encoder/decoder tests, golden fixture, mutation/reorder/truncation tests, independent verifier |
@@ -165,6 +167,11 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dnative-metal-cancellation-storm-report-output=PATH
 
 tools/zig-with-ephemeral-cache.sh build \
+  native-metal-inflight-process-kill-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2 \
+  -Dnative-metal-inflight-process-kill-report-output=PATH
+
+tools/zig-with-ephemeral-cache.sh build \
   native-metal-suite-test \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 ```
@@ -219,17 +226,21 @@ pointers execute once. Naming `install` remains required for a full plan
 because Zig does not select its default step after another top-level step is
 named. The default install now contains only the production CLI; use
 `zig build install-benchmarks` to stage all benchmark and diagnostic
-executables. `zig build run` also builds only the CLI. Metal-only changes use
-one native Darwin Zig invocation containing the serialized
-`native-metal-suite-test` plus the orthogonal device and host-tool compile
-profiles. The aggregate runs diagnostic readiness, real-resource allocation
+executables. `zig build run` also builds only the CLI. Metal-only changes first
+complete the orthogonal device and host-tool compile profiles, then run
+`native-metal-suite-test` as a separate `-j1` hardware phase against the same
+temporary cache. The aggregate runs diagnostic readiness, real-resource allocation
 ownership, one production-native 20-dispatch workload report,
 controlled disruption, the W7b-b3 paired-thread cancellation-storm profile,
 the W7b-a segmented soak, the W7b-b1 post-segment process-kill profile,
-build-isolated fault/reconciliation, and focused correctness without overlap;
-the readiness sub-gate retains its one-dispatch contract. Metal assertions
-run, the production CLI plus diagnostics cannot escape compilation, and all
-roots share one shader-library build step. Each
+the W7b-b4 controlled in-flight process-kill profile, build-isolated
+fault/reconciliation, and focused correctness without overlap. Before each
+60-second campaign, a bounded admission step requires two explicit nominal
+observations ten seconds apart within 180 seconds after its prerequisites; the
+campaign still fails on a non-nominal retained boundary. The readiness
+sub-gate retains its one-dispatch contract. Metal assertions run, the
+production CLI plus diagnostics cannot escape compilation, and all roots share
+one shader-library build step. Each
 segmented campaign executes 12 by 50 paced epochs and 1,200 real commands
 across two worker generations, so use
 `native-metal-soak-report-pure-test` for supervisor/store-only changes when
@@ -246,6 +257,11 @@ The
 [Native Metal Cancellation-Storm Report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md)
 defines the W7b-b3 release-barrier evidence and its no-lock-overlap,
 no-kernel-cancellation, and no-performance boundary.
+The
+[Native Metal In-Flight Process-Kill Report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md)
+defines the W7b-b4 build-isolated controlled event barrier, real PID-only kill,
+fresh production control, and active-kernel/output/state/reclamation
+nonclaims.
 The separate
 [Native Workload Store-Fault Report](NATIVE_WORKLOAD_STORE_FAULT_REPORT.md)
 uses real host processes and filesystem calls with controlled errno injection;
