@@ -253,6 +253,27 @@ PROFILES = (
             max_output_dimensions=1_048_576,
         ),
     ),
+    ProfileSpec(
+        index=8,
+        slug="dense-tensor-reranker-reference",
+        profile_abi=0x4744_5252_0000_0001,
+        lifecycle="stateless",
+        support=SupportSpec(
+            family="stateless_encoder",
+            family_id=2,
+            operation="rerank",
+            operation_id=5,
+            input_kind="dense_tensor",
+            input_kind_id=2,
+            output_kind="ranked_items",
+            output_kind_id=4,
+            numerical_policy="exact_integer",
+            numerical_policy_id=1,
+            max_batch_items=64,
+            max_input_features=4_096,
+            max_output_dimensions=1,
+        ),
+    ),
 )
 
 

@@ -59,7 +59,7 @@ tools/zig-with-ephemeral-cache.sh build runtime-support-inspector-test \
 
 ## Retained profiles
 
-Registry V1 currently contains eight profiles:
+Registry V1 currently contains nine profiles:
 
 | Index | Slug | Lifecycle | Contract shape |
 | ---: | --- | --- | --- |
@@ -71,8 +71,9 @@ Registry V1 currently contains eight profiles:
 | 5 | `video-segment-reference` | stateless | video segment: video u8 features → typed video segment |
 | 6 | `stateful-video-reference` | stateful | video segment: video u8 features → typed video segment |
 | 7 | `latent-step-reference` | stateful | image diffuse step: latent tensor → media chunk |
+| 8 | `dense-tensor-reranker-reference` | stateless | generic rerank: dense i16 tensor → canonical ranked items |
 
-All eight rows have evidence class
+All nine rows have evidence class
 `retained_reference_fixture`, numerical policy `exact_integer`, and no allowed
 ambient capability. Their exact bounds come from the adapter support constants;
 the registry does not maintain a second handwritten copy.
@@ -162,10 +163,11 @@ any later failure.
 
 The standard-library Python example declares the same structures with
 `ctypes`; the dependency-free Rust example uses `#[repr(C)]` structures and
-`extern "C"`. Both validate the registry ABI, enumerate all eight profiles, and
-make supported and capability-rejected queries in addition to verifying the
-canonical contract chain. Their final summary contains
-`profile_count=8 transcript_mask=0x000000000000000c`:
+`extern "C"`. Both validate the registry ABI, enumerate all nine profiles,
+verify the first and appended final row, and make exact reranker, transcript,
+and capability-rejected queries in addition to verifying the canonical
+contract chain. Their final summary contains
+`profile_count=9 transcript_mask=0x000000000000000c`:
 
 ```sh
 python3 examples/interop/python_verify.py
@@ -223,7 +225,7 @@ registry.
 
 ## What this does not claim
 
-The registry and inspector cover only the eight retained exact-integer reference
+The registry and inspector cover only the nine retained exact-integer reference
 fixtures listed above. They make no claim about:
 
 - a production model or checkpoint;
@@ -238,3 +240,6 @@ Cross-compilation shows that a source surface compiles for a target; it does not
 turn a registry row into native execution evidence. Production, platform,
 backend, quality, and performance promotion each require their own retained
 evidence.
+
+The appended generic profile is documented in
+[Dense-Tensor Reranker](DENSE_TENSOR_RERANKER.md).

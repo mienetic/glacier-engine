@@ -1191,6 +1191,104 @@ pub fn build(b: *std.Build) void {
     host_runtime_compile_step.dependOn(test_compile_step);
     host_runtime_compile_step.dependOn(contract_c_compile_step);
 
+    // R2a exposes one download-free dense-tensor reranking fixture. The
+    // independent Python verifier executes the exact demo artifact produced by
+    // this graph, so the focused gate compiles the executable only once.
+    const dense_tensor_reranker_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/dense_tensor_reranker.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_dense_tensor_reranker_tests = b.addRunArtifact(
+        dense_tensor_reranker_tests,
+    );
+    const dense_tensor_reranker_exe = b.addExecutable(.{
+        .name = "glacier-dense-tensor-reranker-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/dense_tensor_reranker.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    dense_tensor_reranker_exe.root_module.addImport("core", core_mod);
+    const run_dense_tensor_reranker = b.addRunArtifact(
+        dense_tensor_reranker_exe,
+    );
+    const dense_tensor_reranker_demo_step = b.step(
+        "dense-tensor-reranker-demo",
+        "Print the canonical dense-tensor reranking result",
+    );
+    dense_tensor_reranker_demo_step.dependOn(
+        &run_dense_tensor_reranker.step,
+    );
+
+    const run_dense_tensor_reranker_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_dense_tensor_reranker_oracle.setCwd(b.path("."));
+    run_dense_tensor_reranker_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_dense_tensor_reranker_oracle.addFileArg(
+        b.path("bench/stateless_tensor_result.py"),
+    );
+    run_dense_tensor_reranker_oracle.addArg("--demo");
+    run_dense_tensor_reranker_oracle.addArtifactArg(
+        dense_tensor_reranker_exe,
+    );
+    const run_dense_tensor_reranker_python_tests =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_stateless_tensor_result",
+        });
+    run_dense_tensor_reranker_python_tests.setCwd(b.path("."));
+    run_dense_tensor_reranker_python_tests.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+
+    const dense_tensor_reranker_test_step = b.step(
+        "dense-tensor-reranker-test",
+        "Run dense-tensor reranking tests and independent verification",
+    );
+    dense_tensor_reranker_test_step.dependOn(
+        &run_dense_tensor_reranker_tests.step,
+    );
+    dense_tensor_reranker_test_step.dependOn(
+        &run_dense_tensor_reranker_oracle.step,
+    );
+    dense_tensor_reranker_test_step.dependOn(
+        &run_dense_tensor_reranker_python_tests.step,
+    );
+    const dense_tensor_reranker_compile_step = b.step(
+        "dense-tensor-reranker-compile",
+        "Compile dense-tensor reranking tests and demo",
+    );
+    dense_tensor_reranker_compile_step.dependOn(
+        &dense_tensor_reranker_tests.step,
+    );
+    dense_tensor_reranker_compile_step.dependOn(
+        &dense_tensor_reranker_exe.step,
+    );
+    // The umbrella core test artifact already imports this module. Attach the
+    // independent checks and demo directly so full rounds do not compile a
+    // second standalone copy of the same Zig tests.
+    test_step.dependOn(&run_dense_tensor_reranker_oracle.step);
+    test_step.dependOn(
+        &run_dense_tensor_reranker_python_tests.step,
+    );
+    test_compile_step.dependOn(&dense_tensor_reranker_exe.step);
+
     // Stateless generated W2 scenarios exercise the unchanged W0 workload
     // and W1 scheduled-media contracts. The focused gate compares the native
     // canonical report with an independent Python replay and retained fixture.
@@ -6211,6 +6309,9 @@ pub fn build(b: *std.Build) void {
     profile_core_compile_step.dependOn(&contract_cpp_consumer.step);
     profile_core_compile_step.dependOn(
         &contract_installed_c_consumer.step,
+    );
+    profile_core_compile_step.dependOn(
+        &dense_tensor_reranker_exe.step,
     );
 
     const profile_cpu_compile_step = b.step(

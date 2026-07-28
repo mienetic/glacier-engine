@@ -136,9 +136,21 @@ test "package exports runtime and core modules independently of host tools" {
             "ToolActionOutboxStoreConformance",
         ),
     );
+    try std.testing.expect(
+        @hasDecl(glacier, "stateless_tensor_result"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "dense_tensor_reranker"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "StatelessTensorResult"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "DenseTensorReranker"),
+    );
     try std.testing.expect(@hasDecl(glacier_core, "RuntimeSupportRegistry"));
     try std.testing.expectEqual(
-        @as(usize, 8),
+        @as(usize, 9),
         glacier_core.RuntimeSupportRegistry.profiles.len,
     );
     try std.testing.expect(glacier.ResourceBank == glacier_core.ResourceBank);

@@ -147,6 +147,23 @@ EXPECTED_PROFILE_SEMANTICS = (
         1_048_576,
         1_048_576,
     ),
+    (
+        8,
+        "dense-tensor-reranker-reference",
+        0x4744_5252_0000_0001,
+        "stateless",
+        "stateless_encoder",
+        2,
+        "rerank",
+        5,
+        "dense_tensor",
+        2,
+        "ranked_items",
+        4,
+        64,
+        4_096,
+        1,
+    ),
 )
 
 
@@ -185,7 +202,7 @@ class RuntimeSupportInspectorOracleTests(unittest.TestCase):
         slugs = [profile.slug for profile in oracle.PROFILES]
         profile_abis = [profile.profile_abi for profile in oracle.PROFILES]
 
-        self.assertEqual(list(range(8)), indices)
+        self.assertEqual(list(range(9)), indices)
         self.assertEqual(len(slugs), len(set(slugs)))
         self.assertEqual(len(profile_abis), len(set(profile_abis)))
 
@@ -203,7 +220,7 @@ class RuntimeSupportInspectorOracleTests(unittest.TestCase):
             "retained_reference_fixture_contracts",
             document["claim_scope"],
         )
-        self.assertEqual(8, document["profile_count"])
+        self.assertEqual(9, document["profile_count"])
         self.assertEqual(64, document["max_profiles"])
 
     def test_rendering_is_compact_ascii_json_with_exact_hex_width(self) -> None:
@@ -221,8 +238,8 @@ class RuntimeSupportInspectorOracleTests(unittest.TestCase):
             )
 
         self.assertEqual(
-            "aed21d378899bb5e1897ea05fd14c7ca"
-            "2a4bd75dd571558666a2c65bf67c5b90",
+            "171605970b95dd5f2655f24caab09a2f"
+            "f24c1d26337cee64b26bf0527d89421d",
             hashlib.sha256(rendered).hexdigest(),
         )
 

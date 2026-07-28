@@ -125,6 +125,10 @@ pub const runtime_support_registry =
     @import("runtime_support_registry.zig");
 pub const stateless_model_adapter =
     @import("stateless_model_adapter.zig");
+pub const stateless_tensor_result =
+    @import("stateless_tensor_result.zig");
+pub const dense_tensor_reranker =
+    @import("dense_tensor_reranker.zig");
 pub const stateful_model_adapter =
     @import("stateful_model_adapter.zig");
 pub const stateful_model_continuation =
@@ -272,6 +276,8 @@ pub const MediaProcessorCache = media_processor_cache;
 pub const ModelContract = model_contract;
 pub const RuntimeSupportRegistry = runtime_support_registry;
 pub const StatelessModelAdapter = stateless_model_adapter;
+pub const StatelessTensorResult = stateless_tensor_result;
+pub const DenseTensorReranker = dense_tensor_reranker;
 pub const StatefulModelAdapter = stateful_model_adapter;
 pub const StatefulModelContinuation =
     stateful_model_continuation;

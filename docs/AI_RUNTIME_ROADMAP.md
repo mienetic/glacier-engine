@@ -953,7 +953,7 @@ Current state: **idea to prototype**, depending on component. Core contracts
 already use scoped grants, but a public extension ABI, worker protocol, stable
 SDK, installer, and compatibility policy do not yet exist. A first
 core-only, experimental C ABI can now verify one complete Model Contract V1
-artifact-plan-result chain, enumerate eight retained-reference profiles, and
+artifact-plan-result chain, enumerate nine retained-reference profiles, and
 query matching support-mask bits from C, Python, or Rust without exposing
 runtime struct layouts; it is a compatibility seed, not the stable SDK.
 
@@ -986,7 +986,7 @@ expand the base adapter's capabilities.
 | Family | Representative operations | Current state | First retained slice | Integration gate |
 | --- | --- | --- | --- | --- |
 | Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication, generation-one source replay, fresh-process handoff, and acknowledged local sink progress integrated experimentally on the POSIX durable adapter | Extend the retained synthetic multi-target proof to one small legal artifact and add repeated/cancelled handoff evidence | Declared numerical equivalence, exact KV ownership, recoverable source exit, replay-safe external publication |
-| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision, audio, and temporal-video embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
+| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result, vision/audio/temporal-video embedding fixtures, and a generic exact-integer dense-tensor reranker with canonical ranked items integrated | Add generic embedding and classification profiles under the same lifecycle | Stable vector normalization, typed class-score publication, and production adapters |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, fresh-process stateful transcript continuation, and restartable exact word-timing/speaker publication integrated; production model gated | Add language/punctuation, overlapping-speaker policy, and crash-atomic checkpoint composition | No sample loss/duplication, exact streaming restart, annotation lineage, calibrated production quality |
 | Speech and audio generation | TTS, codec/audio token generation | Bounded exact-integer PCM publication, cancellation-safe retry, one-buffer backpressure, application acknowledgement, distinct-process restart, shared generated-output checkpoint composition, multi-chunk registry continuity with exact encoded payloads, host-verified retained source-model/renderer replay with separate registry-bound evidence, a validated bounded PCM s16le WAVE profile, and a real two-generation registry-transition-format chain with independent oracle coverage; production model/device paths gated | Add a production renderer/codec adapter, broader profiles, and additional replay profiles | Quality evidence, production container conformance, explicit device authority, physical playback evidence |
@@ -1028,7 +1028,7 @@ without family-specific fields leaking into the common wire.
 
 Exit evidence: vision u8 patches, audio i16 feature windows, strided video u8
 frames, transcript/segment outputs, and a stateful latent step share the common
-contract vocabulary while retaining distinct adapter behavior. Eight
+contract vocabulary while retaining distinct adapter behavior. Nine
 append-only exact-integer profiles are derived directly from retained adapter
 support constants. Compile-time coverage checks, bounded query/rejection tests,
 fixed-width C consumers, standard-library Python, dependency-free Rust, and a
@@ -1522,21 +1522,26 @@ GPU, or multi-OS requirements.
 ### R2 — Stateless tensor families
 
 - add encoder/embedding/reranker/classifier operations; vision, audio, and
-  temporal-video encode operations are retained, while generic encoder,
-  reranker, and classifier fixtures remain;
+  temporal-video encode operations and one generic dense-tensor reranker are
+  retained, while generic embedding and classifier fixtures remain;
 - define typed tensor/vector/score result envelopes; the fixed integer
-  embedding envelope is complete;
+  embedding envelope plus canonical ranked-item elements are complete;
 - add deterministic batch-item mapping and tie/normalization policy; exact
-  batch mapping is complete for vision, audio, and selected video frames, while
-  normalization and tie policies remain;
+  batch mapping is complete for vision, audio, selected video frames, and the
+  generic reranker; the reranker fixes no normalization, descending score, and
+  input-ordinal tie order while vector normalization policies remain;
 - integrate `ResourceBank`, `LaneWeave`, cancellation, and provider routing;
   scheduler receipt handoff, final-service typed publication, cancellation,
-  and retirement are integrated for the retained bounded media runtime and
-  vision/audio/temporal-video stateless adapters, while mixed-family workload
-  profiles and provider routing remain.
+  and retirement are integrated for the retained bounded media runtime,
+  vision/audio/temporal-video stateless adapters, and dense-tensor reranker,
+  while mixed-family workload profiles and provider routing remain.
 
-Exit gate: text generation and one stateless encoder share the runtime planes
-while retaining different state and publication semantics.
+Retained-slice exit gate (**met**): prepared-text generation and the
+exact-integer dense-tensor reranker share the common artifact, plan, result,
+admission, ownership, and publication planes while retaining different state
+and publication semantics. This does not complete the remaining generic
+embedding/classification, provider-routing, production-model, or native-device
+work in R2.
 
 ### R3 — Streaming perception
 

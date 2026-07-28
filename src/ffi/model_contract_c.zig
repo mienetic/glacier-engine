@@ -315,6 +315,43 @@ test "C model support profiles use fixed layouts and fail closed" {
         profile.family,
     );
 
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_profile_get_v1(
+            @intFromEnum(support.ProfileIndexV1.dense_tensor_reranker),
+            &profile,
+            @sizeOf(ModelSupportProfileV1),
+        ),
+    );
+    try std.testing.expectEqual(
+        support.profiles[8].profile_abi,
+        profile.profile_abi,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(support.LifecycleV1.stateless)),
+        profile.lifecycle,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.ModelFamilyIdV1.stateless_encoder)),
+        profile.family,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.OperationIdV1.rerank)),
+        profile.operation,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.InputKindV1.dense_tensor)),
+        profile.input_kind,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.OutputKindV1.ranked_items)),
+        profile.output_kind,
+    );
+    try std.testing.expectEqual(@as(u64, 64), profile.max_batch_items);
+    try std.testing.expectEqual(@as(u64, 4_096), profile.max_input_features);
+    try std.testing.expectEqual(@as(u64, 1), profile.max_output_dimensions);
+    try std.testing.expectEqual(@as(u64, 0), profile.allowed_capabilities);
+
     profile.profile_abi = 1;
     try std.testing.expectEqual(
         statusCode(.out_of_range),
@@ -411,6 +448,37 @@ test "C model support query returns every compatible profile bit" {
     try std.testing.expectEqual(
         @as(u64, 1) << @intFromEnum(
             support.ProfileIndexV1.audio_transcript,
+        ),
+        result.matching_profile_mask,
+    );
+
+    const reranker_query: ModelSupportQueryV1 = .{
+        .family = @intFromEnum(contract.ModelFamilyIdV1.stateless_encoder),
+        .operation = @intFromEnum(contract.OperationIdV1.rerank),
+        .input_kind = @intFromEnum(contract.InputKindV1.dense_tensor),
+        .output_kind = @intFromEnum(contract.OutputKindV1.ranked_items),
+        .numerical_policy = @intFromEnum(
+            contract.NumericalPolicyV1.exact_integer,
+        ),
+        .batch_items = 64,
+        .input_features = 4_096,
+        .output_dimensions = 1,
+        .required_capabilities = 0,
+    };
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_query_v1(
+            &reranker_query,
+            @sizeOf(ModelSupportQueryV1),
+            &result,
+            @sizeOf(ModelSupportResultV1),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 1), result.compatible);
+    try std.testing.expectEqual(@as(u64, 0), result.unsupported_reason);
+    try std.testing.expectEqual(
+        @as(u64, 1) << @intFromEnum(
+            support.ProfileIndexV1.dense_tensor_reranker,
         ),
         result.matching_profile_mask,
     );

@@ -8,6 +8,7 @@ const stateful_transcript = @import("stateful_transcript_adapter.zig");
 const video_segment = @import("video_segment_adapter.zig");
 const stateful_video = @import("stateful_video_adapter.zig");
 const latent_step = @import("latent_step_adapter.zig");
+const dense_tensor_reranker = @import("dense_tensor_reranker.zig");
 
 pub const registry_abi: u64 = 0x4752_5352_0000_0001;
 pub const max_profiles: usize = 64;
@@ -32,6 +33,7 @@ pub const ProfileIndexV1 = enum(u6) {
     video_segment = 5,
     stateful_video = 6,
     latent_step = 7,
+    dense_tensor_reranker = 8,
 };
 
 pub const ProfileV1 = struct {
@@ -107,6 +109,14 @@ pub const profiles = [_]ProfileV1{
         .lifecycle = .stateful,
         .evidence = .retained_reference_fixture,
         .support = latent_step.latent_step_support[0],
+    },
+    .{
+        .index = .dense_tensor_reranker,
+        .slug = "dense-tensor-reranker-reference",
+        .profile_abi = dense_tensor_reranker.reference_adapter_abi,
+        .lifecycle = .stateless,
+        .evidence = .retained_reference_fixture,
+        .support = dense_tensor_reranker.reranker_support[0],
     },
 };
 
@@ -215,7 +225,8 @@ comptime {
         stateful_transcript.transcript_state_support.len != 1 or
         video_segment.video_segment_support.len != 1 or
         stateful_video.video_state_support.len != 1 or
-        latent_step.latent_step_support.len != 1)
+        latent_step.latent_step_support.len != 1 or
+        dense_tensor_reranker.reranker_support.len != 1)
     {
         @compileError(
             "each additional adapter support row needs an appended runtime profile",
@@ -245,7 +256,7 @@ comptime {
 }
 
 test "registry profiles are append-only views of adapter support constants" {
-    try std.testing.expectEqual(@as(usize, 8), profiles.len);
+    try std.testing.expectEqual(@as(usize, 9), profiles.len);
     const expected_slugs = [_][]const u8{
         "vision-encoder-reference",
         "audio-window-reference",
@@ -255,6 +266,7 @@ test "registry profiles are append-only views of adapter support constants" {
         "video-segment-reference",
         "stateful-video-reference",
         "latent-step-reference",
+        "dense-tensor-reranker-reference",
     };
     const expected_lifecycles = [_]LifecycleV1{
         .stateless,
@@ -265,6 +277,7 @@ test "registry profiles are append-only views of adapter support constants" {
         .stateless,
         .stateful,
         .stateful,
+        .stateless,
     };
     for (profiles, expected_slugs, expected_lifecycles, 0..) |
         profile,
@@ -345,6 +358,14 @@ test "registry profiles are append-only views of adapter support constants" {
         latent_step.latent_step_support[0],
         profiles[7].support,
     );
+    try std.testing.expectEqual(
+        dense_tensor_reranker.reference_adapter_abi,
+        profiles[8].profile_abi,
+    );
+    try std.testing.expectEqual(
+        dense_tensor_reranker.reranker_support[0],
+        profiles[8].support,
+    );
 }
 
 test "query scans every profile and returns every compatible bit" {
@@ -356,6 +377,25 @@ test "query scans every profile and returns every compatible bit" {
         @intFromEnum(ProfileIndexV1.stateful_transcript);
     try std.testing.expectEqual(
         stateless_bit | stateful_bit,
+        result.matching_profile_mask,
+    );
+    try std.testing.expectEqual(
+        @as(?model.UnsupportedReasonV1, null),
+        result.deepest_unsupported_reason,
+    );
+}
+
+test "query returns the appended dense-tensor reranker bit at exact bounds" {
+    const support = profiles[8].support;
+    const result = querySupportV1(queryFor(
+        support,
+        support.max_batch_items,
+        support.max_input_features,
+        support.max_output_dimensions,
+        support.allowed_capabilities,
+    ));
+    try std.testing.expectEqual(
+        @as(u64, 1) << @intFromEnum(ProfileIndexV1.dense_tensor_reranker),
         result.matching_profile_mask,
     );
     try std.testing.expectEqual(

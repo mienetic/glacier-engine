@@ -95,7 +95,7 @@ matrix is not needed for a first contribution.
 
 ## 4. Inspect and query the retained runtime profiles
 
-Print the deterministic eight-profile compatibility registry without loading a
+Print the deterministic nine-profile compatibility registry without loading a
 model or probing the machine:
 
 ```sh

@@ -37,6 +37,17 @@ before the first stable release.
 
 ### Added
 
+- Added a download-free **dense-tensor reranker reference fixture**. Bounded
+  `i16` feature rows and an `i8` query produce overflow-checked `i64` scores,
+  canonical batch identity, descending rank order, and input-ordinal tie
+  breaking through the shared stateless publication lifecycle. Rooted binary
+  result records, direct and scheduler-owned execution, cancellation, zero
+  final ownership, a one-record demo, and an independent standard-library
+  Python score/result verifier are retained. The append-only compatibility
+  registry now contains a ninth profile at index 8, with matching C, Python,
+  and Rust discovery checks. This fixture is execution-contract evidence, not
+  production model quality, GPU, provider, native multi-OS, or performance
+  evidence.
 - Added experimental **prepared-text source and target recovery**. Generation
   one now retains a canonical pointer-free replay contract and exact empty-sink
   identity. A fresh source holding the exclusive lease may replay only the

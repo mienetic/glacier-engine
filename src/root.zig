@@ -93,6 +93,10 @@ pub const continuation_object_sweep_writer =
     core.continuation_object_sweep_writer;
 pub const continuation_object_sweep_file =
     core.continuation_object_sweep_file;
+pub const stateless_tensor_result =
+    core.stateless_tensor_result;
+pub const dense_tensor_reranker =
+    core.dense_tensor_reranker;
 
 pub const Precision = core.Precision;
 pub const Pager = core.Pager;
@@ -169,6 +173,10 @@ pub const ContinuationOwnershipManifest =
 pub const ContinuationObjectSweep = core.ContinuationObjectSweep;
 pub const ContinuationObjectSweepRecord =
     core.ContinuationObjectSweepRecord;
+pub const StatelessTensorResult =
+    core.StatelessTensorResult;
+pub const DenseTensorReranker =
+    core.DenseTensorReranker;
 pub const ContinuationObjectSweepWriter =
     core.ContinuationObjectSweepWriter;
 pub const ContinuationObjectSweepFile =

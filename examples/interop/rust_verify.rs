@@ -36,23 +36,29 @@ const OUT_OF_RANGE: u32 = 7;
 const INVALID_QUERY: u32 = 8;
 
 const SUPPORT_REGISTRY_ABI_V1: u64 = 0x4752_5352_0000_0001;
-const SUPPORT_PROFILE_COUNT_V1: u64 = 8;
+const SUPPORT_PROFILE_COUNT_V1: u64 = 9;
 const SUPPORT_PROFILE_VISION_ENCODER: u64 = 0x4756_454e_0000_0001;
+const SUPPORT_PROFILE_DENSE_TENSOR_RERANKER: u64 = 0x4744_5252_0000_0001;
 const SUPPORT_LIFECYCLE_STATELESS: u64 = 1;
 const SUPPORT_EVIDENCE_RETAINED_REFERENCE_FIXTURE: u64 = 1;
+const MODEL_FAMILY_STATELESS_ENCODER: u64 = 2;
 const MODEL_FAMILY_VISION_UNDERSTANDING: u64 = 3;
 const MODEL_FAMILY_AUDIO_UNDERSTANDING: u64 = 4;
 const MODEL_OPERATION_ENCODE: u64 = 3;
+const MODEL_OPERATION_RERANK: u64 = 5;
 const MODEL_OPERATION_TRANSCRIBE: u64 = 6;
+const MODEL_INPUT_DENSE_TENSOR: u64 = 2;
 const MODEL_INPUT_IMAGE_FEATURE_U8: u64 = 3;
 const MODEL_INPUT_AUDIO_FEATURE_I16: u64 = 4;
 const MODEL_OUTPUT_EMBEDDING_I32: u64 = 2;
+const MODEL_OUTPUT_RANKED_ITEMS: u64 = 4;
 const MODEL_OUTPUT_TRANSCRIPT: u64 = 5;
 const NUMERICAL_EXACT_INTEGER: u64 = 1;
 const SUPPORT_UNSUPPORTED_NONE: u64 = 0;
 const SUPPORT_UNSUPPORTED_CAPABILITIES: u64 = 7;
 const SUPPORT_MASK_AUDIO_TRANSCRIPT: u64 = 1 << 2;
 const SUPPORT_MASK_STATEFUL_TRANSCRIPT: u64 = 1 << 3;
+const SUPPORT_MASK_DENSE_TENSOR_RERANKER: u64 = 1 << 8;
 const SUPPORT_MASK_TRANSCRIPT: u64 =
     SUPPORT_MASK_AUDIO_TRANSCRIPT | SUPPORT_MASK_STATEFUL_TRANSCRIPT;
 
@@ -111,6 +117,21 @@ const FIRST_SUPPORT_PROFILE_V1: ModelSupportProfileV1 = ModelSupportProfileV1 {
     max_batch_items: 64,
     max_input_features: 65_536,
     max_output_dimensions: 16_384,
+    allowed_capabilities: 0,
+};
+
+const LAST_SUPPORT_PROFILE_V1: ModelSupportProfileV1 = ModelSupportProfileV1 {
+    profile_abi: SUPPORT_PROFILE_DENSE_TENSOR_RERANKER,
+    lifecycle: SUPPORT_LIFECYCLE_STATELESS,
+    evidence: SUPPORT_EVIDENCE_RETAINED_REFERENCE_FIXTURE,
+    family: MODEL_FAMILY_STATELESS_ENCODER,
+    operation: MODEL_OPERATION_RERANK,
+    input_kind: MODEL_INPUT_DENSE_TENSOR,
+    output_kind: MODEL_OUTPUT_RANKED_ITEMS,
+    numerical_policy: NUMERICAL_EXACT_INTEGER,
+    max_batch_items: 64,
+    max_input_features: 4_096,
+    max_output_dimensions: 1,
     allowed_capabilities: 0,
 };
 
@@ -304,6 +325,45 @@ fn run(fixture_dir: &Path) -> Result<(), String> {
     }
     if profiles.first() != Some(&FIRST_SUPPORT_PROFILE_V1) {
         return Err("first model-support profile does not match V1".to_owned());
+    }
+    if profiles.last() != Some(&LAST_SUPPORT_PROFILE_V1) {
+        return Err("last model-support profile does not match V1".to_owned());
+    }
+
+    let reranker_query = ModelSupportQueryV1 {
+        family: MODEL_FAMILY_STATELESS_ENCODER,
+        operation: MODEL_OPERATION_RERANK,
+        input_kind: MODEL_INPUT_DENSE_TENSOR,
+        output_kind: MODEL_OUTPUT_RANKED_ITEMS,
+        numerical_policy: NUMERICAL_EXACT_INTEGER,
+        batch_items: 64,
+        input_features: 4_096,
+        output_dimensions: 1,
+        required_capabilities: 0,
+    };
+    let mut reranker_result = ModelSupportResultV1::default();
+    let status = unsafe {
+        glacier_model_support_query_v1(
+            &reranker_query,
+            std::mem::size_of::<ModelSupportQueryV1>(),
+            &mut reranker_result,
+            std::mem::size_of::<ModelSupportResultV1>(),
+        )
+    };
+    if status != OK {
+        return Err(format!(
+            "reranker support query failed: {} ({status})",
+            status_name(status)
+        ));
+    }
+    if reranker_result
+        != (ModelSupportResultV1 {
+            compatible: 1,
+            unsupported_reason: SUPPORT_UNSUPPORTED_NONE,
+            matching_profile_mask: SUPPORT_MASK_DENSE_TENSOR_RERANKER,
+        })
+    {
+        return Err("reranker support query did not match the appended V1 profile".to_owned());
     }
 
     let mut transcript_query = ModelSupportQueryV1 {
