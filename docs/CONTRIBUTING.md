@@ -18,6 +18,13 @@ every gate as `PASS`, `FAIL`, or `SKIP` with a reason. Run
 your branch, or `tools/verify.sh full` when you need the broad local ReleaseSafe
 and Python suites.
 
+Pull requests and pushes to `main` run the host ReleaseSafe and POSIX fault
+gates, the full standard-library Python regression suite, and the four retained
+cross-target compile closures in parallel on GitHub Actions. A macOS job
+compiles the complete Metal closure but does not execute or measure it. Native
+Metal runtime and performance gates remain explicit local or maintainer-run
+checks so hosted CI does not imply hardware evidence it did not collect.
+
 Then choose a bounded item from [Contributor projects](PROJECTS.md), open a
 **Claim a contributor slice** issue, and tell us what command will prove it is
 done. Draft pull requests are encouraged.

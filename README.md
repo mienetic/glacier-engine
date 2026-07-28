@@ -6,6 +6,10 @@
 
 <p align="center"><strong>A proof-carrying runtime for local and provider-backed AI execution.</strong></p>
 
+<p align="center">
+  <a href="https://github.com/mienetic/glacier-engine/actions/workflows/ci.yml"><img src="https://github.com/mienetic/glacier-engine/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+</p>
+
 Glacier Engine is an experimental full AI Runtime project written in Zig. It
 treats artifact identity, resource admission, placement, scheduling, execution,
 continuation, token and media publication, provider usage, and cost as explicit

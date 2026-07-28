@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  host:
+    name: Host ReleaseSafe verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+          use-cache: false
+
+      - name: Report toolchains
+        run: |
+          zig version
+          python3 --version
+          rustc --version
+
+      - name: Check formatting and public documentation
+        run: |
+          zig fmt --check build.zig src bench examples tests
+          python3 -m unittest bench.tests.test_public_markdown_policy
+
+      - name: Compile host test frontier
+        run: zig build host-runtime-compile -Dmetal=false -Doptimize=ReleaseSafe -j2
+
+      - name: Run host and language gates
+        run: zig build test contract-interop-test contract-rust-test -Dmetal=false -Doptimize=ReleaseSafe -j2
+
+      - name: Run POSIX store-fault campaign
+        run: zig build native-workload-store-fault-test -Dmetal=false -Doptimize=ReleaseSafe -j2
+
+  python:
+    name: Python regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+          use-cache: false
+
+      - name: Report toolchains
+        run: |
+          zig version
+          python3 --version
+
+      - name: Run full Python suite
+        run: python3 -m unittest discover -s bench/tests
+
+  metal-compile:
+    name: macOS Metal compile frontier
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+          use-cache: false
+
+      - name: Compile Metal closure without execution claims
+        run: >-
+          zig build native-metal-suite-compile
+          -Dmetal-output-dir="${RUNNER_TEMP}/glacier-metal"
+          -Dmetal=true
+          -Doptimize=ReleaseSafe
+          -j2
+
+  cross:
+    name: Cross-compile (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        target:
+          - x86_64-linux-musl
+          - aarch64-linux-musl
+          - x86_64-windows-gnu
+          - x86_64-freebsd
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+          use-cache: false
+
+      - name: Compile complete target closure
+        run: >-
+          zig build install install-benchmarks test-compile
+          -Dtarget=${{ matrix.target }}
+          -Dmetal=false
+          -Doptimize=ReleaseSafe
+          -j2
