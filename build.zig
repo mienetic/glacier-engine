@@ -59,6 +59,17 @@ pub fn build(b: *std.Build) void {
         if (path.len == 0)
             @panic("-Dnative-metal-disruption-report-output must not be empty");
     }
+    const native_metal_cancellation_storm_report_output = b.option(
+        []const u8,
+        "native-metal-cancellation-storm-report-output",
+        "Optional path that retains the focused native Metal cancellation-storm report wire",
+    );
+    if (native_metal_cancellation_storm_report_output) |path| {
+        if (path.len == 0)
+            @panic(
+                "-Dnative-metal-cancellation-storm-report-output must not be empty",
+            );
+    }
     const native_metal_soak_output_dir = b.option(
         []const u8,
         "native-metal-soak-output-dir",
@@ -2061,6 +2072,14 @@ pub fn build(b: *std.Build) void {
         "native-metal-disruption-report-compile",
         "Compile the production-native Metal disruption report producer",
     );
+    const native_metal_cancellation_storm_report_test_step = b.step(
+        "native-metal-cancellation-storm-report-test",
+        "Run the hard production-native Metal cancellation-storm report gate",
+    );
+    const native_metal_cancellation_storm_report_compile_step = b.step(
+        "native-metal-cancellation-storm-report-compile",
+        "Compile the production-native Metal cancellation-storm report producer",
+    );
     const native_metal_soak_report_test_step = b.step(
         "native-metal-soak-report-test",
         "Run the hard 60-second segmented native Metal soak gate",
@@ -2079,7 +2098,7 @@ pub fn build(b: *std.Build) void {
     );
     const native_metal_suite_test_step = b.step(
         "native-metal-suite-test",
-        "Run serialized Metal readiness, allocation, workload-report, disruption, soak, process-kill, fault, and correctness gates",
+        "Run serialized Metal readiness, allocation, workload-report, disruption, cancellation-storm, soak, process-kill, fault, and correctness gates",
     );
     if (metal_shim != null and
         builtin.os.tag == .macos and
@@ -2436,10 +2455,110 @@ pub fn build(b: *std.Build) void {
             &run_native_metal_disruption_report_verifier.step,
         );
 
+        // W7b-b3 exercises cancellation admission and settlement through
+        // paired real host threads while retaining zero-command
+        // cancellation records and a bounded set of real Metal controls.
+        // The serialized runner follows W7a and completes before either soak.
+        const native_metal_cancellation_storm_report_exe = b.addExecutable(.{
+            .name = "glacier-native-metal-cancellation-storm-report",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_metal_cancellation_storm_report.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+        native_metal_cancellation_storm_report_exe.root_module.addImport(
+            "engine",
+            engine_mod,
+        );
+        native_metal_cancellation_storm_report_exe.linkLibC();
+        native_metal_cancellation_storm_report_exe.linkLibrary(shim);
+        native_metal_cancellation_storm_report_exe.linkFramework("Metal");
+        native_metal_cancellation_storm_report_exe.linkFramework(
+            "Foundation",
+        );
+        native_metal_cancellation_storm_report_compile_step.dependOn(
+            &native_metal_cancellation_storm_report_exe.step,
+        );
+
+        const run_native_metal_cancellation_storm_report_model =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "unittest",
+                "bench.tests.test_native_metal_cancellation_storm_report",
+            });
+        run_native_metal_cancellation_storm_report_model.setCwd(b.path("."));
+        run_native_metal_cancellation_storm_report_model.setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_native_metal_cancellation_storm_report_model.setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+        run_native_metal_cancellation_storm_report_model.step.dependOn(
+            &run_native_metal_disruption_report_model.step,
+        );
+
+        const run_native_metal_cancellation_storm_report_verifier =
+            b.addSystemCommand(&.{"python3"});
+        const run_native_metal_cancellation_storm_report_suite =
+            b.addSystemCommand(&.{"python3"});
+        for ([_]*std.Build.Step.Run{
+            run_native_metal_cancellation_storm_report_verifier,
+            run_native_metal_cancellation_storm_report_suite,
+        }) |run_report| {
+            run_report.setCwd(b.path("."));
+            run_report.setEnvironmentVariable(
+                "PYTHONDONTWRITEBYTECODE",
+                "1",
+            );
+            run_report.setEnvironmentVariable(
+                "PYTHONPATH",
+                ".",
+            );
+            run_report.addFileArg(
+                b.path(
+                    "bench/native_metal_cancellation_storm_report.py",
+                ),
+            );
+            run_report.addArg("--runner");
+            run_report.addArtifactArg(
+                native_metal_cancellation_storm_report_exe,
+            );
+            run_report.addArg("--metallib");
+            run_report.addArg(metal_library_path);
+            run_report.step.dependOn(&native_metal_lib.step);
+            run_report.step.dependOn(
+                &run_native_metal_cancellation_storm_report_model.step,
+            );
+            run_report.step.dependOn(
+                &run_native_workload_report_tests.step,
+            );
+        }
+        if (native_metal_cancellation_storm_report_output) |path| {
+            run_native_metal_cancellation_storm_report_verifier.addArg(
+                "--output",
+            );
+            run_native_metal_cancellation_storm_report_verifier.addArg(
+                path,
+            );
+        }
+        run_native_metal_cancellation_storm_report_suite.step.dependOn(
+            &run_native_metal_disruption_report_suite.step,
+        );
+        native_metal_cancellation_storm_report_test_step.dependOn(
+            &run_native_metal_cancellation_storm_report_verifier.step,
+        );
+
         // W7b keeps one Metal backend alive for six paced five-second
         // segments, checkpoints every independently verified W7 wire, then
         // repeats in a fresh worker process. This makes the 60-second soak
-        // gate serialized with W7a while preserving a focused invocation.
+        // gate serialized after W7b-b3 while preserving a focused invocation.
         const native_metal_soak_worker_exe = b.addExecutable(.{
             .name = "glacier-native-metal-soak-worker",
             .root_module = b.createModule(.{
@@ -2537,7 +2656,7 @@ pub fn build(b: *std.Build) void {
             &run_native_metal_soak_report_verifier.step,
         );
         run_native_metal_soak_report_suite.step.dependOn(
-            &run_native_metal_disruption_report_suite.step,
+            &run_native_metal_cancellation_storm_report_suite.step,
         );
 
         // W7b-b1 preserves the W7b-a geometry but seals a distinct schedule:
@@ -2785,6 +2904,12 @@ pub fn build(b: *std.Build) void {
             &native_metal_failure.step,
         );
         native_metal_disruption_report_compile_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_cancellation_storm_report_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_cancellation_storm_report_compile_step.dependOn(
             &native_metal_failure.step,
         );
         native_metal_soak_report_test_step.dependOn(

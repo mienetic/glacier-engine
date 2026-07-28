@@ -174,6 +174,11 @@ It does not prove:
 - Windows termination semantics or native multi-OS replication; or
 - throughput, latency, or production-model performance.
 
-Storage exhaustion, crash points inside store publication, cancellation storms,
-adapter loss, physical-device faults, and replay-safe prepared-text output
-sinks remain later W7b-b work.
+The separate
+[Native Workload Store-Fault Report](NATIVE_WORKLOAD_STORE_FAULT_REPORT.md)
+covers controlled publication-call failures, while the
+[Native Metal Cancellation-Storm Report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md)
+covers fixed pre-submit concurrent callers. Supervisor and in-flight-command
+interruption, recovery-process faults, adapter loss, physical storage/device
+faults, power disruption, and replay-safe prepared-text output sinks remain
+later W7b-b work.

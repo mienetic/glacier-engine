@@ -84,10 +84,14 @@ sealed only after those facts hold. A failure after native submission remains
 process-scoped and publishes no partial wire.
 
 This finite campaign proves bounded repeated recovery for its declared
-schedule. It does not complete long-duration soak coverage. A later W7 slice
-must add duration-bounded segmented reports, process restart, storage
-pressure, cancellation storms, and physical removable-device campaigns
-without relabelling injected faults as hardware observations.
+schedule. Duration-bounded segmented-soak, post-segment process-kill,
+publication-call store-fault, and concurrent-caller cancellation-storm
+coverage are separate W7 profiles with their own claim boundaries. Supervisor
+and in-flight-command interruption, recovery-process faults, and physical
+storage, removable-device, and power campaigns remain open without relabelling
+controlled faults as hardware observations. See the
+[Native Metal Cancellation-Storm Report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md)
+for the fixed pre-submit concurrent-caller profile.
 
 ## Run the hard gate
 

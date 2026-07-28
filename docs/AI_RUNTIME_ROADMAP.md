@@ -784,8 +784,8 @@ reporting:
    CPU and device utilization, host/device memory separately, accelerator
    submit/device/synchronization timing, fallback status, power/thermal/energy
    when available, and output-quality policy.
-3. **Soak and disruption — W7a, W7b-a, W7b-b1, and W7b-b2 implemented;
-   remaining W7b-b work is open.**
+3. **Soak and disruption — W7a, W7b-a, W7b-b1, W7b-b2, and W7b-b3
+   implemented; remaining W7b-b work is open.**
    W7a runs 50 fixed production-native Metal epochs and retains 250 raw records
    around 100 real GPU commands. Each epoch settles an admitted cancellation
    and one exact malformed pre-submit rejection, then submits both bounded
@@ -798,6 +798,22 @@ reporting:
    roots, unique generation roots, 200/200 Bank-pin closure, and final zero
    ownership. See
    [Native Metal controlled-disruption report](NATIVE_METAL_DISRUPTION_REPORT.md).
+
+   W7b-b3 adds a focused concurrent-caller cancellation profile. In each of
+   eight blocks of eight waves, two real host threads reach one ready barrier
+   before a shared release store; each wave retains one cancel-before-submit
+   result per lane and one capacity probe, and each block ends with one
+   CPU-oracle-checked real Metal control per lane. The
+   fixed 163,132-byte wire therefore contains 128 cancellations, 64 capacity
+   probes, 16 completed controls, and 208 records, with 144/144 pin closure.
+   Cancellation and capacity records submit no GPU command. The exact verifier
+   binds the host-event partial order, challenge-selected settlement order,
+   zero-command roots, unique generation roots, measured 91:91 flow balance,
+   component identities, and terminal zero ownership. The barrier proves the
+   ready-before-release boundary, not simultaneous scheduling or execution,
+   lock overlap, physical GPU parallelism, kernel cancellation, preemption, or
+   performance. See
+   [Native Metal cancellation-storm report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md).
 
    W7b-a adds the fixed segmented production-native Metal soak. Twelve paced
    segments run across two worker processes, six per process with one planned
@@ -847,18 +863,17 @@ reporting:
    campaign reference path until a general production recovery API and its own
    interruption matrix are integrated.
 
-   These completed slices prove finite controlled software disruption,
-   correctness, ownership closure, clean restart, one post-segment process
-   kill, prepared store roll-forward, fsync-bounded same-filesystem
-   process-restart continuity, and bounded observed growth for the invoking
-   host.
+   These completed slices prove finite controlled software disruption, the
+   ready-before-release boundary with pre-submit cancellation, correctness,
+   ownership closure, clean restart, one post-segment process kill, prepared
+   store roll-forward, fsync-bounded same-filesystem process-restart
+   continuity, and bounded observed growth for the invoking host.
    They are not latency or throughput benchmarks, indefinite no-leak proofs,
    in-flight command recovery, physical residency measurements, or physical
    device-loss, driver, power, or storage-failure evidence. W7b-b remains open
    for supervisor and in-flight process death, recovery-process interruption,
-   cancellation storms, adapter loss, physical storage/power, and
-   physical-device-fault schedules with explicit synthetic-versus-physical
-   provenance. Prepared-text
+   adapter loss, physical storage/power, and physical-device-fault schedules
+   with explicit synthetic-versus-physical provenance. Prepared-text
    additions should cover repeated handoffs, source death before generation
    two, target death before generation three, idempotent-sink replay, selector
    corruption, lease contention, and recovery memory growth without

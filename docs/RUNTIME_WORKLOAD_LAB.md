@@ -35,7 +35,11 @@ ownership, and terminal closure without treating injected conditions as
 physical device faults. W7b-a adds a fixed segmented native Metal soak: 12
 paced segments cross one clean six-segment process restart while retaining a
 content-addressed checkpoint after every segment and bounding observed RSS and
-Metal allocation context within each process generation. Provider, stateful,
+Metal allocation context within each process generation. W7b-b3 adds 64
+paired-thread cancellation waves around the same bounded production adapter:
+128 cancel-before-submit outcomes and 64 capacity probes submit no GPU command,
+while 16 real Metal controls preserve CPU-oracle correctness and the complete
+208-record campaign closes 144/144 pins. Provider, stateful,
 streaming, batched, preemptible, device-backed, live-service, and OS-isolated
 real-credential profiles, direct physical CPU/device adapters, retained
 multi-machine load matrices, broader disruption and physical-fault campaigns,
@@ -343,9 +347,25 @@ Results from different modes are not merged into one headline number.
     production store writer; prepared roll-forward remains bounded campaign
     reference code rather than a general production recovery API. See the
     [Native workload store-fault report](NATIVE_WORKLOAD_STORE_FAULT_REPORT.md).
+  - [x] **W7b-b3 — Native cancellation-storm concurrent callers.** In each of
+    eight blocks of eight waves, two real host threads reach one ready barrier
+    before a shared release store; each thread cancels one disjoint admitted
+    lane before submission, and each wave retains one capacity probe. Every
+    block then completes one real Metal control on
+    each lane. The 163,132-byte report contains 128 cancellations, 64 capacity
+    probes, 16 CPU-oracle-checked controls, and 208 records, with 144/144 pin
+    closure and terminal zero ownership. Block 0 is warmup; blocks 1–7 retain
+    182 measured records balanced 91:91 across the two flows. The exact verifier
+    binds the host-event partial order, challenge-selected settlement order,
+    unique generations, zero native-command roots for cancellation/capacity,
+    component hashes, measured summary, and closure. The barrier proves the
+    ready-before-release boundary, not simultaneous scheduling or execution,
+    critical-section overlap, GPU parallelism, post-submit kernel cancellation,
+    preemption, performance, or a physical fault. See the
+    [Native Metal cancellation-storm report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md).
   - [ ] **W7b-b — Remaining broader disruption.** Add bounded supervisor and
-    in-flight-command kill, recovery-process interruption,
-    cancellation-storm, adapter-loss, physical storage/power, and
+    in-flight-command kill, recovery-process interruption, adapter-loss,
+    physical storage/power, and
     physical-device fault schedules with explicit
     synthetic-versus-physical provenance. Include prepared-text repeated
     handoff, source/target death, idempotent sink replay, selector corruption,
@@ -597,6 +617,24 @@ Add `-Dnative-metal-disruption-report-output=PATH` for atomic retention after
 both verification layers pass. It is a finite recovery and ownership
 campaign, not a duration-bounded soak, physical-fault test, or performance
 benchmark.
+
+Run the W7b-b3 production-native cancellation-storm campaign separately:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-cancellation-storm-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+In each of 64 waves, both real cancellation-caller threads reach the ready
+barrier before one shared release store. The campaign retains 128
+cancel-before-submit and 64 capacity records with zero native commands, and
+verifies 16 real Metal controls against CPU oracles. Add
+`-Dnative-metal-cancellation-storm-report-output=PATH` to retain the raw wire
+after both verification layers pass. See
+[Native Metal cancellation-storm report](NATIVE_METAL_CANCELLATION_STORM_REPORT.md).
+The ready-before-release boundary does not prove simultaneous scheduling or
+execution, lock overlap, physical GPU parallelism, or kernel cancellation.
 
 Run the W7b-a segmented production-native Metal soak separately:
 

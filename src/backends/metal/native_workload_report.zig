@@ -29,6 +29,8 @@ pub const Digest = native_report.Digest;
 
 pub const producer_abi: u64 = 0x4757_364d_0000_0001;
 pub const disruption_producer_abi: u64 = 0x4757_374d_0000_0001;
+pub const cancellation_storm_producer_abi: u64 =
+    0x4757_434d_0000_0001;
 pub const in_features: usize = 64;
 pub const out_features: usize = 37;
 pub const group_size: usize = 8;
@@ -89,6 +91,44 @@ pub const disruption_pin_count: usize =
 pub const disruption_encoded_bytes: usize =
     native_report.minimum_encoded_bytes +
     disruption_record_count * native_report.record_wire_bytes;
+pub const cancellation_storm_block_count: usize = 8;
+pub const cancellation_storm_waves_per_block: usize = 8;
+pub const cancellation_storm_warmup_block_count: usize = 1;
+pub const cancellation_storm_records_per_wave: usize = 3;
+pub const cancellation_storm_control_records_per_block: usize =
+    flow_count;
+pub const cancellation_storm_records_per_block: usize =
+    cancellation_storm_waves_per_block *
+    cancellation_storm_records_per_wave +
+    cancellation_storm_control_records_per_block;
+pub const cancellation_storm_warmup_record_count: usize =
+    cancellation_storm_warmup_block_count *
+    cancellation_storm_records_per_block;
+pub const cancellation_storm_record_count: usize =
+    cancellation_storm_block_count *
+    cancellation_storm_records_per_block;
+pub const cancellation_storm_measured_record_count: usize =
+    cancellation_storm_record_count -
+    cancellation_storm_warmup_record_count;
+pub const cancellation_storm_cancelled_count: usize =
+    cancellation_storm_block_count *
+    cancellation_storm_waves_per_block *
+    flow_count;
+pub const cancellation_storm_capacity_rejected_count: usize =
+    cancellation_storm_block_count *
+    cancellation_storm_waves_per_block;
+pub const cancellation_storm_completed_dispatch_count: usize =
+    cancellation_storm_block_count * flow_count;
+pub const cancellation_storm_pin_count: usize =
+    cancellation_storm_cancelled_count +
+    cancellation_storm_completed_dispatch_count;
+pub const cancellation_storm_event_count: usize =
+    cancellation_storm_block_count *
+    (cancellation_storm_waves_per_block * 11 + 14);
+pub const cancellation_storm_encoded_bytes: usize =
+    native_report.minimum_encoded_bytes +
+    cancellation_storm_record_count *
+        native_report.record_wire_bytes;
 pub const storage_record_capacity: usize =
     disruption_record_count;
 pub const storage_wire_capacity: usize =
@@ -105,6 +145,23 @@ const DisruptionActionV1 = enum(u64) {
 const DisruptionActionDetailV1 = enum(u64) {
     cancelled_before_submit = 1,
     invalid_host_lengths = 2,
+};
+
+const CancellationStormActionV1 = enum(u64) {
+    cancel_lane0 = 1,
+    cancel_lane1 = 2,
+    capacity_probe = 3,
+    completed_lane0 = 4,
+    completed_lane1 = 5,
+};
+
+const CancellationStormRootRoleV1 = enum(u64) {
+    request = 1,
+    terminal = 2,
+    completion = 3,
+    timing_unsupported = 4,
+    allocation_unsupported = 5,
+    action_evidence = 6,
 };
 
 const disruption_admitted_presence: u8 =
@@ -132,6 +189,20 @@ comptime {
         disruption_pin_count != 200 or
         disruption_record_count > native_report.max_records)
         @compileError("native Metal disruption schedule changed");
+    if (cancellation_storm_record_count != 208 or
+        cancellation_storm_warmup_record_count != 26 or
+        cancellation_storm_measured_record_count != 182 or
+        cancellation_storm_cancelled_count != 128 or
+        cancellation_storm_capacity_rejected_count != 64 or
+        cancellation_storm_completed_dispatch_count != 16 or
+        cancellation_storm_pin_count != 144 or
+        cancellation_storm_event_count != 816 or
+        cancellation_storm_encoded_bytes != 163_132 or
+        cancellation_storm_record_count >
+            native_report.max_records)
+        @compileError(
+            "native Metal cancellation-storm schedule changed",
+        );
 }
 
 pub const RunConfigV1 = struct {
@@ -216,8 +287,11 @@ const FixtureV1 = struct {
 const EventClockV1 = struct {
     timer: std.time.Timer,
     sequence: u64 = 0,
+    mutex: std.Thread.Mutex = .{},
 
     fn next(self: *EventClockV1) !native_report.EventPointV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         self.sequence = std.math.add(
             u64,
             self.sequence,
@@ -345,6 +419,46 @@ const PendingRecordV1 = struct {
     bank_used_before: u64 = 0,
 };
 
+const CancellationStormPendingV1 = struct {
+    request: metal_allocation.MetalMatvecDispatchRequestV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    host: native_report.HostEventsV1 = .{
+        .presence_mask = disruption_admitted_presence,
+    },
+    terminal: ?lease_tree.DispatchTerminalEvidenceV1 = null,
+    completion: ?lease_tree.LeaseTreeDispatchCompletionV1 = null,
+};
+
+const CancellationStormWorkerV1 = struct {
+    adapter: *metal_allocation.MetalAllocationAdapterV1,
+    lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    pin: lease_tree.LeaseTreeDispatchPinV1,
+    clock: *EventClockV1,
+    ready: *std.atomic.Value(usize),
+    release: *std.atomic.Value(bool),
+    terminal: ?lease_tree.DispatchTerminalEvidenceV1 = null,
+    observed_return: native_report.EventPointV1 = .{},
+    failure: ?anyerror = null,
+
+    fn run(self: *@This()) void {
+        _ = self.ready.fetchAdd(1, .acq_rel);
+        while (!self.release.load(.acquire))
+            std.atomic.spinLoopHint();
+        self.terminal =
+            self.adapter.cancelMatvecBeforeSubmitObserved(
+                self.lease,
+                self.pin,
+            ) catch |err| {
+                self.failure = err;
+                return;
+            };
+        self.observed_return = self.clock.next() catch |err| {
+            self.failure = err;
+            return;
+        };
+    }
+};
+
 /// Run the fixed production-native campaign and return an encoded report only
 /// after terminal zero ownership has been proven.
 pub fn runV1(
@@ -394,9 +508,38 @@ pub fn runControlledDisruptionV1(
     );
 }
 
+/// Run the fixed W7b cancellation-storm concurrent-caller campaign.
+/// Cancellation records prove concurrent host callers against two disjoint
+/// production-adapter lanes before native submission; only the clean control
+/// pairs submit Metal commands.
+pub fn runCancellationStormV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    config: RunConfigV1,
+) !ArtifactV1 {
+    if (storage.state != .empty) return error.StorageAlreadyBound;
+    if (digestIsZero(config.build_sha256) or
+        digestIsZero(config.challenge_sha256))
+        return error.InvalidIdentity;
+    try validateNativeWorkloadEpochStartSpacingV1(
+        config.epoch_start_spacing_ns,
+    );
+    storage.state = .running;
+    storage.backend = backend;
+    errdefer storage.state = .failed_retained;
+
+    return runBoundCampaignV1(
+        storage,
+        backend,
+        config,
+        .cancellation_storm,
+    );
+}
+
 const CampaignKindV1 = enum {
     native_workload,
     controlled_disruption,
+    cancellation_storm,
 };
 
 fn runBoundV1(
@@ -460,6 +603,12 @@ fn runBoundCampaignV1(
             config,
         ),
         .controlled_disruption => try makeControlledDisruptionScenarioV1(
+            storage,
+            initial_device,
+            logical_cpu_count,
+            config,
+        ),
+        .cancellation_storm => try makeCancellationStormScenarioV1(
             storage,
             initial_device,
             logical_cpu_count,
@@ -555,6 +704,7 @@ fn runBoundCampaignV1(
             .controlled_disruption => digestV1(
                 "glacier-w7-metal-controlled-disruption-owner-v1\x00",
             ),
+            .cancellation_storm => scenario.profile_sha256,
         },
         storage.adapter.authority,
         fixture.selection,
@@ -673,11 +823,27 @@ fn runBoundCampaignV1(
                 &clock,
             );
         },
+        .cancellation_storm => {
+            try runCancellationStormBlocksV1(
+                storage,
+                backend,
+                campaign_lease,
+                fixture,
+                scenario,
+                initial_lifecycle,
+                initial_device,
+                initial_device.recommended_max_working_set_size,
+                completed_dispatches_before,
+                config.challenge_sha256,
+                &clock,
+            );
+        },
     }
 
     const expected_event_count: u64 = switch (campaign) {
         .native_workload => record_count * native_report.event_count,
         .controlled_disruption => disruption_epoch_count * 25,
+        .cancellation_storm => cancellation_storm_event_count,
     };
     if (clock.sequence != expected_event_count)
         return error.InvalidEventSequence;
@@ -713,10 +879,12 @@ fn runBoundCampaignV1(
     const expected_pin_count: u64 = switch (campaign) {
         .native_workload => record_count,
         .controlled_disruption => disruption_pin_count,
+        .cancellation_storm => cancellation_storm_pin_count,
     };
     const expected_dispatch_count: u64 = switch (campaign) {
         .native_workload => record_count,
         .controlled_disruption => disruption_completed_dispatch_count,
+        .cancellation_storm => cancellation_storm_completed_dispatch_count,
     };
     if (!final_bank.used.isZero() or
         final_bank.active_reservations != 0 or
@@ -755,16 +923,20 @@ fn runBoundCampaignV1(
     const campaign_record_count: usize = switch (campaign) {
         .native_workload => record_count,
         .controlled_disruption => disruption_record_count,
+        .cancellation_storm => cancellation_storm_record_count,
     };
     const campaign_encoded_bytes: usize = switch (campaign) {
         .native_workload => encoded_bytes,
         .controlled_disruption => disruption_encoded_bytes,
+        .cancellation_storm => cancellation_storm_encoded_bytes,
     };
     const sealed = try native_report.sealV1(
         scenario,
         storage.records[0..campaign_record_count],
         closure,
     );
+    if (campaign == .cancellation_storm)
+        try validateCancellationStormSealedV1(sealed);
     const wire = try native_report.encodeV1(
         sealed,
         storage.wire[0..campaign_encoded_bytes],
@@ -918,6 +1090,102 @@ fn controlledDisruptionBackendIdentityV1() Digest {
     return finishHash(&hash);
 }
 
+fn hashCancellationStormScheduleTupleV1(
+    hash: *std.crypto.hash.sha2.Sha256,
+) void {
+    hashU64(hash, cancellation_storm_producer_abi);
+    hashU64(hash, cancellation_storm_block_count);
+    hashU64(hash, cancellation_storm_waves_per_block);
+    hashU64(hash, cancellation_storm_warmup_block_count);
+    hashU64(hash, cancellation_storm_records_per_wave);
+    hashU64(hash, cancellation_storm_control_records_per_block);
+    hashU64(hash, flow_count);
+    hashU64(
+        hash,
+        metal_allocation.maximum_async_dispatch_slots,
+    );
+    hashU64(hash, persistent_device_bytes);
+    hashU64(hash, cancellation_storm_pin_count);
+    inline for (
+        std.meta.fields(CancellationStormActionV1),
+    ) |field| {
+        hashU64(hash, field.value);
+    }
+}
+
+pub fn cancellationStormScheduleIdentityV1() Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7b-metal-cancellation-storm-schedule-v1\x00",
+    );
+    hashCancellationStormScheduleTupleV1(&hash);
+    return finishHash(&hash);
+}
+
+pub fn cancellationStormProfileIdentityV1() Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7b-metal-cancellation-storm-profile-v1\x00",
+    );
+    hash.update(&cancellationStormScheduleIdentityV1());
+    hashCancellationStormScheduleTupleV1(&hash);
+    return finishHash(&hash);
+}
+
+pub fn cancellationStormWorkloadIdentityV1() Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7b-metal-cancellation-storm-workload-v1\x00",
+    );
+    hashU64(&hash, cancellation_storm_producer_abi);
+    hashU64(&hash, in_features);
+    hashU64(&hash, out_features);
+    hashU64(&hash, group_size);
+    hashU64(&hash, work_units_per_record);
+    return finishHash(&hash);
+}
+
+fn cancellationStormArtifactIdentityV1(
+    storage: *const StorageV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7b-metal-cancellation-storm-artifact-v1\x00",
+    );
+    hashU64(&hash, cancellation_storm_producer_abi);
+    hash.update(&artifactIdentityV1(storage));
+    return finishHash(&hash);
+}
+
+pub fn cancellationStormBackendIdentityV1() Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7b-metal-cancellation-storm-backend-v1\x00",
+    );
+    hashU64(&hash, cancellation_storm_producer_abi);
+    hashU64(&hash, metal.device_info_abi);
+    hashU64(&hash, metal.dispatch_observation_abi);
+    hashU64(&hash, metal.async_submission_abi);
+    hashU64(&hash, metal.async_completion_abi);
+    hashU64(&hash, metal_allocation.adapter_abi);
+    hashU64(&hash, metal_allocation.observation_abi);
+    hashU64(
+        &hash,
+        metal_allocation.dispatch_observation_abi,
+    );
+    return finishHash(&hash);
+}
+
+pub fn cancellationStormHostSourceIdentityV1() Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7b-metal-cancellation-storm-host-source-v1\x00",
+    );
+    hashU64(&hash, cancellation_storm_producer_abi);
+    hash.update(&cancellationStormScheduleIdentityV1());
+    return finishHash(&hash);
+}
+
 fn hostSourceIdentityV1() Digest {
     return digestV1(
         "std.time.Timer.read+global-sequence/metal-workload-v1",
@@ -1047,6 +1315,85 @@ fn controlledDisruptionCapacityRootV1(
     return finishHash(&hash);
 }
 
+fn cancellationStormRecordRootV1(
+    scenario: native_report.ScenarioV1,
+    block_index: usize,
+    wave_index: usize,
+    action: CancellationStormActionV1,
+    lane: usize,
+    role: CancellationStormRootRoleV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7b-metal-cancellation-storm-record-v1\x00",
+    );
+    hash.update(&scenario.profile_sha256);
+    hashU64(&hash, cancellation_storm_producer_abi);
+    hashU64(&hash, block_index);
+    hashU64(&hash, wave_index);
+    hashU64(&hash, @intFromEnum(action));
+    hashU64(&hash, lane);
+    hashU64(&hash, @intFromEnum(role));
+    return finishHash(&hash);
+}
+
+fn cancellationStormAdmittedCommitmentV1(
+    scenario: native_report.ScenarioV1,
+    block_index: usize,
+    wave_index: usize,
+    action: CancellationStormActionV1,
+    lane: usize,
+    terminal_rank: usize,
+    outcome: native_report.OutcomeV1,
+    request_sha256: Digest,
+    pin_sha256: Digest,
+    terminal_sha256: Digest,
+    completion_sha256: Digest,
+    action_evidence_sha256: Digest,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7b-metal-cancellation-storm-admitted-v1\x00",
+    );
+    hash.update(&scenario.profile_sha256);
+    hashU64(&hash, cancellation_storm_producer_abi);
+    hashU64(&hash, block_index);
+    hashU64(&hash, wave_index);
+    hashU64(&hash, @intFromEnum(action));
+    hashU64(&hash, lane);
+    hashU64(&hash, terminal_rank);
+    hashU64(&hash, @intFromEnum(outcome));
+    hash.update(&request_sha256);
+    hash.update(&pin_sha256);
+    hash.update(&terminal_sha256);
+    hash.update(&completion_sha256);
+    hash.update(&action_evidence_sha256);
+    return finishHash(&hash);
+}
+
+fn cancellationStormCapacityRootV1(
+    scenario: native_report.ScenarioV1,
+    block_index: usize,
+    wave_index: usize,
+    probe_flow: usize,
+    role: CancellationStormRootRoleV1,
+    generations: metal_allocation.MetalDispatchGenerationSnapshotV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-w7b-metal-cancellation-storm-capacity-v1\x00",
+    );
+    hash.update(&scenario.profile_sha256);
+    hashU64(&hash, cancellation_storm_producer_abi);
+    hashU64(&hash, block_index);
+    hashU64(&hash, wave_index);
+    hashU64(&hash, probe_flow);
+    hashU64(&hash, @intFromEnum(role));
+    hashU64(&hash, generations.next_request_generation);
+    hashU64(&hash, generations.next_ticket_generation);
+    return finishHash(&hash);
+}
+
 fn oracleIdentityV1(
     flow: usize,
     oracle: []const f32,
@@ -1123,6 +1470,41 @@ fn makeControlledDisruptionScenarioV1(
         .device_sha256 = device_sha256,
         .placement_sha256 = native_observer.placementIdentityV1(info),
         .host_source_sha256 = controlledDisruptionHostSourceIdentityV1(),
+        .host_clock_sha256 = hostClockIdentityV1(),
+        .device_source_sha256 = native_observer.sourceIdentityV1(),
+        .device_clock_sha256 = deviceClockIdentityV1(),
+        .challenge_sha256 = config.challenge_sha256,
+    });
+}
+
+fn makeCancellationStormScenarioV1(
+    storage: *const StorageV1,
+    info: metal.MetalDeviceInfo,
+    logical_cpu_count: u64,
+    config: RunConfigV1,
+) !native_report.ScenarioV1 {
+    const device_sha256 =
+        native_observer.deviceIdentityV1(info);
+    return native_report.makeScenarioV1(.{
+        .mode = .closed,
+        .evidence = .production_native,
+        .warmup_count = cancellation_storm_warmup_record_count,
+        .measured_count = cancellation_storm_measured_record_count,
+        .max_in_flight = flow_count,
+        .queue_count = flow_count,
+        .flow_count = flow_count,
+        .workload_sha256 = cancellationStormWorkloadIdentityV1(),
+        .profile_sha256 = cancellationStormProfileIdentityV1(),
+        .artifact_sha256 = cancellationStormArtifactIdentityV1(storage),
+        .build_sha256 = config.build_sha256,
+        .machine_sha256 = native_observer.machineIdentityV1(
+            logical_cpu_count,
+            device_sha256,
+        ),
+        .backend_sha256 = cancellationStormBackendIdentityV1(),
+        .device_sha256 = device_sha256,
+        .placement_sha256 = native_observer.placementIdentityV1(info),
+        .host_source_sha256 = cancellationStormHostSourceIdentityV1(),
         .host_clock_sha256 = hostClockIdentityV1(),
         .device_source_sha256 = native_observer.sourceIdentityV1(),
         .device_clock_sha256 = deviceClockIdentityV1(),
@@ -2697,4 +3079,1279 @@ fn runControlledDisruptionEpochsV1(
         allocated_context_high_water >
             recommended_max_working_set_size)
         return error.InvalidAllocatedContext;
+}
+
+fn cancellationStormCohortV1(
+    block_index: usize,
+) native_report.CohortV1 {
+    return if (block_index <
+        cancellation_storm_warmup_block_count)
+        .warmup
+    else
+        .measured;
+}
+
+fn cancellationStormCancelActionV1(
+    lane: usize,
+) !CancellationStormActionV1 {
+    return switch (lane) {
+        0 => .cancel_lane0,
+        1 => .cancel_lane1,
+        else => error.InvalidLaneState,
+    };
+}
+
+fn cancellationStormControlActionV1(
+    lane: usize,
+) !CancellationStormActionV1 {
+    return switch (lane) {
+        0 => .completed_lane0,
+        1 => .completed_lane1,
+        else => error.InvalidLaneState,
+    };
+}
+
+fn cancellationStormSettlementFirstLaneV1(
+    challenge_sha256: Digest,
+    global_wave: usize,
+) usize {
+    const byte_index = global_wave / 8;
+    const bit_index: u3 = @intCast(global_wave % 8);
+    return (challenge_sha256[byte_index] >> bit_index) & 1;
+}
+
+fn prepareCancellationStormWaveV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    fixture: FixtureV1,
+    block_index: usize,
+    wave_index: usize,
+    clock: *EventClockV1,
+) ![flow_count]CancellationStormPendingV1 {
+    const prior_pins =
+        block_index * 18 + wave_index * flow_count;
+    const bank_before = try storage.bank.snapshotV4();
+    const coordinator_before =
+        try storage.coordinator.snapshot();
+    if (bank_before.used.device_bytes !=
+        persistent_device_bytes or
+        bank_before.active_lease_pin_slots != 0 or
+        bank_before.lease_pin_acquisitions != prior_pins or
+        bank_before.lease_pin_completions != prior_pins or
+        coordinator_before.active_dispatches != 0 or
+        try backend.nativeLiveCommandCount() != 0)
+        return error.InvalidCancellationStormBoundary;
+
+    var pending: [flow_count]CancellationStormPendingV1 =
+        undefined;
+    for (0..flow_count) |lane| {
+        if (storage.lanes[lane].request != null or
+            storage.lanes[lane].pin != null or
+            storage.lanes[lane].ticket != null)
+            return error.InvalidLaneState;
+        pending[lane] = .{
+            .request = undefined,
+            .pin = undefined,
+        };
+        pending[lane].host.arrival = try clock.next();
+    }
+
+    for (0..flow_count) |lane| {
+        const attempt =
+            try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+                fixture.bindings[lane],
+                storage.packed_weights.len,
+                storage.scales.len,
+                storage.inputs[lane].len,
+                storage.outputs[lane].len,
+                group_size,
+                in_features,
+                out_features,
+            );
+        const request =
+            try storage.adapter.prepareMatvecDispatchRequestV1(
+                attempt,
+            );
+        const expected_request_generation: u64 =
+            @intCast(
+                block_index * 18 +
+                    wave_index * flow_count +
+                    lane +
+                    1,
+            );
+        if (request.request_generation !=
+            expected_request_generation)
+            return error.InvalidRequestGeneration;
+        storage.lanes[lane].request = request;
+        const pin = try storage.coordinator.acquireDispatchPin(
+            campaign_lease,
+            storage.adapter.dispatchInterface(),
+            request.request_sha256,
+        );
+        try lease_tree.validateDispatchPinV1(pin);
+        if (pin.dispatch_generation !=
+            expected_request_generation)
+            return error.InvalidDispatchGeneration;
+        storage.lanes[lane].pin = pin;
+        pending[lane].request = request;
+        pending[lane].pin = pin;
+        pending[lane].host.admission = try clock.next();
+
+        const bank_after = try storage.bank.snapshotV4();
+        if (bank_after.lease_pin_acquisitions !=
+            prior_pins + lane + 1 or
+            bank_after.lease_pin_completions != prior_pins or
+            bank_after.active_lease_pin_slots != lane + 1 or
+            bank_after.used.device_bytes !=
+                persistent_device_bytes or
+            (try storage.coordinator.snapshot())
+                .active_dispatches != lane + 1 or
+            try backend.nativeLiveCommandCount() != 0)
+            return error.InvalidBankPinFacts;
+    }
+
+    const generations =
+        storage.adapter.dispatchGenerationSnapshotV1();
+    const expected_generations: metal_allocation.MetalDispatchGenerationSnapshotV1 = .{
+        .next_request_generation = @intCast(
+            block_index * 18 +
+                wave_index * flow_count +
+                3,
+        ),
+        .next_ticket_generation = @intCast(block_index * flow_count + 1),
+    };
+    if (!std.meta.eql(generations, expected_generations))
+        return error.InvalidRequestGeneration;
+    return pending;
+}
+
+fn writeCancellationStormCapacityRecordV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    fixture: FixtureV1,
+    scenario: native_report.ScenarioV1,
+    block_index: usize,
+    wave_index: usize,
+    ordinal: usize,
+    clock: *EventClockV1,
+) !void {
+    const global_wave =
+        block_index * cancellation_storm_waves_per_block +
+        wave_index;
+    const probe_flow = global_wave & 1;
+    var host: native_report.HostEventsV1 = .{
+        .presence_mask = native_report.capacity_rejected_presence,
+    };
+    host.arrival = try clock.next();
+
+    const adapter_before = storage.adapter.snapshot();
+    const generations_before =
+        storage.adapter.dispatchGenerationSnapshotV1();
+    const expected_generations: metal_allocation.MetalDispatchGenerationSnapshotV1 = .{
+        .next_request_generation = @intCast(
+            block_index * 18 +
+                wave_index * flow_count +
+                3,
+        ),
+        .next_ticket_generation = @intCast(block_index * flow_count + 1),
+    };
+    if (!std.meta.eql(
+        generations_before,
+        expected_generations,
+    ))
+        return error.InvalidRequestGeneration;
+    const bank_before = try storage.bank.snapshotV4();
+    const coordinator_before =
+        try storage.coordinator.snapshot();
+    const native_commands_before =
+        try backend.nativeLiveCommandCount();
+    const native_buffers_before =
+        try backend.nativeLiveBufferCount();
+    const logical_buffers_before =
+        backend.liveBufferCount();
+    const completed_before =
+        backend.completedDispatchCount();
+    if (bank_before.active_lease_pin_slots != flow_count or
+        coordinator_before.active_dispatches != flow_count or
+        native_commands_before != 0)
+        return error.InvalidCancellationStormBoundary;
+
+    const distinct_attempt =
+        try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+            fixture.bindings[probe_flow],
+            storage.packed_weights.len,
+            storage.scales.len,
+            storage.inputs[probe_flow].len,
+            out_features - 2,
+            group_size,
+            in_features,
+            out_features,
+        );
+    if (storage.adapter.prepareMatvecDispatchRequestV1(
+        distinct_attempt,
+    )) |_| {
+        return error.CapacityAttemptUnexpectedlyAdmitted;
+    } else |err| switch (err) {
+        error.DispatchBusy => {},
+        else => return err,
+    }
+    host.terminal = try clock.next();
+
+    const adapter_after = storage.adapter.snapshot();
+    const generations_after =
+        storage.adapter.dispatchGenerationSnapshotV1();
+    const bank_after = try storage.bank.snapshotV4();
+    const coordinator_after =
+        try storage.coordinator.snapshot();
+    if (!std.meta.eql(adapter_before, adapter_after) or
+        !std.meta.eql(
+            generations_before,
+            generations_after,
+        ) or !std.meta.eql(bank_before, bank_after) or
+        !std.meta.eql(
+            coordinator_before,
+            coordinator_after,
+        ) or try backend.nativeLiveCommandCount() !=
+        native_commands_before or
+        try backend.nativeLiveBufferCount() !=
+            native_buffers_before or
+        backend.liveBufferCount() !=
+            logical_buffers_before or
+        backend.completedDispatchCount() != completed_before)
+        return error.CapacityRejectionMutatedState;
+    host.settlement = try clock.next();
+
+    storage.records[ordinal] = try native_report.makeRecordV1(.{
+        .ordinal = @intCast(ordinal),
+        .cohort = cancellationStormCohortV1(block_index),
+        .outcome = .capacity_rejected,
+        .correctness = .not_applicable,
+        .fallback = false,
+        .flow_id = @intCast(probe_flow),
+        .work_units = work_units_per_record,
+        .adapter_queue_slot = native_report.no_queue_slot,
+        .host = host,
+        .roots = .{
+            .request_sha256 = cancellationStormCapacityRootV1(
+                scenario,
+                block_index,
+                wave_index,
+                probe_flow,
+                .request,
+                generations_before,
+            ),
+            .terminal_sha256 = cancellationStormCapacityRootV1(
+                scenario,
+                block_index,
+                wave_index,
+                probe_flow,
+                .terminal,
+                generations_before,
+            ),
+            .completion_sha256 = cancellationStormCapacityRootV1(
+                scenario,
+                block_index,
+                wave_index,
+                probe_flow,
+                .completion,
+                generations_before,
+            ),
+        },
+        .device_timing = .{
+            .availability = .unsupported,
+            .source_sha256 = scenario.device_source_sha256,
+            .clock_sha256 = scenario.device_clock_sha256,
+            .reason_sha256 = cancellationStormCapacityRootV1(
+                scenario,
+                block_index,
+                wave_index,
+                probe_flow,
+                .timing_unsupported,
+                generations_before,
+            ),
+        },
+        .allocated_context = .{
+            .availability = .unsupported,
+            .source_sha256 = scenario.device_source_sha256,
+            .reason_sha256 = cancellationStormCapacityRootV1(
+                scenario,
+                block_index,
+                wave_index,
+                probe_flow,
+                .allocation_unsupported,
+                generations_before,
+            ),
+        },
+    });
+}
+
+fn writeCancellationStormCancelledRecordV1(
+    storage: *StorageV1,
+    scenario: native_report.ScenarioV1,
+    block_index: usize,
+    wave_index: usize,
+    ordinal: usize,
+    lane: usize,
+    terminal_rank: usize,
+    pending: CancellationStormPendingV1,
+) !void {
+    const terminal = pending.terminal orelse
+        return error.InvalidCancellationStormOutcome;
+    const completion = pending.completion orelse
+        return error.InvalidCancellationStormOutcome;
+    const action = try cancellationStormCancelActionV1(lane);
+    const action_evidence_sha256 =
+        cancellationStormRecordRootV1(
+            scenario,
+            block_index,
+            wave_index,
+            action,
+            lane,
+            .action_evidence,
+        );
+    const admitted_commitment =
+        cancellationStormAdmittedCommitmentV1(
+            scenario,
+            block_index,
+            wave_index,
+            action,
+            lane,
+            terminal_rank,
+            .cancelled,
+            pending.request.request_sha256,
+            pending.pin.pin_sha256,
+            terminal.terminal_sha256,
+            completion.completion_sha256,
+            action_evidence_sha256,
+        );
+    storage.records[ordinal] = try native_report.makeRecordV1(.{
+        .ordinal = @intCast(ordinal),
+        .cohort = cancellationStormCohortV1(block_index),
+        .outcome = .cancelled,
+        .correctness = .not_applicable,
+        .fallback = false,
+        .flow_id = @intCast(lane),
+        .work_units = work_units_per_record,
+        .adapter_queue_slot = @intCast(lane),
+        .host = pending.host,
+        .roots = .{
+            .request_sha256 = pending.request.request_sha256,
+            .pin_sha256 = pending.pin.pin_sha256,
+            .terminal_sha256 = terminal.terminal_sha256,
+            .completion_sha256 = completion.completion_sha256,
+        },
+        .device_timing = .{
+            .availability = .unsupported,
+            .source_sha256 = scenario.device_source_sha256,
+            .clock_sha256 = scenario.device_clock_sha256,
+            .reason_sha256 = admitted_commitment,
+        },
+        .allocated_context = .{
+            .availability = .unsupported,
+            .source_sha256 = scenario.device_source_sha256,
+            .reason_sha256 = action_evidence_sha256,
+        },
+        .logical = .{
+            .bank_acquisitions = 1,
+            .bank_completions = 1,
+            .bank_used_before = persistent_device_bytes,
+            .bank_used_after_settlement = persistent_device_bytes,
+            .pin_count_before = 1,
+            .pin_count_after_settlement = 0,
+            .dispatch_count_before = 0,
+            .dispatch_count_after_settlement = 0,
+            .native_command_count_before = 0,
+            .native_command_count_after_settlement = 0,
+        },
+    });
+}
+
+fn runCancellationStormConcurrentCancellationV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    scenario: native_report.ScenarioV1,
+    block_index: usize,
+    wave_index: usize,
+    ordinal_base: usize,
+    challenge_sha256: Digest,
+    pending: *[flow_count]CancellationStormPendingV1,
+    clock: *EventClockV1,
+) !void {
+    if (try backend.nativeLiveCommandCount() != 0)
+        return error.InvalidCancellationStormBoundary;
+    const completed_before =
+        backend.completedDispatchCount();
+    var ready = std.atomic.Value(usize).init(0);
+    var release = std.atomic.Value(bool).init(false);
+    var workers: [flow_count]CancellationStormWorkerV1 =
+        undefined;
+    for (&workers, 0..) |*worker, lane| {
+        worker.* = .{
+            .adapter = &storage.adapter,
+            .lease = campaign_lease,
+            .pin = pending[lane].pin,
+            .clock = clock,
+            .ready = &ready,
+            .release = &release,
+        };
+    }
+
+    var threads: [flow_count]std.Thread = undefined;
+    var spawned: usize = 0;
+    errdefer {
+        release.store(true, .release);
+        for (threads[0..spawned]) |thread| thread.join();
+    }
+    for (&threads, 0..) |*thread, lane| {
+        thread.* = try std.Thread.spawn(
+            .{},
+            CancellationStormWorkerV1.run,
+            .{&workers[lane]},
+        );
+        spawned += 1;
+    }
+    while (ready.load(.acquire) != flow_count)
+        std.atomic.spinLoopHint();
+    release.store(true, .release);
+    for (&threads) |*thread| thread.join();
+    spawned = 0;
+
+    for (&workers, 0..) |*worker, lane| {
+        if (worker.failure) |err| return err;
+        const terminal = worker.terminal orelse
+            return error.InvalidCancellationStormOutcome;
+        try lease_tree.validateDispatchTerminalForPinV1(
+            terminal,
+            pending[lane].pin,
+        );
+        if (terminal.outcome != .cancelled_before_submit or
+            worker.observed_return.sequence == 0)
+            return error.InvalidCancellationStormOutcome;
+        pending[lane].terminal = terminal;
+        pending[lane].host.terminal =
+            worker.observed_return;
+    }
+    if (pending[0].host.terminal.sequence ==
+        pending[1].host.terminal.sequence or
+        try backend.nativeLiveCommandCount() != 0 or
+        backend.completedDispatchCount() != completed_before)
+        return error.InvalidCancellationStormOutcome;
+
+    const terminal_ranks = [flow_count]usize{
+        if (pending[0].host.terminal.sequence <
+            pending[1].host.terminal.sequence) 0 else 1,
+        if (pending[1].host.terminal.sequence <
+            pending[0].host.terminal.sequence) 0 else 1,
+    };
+    const global_wave =
+        block_index * cancellation_storm_waves_per_block +
+        wave_index;
+    const first_lane =
+        cancellationStormSettlementFirstLaneV1(
+            challenge_sha256,
+            global_wave,
+        );
+    const settlement_order =
+        [flow_count]usize{ first_lane, first_lane ^ 1 };
+    for (settlement_order) |lane| {
+        const terminal = pending[lane].terminal.?;
+        const completion =
+            try storage.coordinator.completeDispatchPin(
+                pending[lane].pin,
+                storage.adapter.dispatchInterface(),
+                terminal,
+            );
+        try lease_tree.validateDispatchCompletionForPinV1(
+            completion,
+            pending[lane].pin,
+            terminal,
+        );
+        try storage.adapter.acknowledgeDispatchCompletion(
+            completion,
+        );
+        pending[lane].completion = completion;
+        pending[lane].host.settlement = try clock.next();
+        storage.lanes[lane] = .{};
+    }
+
+    const expected_pins =
+        block_index * 18 + wave_index * flow_count +
+        flow_count;
+    const bank_after = try storage.bank.snapshotV4();
+    const coordinator_after =
+        try storage.coordinator.snapshot();
+    if (bank_after.used.device_bytes !=
+        persistent_device_bytes or
+        bank_after.active_lease_pin_slots != 0 or
+        bank_after.lease_pin_acquisitions != expected_pins or
+        bank_after.lease_pin_completions != expected_pins or
+        coordinator_after.active_dispatches != 0 or
+        try backend.nativeLiveCommandCount() != 0)
+        return error.InvalidCancellationStormBoundary;
+
+    for (0..flow_count) |lane| {
+        try writeCancellationStormCancelledRecordV1(
+            storage,
+            scenario,
+            block_index,
+            wave_index,
+            ordinal_base + lane,
+            lane,
+            terminal_ranks[lane],
+            pending[lane],
+        );
+    }
+}
+
+fn startCancellationStormControlPairV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    fixture: FixtureV1,
+    block_index: usize,
+    ordinal_base: usize,
+    clock: *EventClockV1,
+) ![flow_count]PendingRecordV1 {
+    const prior_pins = block_index * 18 + 16;
+    var pending: [flow_count]PendingRecordV1 = undefined;
+    for (0..flow_count) |lane| {
+        if (storage.lanes[lane].request != null or
+            storage.lanes[lane].pin != null or
+            storage.lanes[lane].ticket != null)
+            return error.InvalidLaneState;
+        storage.outputs[lane] =
+            [_]f32{-8_765.25} ** out_features;
+        pending[lane] = .{
+            .ordinal = @intCast(ordinal_base + lane),
+            .cohort = cancellationStormCohortV1(
+                block_index,
+            ),
+            .flow_id = @intCast(lane),
+            .request = undefined,
+            .pin = undefined,
+            .ticket = undefined,
+        };
+        pending[lane].host.arrival = try clock.next();
+    }
+
+    for (0..flow_count) |lane| {
+        const bank_before = try storage.bank.snapshotV4();
+        const attempt =
+            try metal_allocation.makeMetalMatvecPreSubmitAttemptV1(
+                fixture.bindings[lane],
+                storage.packed_weights.len,
+                storage.scales.len,
+                storage.inputs[lane].len,
+                storage.outputs[lane].len,
+                group_size,
+                in_features,
+                out_features,
+            );
+        const request =
+            try storage.adapter.prepareMatvecDispatchRequestV1(
+                attempt,
+            );
+        const expected_request_generation: u64 =
+            @intCast(block_index * 18 + 17 + lane);
+        if (request.request_generation !=
+            expected_request_generation)
+            return error.InvalidRequestGeneration;
+        storage.lanes[lane].request = request;
+        const pin = try storage.coordinator.acquireDispatchPin(
+            campaign_lease,
+            storage.adapter.dispatchInterface(),
+            request.request_sha256,
+        );
+        try lease_tree.validateDispatchPinV1(pin);
+        if (pin.dispatch_generation !=
+            expected_request_generation)
+            return error.InvalidDispatchGeneration;
+        storage.lanes[lane].pin = pin;
+        pending[lane].host.admission = try clock.next();
+        const bank_after = try storage.bank.snapshotV4();
+        if (bank_after.lease_pin_acquisitions !=
+            prior_pins + lane + 1 or
+            bank_after.lease_pin_completions != prior_pins or
+            bank_after.active_lease_pin_slots != lane + 1 or
+            bank_after.used.device_bytes !=
+                bank_before.used.device_bytes or
+            try backend.nativeLiveCommandCount() != 0)
+            return error.InvalidBankPinFacts;
+        pending[lane].request = request;
+        pending[lane].pin = pin;
+        pending[lane].bank_used_before =
+            bank_before.used.device_bytes;
+    }
+
+    for (0..flow_count) |lane| {
+        pending[lane].host.first_service =
+            try clock.next();
+    }
+    for (0..flow_count) |lane| {
+        const ticket =
+            try storage.adapter.submitMatvecInt4AsyncObserved(
+                campaign_lease,
+                pending[lane].pin,
+                fixture.bindings[lane],
+                &storage.packed_weights,
+                &storage.scales,
+                &storage.inputs[lane],
+                &storage.outputs[lane],
+                group_size,
+                in_features,
+                out_features,
+            );
+        storage.lanes[lane].ticket = ticket;
+        pending[lane].ticket = ticket;
+        pending[lane].host.submit_return = try clock.next();
+        try metal_allocation
+            .validateMetalAsyncDispatchTicketV1(ticket);
+        const expected_ticket_generation: u64 =
+            @intCast(block_index * flow_count + lane + 1);
+        if (ticket.ticket_generation !=
+            expected_ticket_generation or
+            ticket.queue_slot != lane or
+            !std.meta.eql(
+                storage.adapter
+                    .currentAsyncDispatchTicketForQueueSlotV1(
+                    lane,
+                ) orelse return error.InvalidLaneState,
+                ticket,
+            ) or storage.adapter
+            .currentAsyncDispatchQuarantineForQueueSlotV1(
+            lane,
+        ) != null)
+            return error.InvalidLaneState;
+    }
+
+    const expected_generations: metal_allocation.MetalDispatchGenerationSnapshotV1 = .{
+        .next_request_generation = @intCast((block_index + 1) * 18 + 1),
+        .next_ticket_generation = @intCast((block_index + 1) * flow_count + 1),
+    };
+    if (!std.meta.eql(
+        storage.adapter.dispatchGenerationSnapshotV1(),
+        expected_generations,
+    ) or (try storage.coordinator.snapshot())
+        .active_dispatches != flow_count or
+        (try storage.bank.snapshotV4())
+            .active_lease_pin_slots != flow_count or
+        try backend.nativeLiveCommandCount() != flow_count or
+        pending[0].request.request_generation >=
+            pending[1].request.request_generation or
+        pending[0].pin.dispatch_generation >=
+            pending[1].pin.dispatch_generation or
+        pending[0].ticket.ticket_generation >=
+            pending[1].ticket.ticket_generation)
+        return error.InvalidPairOwnership;
+    return pending;
+}
+
+fn runCancellationStormControlPairV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    fixture: FixtureV1,
+    scenario: native_report.ScenarioV1,
+    block_index: usize,
+    ordinal_base: usize,
+    clock: *EventClockV1,
+) !void {
+    var pending = try startCancellationStormControlPairV1(
+        storage,
+        backend,
+        campaign_lease,
+        fixture,
+        block_index,
+        ordinal_base,
+        clock,
+    );
+    for (0..flow_count) |lane| {
+        try observeLaneV1(
+            storage,
+            campaign_lease,
+            lane,
+            &pending[lane],
+            clock,
+        );
+    }
+    for (0..flow_count) |lane| {
+        pending[lane].host.terminal = try clock.next();
+    }
+    var reverse_lane: usize = flow_count;
+    while (reverse_lane != 0) {
+        reverse_lane -= 1;
+        try settleLaneV1(
+            storage,
+            backend,
+            scenario,
+            reverse_lane,
+            &pending[reverse_lane],
+            clock,
+        );
+    }
+    try validatePairSettledV1(
+        storage,
+        backend,
+        (block_index + 1) * 18,
+        &pending,
+    );
+}
+
+fn validateCancellationStormWaveScheduleV1(
+    storage: *const StorageV1,
+    scenario: native_report.ScenarioV1,
+    block_index: usize,
+    wave_index: usize,
+    challenge_sha256: Digest,
+) !void {
+    const record_base =
+        block_index * cancellation_storm_records_per_block +
+        wave_index * cancellation_storm_records_per_wave;
+    const sequence_base: u64 =
+        @intCast(block_index * 102 + wave_index * 11);
+    const cancelled = [flow_count]native_report.RecordV1{
+        storage.records[record_base],
+        storage.records[record_base + 1],
+    };
+    const capacity = storage.records[record_base + 2];
+    const expected_cohort =
+        cancellationStormCohortV1(block_index);
+
+    if (cancelled[0].host.arrival.sequence !=
+        sequence_base + 1 or
+        cancelled[1].host.arrival.sequence !=
+            sequence_base + 2 or
+        cancelled[0].host.admission.sequence !=
+            sequence_base + 3 or
+        cancelled[1].host.admission.sequence !=
+            sequence_base + 4 or
+        capacity.host.arrival.sequence !=
+            sequence_base + 5 or
+        capacity.host.terminal.sequence !=
+            sequence_base + 6 or
+        capacity.host.settlement.sequence !=
+            sequence_base + 7)
+        return error.InvalidEventSequence;
+    const terminal_sequences = [flow_count]u64{
+        cancelled[0].host.terminal.sequence,
+        cancelled[1].host.terminal.sequence,
+    };
+    if (!((terminal_sequences[0] == sequence_base + 8 and
+        terminal_sequences[1] == sequence_base + 9) or
+        (terminal_sequences[0] == sequence_base + 9 and
+            terminal_sequences[1] == sequence_base + 8)))
+        return error.InvalidEventSequence;
+    const global_wave =
+        block_index * cancellation_storm_waves_per_block +
+        wave_index;
+    const first_lane =
+        cancellationStormSettlementFirstLaneV1(
+            challenge_sha256,
+            global_wave,
+        );
+    if (cancelled[first_lane].host.settlement.sequence !=
+        sequence_base + 10 or
+        cancelled[first_lane ^ 1].host.settlement.sequence !=
+            sequence_base + 11)
+        return error.InvalidEventSequence;
+
+    const expected_generations: metal_allocation.MetalDispatchGenerationSnapshotV1 = .{
+        .next_request_generation = @intCast(
+            block_index * 18 +
+                wave_index * flow_count +
+                3,
+        ),
+        .next_ticket_generation = @intCast(block_index * flow_count + 1),
+    };
+    for (cancelled, 0..) |record, lane| {
+        const action =
+            try cancellationStormCancelActionV1(lane);
+        const action_evidence_sha256 =
+            cancellationStormRecordRootV1(
+                scenario,
+                block_index,
+                wave_index,
+                action,
+                lane,
+                .action_evidence,
+            );
+        const terminal_rank: usize =
+            if (record.host.terminal.sequence ==
+            sequence_base + 8) 0 else 1;
+        const admitted_commitment =
+            cancellationStormAdmittedCommitmentV1(
+                scenario,
+                block_index,
+                wave_index,
+                action,
+                lane,
+                terminal_rank,
+                .cancelled,
+                record.roots.request_sha256,
+                record.roots.pin_sha256,
+                record.roots.terminal_sha256,
+                record.roots.completion_sha256,
+                action_evidence_sha256,
+            );
+        if (record.ordinal != record_base + lane or
+            record.cohort != expected_cohort or
+            record.outcome != .cancelled or
+            record.correctness != .not_applicable or
+            record.fallback or
+            record.flow_id != lane or
+            record.work_units != work_units_per_record or
+            record.adapter_queue_slot != lane or
+            record.host.presence_mask !=
+                disruption_admitted_presence or
+            record.maximum_abs_error_f64_bits != 0 or
+            !digestIsZero(record.roots.ticket_sha256) or
+            !digestIsZero(record.roots.dispatch_sha256) or
+            !digestIsZero(
+                record.roots.submission_sha256,
+            ) or
+            !digestIsZero(record.roots.output_sha256) or
+            !digestIsZero(record.roots.oracle_sha256) or
+            !std.mem.eql(
+                u8,
+                &record.device_timing.reason_sha256,
+                &admitted_commitment,
+            ) or !std.mem.eql(
+            u8,
+            &record.allocated_context.reason_sha256,
+            &action_evidence_sha256,
+        ) or record.device_timing.availability !=
+            .unsupported or
+            record.allocated_context.availability !=
+                .unsupported or
+            record.logical.bank_acquisitions != 1 or
+            record.logical.bank_completions != 1 or
+            record.logical.bank_used_before !=
+                persistent_device_bytes or
+            record.logical.bank_used_after_settlement !=
+                persistent_device_bytes or
+            record.logical.pin_count_before != 1 or
+            record.logical.pin_count_after_settlement != 0 or
+            record.logical.dispatch_count_before != 0 or
+            record.logical.dispatch_count_after_settlement != 0 or
+            record.logical.native_command_count_before != 0 or
+            record.logical.native_command_count_after_settlement !=
+                0)
+            return error.InvalidCancellationStormRecord;
+    }
+
+    const probe_flow = global_wave & 1;
+    if (capacity.ordinal != record_base + 2 or
+        capacity.cohort != expected_cohort or
+        capacity.outcome != .capacity_rejected or
+        capacity.correctness != .not_applicable or
+        capacity.fallback or
+        capacity.flow_id != probe_flow or
+        capacity.work_units != work_units_per_record or
+        capacity.adapter_queue_slot !=
+            native_report.no_queue_slot or
+        capacity.host.presence_mask !=
+            native_report.capacity_rejected_presence or
+        capacity.maximum_abs_error_f64_bits != 0 or
+        !digestIsZero(capacity.roots.ticket_sha256) or
+        !digestIsZero(capacity.roots.pin_sha256) or
+        !digestIsZero(capacity.roots.dispatch_sha256) or
+        !digestIsZero(capacity.roots.submission_sha256) or
+        !digestIsZero(capacity.roots.output_sha256) or
+        !digestIsZero(capacity.roots.oracle_sha256) or
+        capacity.device_timing.availability !=
+            .unsupported or
+        capacity.allocated_context.availability !=
+            .unsupported or
+        !std.mem.eql(
+            u8,
+            &capacity.roots.request_sha256,
+            &cancellationStormCapacityRootV1(
+                scenario,
+                block_index,
+                wave_index,
+                probe_flow,
+                .request,
+                expected_generations,
+            ),
+        ) or !std.mem.eql(
+        u8,
+        &capacity.roots.terminal_sha256,
+        &cancellationStormCapacityRootV1(
+            scenario,
+            block_index,
+            wave_index,
+            probe_flow,
+            .terminal,
+            expected_generations,
+        ),
+    ) or !std.mem.eql(
+        u8,
+        &capacity.roots.completion_sha256,
+        &cancellationStormCapacityRootV1(
+            scenario,
+            block_index,
+            wave_index,
+            probe_flow,
+            .completion,
+            expected_generations,
+        ),
+    ) or !std.mem.eql(
+        u8,
+        &capacity.device_timing.reason_sha256,
+        &cancellationStormCapacityRootV1(
+            scenario,
+            block_index,
+            wave_index,
+            probe_flow,
+            .timing_unsupported,
+            expected_generations,
+        ),
+    ) or !std.mem.eql(
+        u8,
+        &capacity.allocated_context.reason_sha256,
+        &cancellationStormCapacityRootV1(
+            scenario,
+            block_index,
+            wave_index,
+            probe_flow,
+            .allocation_unsupported,
+            expected_generations,
+        ),
+    ) or !std.meta.eql(
+        capacity.logical,
+        native_report.LogicalFactsV1{},
+    ))
+        return error.InvalidCancellationStormRecord;
+}
+
+fn validateCancellationStormControlScheduleV1(
+    storage: *const StorageV1,
+    block_index: usize,
+) !void {
+    const record_base =
+        block_index * cancellation_storm_records_per_block +
+        cancellation_storm_waves_per_block *
+            cancellation_storm_records_per_wave;
+    const sequence_base: u64 =
+        @intCast(block_index * 102 + 88);
+    const lane0 = storage.records[record_base];
+    const lane1 = storage.records[record_base + 1];
+    const expected_lane0 = [_]u64{
+        sequence_base + 1,
+        sequence_base + 3,
+        sequence_base + 5,
+        sequence_base + 7,
+        sequence_base + 9,
+        sequence_base + 11,
+        sequence_base + 14,
+    };
+    const expected_lane1 = [_]u64{
+        sequence_base + 2,
+        sequence_base + 4,
+        sequence_base + 6,
+        sequence_base + 8,
+        sequence_base + 10,
+        sequence_base + 12,
+        sequence_base + 13,
+    };
+    const lane0_points = [_]u64{
+        lane0.host.arrival.sequence,
+        lane0.host.admission.sequence,
+        lane0.host.first_service.sequence,
+        lane0.host.submit_return.sequence,
+        lane0.host.first_output.sequence,
+        lane0.host.terminal.sequence,
+        lane0.host.settlement.sequence,
+    };
+    const lane1_points = [_]u64{
+        lane1.host.arrival.sequence,
+        lane1.host.admission.sequence,
+        lane1.host.first_service.sequence,
+        lane1.host.submit_return.sequence,
+        lane1.host.first_output.sequence,
+        lane1.host.terminal.sequence,
+        lane1.host.settlement.sequence,
+    };
+    if (!std.meta.eql(lane0_points, expected_lane0) or
+        !std.meta.eql(lane1_points, expected_lane1))
+        return error.InvalidEventSequence;
+    for (
+        [_]native_report.RecordV1{ lane0, lane1 },
+        0..,
+    ) |record, lane| {
+        _ = try cancellationStormControlActionV1(lane);
+        const maximum_abs_error_value: f64 =
+            @bitCast(record.maximum_abs_error_f64_bits);
+        if (record.ordinal != record_base + lane or
+            record.cohort !=
+                cancellationStormCohortV1(block_index) or
+            record.outcome != .completed or
+            record.correctness != .correct or
+            record.fallback or
+            record.flow_id != lane or
+            record.work_units != work_units_per_record or
+            record.adapter_queue_slot != lane or
+            record.host.presence_mask !=
+                native_report.event_presence_all or
+            !std.math.isFinite(maximum_abs_error_value) or
+            maximum_abs_error_value < 0 or
+            maximum_abs_error_value > maximum_abs_error or
+            digestIsZero(record.roots.request_sha256) or
+            digestIsZero(record.roots.ticket_sha256) or
+            digestIsZero(record.roots.pin_sha256) or
+            digestIsZero(record.roots.dispatch_sha256) or
+            digestIsZero(record.roots.submission_sha256) or
+            digestIsZero(record.roots.output_sha256) or
+            digestIsZero(record.roots.oracle_sha256) or
+            digestIsZero(record.roots.terminal_sha256) or
+            digestIsZero(record.roots.completion_sha256) or
+            record.device_timing.availability != .present or
+            record.device_timing.duration_ns == 0 or
+            record.allocated_context.availability != .present or
+            record.allocated_context.before_bytes == 0 or
+            record.allocated_context.after_bytes == 0 or
+            record.logical.bank_acquisitions != 1 or
+            record.logical.bank_completions != 1 or
+            record.logical.bank_used_before !=
+                persistent_device_bytes or
+            record.logical.bank_used_after_settlement !=
+                persistent_device_bytes or
+            record.logical.pin_count_before != 1 or
+            record.logical.pin_count_after_settlement != 0 or
+            record.logical.dispatch_count_before != 1 or
+            record.logical.dispatch_count_after_settlement != 0 or
+            record.logical.native_command_count_before != 1 or
+            record.logical.native_command_count_after_settlement !=
+                0)
+            return error.InvalidCancellationStormRecord;
+    }
+}
+
+fn validateCancellationStormBlockBoundaryV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    initial_lifecycle: metal.MetalDeviceLifecycleSnapshot,
+    initial_device: metal.MetalDeviceInfo,
+    block_index: usize,
+    completed_dispatches_before: u64,
+) !void {
+    try validateLifecycleSnapshot(
+        backend,
+        initial_lifecycle,
+        try backend.deviceLifecycleSnapshot(),
+    );
+    try validateDeviceAndPlacementIdentityV1(
+        initial_device,
+        try backend.deviceInfo(),
+    );
+    const expected_pins: u64 =
+        @intCast((block_index + 1) * 18);
+    const adapter_snapshot = storage.adapter.snapshot();
+    const bank_snapshot = try storage.bank.snapshotV4();
+    const coordinator_snapshot =
+        try storage.coordinator.snapshot();
+    const expected_generations: metal_allocation.MetalDispatchGenerationSnapshotV1 = .{
+        .next_request_generation = @intCast((block_index + 1) * 18 + 1),
+        .next_ticket_generation = @intCast((block_index + 1) * flow_count + 1),
+    };
+    if (adapter_snapshot.live_objects != flow_count * 4 or
+        adapter_snapshot.materialized_leases != 1 or
+        adapter_snapshot.used_resource_bytes !=
+            persistent_device_bytes or
+        !std.meta.eql(
+            storage.adapter.dispatchGenerationSnapshotV1(),
+            expected_generations,
+        ) or backend.liveBufferCount() != flow_count * 4 or
+        try backend.nativeLiveBufferCount() !=
+            flow_count * 4 or
+        try backend.nativeLiveCommandCount() != 0 or
+        bank_snapshot.used.device_bytes !=
+            persistent_device_bytes or
+        bank_snapshot.active_lease_pin_slots != 0 or
+        bank_snapshot.lease_pin_acquisitions !=
+            expected_pins or
+        bank_snapshot.lease_pin_completions !=
+            expected_pins or
+        !coordinator_snapshot.live_lease or
+        coordinator_snapshot.active_dispatches != 0 or
+        backend.completedDispatchCount() !=
+            completed_dispatches_before +
+                (block_index + 1) * flow_count or
+        backend.compatibilityUnresolvedSubmission() != null)
+        return error.InvalidCancellationStormBoundary;
+    for (0..flow_count) |lane| {
+        if (storage.lanes[lane].request != null or
+            storage.lanes[lane].pin != null or
+            storage.lanes[lane].ticket != null or
+            storage.adapter
+                .currentAsyncDispatchTicketForQueueSlotV1(
+                lane,
+            ) != null or
+            storage.adapter
+                .currentAsyncDispatchQuarantineForQueueSlotV1(
+                lane,
+            ) != null)
+            return error.InvalidLaneState;
+    }
+}
+
+fn runCancellationStormBlocksV1(
+    storage: *StorageV1,
+    backend: *metal.MetalBackend,
+    campaign_lease: lease_tree.LeaseTreeDeviceAllocationLeaseV1,
+    fixture: FixtureV1,
+    scenario: native_report.ScenarioV1,
+    initial_lifecycle: metal.MetalDeviceLifecycleSnapshot,
+    initial_device: metal.MetalDeviceInfo,
+    recommended_max_working_set_size: u64,
+    completed_dispatches_before: u64,
+    challenge_sha256: Digest,
+    clock: *EventClockV1,
+) !void {
+    if (recommended_max_working_set_size == 0)
+        return error.InvalidAllocatedContext;
+    var allocated_context_high_water: u64 = 0;
+    for (0..cancellation_storm_block_count) |block_index| {
+        const block_record_base =
+            block_index *
+            cancellation_storm_records_per_block;
+        for (
+            0..cancellation_storm_waves_per_block,
+        ) |wave_index| {
+            const ordinal_base =
+                block_record_base +
+                wave_index *
+                    cancellation_storm_records_per_wave;
+            var pending =
+                try prepareCancellationStormWaveV1(
+                    storage,
+                    backend,
+                    campaign_lease,
+                    fixture,
+                    block_index,
+                    wave_index,
+                    clock,
+                );
+            try writeCancellationStormCapacityRecordV1(
+                storage,
+                backend,
+                fixture,
+                scenario,
+                block_index,
+                wave_index,
+                ordinal_base + 2,
+                clock,
+            );
+            try runCancellationStormConcurrentCancellationV1(
+                storage,
+                backend,
+                campaign_lease,
+                scenario,
+                block_index,
+                wave_index,
+                ordinal_base,
+                challenge_sha256,
+                &pending,
+                clock,
+            );
+            try validateCancellationStormWaveScheduleV1(
+                storage,
+                scenario,
+                block_index,
+                wave_index,
+                challenge_sha256,
+            );
+        }
+
+        const control_record_base =
+            block_record_base +
+            cancellation_storm_waves_per_block *
+                cancellation_storm_records_per_wave;
+        try runCancellationStormControlPairV1(
+            storage,
+            backend,
+            campaign_lease,
+            fixture,
+            scenario,
+            block_index,
+            control_record_base,
+            clock,
+        );
+        try validateCancellationStormControlScheduleV1(
+            storage,
+            block_index,
+        );
+        for (0..flow_count) |lane| {
+            const allocated =
+                storage.records[control_record_base + lane]
+                    .allocated_context;
+            if (allocated.availability != .present or
+                allocated.before_bytes == 0 or
+                allocated.after_bytes == 0 or
+                allocated.before_bytes >
+                    recommended_max_working_set_size or
+                allocated.after_bytes >
+                    recommended_max_working_set_size)
+                return error.InvalidAllocatedContext;
+            allocated_context_high_water = @max(
+                allocated_context_high_water,
+                @max(
+                    allocated.before_bytes,
+                    allocated.after_bytes,
+                ),
+            );
+        }
+        try validateCancellationStormBlockBoundaryV1(
+            storage,
+            backend,
+            initial_lifecycle,
+            initial_device,
+            block_index,
+            completed_dispatches_before,
+        );
+    }
+    if (allocated_context_high_water == 0 or
+        allocated_context_high_water >
+            recommended_max_working_set_size)
+        return error.InvalidAllocatedContext;
+}
+
+fn validateCancellationStormSealedV1(
+    report_value: native_report.ReportV1,
+) !void {
+    if (report_value.records.len !=
+        cancellation_storm_record_count or
+        report_value.scenario.warmup_count !=
+            cancellation_storm_warmup_record_count or
+        report_value.scenario.measured_count !=
+            cancellation_storm_measured_record_count or
+        report_value.summary.measured_records !=
+            cancellation_storm_measured_record_count or
+        report_value.summary.admitted_count != 126 or
+        report_value.summary.completed_count != 14 or
+        report_value.summary.capacity_rejected_count != 56 or
+        report_value.summary.failed_count != 0 or
+        report_value.summary.cancelled_count != 112 or
+        report_value.summary.timed_out_count != 0 or
+        report_value.summary.attempted_work_units !=
+            cancellation_storm_measured_record_count *
+                work_units_per_record or
+        report_value.summary.completed_work_units !=
+            14 * work_units_per_record or
+        report_value.summary.logical_in_flight_high_water !=
+            flow_count or
+        report_value.summary.flow_completion_min != 7 or
+        report_value.summary.flow_completion_max != 7 or
+        report_value.summary.flow_completion_spread != 0 or
+        report_value.summary.fallback_count != 0 or
+        report_value.summary.correctness_correct_count != 14 or
+        report_value.summary.correctness_incorrect_count != 0 or
+        report_value.closure.acquisitions !=
+            cancellation_storm_pin_count or
+        report_value.closure.completions !=
+            cancellation_storm_pin_count or
+        !report_value.closure.zero_orphan)
+        return error.InvalidCancellationStormSummary;
 }

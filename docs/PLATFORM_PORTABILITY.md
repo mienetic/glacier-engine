@@ -127,6 +127,14 @@ proves 200/200 pins with zero live ownership. Those branches are controlled
 runtime conditions, not physical removal, driver crash, power loss,
 duration-bounded soak, performance, residency, utilization, or physical
 parallelism evidence.
+W7b-b3 separately runs 64 paired-thread waves around the same bounded
+production adapter. In each wave, both real host threads reach the ready
+barrier before one shared release store. Its 128 cancel-before-submit records
+and 64 capacity probes issue zero GPU commands; 16 correctness controls
+execute real Metal commands and pass CPU oracles. The barrier proves the
+ready-before-release boundary, not simultaneous scheduling or execution,
+critical-section overlap, GPU parallelism, kernel cancellation, preemption, or
+performance.
 The serialized suite also runs a build-isolated reconciliation gate: a real
 Metal command completes physically before a separate test-only `.error`
 overlay drives the production quarantine and settlement path. Production
@@ -139,9 +147,10 @@ temperature, frequency, power, and energy remain open or unsupported. The
 verifier checks composition/corruption of self-asserted live output, not
 cryptographic origin. No W5 readiness result or device range is retained here;
 the separate W6b production-workload wire covers one exact Apple M1 session
-only. W7a executes on demand but does not yet have a committed retained machine
-artifact. Cross-compilation remains source/build evidence rather than native
-OS or device support. W5b and non-macOS native observer coverage remain open.
+only. W7a and W7b-b3 execute on demand but do not yet have committed retained
+machine artifacts. Cross-compilation remains source/build evidence rather than
+native OS or device support. W5b and non-macOS native observer coverage remain
+open.
 
 Run the serialized native device suite on macOS with:
 
