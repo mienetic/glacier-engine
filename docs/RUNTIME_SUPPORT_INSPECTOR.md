@@ -59,7 +59,7 @@ tools/zig-with-ephemeral-cache.sh build runtime-support-inspector-test \
 
 ## Retained profiles
 
-Registry V1 currently contains nine profiles:
+Registry V1 currently contains ten profiles:
 
 | Index | Slug | Lifecycle | Contract shape |
 | ---: | --- | --- | --- |
@@ -72,8 +72,9 @@ Registry V1 currently contains nine profiles:
 | 6 | `stateful-video-reference` | stateful | video segment: video u8 features → typed video segment |
 | 7 | `latent-step-reference` | stateful | image diffuse step: latent tensor → media chunk |
 | 8 | `dense-tensor-reranker-reference` | stateless | generic rerank: dense i16 tensor → canonical ranked items |
+| 9 | `dense-tensor-embedding-reference` | stateless | generic encode: dense i16 tensor → exact Q30 L2 i32 embedding |
 
-All nine rows have evidence class
+All ten rows have evidence class
 `retained_reference_fixture`, numerical policy `exact_integer`, and no allowed
 ambient capability. Their exact bounds come from the adapter support constants;
 the registry does not maintain a second handwritten copy.
@@ -163,11 +164,11 @@ any later failure.
 
 The standard-library Python example declares the same structures with
 `ctypes`; the dependency-free Rust example uses `#[repr(C)]` structures and
-`extern "C"`. Both validate the registry ABI, enumerate all nine profiles,
-verify the first and appended final row, and make exact reranker, transcript,
-and capability-rejected queries in addition to verifying the canonical
+`extern "C"`. Both validate the registry ABI, enumerate all ten profiles,
+verify the first and appended final row, and make exact embedding, reranker,
+transcript, and capability-rejected queries in addition to verifying the canonical
 contract chain. Their final summary contains
-`profile_count=9 transcript_mask=0x000000000000000c`:
+`profile_count=10 transcript_mask=0x000000000000000c`:
 
 ```sh
 python3 examples/interop/python_verify.py
@@ -225,7 +226,7 @@ registry.
 
 ## What this does not claim
 
-The registry and inspector cover only the nine retained exact-integer reference
+The registry and inspector cover only the ten retained exact-integer reference
 fixtures listed above. They make no claim about:
 
 - a production model or checkpoint;
@@ -241,5 +242,6 @@ turn a registry row into native execution evidence. Production, platform,
 backend, quality, and performance promotion each require their own retained
 evidence.
 
-The appended generic profile is documented in
-[Dense-Tensor Reranker](DENSE_TENSOR_RERANKER.md).
+The appended generic tensor profiles are documented in
+[Dense-Tensor Reranker](DENSE_TENSOR_RERANKER.md) and
+[Normalized Dense-Tensor Embedding](DENSE_TENSOR_EMBEDDING.md).

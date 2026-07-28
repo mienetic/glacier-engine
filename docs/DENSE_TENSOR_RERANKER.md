@@ -123,9 +123,10 @@ This retained profile does not establish:
 
 ## Contributor entry points
 
-The same bounded contracts can support independent follow-ups:
+The same bounded contracts now support the normalized embedding fixture and
+can support independent follow-ups:
 
-- add a generic embedding result with an explicit normalization policy;
+- compose the normalized embedding into an in-memory retrieval fixture;
 - add class-score publication and a stable label map;
 - build an in-memory retrieval fixture that feeds exact top-k candidates into
   this reranker;

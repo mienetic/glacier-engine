@@ -31,9 +31,10 @@ OUT_OF_RANGE: Final = 7
 INVALID_QUERY: Final = 8
 
 SUPPORT_REGISTRY_ABI_V1: Final = 0x4752535200000001
-SUPPORT_PROFILE_COUNT_V1: Final = 9
+SUPPORT_PROFILE_COUNT_V1: Final = 10
 SUPPORT_PROFILE_VISION_ENCODER: Final = 0x4756454E00000001
 SUPPORT_PROFILE_DENSE_TENSOR_RERANKER: Final = 0x4744525200000001
+SUPPORT_PROFILE_DENSE_TENSOR_EMBEDDING: Final = 0x4744454D00000001
 SUPPORT_LIFECYCLE_STATELESS: Final = 1
 SUPPORT_EVIDENCE_RETAINED_REFERENCE_FIXTURE: Final = 1
 MODEL_FAMILY_STATELESS_ENCODER: Final = 2
@@ -54,6 +55,7 @@ SUPPORT_UNSUPPORTED_CAPABILITIES: Final = 7
 SUPPORT_MASK_AUDIO_TRANSCRIPT: Final = 1 << 2
 SUPPORT_MASK_STATEFUL_TRANSCRIPT: Final = 1 << 3
 SUPPORT_MASK_DENSE_TENSOR_RERANKER: Final = 1 << 8
+SUPPORT_MASK_DENSE_TENSOR_EMBEDDING: Final = 1 << 9
 SUPPORT_MASK_TRANSCRIPT: Final = (
     SUPPORT_MASK_AUDIO_TRANSCRIPT | SUPPORT_MASK_STATEFUL_TRANSCRIPT
 )
@@ -326,17 +328,17 @@ def verify(library_path: Path, fixture_dir: Path) -> tuple[int, bytes, int, int]
         int(last.allowed_capabilities),
     )
     expected_last = (
-        SUPPORT_PROFILE_DENSE_TENSOR_RERANKER,
+        SUPPORT_PROFILE_DENSE_TENSOR_EMBEDDING,
         SUPPORT_LIFECYCLE_STATELESS,
         SUPPORT_EVIDENCE_RETAINED_REFERENCE_FIXTURE,
         MODEL_FAMILY_STATELESS_ENCODER,
-        MODEL_OPERATION_RERANK,
+        MODEL_OPERATION_ENCODE,
         MODEL_INPUT_DENSE_TENSOR,
-        MODEL_OUTPUT_RANKED_ITEMS,
+        MODEL_OUTPUT_EMBEDDING_I32,
         NUMERICAL_EXACT_INTEGER,
         64,
         4_096,
-        1,
+        256,
         0,
     )
     if last_values != expected_last:
@@ -373,6 +375,39 @@ def verify(library_path: Path, fixture_dir: Path) -> tuple[int, bytes, int, int]
     ):
         raise RuntimeError(
             "reranker support query did not match the appended V1 profile"
+        )
+
+    embedding_query = ModelSupportQueryV1(
+        family=MODEL_FAMILY_STATELESS_ENCODER,
+        operation=MODEL_OPERATION_ENCODE,
+        input_kind=MODEL_INPUT_DENSE_TENSOR,
+        output_kind=MODEL_OUTPUT_EMBEDDING_I32,
+        numerical_policy=NUMERICAL_EXACT_INTEGER,
+        batch_items=64,
+        input_features=4_096,
+        output_dimensions=256,
+        required_capabilities=0,
+    )
+    embedding_result = ModelSupportResultV1()
+    status = int(
+        library.glacier_model_support_query_v1(
+            ctypes.byref(embedding_query),
+            ctypes.sizeof(embedding_query),
+            ctypes.byref(embedding_result),
+            ctypes.sizeof(embedding_result),
+        )
+    )
+    if status != OK:
+        name = STATUS_NAMES.get(status, "UNKNOWN")
+        raise RuntimeError(f"embedding support query failed: {name} ({status})")
+    if (
+        int(embedding_result.compatible) != 1
+        or int(embedding_result.unsupported_reason) != SUPPORT_UNSUPPORTED_NONE
+        or int(embedding_result.matching_profile_mask)
+        != SUPPORT_MASK_DENSE_TENSOR_EMBEDDING
+    ):
+        raise RuntimeError(
+            "embedding support query did not match the appended V1 profile"
         )
 
     transcript_query = ModelSupportQueryV1(

@@ -220,6 +220,19 @@ static const struct expected_support_profile expected_support_profiles[] = {
         UINT64_C(4096),
         UINT64_C(1),
     },
+    {
+        GLACIER_MODEL_SUPPORT_INDEX_DENSE_TENSOR_EMBEDDING,
+        GLACIER_MODEL_SUPPORT_MASK_DENSE_TENSOR_EMBEDDING,
+        GLACIER_MODEL_SUPPORT_PROFILE_DENSE_TENSOR_EMBEDDING,
+        GLACIER_MODEL_SUPPORT_LIFECYCLE_STATELESS,
+        GLACIER_MODEL_FAMILY_STATELESS_ENCODER,
+        GLACIER_MODEL_OPERATION_ENCODE,
+        GLACIER_MODEL_INPUT_DENSE_TENSOR,
+        GLACIER_MODEL_OUTPUT_EMBEDDING_I32,
+        UINT64_C(64),
+        UINT64_C(4096),
+        UINT64_C(256),
+    },
 };
 
 int main(int argc, char **argv) {
@@ -341,6 +354,48 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    memset(&support_query, 0, sizeof support_query);
+    support_query.family = GLACIER_MODEL_FAMILY_STATELESS_ENCODER;
+    support_query.operation = GLACIER_MODEL_OPERATION_ENCODE;
+    support_query.input_kind = GLACIER_MODEL_INPUT_DENSE_TENSOR;
+    support_query.output_kind = GLACIER_MODEL_OUTPUT_EMBEDDING_I32;
+    support_query.numerical_policy = GLACIER_NUMERICAL_EXACT_INTEGER;
+    support_query.batch_items = UINT64_C(64);
+    support_query.input_features = UINT64_C(4096);
+    support_query.output_dimensions = UINT64_C(256);
+    status = glacier_model_support_query_v1(
+        &support_query,
+        sizeof support_query,
+        &support_result,
+        sizeof support_result
+    );
+    if (status != GLACIER_MODEL_CONTRACT_OK ||
+        support_result.compatible != UINT64_C(1) ||
+        support_result.unsupported_reason !=
+            GLACIER_MODEL_SUPPORT_UNSUPPORTED_NONE ||
+        support_result.matching_profile_mask !=
+            GLACIER_MODEL_SUPPORT_MASK_DENSE_TENSOR_EMBEDDING) {
+        fprintf(stderr, "embedding support query did not match exact bounds\n");
+        return 1;
+    }
+
+    support_query.output_dimensions = UINT64_C(257);
+    status = glacier_model_support_query_v1(
+        &support_query,
+        sizeof support_query,
+        &support_result,
+        sizeof support_result
+    );
+    if (status != GLACIER_MODEL_CONTRACT_OK ||
+        support_result.compatible != UINT64_C(0) ||
+        support_result.unsupported_reason !=
+            GLACIER_MODEL_SUPPORT_UNSUPPORTED_DIMENSIONS ||
+        support_result.matching_profile_mask != UINT64_C(0)) {
+        fprintf(stderr, "embedding dimension overflow was not explicit\n");
+        return 1;
+    }
+
+    support_query.output_dimensions = UINT64_C(256);
     support_query.required_capabilities = UINT64_C(1);
     status = glacier_model_support_query_v1(
         &support_query,

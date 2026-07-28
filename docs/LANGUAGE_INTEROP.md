@@ -7,7 +7,7 @@ use their normal C foreign-function interface.
 
 This slice is deliberately narrow. It verifies a canonical artifact manifest,
 execution plan, and result envelope as one bound chain. It also enumerates
-nine append-only exact-integer fixture profiles and answers typed
+ten append-only exact-integer fixture profiles and answers typed
 shape-and-capability queries over those records. It does not load model
 weights, run inference, create a session, invoke a backend, inspect the current
 host, or make the wider runtime API stable. Registration is not execution.
@@ -88,7 +88,7 @@ python3 examples/interop/python_verify.py \
 Use `.so` on Linux or `.dll` on Windows. A successful run prints the
 experimental ABI number, authenticated result root, retained profile count,
 and matching support mask. The final summary is
-`profile_count=9 transcript_mask=0x000000000000000c`.
+`profile_count=10 transcript_mask=0x000000000000000c`.
 
 ## Rust quick start
 
@@ -165,7 +165,7 @@ final 32 bytes of the result wire for a zero-copy root check.
 ### Support enumeration and queries
 
 `glacier_model_support_registry_abi_v1` returns the registry identifier also
-rendered in JSON. `glacier_model_support_profile_count_v1` returns nine. The
+rendered in JSON. `glacier_model_support_profile_count_v1` returns ten. The
 getter copies one fixed-width record into caller-owned storage; an out-of-range
 index returns `OUT_OF_RANGE`. Indices are immutable mask positions in Registry
 V1, so callers must preserve every returned bit instead of assuming there can
@@ -190,7 +190,8 @@ reason semantics, see
 Both output-writing support functions require the exact V1 structure size,
 allocate no memory, retain no input pointer, and zero a correctly sized output
 before any later validation failure. The C, Python, and Rust consumers exercise
-enumeration and a multi-match transcript query over the same library.
+enumeration, exact dense-embedding and reranker queries, and a multi-match
+transcript query over the same library.
 
 Status values are fixed unsigned integers:
 
@@ -223,7 +224,7 @@ tools/zig-with-ephemeral-cache.sh build runtime-support-inspector \
   -Doptimize=ReleaseSafe -Dmetal=false -j2
 ```
 
-It prints the same nine profiles in stable index order, including names and
+It prints the same ten profiles in stable index order, including names and
 numeric IDs, their profile ABIs, lifecycle, evidence class, bounds, and allowed
 capability masks. It accepts no semantic arguments and explicitly reports
 `production_model_support: false` and `host_backend_probed: false`.

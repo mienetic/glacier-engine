@@ -274,6 +274,27 @@ PROFILES = (
             max_output_dimensions=1,
         ),
     ),
+    ProfileSpec(
+        index=9,
+        slug="dense-tensor-embedding-reference",
+        profile_abi=0x4744_454D_0000_0001,
+        lifecycle="stateless",
+        support=SupportSpec(
+            family="stateless_encoder",
+            family_id=2,
+            operation="encode",
+            operation_id=3,
+            input_kind="dense_tensor",
+            input_kind_id=2,
+            output_kind="embedding_i32",
+            output_kind_id=2,
+            numerical_policy="exact_integer",
+            numerical_policy_id=1,
+            max_batch_items=64,
+            max_input_features=4_096,
+            max_output_dimensions=256,
+        ),
+    ),
 )
 
 

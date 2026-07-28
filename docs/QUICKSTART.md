@@ -95,7 +95,7 @@ matrix is not needed for a first contribution.
 
 ## 4. Inspect and query the retained runtime profiles
 
-Print the deterministic nine-profile compatibility registry without loading a
+Print the deterministic ten-profile compatibility registry without loading a
 model or probing the machine:
 
 ```sh
@@ -118,6 +118,16 @@ quality/performance/memory/energy results. Registration is not execution.
 Read [Runtime Support Registry and Inspector](RUNTIME_SUPPORT_INSPECTOR.md) for
 the JSON fields, append-only indices, mask and rejection semantics, and the
 fixture-authoring checklist.
+
+Run the normalized dense-embedding fixture and its independent Python replay
+with one focused build graph:
+
+```sh
+zig build dense-tensor-embedding-test -Dmetal=false -j2
+```
+
+See [Normalized Dense-Tensor Embedding](DENSE_TENSOR_EMBEDDING.md) for the
+exact Q30 L2 policy, useful compositions, and nonclaims.
 
 ## 5. Call Glacier from C, Python, or Rust
 

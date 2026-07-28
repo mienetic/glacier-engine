@@ -140,17 +140,29 @@ test "package exports runtime and core modules independently of host tools" {
         @hasDecl(glacier, "stateless_tensor_result"),
     );
     try std.testing.expect(
+        @hasDecl(glacier, "stateless_embedding_result"),
+    );
+    try std.testing.expect(
         @hasDecl(glacier, "dense_tensor_reranker"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "dense_tensor_embedding"),
     );
     try std.testing.expect(
         @hasDecl(glacier_core, "StatelessTensorResult"),
     );
     try std.testing.expect(
+        @hasDecl(glacier_core, "StatelessEmbeddingResult"),
+    );
+    try std.testing.expect(
         @hasDecl(glacier_core, "DenseTensorReranker"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "DenseTensorEmbedding"),
     );
     try std.testing.expect(@hasDecl(glacier_core, "RuntimeSupportRegistry"));
     try std.testing.expectEqual(
-        @as(usize, 9),
+        @as(usize, 10),
         glacier_core.RuntimeSupportRegistry.profiles.len,
     );
     try std.testing.expect(glacier.ResourceBank == glacier_core.ResourceBank);

@@ -37,6 +37,18 @@ before the first stable release.
 
 ### Added
 
+- Added a download-free **normalized dense-tensor embedding reference
+  fixture**. Bounded row-major `i16` inputs and `i8` projection weights produce
+  checked `i64` accumulators and compact `i32` Q30 L2 vectors. A fixed policy
+  binds exact squared-threshold arithmetic, nearest-ties-to-even rounding, and
+  zero-vector rejection without floating point. Direct and scheduler-owned
+  execution, candidate recomputation, cancellation, zero final ownership, a
+  one-record demo, and an independent standard-library Python big-integer
+  verifier are retained. The append-only compatibility registry now contains
+  a tenth profile at index 9, with matching C, Python, and Rust discovery
+  checks. This fixture establishes execution-contract determinism, not
+  semantic quality, provider-token savings, GPU execution, native multi-OS
+  behavior, or performance.
 - Added a download-free **dense-tensor reranker reference fixture**. Bounded
   `i16` feature rows and an `i8` query produce overflow-checked `i64` scores,
   canonical batch identity, descending rank order, and input-ordinal tie

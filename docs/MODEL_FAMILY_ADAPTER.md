@@ -116,8 +116,9 @@ The retained tests prove:
 - cache bytes cannot substitute for a foreign processor/cache lineage;
 - candidate mutation between prepare and commit cannot become visible;
 - cancellation does not advance publication state;
-- vision, audio-window, temporal-video, and dense-tensor reranking sessions
-  adopt one scheduler receipt without a second reservation or commit;
+- vision, audio-window, temporal-video, dense-tensor reranking, and normalized
+  dense-embedding sessions adopt one scheduler receipt without a second
+  reservation or commit;
 - typed output remains invisible until the final V2 service commit;
 - output bytes are bound to source mapping, adapter, resource receipt, and
   predecessor; and
@@ -132,7 +133,9 @@ throughput, or compatibility with downloaded weights.
 ```sh
 zig test src/core/model_contract.zig -OReleaseSafe
 zig test src/core/stateless_tensor_result.zig -OReleaseSafe
+zig test src/core/stateless_embedding_result.zig -OReleaseSafe
 zig test src/core/dense_tensor_reranker.zig -OReleaseSafe
+zig test src/core/dense_tensor_embedding.zig -OReleaseSafe
 zig test src/core/vision_encoder_adapter.zig -OReleaseSafe
 zig test src/core/audio_window_adapter.zig -OReleaseSafe
 zig test src/core/temporal_video_adapter.zig -OReleaseSafe
@@ -176,6 +179,12 @@ rooted ranked items under one fixed score/tie policy. It uses the same
 stateless publication and ownership lifecycle without downloading a model. See
 [Dense-Tensor Reranker](DENSE_TENSOR_RERANKER.md).
 
+A generic dense-tensor encoder now maps the same batch identity into compact
+row-major `i32` vectors under a separate exact Q30 L2 policy. Integer-only
+squared-threshold rounding makes the normalized bytes portable and an
+independent Python implementation replays the result. See
+[Normalized Dense-Tensor Embedding](DENSE_TENSOR_EMBEDDING.md).
+
 The canonical video-segment timeline reduces ordered raw results with one
 fixed merge policy and resource-backed decision transaction. See
 [Canonical Video-Segment Timeline](VIDEO_SEGMENT_TIMELINE.md).
@@ -213,8 +222,8 @@ decoder and atomically publishes one raw image, provenance record, typed
 result, resource receipt, and media transition. See
 [Generated-Image Publication](GENERATED_IMAGE_PUBLICATION.md).
 
-The next stateless family work is a generic embedding or classifier with
-explicit vector-normalization or class-score policy.
+The next stateless family work is a classifier with explicit class-score
+policy or a retrieval composition over the normalized embedding and reranker.
 
 See [Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md),
 [Multimodal Roadmap](MULTIMODAL_ROADMAP.md), and

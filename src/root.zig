@@ -95,8 +95,12 @@ pub const continuation_object_sweep_file =
     core.continuation_object_sweep_file;
 pub const stateless_tensor_result =
     core.stateless_tensor_result;
+pub const stateless_embedding_result =
+    core.stateless_embedding_result;
 pub const dense_tensor_reranker =
     core.dense_tensor_reranker;
+pub const dense_tensor_embedding =
+    core.dense_tensor_embedding;
 
 pub const Precision = core.Precision;
 pub const Pager = core.Pager;
@@ -175,8 +179,12 @@ pub const ContinuationObjectSweepRecord =
     core.ContinuationObjectSweepRecord;
 pub const StatelessTensorResult =
     core.StatelessTensorResult;
+pub const StatelessEmbeddingResult =
+    core.StatelessEmbeddingResult;
 pub const DenseTensorReranker =
     core.DenseTensorReranker;
+pub const DenseTensorEmbedding =
+    core.DenseTensorEmbedding;
 pub const ContinuationObjectSweepWriter =
     core.ContinuationObjectSweepWriter;
 pub const ContinuationObjectSweepFile =

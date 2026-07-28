@@ -1289,6 +1289,100 @@ pub fn build(b: *std.Build) void {
     );
     test_compile_step.dependOn(&dense_tensor_reranker_exe.step);
 
+    // The normalized-embedding fixture shares the same compile-once shape:
+    // one Zig test artifact, one demo executable, and an independent Python
+    // replay of that exact executable.
+    const dense_tensor_embedding_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/dense_tensor_embedding.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_dense_tensor_embedding_tests = b.addRunArtifact(
+        dense_tensor_embedding_tests,
+    );
+    const dense_tensor_embedding_exe = b.addExecutable(.{
+        .name = "glacier-dense-tensor-embedding-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "examples/dense_tensor_embedding_demo.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    dense_tensor_embedding_exe.root_module.addImport("core", core_mod);
+    const run_dense_tensor_embedding = b.addRunArtifact(
+        dense_tensor_embedding_exe,
+    );
+    const dense_tensor_embedding_demo_step = b.step(
+        "dense-tensor-embedding-demo",
+        "Print the canonical normalized dense embedding",
+    );
+    dense_tensor_embedding_demo_step.dependOn(
+        &run_dense_tensor_embedding.step,
+    );
+
+    const run_dense_tensor_embedding_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_dense_tensor_embedding_oracle.setCwd(b.path("."));
+    run_dense_tensor_embedding_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_dense_tensor_embedding_oracle.addFileArg(
+        b.path("bench/stateless_embedding_result.py"),
+    );
+    run_dense_tensor_embedding_oracle.addArg("--demo");
+    run_dense_tensor_embedding_oracle.addArtifactArg(
+        dense_tensor_embedding_exe,
+    );
+    const run_dense_tensor_embedding_python_tests =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_stateless_embedding_result",
+        });
+    run_dense_tensor_embedding_python_tests.setCwd(b.path("."));
+    run_dense_tensor_embedding_python_tests.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+
+    const dense_tensor_embedding_test_step = b.step(
+        "dense-tensor-embedding-test",
+        "Run normalized dense-embedding tests and independent verification",
+    );
+    dense_tensor_embedding_test_step.dependOn(
+        &run_dense_tensor_embedding_tests.step,
+    );
+    dense_tensor_embedding_test_step.dependOn(
+        &run_dense_tensor_embedding_oracle.step,
+    );
+    dense_tensor_embedding_test_step.dependOn(
+        &run_dense_tensor_embedding_python_tests.step,
+    );
+    const dense_tensor_embedding_compile_step = b.step(
+        "dense-tensor-embedding-compile",
+        "Compile the normalized dense-embedding demo",
+    );
+    dense_tensor_embedding_compile_step.dependOn(
+        &dense_tensor_embedding_exe.step,
+    );
+    // core_tests already imports both embedding modules. Full rounds only add
+    // the independent checks and the single demo artifact.
+    test_step.dependOn(&run_dense_tensor_embedding_oracle.step);
+    test_step.dependOn(
+        &run_dense_tensor_embedding_python_tests.step,
+    );
+    test_compile_step.dependOn(&dense_tensor_embedding_exe.step);
+
     // Stateless generated W2 scenarios exercise the unchanged W0 workload
     // and W1 scheduled-media contracts. The focused gate compares the native
     // canonical report with an independent Python replay and retained fixture.
@@ -6312,6 +6406,9 @@ pub fn build(b: *std.Build) void {
     );
     profile_core_compile_step.dependOn(
         &dense_tensor_reranker_exe.step,
+    );
+    profile_core_compile_step.dependOn(
+        &dense_tensor_embedding_exe.step,
     );
 
     const profile_cpu_compile_step = b.step(
