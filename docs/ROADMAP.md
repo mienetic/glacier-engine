@@ -40,8 +40,75 @@ evidence. The plane and model-family sequence is specified in the
 | Benchmark evidence | W6a portable reports, W6b production-native Metal reports, W7a controlled-disruption recovery, W7b-b3 cancellation-storm concurrent-caller evidence, W7b-b4 controlled in-flight process-kill evidence, W7b-a segmented soak, W7b-b1 post-segment process-kill recovery, and the W7b-b2 production-publisher/reference-recovery campaign integrated with W5a, a bounded Linux host source, native macOS Metal diagnostic readiness, allocation/pinned-dispatch ownership, bounded two-slot lifetime evidence, lifecycle no-event evidence, and build-isolated fault/reconciliation conformance | Paired harnesses, machine envelope, fixed native-observation ABI, strict Linux `MemAvailable` parsing, one fixed readiness dispatch, the retained W6b 20-command capture, the 50-epoch W7a campaign, the 208-record W7b-b3 profile with 128 zero-command cancellations, 64 zero-command capacity probes, 16 real controls, and 144/144 closure, the W7b-b4 exact 512-byte pre-kill frame with one real event-blocked command followed by real PID-only `SIGKILL`, exact `-9`/EOF, and a fresh 20-command production control, two fixed native Metal segmented W7b profiles, and a separate 27-phase store matrix with 27 real writer deaths, 54 controlled errno cases, one clean control, exact prepared roll-forward, repeated fresh recovery, strict audit, and a dual-verifier binary report; controlled barriers and storage errors remain separate from physical fault evidence | Retain reproducible native Linux and broader accelerator campaign matrices; complete W7b-b supervisor/recovery-process, active-kernel, adapter, and physical storage/device/power work; add removable-hardware notification plus direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters; and add reproducible native machines |
 | Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, W5a, bounded W5b Linux-source and macOS Metal readiness implementations, the native bounded two-slot proof, W6a/W6b reports, W7a native controlled-disruption recovery, W7b-b3 cancellation-storm concurrent callers, W7b-b4 controlled in-flight process kill, W7b-a segmented soak, W7b-b1 process-kill recovery, and the W7b-b2 production-publisher/reference-recovery campaign integrated; W4b, W5, the remaining W7b-b work, and W8 remain open | In each of 64 W7b-b3 waves, both real host threads reach the ready barrier before one shared release store. W7b-b4 validates one real registered command at a synthetic event barrier before real PID-only `SIGKILL`, then checks 20 real commands in a distinct production process. W7b-a chains 12 independently verified W7 reports across two clean worker generations; W7b-b1 kills the first quiescent worker with real `SIGKILL` and completes in a fresh GPU process; W7b-b2 separately kills production store writers or injects deterministic storage errors at all 27 publication calls and permits only an exact prepared successor. The GPU gates and storage gate keep physical versus controlled provenance separate and grant no arbitrary append/resume authority | Next: remaining W4 profiles, retained native Linux and broader accelerator observer/campaign evidence, direct physical CPU/GPU adapters, W7b-b supervisor/recovery-process, active-kernel, adapter, and physical storage/device/power campaigns, replay-safe prepared-text sinks, and W8 native multi-OS replication |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
+| End-to-end user path | Prototype from integrated components; canonical work is AI Runtime R1 | Conversion, prepared images, CPU generation, exact publication, restart primitives, and inspectors exist separately | One supported raw-text-to-evidence path with restart-safe delivery, retained native evidence, and no silently selected stub |
+| Serving interface | Idea; source stub only | A reserved `ServerConfig` and an unimplemented compatibility-route placeholder | Versioned unary and streaming APIs, lifecycle, admission, cancellation, idempotency, and operational gates |
+| ABI and release governance | Experimental surfaces | Append-only retained profiles, C verifier/support query, cross-language reference implementations, package version, and an `Unreleased` changelog | Machine-readable ABI registry, compatibility automation, signed reproducible artifacts, and a published migration policy |
 
 ## P0 — Open-source usability
+
+### Product delivery focus
+
+Status: **prototype assembled from integrated components; no supported golden
+path yet**.
+
+The only project-wide dependency-ordered delivery sequence is
+[R0–R6 in the Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md#delivery-sequence).
+R1 is active. This section is a contributor-facing view of that same R1 exit
+gate, not a second milestone sequence.
+
+Next slices:
+
+- [ ] Select one redistributable text fixture and freeze its source artifact,
+  tokenizer, conversion, prepared-image, request-profile, and expected-result
+  identities.
+- [ ] Accept raw text through an exact tokenizer identity and render text from
+  the resulting token publication without requiring callers to supply token IDs.
+- [ ] Connect source conversion, `.glrt` preparation, admission, generation,
+  transactional token publication, checkpoint selection, and read-only
+  inspection through one documented command sequence.
+- [ ] Add an idempotent durable result sink plus acknowledged target progress so
+  a target-process crash can resume without duplicate visible text.
+- [ ] Remove unsupported placeholder behavior from the selected path or keep it
+  behind an explicit experimental capability that cannot be selected silently.
+- [ ] Retain a clean-host fixture campaign covering success, malformed input,
+  unsupported model/tokenizer, capacity rejection, cancellation, source death,
+  target death, and exact resume.
+
+Promotion gate: after installing one experimental release, a clean host can run
+one documented raw-text request to a checked visible result and evidence
+reference. Killing the source or target at every retained boundary never
+duplicates visible text, and unsupported inputs reject before publication.
+
+Service lifecycle work stays in
+[P2b — Serving and isolation](#p2b--serving-and-isolation). ABI and release
+promotion stays in [Stable project surface](#stable-project-surface). Neither
+may claim completion merely because R1 components exist.
+
+### Security and software supply chain
+
+Status: **security policy published; no independent audit or production
+security claim**.
+
+Next slices:
+
+- [ ] Publish threat models for untrusted model/config/media/evidence inputs,
+  local multi-tenant use, provider credentials, tool dispatch, and service
+  exposure.
+- [ ] Add coverage-guided fuzz targets and retained malformed corpora for every
+  externally reachable parser and fixed-wire decoder.
+- [ ] Run applicable sanitizer, allocator-failure, integer-boundary, and
+  descriptor-race gates on native hosts.
+- [ ] Produce an SBOM, provenance manifest, checksums, and signed release
+  artifacts from a documented reproducible release procedure.
+- [ ] Keep provider/tool credentials behind isolated adapters with explicit
+  zeroization, redaction, log, crash-dump, and rotation policy.
+- [ ] Commission an independent review before changing the project statement
+  that it is not a production security boundary.
+
+Promotion gate: a release can be traced to reviewed source and declared build
+inputs, malformed external inputs fail closed within declared bounds, credentials
+do not enter portable evidence, and security claims remain no broader than the
+retained tests and independent review.
 
 ### Contributor experience
 
@@ -230,14 +297,30 @@ evidence. The plane and model-family sequence is specified in the
   Contract V1 chain verification, with installed shared/static libraries,
   a public C/C++ header, source and staged-install C consumers,
   standard-library Python `ctypes`, and a named dependency-free Rust gate.
+- [ ] Create a machine-readable registry for every promoted wire, receipt,
+  manifest, selector, evidence record, exported C symbol, and support bit.
+- [ ] Classify registered surfaces as internal, experimental,
+  retained-compatible, or stable, and reject unregistered promotion claims.
+- [ ] Generate compatibility documentation, fixed-size/layout assertions,
+  mutation fixtures, and language-consumer cases from that registry where
+  practical.
 - [ ] Separate internal research APIs from the supported library boundary.
 - [ ] Publish an API stability and deprecation policy.
 - [ ] Retain an exported-symbol/layout allowlist, native multi-OS consumers,
   packaging metadata, and migration fixtures before promoting the experimental
   C boundary.
+- [ ] Retain previous-release consumers and fixtures in native multi-OS gates
+  before changing a promoted surface.
+- [ ] Add a roadmap/status consistency check so each completed claim names an
+  existing test, artifact, and verifier.
 - [ ] Add installation packages after cross-platform release artifacts are proven.
 - [ ] Add automated repository checks only when they are stable, fast, and useful
   to contributors locally as well as remotely.
+
+Promotion gate: a release candidate proves its exact compatible and
+incompatible surface against the previous retained release, every layout drift
+is intentional and reviewed, and no documentation row implies support absent
+from the registry and its gates.
 
 ### Platform portability
 
@@ -673,7 +756,7 @@ native-observation, resilience, and platform-replication sequence.
 See [Platform Portability](PLATFORM_PORTABILITY.md) for the evidence matrix,
 adapter architecture, G0–G7 promotion gates, and staged target sequence.
 
-## P1 — Verifiable AI state
+## P1a — Verifiable AI state
 
 ### Prepared text state capture
 
@@ -865,7 +948,7 @@ Next slices:
 - process or sandbox boundary experiment;
 - revocation and failure semantics.
 
-## P1 — Provider efficiency and accountability
+## P1b — Provider efficiency and accountability
 
 ### Context and token plane
 
@@ -898,7 +981,49 @@ Next slices:
 Promotion gate: no double counting across retry/ambiguous resolution, complete
 valid prefixes survive process loss, and corrupt complete frames fail closed.
 
-## P2 — Runtime breadth
+## P1c — Adoption and operations
+
+### Execution SDKs
+
+Status: **C, Python, and Rust verifier interop exists; model/session execution
+bindings are not yet a supported surface**.
+
+Next slices:
+
+- one narrow C session ABI over the active R1 text vertical;
+- Python load/generate/stream/cancel/resume bindings with bounded ownership;
+- Rust safe wrapper with explicit lifetime and error-state mapping;
+- generated compatibility tests against the retained ABI registry;
+- Node.js bindings only after the underlying session ABI reaches its stated
+  stability gate.
+
+Promotion gate: each advertised language runs the same retained request,
+cancellation, process-restart, and evidence-inspection fixtures without hidden
+global state or language-specific publication semantics.
+
+### Operational observability
+
+Status: **portable evidence and native observation records exist; standard
+operations export is open**.
+
+Next slices:
+
+- a stable projection from evidence events to metrics, logs, and traces without
+  treating exported telemetry as execution authority;
+- optional Prometheus and OpenTelemetry adapters with bounded labels and
+  privacy-safe request correlation;
+- queue, admission, cancellation, publication, restart, ownership, and
+  unsupported-telemetry dashboards;
+- retention, redaction, tenant separation, and evidence-export policy;
+- SLO examples that distinguish logical correctness, service availability,
+  latency, and physical-resource observations.
+
+Promotion gate: an operator can diagnose one retained overload, cancellation,
+restart, and recovery campaign using exported data while an independent verifier
+still derives authoritative publication and ownership results from the original
+evidence.
+
+## P2a — Runtime breadth
 
 ### Model and tokenizer support
 
@@ -1059,24 +1184,50 @@ and
 then the [Multimodal Roadmap](MULTIMODAL_ROADMAP.md) for use cases, promotion
 gates, and contributor-ready work.
 
-### Production weight paging
+### Production paging and throughput integration
 
-The current pager is a mechanics prototype and is not the generation weight
-path. The production sequence is:
+The pager, batch-prefill path, scheduler, KV implementations, and prefix-store
+placeholder are at different maturity levels; they are not one promoted
+throughput vertical. The production sequence is:
 
 1. logical page, representation, device, and tier identity;
 2. true resident-byte reservations and pins;
 3. async fake-backend state machine with cancellation;
 4. one CPU projection consuming page views without eager duplication;
 5. full generation integration behind an explicit required policy;
-6. physical RSS/residency campaigns and corruption tests.
+6. split prefill and decode admission while preserving one
+   request/publication identity;
+7. deterministic continuous batching with bounded queue, cancellation, and
+   fairness behavior;
+8. tenant-safe prefix identity, tokenizer/model binding, exact accounting,
+   eviction, and no raw text in core evidence;
+9. speculative decoding only with draft/target identity, acceptance evidence,
+   and publication of target-verified tokens; and
+10. physical RSS/residency and corruption campaigns plus paired TTFT, ITL,
+    throughput, device-memory, and quality results under the fair campaign
+    contract.
 
-Promotion gate: a real model trace contains load, prefetch, hit, pin, and eviction
-events while no full eager representation remains.
+Promotion gate: one real-model trace contains load, prefetch, hit, pin,
+eviction, admitted prefill/decode, batch, cache, cancellation, and publication
+events while no full eager representation remains. Every visible token remains
+target-authorized, and performance claims retain correctness plus exact machine
+and workload scope.
 
 ### Backend federation
 
 Goal: let a sealed plan select CPU and accelerator capabilities explicitly.
+
+Delivery order:
+
+1. retain native Linux CPU correctness, packaging, and observation evidence;
+2. add one native Linux accelerator for the supported R1 text path, including
+   exact capability, allocation, dispatch, loss, and CPU-oracle evidence;
+3. select each later backend from a declared target-user and native-campaign
+   capacity matrix rather than breadth alone;
+4. add multi-device placement only after each individual backend has explicit
+   residency and migration authority; and
+5. never advertise a backend from cross-compilation or capability discovery
+   alone.
 
 Status: **portable capability fingerprint and deterministic selection
 integrated; native Metal binding integrated for readiness and for both
@@ -1296,7 +1447,37 @@ retained-state, and loss seams are injected and do not claim a physical
 hardware, driver, or device-loss failure, output recovery, performance,
 residency, migration, reset, or physical reclaim.
 
-## P2 — Serving and isolation
+## P2b — Serving and isolation
+
+### Service lifecycle
+
+Status: **idea; `src/server/api.zig` is an explicit non-implemented stub**.
+
+The service surface must adopt the same admission, publication, continuation,
+and evidence semantics as the local runtime. A transport wrapper cannot create
+a second execution state machine.
+
+Next slices:
+
+- freeze versioned model-list and chat-completions compatibility routes,
+  beginning with one bounded non-streaming R1 text profile;
+- add event streaming where every emitted token cites one committed
+  publication sequence and disconnect cannot expose an unpublished token;
+- bind tenant identity, deadline, cancellation, idempotency key, and the
+  `LaneWeave` receipt to one service request root;
+- define bounded request/body/output limits, overload responses, queue
+  backpressure, and exact retry guidance before and after publication;
+- retain readiness, liveness, graceful drain, checkpoint-aware shutdown, and
+  restart tests with accepted work in every lifecycle phase;
+- return an inspectable evidence reference without credentials, private prompt
+  bytes, or host paths; and
+- introduce authentication, quota, and transport-security adapters only with
+  explicit authority and nonclaims.
+
+Promotion gate: a retained client drives unary and streaming requests through
+a real server process; disconnect, timeout, overload, shutdown, and process
+death never duplicate publication or lose ownership accounting, and a
+restarted server reports an honest terminal or resumable state.
 
 ### Multi-tenant LaneWeave
 
@@ -1681,6 +1862,38 @@ MachineEnvelope v2 work items:
 Promotion gate: a same-machine result remains scoped to its exact matrix;
 multi-platform wording requires independent machines, workloads, and retained
 artifacts rather than repeated samples from one host.
+
+## Delivery focus and operating model
+
+The canonical dependency order is
+[R0–R6](AI_RUNTIME_ROADMAP.md#delivery-sequence). This project-wide roadmap
+groups contributor work by priority and runtime domain; it does not define a
+parallel milestone sequence.
+
+| Delivery outcome | Canonical home | Required evidence |
+| --- | --- | --- |
+| Supported local text path | AI Runtime R1 and [Product delivery focus](#product-delivery-focus) | Clean-host raw text, exact visible result, restart-safe sink, native macOS and Linux campaigns |
+| Release trust | [Stable project surface](#stable-project-surface) and [Security and software supply chain](#security-and-software-supply-chain) | Registered ABI/schema surface, previous-release compatibility, provenance, checksums, and declared security boundary |
+| Service lifecycle | [P2b — Serving and isolation](#p2b--serving-and-isolation) | Retained unary/streaming client plus disconnect, overload, shutdown, and restart campaigns |
+| Production throughput | [Production paging and throughput integration](#production-paging-and-throughput-integration) | Exact-output real-model trace and paired scoped performance evidence |
+| Ecosystem operations | AI Runtime R6 and [P1c — Adoption and operations](#p1c--adoption-and-operations) | Retained language consumers, standard telemetry projections, packages, and native support matrix |
+
+Later work may prototype early, but no surface is described as shipped until
+its canonical dependency and promotion gates pass.
+
+### Roadmap operating model
+
+- represent each active milestone with a GitHub milestone and a small set of
+  issues that each advance one observable state;
+- require an RFC or ADR when a change creates a new public authority, wire ABI,
+  persistence rule, service contract, or compatibility break;
+- label issues by runtime plane, status transition, platform, and evidence type;
+- keep issue acceptance criteria identical to the roadmap promotion slice and
+  name the retained fixture or artifact;
+- close or re-scope stale tracks explicitly rather than allowing roadmap prose
+  and implementation state to drift;
+- publish a release-readiness view generated from the ABI registry, native
+  matrix, open blockers, and retained artifacts.
 
 ## How roadmap work merges
 
