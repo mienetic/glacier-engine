@@ -79,6 +79,8 @@ narrow change never hides the checks required by another changed path.
 | Native Metal cancellation-storm Zig producer | Serialized native Darwin Metal suite; no foreign Zig target or foreign GPU-execution claim |
 | Native Metal cancellation-storm Python verifier or focused test | Changed-file Python syntax, full Python discovery, and the serialized native Darwin Metal suite; no foreign Zig target or foreign GPU-execution claim |
 | Native Metal in-flight process-kill worker, controller, ready frame, or focused test | Ready-frame/controller model checks plus the serialized native Darwin Metal suite; changed Python also receives syntax and full discovery; no foreign GPU-execution claim |
+| W7b-b5 supervisor/recovery-death report codec or verifier | Changed-file syntax, the portable Python/Zig report gate, native report compile, and retained-target cross-compile; no GPU or native signal claim |
+| W7b-b5 supervisor/recovery-death controller or protocol test | Changed-file Python syntax, full Python discovery, the deterministic staged-store model plus real POSIX process/lock fixture, and the serialized native Darwin Metal suite; the host layers are not a composed GPU-execution claim |
 | POSIX shell script | Syntax under its declared `sh` or `bash` shebang |
 | Retained Rust interop consumer | Native Rust contract gate only; `rustc` is required, but foreign Zig targets cannot compile or validate this runtime consumer |
 | Other Rust build input | Native Rust contract gate, native ReleaseSafe, Python discovery, and every retained target until its build graph is classified |
@@ -99,7 +101,7 @@ narrow change never hides the checks required by another changed path.
 | FreeBSD-specific runtime | Native ReleaseSafe plus the retained FreeBSD target |
 | Shared POSIX runtime | Native ReleaseSafe, explicit Darwin evidence, both Linux targets, and FreeBSD; the Darwin label reuses the native suite instead of compiling twice |
 | Darwin- or macOS-specific runtime | Native Darwin ReleaseSafe tests; a non-Darwin skip is not passing evidence |
-| Metal backend | Serialized native Darwin Metal suite, including the production-native workload report, controlled-disruption campaign, 60-second segmented-soak campaign, post-segment process-kill campaign, controlled in-flight process-kill campaign, production-symbol isolation, and the build-isolated fault/race gate; a non-Darwin skip is not passing evidence |
+| Metal backend | Serialized native Darwin Metal suite, including the production-native workload report, controlled-disruption campaign, 60-second segmented-soak campaign, post-segment process-kill campaign, controlled in-flight process-kill campaign, supervisor/recovery-process death campaign, production-symbol isolation, and the build-isolated fault/race gate; a non-Darwin skip is not passing evidence |
 | Unknown input under a code tree | Conservatively use every retained target |
 | Concurrency or locking | Zig modes above, ThreadSanitizer where supported, fault/recovery tests |
 | On-disk or wire ABI | Encoder/decoder tests, golden fixture, mutation/reorder/truncation tests, independent verifier |
@@ -244,14 +246,17 @@ check. Its shader cache identity tracks the selected Xcode tools, SDK settings,
 and Metal standard-library contents rather than trusting a stale persistent
 toolchain result. `tools/verify.sh` then runs `native-metal-suite-test` as a
 separate `-j1` hardware phase with the same temporary cache, Metal output
-directory, and prefix. The compile frontier therefore finishes before thermal
-admission and real device work. The aggregate runs diagnostic readiness,
+directory, prefix, and build graph. The compile frontier completes every suite
+artifact and static check before the first suite device process starts, and
+shared artifacts are not rebuilt through independent cold invocations. The
+aggregate runs diagnostic readiness,
 real-resource
 allocation ownership, one production-native 20-dispatch workload report,
 controlled disruption, the W7b-b3 paired-thread cancellation-storm profile,
 the W7b-a segmented soak, the W7b-b1 post-segment process-kill profile,
-the W7b-b4 controlled in-flight process-kill profile, build-isolated
-fault/reconciliation, and focused correctness without overlap. Before each
+the W7b-b4 controlled in-flight process-kill profile, the W7b-b5
+supervisor/recovery-process death profile, build-isolated fault/reconciliation,
+and focused correctness without overlap. Before each
 60-second campaign, a bounded admission step requires two explicit nominal
 observations ten seconds apart within 180 seconds after its prerequisites; the
 campaign still fails on a non-nominal retained boundary. The readiness
@@ -261,11 +266,14 @@ one shader-library build step. Each
 segmented campaign executes 12 by 50 paced epochs and 1,200 real commands
 across two worker generations, so use
 `native-metal-soak-report-pure-test` for supervisor/store-only changes when
-native execution is not required. Omit `-Dnative-metal-soak-output-dir` unless
-a verified store is intentionally retained for offline reopening. Process RSS
-is a host observation; `currentAllocatedSize` is device-wide allocation
-context rather than residency or owned GPU memory. Physical metrics remain
-unsupported unless a named observer supplies them. See the
+native execution is not required. Use
+`native-supervisor-recovery-death-host-test` for the W7b-b5 lock, signal,
+ready-frame, grant, prepared-selector, and fresh-audit protocol without GPU
+work. Omit `-Dnative-metal-soak-output-dir` unless a verified store is
+intentionally retained for offline reopening. Process RSS is a host
+observation; `currentAllocatedSize` is device-wide allocation context rather
+than residency or owned GPU memory. Physical metrics remain unsupported unless
+a named observer supplies them. See the
 [Native Metal Segmented Soak Report](NATIVE_METAL_SOAK_REPORT.md) for the exact
 clean-restart gate and the
 [Native Metal Process-Kill Recovery Report](NATIVE_METAL_PROCESS_KILL_REPORT.md)
@@ -279,6 +287,12 @@ The
 defines the W7b-b4 build-isolated controlled event barrier, real PID-only kill,
 fresh production control, and active-kernel/output/state/reclamation
 nonclaims.
+The
+[Native Metal Supervisor and Recovery-Process Death Report](NATIVE_METAL_SUPERVISOR_RECOVERY_DEATH_REPORT.md)
+defines the W7b-b5 generation-six supervisor-death audit,
+prepared-generation-twelve recovery-process-death boundary, two real PID-only
+kills, controlled barriers/timing/pause/grants, exact `11 -> 12` roll-forward,
+and 3,520-byte Python/Zig verification boundary.
 The separate
 [Native Workload Store-Fault Report](NATIVE_WORKLOAD_STORE_FAULT_REPORT.md)
 uses real host processes and filesystem calls with controlled errno injection;

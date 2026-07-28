@@ -784,7 +784,7 @@ reporting:
    CPU and device utilization, host/device memory separately, accelerator
    submit/device/synchronization timing, fallback status, power/thermal/energy
    when available, and output-quality policy.
-3. **Soak and disruption — W7a, W7b-a, W7b-b1 through W7b-b4
+3. **Soak and disruption — W7a, W7b-a, W7b-b1 through W7b-b5
    implemented; remaining W7b-b work is open.**
    W7a runs 50 fixed production-native Metal epochs and retains 250 raw records
    around 100 real GPU commands. Each epoch settles an admitted cancellation
@@ -879,18 +879,43 @@ reporting:
    campaign reference path until a general production recovery API and its own
    interruption matrix are integrated.
 
+   W7b-b5 composes the fixed 12-segment/1,200-command Metal campaign with two
+   control-plane death boundaries. Worker one completes ordinals `0..5`, exits
+   cleanly, and is reaped before its supervisor synchronizes generation six,
+   holds the exclusive store lock, and publishes a private pre-ready handoff.
+   The controller validates that handoff, proves contention, and returns a
+   challenge-bound acknowledgement before the supervisor emits its public
+   verified ready frame. It then sends real PID-only `SIGKILL`, requires exact
+   `-9` and EOF, derives the resume grant, and launches a fresh shared-lock
+   generation-six auditor whose frame binds that grant. The controller
+   withholds it from the first recovery process until the audit passes; only
+   then does it authorize worker two at exact ordinal six. Its recovery process
+   advances through generation eleven,
+   synchronizes generation-twelve immutable objects and the 192-byte selector
+   temporary, and pauses before active replacement. Worker two exits cleanly
+   before the controller repeats the real PID-only kill. A separately granted
+   fresh process may perform only the exact `11 -> 12` roll-forward, after
+   which another fresh process audits the complete store. The fixed 3,520-byte
+   report binds both ready frames, kill receipts, audits, grants, component and
+   machine identities, store roots, and campaign totals and is independently
+   verified by Python and Zig. The Metal commands, CPU oracles, process kills,
+   lock operations, file/link/replace calls, and `fsync` calls are real; ready
+   barriers, kill timing, publication pause, and grants are controlled. See
+   [Native Metal supervisor and recovery-process death report](NATIVE_METAL_SUPERVISOR_RECOVERY_DEATH_REPORT.md).
+
    These completed slices prove finite controlled software disruption, the
    ready-before-release boundary with pre-submit cancellation, correctness,
    ownership closure, clean restart, one post-segment process kill, one
    controlled event-blocked in-flight process kill followed by a fresh
-   production control, prepared store roll-forward, fsync-bounded
-   same-filesystem process-restart continuity, and bounded observed growth for
-   the invoking host.
+   production control, fresh generation-six audit after supervisor death,
+   exact prepared-generation-twelve roll-forward after recovery-process death,
+   prepared store roll-forward, fsync-bounded same-filesystem process-restart
+   continuity, and bounded observed growth for the invoking host.
    They are not latency or throughput benchmarks, indefinite no-leak proofs,
    active-kernel interruption or recovery, physical residency measurements, or
    physical device-loss, driver, power, or storage-failure evidence. W7b-b
-   remains open for supervisor death, recovery-process interruption,
-   active-kernel and adapter faults, physical storage/power, and
+   remains open for the broader supervisor/recovery interruption matrix,
+   active-kernel and adapter faults, physical storage/power/driver, and
    physical-device-fault schedules with explicit synthetic-versus-physical
    provenance. Prepared-text
    additions should cover repeated handoffs, source death before generation

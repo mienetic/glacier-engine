@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from dataclasses import dataclass
 import fcntl
 import hashlib
 import json
@@ -131,6 +132,23 @@ SUPERVISOR_CLOCK_SHA256 = hashlib.sha256(
 ACTIVE_SELECTOR_NAME = ".glacier-workload-campaign-active-v1"
 LOCK_NAME = ".glacier-workload-campaign.lock"
 STORE_TEMP_SUFFIX = ".prepared-v1.tmp"
+SELECTOR_TEMP_NAME = (
+    ".%s%s" % (ACTIVE_SELECTOR_NAME, STORE_TEMP_SUFFIX)
+)
+PREFIX_BOUNDARY_SCHEMA = (
+    "glacier.native-metal-soak/prefix-boundary-v1"
+)
+PREPARED_FINAL_SCHEMA = (
+    "glacier.native-metal-soak/prepared-final-v1"
+)
+FINALIZED_BOUNDARY_SCHEMA = (
+    "glacier.native-metal-soak/finalized-boundary-v1"
+)
+STORE_SHAPE_DOMAIN = b"glacier-w7b-metal-soak-store-shape-v1\x00"
+PREFIX_GRANT_DOMAIN = b"glacier-w7b-metal-soak-prefix-grant-v1\x00"
+FINALIZER_GRANT_DOMAIN = (
+    b"glacier-w7b-metal-soak-finalizer-grant-v1\x00"
+)
 STORE_OBJECT_PHASES = (
     "create",
     "write_prefix",
@@ -156,6 +174,35 @@ STORE_PUBLICATION_PHASES = tuple(
     for operation in STORE_SELECTOR_PHASES
 ) + (("store_root", "directory_fsync"),)
 StoreIoHook = Callable[[str, str, str], None]
+WorkerFactory = Callable[[str, str, bytes, bytes], Any]
+
+
+@dataclass
+class CampaignBoundaryHandle:
+    """A verified boundary whose store remains exclusively locked.
+
+    ``facts`` contains only JSON-serializable public receipts. Grant bytes are
+    used to derive the receipt binding and are never retained by this handle or
+    written to the campaign store. The caller must keep the handle alive until
+    its outer supervisor has emitted the boundary receipt.
+    """
+
+    store: CampaignStore
+    facts: dict[str, Any]
+
+    def close(self) -> None:
+        self.store.close()
+
+    def __enter__(self) -> CampaignBoundaryHandle:
+        return self
+
+    def __exit__(
+        self,
+        _exception_type: object,
+        _exception: object,
+        _traceback: object,
+    ) -> None:
+        self.close()
 
 
 def _require(condition: bool, message: str) -> None:
@@ -1438,16 +1485,26 @@ class CampaignStore:
         expected_objects: Optional[
             Mapping[str, Mapping[str, bytes]]
         ] = None,
+        _existing_mode: Optional[str] = None,
     ) -> None:
         self.root = Path(root)
         self.io_hook = io_hook
         self.poisoned = False
+        self.existing_unverified = _existing_mode is not None
         self.root_fd = -1
         self.directory_fds: dict[str, int] = {}
         self.directory_identities: dict[str, tuple[int, int]] = {}
+        _require(
+            _existing_mode in (None, "selected", "prepared-or-selected"),
+            "invalid existing campaign-store mode",
+        )
         prepared_open = (
             expected_active_selector is not None
             or expected_objects is not None
+        )
+        _require(
+            not (prepared_open and _existing_mode is not None),
+            "campaign-store open modes conflict",
         )
         _require(
             (
@@ -1498,7 +1555,35 @@ class CampaignStore:
                 "campaign store root is not a real directory",
             )
             root_names = {path.name for path in self.root.iterdir()}
-            if not prepared_open:
+            if _existing_mode is not None:
+                allowed_existing_names = (
+                    expected_root_names | {ACTIVE_SELECTOR_NAME}
+                )
+                allowed_prepared_names = allowed_existing_names | {
+                    SELECTOR_TEMP_NAME
+                }
+                _require(
+                    root_names == allowed_existing_names
+                    or (
+                        _existing_mode == "prepared-or-selected"
+                        and root_names == allowed_prepared_names
+                    ),
+                    "existing campaign-store root is not canonical",
+                )
+                for directory in object_directories:
+                    try:
+                        _private_directory_identity(
+                            directory,
+                            require_private=False,
+                        )
+                    except (OSError, NativeMetalSoakError) as error:
+                        raise NativeMetalSoakError(
+                            (
+                                "campaign store object directory "
+                                "is not a real directory"
+                            )
+                        ) from error
+            elif not prepared_open:
                 _require(
                     ACTIVE_SELECTOR_NAME not in root_names,
                     (
@@ -1539,14 +1624,18 @@ class CampaignStore:
                     == expected_root_names | {ACTIVE_SELECTOR_NAME},
                     "prepared campaign-store root is not canonical",
                 )
-        elif prepared_open:
+        elif prepared_open or _existing_mode is not None:
             raise NativeMetalSoakError(
-                "prepared campaign-store root does not exist"
+                "existing campaign-store root does not exist"
             )
         else:
             self.root.mkdir(parents=True, mode=0o700)
 
-        if not prepared_open and not complete_empty_store:
+        if (
+            not prepared_open
+            and _existing_mode is None
+            and not complete_empty_store
+        ):
             os.chmod(self.root, 0o700, follow_symlinks=False)
             for directory in object_directories:
                 directory.mkdir(mode=0o700)
@@ -1607,7 +1696,7 @@ class CampaignStore:
             self._close_namespace_descriptors()
             raise
 
-        if not prepared_open:
+        if not prepared_open and _existing_mode is None:
             try:
                 _require(
                     all(
@@ -1628,7 +1717,11 @@ class CampaignStore:
             | getattr(os, "O_NOFOLLOW", 0)
             | getattr(os, "O_CLOEXEC", 0)
         )
-        created_lock = not prepared_open and not complete_empty_store
+        created_lock = (
+            not prepared_open
+            and _existing_mode is None
+            and not complete_empty_store
+        )
         if created_lock:
             lock_flags |= os.O_CREAT | os.O_EXCL
         try:
@@ -1670,7 +1763,11 @@ class CampaignStore:
         self.lock_identity = (lock_info.st_dev, lock_info.st_ino)
         self.lock = os.fdopen(
             lock_descriptor,
-            "r+b" if prepared_open else "a+b",
+            (
+                "r+b"
+                if prepared_open or _existing_mode is not None
+                else "a+b"
+            ),
         )
         try:
             fcntl.flock(
@@ -1685,7 +1782,37 @@ class CampaignStore:
             ) from error
         try:
             self._verify_namespace()
-            if expected_active_selector is None:
+            if _existing_mode is not None:
+                expected_names = expected_root_names | {
+                    ACTIVE_SELECTOR_NAME
+                }
+                actual_names = set(os.listdir(self.root_fd))
+                _require(
+                    actual_names == expected_names
+                    or (
+                        _existing_mode == "prepared-or-selected"
+                        and actual_names
+                        == expected_names | {SELECTOR_TEMP_NAME}
+                    ),
+                    "existing campaign-store root is not canonical",
+                )
+                _read_regular_at(
+                    self.root_fd,
+                    ACTIVE_SELECTOR_NAME,
+                    campaign.SELECTOR_BYTES,
+                    expected_device=self.root_identity[0],
+                    require_private_single_link=True,
+                )
+                if SELECTOR_TEMP_NAME in actual_names:
+                    _read_regular_at(
+                        self.root_fd,
+                        SELECTOR_TEMP_NAME,
+                        campaign.SELECTOR_BYTES,
+                        expected_device=self.root_identity[0],
+                        require_private_single_link=True,
+                    )
+                self._verify_namespace()
+            elif expected_active_selector is None:
                 _require(
                     expected_objects is None,
                     "prepared objects require a prepared selector",
@@ -1780,6 +1907,37 @@ class CampaignStore:
             expected_objects=expected_objects,
         )
 
+    @classmethod
+    def _open_existing_locked(
+        cls,
+        root: os.PathLike[str] | str,
+        *,
+        allow_prepared_selector: bool = False,
+        io_hook: Optional[StoreIoHook] = None,
+    ) -> CampaignStore:
+        """Open an existing namespace, but withhold writer authority.
+
+        Only the bounded resume/finalizer entry points below authorize this
+        handle after reconstructing and matching an exact grant-bound state.
+        """
+        return cls(
+            root,
+            io_hook=io_hook,
+            _existing_mode=(
+                "prepared-or-selected"
+                if allow_prepared_selector
+                else "selected"
+            ),
+        )
+
+    def _authorize_existing_writer(self) -> None:
+        _require(
+            self.existing_unverified,
+            "existing campaign-store writer was already authorized",
+        )
+        self._guard_namespace()
+        self.existing_unverified = False
+
     def _close_namespace_descriptors(self) -> None:
         for descriptor in self.directory_fds.values():
             with contextlib.suppress(OSError):
@@ -1873,6 +2031,10 @@ class CampaignStore:
         _require(
             not self.lock.closed,
             "campaign store writer is closed",
+        )
+        _require(
+            not self.existing_unverified,
+            "existing campaign store has not passed grant-bound recovery",
         )
         _require(
             not self.poisoned,
@@ -2106,15 +2268,29 @@ class CampaignStore:
             "manifest",
             plan["artifact_store_max_bytes"],
         )
-        temporary_name = (
-            ".%s%s" % (ACTIVE_SELECTOR_NAME, STORE_TEMP_SUFFIX)
+        try:
+            self._prepare_selector(selector_wire)
+            self._commit_prepared_selector(selector_wire)
+        except BaseException:
+            self.poisoned = True
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(SELECTOR_TEMP_NAME, dir_fd=self.root_fd)
+            raise
+        return manifest_wire, selector_wire
+
+    def _prepare_selector(self, selector_wire: bytes) -> None:
+        self._require_writer()
+        _require(
+            isinstance(selector_wire, bytes)
+            and len(selector_wire) == campaign.SELECTOR_BYTES,
+            "prepared selector has an unexpected length",
         )
         descriptor: Optional[int] = None
         try:
             descriptor = self._create_temporary(
                 "selector",
                 self.root_fd,
-                temporary_name,
+                SELECTOR_TEMP_NAME,
             )
             prefix_bytes = min(4096, len(selector_wire) - 1)
             self._run_io(
@@ -2140,30 +2316,180 @@ class CampaignStore:
             )
             os.close(descriptor)
             descriptor = None
-            self._run_io(
-                "selector",
-                "active_replace",
-                lambda: os.replace(
-                    temporary_name,
-                    ACTIVE_SELECTOR_NAME,
-                    src_dir_fd=self.root_fd,
-                    dst_dir_fd=self.root_fd,
-                ),
-            )
-            self._run_io(
-                "store_root",
-                "directory_fsync",
-                lambda: os.fsync(self.root_fd),
-            )
         except BaseException:
             self.poisoned = True
             if descriptor is not None:
                 with contextlib.suppress(OSError):
                     os.close(descriptor)
             with contextlib.suppress(FileNotFoundError):
-                os.unlink(temporary_name, dir_fd=self.root_fd)
+                os.unlink(SELECTOR_TEMP_NAME, dir_fd=self.root_fd)
             raise
-        return manifest_wire, selector_wire
+
+    def _commit_prepared_selector(self, selector_wire: bytes) -> None:
+        self._require_writer()
+        _require(
+            _read_regular_at(
+                self.root_fd,
+                SELECTOR_TEMP_NAME,
+                campaign.SELECTOR_BYTES,
+                expected_device=self.root_identity[0],
+                require_private_single_link=True,
+            )
+            == selector_wire,
+            "prepared selector candidate changed",
+        )
+        self._run_io(
+            "selector",
+            "active_replace",
+            lambda: os.replace(
+                SELECTOR_TEMP_NAME,
+                ACTIVE_SELECTOR_NAME,
+                src_dir_fd=self.root_fd,
+                dst_dir_fd=self.root_fd,
+            ),
+        )
+        self._run_io(
+            "store_root",
+            "directory_fsync",
+            lambda: os.fsync(self.root_fd),
+        )
+
+    def prepare_final_publication(
+        self,
+        plan: Mapping[str, Any],
+        entries: Sequence[Mapping[str, Any]],
+        environment_root_sha256: bytes,
+    ) -> tuple[bytes, bytes, bytes]:
+        """Prepare only the fixed generation-11 to generation-12 switch.
+
+        The immutable successor manifest and the complete 192-byte selector
+        candidate are file-synced. The active generation-11 selector is left
+        untouched and the root directory is intentionally not synced here.
+        """
+        self._require_writer()
+        _require(
+            campaign.SELECTOR_BYTES == 192,
+            "fixed campaign selector ABI changed",
+        )
+        _require(
+            len(entries) == SEGMENT_COUNT,
+            "prepared final publication is not generation 12",
+        )
+        predecessor_manifest_wire = campaign.make_manifest(
+            plan,
+            entries[:-1],
+        )
+        predecessor_manifest = campaign.verify_manifest(
+            predecessor_manifest_wire
+        )
+        predecessor_selector_wire = _read_regular_at(
+            self.root_fd,
+            ACTIVE_SELECTOR_NAME,
+            campaign.SELECTOR_BYTES,
+            expected_device=self.root_identity[0],
+            require_private_single_link=True,
+        )
+        predecessor_selector = campaign.decode_selector(
+            predecessor_selector_wire
+        )
+        _require(
+            predecessor_selector["generation"] == SEGMENT_COUNT - 1
+            and predecessor_selector["manifest_sha256"]
+            == predecessor_manifest["manifest_sha256"],
+            "prepared final predecessor is not exact generation 11",
+        )
+        retained_predecessor_manifest = _read_regular_at(
+            self.directory_fds[self.manifests.name],
+            predecessor_manifest["manifest_sha256"].hex() + ".bin",
+            plan["encoded_bytes"],
+            expected_device=self.root_identity[0],
+            require_private_single_link=True,
+        )
+        _require(
+            retained_predecessor_manifest == predecessor_manifest_wire,
+            "prepared final predecessor manifest changed",
+        )
+
+        manifest_wire = campaign.make_manifest(plan, entries)
+        decoded = campaign.verify_manifest(manifest_wire)
+        manifest_sha256 = decoded["manifest_sha256"]
+        selector_wire = campaign.make_selector(
+            decoded,
+            environment_root_sha256,
+        )
+        selector = campaign.verify_selector(
+            manifest_wire,
+            selector_wire,
+            environment_root_sha256,
+        )
+        _require(
+            selector["generation"] == SEGMENT_COUNT,
+            "prepared final successor is not generation 12",
+        )
+        manifest_name = manifest_sha256.hex() + ".bin"
+        self._preflight_publication(
+            manifest_name,
+            len(manifest_wire),
+            len(selector_wire),
+            plan["artifact_store_max_bytes"],
+        )
+        self._immutable(
+            self.manifests,
+            manifest_name,
+            manifest_wire,
+            "manifest",
+            plan["artifact_store_max_bytes"],
+        )
+        try:
+            self._prepare_selector(selector_wire)
+        except BaseException:
+            self.poisoned = True
+            raise
+        _require(
+            _read_regular_at(
+                self.root_fd,
+                ACTIVE_SELECTOR_NAME,
+                campaign.SELECTOR_BYTES,
+                expected_device=self.root_identity[0],
+                require_private_single_link=True,
+            )
+            == predecessor_selector_wire,
+            "active selector changed while preparing generation 12",
+        )
+        return (
+            predecessor_selector_wire,
+            manifest_wire,
+            selector_wire,
+        )
+
+    def roll_forward_prepared_final(
+        self,
+        predecessor_selector_wire: bytes,
+        successor_selector_wire: bytes,
+    ) -> str:
+        """Apply or recognize one exact prepared 11-to-12 selector switch."""
+        self._require_writer()
+        active = _read_regular_at(
+            self.root_fd,
+            ACTIVE_SELECTOR_NAME,
+            campaign.SELECTOR_BYTES,
+            expected_device=self.root_identity[0],
+            require_private_single_link=True,
+        )
+        if active == predecessor_selector_wire:
+            self._commit_prepared_selector(successor_selector_wire)
+            return "applied"
+        _require(
+            active == successor_selector_wire
+            and not _entry_exists_at(self.root_fd, SELECTOR_TEMP_NAME),
+            "prepared final selector is neither predecessor nor successor",
+        )
+        self._run_io(
+            "store_root",
+            "directory_fsync",
+            lambda: os.fsync(self.root_fd),
+        )
+        return "already_applied"
 
     def _usage(self) -> tuple[int, int]:
         self._guard_namespace()
@@ -2430,6 +2756,565 @@ class CampaignStore:
         return manifest, selector_wire
 
 
+def _require_boundary_grant(value: bytes, label: str) -> None:
+    _require(
+        isinstance(value, bytes)
+        and len(value) == 32
+        and value != ZERO_DIGEST,
+        "%s must be one nonzero 32-byte grant" % label,
+    )
+
+
+def _is_nonzero_hex_digest(value: object) -> bool:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or value != value.lower()
+    ):
+        return False
+    try:
+        return bytes.fromhex(value) != ZERO_DIGEST
+    except ValueError:
+        return False
+
+
+def _challenge_from_facts(
+    facts: Mapping[str, Any],
+    field: str,
+) -> bytes:
+    try:
+        value = bytes.fromhex(str(facts[field]))
+    except (KeyError, ValueError) as error:
+        raise NativeMetalSoakError(
+            "%s is not a canonical boundary challenge" % field
+        ) from error
+    _require_boundary_grant(value, field)
+    return value
+
+
+def _external_grant_use_sha256(
+    domain: bytes,
+    grant_sha256: bytes,
+    predecessor_facts: Mapping[str, Any],
+    successor_facts: Mapping[str, Any],
+) -> bytes:
+    """Bind one campaign-layer grant to the exact state where it was used."""
+    _require_boundary_grant(grant_sha256, "external authority grant")
+    return _sha256_parts(
+        domain,
+        grant_sha256,
+        _canonical_json(predecessor_facts),
+        _canonical_json(successor_facts),
+    )
+
+
+def resume_grant_use_sha256(
+    resume_grant_sha256: bytes,
+    prefix_facts: Mapping[str, Any],
+    prepared_facts: Mapping[str, Any],
+) -> bytes:
+    """Bind an externally derived resume grant to its exact use."""
+    successor = dict(prepared_facts)
+    successor.pop("resume_grant_binding_sha256", None)
+    return _external_grant_use_sha256(
+        PREFIX_GRANT_DOMAIN,
+        resume_grant_sha256,
+        prefix_facts,
+        successor,
+    )
+
+
+def finalizer_grant_use_sha256(
+    finalizer_grant_sha256: bytes,
+    prepared_facts: Mapping[str, Any],
+    finalized_facts: Mapping[str, Any],
+) -> bytes:
+    """Bind an externally derived finalizer grant to its exact use."""
+    successor = dict(finalized_facts)
+    successor.pop("finalizer_grant_binding_sha256", None)
+    return _external_grant_use_sha256(
+        FINALIZER_GRANT_DOMAIN,
+        finalizer_grant_sha256,
+        prepared_facts,
+        successor,
+    )
+
+
+def _store_shape_sha256(
+    store: CampaignStore,
+    *,
+    root_overrides: Optional[Mapping[str, bytes]] = None,
+) -> bytes:
+    """Hash exact logical names, modes, lengths, and contents under lock."""
+    store._guard_namespace()
+    overrides = {} if root_overrides is None else dict(root_overrides)
+    _require(
+        all(
+            isinstance(name, str)
+            and name not in ("", ".", "..")
+            and "/" not in name
+            and isinstance(data, bytes)
+            for name, data in overrides.items()
+        ),
+        "campaign store shape override is invalid",
+    )
+    records: list[dict[str, Any]] = []
+    for name in sorted(os.listdir(store.root_fd)):
+        if name in overrides:
+            continue
+        info = os.stat(
+            name,
+            dir_fd=store.root_fd,
+            follow_symlinks=False,
+        )
+        if name in store.directory_fds:
+            _require(
+                stat.S_ISDIR(info.st_mode),
+                "campaign store shape directory changed",
+            )
+            records.append(
+                {
+                    "path": name + "/",
+                    "kind": "directory",
+                    "mode": stat.S_IMODE(info.st_mode),
+                }
+            )
+            continue
+        data = _read_regular_at(
+            store.root_fd,
+            name,
+            ARTIFACT_STORE_MAX_BYTES,
+            expected_device=store.root_identity[0],
+            require_private_single_link=True,
+        )
+        records.append(
+            {
+                "path": name,
+                "kind": "file",
+                "mode": stat.S_IMODE(info.st_mode),
+                "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+        )
+    for name, data in sorted(overrides.items()):
+        records.append(
+            {
+                "path": name,
+                "kind": "file",
+                "mode": 0o600,
+                "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+        )
+    for directory_name, descriptor in sorted(
+        store.directory_fds.items()
+    ):
+        for name in sorted(os.listdir(descriptor)):
+            info = os.stat(
+                name,
+                dir_fd=descriptor,
+                follow_symlinks=False,
+            )
+            data = _read_regular_at(
+                descriptor,
+                name,
+                ARTIFACT_STORE_MAX_BYTES,
+                expected_device=store.root_identity[0],
+                require_private_single_link=True,
+            )
+            records.append(
+                {
+                    "path": directory_name + "/" + name,
+                    "kind": "file",
+                    "mode": stat.S_IMODE(info.st_mode),
+                    "bytes": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                }
+            )
+    records.sort(key=lambda value: value["path"])
+    store._guard_namespace()
+    return _sha256_parts(
+        STORE_SHAPE_DOMAIN,
+        _canonical_json({"records": records}),
+    )
+
+
+def _read_selected_campaign(
+    store: CampaignStore,
+) -> tuple[bytes, dict[str, Any], bytes, dict[str, Any]]:
+    selector_wire = _read_regular_at(
+        store.root_fd,
+        ACTIVE_SELECTOR_NAME,
+        campaign.SELECTOR_BYTES,
+        expected_device=store.root_identity[0],
+        require_private_single_link=True,
+    )
+    selector = campaign.decode_selector(selector_wire)
+    manifest_wire = _read_regular_at(
+        store.directory_fds[store.manifests.name],
+        selector["manifest_sha256"].hex() + ".bin",
+        campaign.encoded_manifest_bytes(SEGMENT_COUNT),
+        expected_device=store.root_identity[0],
+        require_private_single_link=True,
+    )
+    manifest = campaign.verify_manifest(manifest_wire)
+    campaign.verify_selector(
+        manifest_wire,
+        selector_wire,
+        selector["environment_sha256"],
+    )
+    return selector_wire, selector, manifest_wire, manifest
+
+
+def _derive_fixed_retained_plan(
+    store: CampaignStore,
+    manifest: Mapping[str, Any],
+    worker_sha256: bytes,
+    metallib_sha256: bytes,
+    campaign_challenge_sha256: bytes,
+    forced_process_restart: bool,
+) -> dict[str, Any]:
+    _require_boundary_grant(
+        campaign_challenge_sha256,
+        "campaign challenge",
+    )
+    entries = manifest["entries"]
+    _require(entries, "retained campaign has no first entry")
+    first_wire = _read_regular_at(
+        store.directory_fds[store.segments.name],
+        entries[0]["report_wire_sha256"].hex() + ".bin",
+        inner.EXPECTED_WIRE_BYTES,
+        expected_device=store.root_identity[0],
+        require_private_single_link=True,
+    )
+    _verify_retained_entry(
+        entries[0],
+        first_wire,
+        worker_sha256,
+        metallib_sha256,
+    )
+    initial = _initial_plan(
+        campaign_challenge_sha256,
+        worker_sha256,
+        metallib_sha256,
+        _schedule_sha256(
+            _supervisor_sha256(),
+            forced_process_restart,
+        ),
+        forced_process_restart,
+    )
+    expected = _seal_plan_from_first_report(
+        initial,
+        inner._decode_after_portable_verification(first_wire),
+    )
+    _require(
+        manifest["plan"] == expected,
+        "retained campaign plan is not the exact fixed plan",
+    )
+    return expected
+
+
+def _audit_exact_campaign_objects(
+    store: CampaignStore,
+    plan: Mapping[str, Any],
+    entries: Sequence[Mapping[str, Any]],
+    environment_root_sha256: bytes,
+    worker_sha256: bytes,
+    metallib_sha256: bytes,
+    *,
+    selector_candidate: Optional[bytes] = None,
+) -> None:
+    generation = len(entries)
+    _require(
+        1 <= generation <= SEGMENT_COUNT,
+        "campaign audit generation is outside the fixed profile",
+    )
+    expected_segments: dict[str, bytes] = {}
+    segments_fd = store.directory_fds[store.segments.name]
+    for entry in entries:
+        name = entry["report_wire_sha256"].hex() + ".bin"
+        wire = _read_regular_at(
+            segments_fd,
+            name,
+            inner.EXPECTED_WIRE_BYTES,
+            expected_device=store.root_identity[0],
+            require_private_single_link=True,
+        )
+        _require(
+            hashlib.sha256(wire).digest()
+            == entry["report_wire_sha256"],
+            "retained segment content address changed",
+        )
+        _verify_retained_entry(
+            entry,
+            wire,
+            worker_sha256,
+            metallib_sha256,
+        )
+        expected_segments[name] = wire
+    _require(
+        set(os.listdir(segments_fd)) == set(expected_segments),
+        "retained segment object set is not exact",
+    )
+
+    expected_manifests: dict[str, bytes] = {}
+    for prefix_generation in range(1, generation + 1):
+        wire = campaign.make_manifest(
+            plan,
+            entries[:prefix_generation],
+        )
+        decoded = campaign.verify_manifest(wire)
+        expected_manifests[
+            decoded["manifest_sha256"].hex() + ".bin"
+        ] = wire
+    manifests_fd = store.directory_fds[store.manifests.name]
+    _require(
+        set(os.listdir(manifests_fd)) == set(expected_manifests),
+        "retained manifest object set is not exact",
+    )
+    for name, data in expected_manifests.items():
+        _require(
+            _read_regular_at(
+                manifests_fd,
+                name,
+                len(data),
+                expected_device=store.root_identity[0],
+                require_private_single_link=True,
+            )
+            == data,
+            "retained manifest prefix changed",
+        )
+
+    before_sha256, after_sha256 = _resolve_environment_evidence_at(
+        store.directory_fds[store.environments.name],
+        store.directory_identities[store.environments.name],
+        plan["campaign_id_sha256"],
+        generation,
+        environment_root_sha256,
+    )
+    expected_environments = {before_sha256.hex() + ".json"}
+    if after_sha256 != ZERO_DIGEST:
+        expected_environments.add(after_sha256.hex() + ".json")
+    _require(
+        set(
+            os.listdir(
+                store.directory_fds[store.environments.name]
+            )
+        )
+        == expected_environments,
+        "retained environment object set is not exact",
+    )
+
+    expected_root_names = {
+        store.segments.name,
+        store.manifests.name,
+        store.environments.name,
+        LOCK_NAME,
+        ACTIVE_SELECTOR_NAME,
+    }
+    if selector_candidate is not None:
+        _require(
+            len(selector_candidate) == campaign.SELECTOR_BYTES
+            and _read_regular_at(
+                store.root_fd,
+                SELECTOR_TEMP_NAME,
+                campaign.SELECTOR_BYTES,
+                expected_device=store.root_identity[0],
+                require_private_single_link=True,
+            )
+            == selector_candidate,
+            "prepared selector candidate changed",
+        )
+        expected_root_names.add(SELECTOR_TEMP_NAME)
+    _require(
+        set(os.listdir(store.root_fd)) == expected_root_names,
+        "campaign store root object set is not exact",
+    )
+    store._enforce_bound(plan)
+    store._guard_namespace()
+
+
+def _boundary_identity_facts(store: CampaignStore) -> dict[str, Any]:
+    return {
+        "store_device": store.root_identity[0],
+        "store_inode": store.root_identity[1],
+        "lock_device": store.lock_identity[0],
+        "lock_inode": store.lock_identity[1],
+    }
+
+
+def _reaped_worker_pid(persistent: Any) -> int:
+    _require(
+        getattr(persistent, "closed", False) is True,
+        "worker PID was requested before reap",
+    )
+    process = getattr(persistent, "process", None)
+    value = (
+        getattr(process, "pid", None)
+        if process is not None
+        else getattr(persistent, "pid", None)
+    )
+    _require(
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and value > 0,
+        "reaped worker PID is unavailable",
+    )
+    if process is not None:
+        _require(
+            process.poll() is not None and process.returncode == 0,
+            "reaped worker did not have clean exit status zero",
+        )
+    return value
+
+
+def _prefix_boundary_facts(
+    store: CampaignStore,
+    manifest: Mapping[str, Any],
+    selector_wire: bytes,
+    boundary_challenge_sha256: bytes,
+    worker_pid: int,
+) -> dict[str, Any]:
+    selector = campaign.decode_selector(selector_wire)
+    _require(
+        selector["generation"] == SEGMENTS_PER_PROCESS,
+        "prefix boundary is not generation 6",
+    )
+    _require(
+        isinstance(worker_pid, int)
+        and not isinstance(worker_pid, bool)
+        and worker_pid > 0,
+        "prefix worker PID is invalid",
+    )
+    facts: dict[str, Any] = {
+        "schema": PREFIX_BOUNDARY_SCHEMA,
+        "generation": SEGMENTS_PER_PROCESS,
+        "next_ordinal": SEGMENTS_PER_PROCESS,
+        "worker_reaped": True,
+        "worker_pid": worker_pid,
+        "worker_exit_code_bits": 0,
+        "worker_termination_signal": 0,
+        "lock_held": True,
+        "boundary_challenge_sha256": (
+            boundary_challenge_sha256.hex()
+        ),
+        "campaign_challenge_sha256": manifest["plan"][
+            "campaign_challenge_sha256"
+        ].hex(),
+        "campaign_id_sha256": manifest["plan"][
+            "campaign_id_sha256"
+        ].hex(),
+        "plan_sha256": campaign.derive_plan_sha256(
+            manifest["plan"]
+        ).hex(),
+        "selector_wire_hex": selector_wire.hex(),
+        "selector_sha256": selector["selector_sha256"].hex(),
+        "manifest_sha256": manifest["manifest_sha256"].hex(),
+        "final_entry_sha256": manifest["entries"][-1][
+            "entry_sha256"
+        ].hex(),
+        "environment_sha256": selector[
+            "environment_sha256"
+        ].hex(),
+        "store_shape_sha256": _store_shape_sha256(store).hex(),
+        **_boundary_identity_facts(store),
+    }
+    return facts
+
+
+def _prepared_final_facts(
+    store: CampaignStore,
+    manifest: Mapping[str, Any],
+    predecessor_selector_wire: bytes,
+    successor_selector_wire: bytes,
+    recovery_challenge_sha256: bytes,
+    worker_pid: int,
+    *,
+    prepared_store_shape_sha256: Optional[bytes] = None,
+) -> dict[str, Any]:
+    predecessor = campaign.decode_selector(
+        predecessor_selector_wire
+    )
+    successor = campaign.decode_selector(successor_selector_wire)
+    _require(
+        predecessor["generation"] == SEGMENT_COUNT - 1
+        and successor["generation"] == SEGMENT_COUNT,
+        "prepared selector transition is not 11 to 12",
+    )
+    _require(
+        isinstance(worker_pid, int)
+        and not isinstance(worker_pid, bool)
+        and worker_pid > 0,
+        "prepared worker PID is invalid",
+    )
+    facts: dict[str, Any] = {
+        "schema": PREPARED_FINAL_SCHEMA,
+        "selected_generation": SEGMENT_COUNT - 1,
+        "candidate_generation": SEGMENT_COUNT,
+        "next_publication_phase": 26,
+        "worker_reaped": True,
+        "worker_pid": worker_pid,
+        "worker_exit_code_bits": 0,
+        "worker_termination_signal": 0,
+        "lock_held": True,
+        "selector_file_synced": True,
+        "recovery_challenge_sha256": (
+            recovery_challenge_sha256.hex()
+        ),
+        "campaign_challenge_sha256": manifest["plan"][
+            "campaign_challenge_sha256"
+        ].hex(),
+        "candidate_selector_bytes": campaign.SELECTOR_BYTES,
+        "candidate_temp_name": SELECTOR_TEMP_NAME,
+        "campaign_id_sha256": manifest["plan"][
+            "campaign_id_sha256"
+        ].hex(),
+        "plan_sha256": campaign.derive_plan_sha256(
+            manifest["plan"]
+        ).hex(),
+        "selected_selector_wire_hex": (
+            predecessor_selector_wire.hex()
+        ),
+        "selected_selector_sha256": predecessor[
+            "selector_sha256"
+        ].hex(),
+        "selected_manifest_sha256": predecessor[
+            "manifest_sha256"
+        ].hex(),
+        "candidate_selector_wire_hex": successor_selector_wire.hex(),
+        "candidate_selector_sha256": successor[
+            "selector_sha256"
+        ].hex(),
+        "candidate_manifest_sha256": manifest[
+            "manifest_sha256"
+        ].hex(),
+        "candidate_environment_sha256": successor[
+            "environment_sha256"
+        ].hex(),
+        "final_entry_sha256": manifest["entries"][-1][
+            "entry_sha256"
+        ].hex(),
+        "prepared_store_shape_sha256": (
+            _store_shape_sha256(store)
+            if prepared_store_shape_sha256 is None
+            else prepared_store_shape_sha256
+        ).hex(),
+        **_boundary_identity_facts(store),
+    }
+    return facts
+
+
+def _validate_expected_facts(
+    expected: Mapping[str, Any],
+    observed: Mapping[str, Any],
+    label: str,
+) -> None:
+    _require(
+        type(expected) is dict and dict(expected) == dict(observed),
+        "%s facts or grant binding changed" % label,
+    )
+
+
 def _require_exact_regular_objects(
     directory: Path,
     expected: Mapping[str, bytes],
@@ -2679,6 +3564,940 @@ def verify_retained_store(
         with contextlib.suppress(OSError):
             fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
         os.close(lock_descriptor)
+
+
+def _boundary_components(
+    worker: os.PathLike[str] | str,
+    metallib: os.PathLike[str] | str,
+    challenge_sha256: bytes,
+    forced_process_restart: bool,
+) -> tuple[str, str, bytes, bytes, bytes, dict[str, Any]]:
+    worker_path = os.fspath(worker)
+    metallib_path = os.fspath(metallib)
+    _require(worker_path and metallib_path, "missing worker or metallib")
+    _require_boundary_grant(challenge_sha256, "campaign challenge")
+    worker_sha256 = _file_sha256(worker_path)
+    metallib_sha256 = _file_sha256(metallib_path)
+    inner._native_build_sha256(worker_sha256, metallib_sha256)
+    supervisor_sha256 = _supervisor_sha256()
+    initial_plan = _initial_plan(
+        challenge_sha256,
+        worker_sha256,
+        metallib_sha256,
+        _schedule_sha256(
+            supervisor_sha256,
+            forced_process_restart,
+        ),
+        forced_process_restart,
+    )
+    return (
+        worker_path,
+        metallib_path,
+        worker_sha256,
+        metallib_sha256,
+        supervisor_sha256,
+        initial_plan,
+    )
+
+
+def run_campaign_prefix(
+    worker: os.PathLike[str] | str,
+    metallib: os.PathLike[str] | str,
+    output_dir: os.PathLike[str] | str,
+    *,
+    boundary_generation: int = SEGMENTS_PER_PROCESS,
+    campaign_challenge_sha256: bytes,
+    boundary_challenge_sha256: bytes,
+    forced_process_restart: bool = False,
+    io_hook: Optional[StoreIoHook] = None,
+    _worker_factory: WorkerFactory = _PersistentWorker,
+    _capture_environment: Callable[
+        [], tuple[dict[str, Any], bytes]
+    ] = _capture_admitted_environment,
+) -> CampaignBoundaryHandle:
+    """Run ordinals 0..5 and retain the exclusive generation-6 boundary."""
+    _require(
+        forced_process_restart is False,
+        "staged supervisor campaign requires clean worker reap",
+    )
+    _require(
+        boundary_generation == SEGMENTS_PER_PROCESS,
+        "campaign prefix boundary must be exact generation 6",
+    )
+    _require_boundary_grant(
+        boundary_challenge_sha256,
+        "boundary challenge",
+    )
+    _require_boundary_grant(
+        campaign_challenge_sha256,
+        "campaign challenge",
+    )
+    (
+        worker_path,
+        metallib_path,
+        worker_sha256,
+        metallib_sha256,
+        supervisor_sha256,
+        initial_plan,
+    ) = _boundary_components(
+        worker,
+        metallib,
+        campaign_challenge_sha256,
+        forced_process_restart,
+    )
+    campaign_id_sha256 = campaign.derive_campaign_id(initial_plan)
+    environment_before, environment_before_sha256 = (
+        _capture_environment()
+    )
+    store = CampaignStore(output_dir, io_hook=io_hook)
+    persistent: Optional[Any] = None
+    try:
+        retained_before = store.write_environment(environment_before)
+        _require(
+            retained_before == environment_before_sha256,
+            "retained before-environment root changed",
+        )
+        entries: list[dict[str, Any]] = []
+        plan: Optional[dict[str, Any]] = None
+        cumulative_duration_ns = 0
+        previous_entry_sha256 = ZERO_DIGEST
+        previous_report_sha256 = ZERO_DIGEST
+        campaign_started = time.monotonic()
+        persistent = _worker_factory(
+            worker_path,
+            metallib_path,
+            worker_sha256,
+            metallib_sha256,
+        )
+        for ordinal in range(boundary_generation):
+            remaining = (
+                CAMPAIGN_WALL_TIMEOUT_SECONDS
+                - (time.monotonic() - campaign_started)
+            )
+            _require(
+                remaining > 0,
+                "native prefix exceeded the campaign wall bound",
+            )
+            scheduled_action = _scheduled_action_sha256(
+                campaign_id_sha256,
+                initial_plan["schedule_sha256"],
+                persistent.process_source_sha256,
+                ordinal,
+                _process_generation(ordinal),
+                forced_process_restart,
+            )
+            segment_challenge = campaign.derive_segment_challenge(
+                campaign_id_sha256,
+                ordinal,
+                _process_generation(ordinal),
+                previous_entry_sha256,
+                previous_report_sha256,
+                scheduled_action,
+            )
+            wire, duration_ns, rss = persistent.request(
+                segment_challenge,
+                min(
+                    MAXIMUM_SEGMENT_DURATION_NS / 1e9,
+                    remaining,
+                ),
+            )
+            _require(
+                MINIMUM_SEGMENT_DURATION_NS
+                <= duration_ns
+                <= MAXIMUM_SEGMENT_DURATION_NS,
+                "native segment duration is outside the plan",
+            )
+            verification = inner.verify_native_wire(
+                wire,
+                worker_sha256,
+                metallib_sha256,
+                segment_challenge,
+            )
+            decoded = inner._decode_after_portable_verification(wire)
+            _assert_segment_cadence(decoded)
+            if plan is None:
+                plan = _seal_plan_from_first_report(
+                    initial_plan,
+                    decoded,
+                )
+                _require(
+                    plan["campaign_id_sha256"]
+                    == campaign_id_sha256,
+                    "sealed campaign identity changed",
+                )
+            store.write_segment(wire)
+            cumulative_duration_ns += duration_ns
+            phase_terminal = _is_phase_terminal(ordinal)
+            if phase_terminal:
+                if forced_process_restart:
+                    persistent.kill_for_campaign()
+                else:
+                    persistent.close_cleanly()
+            value = _entry_value(
+                plan,
+                decoded,
+                verification,
+                ordinal,
+                previous_entry_sha256,
+                previous_report_sha256,
+                scheduled_action,
+                duration_ns,
+                cumulative_duration_ns,
+                rss,
+                persistent.process_source_sha256,
+                phase_terminal,
+            )
+            entry = campaign.make_entry(plan, value)
+            entries.append(entry)
+            previous_entry_sha256 = entry["entry_sha256"]
+            previous_report_sha256 = entry[
+                "verified_report_sha256"
+            ]
+            environment_root = environment_sha256(
+                campaign_id_sha256,
+                len(entries),
+                environment_before_sha256,
+            )
+            store.publish(plan, entries, environment_root)
+
+        _require(
+            plan is not None
+            and persistent.closed
+            and len(entries) == boundary_generation,
+            "generation-6 worker was not reaped canonically",
+        )
+        prefix_worker_pid = _reaped_worker_pid(persistent)
+        _require(
+            prefix_worker_pid != os.getpid(),
+            "prefix worker PID aliases its supervisor",
+        )
+        checkpoint_environment_root = environment_sha256(
+            campaign_id_sha256,
+            boundary_generation,
+            environment_before_sha256,
+        )
+        reopened, selector_wire = store.recover(
+            plan,
+            boundary_generation,
+            checkpoint_environment_root,
+            worker_sha256,
+            metallib_sha256,
+        )
+        _audit_exact_campaign_objects(
+            store,
+            plan,
+            reopened["entries"],
+            checkpoint_environment_root,
+            worker_sha256,
+            metallib_sha256,
+        )
+        process_boundary._verify_components_unchanged(
+            worker_path,
+            metallib_path,
+            worker_sha256,
+            metallib_sha256,
+        )
+        _require(
+            _supervisor_sha256() == supervisor_sha256,
+            "native soak supervisor changed during the prefix",
+        )
+        facts = _prefix_boundary_facts(
+            store,
+            reopened,
+            selector_wire,
+            boundary_challenge_sha256,
+            prefix_worker_pid,
+        )
+        return CampaignBoundaryHandle(store, facts)
+    except (
+        campaign.CampaignManifestError,
+        inner.NativeMetalDisruptionReportError,
+        process_boundary.NativeMetalReportError,
+        OSError,
+    ) as error:
+        if persistent is not None and not persistent.closed:
+            persistent.abort()
+        store.close()
+        if isinstance(error, NativeMetalSoakError):
+            raise
+        raise NativeMetalSoakError(str(error)) from error
+    except BaseException:
+        if persistent is not None and not persistent.closed:
+            persistent.abort()
+        store.close()
+        raise
+
+
+def resume_campaign_to_prepared_final(
+    worker: os.PathLike[str] | str,
+    metallib: os.PathLike[str] | str,
+    output_dir: os.PathLike[str] | str,
+    *,
+    resume_grant_sha256: bytes,
+    expected_prefix_facts: Mapping[str, Any],
+    recovery_challenge_sha256: bytes,
+    forced_process_restart: bool = False,
+    io_hook: Optional[StoreIoHook] = None,
+    _worker_factory: WorkerFactory = _PersistentWorker,
+    _capture_environment: Callable[
+        [], tuple[dict[str, Any], bytes]
+    ] = _capture_admitted_environment,
+) -> CampaignBoundaryHandle:
+    """Resume ordinal 6 and stop with the final selector only prepared."""
+    _require(
+        forced_process_restart is False,
+        "staged supervisor campaign requires clean worker reap",
+    )
+    _require_boundary_grant(resume_grant_sha256, "resume grant")
+    _require_boundary_grant(
+        recovery_challenge_sha256,
+        "recovery challenge",
+    )
+    campaign_challenge_sha256 = _challenge_from_facts(
+        expected_prefix_facts,
+        "campaign_challenge_sha256",
+    )
+    boundary_challenge_sha256 = _challenge_from_facts(
+        expected_prefix_facts,
+        "boundary_challenge_sha256",
+    )
+    (
+        worker_path,
+        metallib_path,
+        worker_sha256,
+        metallib_sha256,
+        supervisor_sha256,
+        initial_plan,
+    ) = _boundary_components(
+        worker,
+        metallib,
+        campaign_challenge_sha256,
+        forced_process_restart,
+    )
+    store = CampaignStore._open_existing_locked(
+        output_dir,
+        io_hook=io_hook,
+    )
+    persistent: Optional[Any] = None
+    try:
+        (
+            selector_wire,
+            selector,
+            _manifest_wire,
+            manifest,
+        ) = _read_selected_campaign(store)
+        _require(
+            selector["generation"] == SEGMENTS_PER_PROCESS
+            and len(manifest["entries"]) == SEGMENTS_PER_PROCESS,
+            "resume predecessor is not exact generation 6",
+        )
+        plan = _derive_fixed_retained_plan(
+            store,
+            manifest,
+            worker_sha256,
+            metallib_sha256,
+            campaign_challenge_sha256,
+            forced_process_restart,
+        )
+        _audit_exact_campaign_objects(
+            store,
+            plan,
+            manifest["entries"],
+            selector["environment_sha256"],
+            worker_sha256,
+            metallib_sha256,
+        )
+        observed_prefix_facts = _prefix_boundary_facts(
+            store,
+            manifest,
+            selector_wire,
+            boundary_challenge_sha256,
+            expected_prefix_facts.get("worker_pid"),
+        )
+        _validate_expected_facts(
+            expected_prefix_facts,
+            observed_prefix_facts,
+            "resume predecessor",
+        )
+        store._authorize_existing_writer()
+        reopened, _ = store.recover(
+            plan,
+            SEGMENTS_PER_PROCESS,
+            selector["environment_sha256"],
+            worker_sha256,
+            metallib_sha256,
+        )
+        entries = list(reopened["entries"])
+        previous_entry_sha256 = entries[-1]["entry_sha256"]
+        previous_report_sha256 = entries[-1][
+            "verified_report_sha256"
+        ]
+        cumulative_duration_ns = entries[-1][
+            "cumulative_duration_ns"
+        ]
+        environment_objects = _read_environment_objects_at(
+            store.directory_fds[store.environments.name],
+            store.directory_identities[store.environments.name],
+        )
+        _require(
+            len(environment_objects) == 1,
+            "resume predecessor environment set changed",
+        )
+        (
+            environment_before_sha256,
+            environment_before,
+            _captured_at,
+        ) = environment_objects[0]
+        campaign_id_sha256 = plan["campaign_id_sha256"]
+        _require(
+            campaign_id_sha256
+            == campaign.derive_campaign_id(initial_plan),
+            "resumed campaign identity changed",
+        )
+
+        campaign_started = time.monotonic()
+        persistent = _worker_factory(
+            worker_path,
+            metallib_path,
+            worker_sha256,
+            metallib_sha256,
+        )
+        predecessor_selector_wire = b""
+        successor_manifest: Optional[dict[str, Any]] = None
+        successor_selector_wire = b""
+        for ordinal in range(
+            SEGMENTS_PER_PROCESS,
+            SEGMENT_COUNT,
+        ):
+            remaining = (
+                CAMPAIGN_WALL_TIMEOUT_SECONDS
+                - (time.monotonic() - campaign_started)
+            )
+            _require(
+                remaining > 0,
+                "native resume exceeded the campaign wall bound",
+            )
+            scheduled_action = _scheduled_action_sha256(
+                campaign_id_sha256,
+                plan["schedule_sha256"],
+                persistent.process_source_sha256,
+                ordinal,
+                _process_generation(ordinal),
+                forced_process_restart,
+            )
+            segment_challenge = campaign.derive_segment_challenge(
+                campaign_id_sha256,
+                ordinal,
+                _process_generation(ordinal),
+                previous_entry_sha256,
+                previous_report_sha256,
+                scheduled_action,
+            )
+            wire, duration_ns, rss = persistent.request(
+                segment_challenge,
+                min(
+                    MAXIMUM_SEGMENT_DURATION_NS / 1e9,
+                    remaining,
+                ),
+            )
+            _require(
+                MINIMUM_SEGMENT_DURATION_NS
+                <= duration_ns
+                <= MAXIMUM_SEGMENT_DURATION_NS,
+                "native segment duration is outside the plan",
+            )
+            verification = inner.verify_native_wire(
+                wire,
+                worker_sha256,
+                metallib_sha256,
+                segment_challenge,
+            )
+            decoded = inner._decode_after_portable_verification(wire)
+            _assert_segment_cadence(decoded)
+            store.write_segment(wire)
+            cumulative_duration_ns += duration_ns
+            phase_terminal = _is_phase_terminal(ordinal)
+            if phase_terminal:
+                persistent.close_cleanly()
+            value = _entry_value(
+                plan,
+                decoded,
+                verification,
+                ordinal,
+                previous_entry_sha256,
+                previous_report_sha256,
+                scheduled_action,
+                duration_ns,
+                cumulative_duration_ns,
+                rss,
+                persistent.process_source_sha256,
+                phase_terminal,
+            )
+            entry = campaign.make_entry(plan, value)
+            entries.append(entry)
+            previous_entry_sha256 = entry["entry_sha256"]
+            previous_report_sha256 = entry[
+                "verified_report_sha256"
+            ]
+            if ordinal < SEGMENT_COUNT - 1:
+                environment_root = environment_sha256(
+                    campaign_id_sha256,
+                    len(entries),
+                    environment_before_sha256,
+                )
+                store.publish(plan, entries, environment_root)
+                continue
+
+            environment_after, environment_after_sha256 = (
+                _capture_environment()
+            )
+            _compare_environment_boundaries(
+                environment_before,
+                environment_after,
+            )
+            retained_after = store.write_environment(
+                environment_after
+            )
+            _require(
+                retained_after == environment_after_sha256,
+                "retained after-environment root changed",
+            )
+            final_environment_root = environment_sha256(
+                campaign_id_sha256,
+                SEGMENT_COUNT,
+                environment_before_sha256,
+                environment_after_sha256,
+            )
+            (
+                predecessor_selector_wire,
+                successor_manifest_wire,
+                successor_selector_wire,
+            ) = store.prepare_final_publication(
+                plan,
+                entries,
+                final_environment_root,
+            )
+            successor_manifest = campaign.verify_manifest(
+                successor_manifest_wire
+            )
+
+        _require(
+            persistent.closed
+            and len(entries) == SEGMENT_COUNT
+            and successor_manifest is not None
+            and len(predecessor_selector_wire)
+            == campaign.SELECTOR_BYTES
+            and len(successor_selector_wire)
+            == campaign.SELECTOR_BYTES,
+            "final worker was not reaped before preparation",
+        )
+        resumed_worker_pid = _reaped_worker_pid(persistent)
+        _require(
+            resumed_worker_pid != os.getpid()
+            and resumed_worker_pid
+            != expected_prefix_facts.get("worker_pid"),
+            "resumed worker PID aliases an earlier campaign process",
+        )
+        active_after_prepare = _read_regular_at(
+            store.root_fd,
+            ACTIVE_SELECTOR_NAME,
+            campaign.SELECTOR_BYTES,
+            expected_device=store.root_identity[0],
+            require_private_single_link=True,
+        )
+        _require(
+            active_after_prepare == predecessor_selector_wire,
+            "generation 12 became active during prepare",
+        )
+        candidate = _read_regular_at(
+            store.root_fd,
+            SELECTOR_TEMP_NAME,
+            campaign.SELECTOR_BYTES,
+            expected_device=store.root_identity[0],
+            require_private_single_link=True,
+        )
+        _require(
+            candidate == successor_selector_wire,
+            "prepared generation-12 selector changed",
+        )
+        final_environment_root = campaign.decode_selector(
+            successor_selector_wire
+        )["environment_sha256"]
+        _audit_exact_campaign_objects(
+            store,
+            plan,
+            entries,
+            final_environment_root,
+            worker_sha256,
+            metallib_sha256,
+            selector_candidate=successor_selector_wire,
+        )
+        process_boundary._verify_components_unchanged(
+            worker_path,
+            metallib_path,
+            worker_sha256,
+            metallib_sha256,
+        )
+        _require(
+            _supervisor_sha256() == supervisor_sha256,
+            "native soak supervisor changed during resume",
+        )
+        facts = _prepared_final_facts(
+            store,
+            successor_manifest,
+            predecessor_selector_wire,
+            successor_selector_wire,
+            recovery_challenge_sha256,
+            resumed_worker_pid,
+        )
+        facts["resume_grant_binding_sha256"] = (
+            resume_grant_use_sha256(
+                resume_grant_sha256,
+                expected_prefix_facts,
+                facts,
+            ).hex()
+        )
+        return CampaignBoundaryHandle(store, facts)
+    except (
+        campaign.CampaignManifestError,
+        inner.NativeMetalDisruptionReportError,
+        process_boundary.NativeMetalReportError,
+        OSError,
+    ) as error:
+        if persistent is not None and not persistent.closed:
+            persistent.abort()
+        store.close()
+        if isinstance(error, NativeMetalSoakError):
+            raise
+        raise NativeMetalSoakError(str(error)) from error
+    except BaseException:
+        if persistent is not None and not persistent.closed:
+            persistent.abort()
+        store.close()
+        raise
+
+
+def _decode_prepared_boundary_facts(
+    expected: Mapping[str, Any],
+    finalizer_grant_sha256: bytes,
+) -> tuple[bytes, bytes]:
+    _require(
+        type(expected) is dict
+        and expected.get("schema") == PREPARED_FINAL_SCHEMA,
+        "prepared final facts schema changed",
+    )
+    _require_boundary_grant(finalizer_grant_sha256, "finalizer grant")
+    try:
+        predecessor = bytes.fromhex(
+            str(expected["selected_selector_wire_hex"])
+        )
+        successor = bytes.fromhex(
+            str(expected["candidate_selector_wire_hex"])
+        )
+    except (KeyError, ValueError) as error:
+        raise NativeMetalSoakError(
+            "prepared final selector facts are invalid"
+        ) from error
+    _require(
+        len(predecessor) == campaign.SELECTOR_BYTES
+        and len(successor) == campaign.SELECTOR_BYTES
+        and campaign.decode_selector(predecessor)["generation"]
+        == SEGMENT_COUNT - 1
+        and campaign.decode_selector(successor)["generation"]
+        == SEGMENT_COUNT,
+        "prepared final selector transition changed",
+    )
+    return predecessor, successor
+
+
+def roll_forward_prepared_final(
+    worker: os.PathLike[str] | str,
+    metallib: os.PathLike[str] | str,
+    output_dir: os.PathLike[str] | str,
+    *,
+    finalizer_grant_sha256: bytes,
+    expected_prepared_facts: Mapping[str, Any],
+    forced_process_restart: bool = False,
+    io_hook: Optional[StoreIoHook] = None,
+) -> CampaignBoundaryHandle:
+    """Fresh-open, finalize only the authorized 11-to-12 switch, and audit."""
+    _require(
+        forced_process_restart is False,
+        "staged supervisor campaign requires clean worker reap",
+    )
+    _require_boundary_grant(finalizer_grant_sha256, "finalizer grant")
+    predecessor_selector_wire, successor_selector_wire = (
+        _decode_prepared_boundary_facts(
+            expected_prepared_facts,
+            finalizer_grant_sha256,
+        )
+    )
+    campaign_challenge_sha256 = _challenge_from_facts(
+        expected_prepared_facts,
+        "campaign_challenge_sha256",
+    )
+    recovery_challenge_sha256 = _challenge_from_facts(
+        expected_prepared_facts,
+        "recovery_challenge_sha256",
+    )
+    (
+        worker_path,
+        metallib_path,
+        worker_sha256,
+        metallib_sha256,
+        supervisor_sha256,
+        _initial,
+    ) = _boundary_components(
+        worker,
+        metallib,
+        campaign_challenge_sha256,
+        forced_process_restart,
+    )
+    store = CampaignStore._open_existing_locked(
+        output_dir,
+        allow_prepared_selector=True,
+        io_hook=io_hook,
+    )
+    try:
+        (
+            active_selector_wire,
+            active_selector,
+            _active_manifest_wire,
+            active_manifest,
+        ) = _read_selected_campaign(store)
+        if active_selector_wire == predecessor_selector_wire:
+            _require(
+                _entry_exists_at(store.root_fd, SELECTOR_TEMP_NAME)
+                and _read_regular_at(
+                    store.root_fd,
+                    SELECTOR_TEMP_NAME,
+                    campaign.SELECTOR_BYTES,
+                    expected_device=store.root_identity[0],
+                    require_private_single_link=True,
+                )
+                == successor_selector_wire,
+                "prepared final selector residue changed",
+            )
+            successor = campaign.decode_selector(
+                successor_selector_wire
+            )
+            successor_manifest_wire = _read_regular_at(
+                store.directory_fds[store.manifests.name],
+                successor["manifest_sha256"].hex() + ".bin",
+                campaign.encoded_manifest_bytes(SEGMENT_COUNT),
+                expected_device=store.root_identity[0],
+                require_private_single_link=True,
+            )
+            successor_manifest = campaign.verify_manifest(
+                successor_manifest_wire
+            )
+            campaign.verify_selector(
+                successor_manifest_wire,
+                successor_selector_wire,
+                successor["environment_sha256"],
+            )
+            plan = _derive_fixed_retained_plan(
+                store,
+                successor_manifest,
+                worker_sha256,
+                metallib_sha256,
+                campaign_challenge_sha256,
+                forced_process_restart,
+            )
+            expected_predecessor_wire = campaign.make_manifest(
+                plan,
+                successor_manifest["entries"][:-1],
+            )
+            expected_predecessor = campaign.verify_manifest(
+                expected_predecessor_wire
+            )
+            _require(
+                active_selector["generation"] == SEGMENT_COUNT - 1
+                and active_manifest["manifest_sha256"]
+                == expected_predecessor["manifest_sha256"]
+                and active_manifest["entries"]
+                == successor_manifest["entries"][:-1],
+                "prepared final active predecessor changed",
+            )
+            _audit_exact_campaign_objects(
+                store,
+                plan,
+                successor_manifest["entries"],
+                successor["environment_sha256"],
+                worker_sha256,
+                metallib_sha256,
+                selector_candidate=successor_selector_wire,
+            )
+            observed_prepared_facts = _prepared_final_facts(
+                store,
+                successor_manifest,
+                predecessor_selector_wire,
+                successor_selector_wire,
+                recovery_challenge_sha256,
+                expected_prepared_facts.get("worker_pid"),
+            )
+        else:
+            _require(
+                active_selector_wire == successor_selector_wire
+                and active_selector["generation"] == SEGMENT_COUNT
+                and not _entry_exists_at(
+                    store.root_fd,
+                    SELECTOR_TEMP_NAME,
+                ),
+                "finalizer found neither exact prepared nor successor state",
+            )
+            successor_manifest = active_manifest
+            plan = _derive_fixed_retained_plan(
+                store,
+                successor_manifest,
+                worker_sha256,
+                metallib_sha256,
+                campaign_challenge_sha256,
+                forced_process_restart,
+            )
+            _audit_exact_campaign_objects(
+                store,
+                plan,
+                successor_manifest["entries"],
+                active_selector["environment_sha256"],
+                worker_sha256,
+                metallib_sha256,
+            )
+            hypothetical_prepared_shape = _store_shape_sha256(
+                store,
+                root_overrides={
+                    ACTIVE_SELECTOR_NAME: predecessor_selector_wire,
+                    SELECTOR_TEMP_NAME: successor_selector_wire,
+                },
+            )
+            observed_prepared_facts = _prepared_final_facts(
+                store,
+                successor_manifest,
+                predecessor_selector_wire,
+                successor_selector_wire,
+                recovery_challenge_sha256,
+                expected_prepared_facts.get("worker_pid"),
+                prepared_store_shape_sha256=(
+                    hypothetical_prepared_shape
+                ),
+            )
+        expected_prepared_core = dict(expected_prepared_facts)
+        resume_grant_binding = expected_prepared_core.pop(
+            "resume_grant_binding_sha256",
+            None,
+        )
+        _require(
+            _is_nonzero_hex_digest(resume_grant_binding),
+            "prepared final resume-grant receipt changed",
+        )
+        _validate_expected_facts(
+            expected_prepared_core,
+            observed_prepared_facts,
+            "prepared final",
+        )
+        store._authorize_existing_writer()
+        disposition = store.roll_forward_prepared_final(
+            predecessor_selector_wire,
+            successor_selector_wire,
+        )
+        (
+            final_selector_wire,
+            final_selector,
+            _final_manifest_wire,
+            final_manifest,
+        ) = _read_selected_campaign(store)
+        _require(
+            final_selector_wire == successor_selector_wire
+            and final_selector["generation"] == SEGMENT_COUNT,
+            "finalizer did not select exact generation 12",
+        )
+        final_plan = _derive_fixed_retained_plan(
+            store,
+            final_manifest,
+            worker_sha256,
+            metallib_sha256,
+            campaign_challenge_sha256,
+            forced_process_restart,
+        )
+        _audit_exact_campaign_objects(
+            store,
+            final_plan,
+            final_manifest["entries"],
+            final_selector["environment_sha256"],
+            worker_sha256,
+            metallib_sha256,
+        )
+        recovered, recovered_selector = store.recover(
+            final_plan,
+            SEGMENT_COUNT,
+            final_selector["environment_sha256"],
+            worker_sha256,
+            metallib_sha256,
+        )
+        _require(
+            recovered_selector == successor_selector_wire
+            and recovered["entries"] == final_manifest["entries"],
+            "strict final recovery changed generation 12",
+        )
+        process_boundary._verify_components_unchanged(
+            worker_path,
+            metallib_path,
+            worker_sha256,
+            metallib_sha256,
+        )
+        _require(
+            _supervisor_sha256() == supervisor_sha256,
+            "native soak supervisor changed during finalization",
+        )
+        facts = {
+            "schema": FINALIZED_BOUNDARY_SCHEMA,
+            "generation": SEGMENT_COUNT,
+            "disposition": disposition,
+            "strict_audit": True,
+            "lock_held": True,
+            "campaign_id_sha256": final_plan[
+                "campaign_id_sha256"
+            ].hex(),
+            "plan_sha256": campaign.derive_plan_sha256(
+                final_plan
+            ).hex(),
+            "selector_wire_hex": final_selector_wire.hex(),
+            "selector_sha256": final_selector[
+                "selector_sha256"
+            ].hex(),
+            "manifest_sha256": final_manifest[
+                "manifest_sha256"
+            ].hex(),
+            "final_entry_sha256": final_manifest["entries"][-1][
+                "entry_sha256"
+            ].hex(),
+            "environment_sha256": final_selector[
+                "environment_sha256"
+            ].hex(),
+            "store_shape_sha256": _store_shape_sha256(store).hex(),
+            **_boundary_identity_facts(store),
+        }
+        facts["finalizer_grant_binding_sha256"] = (
+            finalizer_grant_use_sha256(
+                finalizer_grant_sha256,
+                expected_prepared_facts,
+                facts,
+            ).hex()
+        )
+        return CampaignBoundaryHandle(store, facts)
+    except (
+        campaign.CampaignManifestError,
+        inner.NativeMetalDisruptionReportError,
+        process_boundary.NativeMetalReportError,
+        OSError,
+    ) as error:
+        store.close()
+        if isinstance(error, NativeMetalSoakError):
+            raise
+        raise NativeMetalSoakError(str(error)) from error
+    except BaseException:
+        store.close()
+        raise
 
 
 def verify_campaign(

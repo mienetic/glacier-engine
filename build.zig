@@ -101,6 +101,17 @@ pub fn build(b: *std.Build) void {
                 "-Dnative-metal-inflight-process-kill-report-output must not be empty",
             );
     }
+    const native_metal_supervisor_recovery_death_output_dir = b.option(
+        []const u8,
+        "native-metal-supervisor-recovery-death-output-dir",
+        "Optional directory that retains the verified supervisor/recovery-death report and campaign store",
+    );
+    if (native_metal_supervisor_recovery_death_output_dir) |path| {
+        if (path.len == 0)
+            @panic(
+                "-Dnative-metal-supervisor-recovery-death-output-dir must not be empty",
+            );
+    }
     const native_workload_store_fault_output = b.option(
         []const u8,
         "native-workload-store-fault-output",
@@ -2125,6 +2136,30 @@ pub fn build(b: *std.Build) void {
         "native-metal-inflight-process-kill-report-compile",
         "Compile the event-blocked native Metal victim worker",
     );
+    const native_supervisor_recovery_death_report_test_step = b.step(
+        "native-supervisor-recovery-death-report-test",
+        "Run the portable supervisor/recovery-death codec and independent model",
+    );
+    const native_supervisor_recovery_death_report_compile_step = b.step(
+        "native-supervisor-recovery-death-report-compile",
+        "Compile the portable supervisor/recovery-death codec and verifier",
+    );
+    const native_supervisor_recovery_death_report_cross_compile_step = b.step(
+        "native-supervisor-recovery-death-report-cross-compile",
+        "Cross-compile the supervisor/recovery-death codec and verifier",
+    );
+    const native_supervisor_recovery_death_host_test_step = b.step(
+        "native-supervisor-recovery-death-host-test",
+        "Run the POSIX process/lock protocol and deterministic staged-store model",
+    );
+    const native_metal_supervisor_recovery_death_report_test_step = b.step(
+        "native-metal-supervisor-recovery-death-report-test",
+        "Run the hard production-native Metal supervisor and recovery-process death campaign",
+    );
+    const native_metal_supervisor_recovery_death_report_compile_step = b.step(
+        "native-metal-supervisor-recovery-death-report-compile",
+        "Compile every artifact used by the native Metal supervisor/recovery-death campaign",
+    );
     const native_metal_suite_compile_step = b.step(
         "native-metal-suite-compile",
         "Compile and statically validate every native Metal suite artifact",
@@ -2191,6 +2226,226 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(
         &run_native_metal_inflight_process_kill_report_model.step,
     );
+
+    // W7b-b5 keeps its fixed report codec portable even though the hard
+    // producer below requires native macOS Metal plus POSIX process/storage
+    // evidence. The independent Python model and fresh Zig verifier retain
+    // the exact 3,520-byte wire without granting continuation authority.
+    const native_supervisor_recovery_death_report_mod = b.createModule(.{
+        .root_source_file = b.path(
+            "src/core/native_metal_supervisor_recovery_death_report.zig",
+        ),
+        .target = target,
+        .optimize = optimize,
+    });
+    const native_supervisor_recovery_death_report_tests = b.addTest(.{
+        .name = "glacier-native-supervisor-recovery-death-report-tests",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/native_metal_supervisor_recovery_death_report.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_native_supervisor_recovery_death_report_tests =
+        b.addRunArtifact(
+            native_supervisor_recovery_death_report_tests,
+        );
+    const native_supervisor_recovery_death_report_verifier =
+        b.addExecutable(.{
+            .name = "glacier-native-supervisor-recovery-death-report",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_metal_supervisor_recovery_death_report.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+    native_supervisor_recovery_death_report_verifier.root_module.addImport(
+        "native_metal_supervisor_recovery_death_report",
+        native_supervisor_recovery_death_report_mod,
+    );
+    const native_supervisor_recovery_death_report_verifier_tests =
+        b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_metal_supervisor_recovery_death_report.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    native_supervisor_recovery_death_report_verifier_tests.root_module
+        .addImport(
+        "native_metal_supervisor_recovery_death_report",
+        native_supervisor_recovery_death_report_mod,
+    );
+    const run_native_supervisor_recovery_death_report_verifier_tests =
+        b.addRunArtifact(
+            native_supervisor_recovery_death_report_verifier_tests,
+        );
+    const run_native_supervisor_recovery_death_report_model =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_native_metal_supervisor_recovery_death_report",
+        });
+    run_native_supervisor_recovery_death_report_model.setCwd(
+        b.path("."),
+    );
+    run_native_supervisor_recovery_death_report_model
+        .setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_native_supervisor_recovery_death_report_model
+        .setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_native_supervisor_recovery_death_report_model.step.dependOn(
+        &run_native_supervisor_recovery_death_report_tests.step,
+    );
+    const emit_python_supervisor_recovery_death_golden =
+        b.addSystemCommand(&.{
+            "python3",
+            "-c",
+            "from pathlib import Path; import sys; " ++
+                "from bench.tests." ++
+                "test_native_metal_supervisor_recovery_death_report " ++
+                "import _fixture; " ++
+                "Path(sys.argv[1]).write_bytes(_fixture()[-1])",
+        });
+    emit_python_supervisor_recovery_death_golden.setCwd(b.path("."));
+    emit_python_supervisor_recovery_death_golden.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    emit_python_supervisor_recovery_death_golden.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    const python_supervisor_recovery_death_golden =
+        emit_python_supervisor_recovery_death_golden.addOutputFileArg(
+            "python-supervisor-recovery-death-golden.bin",
+        );
+    const run_python_to_zig_supervisor_recovery_death_interop =
+        b.addRunArtifact(
+            native_supervisor_recovery_death_report_verifier,
+        );
+    run_python_to_zig_supervisor_recovery_death_interop.addFileArg(
+        python_supervisor_recovery_death_golden,
+    );
+    run_python_to_zig_supervisor_recovery_death_interop.expectStdOutEqual(
+        "wire_verified=true claims_only=true generation=6->12 " ++
+            "recovery_lock_ack=1 claimed_sigkills=2 " ++
+            "claimed_commands=1200 claimed_cpu_oracles=1200 " ++
+            "report_sha256=" ++
+            "0260c4a008fa5b27c78ed793feceb110" ++
+            "7bf7615b373b76982f4d96a2b9cf58c9\n",
+    );
+    run_python_to_zig_supervisor_recovery_death_interop.step.dependOn(
+        &run_native_supervisor_recovery_death_report_model.step,
+    );
+    const run_native_supervisor_recovery_death_protocol_model =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_native_metal_soak_report",
+            "bench.tests.test_native_metal_supervisor_recovery_death_protocol",
+        });
+    run_native_supervisor_recovery_death_protocol_model.setCwd(
+        b.path("."),
+    );
+    run_native_supervisor_recovery_death_protocol_model
+        .setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_native_supervisor_recovery_death_protocol_model
+        .setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_native_supervisor_recovery_death_protocol_model.step.dependOn(
+        &run_native_supervisor_recovery_death_report_model.step,
+    );
+    native_supervisor_recovery_death_host_test_step.dependOn(
+        &run_native_supervisor_recovery_death_protocol_model.step,
+    );
+    native_supervisor_recovery_death_report_test_step.dependOn(
+        &run_native_supervisor_recovery_death_report_tests.step,
+    );
+    native_supervisor_recovery_death_report_test_step.dependOn(
+        &run_native_supervisor_recovery_death_report_verifier_tests.step,
+    );
+    native_supervisor_recovery_death_report_test_step.dependOn(
+        &run_native_supervisor_recovery_death_report_model.step,
+    );
+    native_supervisor_recovery_death_report_test_step.dependOn(
+        &run_python_to_zig_supervisor_recovery_death_interop.step,
+    );
+    native_supervisor_recovery_death_report_compile_step.dependOn(
+        &native_supervisor_recovery_death_report_tests.step,
+    );
+    native_supervisor_recovery_death_report_compile_step.dependOn(
+        &native_supervisor_recovery_death_report_verifier.step,
+    );
+    native_supervisor_recovery_death_report_compile_step.dependOn(
+        &native_supervisor_recovery_death_report_verifier_tests.step,
+    );
+    for (native_workload_report_cross_targets) |cross_query| {
+        const cross_target = b.resolveTargetQuery(cross_query);
+        const cross_supervisor_recovery_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "src/core/native_metal_supervisor_recovery_death_report.zig",
+                ),
+                .target = cross_target,
+                .optimize = optimize,
+            }),
+        });
+        const cross_supervisor_recovery_mod = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/native_metal_supervisor_recovery_death_report.zig",
+            ),
+            .target = cross_target,
+            .optimize = optimize,
+        });
+        const cross_supervisor_recovery_verifier = b.addExecutable(.{
+            .name = "glacier-native-supervisor-recovery-death-report",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_metal_supervisor_recovery_death_report.zig",
+                ),
+                .target = cross_target,
+                .optimize = optimize,
+            }),
+        });
+        cross_supervisor_recovery_verifier.root_module.addImport(
+            "native_metal_supervisor_recovery_death_report",
+            cross_supervisor_recovery_mod,
+        );
+        native_supervisor_recovery_death_report_cross_compile_step.dependOn(
+            &cross_supervisor_recovery_tests.step,
+        );
+        native_supervisor_recovery_death_report_cross_compile_step.dependOn(
+            &cross_supervisor_recovery_verifier.step,
+        );
+    }
+    test_step.dependOn(
+        native_supervisor_recovery_death_report_test_step,
+    );
+    test_compile_step.dependOn(
+        native_supervisor_recovery_death_report_compile_step,
+    );
+
     const native_metal_build_available =
         metal_shim != null and
         builtin.os.tag == .macos and
@@ -2259,30 +2514,44 @@ pub fn build(b: *std.Build) void {
 
         const run_native_metal_observation_verifier =
             b.addSystemCommand(&.{"python3"});
-        run_native_metal_observation_verifier.setCwd(b.path("."));
-        run_native_metal_observation_verifier.setEnvironmentVariable(
-            "PYTHONDONTWRITEBYTECODE",
-            "1",
-        );
-        run_native_metal_observation_verifier.setEnvironmentVariable(
-            "PYTHONPATH",
-            ".",
-        );
-        run_native_metal_observation_verifier.addFileArg(
-            b.path("bench/native_metal_readiness.py"),
-        );
-        run_native_metal_observation_verifier.addArg("--runner");
-        run_native_metal_observation_verifier.addArtifactArg(
-            native_metal_observation_exe,
-        );
-        run_native_metal_observation_verifier.step.dependOn(
-            &native_metal_lib.step,
-        );
-        run_native_metal_observation_verifier.step.dependOn(
-            &run_native_metal_observation_tests.step,
-        );
-        run_native_metal_observation_verifier.step.dependOn(
-            &run_native_metal_observation_model.step,
+        const run_native_metal_observation_verifier_suite =
+            b.addSystemCommand(&.{"python3"});
+        for ([_]*std.Build.Step.Run{
+            run_native_metal_observation_verifier,
+            run_native_metal_observation_verifier_suite,
+        }) |run_observation| {
+            run_observation.setCwd(b.path("."));
+            run_observation.setEnvironmentVariable(
+                "PYTHONDONTWRITEBYTECODE",
+                "1",
+            );
+            run_observation.setEnvironmentVariable(
+                "PYTHONPATH",
+                ".",
+            );
+            run_observation.addFileArg(
+                b.path("bench/native_metal_readiness.py"),
+            );
+            run_observation.addArg("--runner");
+            run_observation.addArtifactArg(
+                native_metal_observation_exe,
+            );
+            run_observation.step.dependOn(
+                &native_metal_lib.step,
+            );
+            run_observation.step.dependOn(
+                &run_native_metal_observation_tests.step,
+            );
+            run_observation.step.dependOn(
+                &run_native_metal_observation_model.step,
+            );
+        }
+        // The serialized hardware suite has a dedicated first device process.
+        // Its compile-frontier dependency prevents any GPU command from
+        // starting until every suite artifact and static isolation check has
+        // completed once in this build graph. Focused readiness remains small.
+        run_native_metal_observation_verifier_suite.step.dependOn(
+            native_metal_suite_compile_step,
         );
         run_native_metal_correctness_tests.step.dependOn(
             &run_native_metal_observation_verifier.step,
@@ -2350,7 +2619,7 @@ pub fn build(b: *std.Build) void {
             &native_metal_lib.step,
         );
         run_native_metal_allocation_suite.step.dependOn(
-            &run_native_metal_observation_verifier.step,
+            &run_native_metal_observation_verifier_suite.step,
         );
 
         // W6b emits one raw, independently decoded report from twenty real
@@ -2713,11 +2982,17 @@ pub fn build(b: *std.Build) void {
             b.addSystemCommand(&.{"python3"});
         const run_native_metal_process_kill_environment_admission_suite =
             b.addSystemCommand(&.{"python3"});
+        const run_native_metal_supervisor_recovery_death_admission =
+            b.addSystemCommand(&.{"python3"});
+        const run_native_metal_supervisor_recovery_death_admission_suite =
+            b.addSystemCommand(&.{"python3"});
         for ([_]*std.Build.Step.Run{
             run_native_metal_soak_environment_admission,
             run_native_metal_soak_environment_admission_suite,
             run_native_metal_process_kill_environment_admission,
             run_native_metal_process_kill_environment_admission_suite,
+            run_native_metal_supervisor_recovery_death_admission,
+            run_native_metal_supervisor_recovery_death_admission_suite,
         }) |run_admission| {
             run_admission.setCwd(b.path("."));
             run_admission.setEnvironmentVariable(
@@ -3035,6 +3310,9 @@ pub fn build(b: *std.Build) void {
         for ([_]*std.Build.Step.Compile{
             metal_tests,
             native_metal_inflight_process_kill_ready_tests,
+            native_supervisor_recovery_death_report_tests,
+            native_supervisor_recovery_death_report_verifier,
+            native_supervisor_recovery_death_report_verifier_tests,
             native_metal_observation_tests,
             native_metal_observation_exe,
             native_metal_allocation_tests,
@@ -3071,6 +3349,18 @@ pub fn build(b: *std.Build) void {
         );
         native_metal_suite_compile_step.dependOn(
             native_metal_inflight_process_kill_report_compile_step,
+        );
+        native_metal_supervisor_recovery_death_report_compile_step.dependOn(
+            &native_metal_soak_worker_exe.step,
+        );
+        native_metal_supervisor_recovery_death_report_compile_step.dependOn(
+            native_supervisor_recovery_death_report_compile_step,
+        );
+        native_metal_supervisor_recovery_death_report_compile_step.dependOn(
+            &native_metal_lib.step,
+        );
+        native_metal_suite_compile_step.dependOn(
+            native_metal_supervisor_recovery_death_report_compile_step,
         );
         native_metal_suite_compile_step.dependOn(
             &native_metal_lib.step,
@@ -3140,6 +3430,73 @@ pub fn build(b: *std.Build) void {
             &run_native_metal_process_kill_report_suite.step,
         );
 
+        // W7b-b5 kills two distinct supervisor roles only after each has
+        // cleanly reaped its Metal worker and published a fixed durable
+        // boundary. The suite variant follows the in-flight kill gate, while
+        // both variants reuse the already compiled soak worker, shader
+        // library, portable codec, and fresh Zig verifier.
+        const run_native_metal_supervisor_recovery_death_report =
+            b.addSystemCommand(&.{"python3"});
+        const run_native_metal_supervisor_recovery_death_report_suite =
+            b.addSystemCommand(&.{"python3"});
+        for ([_]*std.Build.Step.Run{
+            run_native_metal_supervisor_recovery_death_report,
+            run_native_metal_supervisor_recovery_death_report_suite,
+        }) |run_report| {
+            run_report.setCwd(b.path("."));
+            run_report.setEnvironmentVariable(
+                "PYTHONDONTWRITEBYTECODE",
+                "1",
+            );
+            run_report.setEnvironmentVariable(
+                "PYTHONPATH",
+                ".",
+            );
+            run_report.addFileArg(
+                b.path(
+                    "bench/native_metal_supervisor_recovery_death_campaign.py",
+                ),
+            );
+            run_report.addArg("--worker");
+            run_report.addArtifactArg(native_metal_soak_worker_exe);
+            run_report.addArg("--metallib");
+            run_report.addArg(metal_library_path);
+            run_report.addArg("--zig-verifier");
+            run_report.addArtifactArg(
+                native_supervisor_recovery_death_report_verifier,
+            );
+            run_report.step.dependOn(&native_metal_lib.step);
+            run_report.step.dependOn(
+                &run_native_supervisor_recovery_death_protocol_model.step,
+            );
+            run_report.step.dependOn(
+                &run_native_metal_soak_report_model.step,
+            );
+            run_report.step.dependOn(
+                &run_native_workload_campaign_tests.step,
+            );
+        }
+        if (native_metal_supervisor_recovery_death_output_dir) |path| {
+            run_native_metal_supervisor_recovery_death_report.addArg(
+                "--output-dir",
+            );
+            run_native_metal_supervisor_recovery_death_report.addArg(path);
+        }
+        run_native_metal_supervisor_recovery_death_report.step.dependOn(
+            &run_native_metal_supervisor_recovery_death_admission.step,
+        );
+        native_metal_supervisor_recovery_death_report_test_step.dependOn(
+            &run_native_metal_supervisor_recovery_death_report.step,
+        );
+        run_native_metal_supervisor_recovery_death_admission_suite.step
+            .dependOn(
+            &run_native_metal_inflight_process_kill_report_suite.step,
+        );
+        run_native_metal_supervisor_recovery_death_report_suite.step
+            .dependOn(
+            &run_native_metal_supervisor_recovery_death_admission_suite.step,
+        );
+
         const run_native_metal_fault_tests =
             b.addRunArtifact(native_metal_fault_tests);
         run_native_metal_fault_tests.step.dependOn(
@@ -3157,7 +3514,7 @@ pub fn build(b: *std.Build) void {
             &check_metal_fault_symbols.step,
         );
         run_native_metal_fault_suite.step.dependOn(
-            &run_native_metal_inflight_process_kill_report_suite.step,
+            &run_native_metal_supervisor_recovery_death_report_suite.step,
         );
         const run_native_metal_correctness_suite =
             b.addRunArtifact(metal_tests);
@@ -3239,6 +3596,12 @@ pub fn build(b: *std.Build) void {
             &native_metal_failure.step,
         );
         native_metal_inflight_process_kill_report_compile_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_supervisor_recovery_death_report_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_supervisor_recovery_death_report_compile_step.dependOn(
             &native_metal_failure.step,
         );
         native_metal_suite_test_step.dependOn(
@@ -5764,6 +6127,9 @@ pub fn build(b: *std.Build) void {
     profile_device_compile_step.dependOn(&metal_tests.step);
     profile_device_compile_step.dependOn(
         &native_metal_inflight_process_kill_ready_tests.step,
+    );
+    profile_device_compile_step.dependOn(
+        &native_supervisor_recovery_death_report_tests.step,
     );
     profile_device_compile_step.dependOn(
         &metal_kernel_bench_exe.step,

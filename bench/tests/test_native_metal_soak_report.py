@@ -103,6 +103,62 @@ def _wire(
     )
 
 
+class _FakePersistentWorker:
+    instances: list["_FakePersistentWorker"] = []
+
+    def __init__(
+        self,
+        worker: str,
+        metallib: str,
+        worker_sha256: bytes,
+        metallib_sha256: bytes,
+    ) -> None:
+        del worker, metallib
+        self.worker_sha256 = worker_sha256
+        self.metallib_sha256 = metallib_sha256
+        self.closed = False
+        self.aborted = False
+        self.challenges: list[bytes] = []
+        self.pid = 1_000_000_001 + len(self.instances)
+        self.process_source_sha256 = _digest(
+            b"fake-persistent-worker-"
+            + str(len(self.instances) + 1).encode("ascii")
+        )
+        self.instances.append(self)
+
+    def request(
+        self,
+        challenge_sha256: bytes,
+        _timeout_seconds: float,
+    ) -> tuple[bytes, int, tuple[int, int, int, int]]:
+        if self.closed:
+            raise AssertionError("fake worker was already reaped")
+        self.challenges.append(challenge_sha256)
+        return (
+            _wire(
+                self.worker_sha256,
+                self.metallib_sha256,
+                challenge_sha256,
+            ),
+            soak.MINIMUM_SEGMENT_DURATION_NS + 1,
+            (16 << 20, 17 << 20, 16 << 20, 100),
+        )
+
+    def close_cleanly(self) -> None:
+        if self.closed:
+            raise AssertionError("fake worker was reaped twice")
+        self.closed = True
+
+    def kill_for_campaign(self) -> None:
+        if self.closed:
+            raise AssertionError("fake worker was reaped twice")
+        self.closed = True
+
+    def abort(self) -> None:
+        self.aborted = True
+        self.closed = True
+
+
 class NativeMetalSoakReportTests(unittest.TestCase):
     def test_hard_offline_gate_rejects_a_canonical_partial_prefix(
         self,
@@ -1025,6 +1081,312 @@ class NativeMetalSoakReportTests(unittest.TestCase):
                     metallib_path,
                     output,
                 )
+
+    def test_grant_bound_prefix_prepare_and_final_roll_forward(self) -> None:
+        worker_contents = b"deterministic staged fake worker\n"
+        metallib_contents = b"deterministic staged fake metallib\n"
+        campaign_challenge = _digest(b"staged-campaign-challenge")
+        boundary_challenge = _digest(b"prefix-boundary-challenge")
+        recovery_challenge = _digest(b"recovery-boundary-challenge")
+        before = _environment(
+            dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+        )
+        after = _environment(
+            dt.datetime(2026, 1, 1, 0, 10, tzinfo=dt.timezone.utc)
+        )
+        _FakePersistentWorker.instances = []
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            worker_path = base / "worker"
+            metallib_path = base / "workload.metallib"
+            output = base / "retained-store"
+            worker_path.write_bytes(worker_contents)
+            metallib_path.write_bytes(metallib_contents)
+
+            prefix = soak.run_campaign_prefix(
+                worker_path,
+                metallib_path,
+                output,
+                campaign_challenge_sha256=campaign_challenge,
+                boundary_challenge_sha256=boundary_challenge,
+                _worker_factory=_FakePersistentWorker,
+                _capture_environment=lambda: (
+                    before,
+                    hashlib.sha256(
+                        soak._canonical_json(before)
+                    ).digest(),
+                ),
+            )
+            prefix_facts = dict(prefix.facts)
+            self.assertEqual(6, prefix_facts["generation"])
+            self.assertEqual(6, prefix_facts["next_ordinal"])
+            self.assertTrue(prefix_facts["worker_reaped"])
+            self.assertEqual(
+                1_000_000_001,
+                prefix_facts["worker_pid"],
+            )
+            self.assertEqual(0, prefix_facts["worker_exit_code_bits"])
+            self.assertEqual(
+                0,
+                prefix_facts["worker_termination_signal"],
+            )
+            self.assertTrue(prefix_facts["lock_held"])
+            self.assertNotIn("resume_grant_sha256", prefix_facts)
+            json.dumps(prefix_facts, allow_nan=False)
+            self.assertEqual(
+                6,
+                len(_FakePersistentWorker.instances[0].challenges),
+            )
+            self.assertTrue(_FakePersistentWorker.instances[0].closed)
+            with self.assertRaisesRegex(
+                soak.NativeMetalSoakError,
+                "still being written",
+            ):
+                soak.verify_retained_store(
+                    worker_path,
+                    metallib_path,
+                    output,
+                )
+            prefix.close()
+
+            forged_prefix = dict(prefix_facts)
+            forged_prefix["final_entry_sha256"] = bytes(32).hex()
+            with self.assertRaisesRegex(
+                soak.NativeMetalSoakError,
+                "facts or grant binding",
+            ):
+                soak.resume_campaign_to_prepared_final(
+                    worker_path,
+                    metallib_path,
+                    output,
+                    resume_grant_sha256=_digest(
+                        b"forged-outer-resume-grant"
+                    ),
+                    expected_prefix_facts=forged_prefix,
+                    recovery_challenge_sha256=recovery_challenge,
+                    _worker_factory=_FakePersistentWorker,
+                    _capture_environment=lambda: (
+                        after,
+                        hashlib.sha256(
+                            soak._canonical_json(after)
+                        ).digest(),
+                    ),
+                )
+
+            resume_grant = _digest(b"outer-resume-authority-grant")
+            with self.assertRaisesRegex(
+                soak.NativeMetalSoakError,
+                "nonzero 32-byte grant",
+            ):
+                soak.resume_campaign_to_prepared_final(
+                    worker_path,
+                    metallib_path,
+                    output,
+                    resume_grant_sha256=bytes(32),
+                    expected_prefix_facts=prefix_facts,
+                    recovery_challenge_sha256=recovery_challenge,
+                    _worker_factory=_FakePersistentWorker,
+                    _capture_environment=lambda: (
+                        after,
+                        hashlib.sha256(
+                            soak._canonical_json(after)
+                        ).digest(),
+                    ),
+                )
+
+            io_events: list[tuple[str, str, str]] = []
+            prepared = soak.resume_campaign_to_prepared_final(
+                worker_path,
+                metallib_path,
+                output,
+                resume_grant_sha256=resume_grant,
+                expected_prefix_facts=prefix_facts,
+                recovery_challenge_sha256=recovery_challenge,
+                io_hook=lambda timing, object_kind, operation: (
+                    io_events.append((timing, object_kind, operation))
+                ),
+                _worker_factory=_FakePersistentWorker,
+                _capture_environment=lambda: (
+                    after,
+                    hashlib.sha256(
+                        soak._canonical_json(after)
+                    ).digest(),
+                ),
+            )
+            prepared_facts = dict(prepared.facts)
+            self.assertEqual(11, prepared_facts["selected_generation"])
+            self.assertEqual(12, prepared_facts["candidate_generation"])
+            self.assertEqual(26, prepared_facts["next_publication_phase"])
+            self.assertEqual(
+                192,
+                prepared_facts["candidate_selector_bytes"],
+            )
+            self.assertTrue(prepared_facts["selector_file_synced"])
+            self.assertEqual(
+                1_000_000_002,
+                prepared_facts["worker_pid"],
+            )
+            self.assertNotEqual(
+                prefix_facts["worker_pid"],
+                prepared_facts["worker_pid"],
+            )
+            self.assertEqual(
+                0,
+                prepared_facts["worker_exit_code_bits"],
+            )
+            self.assertEqual(
+                0,
+                prepared_facts["worker_termination_signal"],
+            )
+            self.assertTrue(
+                soak._is_nonzero_hex_digest(
+                    prepared_facts[
+                        "resume_grant_binding_sha256"
+                    ]
+                )
+            )
+            self.assertEqual(
+                prepared_facts["resume_grant_binding_sha256"],
+                soak.resume_grant_use_sha256(
+                    resume_grant,
+                    prefix_facts,
+                    prepared_facts,
+                ).hex(),
+            )
+            self.assertNotIn(
+                "finalizer_grant_sha256",
+                prepared_facts,
+            )
+            json.dumps(prepared_facts, allow_nan=False)
+            self.assertEqual(
+                ("after", "selector", "file_fsync"),
+                io_events[-1],
+            )
+            self.assertEqual(
+                5,
+                sum(
+                    event
+                    == ("after", "selector", "active_replace")
+                    for event in io_events
+                ),
+            )
+            active = output / soak.ACTIVE_SELECTOR_NAME
+            candidate = output / soak.SELECTOR_TEMP_NAME
+            self.assertEqual(
+                11,
+                campaign.decode_selector(
+                    active.read_bytes()
+                )["generation"],
+            )
+            candidate_wire = candidate.read_bytes()
+            self.assertEqual(192, len(candidate_wire))
+            self.assertEqual(
+                12,
+                campaign.decode_selector(candidate_wire)["generation"],
+            )
+            self.assertEqual(
+                6,
+                len(_FakePersistentWorker.instances[1].challenges),
+            )
+            self.assertTrue(_FakePersistentWorker.instances[1].closed)
+            prepared.close()
+
+            finalizer_grant = _digest(
+                b"outer-finalizer-authority-grant"
+            )
+            with self.assertRaisesRegex(
+                soak.NativeMetalSoakError,
+                "nonzero 32-byte grant",
+            ):
+                soak.roll_forward_prepared_final(
+                    worker_path,
+                    metallib_path,
+                    output,
+                    finalizer_grant_sha256=bytes(32),
+                    expected_prepared_facts=prepared_facts,
+                )
+            self.assertEqual(
+                11,
+                campaign.decode_selector(
+                    active.read_bytes()
+                )["generation"],
+            )
+
+            corrupted_candidate = bytearray(candidate_wire)
+            corrupted_candidate[0] ^= 1
+            candidate.write_bytes(corrupted_candidate)
+            with self.assertRaisesRegex(
+                soak.NativeMetalSoakError,
+                "residue changed",
+            ):
+                soak.roll_forward_prepared_final(
+                    worker_path,
+                    metallib_path,
+                    output,
+                    finalizer_grant_sha256=finalizer_grant,
+                    expected_prepared_facts=prepared_facts,
+                )
+            self.assertEqual(
+                11,
+                campaign.decode_selector(
+                    active.read_bytes()
+                )["generation"],
+            )
+            candidate.write_bytes(candidate_wire)
+
+            finalized = soak.roll_forward_prepared_final(
+                worker_path,
+                metallib_path,
+                output,
+                finalizer_grant_sha256=finalizer_grant,
+                expected_prepared_facts=prepared_facts,
+            )
+            self.assertEqual("applied", finalized.facts["disposition"])
+            self.assertTrue(finalized.facts["strict_audit"])
+            self.assertEqual(12, finalized.facts["generation"])
+            self.assertTrue(
+                soak._is_nonzero_hex_digest(
+                    finalized.facts[
+                        "finalizer_grant_binding_sha256"
+                    ]
+                )
+            )
+            self.assertEqual(
+                finalized.facts[
+                    "finalizer_grant_binding_sha256"
+                ],
+                soak.finalizer_grant_use_sha256(
+                    finalizer_grant,
+                    prepared_facts,
+                    finalized.facts,
+                ).hex(),
+            )
+            self.assertFalse(candidate.exists())
+            finalized.close()
+
+            replay = soak.roll_forward_prepared_final(
+                worker_path,
+                metallib_path,
+                output,
+                finalizer_grant_sha256=finalizer_grant,
+                expected_prepared_facts=prepared_facts,
+            )
+            self.assertEqual(
+                "already_applied",
+                replay.facts["disposition"],
+            )
+            self.assertTrue(replay.facts["strict_audit"])
+            replay.close()
+
+            audited = soak.verify_retained_store(
+                worker_path,
+                metallib_path,
+                output,
+                require_complete=True,
+            )
+            self.assertTrue(audited["complete"])
+            self.assertEqual(soak.SEGMENT_COUNT, audited["segments"])
 
     def test_replaced_root_cannot_redirect_locked_writer(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -53,6 +53,8 @@ EXPECTED_METAL_NATIVE_SOURCE_PATHS = frozenset(
         "examples/native_metal_cancellation_storm_report.zig",
         "examples/native_metal_disruption_report.zig",
         "examples/native_metal_inflight_process_kill_worker.zig",
+        "bench/native_metal_supervisor_recovery_death_campaign.py",
+        "bench/tests/test_native_metal_supervisor_recovery_death_protocol.py",
         "examples/native_metal_observation.zig",
         "examples/native_metal_soak_worker.zig",
         "examples/native_metal_workload_report.zig",
@@ -105,14 +107,18 @@ EXPECTED_DURABLE_RUNTIME_PROFILE_PATHS = frozenset(
 
 EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
     {
+        "src/core/native_metal_supervisor_recovery_death_report.zig",
         "src/core/native_workload_campaign_manifest.zig",
         "src/core/native_workload_report.zig",
         "src/core/native_workload_store_fault_report.zig",
+        "examples/native_metal_supervisor_recovery_death_report.zig",
         "examples/native_workload_report.zig",
         "examples/native_workload_store_fault_report.zig",
+        "bench/native_metal_supervisor_recovery_death_report.py",
         "bench/native_workload_campaign.py",
         "bench/native_workload_report.py",
         "bench/native_workload_store_fault_report.py",
+        "bench/tests/test_native_metal_supervisor_recovery_death_report.py",
         "bench/tests/test_native_workload_campaign.py",
         "bench/tests/test_native_workload_report.py",
         "bench/tests/test_native_workload_store_fault_report.py",
@@ -299,6 +305,29 @@ class VerificationPolicyTests(unittest.TestCase):
         for changed_path in (
             "bench/native_metal_inflight_process_kill_report.py",
             "bench/tests/test_native_metal_inflight_process_kill_report.py",
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    plan.flags,
+                    frozenset(
+                        {
+                            "python-changed",
+                            "python-full",
+                            "metal-native",
+                        }
+                    ),
+                )
+
+    def test_supervisor_recovery_death_campaign_selects_hardware_gate(
+        self,
+    ):
+        for changed_path in (
+            "bench/native_metal_supervisor_recovery_death_campaign.py",
+            (
+                "bench/tests/"
+                "test_native_metal_supervisor_recovery_death_protocol.py"
+            ),
         ):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
@@ -844,9 +873,14 @@ class VerificationPolicyTests(unittest.TestCase):
         for changed_path in sorted(EXPECTED_METAL_NATIVE_SOURCE_PATHS):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
+                expected_flags = {"metal-native"}
+                if changed_path.endswith(".py"):
+                    expected_flags.update(
+                        {"python-changed", "python-full"}
+                    )
                 self.assertEqual(
                     plan.flags,
-                    frozenset({"metal-native"}),
+                    frozenset(expected_flags),
                 )
 
         for changed_path in (
@@ -1102,6 +1136,12 @@ class VerificationPolicyTests(unittest.TestCase):
         )
         self.assertIn(
             "profile_device_compile_step.dependOn(\n"
+            "        &native_supervisor_recovery_death_report_tests.step,\n"
+            "    );",
+            source,
+        )
+        self.assertIn(
+            "profile_device_compile_step.dependOn(\n"
             "        &metal_kernel_bench_exe.step,\n"
             "    );",
             source,
@@ -1122,6 +1162,9 @@ class VerificationPolicyTests(unittest.TestCase):
         for artifact in (
             "metal_tests",
             "native_metal_inflight_process_kill_ready_tests",
+            "native_supervisor_recovery_death_report_tests",
+            "native_supervisor_recovery_death_report_verifier",
+            "native_supervisor_recovery_death_report_verifier_tests",
             "native_metal_observation_tests",
             "native_metal_observation_exe",
             "native_metal_allocation_tests",
@@ -1146,6 +1189,40 @@ class VerificationPolicyTests(unittest.TestCase):
         )
         self.assertIn(
             "check_metal_fault_symbols.expectExitCode(0)",
+            source,
+        )
+        self.assertIn(
+            "run_native_metal_observation_verifier_suite.step.dependOn(\n"
+            "            native_metal_suite_compile_step,\n"
+            "        );",
+            source,
+        )
+        self.assertIn(
+            "native_supervisor_recovery_death_host_test_step.dependOn(\n"
+            "        &run_native_supervisor_recovery_death_protocol_model.step,\n"
+            "    );",
+            source,
+        )
+        self.assertIn(
+            "native_supervisor_recovery_death_report_test_step.dependOn(\n"
+            "        "
+            "&run_python_to_zig_supervisor_recovery_death_interop.step,\n"
+            "    );",
+            source,
+        )
+        self.assertIn(
+            "native_metal_supervisor_recovery_death_report_test_step"
+            ".dependOn(\n"
+            "            "
+            "&run_native_metal_supervisor_recovery_death_report.step,\n"
+            "        );",
+            source,
+        )
+        self.assertIn(
+            "run_native_metal_fault_suite.step.dependOn(\n"
+            "            "
+            "&run_native_metal_supervisor_recovery_death_report_suite.step,\n"
+            "        );",
             source,
         )
         metal_lib_start = source.index("fn buildMetalLib(")

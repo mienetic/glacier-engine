@@ -43,6 +43,13 @@ while 16 real Metal controls preserve CPU-oracle correctness and the complete
 event-blocked in-flight process kill: a fault-linked victim reports one real
 registered command and four live buffers before real PID-only `SIGKILL`, then
 a distinct production-linked W6 process completes 20 real Metal commands.
+W7b-b5 adds exact generation-six supervisor death and
+prepared-generation-twelve recovery-process death to the complete
+12-segment/1,200-command production campaign. Both workers exit cleanly before
+their controller processes receive real PID-only `SIGKILL`; fresh processes
+audit generation six, perform only the authorized `11 -> 12` roll-forward, and
+audit the final store. The exact 3,520-byte outer result is independently
+verified in Python and Zig.
 Provider, stateful,
 streaming, batched, preemptible, device-backed, live-service, and OS-isolated
 real-credential profiles, direct physical CPU/device adapters, retained
@@ -381,8 +388,30 @@ Results from different modes are not merged into one headline number.
     complete driver reclamation, physical device loss, performance, or direct
     GPU telemetry. See the
     [Native Metal in-flight process-kill report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md).
-  - [ ] **W7b-b — Remaining broader disruption.** Add bounded supervisor and
-    recovery-process interruption, active-kernel and adapter-loss,
+  - [x] **W7b-b5 — Supervisor and recovery-process death at durable
+    boundaries.** Worker one completes ordinals `0..5`, exits cleanly, and is
+    reaped before the supervisor synchronizes generation six, holds the
+    exclusive store lock, and publishes a private pre-ready handoff. The
+    controller validates that handoff, proves contention, and returns a
+    challenge-bound acknowledgement before the supervisor emits its exact
+    public ready frame. It then sends real PID-only `SIGKILL`, requires `-9`
+    and EOF, derives the resume grant, and starts a fresh shared-lock
+    generation-six audit whose frame binds it. The grant is withheld from
+    recovery until that audit passes; worker two then completes ordinals
+    `6..11`. Its recovery
+    process keeps generation eleven active while synchronizing generation-twelve
+    immutable objects and the exact 192-byte selector temporary. After worker
+    two exits cleanly, the controller repeats the real kill. A separately
+    authorized fresh process performs only the exact `11 -> 12` roll-forward
+    before a final fresh audit. The complete 3,520-byte report binds both ready
+    frames, kill receipts, audits, grants, store roots, identities, and fixed
+    1,200-command/1,200-CPU-oracle campaign and passes independent Python and
+    Zig verification. Locks, file writes, hard links, replacements, and
+    `fsync` calls are real; ready barriers, kill timing, publication pause,
+    and grants are controlled. See the
+    [Native Metal supervisor and recovery-process death report](NATIVE_METAL_SUPERVISOR_RECOVERY_DEATH_REPORT.md).
+  - [ ] **W7b-b — Remaining broader disruption.** Add the broader bounded
+    supervisor/recovery interruption matrix, active-kernel and adapter-loss,
     physical storage/power, and
     physical-device fault schedules with explicit
     synthetic-versus-physical provenance. Include prepared-text repeated
@@ -672,6 +701,38 @@ complete verification. See the
 This gate does not prove active-kernel interruption, output recovery, state
 preservation, or complete driver reclamation.
 
+Run the W7b-b5 portable report and bounded host protocol without GPU work:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-supervisor-recovery-death-report-test \
+  native-supervisor-recovery-death-host-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
+Compile its native frontier without starting a device process:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-supervisor-recovery-death-report-compile \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+Run the focused W7b-b5 hard gate:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-supervisor-recovery-death-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+Add `-Dnative-metal-supervisor-recovery-death-output-dir=PATH` to retain the
+private verified report-and-store directory. The gate completes 1,200 real
+Metal commands against 1,200 CPU oracles, sends two real PID-only `SIGKILL`
+operations only after the corresponding worker is cleanly reaped, and accepts
+only the fresh generation-six audit and exact `11 -> 12` roll-forward. See the
+[Native Metal supervisor and recovery-process death report](NATIVE_METAL_SUPERVISOR_RECOVERY_DEATH_REPORT.md).
+
 Run the W7b-a segmented production-native Metal soak separately:
 
 ```sh
@@ -706,6 +767,19 @@ verified boundary; the second worker uses a fresh Metal backend. See
 [Native Metal process-kill recovery report](NATIVE_METAL_PROCESS_KILL_REPORT.md).
 This gate does not interrupt a GPU command, recover process-local state, or
 model device removal.
+
+Run the full native Metal suite in its fixed hardware order:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build native-metal-suite-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j1
+```
+
+Affected-path verification completes `native-metal-suite-compile` first. That
+shared frontier builds every suite artifact and performs every static check
+before the first suite device process starts. The serialized hardware phase
+then reuses the same graph and private caches, avoiding repeated compilation
+through separate cold invocations.
 
 When retention is requested from the serialized `native-metal-suite-test`, use
 `-Dnative-metal-suite-report-output=PATH`. It is mutually exclusive with the
@@ -765,4 +839,5 @@ and nonclaims. See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md),
 [Native Workload Report](NATIVE_WORKLOAD_REPORT.md),
 [Native Metal Process-Kill Recovery Report](NATIVE_METAL_PROCESS_KILL_REPORT.md),
 [Native Metal In-Flight Process-Kill Report](NATIVE_METAL_INFLIGHT_PROCESS_KILL_REPORT.md),
+[Native Metal Supervisor and Recovery-Process Death Report](NATIVE_METAL_SUPERVISOR_RECOVERY_DEATH_REPORT.md),
 and [Benchmark and Evidence Guide](BENCHMARKS.md) for the existing foundations.

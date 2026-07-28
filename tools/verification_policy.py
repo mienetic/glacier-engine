@@ -160,6 +160,8 @@ METAL_NATIVE_SOURCE_PATHS = {
     "examples/native_metal_cancellation_storm_report.zig",
     "examples/native_metal_disruption_report.zig",
     "examples/native_metal_inflight_process_kill_worker.zig",
+    "bench/native_metal_supervisor_recovery_death_campaign.py",
+    "bench/tests/test_native_metal_supervisor_recovery_death_protocol.py",
     "examples/native_metal_observation.zig",
     "examples/native_metal_soak_worker.zig",
     "examples/native_metal_workload_report.zig",
@@ -202,17 +204,21 @@ DURABLE_RUNTIME_PROFILE_PATHS = {
 }
 
 WORKLOAD_REPORT_PORTABLE_PATHS = {
+    "src/core/native_metal_supervisor_recovery_death_report.zig",
     "src/core/native_workload_campaign_manifest.zig",
     "src/core/native_workload_report.zig",
     "src/core/native_workload_store_fault_report.zig",
+    "examples/native_metal_supervisor_recovery_death_report.zig",
     "examples/native_workload_report.zig",
     "examples/native_workload_store_fault_report.zig",
+    "bench/native_metal_supervisor_recovery_death_report.py",
     "bench/native_workload_campaign.py",
     "bench/native_workload_report.py",
     "bench/native_workload_store_fault_report.py",
     "bench/tests/test_native_workload_campaign.py",
     "bench/tests/test_native_workload_report.py",
     "bench/tests/test_native_workload_store_fault_report.py",
+    "bench/tests/test_native_metal_supervisor_recovery_death_report.py",
 }
 
 WORKLOAD_STORE_FAULT_POSIX_PATHS = {
@@ -589,10 +595,13 @@ def _decision_for_path(path: str) -> PathDecision:
         )
 
     if path in METAL_NATIVE_SOURCE_PATHS:
+        native_metal_flags = {"metal-native"}
+        if suffix == ".py":
+            native_metal_flags.update({"python-changed", "python-full"})
         return PathDecision(
             path,
             "audited native Metal implementation or consumer changed",
-            frozenset({"metal-native"}),
+            frozenset(native_metal_flags),
             (),
         )
 

@@ -674,7 +674,10 @@ if [ "$profile" = "affected" ] &&
             native-workload-campaign-cross-compile \
             native-workload-store-fault-report-test \
             native-workload-store-fault-report-compile \
-            native-workload-store-fault-report-cross-compile
+            native-workload-store-fault-report-cross-compile \
+            native-supervisor-recovery-death-report-test \
+            native-supervisor-recovery-death-report-compile \
+            native-supervisor-recovery-death-report-cross-compile
     else
         record_skip "portable/workload-report" \
             "requires working zig and python3 executables"
