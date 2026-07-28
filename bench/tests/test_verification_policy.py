@@ -104,11 +104,31 @@ EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
     {
         "src/core/native_workload_campaign_manifest.zig",
         "src/core/native_workload_report.zig",
+        "src/core/native_workload_store_fault_report.zig",
         "examples/native_workload_report.zig",
+        "examples/native_workload_store_fault_report.zig",
         "bench/native_workload_campaign.py",
         "bench/native_workload_report.py",
+        "bench/native_workload_store_fault_report.py",
         "bench/tests/test_native_workload_campaign.py",
         "bench/tests/test_native_workload_report.py",
+        "bench/tests/test_native_workload_store_fault_report.py",
+    }
+)
+
+EXPECTED_WORKLOAD_STORE_FAULT_POSIX_PATHS = frozenset(
+    {
+        "bench/native_metal_soak_report.py",
+        "bench/native_workload_store_fault_campaign.py",
+        "bench/tests/test_native_metal_soak_report.py",
+        "bench/tests/test_native_workload_store_fault_campaign.py",
+    }
+)
+
+EXPECTED_WORKLOAD_STORE_FAULT_METAL_PATHS = frozenset(
+    {
+        "bench/native_metal_soak_report.py",
+        "bench/tests/test_native_metal_soak_report.py",
     }
 )
 
@@ -228,11 +248,21 @@ class VerificationPolicyTests(unittest.TestCase):
             (),
         )
         self.assertEqual(plan.flags, frozenset({"metal-native"}))
-        for changed_path in (
-            "bench/native_metal_soak_report.py",
-            "bench/tests/test_native_metal_soak_protocol.py",
-            "bench/tests/test_native_metal_soak_report.py",
-        ):
+        plan = self.assert_targets(
+            ["bench/tests/test_native_metal_soak_protocol.py"],
+            (),
+        )
+        self.assertEqual(
+            plan.flags,
+            frozenset(
+                {
+                    "python-changed",
+                    "python-full",
+                    "metal-native",
+                }
+            ),
+        )
+        for changed_path in sorted(EXPECTED_WORKLOAD_STORE_FAULT_METAL_PATHS):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
                 self.assertEqual(
@@ -242,6 +272,7 @@ class VerificationPolicyTests(unittest.TestCase):
                             "python-changed",
                             "python-full",
                             "metal-native",
+                            "workload-store-fault-posix",
                         }
                     ),
                 )
@@ -258,6 +289,9 @@ class VerificationPolicyTests(unittest.TestCase):
                 self.assertTrue(plan.requires("python-full"))
                 if changed_path == "build.zig":
                     self.assertTrue(plan.requires("metal-native"))
+                    self.assertTrue(
+                        plan.requires("workload-store-fault-posix")
+                    )
                 self.assertEqual(
                     tuple(
                         policy.TargetBuildPlan(
@@ -482,6 +516,55 @@ class VerificationPolicyTests(unittest.TestCase):
                 gate_names = policy._gate_names(plan.decisions[0])
                 self.assertIn("portable/workload-report", gate_names)
                 self.assertNotIn("native/metal", gate_names)
+                self.assertNotIn(
+                    "native/workload-store-fault",
+                    gate_names,
+                )
+
+    def test_workload_store_fault_paths_select_the_native_posix_gate(self):
+        self.assertEqual(
+            EXPECTED_WORKLOAD_STORE_FAULT_POSIX_PATHS,
+            policy.WORKLOAD_STORE_FAULT_POSIX_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_WORKLOAD_STORE_FAULT_METAL_PATHS,
+            policy.WORKLOAD_STORE_FAULT_METAL_PATHS,
+        )
+        for changed_path in sorted(
+            EXPECTED_WORKLOAD_STORE_FAULT_POSIX_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                expected_flags = {
+                    "python-changed",
+                    "workload-store-fault-posix",
+                }
+                if changed_path in EXPECTED_WORKLOAD_STORE_FAULT_METAL_PATHS:
+                    expected_flags.update({"metal-native", "python-full"})
+                self.assertEqual(frozenset(expected_flags), plan.flags)
+                self.assertFalse(plan.requires("native-full"))
+                gate_names = policy._gate_names(plan.decisions[0])
+                self.assertIn("native/workload-store-fault", gate_names)
+                self.assertNotIn("portable/workload-report", gate_names)
+
+    def test_workload_store_fault_codec_and_campaign_union_both_gates(self):
+        plan = self.assert_targets(
+            [
+                "bench/native_workload_store_fault_report.py",
+                "bench/native_workload_store_fault_campaign.py",
+            ],
+            (),
+        )
+        self.assertEqual(
+            frozenset(
+                {
+                    "python-changed",
+                    "workload-report-portable",
+                    "workload-store-fault-posix",
+                }
+            ),
+            plan.flags,
+        )
 
     def test_workload_report_path_near_misses_fail_closed(self):
         cases = {
@@ -772,6 +855,9 @@ class VerificationPolicyTests(unittest.TestCase):
         )
         self.assertTrue(shell_plan.requires("shell-changed"))
         self.assertTrue(shell_plan.requires("native-full"))
+        self.assertTrue(
+            shell_plan.requires("workload-store-fault-posix")
+        )
 
         python_plan = self.assert_targets(
             ["tools/verification_policy.py"],
@@ -779,6 +865,9 @@ class VerificationPolicyTests(unittest.TestCase):
         )
         self.assertTrue(python_plan.requires("python-changed"))
         self.assertTrue(python_plan.requires("native-full"))
+        self.assertTrue(
+            python_plan.requires("workload-store-fault-posix")
+        )
 
         wrapper_plan = self.assert_targets(
             ["tools/zig-with-ephemeral-cache.sh"],
@@ -794,13 +883,23 @@ class VerificationPolicyTests(unittest.TestCase):
             "Tools/Verification_Policy.py": (
                 policy.RETAINED_TARGETS,
                 frozenset(
-                    {"native-full", "python-changed", "python-full"}
+                    {
+                        "native-full",
+                        "python-changed",
+                        "python-full",
+                        "workload-store-fault-posix",
+                    }
                 ),
             ),
             "Tools/Verify.SH": (
                 policy.RETAINED_TARGETS,
                 frozenset(
-                    {"native-full", "python-full", "shell-changed"}
+                    {
+                        "native-full",
+                        "python-full",
+                        "shell-changed",
+                        "workload-store-fault-posix",
+                    }
                 ),
             ),
             "Tools/Zig-With-Ephemeral-Cache.SH": (
@@ -810,7 +909,12 @@ class VerificationPolicyTests(unittest.TestCase):
             "Build.zig": (
                 policy.RETAINED_TARGETS,
                 frozenset(
-                    {"metal-native", "native-full", "python-full"}
+                    {
+                        "metal-native",
+                        "native-full",
+                        "python-full",
+                        "workload-store-fault-posix",
+                    }
                 ),
             ),
         }
@@ -832,6 +936,32 @@ class VerificationPolicyTests(unittest.TestCase):
         )
         self.assertIn('"install-benchmarks"', source)
         self.assertIn('"native-metal-correctness-test"', source)
+        self.assertEqual(
+            1,
+            source.count('"native-workload-store-fault-test"'),
+        )
+        self.assertIn(
+            "test_step.dependOn("
+            "native_workload_store_fault_report_test_step)",
+            source,
+        )
+        self.assertIn(
+            "native_workload_store_fault_report_test_step.dependOn(\n"
+            "        &run_native_workload_store_fault_report_verifier_tests.step,\n"
+            "    )",
+            source,
+        )
+        self.assertIn(
+            "native_workload_store_fault_report_compile_step.dependOn(\n"
+            "        &native_workload_store_fault_report_verifier_tests.step,\n"
+            "    )",
+            source,
+        )
+        self.assertNotIn(
+            "test_step.dependOn("
+            "native_workload_store_fault_test_step)",
+            source,
+        )
         self.assertEqual(1, source.count("b.installArtifact("))
         self.assertNotIn(
             "run_cmd.step.dependOn(b.getInstallStep())",
@@ -1336,6 +1466,19 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             timeout=30,
         )
 
+    def run_full(self, repository, environment):
+        return subprocess.run(
+            (
+                str(repository / "tools" / "verify.sh"),
+                "full",
+            ),
+            cwd=repository,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
     def test_native_metal_gate_compiles_device_consumers_in_same_graph(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -1426,10 +1569,21 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                     "native-workload-campaign-test "
                     "native-workload-campaign-compile "
                     "native-workload-campaign-cross-compile "
+                    "native-workload-store-fault-report-test "
+                    "native-workload-store-fault-report-compile "
+                    "native-workload-store-fault-report-cross-compile "
                 )
             ]
             self.assertEqual(1, len(report_calls), report_calls)
             self.assertIn("-Dmetal=false ", report_calls[0])
+            self.assertNotIn(
+                "native-workload-store-fault-pure-test",
+                report_calls[0],
+            )
+            self.assertNotIn(
+                " native-workload-store-fault-test ",
+                report_calls[0],
+            )
             self.assertFalse(
                 any("native-metal-suite-test" in line for line in calls),
                 calls,
@@ -1437,6 +1591,106 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertFalse(
                 any(" -Dtarget=" in line for line in calls),
                 calls,
+            )
+
+    def test_store_fault_campaign_and_store_changes_select_hard_gate(self):
+        for changed_path in (
+            "bench/native_workload_store_fault_campaign.py",
+            "bench/native_metal_soak_report.py",
+        ):
+            with self.subTest(changed_path=changed_path):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    repository, merge_base, environment = (
+                        self.make_repository(root)
+                    )
+                    path = repository / changed_path
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("", encoding="ascii")
+
+                    result = self.run_verify(
+                        repository,
+                        merge_base,
+                        environment,
+                    )
+
+                    self.assertEqual(
+                        0,
+                        result.returncode,
+                        result.stdout + result.stderr,
+                    )
+                    self.assertIn(
+                        "PASS  native/workload-store-fault:",
+                        result.stdout,
+                    )
+                    self.assertNotIn(
+                        "PASS  portable/workload-report:",
+                        result.stdout,
+                    )
+                    calls = Path(
+                        environment["VERIFY_INTEGRATION_ZIG_LOG"]
+                    ).read_text(encoding="ascii").splitlines()
+                    hard_calls = [
+                        line
+                        for line in calls
+                        if line.startswith(
+                            "build native-workload-store-fault-test "
+                        )
+                    ]
+                    self.assertEqual(1, len(hard_calls), hard_calls)
+                    self.assertIn("-Dmetal=false ", hard_calls[0])
+                    self.assertFalse(
+                        any(" -Dtarget=" in line for line in hard_calls),
+                        hard_calls,
+                    )
+
+    def test_store_fault_gate_has_explicit_native_availability(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            campaign_path = (
+                repository / "bench" / "native_workload_store_fault_campaign.py"
+            )
+            campaign_path.write_text("", encoding="ascii")
+            uname = root / "fake-bin" / "uname"
+            self.make_fake_command(uname, "printf 'Darwin\\n'\n")
+
+            darwin = self.run_verify(repository, merge_base, environment)
+            self.assertEqual(
+                0,
+                darwin.returncode,
+                darwin.stdout + darwin.stderr,
+            )
+            self.assertIn(
+                "PASS  native/workload-store-fault:",
+                darwin.stdout,
+            )
+
+            self.make_fake_command(uname, "printf 'TestOS\\n'\n")
+            ordinary = self.run_verify(repository, merge_base, environment)
+            self.assertEqual(
+                0,
+                ordinary.returncode,
+                ordinary.stdout + ordinary.stderr,
+            )
+            self.assertIn(
+                "SKIP  native/workload-store-fault: requires native "
+                "Darwin, Linux, or FreeBSD POSIX execution",
+                ordinary.stdout,
+            )
+
+            strict_environment = dict(environment)
+            strict_environment["GLACIER_VERIFY_REQUIRE_NATIVE"] = "1"
+            strict = self.run_verify(
+                repository,
+                merge_base,
+                strict_environment,
+            )
+            self.assertNotEqual(0, strict.returncode)
+            self.assertIn(
+                "FAIL  native/workload-store-fault: requires native "
+                "Darwin, Linux, or FreeBSD POSIX execution",
+                strict.stdout,
             )
 
     def test_shell_rejects_unknown_or_out_of_order_policy_targets(self):
@@ -1816,6 +2070,53 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                     for line in target_calls
                 ),
                 target_calls,
+            )
+            self.assertIn(
+                "PASS  native/workload-store-fault:",
+                result.stdout,
+            )
+            all_calls = Path(
+                environment["VERIFY_INTEGRATION_ZIG_LOG"]
+            ).read_text(encoding="ascii").splitlines()
+            self.assertEqual(
+                1,
+                sum(
+                    line.startswith(
+                        "build native-workload-store-fault-test "
+                    )
+                    for line in all_calls
+                ),
+                all_calls,
+            )
+
+    def test_full_profile_includes_the_hard_store_fault_gate(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, _, environment = self.make_repository(root)
+
+            result = self.run_full(repository, environment)
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  native/workload-store-fault:",
+                result.stdout,
+            )
+            calls = Path(
+                environment["VERIFY_INTEGRATION_ZIG_LOG"]
+            ).read_text(encoding="ascii").splitlines()
+            self.assertEqual(
+                1,
+                sum(
+                    line.startswith(
+                        "build native-workload-store-fault-test "
+                    )
+                    for line in calls
+                ),
+                calls,
             )
 
     def test_posix_reuses_native_suite_for_darwin_evidence(self):

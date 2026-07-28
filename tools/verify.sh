@@ -10,7 +10,7 @@ usage: tools/verify.sh [quick|full|matrix]
        GLACIER_VERIFY_REQUIRE_NATIVE=1 tools/verify.sh affected --base REV
 
 quick  Run bounded format, documentation-policy, package, and interop gates.
-full   Add the broad native ReleaseSafe and Python suites plus optional Rust.
+full   Add broad ReleaseSafe/Python, native POSIX store-fault, and optional Rust.
 affected
        Select the union of host and cross-target gates for every path changed
        since the merge base with REV. --base overrides GLACIER_VERIFY_BASE.
@@ -617,7 +617,10 @@ if [ "$profile" = "affected" ] &&
             native-workload-report-cross-compile \
             native-workload-campaign-test \
             native-workload-campaign-compile \
-            native-workload-campaign-cross-compile
+            native-workload-campaign-cross-compile \
+            native-workload-store-fault-report-test \
+            native-workload-store-fault-report-compile \
+            native-workload-store-fault-report-cross-compile
     else
         record_skip "portable/workload-report" \
             "requires working zig and python3 executables"
@@ -672,6 +675,39 @@ fi
 
 host_name=$(uname -s 2>/dev/null || printf unknown)
 host_arch=$(uname -m 2>/dev/null || printf unknown)
+run_workload_store_fault=0
+case "$profile" in
+    full | matrix)
+        run_workload_store_fault=1
+        ;;
+    affected)
+        if [ "$affected_plan_ready" -eq 1 ] &&
+            plan_has "workload-store-fault-posix"; then
+            run_workload_store_fault=1
+        fi
+        ;;
+esac
+
+if [ "$run_workload_store_fault" -eq 1 ]; then
+    case "$host_name" in
+        Darwin | Linux | FreeBSD)
+            if [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
+                run_gate "native/workload-store-fault" \
+                    run_zig_build native-workload-store-fault-test
+            else
+                record_native_unavailable \
+                    "native/workload-store-fault" \
+                    "requires working zig and python3 executables"
+            fi
+            ;;
+        *)
+            record_native_unavailable \
+                "native/workload-store-fault" \
+                "requires native Darwin, Linux, or FreeBSD POSIX execution"
+            ;;
+    esac
+fi
+
 run_rust_gate=0
 require_rust_gate=0
 case "$profile" in

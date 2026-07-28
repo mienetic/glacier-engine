@@ -50,6 +50,8 @@ pub const native_workload_report =
     @import("native_workload_report.zig");
 pub const native_workload_campaign_manifest =
     @import("native_workload_campaign_manifest.zig");
+pub const native_workload_store_fault_report =
+    @import("native_workload_store_fault_report.zig");
 pub const tool_action_contract =
     @import("tool_action_contract.zig");
 pub const tool_action_harness =
@@ -216,6 +218,8 @@ pub const NativeObservationRunner = native_observation_runner;
 pub const NativeWorkloadReport = native_workload_report;
 pub const NativeWorkloadCampaignManifest =
     native_workload_campaign_manifest;
+pub const NativeWorkloadStoreFaultReport =
+    native_workload_store_fault_report;
 pub const ToolActionContract = tool_action_contract;
 pub const ToolActionHarness = tool_action_harness.Harness;
 pub const ToolActionOutboxRecord = tool_action_outbox_record;

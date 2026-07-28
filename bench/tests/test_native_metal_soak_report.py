@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 from unittest import mock
@@ -477,7 +479,13 @@ class NativeMetalSoakReportTests(unittest.TestCase):
         entry = campaign.make_entry(plan, value)
 
         with tempfile.TemporaryDirectory() as directory:
-            store = soak.CampaignStore(directory)
+            io_events: list[tuple[str, str, str]] = []
+            store = soak.CampaignStore(
+                directory,
+                io_hook=lambda timing, object_kind, operation: (
+                    io_events.append((timing, object_kind, operation))
+                ),
+            )
             try:
                 environment_before = store.write_environment(
                     environment_snapshot
@@ -495,6 +503,16 @@ class NativeMetalSoakReportTests(unittest.TestCase):
                     plan,
                     [entry],
                     environment_root,
+                )
+                self.assertEqual(
+                    io_events,
+                    [
+                        (timing, object_kind, operation)
+                        for object_kind, operation in (
+                            soak.STORE_PUBLICATION_PHASES
+                        )
+                        for timing in ("before", "after")
+                    ],
                 )
                 manifest = campaign.verify_manifest(manifest_wire)
                 selector = campaign.verify_selector(
@@ -516,6 +534,52 @@ class NativeMetalSoakReportTests(unittest.TestCase):
                     metallib,
                 )
                 self.assertEqual(entry, reopened["entries"][0])
+                environment_directory = (
+                    Path(directory) / "environments"
+                )
+                displaced_environment_directory = (
+                    Path(directory) / "displaced-environments"
+                )
+                descriptor_resolver = (
+                    soak._resolve_environment_evidence_at
+                )
+                descriptor_resolver_calls = 0
+
+                def swap_and_restore_environment_namespace(
+                    *args: object,
+                    **kwargs: object,
+                ) -> tuple[bytes, bytes]:
+                    nonlocal descriptor_resolver_calls
+                    descriptor_resolver_calls += 1
+                    environment_directory.rename(
+                        displaced_environment_directory
+                    )
+                    environment_directory.mkdir(mode=0o700)
+                    try:
+                        return descriptor_resolver(*args, **kwargs)
+                    finally:
+                        environment_directory.rmdir()
+                        displaced_environment_directory.rename(
+                            environment_directory
+                        )
+
+                with mock.patch.object(
+                    soak,
+                    "_resolve_environment_evidence_at",
+                    side_effect=swap_and_restore_environment_namespace,
+                ):
+                    reopened_after_swap, _ = store.recover(
+                        plan,
+                        1,
+                        environment_root,
+                        worker,
+                        metallib,
+                    )
+                self.assertEqual(1, descriptor_resolver_calls)
+                self.assertEqual(
+                    entry,
+                    reopened_after_swap["entries"][0],
+                )
                 (
                     Path(directory)
                     / "environments"
@@ -629,7 +693,7 @@ class NativeMetalSoakReportTests(unittest.TestCase):
             finally:
                 store.close()
 
-    def test_failed_postpublication_bound_check_restores_selector(
+    def test_postcommit_error_keeps_successor_and_poisons_writer(
         self,
     ) -> None:
         worker = _digest(b"rollback-worker")
@@ -709,23 +773,54 @@ class NativeMetalSoakReportTests(unittest.TestCase):
                 store.publish(plan, [entry], environment_root)
                 active = Path(directory) / soak.ACTIVE_SELECTOR_NAME
                 previous_selector = active.read_bytes()
-                with mock.patch.object(
-                    store,
-                    "_enforce_bound",
-                    side_effect=soak.NativeMetalSoakError(
-                        "injected postpublication bound failure"
-                    ),
-                ):
-                    with self.assertRaisesRegex(
-                        soak.NativeMetalSoakError,
-                        "injected",
+
+                def fail_after_root_sync(
+                    timing: str,
+                    object_kind: str,
+                    operation: str,
+                ) -> None:
+                    if (
+                        timing,
+                        object_kind,
+                        operation,
+                    ) == (
+                        "after",
+                        "store_root",
+                        "directory_fsync",
                     ):
-                        store.publish(
-                            plan,
-                            [forged_entry],
-                            environment_root,
-                        )
-                self.assertEqual(previous_selector, active.read_bytes())
+                        raise OSError(errno.EIO, "injected postcommit error")
+
+                store.io_hook = fail_after_root_sync
+                with self.assertRaisesRegex(OSError, "postcommit"):
+                    store.publish(
+                        plan,
+                        [forged_entry],
+                        environment_root,
+                    )
+                self.assertNotEqual(
+                    previous_selector,
+                    active.read_bytes(),
+                )
+                self.assertEqual(
+                    campaign.verify_manifest(
+                        (
+                            Path(directory)
+                            / "manifests"
+                            / (
+                                campaign.decode_selector(
+                                    active.read_bytes()
+                                )["manifest_sha256"].hex()
+                                + ".bin"
+                            )
+                        ).read_bytes()
+                    )["entries"][0],
+                    forged_entry,
+                )
+                with self.assertRaisesRegex(
+                    soak.NativeMetalSoakError,
+                    "poisoned",
+                ):
+                    store.write_segment(wire)
             finally:
                 store.close()
 
@@ -931,6 +1026,51 @@ class NativeMetalSoakReportTests(unittest.TestCase):
                     output,
                 )
 
+    def test_replaced_root_cannot_redirect_locked_writer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "store"
+            displaced = base / "displaced-store"
+            first = soak.CampaignStore(root)
+            try:
+                root.rename(displaced)
+                second = soak.CampaignStore(root)
+                try:
+                    replacement_names = sorted(
+                        path.relative_to(root)
+                        for path in root.rglob("*")
+                    )
+                    with self.assertRaisesRegex(
+                        soak.NativeMetalSoakError,
+                        "root namespace changed",
+                    ):
+                        first.write_environment({"owner": "first"})
+                    self.assertTrue(first.poisoned)
+                    self.assertEqual(
+                        replacement_names,
+                        sorted(
+                            path.relative_to(root)
+                            for path in root.rglob("*")
+                        ),
+                    )
+                    self.assertEqual(
+                        [],
+                        list((displaced / "environments").iterdir()),
+                    )
+
+                    digest = second.write_environment({"owner": "second"})
+                    self.assertTrue(
+                        (
+                            root
+                            / "environments"
+                            / (digest.hex() + ".json")
+                        ).is_file()
+                    )
+                finally:
+                    second.close()
+            finally:
+                first.close()
+
     def test_store_rejects_symlinked_object_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "store"
@@ -938,11 +1078,19 @@ class NativeMetalSoakReportTests(unittest.TestCase):
             root.mkdir()
             target.mkdir()
             os.symlink(target, root / "segments")
+            before_mode = stat.S_IMODE(root.lstat().st_mode)
+            before_names = {path.name for path in root.iterdir()}
             with self.assertRaisesRegex(
                 soak.NativeMetalSoakError,
                 "object directory",
             ):
                 soak.CampaignStore(root)
+            self.assertEqual(before_mode, stat.S_IMODE(root.lstat().st_mode))
+            self.assertEqual(
+                before_names,
+                {path.name for path in root.iterdir()},
+            )
+            self.assertFalse((root / soak.LOCK_NAME).exists())
 
     def test_store_rejects_preexisting_active_selector_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -951,11 +1099,19 @@ class NativeMetalSoakReportTests(unittest.TestCase):
                 root / "missing-selector-target",
                 root / soak.ACTIVE_SELECTOR_NAME,
             )
+            before_mode = stat.S_IMODE(root.lstat().st_mode)
+            before_names = {path.name for path in root.iterdir()}
             with self.assertRaisesRegex(
                 soak.NativeMetalSoakError,
                 "active selector",
             ):
                 soak.CampaignStore(root)
+            self.assertEqual(before_mode, stat.S_IMODE(root.lstat().st_mode))
+            self.assertEqual(
+                before_names,
+                {path.name for path in root.iterdir()},
+            )
+            self.assertFalse((root / soak.LOCK_NAME).exists())
 
 
 if __name__ == "__main__":

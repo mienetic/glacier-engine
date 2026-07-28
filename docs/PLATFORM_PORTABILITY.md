@@ -39,7 +39,7 @@ surface.
 
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
-| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox initialization/append/repair campaign | Portable Zig fake/state tests and an independent Python oracle model deterministic device contracts without a GPU; the native gates use a real `MTLDevice` and real `MTLBuffer` resources, submit and verify one fixed 37x64 INT4 readiness branch, retain zero-command reject/cancel branches, and exercise two disjoint native commands with deliberate out-of-order settlement after both complete, but no device support range is declared | Development host, not a broad platform certification |
+| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox campaign and the W7b-b2 production-publisher/reference-recovery campaign-store gate across 27 real writer deaths, 54 controlled errno cases, and one clean control; physical storage and power-loss evidence remain absent | Portable Zig fake/state tests and an independent Python oracle model deterministic device contracts without a GPU; the native gates use a real `MTLDevice` and real `MTLBuffer` resources, submit and verify one fixed 37x64 INT4 readiness branch, retain zero-command reject/cancel branches, and exercise two disjoint native commands with deliberate out-of-order settlement after both complete, but no device support range is declared | Development host, not a broad platform certification |
 | Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is implemented; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is architecture-neutral; native smoke is not retained | Native Linux filesystem campaign is pending | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
@@ -273,6 +273,17 @@ foreign binaries were compiled, not run. This establishes source and build
 portability only; it exercises no native filesystem recovery, mutex
 interleaving, credential backend, sandbox, service process, or external I/O on
 those targets.
+
+On 2026-07-28, the accelerator-independent POSIX-host W7b-b2 gate ran the
+production campaign-store publisher on the macOS development host. It used real
+subprocesses, advisory locking, native filesystem calls, and 27 writer
+`SIGKILL` deaths, followed by fresh-process reference prepared roll-forward and
+strict verification. Its 54 `EIO` and `ENOSPC` cases are deterministic
+software injection. The gate runs no model or GPU command and does not
+establish a general production recovery API, physical disk exhaustion,
+controller/media failure, power-loss persistence, or native recovery on
+another OS. The report-codec tests and standalone Zig report verifier also
+cross-compile, but foreign compilation is not native filesystem evidence.
 
 The build graph now also provides `native-observation-cross-compile` for
 Linux x86_64/AArch64 GNU, Windows x86_64 GNU, and FreeBSD x86_64. It compiles
@@ -580,6 +591,8 @@ Every promoted target must retain artifacts for the relevant gates.
 - fresh-process resume and hard-termination campaigns run natively;
 - torn body/footer, stale generation, namespace replacement, and lock
   contention are retained;
+- logical publication-call injection is labeled separately from physical
+  storage failure; and
 - initial publication and storage-device power loss remain separate campaigns.
 
 ### G5 — accelerator correctness

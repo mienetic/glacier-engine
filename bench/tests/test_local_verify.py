@@ -240,9 +240,14 @@ class LocalVerifyTests(unittest.TestCase):
             self.assertIn("PASS  native/releasesafe-suite:", result.stdout)
             self.assertIn("PASS  python/full-suite:", result.stdout)
             self.assertIn(
+                "SKIP  native/workload-store-fault: requires native "
+                "Darwin, Linux, or FreeBSD POSIX execution",
+                result.stdout,
+            )
+            self.assertIn(
                 "SKIP  interop/rust: unsupported host", result.stdout
             )
-            self.assertIn("Summary: 8 PASS, 4 SKIP, 0 FAIL", result.stdout)
+            self.assertIn("Summary: 8 PASS, 5 SKIP, 0 FAIL", result.stdout)
 
             log = (root / "tool.log").read_text(encoding="utf-8")
             self.assertIn("zig|args=build test ", log)

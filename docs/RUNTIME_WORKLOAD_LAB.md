@@ -328,9 +328,25 @@ Results from different modes are not merged into one headline number.
     This is real post-segment OS process-death evidence, not an in-flight
     command, supervisor-crash, driver-reclamation, or physical-device recovery
     claim.
+  - [x] **W7b-b2 — Production store publication faults.** A
+    accelerator-independent POSIX-host prepared generation transition runs
+    through 27 ordered publication calls spanning environment, report,
+    manifest, selector, and store-root objects. The hard matrix sends real
+    `SIGKILL` after each call, separately returns controlled `EIO` and `ENOSPC`
+    before each call, and runs one clean control. Every case uses
+    two fresh recovery processes plus a fresh strict verifier; unknown residue,
+    corrupt objects, symlinks, foreign hard links, selector substitution, lock
+    contention, and directory-namespace replacement fail closed. The
+    81-fault binary report has independent Zig/Python verification. This runs
+    real host processes and filesystem calls but no model or GPU command;
+    injected errno is not physical storage failure. Publication uses the
+    production store writer; prepared roll-forward remains bounded campaign
+    reference code rather than a general production recovery API. See the
+    [Native workload store-fault report](NATIVE_WORKLOAD_STORE_FAULT_REPORT.md).
   - [ ] **W7b-b — Remaining broader disruption.** Add bounded supervisor and
-    in-flight-command kill, storage-pressure, cancellation-storm, adapter-loss,
-    and physical-device fault schedules with explicit
+    in-flight-command kill, recovery-process interruption,
+    cancellation-storm, adapter-loss, physical storage/power, and
+    physical-device fault schedules with explicit
     synthetic-versus-physical provenance. Include prepared-text repeated
     handoff, source/target death, idempotent sink replay, selector corruption,
     and lease contention without relabelling fail-closed unavailability as

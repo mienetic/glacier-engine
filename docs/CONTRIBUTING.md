@@ -71,7 +71,10 @@ narrow change never hides the checks required by another changed path.
 | --- | --- |
 | Documentation or metadata only | Quick profile, links, spelling/manual review |
 | GitHub workflow, action, or dependency automation | Quick gates, native ReleaseSafe, Python discovery, and every retained target |
-| Python verifier, harness, or retained result | Changed-file Python syntax and full Python unittest discovery; no foreign Zig target |
+| Python verifier, harness, or retained result without a focused gate below | Changed-file Python syntax and full Python unittest discovery; no foreign Zig target |
+| Portable workload report/campaign codec, verifier, or focused test | Changed-file Python syntax where applicable plus the portable workload report test, native compile, and four-target cross-compile gate; no hard native campaign unless another changed path selects one |
+| W7b-b2 store-fault campaign (`bench/native_workload_store_fault_campaign.py` and `bench/tests/test_native_workload_store_fault_campaign.py`) | Changed-file Python syntax plus the hard native POSIX store-fault gate on Darwin, Linux, or FreeBSD; no foreign Zig target |
+| Production campaign-store publisher (`bench/native_metal_soak_report.py` and `bench/tests/test_native_metal_soak_report.py`) | Changed-file Python syntax, full Python discovery, the hard native POSIX store-fault gate, and the serialized native Darwin Metal suite; no foreign Zig target |
 | POSIX shell script | Syntax under its declared `sh` or `bash` shebang |
 | Retained Rust interop consumer | Native Rust contract gate only; `rustc` is required, but foreign Zig targets cannot compile or validate this runtime consumer |
 | Other Rust build input | Native Rust contract gate, native ReleaseSafe, Python discovery, and every retained target until its build graph is classified |
@@ -84,14 +87,15 @@ narrow change never hides the checks required by another changed path.
 | Shared durable core/runtime implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
 | Audited durable recovery demo or worker | Native ReleaseSafe, Python discovery, and the durable profile on every retained target |
 | CLI or retained read-only inspector | Native ReleaseSafe, Python discovery, and the host-tool profile on every retained target |
-| Shared root, unclassified Zig/C/C++/header, or build input | Native ReleaseSafe, Python discovery, and the full production-install, benchmark-install, and test-compile roots on every retained target |
+| Shared root, unclassified Zig/C/C++/header, or other build input | Native ReleaseSafe, Python discovery, and the full production-install, benchmark-install, and test-compile roots on every retained target |
+| Zig build graph (`build.zig` or `build.zig.zon`) | Native ReleaseSafe, Python discovery, the hard native POSIX store-fault gate, the serialized native Darwin Metal suite, and the full production-install, benchmark-install, and test-compile roots on every retained target |
 | AArch64 NEON/CRC C kernel | Native ReleaseSafe with explicit Apple Silicon (`arm64`/`aarch64`) Darwin evidence, Python discovery, and the CPU plus downstream host-tool profiles on the retained AArch64 Linux target; Intel macOS and Rosetta report unavailable instead of reusing an unrelated x86_64 pass |
 | Linux-specific runtime | Native ReleaseSafe plus both retained Linux targets |
 | Windows-specific runtime | Native ReleaseSafe plus the retained Windows target |
 | FreeBSD-specific runtime | Native ReleaseSafe plus the retained FreeBSD target |
 | Shared POSIX runtime | Native ReleaseSafe, explicit Darwin evidence, both Linux targets, and FreeBSD; the Darwin label reuses the native suite instead of compiling twice |
 | Darwin- or macOS-specific runtime | Native Darwin ReleaseSafe tests; a non-Darwin skip is not passing evidence |
-| Metal backend | Serialized native Darwin Metal suite, including the production-native workload report, controlled-disruption campaign, 60-second segmented-soak campaign, production-symbol isolation, and the build-isolated fault/race gate; a non-Darwin skip is not passing evidence |
+| Metal backend | Serialized native Darwin Metal suite, including the production-native workload report, controlled-disruption campaign, 60-second segmented-soak campaign, post-segment process-kill campaign, production-symbol isolation, and the build-isolated fault/race gate; a non-Darwin skip is not passing evidence |
 | Unknown input under a code tree | Conservatively use every retained target |
 | Concurrency or locking | Zig modes above, ThreadSanitizer where supported, fault/recovery tests |
 | On-disk or wire ABI | Encoder/decoder tests, golden fixture, mutation/reorder/truncation tests, independent verifier |
@@ -133,6 +137,19 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dnative-metal-process-kill-output-dir=PATH
 
 tools/zig-with-ephemeral-cache.sh build \
+  native-workload-store-fault-pure-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+
+tools/zig-with-ephemeral-cache.sh build \
+  native-workload-store-fault-report-cross-compile \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+
+tools/zig-with-ephemeral-cache.sh build \
+  native-workload-store-fault-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2 \
+  -Dnative-workload-store-fault-output=PATH
+
+tools/zig-with-ephemeral-cache.sh build \
   native-metal-workload-report-test \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 
@@ -159,8 +176,10 @@ Changed `.sh` files must declare one of the retained `sh` or `bash` shebangs;
 syntax is checked by that interpreter. Changed Rust source makes the native
 Rust gate required rather than optional. On a non-Darwin host, selected Darwin
 and Metal gates remain visible `SKIP` results for ordinary contributor
-planning. CI and release verification should set
-`GLACIER_VERIFY_REQUIRE_NATIVE=1`, which turns either unavailable selected
+planning. The selected native POSIX store-fault gate runs on Darwin, Linux, or
+FreeBSD; other hosts likewise report it as unavailable. CI and release
+verification should set
+`GLACIER_VERIFY_REQUIRE_NATIVE=1`, which turns any unavailable selected
 native gate into `FAIL`.
 
 The retained cross-target set is:
@@ -215,6 +234,11 @@ unsupported unless a named observer supplies them. See the
 clean-restart gate and the
 [Native Metal Process-Kill Recovery Report](NATIVE_METAL_PROCESS_KILL_REPORT.md)
 for the W7b-b1 claim boundary.
+The separate
+[Native Workload Store-Fault Report](NATIVE_WORKLOAD_STORE_FAULT_REPORT.md)
+uses real host processes and filesystem calls with controlled errno injection;
+it runs no model or GPU command and grants no physical-storage or power-loss
+claim.
 Verification uses one protected temporary workspace, shared private Zig cache
 directories, temporary target prefixes, `-j2`, and repository fixtures only.
 No persistent repository cache is needed. The quick profile intentionally

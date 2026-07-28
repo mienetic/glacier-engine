@@ -784,8 +784,8 @@ reporting:
    CPU and device utilization, host/device memory separately, accelerator
    submit/device/synchronization timing, fallback status, power/thermal/energy
    when available, and output-quality policy.
-3. **Soak and disruption — W7a, W7b-a, and W7b-b1 implemented; remaining
-   W7b-b work is open.**
+3. **Soak and disruption — W7a, W7b-a, W7b-b1, and W7b-b2 implemented;
+   remaining W7b-b work is open.**
    W7a runs 50 fixed production-native Metal epochs and retains 250 raw records
    around 100 real GPU commands. Each epoch settles an admitted cancellation
    and one exact malformed pre-submit rejection, then submits both bounded
@@ -834,15 +834,31 @@ reporting:
    zero-flag golden remains byte-identical. See
    [Native Metal process-kill recovery report](NATIVE_METAL_PROCESS_KILL_REPORT.md).
 
+   W7b-b2 separates storage publication from device execution. The production
+   campaign-store writer advances one exact prepared generation across 27
+   ordered filesystem calls under 27 real writer `SIGKILL` deaths, 27
+   controlled `EIO` returns, 27 controlled `ENOSPC` returns, and one clean
+   control. Each case then uses two fresh roll-forward recovery processes and
+   a fresh strict verifier. The fixed binary report binds raw/canonical store
+   states and explicit real-signal versus synthetic-errno provenance, with
+   independent Zig/Python verification. It runs no model or GPU command. See
+   [Native workload store-fault report](NATIVE_WORKLOAD_STORE_FAULT_REPORT.md).
+   The publisher is production code; prepared roll-forward remains a bounded
+   campaign reference path until a general production recovery API and its own
+   interruption matrix are integrated.
+
    These completed slices prove finite controlled software disruption,
    correctness, ownership closure, clean restart, one post-segment process
-   kill, durable continuity, and bounded observed growth for the invoking host.
+   kill, prepared store roll-forward, fsync-bounded same-filesystem
+   process-restart continuity, and bounded observed growth for the invoking
+   host.
    They are not latency or throughput benchmarks, indefinite no-leak proofs,
    in-flight command recovery, physical residency measurements, or physical
    device-loss, driver, power, or storage-failure evidence. W7b-b remains open
-   for supervisor and in-flight process death, storage pressure,
-   cancellation storms, adapter loss, and physical-device-fault schedules
-   with explicit synthetic-versus-physical provenance. Prepared-text
+   for supervisor and in-flight process death, recovery-process interruption,
+   cancellation storms, adapter loss, physical storage/power, and
+   physical-device-fault schedules with explicit synthetic-versus-physical
+   provenance. Prepared-text
    additions should cover repeated handoffs, source death before generation
    two, target death before generation three, idempotent-sink replay, selector
    corruption, lease contention, and recovery memory growth without

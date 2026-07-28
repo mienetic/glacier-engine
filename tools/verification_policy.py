@@ -57,9 +57,21 @@ GITHUB_CONTROL_PATHS = {
 
 POLICY_CONTROL_PATHS = {
     "tools/verification_policy.py": frozenset(
-        {"native-full", "python-changed", "python-full"}
+        {
+            "native-full",
+            "python-changed",
+            "python-full",
+            "workload-store-fault-posix",
+        }
     ),
-    "tools/verify.sh": frozenset({"native-full", "python-full", "shell-changed"}),
+    "tools/verify.sh": frozenset(
+        {
+            "native-full",
+            "python-full",
+            "shell-changed",
+            "workload-store-fault-posix",
+        }
+    ),
     "tools/zig-with-ephemeral-cache.sh": frozenset(
         {"python-full", "shell-changed"}
     ),
@@ -189,11 +201,27 @@ DURABLE_RUNTIME_PROFILE_PATHS = {
 WORKLOAD_REPORT_PORTABLE_PATHS = {
     "src/core/native_workload_campaign_manifest.zig",
     "src/core/native_workload_report.zig",
+    "src/core/native_workload_store_fault_report.zig",
     "examples/native_workload_report.zig",
+    "examples/native_workload_store_fault_report.zig",
     "bench/native_workload_campaign.py",
     "bench/native_workload_report.py",
+    "bench/native_workload_store_fault_report.py",
     "bench/tests/test_native_workload_campaign.py",
     "bench/tests/test_native_workload_report.py",
+    "bench/tests/test_native_workload_store_fault_report.py",
+}
+
+WORKLOAD_STORE_FAULT_POSIX_PATHS = {
+    "bench/native_metal_soak_report.py",
+    "bench/native_workload_store_fault_campaign.py",
+    "bench/tests/test_native_metal_soak_report.py",
+    "bench/tests/test_native_workload_store_fault_campaign.py",
+}
+
+WORKLOAD_STORE_FAULT_METAL_PATHS = {
+    "bench/native_metal_soak_report.py",
+    "bench/tests/test_native_metal_soak_report.py",
 }
 
 
@@ -474,6 +502,23 @@ def _decision_for_path(path: str) -> PathDecision:
             (),
         )
 
+    if lower in WORKLOAD_STORE_FAULT_POSIX_PATHS:
+        store_fault_flags = {
+            "python-changed",
+            "workload-store-fault-posix",
+        }
+        if lower in WORKLOAD_STORE_FAULT_METAL_PATHS:
+            store_fault_flags.update({"metal-native", "python-full"})
+        return PathDecision(
+            path,
+            (
+                "POSIX workload campaign store, hard fault runner, "
+                "or focused recovery test changed"
+            ),
+            frozenset(store_fault_flags),
+            (),
+        )
+
     if path in WORKLOAD_REPORT_PORTABLE_PATHS:
         report_flags = {"workload-report-portable"}
         if suffix == ".py":
@@ -706,7 +751,9 @@ def _decision_for_path(path: str) -> PathDecision:
     if lower in BUILD_CONTROL_PATHS:
         build_flags = {"native-full", "python-full"}
         if lower in {"build.zig", "build.zig.zon"}:
-            build_flags.add("metal-native")
+            build_flags.update(
+                {"metal-native", "workload-store-fault-posix"}
+            )
         return PathDecision(
             path,
             "build or package control changed; validate every retained target",
@@ -840,6 +887,7 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
         ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
         ("workload-report-portable", "portable/workload-report"),
+        ("workload-store-fault-posix", "native/workload-store-fault"),
     ):
         if flag in decision.flags:
             names.append(label)
@@ -872,6 +920,7 @@ def print_report(plan: VerificationPlan) -> None:
         ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
         ("workload-report-portable", "portable/workload-report"),
+        ("workload-store-fault-posix", "native/workload-store-fault"),
     ):
         if plan.requires(flag):
             selected_gates.append(label)

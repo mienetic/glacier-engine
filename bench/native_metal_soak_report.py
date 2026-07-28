@@ -29,7 +29,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from bench import lane4_evidence
 from bench import native_metal_disruption_report as inner
@@ -130,6 +130,32 @@ SUPERVISOR_CLOCK_SHA256 = hashlib.sha256(
 
 ACTIVE_SELECTOR_NAME = ".glacier-workload-campaign-active-v1"
 LOCK_NAME = ".glacier-workload-campaign.lock"
+STORE_TEMP_SUFFIX = ".prepared-v1.tmp"
+STORE_OBJECT_PHASES = (
+    "create",
+    "write_prefix",
+    "write_complete",
+    "file_fsync",
+    "target_link",
+    "temp_unlink",
+    "directory_fsync",
+)
+STORE_SELECTOR_PHASES = (
+    "create",
+    "write_prefix",
+    "write_complete",
+    "file_fsync",
+    "active_replace",
+)
+STORE_PUBLICATION_PHASES = tuple(
+    (object_kind, operation)
+    for object_kind in ("environment", "segment", "manifest")
+    for operation in STORE_OBJECT_PHASES
+) + tuple(
+    ("selector", operation)
+    for operation in STORE_SELECTOR_PHASES
+) + (("store_root", "directory_fsync"),)
+StoreIoHook = Callable[[str, str, str], None]
 
 
 def _require(condition: bool, message: str) -> None:
@@ -995,6 +1021,130 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _directory_open_flags() -> int:
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+
+
+def _regular_read_flags() -> int:
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+
+
+def _same_file_identity(
+    left: os.stat_result,
+    right: os.stat_result,
+) -> bool:
+    return (
+        left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and stat.S_IFMT(left.st_mode) == stat.S_IFMT(right.st_mode)
+    )
+
+
+def _entry_exists_at(directory_fd: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _read_regular_at(
+    directory_fd: int,
+    name: str,
+    maximum_bytes: int,
+    *,
+    expected_device: Optional[int] = None,
+    require_private_single_link: bool = False,
+) -> bytes:
+    _require(
+        name not in ("", ".", "..")
+        and "/" not in name
+        and maximum_bytes > 0,
+        "invalid descriptor-relative file read",
+    )
+    descriptor = os.open(
+        name,
+        _regular_read_flags(),
+        dir_fd=directory_fd,
+    )
+    try:
+        before = os.fstat(descriptor)
+        named_before = os.stat(
+            name,
+            dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        _require(
+            stat.S_ISREG(before.st_mode)
+            and stat.S_ISREG(named_before.st_mode)
+            and _same_file_identity(before, named_before)
+            and 0 <= before.st_size <= maximum_bytes,
+            "campaign object is not a bounded regular file",
+        )
+        if expected_device is not None:
+            _require(
+                before.st_dev == expected_device,
+                "campaign object crossed filesystem devices",
+            )
+        if require_private_single_link:
+            _require(
+                before.st_nlink == 1
+                and stat.S_IMODE(before.st_mode) & 0o077 == 0,
+                "campaign object is not private and canonical",
+            )
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            _require(chunk != b"", "campaign object was truncated")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        _require(
+            os.read(descriptor, 1) == b"",
+            "campaign object grew while being read",
+        )
+        after = os.fstat(descriptor)
+        named_after = os.stat(
+            name,
+            dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        _require(
+            (
+                before.st_dev,
+                before.st_ino,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+                before.st_nlink,
+                stat.S_IMODE(before.st_mode),
+            )
+            == (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+                after.st_nlink,
+                stat.S_IMODE(after.st_mode),
+            )
+            and _same_file_identity(after, named_after),
+            "campaign object changed while being read",
+        )
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
 def _write_all(descriptor: int, data: bytes) -> None:
     view = memoryview(data)
     while view:
@@ -1049,6 +1199,55 @@ def _read_regular_file(path: Path, maximum_bytes: int) -> bytes:
         os.close(descriptor)
 
 
+def _decode_environment_object(
+    name: str,
+    data: bytes,
+) -> tuple[bytes, dict[str, Any], Any]:
+    _require(
+        name.endswith(".json")
+        and len(name) == 69
+        and name[:-5] == name[:-5].lower(),
+        "environment object name is not canonical",
+    )
+    try:
+        name_digest = bytes.fromhex(name[:-5])
+    except ValueError as error:
+        raise NativeMetalSoakError(
+            "environment object name is not hexadecimal"
+        ) from error
+    _require(
+        hashlib.sha256(data).digest() == name_digest,
+        "environment object content address changed",
+    )
+    try:
+        decoded = json.loads(data.decode("ascii"))
+        _require(
+            isinstance(decoded, dict)
+            and _canonical_json(decoded) == data,
+            "environment object is not canonical JSON",
+        )
+        (_host, captured_at) = lane4_evidence._validate_environment(
+            decoded,
+            "retained_environment",
+            expected_foundation_runner_sha256=decoded.get(
+                "foundation_probe_runner_sha256",
+                "",
+            ),
+        )
+    except (
+        UnicodeDecodeError,
+        ValueError,
+        TypeError,
+        lane4_evidence.EvidenceError,
+    ) as error:
+        if isinstance(error, NativeMetalSoakError):
+            raise
+        raise NativeMetalSoakError(
+            "retained environment object is invalid: %s" % error
+        ) from error
+    return name_digest, decoded, captured_at
+
+
 def _read_environment_objects(
     directory: Path,
 ) -> list[tuple[bytes, dict[str, Any], Any]]:
@@ -1061,53 +1260,44 @@ def _read_environment_objects(
         1 <= len(paths) <= 2,
         "campaign store has an unexpected environment-object count",
     )
-    result: list[tuple[bytes, dict[str, Any], Any]] = []
-    for path in paths:
-        _require(
-            path.name.endswith(".json")
-            and len(path.name) == 69
-            and path.name[:-5] == path.name[:-5].lower(),
-            "environment object name is not canonical",
+    return [
+        _decode_environment_object(
+            path.name,
+            _read_regular_file(path, ENVIRONMENT_OBJECT_MAX_BYTES),
         )
-        try:
-            name_digest = bytes.fromhex(path.name[:-5])
-        except ValueError as error:
-            raise NativeMetalSoakError(
-                "environment object name is not hexadecimal"
-            ) from error
-        data = _read_regular_file(path, ENVIRONMENT_OBJECT_MAX_BYTES)
-        _require(
-            hashlib.sha256(data).digest() == name_digest,
-            "environment object content address changed",
+        for path in paths
+    ]
+
+
+def _read_environment_objects_at(
+    directory_fd: int,
+    expected_identity: tuple[int, int],
+) -> list[tuple[bytes, dict[str, Any], Any]]:
+    opened = os.fstat(directory_fd)
+    _require(
+        stat.S_ISDIR(opened.st_mode)
+        and (opened.st_dev, opened.st_ino) == expected_identity
+        and stat.S_IMODE(opened.st_mode) & 0o077 == 0,
+        "environment object directory identity changed",
+    )
+    names = sorted(os.listdir(directory_fd))
+    _require(
+        1 <= len(names) <= 2,
+        "campaign store has an unexpected environment-object count",
+    )
+    return [
+        _decode_environment_object(
+            name,
+            _read_regular_at(
+                directory_fd,
+                name,
+                ENVIRONMENT_OBJECT_MAX_BYTES,
+                expected_device=expected_identity[0],
+                require_private_single_link=True,
+            ),
         )
-        try:
-            decoded = json.loads(data.decode("ascii"))
-            _require(
-                isinstance(decoded, dict)
-                and _canonical_json(decoded) == data,
-                "environment object is not canonical JSON",
-            )
-            (_host, captured_at) = lane4_evidence._validate_environment(
-                decoded,
-                "retained_environment",
-                expected_foundation_runner_sha256=decoded.get(
-                    "foundation_probe_runner_sha256",
-                    "",
-                ),
-            )
-        except (
-            UnicodeDecodeError,
-            ValueError,
-            TypeError,
-            lane4_evidence.EvidenceError,
-        ) as error:
-            if isinstance(error, NativeMetalSoakError):
-                raise
-            raise NativeMetalSoakError(
-                "retained environment object is invalid: %s" % error
-            ) from error
-        result.append((name_digest, decoded, captured_at))
-    return result
+        for name in names
+    ]
 
 
 def _resolve_environment_evidence(
@@ -1116,7 +1306,38 @@ def _resolve_environment_evidence(
     generation: int,
     expected_environment_sha256: bytes,
 ) -> tuple[bytes, bytes]:
-    objects = _read_environment_objects(directory)
+    return _resolve_environment_objects(
+        _read_environment_objects(directory),
+        campaign_id_sha256,
+        generation,
+        expected_environment_sha256,
+    )
+
+
+def _resolve_environment_evidence_at(
+    directory_fd: int,
+    expected_identity: tuple[int, int],
+    campaign_id_sha256: bytes,
+    generation: int,
+    expected_environment_sha256: bytes,
+) -> tuple[bytes, bytes]:
+    return _resolve_environment_objects(
+        _read_environment_objects_at(
+            directory_fd,
+            expected_identity,
+        ),
+        campaign_id_sha256,
+        generation,
+        expected_environment_sha256,
+    )
+
+
+def _resolve_environment_objects(
+    objects: Sequence[tuple[bytes, dict[str, Any], Any]],
+    campaign_id_sha256: bytes,
+    generation: int,
+    expected_environment_sha256: bytes,
+) -> tuple[bytes, bytes]:
     if generation < SEGMENT_COUNT:
         _require(
             len(objects) == 1,
@@ -1168,44 +1389,289 @@ def _resolve_environment_evidence(
     return before[0], ZERO_DIGEST
 
 
+def _private_directory_identity(
+    path: Path,
+    *,
+    expected_device: Optional[int] = None,
+    require_private: bool = True,
+) -> tuple[int, int]:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        opened = os.fstat(descriptor)
+        named = path.lstat()
+        _require(
+            stat.S_ISDIR(opened.st_mode)
+            and stat.S_ISDIR(named.st_mode)
+            and (opened.st_dev, opened.st_ino)
+            == (named.st_dev, named.st_ino),
+            "campaign store directory identity changed",
+        )
+        if expected_device is not None:
+            _require(
+                opened.st_dev == expected_device,
+                "campaign store crosses filesystem devices",
+            )
+        if require_private:
+            _require(
+                stat.S_IMODE(opened.st_mode) & 0o077 == 0,
+                "campaign store directory is not private",
+            )
+        return opened.st_dev, opened.st_ino
+    finally:
+        os.close(descriptor)
+
+
 class CampaignStore:
     """Crash-atomic content-addressed segment/manifest store."""
 
-    def __init__(self, root: os.PathLike[str] | str) -> None:
+    def __init__(
+        self,
+        root: os.PathLike[str] | str,
+        *,
+        io_hook: Optional[StoreIoHook] = None,
+        expected_active_selector: Optional[bytes] = None,
+        expected_objects: Optional[
+            Mapping[str, Mapping[str, bytes]]
+        ] = None,
+    ) -> None:
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.io_hook = io_hook
+        self.poisoned = False
+        self.root_fd = -1
+        self.directory_fds: dict[str, int] = {}
+        self.directory_identities: dict[str, tuple[int, int]] = {}
+        prepared_open = (
+            expected_active_selector is not None
+            or expected_objects is not None
+        )
         _require(
-            self.root.is_dir() and not self.root.is_symlink(),
-            "campaign store root is not a real directory",
+            (
+                expected_active_selector is not None
+                and expected_objects is not None
+            )
+            if prepared_open
+            else (
+                expected_active_selector is None
+                and expected_objects is None
+            ),
+            "prepared campaign-store inputs are incomplete",
         )
         self.segments = self.root / "segments"
         self.manifests = self.root / "manifests"
         self.environments = self.root / "environments"
-        for directory in (
+        object_directories = (
             self.segments,
             self.manifests,
             self.environments,
-        ):
-            directory.mkdir(exist_ok=True)
-            _require(
-                directory.is_dir() and not directory.is_symlink(),
-                "campaign store object directory is not a real directory",
-            )
-        _fsync_directory(self.root)
-        self.lock_path = self.root / LOCK_NAME
-        lock_descriptor = os.open(
-            self.lock_path,
-            os.O_RDWR
-            | os.O_CREAT
-            | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
         )
-        if not stat.S_ISREG(os.fstat(lock_descriptor).st_mode):
-            os.close(lock_descriptor)
-            raise NativeMetalSoakError(
-                "campaign lock is not a regular file"
+        self.lock_path = self.root / LOCK_NAME
+        expected_root_names = {
+            *(directory.name for directory in object_directories),
+            self.lock_path.name,
+        }
+        if prepared_open:
+            _require(
+                isinstance(expected_active_selector, bytes)
+                and len(expected_active_selector)
+                == campaign.SELECTOR_BYTES
+                and expected_objects is not None
+                and set(expected_objects)
+                == {directory.name for directory in object_directories},
+                "invalid prepared campaign-store predecessor",
             )
-        self.lock = os.fdopen(lock_descriptor, "a+b")
+        root_exists = os.path.lexists(self.root)
+        complete_empty_store = False
+        if root_exists:
+            try:
+                root_info = self.root.lstat()
+            except OSError as error:
+                raise NativeMetalSoakError(
+                    "campaign store root cannot be inspected"
+                ) from error
+            _require(
+                stat.S_ISDIR(root_info.st_mode),
+                "campaign store root is not a real directory",
+            )
+            root_names = {path.name for path in self.root.iterdir()}
+            if not prepared_open:
+                _require(
+                    ACTIVE_SELECTOR_NAME not in root_names,
+                    (
+                        "campaign output directory already has an "
+                        "active selector"
+                    ),
+                )
+                for directory in object_directories:
+                    if directory.name in root_names:
+                        try:
+                            _private_directory_identity(
+                                directory,
+                                require_private=False,
+                            )
+                        except (OSError, NativeMetalSoakError) as error:
+                            raise NativeMetalSoakError(
+                                (
+                                    "campaign store object directory "
+                                    "is not a real directory"
+                                )
+                            ) from error
+                _require(
+                    root_names in (set(), expected_root_names),
+                    (
+                        "campaign output directory is not an empty "
+                        "canonical store"
+                    ),
+                )
+                complete_empty_store = root_names == expected_root_names
+            else:
+                prepared_without_lock = (
+                    expected_root_names - {self.lock_path.name}
+                ) | {ACTIVE_SELECTOR_NAME}
+                if root_names == prepared_without_lock:
+                    raise FileNotFoundError(self.lock_path)
+                _require(
+                    root_names
+                    == expected_root_names | {ACTIVE_SELECTOR_NAME},
+                    "prepared campaign-store root is not canonical",
+                )
+        elif prepared_open:
+            raise NativeMetalSoakError(
+                "prepared campaign-store root does not exist"
+            )
+        else:
+            self.root.mkdir(parents=True, mode=0o700)
+
+        if not prepared_open and not complete_empty_store:
+            os.chmod(self.root, 0o700, follow_symlinks=False)
+            for directory in object_directories:
+                directory.mkdir(mode=0o700)
+                os.chmod(directory, 0o700, follow_symlinks=False)
+            _fsync_directory(self.root)
+
+        try:
+            self.root_fd = os.open(
+                self.root,
+                _directory_open_flags(),
+            )
+            root_opened = os.fstat(self.root_fd)
+            root_named = self.root.lstat()
+            _require(
+                stat.S_ISDIR(root_opened.st_mode)
+                and stat.S_ISDIR(root_named.st_mode)
+                and _same_file_identity(root_opened, root_named)
+                and stat.S_IMODE(root_opened.st_mode) & 0o077 == 0,
+                "campaign store root identity changed",
+            )
+            self.root_identity = (
+                root_opened.st_dev,
+                root_opened.st_ino,
+            )
+            for directory in object_directories:
+                descriptor = os.open(
+                    directory.name,
+                    _directory_open_flags(),
+                    dir_fd=self.root_fd,
+                )
+                try:
+                    opened = os.fstat(descriptor)
+                    named = os.stat(
+                        directory.name,
+                        dir_fd=self.root_fd,
+                        follow_symlinks=False,
+                    )
+                    _require(
+                        stat.S_ISDIR(opened.st_mode)
+                        and stat.S_ISDIR(named.st_mode)
+                        and _same_file_identity(opened, named)
+                        and opened.st_dev == self.root_identity[0]
+                        and stat.S_IMODE(opened.st_mode) & 0o077 == 0,
+                        (
+                            "campaign store object directory is not "
+                            "a private real directory"
+                        ),
+                    )
+                except BaseException:
+                    os.close(descriptor)
+                    raise
+                self.directory_fds[directory.name] = descriptor
+                self.directory_identities[directory.name] = (
+                    opened.st_dev,
+                    opened.st_ino,
+                )
+        except BaseException:
+            self._close_namespace_descriptors()
+            raise
+
+        if not prepared_open:
+            try:
+                _require(
+                    all(
+                        not os.listdir(descriptor)
+                        for descriptor in self.directory_fds.values()
+                    ),
+                    (
+                        "campaign output directory is not an empty "
+                        "canonical store"
+                    ),
+                )
+            except BaseException:
+                self._close_namespace_descriptors()
+                raise
+
+        lock_flags = (
+            os.O_RDWR
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        created_lock = not prepared_open and not complete_empty_store
+        if created_lock:
+            lock_flags |= os.O_CREAT | os.O_EXCL
+        try:
+            lock_descriptor = os.open(
+                LOCK_NAME,
+                lock_flags,
+                0o600,
+                dir_fd=self.root_fd,
+            )
+        except BaseException:
+            self._close_namespace_descriptors()
+            raise
+        try:
+            lock_info = os.fstat(lock_descriptor)
+            lock_named = os.stat(
+                LOCK_NAME,
+                dir_fd=self.root_fd,
+                follow_symlinks=False,
+            )
+            _require(
+                stat.S_ISREG(lock_info.st_mode)
+                and stat.S_ISREG(lock_named.st_mode)
+                and lock_info.st_dev == self.root_identity[0]
+                and lock_info.st_nlink == 1
+                and stat.S_IMODE(lock_info.st_mode) & 0o077 == 0
+                and _same_file_identity(lock_info, lock_named),
+                (
+                    "campaign lock is not a private single-link "
+                    "regular file"
+                ),
+            )
+            if created_lock:
+                os.fchmod(lock_descriptor, 0o600)
+                os.fsync(self.root_fd)
+        except BaseException:
+            os.close(lock_descriptor)
+            self._close_namespace_descriptors()
+            raise
+        self.lock_identity = (lock_info.st_dev, lock_info.st_ino)
+        self.lock = os.fdopen(
+            lock_descriptor,
+            "r+b" if prepared_open else "a+b",
+        )
         try:
             fcntl.flock(
                 self.lock.fileno(),
@@ -1213,93 +1679,367 @@ class CampaignStore:
             )
         except OSError as error:
             self.lock.close()
+            self._close_namespace_descriptors()
             raise NativeMetalSoakError(
                 "campaign store is already locked"
             ) from error
-        active = self.root / ACTIVE_SELECTOR_NAME
         try:
-            _require(
-                not os.path.lexists(active),
-                "campaign output directory already has an active selector",
-            )
-            expected_root_names = {
-                self.segments.name,
-                self.manifests.name,
-                self.environments.name,
-                self.lock_path.name,
-            }
-            _require(
-                {path.name for path in self.root.iterdir()}
-                == expected_root_names
-                and all(
-                    not any(directory.iterdir())
-                    for directory in (
-                        self.segments,
-                        self.manifests,
-                        self.environments,
+            self._verify_namespace()
+            if expected_active_selector is None:
+                _require(
+                    expected_objects is None,
+                    "prepared objects require a prepared selector",
+                )
+                _require(
+                    not _entry_exists_at(
+                        self.root_fd,
+                        ACTIVE_SELECTOR_NAME,
+                    ),
+                    "campaign output directory already has an active selector",
+                )
+                _require(
+                    set(os.listdir(self.root_fd)) == expected_root_names
+                    and all(
+                        not os.listdir(descriptor)
+                        for descriptor in self.directory_fds.values()
+                    ),
+                    (
+                        "campaign output directory is not an empty "
+                        "canonical store"
+                    ),
+                )
+            else:
+                _require(
+                    set(os.listdir(self.root_fd))
+                    == expected_root_names | {ACTIVE_SELECTOR_NAME},
+                    "prepared campaign-store root is not canonical",
+                )
+                _require(
+                    _read_regular_at(
+                        self.root_fd,
+                        ACTIVE_SELECTOR_NAME,
+                        campaign.SELECTOR_BYTES,
+                        expected_device=self.root_identity[0],
+                        require_private_single_link=True,
                     )
-                ),
-                "campaign output directory is not an empty canonical store",
-            )
+                    == expected_active_selector,
+                    "prepared campaign-store selector changed",
+                )
+                for directory in object_directories:
+                    objects = expected_objects[directory.name]
+                    descriptor = self.directory_fds[directory.name]
+                    _require(
+                        isinstance(objects, Mapping)
+                        and set(objects) == set(os.listdir(descriptor)),
+                        (
+                            "prepared campaign-store object set "
+                            "changed"
+                        ),
+                    )
+                    for name, data in objects.items():
+                        _require(
+                            isinstance(name, str)
+                            and name not in ("", ".", "..")
+                            and "/" not in name
+                            and isinstance(data, bytes)
+                            and _read_regular_at(
+                                descriptor,
+                                name,
+                                len(data),
+                                expected_device=self.root_identity[0],
+                                require_private_single_link=True,
+                            )
+                            == data,
+                            (
+                                "prepared campaign-store object "
+                                "changed"
+                            ),
+                        )
+                self._verify_namespace()
         except BaseException:
             with contextlib.suppress(OSError):
                 fcntl.flock(self.lock.fileno(), fcntl.LOCK_UN)
             self.lock.close()
+            self._close_namespace_descriptors()
             raise
 
+    @classmethod
+    def open_prepared(
+        cls,
+        root: os.PathLike[str] | str,
+        *,
+        expected_active_selector: bytes,
+        expected_objects: Mapping[str, Mapping[str, bytes]],
+        io_hook: Optional[StoreIoHook] = None,
+    ) -> CampaignStore:
+        """Open one exact predecessor for a pre-authorized publication."""
+        return cls(
+            root,
+            io_hook=io_hook,
+            expected_active_selector=expected_active_selector,
+            expected_objects=expected_objects,
+        )
+
+    def _close_namespace_descriptors(self) -> None:
+        for descriptor in self.directory_fds.values():
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
+        self.directory_fds.clear()
+        if self.root_fd >= 0:
+            with contextlib.suppress(OSError):
+                os.close(self.root_fd)
+            self.root_fd = -1
+
+    def _verify_namespace(self) -> None:
+        _require(
+            self.root_fd >= 0,
+            "campaign store namespace is closed",
+        )
+        root_opened = os.fstat(self.root_fd)
+        root_named = self.root.lstat()
+        _require(
+            stat.S_ISDIR(root_opened.st_mode)
+            and stat.S_ISDIR(root_named.st_mode)
+            and _same_file_identity(root_opened, root_named)
+            and (
+                root_opened.st_dev,
+                root_opened.st_ino,
+            )
+            == self.root_identity
+            and stat.S_IMODE(root_opened.st_mode) & 0o077 == 0,
+            "campaign store root namespace changed",
+        )
+        for name, descriptor in self.directory_fds.items():
+            opened = os.fstat(descriptor)
+            named = os.stat(
+                name,
+                dir_fd=self.root_fd,
+                follow_symlinks=False,
+            )
+            _require(
+                stat.S_ISDIR(opened.st_mode)
+                and stat.S_ISDIR(named.st_mode)
+                and _same_file_identity(opened, named)
+                and (
+                    opened.st_dev,
+                    opened.st_ino,
+                )
+                == self.directory_identities[name]
+                and opened.st_dev == self.root_identity[0]
+                and stat.S_IMODE(opened.st_mode) & 0o077 == 0,
+                "campaign store object-directory namespace changed",
+            )
+        lock_opened = os.fstat(self.lock.fileno())
+        lock_named = os.stat(
+            LOCK_NAME,
+            dir_fd=self.root_fd,
+            follow_symlinks=False,
+        )
+        _require(
+            stat.S_ISREG(lock_opened.st_mode)
+            and stat.S_ISREG(lock_named.st_mode)
+            and _same_file_identity(lock_opened, lock_named)
+            and (
+                lock_opened.st_dev,
+                lock_opened.st_ino,
+            )
+            == self.lock_identity
+            and lock_opened.st_dev == self.root_identity[0]
+            and lock_opened.st_nlink == 1
+            and stat.S_IMODE(lock_opened.st_mode) & 0o077 == 0,
+            "campaign store lock namespace changed",
+        )
+
+    def _guard_namespace(self) -> None:
+        try:
+            self._verify_namespace()
+        except NativeMetalSoakError:
+            self.poisoned = True
+            raise
+        except OSError as error:
+            self.poisoned = True
+            raise NativeMetalSoakError(
+                "campaign store namespace changed"
+            ) from error
+
     def close(self) -> None:
-        if self.lock.closed:
-            return
-        with contextlib.suppress(OSError):
-            fcntl.flock(self.lock.fileno(), fcntl.LOCK_UN)
-        self.lock.close()
+        if not self.lock.closed:
+            with contextlib.suppress(OSError):
+                fcntl.flock(self.lock.fileno(), fcntl.LOCK_UN)
+            self.lock.close()
+        self._close_namespace_descriptors()
+
+    def _require_writer(self) -> None:
+        _require(
+            not self.lock.closed,
+            "campaign store writer is closed",
+        )
+        _require(
+            not self.poisoned,
+            "campaign store writer is poisoned; use fresh recovery",
+        )
+        self._guard_namespace()
+
+    def _io(self, timing: str, object_kind: str, operation: str) -> None:
+        if self.io_hook is not None:
+            self.io_hook(timing, object_kind, operation)
+
+    def _run_io(
+        self,
+        object_kind: str,
+        operation: str,
+        action: Callable[[], Any],
+    ) -> Any:
+        self._guard_namespace()
+        self._io("before", object_kind, operation)
+        self._guard_namespace()
+        result = action()
+        self._guard_namespace()
+        self._io("after", object_kind, operation)
+        self._guard_namespace()
+        return result
+
+    def _create_temporary(
+        self,
+        object_kind: str,
+        directory_fd: int,
+        temporary_name: str,
+    ) -> int:
+        self._guard_namespace()
+        self._io("before", object_kind, "create")
+        self._guard_namespace()
+        descriptor = os.open(
+            temporary_name,
+            (
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+            ),
+            0o600,
+            dir_fd=directory_fd,
+        )
+        try:
+            self._guard_namespace()
+            self._io("after", object_kind, "create")
+            self._guard_namespace()
+        except BaseException:
+            os.close(descriptor)
+            raise
+        return descriptor
 
     def _immutable(
         self,
         directory: Path,
         name: str,
         data: bytes,
+        object_kind: str,
         maximum_store_bytes: int = ARTIFACT_STORE_MAX_BYTES,
     ) -> Path:
+        self._require_writer()
         target = directory / name
-        if os.path.lexists(target):
+        directory_fd = self.directory_fds[directory.name]
+        if _entry_exists_at(directory_fd, name):
             _require(
-                target.is_file()
-                and not target.is_symlink()
-                and _read_regular_file(target, len(data)) == data,
+                _read_regular_at(
+                    directory_fd,
+                    name,
+                    len(data),
+                    expected_device=self.root_identity[0],
+                    require_private_single_link=True,
+                )
+                == data,
                 "content-addressed object collision",
             )
+            descriptor = os.open(
+                name,
+                _regular_read_flags(),
+                dir_fd=directory_fd,
+            )
+            try:
+                self._guard_namespace()
+                info = os.fstat(descriptor)
+                _require(
+                    stat.S_ISREG(info.st_mode)
+                    and info.st_dev == self.root_identity[0]
+                    and info.st_nlink == 1
+                    and stat.S_IMODE(info.st_mode) & 0o077 == 0,
+                    "campaign object is not private and canonical",
+                )
+                os.fsync(descriptor)
+                self._guard_namespace()
+            finally:
+                os.close(descriptor)
+            self._guard_namespace()
+            os.fsync(directory_fd)
+            self._guard_namespace()
             return target
         self._preflight_target(
-            target,
+            directory_fd,
+            name,
             len(data),
             maximum_store_bytes,
+            hard_link=True,
         )
-        temporary = directory / (
-            ".%s.%d.%s.tmp"
-            % (name, os.getpid(), os.urandom(8).hex())
-        )
-        descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
-        )
+        _require(len(data) >= 2, "campaign object is too short")
+        temporary_name = ".%s%s" % (name, STORE_TEMP_SUFFIX)
+        descriptor: Optional[int] = None
         try:
-            _write_all(descriptor, data)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        try:
-            os.link(
-                temporary,
-                target,
-                follow_symlinks=False,
+            descriptor = self._create_temporary(
+                object_kind,
+                directory_fd,
+                temporary_name,
             )
-            temporary.unlink()
-            _fsync_directory(directory)
+            prefix_bytes = min(4096, len(data) - 1)
+            self._run_io(
+                object_kind,
+                "write_prefix",
+                lambda: _write_all(descriptor, data[:prefix_bytes]),
+            )
+            self._run_io(
+                object_kind,
+                "write_complete",
+                lambda: _write_all(descriptor, data[prefix_bytes:]),
+            )
+            self._run_io(
+                object_kind,
+                "file_fsync",
+                lambda: os.fsync(descriptor),
+            )
+            os.close(descriptor)
+            descriptor = None
+            self._run_io(
+                object_kind,
+                "target_link",
+                lambda: os.link(
+                    temporary_name,
+                    name,
+                    src_dir_fd=directory_fd,
+                    dst_dir_fd=directory_fd,
+                    follow_symlinks=False,
+                ),
+            )
+            self._run_io(
+                object_kind,
+                "temp_unlink",
+                lambda: os.unlink(
+                    temporary_name,
+                    dir_fd=directory_fd,
+                ),
+            )
+            self._run_io(
+                object_kind,
+                "directory_fsync",
+                lambda: os.fsync(directory_fd),
+            )
         except BaseException:
+            self.poisoned = True
+            if descriptor is not None:
+                with contextlib.suppress(OSError):
+                    os.close(descriptor)
             with contextlib.suppress(FileNotFoundError):
-                temporary.unlink()
+                os.unlink(temporary_name, dir_fd=directory_fd)
             raise
         return target
 
@@ -1307,16 +2047,19 @@ class CampaignStore:
         self,
         snapshot: Mapping[str, Any],
     ) -> bytes:
+        self._require_writer()
         data = _canonical_json(snapshot)
         digest = hashlib.sha256(data).digest()
         self._immutable(
             self.environments,
             digest.hex() + ".json",
             data,
+            "environment",
         )
         return digest
 
     def write_segment(self, wire: bytes) -> bytes:
+        self._require_writer()
         _require(
             len(wire) == inner.EXPECTED_WIRE_BYTES,
             "segment wire has an unexpected length",
@@ -1326,6 +2069,7 @@ class CampaignStore:
             self.segments,
             digest.hex() + ".bin",
             wire,
+            "segment",
         )
         return digest
 
@@ -1335,15 +2079,10 @@ class CampaignStore:
         entries: Sequence[Mapping[str, Any]],
         environment_root_sha256: bytes,
     ) -> tuple[bytes, bytes]:
+        self._require_writer()
         manifest_wire = campaign.make_manifest(plan, entries)
         decoded = campaign.verify_manifest(manifest_wire)
         manifest_sha256 = decoded["manifest_sha256"]
-        self._immutable(
-            self.manifests,
-            manifest_sha256.hex() + ".bin",
-            manifest_wire,
-            plan["artifact_store_max_bytes"],
-        )
         selector_wire = campaign.make_selector(
             decoded,
             environment_root_sha256,
@@ -1353,103 +2092,168 @@ class CampaignStore:
             selector_wire,
             environment_root_sha256,
         )
-        active = self.root / ACTIVE_SELECTOR_NAME
-        previous_selector = (
-            _read_regular_file(active, campaign.SELECTOR_BYTES)
-            if os.path.lexists(active)
-            else None
-        )
-        self._preflight_target(
-            active,
+        manifest_name = manifest_sha256.hex() + ".bin"
+        self._preflight_publication(
+            manifest_name,
+            len(manifest_wire),
             len(selector_wire),
             plan["artifact_store_max_bytes"],
-            replacing=True,
         )
-        temporary = self.root / (
-            ".%s.%d.%s.tmp"
-            % (ACTIVE_SELECTOR_NAME, os.getpid(), os.urandom(8).hex())
+        self._immutable(
+            self.manifests,
+            manifest_name,
+            manifest_wire,
+            "manifest",
+            plan["artifact_store_max_bytes"],
         )
-        descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
+        temporary_name = (
+            ".%s%s" % (ACTIVE_SELECTOR_NAME, STORE_TEMP_SUFFIX)
         )
+        descriptor: Optional[int] = None
         try:
-            _write_all(descriptor, selector_wire)
-            os.fsync(descriptor)
-        finally:
+            descriptor = self._create_temporary(
+                "selector",
+                self.root_fd,
+                temporary_name,
+            )
+            prefix_bytes = min(4096, len(selector_wire) - 1)
+            self._run_io(
+                "selector",
+                "write_prefix",
+                lambda: _write_all(
+                    descriptor,
+                    selector_wire[:prefix_bytes],
+                ),
+            )
+            self._run_io(
+                "selector",
+                "write_complete",
+                lambda: _write_all(
+                    descriptor,
+                    selector_wire[prefix_bytes:],
+                ),
+            )
+            self._run_io(
+                "selector",
+                "file_fsync",
+                lambda: os.fsync(descriptor),
+            )
             os.close(descriptor)
-        try:
-            os.replace(temporary, active)
-            _fsync_directory(self.root)
+            descriptor = None
+            self._run_io(
+                "selector",
+                "active_replace",
+                lambda: os.replace(
+                    temporary_name,
+                    ACTIVE_SELECTOR_NAME,
+                    src_dir_fd=self.root_fd,
+                    dst_dir_fd=self.root_fd,
+                ),
+            )
+            self._run_io(
+                "store_root",
+                "directory_fsync",
+                lambda: os.fsync(self.root_fd),
+            )
         except BaseException:
+            self.poisoned = True
+            if descriptor is not None:
+                with contextlib.suppress(OSError):
+                    os.close(descriptor)
             with contextlib.suppress(FileNotFoundError):
-                temporary.unlink()
-            raise
-        try:
-            self._enforce_bound(plan)
-        except BaseException:
-            self._restore_selector(active, previous_selector)
+                os.unlink(temporary_name, dir_fd=self.root_fd)
             raise
         return manifest_wire, selector_wire
 
     def _usage(self) -> tuple[int, int]:
+        self._guard_namespace()
         total = 0
         count = 0
-        expected_directories = {
-            self.segments.resolve(),
-            self.manifests.resolve(),
-            self.environments.resolve(),
-        }
-        discovered_directories: set[Path] = set()
-        for directory, subdirectories, files in os.walk(
-            self.root,
-            followlinks=False,
-        ):
-            directory_path = Path(directory)
-            for name in subdirectories:
-                path = directory_path / name
-                _require(
-                    path.is_dir() and not path.is_symlink(),
-                    "campaign store has a non-real directory",
+        try:
+            for name in os.listdir(self.root_fd):
+                info = os.stat(
+                    name,
+                    dir_fd=self.root_fd,
+                    follow_symlinks=False,
                 )
-                discovered_directories.add(path.resolve())
-            for filename in files:
-                path = directory_path / filename
-                info = path.lstat()
+                if name in self.directory_fds:
+                    _require(
+                        stat.S_ISDIR(info.st_mode)
+                        and (info.st_dev, info.st_ino)
+                        == self.directory_identities[name],
+                        "campaign store directory layout changed",
+                    )
+                    continue
                 _require(
-                    stat.S_ISREG(info.st_mode),
+                    stat.S_ISREG(info.st_mode)
+                    and info.st_dev == self.root_identity[0]
+                    and info.st_nlink == 1
+                    and stat.S_IMODE(info.st_mode) & 0o077 == 0,
                     "campaign store has a non-regular file",
                 )
                 total += info.st_size
                 count += 1
-        _require(
-            discovered_directories == expected_directories,
-            "campaign store directory layout changed",
-        )
+            for descriptor in self.directory_fds.values():
+                for name in os.listdir(descriptor):
+                    info = os.stat(
+                        name,
+                        dir_fd=descriptor,
+                        follow_symlinks=False,
+                    )
+                    _require(
+                        stat.S_ISREG(info.st_mode)
+                        and info.st_dev == self.root_identity[0]
+                        and info.st_nlink == 1
+                        and stat.S_IMODE(info.st_mode) & 0o077 == 0,
+                        "campaign store has a non-regular file",
+                    )
+                    total += info.st_size
+                    count += 1
+        except NativeMetalSoakError:
+            self.poisoned = True
+            raise
+        except OSError as error:
+            self.poisoned = True
+            raise NativeMetalSoakError(
+                "campaign store contents changed during accounting"
+            ) from error
+        self._guard_namespace()
         return total, count
 
     def _preflight_target(
         self,
-        target: Path,
+        directory_fd: int,
+        target_name: str,
         target_bytes: int,
         maximum_store_bytes: int,
         *,
         replacing: bool = False,
+        hard_link: bool = False,
     ) -> None:
         _require(
             0 <= target_bytes <= maximum_store_bytes,
             "campaign object exceeds the store byte bound",
         )
+        _require(
+            target_name not in ("", ".", "..")
+            and "/" not in target_name,
+            "campaign target name is not canonical",
+        )
         total, count = self._usage()
-        if os.path.lexists(target):
+        original_total = total
+        original_count = count
+        if _entry_exists_at(directory_fd, target_name):
+            info = os.stat(
+                target_name,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
             _require(
                 replacing
-                and target.is_file()
-                and not target.is_symlink(),
+                and stat.S_ISREG(info.st_mode)
+                and info.st_dev == self.root_identity[0],
                 "campaign target unexpectedly exists",
             )
-            info = target.lstat()
             total -= info.st_size
         else:
             count += 1
@@ -1462,37 +2266,81 @@ class CampaignStore:
             count <= ARTIFACT_STORE_MAX_FILES,
             "campaign store would exceed its file bound",
         )
+        if hard_link:
+            peak_total = original_total + 2 * target_bytes
+            peak_count = original_count + 2
+        else:
+            peak_total = original_total + target_bytes
+            peak_count = original_count + 1
+        _require(
+            peak_total <= maximum_store_bytes,
+            "campaign transaction would exceed its peak byte bound",
+        )
+        _require(
+            peak_count <= ARTIFACT_STORE_MAX_FILES,
+            "campaign transaction would exceed its peak file bound",
+        )
 
-    def _restore_selector(
+    def _preflight_publication(
         self,
-        active: Path,
-        previous_selector: Optional[bytes],
+        manifest_name: str,
+        manifest_bytes: int,
+        selector_bytes: int,
+        maximum_store_bytes: int,
     ) -> None:
-        if previous_selector is None:
-            with contextlib.suppress(FileNotFoundError):
-                active.unlink()
-            _fsync_directory(self.root)
-            return
-        temporary = self.root / (
-            ".%s.rollback.%d.%s.tmp"
-            % (ACTIVE_SELECTOR_NAME, os.getpid(), os.urandom(8).hex())
+        _require(
+            manifest_name not in ("", ".", "..")
+            and "/" not in manifest_name
+            and 0 <= manifest_bytes <= maximum_store_bytes
+            and 0 <= selector_bytes <= maximum_store_bytes,
+            "campaign publication target is not canonical",
         )
-        descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
+        total, count = self._usage()
+        peak_total = total
+        peak_count = count
+        manifests_fd = self.directory_fds[self.manifests.name]
+        if _entry_exists_at(manifests_fd, manifest_name):
+            manifest_info = os.stat(
+                manifest_name,
+                dir_fd=manifests_fd,
+                follow_symlinks=False,
+            )
+            _require(
+                stat.S_ISREG(manifest_info.st_mode)
+                and manifest_info.st_dev == self.root_identity[0],
+                "campaign manifest target unexpectedly exists",
+            )
+        else:
+            peak_total = max(peak_total, total + 2 * manifest_bytes)
+            peak_count = max(peak_count, count + 2)
+            total += manifest_bytes
+            count += 1
+        if _entry_exists_at(self.root_fd, ACTIVE_SELECTOR_NAME):
+            active_info = os.stat(
+                ACTIVE_SELECTOR_NAME,
+                dir_fd=self.root_fd,
+                follow_symlinks=False,
+            )
+            _require(
+                stat.S_ISREG(active_info.st_mode)
+                and active_info.st_dev == self.root_identity[0],
+                "campaign selector target unexpectedly exists",
+            )
+            final_total = total - active_info.st_size + selector_bytes
+            final_count = count
+        else:
+            final_total = total + selector_bytes
+            final_count = count + 1
+        peak_total = max(peak_total, total + selector_bytes, final_total)
+        peak_count = max(peak_count, count + 1, final_count)
+        _require(
+            peak_total <= maximum_store_bytes,
+            "campaign publication exceeds its peak byte bound",
         )
-        try:
-            _write_all(descriptor, previous_selector)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        try:
-            os.replace(temporary, active)
-            _fsync_directory(self.root)
-        finally:
-            with contextlib.suppress(FileNotFoundError):
-                temporary.unlink()
+        _require(
+            peak_count <= ARTIFACT_STORE_MAX_FILES,
+            "campaign publication exceeds its peak file bound",
+        )
 
     def _enforce_bound(self, plan: Mapping[str, Any]) -> None:
         total, count = self._usage()
@@ -1513,21 +2361,26 @@ class CampaignStore:
         worker_sha256: bytes,
         metallib_sha256: bytes,
     ) -> tuple[dict[str, Any], bytes]:
-        selector_wire = _read_regular_file(
-            self.root / ACTIVE_SELECTOR_NAME,
+        self._require_writer()
+        selector_wire = _read_regular_at(
+            self.root_fd,
+            ACTIVE_SELECTOR_NAME,
             campaign.SELECTOR_BYTES,
+            expected_device=self.root_identity[0],
+            require_private_single_link=True,
         )
         selector = campaign.decode_selector(selector_wire)
         _require(
             selector["generation"] == expected_generation,
             "active selector generation changed",
         )
-        manifest_path = self.manifests / (
-            selector["manifest_sha256"].hex() + ".bin"
-        )
-        manifest_wire = _read_regular_file(
-            manifest_path,
+        manifest_name = selector["manifest_sha256"].hex() + ".bin"
+        manifest_wire = _read_regular_at(
+            self.directory_fds[self.manifests.name],
+            manifest_name,
             expected_plan["encoded_bytes"],
+            expected_device=self.root_identity[0],
+            require_private_single_link=True,
         )
         manifest = campaign.verify_manifest(manifest_wire)
         campaign.verify_selector(
@@ -1535,12 +2388,15 @@ class CampaignStore:
             selector_wire,
             environment_root_sha256,
         )
-        _resolve_environment_evidence(
-            self.environments,
+        self._guard_namespace()
+        _resolve_environment_evidence_at(
+            self.directory_fds[self.environments.name],
+            self.directory_identities[self.environments.name],
             expected_plan["campaign_id_sha256"],
             expected_generation,
             environment_root_sha256,
         )
+        self._guard_namespace()
         _require(
             manifest["plan"] == dict(expected_plan),
             "reopened campaign plan changed",
@@ -1549,14 +2405,14 @@ class CampaignStore:
             len(manifest["entries"]) == expected_generation,
             "reopened manifest prefix length changed",
         )
+        segments_fd = self.directory_fds[self.segments.name]
         for entry in manifest["entries"]:
-            wire_path = (
-                self.segments
-                / (entry["report_wire_sha256"].hex() + ".bin")
-            )
-            wire = _read_regular_file(
-                wire_path,
+            wire = _read_regular_at(
+                segments_fd,
+                entry["report_wire_sha256"].hex() + ".bin",
                 inner.EXPECTED_WIRE_BYTES,
+                expected_device=self.root_identity[0],
+                require_private_single_link=True,
             )
             _require(
                 hashlib.sha256(wire).digest()
@@ -1570,6 +2426,7 @@ class CampaignStore:
                 metallib_sha256,
             )
         self._enforce_bound(expected_plan)
+        self._guard_namespace()
         return manifest, selector_wire
 
 

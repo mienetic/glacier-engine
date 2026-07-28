@@ -41,6 +41,8 @@ pub const native_workload_report =
     core.native_workload_report;
 pub const native_workload_campaign_manifest =
     core.native_workload_campaign_manifest;
+pub const native_workload_store_fault_report =
+    core.native_workload_store_fault_report;
 pub const tool_action_contract = core.tool_action_contract;
 pub const tool_action_harness = core.tool_action_harness;
 pub const tool_action_outbox_record =

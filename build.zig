@@ -79,6 +79,17 @@ pub fn build(b: *std.Build) void {
                 "-Dnative-metal-process-kill-output-dir must not be empty",
             );
     }
+    const native_workload_store_fault_output = b.option(
+        []const u8,
+        "native-workload-store-fault-output",
+        "Optional path that retains the native workload store-fault report wire",
+    );
+    if (native_workload_store_fault_output) |path| {
+        if (path.len == 0)
+            @panic(
+                "-Dnative-workload-store-fault-output must not be empty",
+            );
+    }
     if (native_metal_report_output != null and
         native_metal_suite_report_output != null)
         @panic(
@@ -1789,6 +1800,221 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(native_workload_campaign_test_step);
     test_compile_step.dependOn(
         native_workload_campaign_compile_step,
+    );
+
+    // W7b-b2 keeps campaign storage faults separate from device execution.
+    // The fixed report codec is portable; the hard campaign below uses real
+    // native POSIX processes and filesystem calls plus controlled errno
+    // adapters, without turning those adapters into physical-disk evidence.
+    const native_workload_store_fault_report_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/native_workload_store_fault_report.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_native_workload_store_fault_report_tests =
+        b.addRunArtifact(native_workload_store_fault_report_tests);
+    const native_workload_store_fault_report_mod = b.createModule(.{
+        .root_source_file = b.path(
+            "src/core/native_workload_store_fault_report.zig",
+        ),
+        .target = target,
+        .optimize = optimize,
+    });
+    const native_workload_store_fault_report_verifier =
+        b.addExecutable(.{
+            .name = "glacier-native-workload-store-fault-report",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_workload_store_fault_report.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+    native_workload_store_fault_report_verifier.root_module.addImport(
+        "native_workload_store_fault_report",
+        native_workload_store_fault_report_mod,
+    );
+    const native_workload_store_fault_report_verifier_tests =
+        b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_workload_store_fault_report.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+    native_workload_store_fault_report_verifier_tests.root_module.addImport(
+        "native_workload_store_fault_report",
+        native_workload_store_fault_report_mod,
+    );
+    const run_native_workload_store_fault_report_verifier_tests =
+        b.addRunArtifact(
+            native_workload_store_fault_report_verifier_tests,
+        );
+    const run_native_workload_store_fault_report_model =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_native_workload_store_fault_report",
+        });
+    run_native_workload_store_fault_report_model.setCwd(b.path("."));
+    run_native_workload_store_fault_report_model.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_native_workload_store_fault_report_model.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    const native_workload_store_fault_report_test_step = b.step(
+        "native-workload-store-fault-report-test",
+        "Run the portable store-fault report codec and independent verifier",
+    );
+    native_workload_store_fault_report_test_step.dependOn(
+        &run_native_workload_store_fault_report_tests.step,
+    );
+    native_workload_store_fault_report_test_step.dependOn(
+        &run_native_workload_store_fault_report_model.step,
+    );
+    native_workload_store_fault_report_test_step.dependOn(
+        &run_native_workload_store_fault_report_verifier_tests.step,
+    );
+    const native_workload_store_fault_report_compile_step = b.step(
+        "native-workload-store-fault-report-compile",
+        "Compile the store-fault report codec and fresh verifier",
+    );
+    native_workload_store_fault_report_compile_step.dependOn(
+        &native_workload_store_fault_report_tests.step,
+    );
+    native_workload_store_fault_report_compile_step.dependOn(
+        &native_workload_store_fault_report_verifier.step,
+    );
+    native_workload_store_fault_report_compile_step.dependOn(
+        &native_workload_store_fault_report_verifier_tests.step,
+    );
+    const native_workload_store_fault_report_cross_compile_step = b.step(
+        "native-workload-store-fault-report-cross-compile",
+        "Cross-compile the store-fault report codec and verifier",
+    );
+    for (native_workload_report_cross_targets) |cross_query| {
+        const cross_target = b.resolveTargetQuery(cross_query);
+        const cross_store_fault_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "src/core/native_workload_store_fault_report.zig",
+                ),
+                .target = cross_target,
+                .optimize = optimize,
+            }),
+        });
+        const cross_store_fault_mod = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/native_workload_store_fault_report.zig",
+            ),
+            .target = cross_target,
+            .optimize = optimize,
+        });
+        const cross_store_fault_verifier = b.addExecutable(.{
+            .name = "glacier-native-workload-store-fault-report",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_workload_store_fault_report.zig",
+                ),
+                .target = cross_target,
+                .optimize = optimize,
+            }),
+        });
+        cross_store_fault_verifier.root_module.addImport(
+            "native_workload_store_fault_report",
+            cross_store_fault_mod,
+        );
+        native_workload_store_fault_report_cross_compile_step.dependOn(
+            &cross_store_fault_tests.step,
+        );
+        native_workload_store_fault_report_cross_compile_step.dependOn(
+            &cross_store_fault_verifier.step,
+        );
+    }
+    const run_native_workload_store_fault_pure =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_native_workload_store_fault_campaign",
+            "bench.tests.test_native_metal_soak_report",
+        });
+    run_native_workload_store_fault_pure.setCwd(b.path("."));
+    run_native_workload_store_fault_pure.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_native_workload_store_fault_pure.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    const native_workload_store_fault_pure_test_step = b.step(
+        "native-workload-store-fault-pure-test",
+        "Run POSIX-host publication, recovery, and negative-state tests",
+    );
+    native_workload_store_fault_pure_test_step.dependOn(
+        &run_native_workload_store_fault_pure.step,
+    );
+    native_workload_store_fault_pure_test_step.dependOn(
+        native_workload_store_fault_report_test_step,
+    );
+
+    const run_native_workload_store_fault_campaign =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "bench.native_workload_store_fault_campaign",
+            "run-matrix",
+            "--zig-verifier",
+        });
+    run_native_workload_store_fault_campaign.addArtifactArg(
+        native_workload_store_fault_report_verifier,
+    );
+    if (native_workload_store_fault_output) |path| {
+        run_native_workload_store_fault_campaign.addArg("--output");
+        run_native_workload_store_fault_campaign.addArg(path);
+    }
+    run_native_workload_store_fault_campaign.setCwd(b.path("."));
+    run_native_workload_store_fault_campaign.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_native_workload_store_fault_campaign.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    run_native_workload_store_fault_campaign.step.dependOn(
+        &native_workload_store_fault_report_verifier.step,
+    );
+    const native_workload_store_fault_test_step = b.step(
+        "native-workload-store-fault-test",
+        "Run real process-death and controlled POSIX storage-error recovery",
+    );
+    native_workload_store_fault_test_step.dependOn(
+        native_workload_store_fault_pure_test_step,
+    );
+    native_workload_store_fault_test_step.dependOn(
+        &run_native_workload_store_fault_campaign.step,
+    );
+    // Keep only the portable codec in the default build graph. The local
+    // affected/full/matrix verifier selects the hard POSIX-host campaign after
+    // checking native host availability.
+    test_step.dependOn(native_workload_store_fault_report_test_step);
+    test_compile_step.dependOn(
+        native_workload_store_fault_report_compile_step,
     );
 
     // W5b-a is an explicitly invoked native macOS gate. Its Python verifier
