@@ -22,6 +22,7 @@ def _plan_fields(
     restart_after: int = RESTART_AFTER,
     rss_growth_bound: int = 64 * MIB,
     device_growth_bound: int = 64 * MIB,
+    flags: int = campaign.ALLOWED_FLAGS,
 ) -> dict[str, object]:
     epochs = 50
     records_per_epoch = 5
@@ -30,7 +31,7 @@ def _plan_fields(
     result: dict[str, object] = {
         "abi_version": campaign.MANIFEST_ABI,
         "encoded_bytes": campaign.encoded_manifest_bytes(segment_count),
-        "flags": campaign.ALLOWED_FLAGS,
+        "flags": flags,
         "segment_count": segment_count,
         "restart_after_segment": restart_after,
         "epochs_per_segment": epochs,
@@ -131,16 +132,36 @@ def _entries(
 
         duration = 5_000_000_000 + ordinal * 1_000_000
         cumulative_duration += duration
-        phase_terminal = (
+        restart_boundary = (
             restart_after != 0 and ordinal + 1 == restart_after
-        ) or ordinal + 1 == segment_count
+        )
+        forced_restart = bool(
+            restart_boundary
+            and int(plan["flags"])
+            & campaign.PLAN_FLAG_FORCED_PROCESS_RESTART
+        )
+        phase_terminal = restart_boundary or ordinal + 1 == segment_count
         provenance = campaign.BASE_PROVENANCE_BITS
-        if restart_after != 0 and ordinal + 1 == restart_after:
+        if forced_restart:
+            provenance |= campaign.PROVENANCE_FORCED_OS_PROCESS_KILL
+        elif restart_boundary:
             provenance |= campaign.PROVENANCE_PLANNED_GRACEFUL_RESTART
         action_tag = (
-            campaign.ACTION_GRACEFUL_PHASE_END
+            campaign.ACTION_FORCED_PHASE_END
+            if forced_restart
+            else campaign.ACTION_GRACEFUL_PHASE_END
             if phase_terminal
             else campaign.ACTION_NORMAL
+        )
+        exit_code_bits = (
+            campaign.U64_MAX
+            if forced_restart or not phase_terminal
+            else 0
+        )
+        termination_signal = (
+            campaign.TERMINATION_SIGNAL_KILL
+            if forced_restart
+            else 0
         )
         scheduled_action = campaign.derive_scheduled_action(
             plan["campaign_id_sha256"],
@@ -209,8 +230,8 @@ def _entries(
             "device_allocation_before_bytes": device_before,
             "device_allocation_max_bytes": device_max,
             "device_allocation_after_bytes": device_after,
-            "exit_code_bits": 0 if phase_terminal else campaign.U64_MAX,
-            "termination_signal": 0,
+            "exit_code_bits": exit_code_bits,
+            "termination_signal": termination_signal,
             "reserved": 0,
             "scheduled_action_sha256": scheduled_action,
             "segment_challenge_sha256": segment_challenge,
@@ -368,6 +389,180 @@ class NativeWorkloadCampaignTests(unittest.TestCase):
             "d3ca4b9cb32eec8060315547cb1256e73555d77cfa4828248c42fe6d94381ce2",
         )
 
+    def test_forced_restart_roundtrip_and_cross_language_roots(self) -> None:
+        plan = _plan(
+            flags=campaign.PLAN_FLAG_FORCED_PROCESS_RESTART,
+        )
+        entries = _entries(plan)
+        manifest = campaign.make_manifest(plan, entries)
+        decoded = campaign.decode_manifest(manifest)
+        self.assertEqual(campaign.encode_manifest(decoded), manifest)
+        self.assertNotEqual(
+            plan["campaign_id_sha256"],
+            self.plan["campaign_id_sha256"],
+        )
+        self.assertEqual(
+            plan["campaign_id_sha256"].hex(),
+            "520b63429b034796f8f4db3ea748bc636d45a7290feff24815c52f010621f977",
+        )
+
+        boundary = entries[RESTART_AFTER - 1]
+        self.assertEqual(
+            boundary["provenance_bits"],
+            campaign.BASE_PROVENANCE_BITS
+            | campaign.PROVENANCE_FORCED_OS_PROCESS_KILL,
+        )
+        self.assertEqual(boundary["exit_code_bits"], campaign.U64_MAX)
+        self.assertEqual(
+            boundary["termination_signal"],
+            campaign.TERMINATION_SIGNAL_KILL,
+        )
+        self.assertEqual(
+            boundary["scheduled_action_sha256"].hex(),
+            "3b60f035a18e77896ec8f9289eebb5aa6b14a93065abb6a0f15be799a675972c",
+        )
+        self.assertEqual(
+            boundary["segment_challenge_sha256"].hex(),
+            "12f868af28158496519d94f1529da4f2a6442f873e7ea2ae597c130ed5542f76",
+        )
+        self.assertEqual(
+            boundary["entry_sha256"].hex(),
+            "0ef594636c22dbce6c5c92347f4b86490c92718e7e9cadec0302083e4ae5d372",
+        )
+
+        final = entries[-1]
+        self.assertEqual(
+            final["provenance_bits"],
+            campaign.BASE_PROVENANCE_BITS,
+        )
+        self.assertEqual(final["exit_code_bits"], 0)
+        self.assertEqual(final["termination_signal"], 0)
+        self.assertEqual(
+            final["scheduled_action_sha256"].hex(),
+            "b691620f4ba54632eaaa088f87442da8f4cb1c8f38c492a25d13356a89fdc0eb",
+        )
+        self.assertEqual(
+            final["entry_sha256"].hex(),
+            "a57a516bd3dd9c871986347be82d7ef86051aac9dbe301fe83e44ec24097584c",
+        )
+        self.assertEqual(
+            decoded["body_sha256"].hex(),
+            "859cd33a83f35b56b3e6d805b83405a42396b405aea8a6c030955ec2a18ca6df",
+        )
+        self.assertEqual(
+            decoded["manifest_sha256"].hex(),
+            "2846478ac665ca2c35b32721bf0c0a6f40bd29b2e81e812f05ac39e6cb559bf8",
+        )
+        self.assertEqual(
+            hashlib.sha256(manifest).hexdigest(),
+            "83beb4589cba2c4c3cd94bd9f6d77b3628af5d8935bc5645bbb727df8a897d7d",
+        )
+
+        environment = campaign.derive_environment_sha256(
+            plan["campaign_id_sha256"],
+            SEGMENTS,
+            self.before_environment,
+            self.after_environment,
+        )
+        selector_wire = campaign.make_selector(decoded, environment)
+        selector = campaign.verify_selector(
+            manifest,
+            selector_wire,
+            environment,
+        )
+        self.assertEqual(selector["flags"], campaign.ALLOWED_SELECTOR_FLAGS)
+        self.assertEqual(
+            selector["selector_sha256"].hex(),
+            "eecb769e8b704e12aabf9a413e288e80918e6777a8f11290579f6eaa98695ee2",
+        )
+
+    def test_forced_restart_rejects_invalid_flags_and_control_drift(self) -> None:
+        with self.assertRaisesRegex(
+            campaign.CampaignManifestError,
+            "invalid manifest flags",
+        ):
+            _plan(flags=1 << 1)
+        with self.assertRaisesRegex(
+            campaign.CampaignManifestError,
+            "requires a restart boundary",
+        ):
+            _plan(
+                flags=campaign.PLAN_FLAG_FORCED_PROCESS_RESTART,
+                restart_after=0,
+            )
+
+        plan = _plan(
+            flags=campaign.PLAN_FLAG_FORCED_PROCESS_RESTART,
+        )
+        canonical_entries = _entries(plan)
+        boundary_ordinal = RESTART_AFTER - 1
+        mutations = (
+            ("exit_code_bits", 0),
+            ("termination_signal", 0),
+            (
+                "provenance_bits",
+                campaign.BASE_PROVENANCE_BITS
+                | campaign.PROVENANCE_PLANNED_GRACEFUL_RESTART,
+            ),
+        )
+        for field, value in mutations:
+            with self.subTest(field=field):
+                entries = [dict(entry) for entry in canonical_entries]
+                entries[boundary_ordinal][field] = value
+                entries[boundary_ordinal] = _reseal_entry(
+                    plan,
+                    entries[boundary_ordinal],
+                )
+                with self.assertRaises(campaign.CampaignManifestError):
+                    campaign.decode_manifest(_raw_manifest(plan, entries))
+
+        entries = [dict(entry) for entry in canonical_entries]
+        boundary = entries[boundary_ordinal]
+        boundary["scheduled_action_sha256"] = (
+            campaign.derive_scheduled_action(
+                plan["campaign_id_sha256"],
+                plan["schedule_sha256"],
+                boundary_ordinal,
+                int(boundary["process_generation"]),
+                campaign.ACTION_GRACEFUL_PHASE_END,
+                boundary["rss_source_sha256"],
+            )
+        )
+        boundary["segment_challenge_sha256"] = (
+            campaign.derive_segment_challenge(
+                plan["campaign_id_sha256"],
+                boundary_ordinal,
+                int(boundary["process_generation"]),
+                boundary["previous_entry_sha256"],
+                boundary["previous_verified_report_sha256"],
+                boundary["scheduled_action_sha256"],
+            )
+        )
+        entries[boundary_ordinal] = _reseal_entry(plan, boundary)
+        with self.assertRaises(campaign.CampaignManifestError):
+            campaign.decode_manifest(_raw_manifest(plan, entries))
+
+        final_entries = [dict(entry) for entry in canonical_entries]
+        final_entries[-1]["exit_code_bits"] = campaign.U64_MAX
+        final_entries[-1]["termination_signal"] = (
+            campaign.TERMINATION_SIGNAL_KILL
+        )
+        final_entries[-1]["provenance_bits"] = (
+            campaign.BASE_PROVENANCE_BITS
+            | campaign.PROVENANCE_FORCED_OS_PROCESS_KILL
+        )
+        final_entries[-1] = _reseal_entry(plan, final_entries[-1])
+        with self.assertRaises(campaign.CampaignManifestError):
+            campaign.decode_manifest(_raw_manifest(plan, final_entries))
+
+        selector = campaign.decode_selector(self.selector)
+        selector["flags"] = campaign.PLAN_FLAG_FORCED_PROCESS_RESTART
+        with self.assertRaisesRegex(
+            campaign.CampaignManifestError,
+            "selector flags",
+        ):
+            campaign.decode_selector(_reseal_selector(selector))
+
     def test_every_prefix_is_fixed_size_checkpoint_and_resumes(self) -> None:
         previous_manifest_root = None
         for length in range(1, SEGMENTS + 1):
@@ -429,6 +624,53 @@ class NativeWorkloadCampaignTests(unittest.TestCase):
                         previous_manifest_root,
                     )
                 previous_manifest_root = decoded["manifest_sha256"]
+
+    def test_forced_restart_every_prefix_roundtrips(self) -> None:
+        plan = _plan(
+            flags=campaign.PLAN_FLAG_FORCED_PROCESS_RESTART,
+        )
+        entries = _entries(plan)
+        for length in range(1, SEGMENTS + 1):
+            with self.subTest(length=length):
+                wire = campaign.make_manifest(plan, entries[:length])
+                decoded = campaign.verify_manifest(wire)
+                self.assertEqual(
+                    decoded["completed_segment_count"],
+                    length,
+                )
+                after = (
+                    self.after_environment
+                    if length == SEGMENTS
+                    else campaign.ZERO_DIGEST
+                )
+                environment = campaign.derive_environment_sha256(
+                    plan["campaign_id_sha256"],
+                    length,
+                    self.before_environment,
+                    after,
+                )
+                selector_wire = campaign.make_selector(
+                    decoded,
+                    environment,
+                )
+                selector = campaign.verify_selector(
+                    wire,
+                    selector_wire,
+                    environment,
+                )
+                self.assertEqual(selector["generation"], length)
+                self.assertEqual(
+                    selector["flags"],
+                    campaign.ALLOWED_SELECTOR_FLAGS,
+                )
+                if length >= RESTART_AFTER:
+                    boundary = decoded["entries"][
+                        RESTART_AFTER - 1
+                    ]
+                    self.assertEqual(
+                        boundary["termination_signal"],
+                        campaign.TERMINATION_SIGNAL_KILL,
+                    )
 
     def test_manifest_rejects_every_one_bit_mutation(self) -> None:
         for index in range(len(self.manifest)):

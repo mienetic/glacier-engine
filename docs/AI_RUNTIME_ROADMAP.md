@@ -784,7 +784,8 @@ reporting:
    CPU and device utilization, host/device memory separately, accelerator
    submit/device/synchronization timing, fallback status, power/thermal/energy
    when available, and output-quality policy.
-3. **Soak and disruption — W7a and W7b-a implemented; W7b-b remains open.**
+3. **Soak and disruption — W7a, W7b-a, and W7b-b1 implemented; remaining
+   W7b-b work is open.**
    W7a runs 50 fixed production-native Metal epochs and retains 250 raw records
    around 100 real GPU commands. Each epoch settles an admitted cancellation
    and one exact malformed pre-submit rejection, then submits both bounded
@@ -815,24 +816,37 @@ reporting:
    boundaries require AC power, low-power mode disabled, nominal `pmset` and
    Foundation thermal state, and unchanged host/boot identity. A canonical
    checkpoint is published after every segment to a content-addressed store
-   bounded to 4 MiB and 32 regular files. The offline verifier reconstructs
-   every retained manifest prefix, reruns both inner verification layers,
-   rechecks component/environment/selector bindings, and rejects missing,
-   additional, corrupted, symlinked, or chain-substituted objects. See
+   bounded to 4 MiB and 32 regular files. After the live writer closes, a
+   fresh offline-verifier process reconstructs every retained manifest prefix,
+   reruns both inner verification layers, rechecks
+   component/environment/selector bindings, and rejects missing, additional,
+   corrupted, symlinked, or chain-substituted objects. See
    [Native Metal segmented soak report](NATIVE_METAL_SOAK_REPORT.md).
 
+   W7b-b1 seals a second profile over the same bounded workload. Ordinal 5
+   changes from a clean phase end to a forced action bound into the campaign
+   ID, challenge, provenance, exit bits, and signal. Once that segment has
+   passed both verifiers, reached zero logical ownership, and been synchronized
+   as a segment object, the supervisor sends real `SIGKILL` to the worker PID
+   and requires wait status `-9`. It publishes and re-reads generation six,
+   reloads predecessor and cumulative facts from the retained entry, creates a
+   fresh Metal worker, and completes the remaining six segments. The W7b-a
+   zero-flag golden remains byte-identical. See
+   [Native Metal process-kill recovery report](NATIVE_METAL_PROCESS_KILL_REPORT.md).
+
    These completed slices prove finite controlled software disruption,
-   correctness, ownership closure, clean restart, durable continuity, and
-   bounded observed growth for the invoking host. They are not latency or
-   throughput benchmarks, indefinite no-leak proofs, physical residency
-   measurements, or physical device-loss, driver, power, or storage-failure
-   evidence. W7b-b remains open for bounded process-kill, storage-pressure,
-   cancellation-storm, adapter-loss, and physical-device-fault schedules with
-   explicit synthetic-versus-physical provenance. Prepared-text additions
-   should cover repeated handoffs, source death before generation two, target
-   death before generation three, idempotent-sink replay, selector corruption,
-   lease contention, and recovery memory growth without relabeling fail-closed
-   unavailability as success.
+   correctness, ownership closure, clean restart, one post-segment process
+   kill, durable continuity, and bounded observed growth for the invoking host.
+   They are not latency or throughput benchmarks, indefinite no-leak proofs,
+   in-flight command recovery, physical residency measurements, or physical
+   device-loss, driver, power, or storage-failure evidence. W7b-b remains open
+   for supervisor and in-flight process death, storage pressure,
+   cancellation storms, adapter loss, and physical-device-fault schedules
+   with explicit synthetic-versus-physical provenance. Prepared-text
+   additions should cover repeated handoffs, source death before generation
+   two, target death before generation three, idempotent-sink replay, selector
+   corruption, lease contention, and recovery memory growth without
+   relabelling fail-closed unavailability as success.
 
 Native open-loop arrival-rate campaigns and closed-loop concurrency campaigns
 must remain distinct from each other and from deterministic logical-step

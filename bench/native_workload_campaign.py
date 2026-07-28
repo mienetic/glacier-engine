@@ -45,9 +45,15 @@ SELECTOR_BYTES = (
 )
 SELECTOR_BODY_BYTES = SELECTOR_BYTES - 32
 MAX_SEGMENTS = 1024
+# Plan flags are additive. Selector flags remain zero in V1.
+PLAN_FLAG_FORCED_PROCESS_RESTART = 1 << 0
+# ``ALLOWED_FLAGS`` remains the backward-compatible zero-flag plan default.
+ALLOWED_MANIFEST_FLAGS = PLAN_FLAG_FORCED_PROCESS_RESTART
+ALLOWED_SELECTOR_FLAGS = 0
 ALLOWED_FLAGS = 0
 ZERO_DIGEST = bytes(32)
 U64_MAX = (1 << 64) - 1
+TERMINATION_SIGNAL_KILL = 9
 
 PLAN_DOMAIN = b"glacier-native-workload-campaign-plan-v1\x00"
 CAMPAIGN_ID_DOMAIN = b"glacier-native-workload-campaign-id-v1\x00"
@@ -79,7 +85,14 @@ ENVIRONMENT_DOMAIN = (
 
 ACTION_NORMAL = 1
 ACTION_GRACEFUL_PHASE_END = 2
-ACTION_VALUES = frozenset((ACTION_NORMAL, ACTION_GRACEFUL_PHASE_END))
+ACTION_FORCED_PHASE_END = 3
+ACTION_VALUES = frozenset(
+    (
+        ACTION_NORMAL,
+        ACTION_GRACEFUL_PHASE_END,
+        ACTION_FORCED_PHASE_END,
+    )
+)
 
 DISPOSITION_VERIFIED_REPORT = 1
 DISPOSITION_VALUES = frozenset((DISPOSITION_VERIFIED_REPORT,))
@@ -102,6 +115,7 @@ PROVENANCE_CONTROLLED_SOFTWARE = 1 << 1
 PROVENANCE_NATIVE_HOST_OBSERVATION = 1 << 2
 PROVENANCE_DERIVED_SYNTHETIC = 1 << 3
 PROVENANCE_PLANNED_GRACEFUL_RESTART = 1 << 4
+PROVENANCE_FORCED_OS_PROCESS_KILL = 1 << 5
 BASE_PROVENANCE_BITS = (
     PROVENANCE_PRODUCTION_NATIVE
     | PROVENANCE_CONTROLLED_SOFTWARE
@@ -109,7 +123,9 @@ BASE_PROVENANCE_BITS = (
     | PROVENANCE_DERIVED_SYNTHETIC
 )
 ALLOWED_PROVENANCE_BITS = (
-    BASE_PROVENANCE_BITS | PROVENANCE_PLANNED_GRACEFUL_RESTART
+    BASE_PROVENANCE_BITS
+    | PROVENANCE_PLANNED_GRACEFUL_RESTART
+    | PROVENANCE_FORCED_OS_PROCESS_KILL
 )
 
 PLAN_SCALAR_FIELDS = (
@@ -509,6 +525,46 @@ def _expected_process_generation(plan: Mapping[str, Any], ordinal: int) -> int:
     return 2
 
 
+def _expected_attempt_control(
+    plan: Mapping[str, Any],
+    ordinal: int,
+) -> tuple[int, int, int, int]:
+    """Return action, provenance, exit code, and signal for one segment."""
+    restart_boundary = (
+        plan["restart_after_segment"] != 0
+        and ordinal + 1 == plan["restart_after_segment"]
+    )
+    if restart_boundary:
+        if plan["flags"] & PLAN_FLAG_FORCED_PROCESS_RESTART:
+            return (
+                ACTION_FORCED_PHASE_END,
+                BASE_PROVENANCE_BITS
+                | PROVENANCE_FORCED_OS_PROCESS_KILL,
+                U64_MAX,
+                TERMINATION_SIGNAL_KILL,
+            )
+        return (
+            ACTION_GRACEFUL_PHASE_END,
+            BASE_PROVENANCE_BITS
+            | PROVENANCE_PLANNED_GRACEFUL_RESTART,
+            0,
+            0,
+        )
+    if ordinal + 1 == plan["segment_count"]:
+        return (
+            ACTION_GRACEFUL_PHASE_END,
+            BASE_PROVENANCE_BITS,
+            0,
+            0,
+        )
+    return (
+        ACTION_NORMAL,
+        BASE_PROVENANCE_BITS,
+        U64_MAX,
+        0,
+    )
+
+
 def _validate_plan(plan: Mapping[str, Any]) -> Record:
     checked = _copy_fields(
         plan,
@@ -518,7 +574,10 @@ def _validate_plan(plan: Mapping[str, Any]) -> Record:
     )
     segments = checked["segment_count"]
     _require(checked["abi_version"] == MANIFEST_ABI, "invalid manifest ABI")
-    _require(checked["flags"] == ALLOWED_FLAGS, "invalid manifest flags")
+    _require(
+        checked["flags"] & ~ALLOWED_MANIFEST_FLAGS == 0,
+        "invalid manifest flags",
+    )
     _require(0 < segments <= MAX_SEGMENTS, "invalid segment count")
     _require(
         checked["encoded_bytes"] == encoded_manifest_bytes(segments),
@@ -528,6 +587,13 @@ def _validate_plan(plan: Mapping[str, Any]) -> Record:
     _require(
         restart == 0 or 0 < restart < segments,
         "restart boundary is outside the campaign",
+    )
+    _require(
+        not (
+            checked["flags"] & PLAN_FLAG_FORCED_PROCESS_RESTART
+            and restart == 0
+        ),
+        "forced process restart requires a restart boundary",
     )
     for field in (
         "epochs_per_segment",
@@ -707,7 +773,6 @@ def seal_plan(plan: Mapping[str, Any]) -> Record:
         "plan fields are not canonical",
     )
     result["abi_version"] = MANIFEST_ABI
-    result["flags"] = ALLOWED_FLAGS
     result["encoded_bytes"] = encoded_manifest_bytes(result["segment_count"])
     result["campaign_id_sha256"] = ZERO_DIGEST
     result["campaign_id_sha256"] = derive_campaign_id(result)
@@ -756,15 +821,11 @@ def make_entry(
         result["reserved"] == 0,
         "caller supplied a nonzero attempt reserved field",
     )
-    action_tag = (
-        ACTION_GRACEFUL_PHASE_END
-        if (
-            checked_plan["restart_after_segment"] != 0
-            and result["ordinal"] + 1
-            == checked_plan["restart_after_segment"]
+    action_tag, _provenance, _exit_code, _signal = (
+        _expected_attempt_control(
+            checked_plan,
+            result["ordinal"],
         )
-        or result["ordinal"] + 1 == checked_plan["segment_count"]
-        else ACTION_NORMAL
     )
     expected_action_sha256 = derive_scheduled_action(
         checked_plan["campaign_id_sha256"],
@@ -866,34 +927,26 @@ def _validate_entry(
         checked["process_generation"] == expected_generation,
         "attempt process generation mismatch",
     )
-    restart_boundary = plan["restart_after_segment"]
-    expected_action = (
-        ACTION_GRACEFUL_PHASE_END
-        if (
-            restart_boundary != 0
-            and ordinal + 1 == restart_boundary
-        )
-        or ordinal + 1 == plan["segment_count"]
-        else ACTION_NORMAL
+    (
+        expected_action,
+        expected_provenance,
+        expected_exit,
+        expected_signal,
+    ) = _expected_attempt_control(
+        plan,
+        ordinal,
     )
     _require(
         checked["disposition"] == DISPOSITION_VERIFIED_REPORT,
-        "W7b-a publishes only independently verified reports",
+        "campaign publishes only independently verified reports",
     )
-    expected_provenance = BASE_PROVENANCE_BITS
-    if restart_boundary != 0 and ordinal + 1 == restart_boundary:
-        expected_provenance |= PROVENANCE_PLANNED_GRACEFUL_RESTART
     _require(
         checked["provenance_bits"] == expected_provenance,
         "attempt provenance does not match the schedule",
     )
-    phase_terminal = (
-        restart_boundary != 0 and ordinal + 1 == restart_boundary
-    ) or ordinal + 1 == plan["segment_count"]
-    expected_exit = 0 if phase_terminal else U64_MAX
     _require(
         checked["exit_code_bits"] == expected_exit
-        and checked["termination_signal"] == 0,
+        and checked["termination_signal"] == expected_signal,
         "attempt process termination state does not match its phase boundary",
     )
 
@@ -1418,7 +1471,7 @@ def make_selector(
     selector: Record = {
         "abi_version": SELECTOR_ABI,
         "encoded_bytes": SELECTOR_BYTES,
-        "flags": ALLOWED_FLAGS,
+        "flags": ALLOWED_SELECTOR_FLAGS,
         "generation": len(entries),
         "segment_count": plan["segment_count"],
         "total_records": entries[-1]["cumulative_records"],
@@ -1476,7 +1529,10 @@ def _validate_selector(selector: Mapping[str, Any]) -> None:
         selector["encoded_bytes"] == SELECTOR_BYTES,
         "invalid selector encoded length",
     )
-    _require(selector["flags"] == ALLOWED_FLAGS, "invalid selector flags")
+    _require(
+        selector["flags"] == ALLOWED_SELECTOR_FLAGS,
+        "invalid selector flags",
+    )
     _require(
         0 < selector["generation"] <= selector["segment_count"]
         and selector["segment_count"] <= MAX_SEGMENTS,
@@ -1568,7 +1624,10 @@ def verify_selector(
 
 __all__ = [
     "ALLOWED_FLAGS",
+    "ALLOWED_MANIFEST_FLAGS",
     "ALLOWED_PROVENANCE_BITS",
+    "ALLOWED_SELECTOR_FLAGS",
+    "ACTION_FORCED_PHASE_END",
     "ACTION_GRACEFUL_PHASE_END",
     "ACTION_NORMAL",
     "ATTEMPT_ABI",
@@ -1591,13 +1650,16 @@ __all__ = [
     "PLAN_SCALAR_FIELDS",
     "PROVENANCE_CONTROLLED_SOFTWARE",
     "PROVENANCE_DERIVED_SYNTHETIC",
+    "PROVENANCE_FORCED_OS_PROCESS_KILL",
     "PROVENANCE_NATIVE_HOST_OBSERVATION",
     "PROVENANCE_PLANNED_GRACEFUL_RESTART",
     "PROVENANCE_PRODUCTION_NATIVE",
+    "PLAN_FLAG_FORCED_PROCESS_RESTART",
     "SELECTOR_ABI",
     "SELECTOR_BYTES",
     "SELECTOR_DIGEST_FIELDS",
     "SELECTOR_SCALAR_FIELDS",
+    "TERMINATION_SIGNAL_KILL",
     "U64_MAX",
     "ZERO_DIGEST",
     "decode_manifest",

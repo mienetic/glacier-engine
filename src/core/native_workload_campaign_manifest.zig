@@ -30,21 +30,32 @@ pub const selector_bytes: usize = 192;
 pub const selector_body_bytes: usize = selector_bytes - @sizeOf(Digest);
 pub const max_segment_count: usize = 1_024;
 pub const running_exit_code_bits: u64 = std.math.maxInt(u64);
-pub const allowed_manifest_flags: u64 = 0;
+pub const plan_flag_forced_process_restart: u64 = 1 << 0;
+pub const default_manifest_flags: u64 = 0;
+// Preserve the public V1 default used by existing callers. New decoders use
+// the supported mask when accepting additive plan flags.
+pub const allowed_manifest_flags: u64 = default_manifest_flags;
+pub const supported_manifest_flags: u64 =
+    plan_flag_forced_process_restart;
 pub const allowed_attempt_flags: u64 = 0;
 pub const allowed_selector_flags: u64 = 0;
+pub const termination_signal_kill: u64 = 9;
+
+pub const action_forced_phase_end: u64 = 3;
 
 pub const provenance_native_gpu: u64 = 1 << 0;
 pub const provenance_controlled_software: u64 = 1 << 1;
 pub const provenance_native_host_observation: u64 = 1 << 2;
 pub const provenance_derived_synthetic: u64 = 1 << 3;
 pub const provenance_planned_graceful_restart: u64 = 1 << 4;
+pub const provenance_forced_os_process_kill: u64 = 1 << 5;
 pub const allowed_provenance_bits: u64 =
     provenance_native_gpu |
     provenance_controlled_software |
     provenance_native_host_observation |
     provenance_derived_synthetic |
-    provenance_planned_graceful_restart;
+    provenance_planned_graceful_restart |
+    provenance_forced_os_process_kill;
 pub const base_segment_provenance: u64 =
     provenance_native_gpu |
     provenance_controlled_software |
@@ -111,6 +122,7 @@ pub const DispositionV1 = enum(u64) {
 pub const ScheduledActionV1 = enum(u64) {
     normal_segment = 1,
     graceful_phase_end = 2,
+    forced_phase_end = action_forced_phase_end,
 };
 
 pub const AvailabilityV1 = enum(u64) {
@@ -129,6 +141,7 @@ pub const ObservationKindV1 = enum(u64) {
 /// report exists. Machine, backend, device, and placement are deliberately not
 /// part of this seed.
 pub const CampaignSeedV1 = struct {
+    flags: u64 = default_manifest_flags,
     segment_count: u64,
     restart_after_segment: u64,
     epochs_per_segment: u64,
@@ -169,7 +182,7 @@ pub const PlanConfigV1 = struct {
 pub const PlanV1 = struct {
     abi_version: u64 = manifest_abi,
     encoded_bytes: u64,
-    flags: u64 = allowed_manifest_flags,
+    flags: u64 = default_manifest_flags,
     segment_count: u64,
     restart_after_segment: u64,
     epochs_per_segment: u64,
@@ -389,6 +402,11 @@ fn derivePlanV1(
     require_dynamic_identities: bool,
 ) Error!PlanV1 {
     const seed = config.seed;
+    if ((seed.flags & ~supported_manifest_flags) != 0)
+        return Error.InvalidFlags;
+    if ((seed.flags & plan_flag_forced_process_restart) != 0 and
+        seed.restart_after_segment == 0)
+        return Error.InvalidPlan;
     if (seed.segment_count == 0 or
         seed.segment_count > max_segment_count or
         (seed.restart_after_segment != 0 and
@@ -501,6 +519,7 @@ fn derivePlanV1(
     var plan: PlanV1 = .{
         .encoded_bytes = std.math.cast(u64, encoded_bytes) orelse
             return Error.ArithmeticOverflow,
+        .flags = seed.flags,
         .segment_count = seed.segment_count,
         .restart_after_segment = seed.restart_after_segment,
         .epochs_per_segment = seed.epochs_per_segment,
@@ -549,6 +568,7 @@ fn derivePlanV1(
 
 fn seedFromPlanV1(plan: PlanV1) CampaignSeedV1 {
     return .{
+        .flags = plan.flags,
         .segment_count = plan.segment_count,
         .restart_after_segment = plan.restart_after_segment,
         .epochs_per_segment = plan.epochs_per_segment,
@@ -715,11 +735,18 @@ pub fn makeAttemptV1(
         plan,
         config.ordinal,
     );
-    const phase_end = isPhaseEndV1(plan, config.ordinal);
-    const actual_restart =
-        phase_end and config.ordinal + 1 < plan.segment_count;
+    const restart_boundary = isRestartBoundaryV1(
+        plan,
+        config.ordinal,
+    );
+    const forced_restart = restart_boundary and
+        (plan.flags & plan_flag_forced_process_restart) != 0;
+    const phase_end =
+        restart_boundary or config.ordinal + 1 == plan.segment_count;
     const provenance = base_segment_provenance |
-        (if (actual_restart)
+        (if (forced_restart)
+            provenance_forced_os_process_kill
+        else if (restart_boundary)
             provenance_planned_graceful_restart
         else
             0);
@@ -801,8 +828,16 @@ pub fn makeAttemptV1(
         .device_allocation_before_bytes = config.device_allocation.before_bytes,
         .device_allocation_max_bytes = config.device_allocation.max_bytes,
         .device_allocation_after_bytes = config.device_allocation.after_bytes,
-        .exit_code_bits = if (phase_end) 0 else running_exit_code_bits,
-        .termination_signal = 0,
+        .exit_code_bits = if (forced_restart)
+            running_exit_code_bits
+        else if (phase_end)
+            0
+        else
+            running_exit_code_bits,
+        .termination_signal = if (forced_restart)
+            termination_signal_kill
+        else
+            0,
         .scheduled_action_sha256 = scheduled_action,
         .segment_challenge_sha256 = challenge,
         .previous_attempt_sha256 = previous_attempt,
@@ -919,7 +954,10 @@ fn scheduledActionV1(
     plan: PlanV1,
     ordinal: u64,
 ) ScheduledActionV1 {
-    return if (isPhaseEndV1(plan, ordinal))
+    return if (isRestartBoundaryV1(plan, ordinal) and
+        (plan.flags & plan_flag_forced_process_restart) != 0)
+        .forced_phase_end
+    else if (isPhaseEndV1(plan, ordinal))
         .graceful_phase_end
     else
         .normal_segment;
@@ -2176,6 +2214,240 @@ test "wire codec matches the independent Python golden fixture" {
     try testing.expectEqual(@as(u64, 15_000), selector.total_events);
 }
 
+test "forced restart matches Python roots and remains graceful at completion" {
+    const testing = std.testing;
+    var config = goldenPlanConfig();
+    config.seed.flags = plan_flag_forced_process_restart;
+    const plan = try makePlanV1(config);
+    try expectDigestHex(
+        "520b63429b034796f8f4db3ea748bc636d45a7290feff24815c52f010621f977",
+        plan.campaign_id_sha256,
+    );
+
+    var attempts: [test_segment_count]AttemptV1 = undefined;
+    for (&attempts, 0..) |*attempt, ordinal| {
+        attempt.* = try makeAttemptV1(
+            plan,
+            if (ordinal == 0) null else &attempts[ordinal - 1],
+            try goldenAttemptConfig(ordinal),
+        );
+    }
+
+    const boundary = attempts[5];
+    try testing.expectEqual(
+        base_segment_provenance |
+            provenance_forced_os_process_kill,
+        boundary.provenance_bits,
+    );
+    try testing.expectEqual(
+        running_exit_code_bits,
+        boundary.exit_code_bits,
+    );
+    try testing.expectEqual(
+        termination_signal_kill,
+        boundary.termination_signal,
+    );
+    try expectDigestHex(
+        "3b60f035a18e77896ec8f9289eebb5aa6b14a93065abb6a0f15be799a675972c",
+        boundary.scheduled_action_sha256,
+    );
+    try expectDigestHex(
+        "12f868af28158496519d94f1529da4f2a6442f873e7ea2ae597c130ed5542f76",
+        boundary.segment_challenge_sha256,
+    );
+    try expectDigestHex(
+        "0ef594636c22dbce6c5c92347f4b86490c92718e7e9cadec0302083e4ae5d372",
+        boundary.attempt_sha256,
+    );
+
+    const final_attempt = attempts[11];
+    try testing.expectEqual(
+        base_segment_provenance,
+        final_attempt.provenance_bits,
+    );
+    try testing.expectEqual(@as(u64, 0), final_attempt.exit_code_bits);
+    try testing.expectEqual(@as(u64, 0), final_attempt.termination_signal);
+    try expectDigestHex(
+        "b691620f4ba54632eaaa088f87442da8f4cb1c8f38c492a25d13356a89fdc0eb",
+        final_attempt.scheduled_action_sha256,
+    );
+    try expectDigestHex(
+        "a57a516bd3dd9c871986347be82d7ef86051aac9dbe301fe83e44ec24097584c",
+        final_attempt.attempt_sha256,
+    );
+
+    const manifest = try makeManifestV1(plan, &attempts);
+    var wire: [test_manifest_bytes]u8 = undefined;
+    const encoded = try encodeManifestV1(manifest, &wire);
+    try expectDigestHex(
+        "859cd33a83f35b56b3e6d805b83405a42396b405aea8a6c030955ec2a18ca6df",
+        encoded.manifest_body_sha256,
+    );
+    try expectDigestHex(
+        "2846478ac665ca2c35b32721bf0c0a6f40bd29b2e81e812f05ac39e6cb559bf8",
+        encoded.manifest_footer_sha256,
+    );
+    try expectDigestHex(
+        "83beb4589cba2c4c3cd94bd9f6d77b3628af5d8935bc5645bbb727df8a897d7d",
+        digestV1(encoded.bytes),
+    );
+
+    var decoded_storage: [test_segment_count]AttemptV1 = undefined;
+    const decoded = try decodeManifestV1(
+        encoded.bytes,
+        &decoded_storage,
+    );
+    try testing.expectEqualDeep(plan, decoded.manifest.plan);
+    try testing.expectEqualDeep(
+        attempts[0..],
+        decoded.manifest.attempts,
+    );
+
+    const selector = try makeSelectorWithEnvironmentV1(
+        decoded.manifest,
+        decoded.manifest_footer_sha256,
+        goldenDigest("environment-before"),
+        goldenDigest("environment-after"),
+    );
+    try testing.expectEqual(
+        allowed_selector_flags,
+        selector.flags,
+    );
+    try expectDigestHex(
+        "eecb769e8b704e12aabf9a413e288e80918e6777a8f11290579f6eaa98695ee2",
+        selector.selector_sha256,
+    );
+}
+
+test "forced restart rejects invalid flags and coherent control drift" {
+    const testing = std.testing;
+    var unknown_flags = goldenPlanConfig();
+    unknown_flags.seed.flags = 1 << 1;
+    try testing.expectError(
+        Error.InvalidFlags,
+        makePlanV1(unknown_flags),
+    );
+
+    var missing_boundary = goldenPlanConfig();
+    missing_boundary.seed.flags = plan_flag_forced_process_restart;
+    missing_boundary.seed.restart_after_segment = 0;
+    try testing.expectError(
+        Error.InvalidPlan,
+        makePlanV1(missing_boundary),
+    );
+
+    var config = goldenPlanConfig();
+    config.seed.flags = plan_flag_forced_process_restart;
+    const plan = try makePlanV1(config);
+    var attempts: [test_segment_count]AttemptV1 = undefined;
+    for (&attempts, 0..) |*attempt, ordinal| {
+        attempt.* = try makeAttemptV1(
+            plan,
+            if (ordinal == 0) null else &attempts[ordinal - 1],
+            try goldenAttemptConfig(ordinal),
+        );
+    }
+
+    var wrong_exit = attempts[5];
+    wrong_exit.exit_code_bits = 0;
+    wrong_exit.attempt_sha256 = try attemptSha256V1(
+        plan.campaign_id_sha256,
+        wrong_exit,
+    );
+    try testing.expectError(
+        Error.InvalidAttempt,
+        validateAttemptV1(plan, &attempts[4], wrong_exit),
+    );
+
+    var wrong_signal = attempts[5];
+    wrong_signal.termination_signal = 0;
+    wrong_signal.attempt_sha256 = try attemptSha256V1(
+        plan.campaign_id_sha256,
+        wrong_signal,
+    );
+    try testing.expectError(
+        Error.InvalidAttempt,
+        validateAttemptV1(plan, &attempts[4], wrong_signal),
+    );
+
+    var wrong_provenance = attempts[5];
+    wrong_provenance.provenance_bits =
+        base_segment_provenance |
+        provenance_planned_graceful_restart;
+    wrong_provenance.attempt_sha256 = try attemptSha256V1(
+        plan.campaign_id_sha256,
+        wrong_provenance,
+    );
+    try testing.expectError(
+        Error.InvalidAttempt,
+        validateAttemptV1(plan, &attempts[4], wrong_provenance),
+    );
+
+    var graceful_action_hash =
+        std.crypto.hash.sha2.Sha256.init(.{});
+    graceful_action_hash.update(scheduled_action_domain);
+    graceful_action_hash.update(&plan.campaign_id_sha256);
+    graceful_action_hash.update(&plan.profile_sha256);
+    hashU64(&graceful_action_hash, 5);
+    hashU64(&graceful_action_hash, attempts[5].process_generation);
+    hashU64(
+        &graceful_action_hash,
+        @intFromEnum(ScheduledActionV1.graceful_phase_end),
+    );
+    graceful_action_hash.update(&attempts[5].rss_source_sha256);
+    var wrong_action = attempts[5];
+    wrong_action.scheduled_action_sha256 =
+        finishHash(&graceful_action_hash);
+    wrong_action.segment_challenge_sha256 =
+        try segmentChallengeSha256V1(
+            plan.campaign_id_sha256,
+            wrong_action.ordinal,
+            wrong_action.process_generation,
+            wrong_action.previous_attempt_sha256,
+            wrong_action.previous_verified_report_sha256,
+            wrong_action.scheduled_action_sha256,
+        );
+    wrong_action.attempt_sha256 = try attemptSha256V1(
+        plan.campaign_id_sha256,
+        wrong_action,
+    );
+    try testing.expectError(
+        Error.InvalidAttempt,
+        validateAttemptV1(plan, &attempts[4], wrong_action),
+    );
+
+    var forced_final = attempts[11];
+    forced_final.provenance_bits =
+        base_segment_provenance |
+        provenance_forced_os_process_kill;
+    forced_final.exit_code_bits = running_exit_code_bits;
+    forced_final.termination_signal = termination_signal_kill;
+    forced_final.attempt_sha256 = try attemptSha256V1(
+        plan.campaign_id_sha256,
+        forced_final,
+    );
+    try testing.expectError(
+        Error.InvalidAttempt,
+        validateAttemptV1(plan, &attempts[10], forced_final),
+    );
+
+    const manifest = try makeManifestV1(plan, &attempts);
+    var wire: [test_manifest_bytes]u8 = undefined;
+    const encoded = try encodeManifestV1(manifest, &wire);
+    var selector = try makeSelectorWithEnvironmentV1(
+        manifest,
+        encoded.manifest_footer_sha256,
+        goldenDigest("environment-before"),
+        goldenDigest("environment-after"),
+    );
+    selector.flags = plan_flag_forced_process_restart;
+    selector.selector_sha256 = selectorSha256V1(selector);
+    try testing.expectError(
+        Error.InvalidSelector,
+        validateSelectorV1(selector),
+    );
+}
+
 test "campaign plan locks fixed W7 geometry and excludes dynamic identity from campaign id" {
     const testing = std.testing;
     const config = testPlanConfig();
@@ -2359,6 +2631,46 @@ test "partial manifest round trips fixed zero padding and selector" {
             before,
             testDigest(90, 1),
         ),
+    );
+}
+
+test "forced restart boundary prefix round trips with zero-flag selector" {
+    const testing = std.testing;
+    var config = testPlanConfig();
+    config.seed.flags = plan_flag_forced_process_restart;
+    const plan = try makePlanV1(config);
+    var attempts: [test_segment_count]AttemptV1 = undefined;
+    try fillTestAttempts(plan, &attempts);
+    const manifest = try makeManifestV1(plan, attempts[0..6]);
+    var encoded_storage: [test_manifest_bytes]u8 = undefined;
+    const encoded = try encodeManifestV1(manifest, &encoded_storage);
+
+    var decoded_storage: [test_segment_count]AttemptV1 = undefined;
+    const decoded = try decodeManifestV1(
+        encoded.bytes,
+        &decoded_storage,
+    );
+    try testing.expectEqual(@as(usize, 6), decoded.manifest.attempts.len);
+    try testing.expectEqual(
+        termination_signal_kill,
+        decoded.manifest.attempts[5].termination_signal,
+    );
+
+    const selector = try makeSelectorWithEnvironmentV1(
+        decoded.manifest,
+        decoded.manifest_footer_sha256,
+        testDigest(91, 0),
+        zero_digest,
+    );
+    try testing.expectEqual(allowed_selector_flags, selector.flags);
+    var selector_storage: [selector_bytes]u8 = undefined;
+    const selector_wire = try encodeSelectorV1(
+        selector,
+        &selector_storage,
+    );
+    try testing.expectEqualDeep(
+        selector,
+        try decodeSelectorV1(selector_wire),
     );
 }
 

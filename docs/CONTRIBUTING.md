@@ -128,6 +128,11 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dnative-metal-soak-output-dir=PATH
 
 tools/zig-with-ephemeral-cache.sh build \
+  native-metal-process-kill-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2 \
+  -Dnative-metal-process-kill-output-dir=PATH
+
+tools/zig-with-ephemeral-cache.sh build \
   native-metal-workload-report-test \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 
@@ -193,12 +198,13 @@ one native Darwin Zig invocation containing the serialized
 `native-metal-suite-test` plus the orthogonal device and host-tool compile
 profiles. The aggregate runs diagnostic readiness, real-resource allocation
 ownership, one production-native 20-dispatch workload report,
-controlled disruption, the W7b-a segmented soak, build-isolated
-fault/reconciliation, and focused correctness without overlap; the readiness
-sub-gate retains its one-dispatch contract. Metal assertions run, the
-production CLI plus diagnostics cannot escape compilation, and all roots share
-one shader-library build step. The soak executes 12 by 50 paced epochs and
-1,200 real commands across two worker generations, so use
+controlled disruption, the W7b-a segmented soak, the W7b-b1 post-segment
+process-kill profile, build-isolated fault/reconciliation, and focused
+correctness without overlap; the readiness sub-gate retains its one-dispatch
+contract. Metal assertions run, the production CLI plus diagnostics cannot
+escape compilation, and all roots share one shader-library build step. Each
+segmented campaign executes 12 by 50 paced epochs and 1,200 real commands
+across two worker generations, so use
 `native-metal-soak-report-pure-test` for supervisor/store-only changes when
 native execution is not required. Omit `-Dnative-metal-soak-output-dir` unless
 a verified store is intentionally retained for offline reopening. Process RSS
@@ -206,7 +212,9 @@ is a host observation; `currentAllocatedSize` is device-wide allocation
 context rather than residency or owned GPU memory. Physical metrics remain
 unsupported unless a named observer supplies them. See the
 [Native Metal Segmented Soak Report](NATIVE_METAL_SOAK_REPORT.md) for the exact
-gate and W7b-b boundary.
+clean-restart gate and the
+[Native Metal Process-Kill Recovery Report](NATIVE_METAL_PROCESS_KILL_REPORT.md)
+for the W7b-b1 claim boundary.
 Verification uses one protected temporary workspace, shared private Zig cache
 directories, temporary target prefixes, `-j2`, and repository fixtures only.
 No persistent repository cache is needed. The quick profile intentionally

@@ -68,6 +68,17 @@ pub fn build(b: *std.Build) void {
         if (path.len == 0)
             @panic("-Dnative-metal-soak-output-dir must not be empty");
     }
+    const native_metal_process_kill_output_dir = b.option(
+        []const u8,
+        "native-metal-process-kill-output-dir",
+        "Optional directory that retains the verified native Metal process-kill campaign store",
+    );
+    if (native_metal_process_kill_output_dir) |path| {
+        if (path.len == 0)
+            @panic(
+                "-Dnative-metal-process-kill-output-dir must not be empty",
+            );
+    }
     if (native_metal_report_output != null and
         native_metal_suite_report_output != null)
         @panic(
@@ -1836,9 +1847,13 @@ pub fn build(b: *std.Build) void {
         "native-metal-soak-report-compile",
         "Compile the persistent native Metal soak worker",
     );
+    const native_metal_process_kill_report_test_step = b.step(
+        "native-metal-process-kill-report-test",
+        "Run the hard native Metal post-segment SIGKILL recovery gate",
+    );
     const native_metal_suite_test_step = b.step(
         "native-metal-suite-test",
-        "Run serialized Metal readiness, allocation, workload-report, disruption, soak, fault, and correctness gates",
+        "Run serialized Metal readiness, allocation, workload-report, disruption, soak, process-kill, fault, and correctness gates",
     );
     if (metal_shim != null and
         builtin.os.tag == .macos and
@@ -2289,42 +2304,66 @@ pub fn build(b: *std.Build) void {
                 "--output-dir",
             );
             run_native_metal_soak_report_verifier.addArg(path);
-            const verify_native_metal_soak_store =
-                b.addSystemCommand(&.{"python3"});
-            verify_native_metal_soak_store.setCwd(b.path("."));
-            verify_native_metal_soak_store.setEnvironmentVariable(
+        }
+        // The supervisor always closes the live writer and launches a fresh
+        // offline-verifier process. The option above changes retention only.
+        native_metal_soak_report_test_step.dependOn(
+            &run_native_metal_soak_report_verifier.step,
+        );
+        run_native_metal_soak_report_suite.step.dependOn(
+            &run_native_metal_disruption_report_suite.step,
+        );
+
+        // W7b-b1 preserves the W7b-a geometry but seals a distinct schedule:
+        // after segment six is independently verified, the supervisor sends
+        // SIGKILL to that worker, reaps the exact signal status, publishes and
+        // reopens the prefix, then continues in a fresh Metal process.
+        const run_native_metal_process_kill_report =
+            b.addSystemCommand(&.{"python3"});
+        const run_native_metal_process_kill_report_suite =
+            b.addSystemCommand(&.{"python3"});
+        for ([_]*std.Build.Step.Run{
+            run_native_metal_process_kill_report,
+            run_native_metal_process_kill_report_suite,
+        }) |run_process_kill| {
+            run_process_kill.setCwd(b.path("."));
+            run_process_kill.setEnvironmentVariable(
                 "PYTHONDONTWRITEBYTECODE",
                 "1",
             );
-            verify_native_metal_soak_store.setEnvironmentVariable(
+            run_process_kill.setEnvironmentVariable(
                 "PYTHONPATH",
                 ".",
             );
-            verify_native_metal_soak_store.addFileArg(
+            run_process_kill.addFileArg(
                 b.path("bench/native_metal_soak_report.py"),
             );
-            verify_native_metal_soak_store.addArg("--worker");
-            verify_native_metal_soak_store.addArtifactArg(
+            run_process_kill.addArg("--worker");
+            run_process_kill.addArtifactArg(
                 native_metal_soak_worker_exe,
             );
-            verify_native_metal_soak_store.addArg("--metallib");
-            verify_native_metal_soak_store.addArg(metal_library_path);
-            verify_native_metal_soak_store.addArg("--output-dir");
-            verify_native_metal_soak_store.addArg(path);
-            verify_native_metal_soak_store.addArg("--verify-store");
-            verify_native_metal_soak_store.step.dependOn(
-                &run_native_metal_soak_report_verifier.step,
+            run_process_kill.addArg("--metallib");
+            run_process_kill.addArg(metal_library_path);
+            run_process_kill.addArg("--forced-process-restart");
+            run_process_kill.step.dependOn(&native_metal_lib.step);
+            run_process_kill.step.dependOn(
+                &run_native_metal_soak_report_model.step,
             );
-            native_metal_soak_report_test_step.dependOn(
-                &verify_native_metal_soak_store.step,
-            );
-        } else {
-            native_metal_soak_report_test_step.dependOn(
-                &run_native_metal_soak_report_verifier.step,
+            run_process_kill.step.dependOn(
+                &run_native_workload_campaign_tests.step,
             );
         }
-        run_native_metal_soak_report_suite.step.dependOn(
-            &run_native_metal_disruption_report_suite.step,
+        if (native_metal_process_kill_output_dir) |path| {
+            run_native_metal_process_kill_report.addArg(
+                "--output-dir",
+            );
+            run_native_metal_process_kill_report.addArg(path);
+        }
+        native_metal_process_kill_report_test_step.dependOn(
+            &run_native_metal_process_kill_report.step,
+        );
+        run_native_metal_process_kill_report_suite.step.dependOn(
+            &run_native_metal_soak_report_suite.step,
         );
 
         // The fault shim is a second, non-installed build of the same bridge.
@@ -2462,7 +2501,7 @@ pub fn build(b: *std.Build) void {
             &check_metal_fault_symbols.step,
         );
         run_native_metal_fault_suite.step.dependOn(
-            &run_native_metal_soak_report_suite.step,
+            &run_native_metal_process_kill_report_suite.step,
         );
         const run_native_metal_correctness_suite =
             b.addRunArtifact(metal_tests);
@@ -2529,6 +2568,9 @@ pub fn build(b: *std.Build) void {
             &native_metal_failure.step,
         );
         native_metal_soak_report_compile_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_process_kill_report_test_step.dependOn(
             &native_metal_failure.step,
         );
         native_metal_suite_test_step.dependOn(

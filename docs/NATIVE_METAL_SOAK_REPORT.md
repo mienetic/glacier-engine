@@ -145,7 +145,7 @@ performance comparison.
 
 ## Durable progress store
 
-The optional retained store contains:
+Every campaign runs against a private canonical store containing:
 
 - `segments/<wire-sha256>.bin`;
 - `manifests/<manifest-sha256>.bin`;
@@ -163,6 +163,11 @@ or the first selector is removed.
 The fixed campaign store is bounded to 4 MiB and 32 regular files. Symlinks,
 content-address collisions, malformed prefixes, missing objects, and component
 replacement fail closed.
+
+By default the parent removes the store only after the live writer has closed
+and a fresh verifier process has reopened and accepted it. Supplying an output
+directory retains the same verified store for later audit; it does not change
+the campaign or verification contract.
 
 An interrupted run can leave an active selector naming the last published
 prefix. That prefix is an audit anchor, not a resume token. Offline verification
@@ -201,14 +206,15 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 ```
 
-Add `-Dnative-metal-soak-output-dir=PATH` to retain the verified store.
-When that option is present, the build gate follows the native run with offline
-verification of the retained store.
+The gate performs real Metal work, closes the live writer, launches a fresh
+offline-verifier process over the store, and only then removes the temporary
+store. Add `-Dnative-metal-soak-output-dir=PATH` to retain that verified store
+instead.
 
 Audit a retained active prefix without starting native GPU work:
 
 ```sh
-python3 bench/native_metal_soak_report.py \
+python3 -m bench.native_metal_soak_report \
   --worker path/to/glacier-native-metal-soak-worker \
   --metallib path/to/glacier_native.metallib \
   --output-dir PATH \
@@ -248,3 +254,10 @@ Sampled RSS is not a continuous process high-water mark, and
 does not prove indefinite leak freedom. Supervisor-crash resume, those physical
 faults and observations, longer soak schedules, and native-platform replication
 remain later work.
+
+The separate
+[process-kill recovery profile](NATIVE_METAL_PROCESS_KILL_REPORT.md) sends a
+real `SIGKILL` after ordinal 5 (the sixth segment) is fully verified and
+quiescent, then continues through a fresh Metal worker. That extends
+process-boundary evidence, but still does not claim in-flight command recovery
+or a physical GPU/driver/power fault.

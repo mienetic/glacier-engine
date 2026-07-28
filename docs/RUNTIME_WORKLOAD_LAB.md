@@ -297,11 +297,12 @@ Results from different modes are not merged into one headline number.
     low-power mode disabled, nominal `pmset` and Foundation thermal state, no
     admission reason, and the same host/boot-session fingerprint.
 
-    The optional crash-atomic, content-addressed store publishes a canonical
-    fixed-size manifest and active selector after every segment, retains raw
-    segments and environment objects, and is bounded to 4 MiB and 32 regular
-    files. Its fresh offline verifier, independent of the live supervisor's
-    in-memory state, reopens the active prefix and rebuilds
+    The crash-atomic, content-addressed store publishes a canonical fixed-size
+    manifest and active selector after every segment, retains raw segments and
+    environment objects, and is bounded to 4 MiB and 32 regular files. It is
+    ephemeral unless retention is requested. After the writer closes, a fresh
+    offline-verifier process, independent of the live supervisor's in-memory
+    state, reopens the active prefix and rebuilds
     the exact manifest sequence, reruns both verification layers over every
     retained inner wire, rechecks component and environment bindings, and
     rejects missing, additional, corrupted, symlinked, or chain-substituted
@@ -311,12 +312,29 @@ Results from different modes are not merged into one headline number.
     and observed-growth evidence for the invoking host. It is not a latency or
     throughput benchmark, a no-leak proof, physical residency evidence, or a
     physical device, driver, power, or storage-failure campaign.
-  - [ ] **W7b-b — Broader disruption.** Add bounded process-kill,
-    storage-pressure, cancellation-storm, adapter-loss, and physical-device
-    fault schedules with explicit synthetic-versus-physical provenance.
-    Include prepared-text repeated handoff, source/target death, idempotent
-    sink replay, selector corruption, and lease contention without relabelling
-    fail-closed unavailability as recovery.
+  - [x] **W7b-b1 — Quiescent worker process kill.** A separate sealed profile
+    runs the same 12 segments and 1,200 real commands but changes ordinal 5 to
+    a forced phase end. After that segment passes both verifiers, reaches zero
+    logical ownership, and is synchronized as a content-addressed object, the
+    supervisor sends real `SIGKILL` to that worker PID and requires wait status
+    `-9`. It then publishes and re-reads generation six, restores predecessor
+    and cumulative facts from the retained entry, starts a fresh Metal worker,
+    and completes generation two. The plan flag, forced action, provenance,
+    signal, entry, challenge, and selector semantics are independently
+    reconstructed in Zig and Python while the zero-flag W7b-a golden remains
+    byte-identical. The watchdog separately kills an entire timed-out private
+    process group even after its leader exits. See
+    [Native Metal process-kill recovery report](NATIVE_METAL_PROCESS_KILL_REPORT.md).
+    This is real post-segment OS process-death evidence, not an in-flight
+    command, supervisor-crash, driver-reclamation, or physical-device recovery
+    claim.
+  - [ ] **W7b-b — Remaining broader disruption.** Add bounded supervisor and
+    in-flight-command kill, storage-pressure, cancellation-storm, adapter-loss,
+    and physical-device fault schedules with explicit
+    synthetic-versus-physical provenance. Include prepared-text repeated
+    handoff, source/target death, idempotent sink replay, selector corruption,
+    and lease contention without relabelling fail-closed unavailability as
+    recovery.
 - [ ] **W8 — Native platform replication.** Retain independently verifiable
   campaigns on every claimed operating system and backend. Cross-compilation
   does not count as native workload evidence.
@@ -573,16 +591,31 @@ tools/zig-with-ephemeral-cache.sh build \
 ```
 
 This runs 12 independently challenged and verified segments across two clean
-worker lifetimes. Add `-Dnative-metal-soak-output-dir=PATH` to publish the
-bounded content-addressed checkpoint store after every segment. When that
-option is present, the build gate closes the live writer and launches the
-`--verify-store` offline path, which reopens the retained selector, manifests,
-environment objects, and every referenced inner wire without trusting the
-supervisor's in-memory results. See
+worker lifetimes. The bounded content-addressed checkpoint store is published
+after every segment. Add `-Dnative-metal-soak-output-dir=PATH` to retain it;
+otherwise it is ephemeral. In both cases the build gate closes the live writer
+and launches the `--verify-store` offline path in a fresh process, which
+reopens the selector, manifests, environment objects, and every referenced
+inner wire without trusting the supervisor's in-memory results. See
 [Native Metal segmented soak report](NATIVE_METAL_SOAK_REPORT.md). The gate is
 finite paced recovery and observed-growth evidence, not a performance
 benchmark, physical fault injection, device residency measurement, or an
 unbounded no-leak proof.
+
+Run the W7b-b1 post-segment process-kill profile separately:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-process-kill-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+Add `-Dnative-metal-process-kill-output-dir=PATH` to retain its store. The
+first worker is killed only after its sixth report reaches a quiescent,
+verified boundary; the second worker uses a fresh Metal backend. See
+[Native Metal process-kill recovery report](NATIVE_METAL_PROCESS_KILL_REPORT.md).
+This gate does not interrupt a GPU command, recover process-local state, or
+model device removal.
 
 When retention is requested from the serialized `native-metal-suite-test`, use
 `-Dnative-metal-suite-report-output=PATH`. It is mutually exclusive with the
@@ -640,4 +673,5 @@ and nonclaims. See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md),
 [Typed Tool Workload](TYPED_TOOL_WORKLOAD.md), plus the
 [Native Observation Contract](NATIVE_OBSERVATION.md),
 [Native Workload Report](NATIVE_WORKLOAD_REPORT.md), and
+[Native Metal Process-Kill Recovery Report](NATIVE_METAL_PROCESS_KILL_REPORT.md),
 [Benchmark and Evidence Guide](BENCHMARKS.md) for the existing foundations.

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Run and verify the fixed segmented production-native Metal soak campaign.
+"""Run and verify fixed segmented production-native Metal campaigns.
 
 The supervisor keeps one native worker alive for six paced W7 segments,
 publishes a crash-atomic checkpoint after every independently verified inner
-wire, requires a clean worker exit, then resumes the chain in a fresh process
-for six more segments. RSS is sampled from the worker process and Metal
+wire, terminates the phase according to the sealed schedule, then continues
+the chain in a fresh process for six more segments. The W7b-a profile uses a
+clean phase exit. The bounded W7b-b process-kill profile instead sends a real
+``SIGKILL`` after segment six has been verified and retained but before its
+manifest prefix is published. RSS is sampled from the worker process and Metal
 ``currentAllocatedSize`` is recomputed from the completed raw records. Neither
 observation is relabelled as device residency or a proof of leak freedom.
 """
@@ -58,6 +61,7 @@ MINIMUM_SEGMENT_DURATION_NS = (
 )
 MAXIMUM_SEGMENT_DURATION_NS = 15_000_000_000
 CAMPAIGN_WALL_TIMEOUT_SECONDS = 180.0
+OFFLINE_VERIFY_TIMEOUT_SECONDS = 30.0
 WORKER_EXIT_TIMEOUT_SECONDS = 5.0
 RSS_SAMPLE_INTERVAL_SECONDS = 0.05
 MINIMUM_RSS_SAMPLES = 10
@@ -114,6 +118,9 @@ EXPECTED_TOTAL_PINS = SEGMENT_COUNT * EXPECTED_PINS_PER_SEGMENT
 EXPECTED_TOTAL_EVENTS = SEGMENT_COUNT * EXPECTED_EVENTS_PER_SEGMENT
 
 SCHEDULE_DOMAIN = b"glacier-w7b-metal-soak-schedule-v1\x00"
+PROCESS_KILL_SCHEDULE_DOMAIN = (
+    b"glacier-w7b-metal-process-kill-schedule-v1\x00"
+)
 RSS_SOURCE_BASE_SHA256 = hashlib.sha256(
     b"/bin/ps -o rss= -p <persistent-worker-pid>; rss_kib*1024/v1"
 ).digest()
@@ -166,9 +173,16 @@ def _supervisor_sha256() -> bytes:
     return _file_sha256(Path(__file__).resolve())
 
 
-def _schedule_sha256(supervisor_sha256: bytes) -> bytes:
+def _schedule_sha256(
+    supervisor_sha256: bytes,
+    forced_process_restart: bool = False,
+) -> bytes:
     return _sha256_parts(
-        SCHEDULE_DOMAIN,
+        (
+            PROCESS_KILL_SCHEDULE_DOMAIN
+            if forced_process_restart
+            else SCHEDULE_DOMAIN
+        ),
         supervisor_sha256,
         *(
             _u64(value)
@@ -203,8 +217,17 @@ def _scheduled_action_sha256(
     process_source_sha256: bytes,
     ordinal: int,
     process_generation: int,
+    forced_process_restart: bool = False,
 ) -> bytes:
-    action_tag = 2 if _is_phase_terminal(ordinal) else 1
+    if (
+        forced_process_restart
+        and ordinal == RESTART_AFTER_SEGMENT - 1
+    ):
+        action_tag = campaign.ACTION_FORCED_PHASE_END
+    elif _is_phase_terminal(ordinal):
+        action_tag = campaign.ACTION_GRACEFUL_PHASE_END
+    else:
+        action_tag = campaign.ACTION_NORMAL
     return campaign.derive_scheduled_action(
         campaign_id_sha256,
         schedule_sha256,
@@ -312,6 +335,7 @@ def _initial_plan(
     worker_sha256: bytes,
     metallib_sha256: bytes,
     schedule_sha256: bytes,
+    forced_process_restart: bool = False,
 ) -> dict[str, Any]:
     build_sha256 = inner._native_build_sha256(
         worker_sha256,
@@ -323,7 +347,11 @@ def _initial_plan(
     return {
         "abi_version": campaign.MANIFEST_ABI,
         "encoded_bytes": campaign.encoded_manifest_bytes(SEGMENT_COUNT),
-        "flags": campaign.ALLOWED_FLAGS,
+        "flags": (
+            campaign.PLAN_FLAG_FORCED_PROCESS_RESTART
+            if forced_process_restart
+            else 0
+        ),
         "segment_count": SEGMENT_COUNT,
         "restart_after_segment": RESTART_AFTER_SEGMENT,
         "epochs_per_segment": EPOCHS_PER_SEGMENT,
@@ -430,16 +458,25 @@ class _PersistentWorker:
             or self.process.stderr is None
         ):
             self._terminate()
+            self._close_resources()
             raise NativeMetalSoakError(
                 "could not open native Metal soak worker pipes"
             )
-        self.selector = selectors.DefaultSelector()
-        for stream, kind in (
-            (self.process.stdout, "stdout"),
-            (self.process.stderr, "stderr"),
-        ):
-            os.set_blocking(stream.fileno(), False)
-            self.selector.register(stream, selectors.EVENT_READ, kind)
+        try:
+            self.selector = selectors.DefaultSelector()
+            for stream, kind in (
+                (self.process.stdout, "stdout"),
+                (self.process.stderr, "stderr"),
+            ):
+                os.set_blocking(stream.fileno(), False)
+                self.selector.register(stream, selectors.EVENT_READ, kind)
+        except (KeyError, OSError, ValueError) as error:
+            self._terminate()
+            self._close_resources()
+            raise NativeMetalSoakError(
+                "could not register native Metal soak worker pipes: %s"
+                % error
+            ) from error
         self.stdout = bytearray()
         self.stderr = bytearray()
         self.closed = False
@@ -470,6 +507,23 @@ class _PersistentWorker:
                 pass
             with contextlib.suppress(subprocess.TimeoutExpired):
                 process.wait(timeout=1.0)
+
+    def _close_resources(self) -> None:
+        selector = getattr(self, "selector", None)
+        if selector is not None:
+            with contextlib.suppress(Exception):
+                selector.close()
+        process = getattr(self, "process", None)
+        if process is None:
+            return
+        for stream in (
+            process.stdin,
+            process.stdout,
+            process.stderr,
+        ):
+            if stream is not None:
+                with contextlib.suppress(OSError, ValueError):
+                    stream.close()
 
     def _read_ready(self, timeout: float) -> None:
         for key, _events in self.selector.select(timeout):
@@ -660,8 +714,54 @@ class _PersistentWorker:
             self.worker_sha256,
             self.metallib_sha256,
         )
-        with contextlib.suppress(Exception):
-            self.selector.close()
+        self._close_resources()
+
+    def kill_for_campaign(self) -> None:
+        """Apply the scheduled POSIX process-kill boundary and reap it."""
+        _require(not self.closed, "native soak worker is already closed")
+        _require(
+            self.process.poll() is None,
+            "native soak worker exited before its scheduled process kill",
+        )
+        _require(
+            not self.stdout and not self.stderr,
+            "native soak worker has stale output before process kill",
+        )
+        self.closed = True
+        try:
+            os.kill(self.process.pid, signal.SIGKILL)
+        except OSError as error:
+            self._terminate()
+            raise NativeMetalSoakError(
+                "could not apply scheduled native worker SIGKILL: %s"
+                % error
+            ) from error
+        try:
+            self.process.wait(timeout=WORKER_EXIT_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired as error:
+            self._terminate()
+            raise NativeMetalSoakError(
+                "native soak worker was not reaped after SIGKILL"
+            ) from error
+        # Drain any pipe bytes made visible before the signal was delivered.
+        for _ in range(4):
+            self._read_ready(0.0)
+        _require(
+            self.process.returncode == -campaign.TERMINATION_SIGNAL_KILL,
+            "native soak worker SIGKILL produced status %s"
+            % self.process.returncode,
+        )
+        _require(
+            not self.stdout and not self.stderr,
+            "native soak worker emitted trailing output at process kill",
+        )
+        process_boundary._verify_components_unchanged(
+            self.worker,
+            self.metallib,
+            self.worker_sha256,
+            self.metallib_sha256,
+        )
+        self._close_resources()
 
     def abort(self) -> None:
         self._terminate()
@@ -672,8 +772,7 @@ class _PersistentWorker:
                 self.worker_sha256,
                 self.metallib_sha256,
             )
-        with contextlib.suppress(Exception):
-            self.selector.close()
+        self._close_resources()
 
 
 def _completed_allocation_context(
@@ -806,8 +905,19 @@ def _entry_value(
     ) = _completed_allocation_context(decoded)
     identities = decoded.scenario.identities
     provenance = campaign.BASE_PROVENANCE_BITS
+    forced_process_restart = bool(
+        plan["flags"] & campaign.PLAN_FLAG_FORCED_PROCESS_RESTART
+    )
+    forced_process_kill = (
+        forced_process_restart
+        and ordinal == RESTART_AFTER_SEGMENT - 1
+    )
     if ordinal == RESTART_AFTER_SEGMENT - 1:
-        provenance |= campaign.PROVENANCE_PLANNED_GRACEFUL_RESTART
+        provenance |= (
+            campaign.PROVENANCE_FORCED_OS_PROCESS_KILL
+            if forced_process_kill
+            else campaign.PROVENANCE_PLANNED_GRACEFUL_RESTART
+        )
     return {
         "abi_version": campaign.ATTEMPT_ABI,
         "ordinal": ordinal,
@@ -840,10 +950,18 @@ def _entry_value(
         "device_allocation_before_bytes": device_before,
         "device_allocation_max_bytes": device_max,
         "device_allocation_after_bytes": device_after,
-        "exit_code_bits": 0
-        if phase_exited_cleanly
-        else RUNNING_EXIT_CODE_BITS,
-        "termination_signal": 0,
+        "exit_code_bits": (
+            RUNNING_EXIT_CODE_BITS
+            if forced_process_kill
+            else 0
+            if phase_exited_cleanly
+            else RUNNING_EXIT_CODE_BITS
+        ),
+        "termination_signal": (
+            campaign.TERMINATION_SIGNAL_KILL
+            if forced_process_kill
+            else 0
+        ),
         "reserved": 0,
         "segment_challenge_sha256": identities[12],
         "previous_entry_sha256": previous_entry_sha256,
@@ -1479,8 +1597,10 @@ def verify_retained_store(
     worker: os.PathLike[str] | str,
     metallib: os.PathLike[str] | str,
     output_dir: os.PathLike[str] | str,
+    expected_forced_process_restart: Optional[bool] = None,
+    require_complete: bool = False,
 ) -> dict[str, Any]:
-    """Offline-verify a completed store without trusting live-run memory."""
+    """Offline-verify a retained store without trusting live-run memory."""
     worker_path = os.fspath(worker)
     metallib_path = os.fspath(metallib)
     root = Path(output_dir)
@@ -1547,9 +1667,23 @@ def verify_retained_store(
         )
         plan = manifest["plan"]
         entries = manifest["entries"]
+        forced_process_restart = bool(
+            plan["flags"]
+            & campaign.PLAN_FLAG_FORCED_PROCESS_RESTART
+        )
+        if expected_forced_process_restart is not None:
+            _require(
+                forced_process_restart
+                == expected_forced_process_restart,
+                "retained campaign restart profile changed",
+            )
         _require(
             len(entries) == generation_count,
             "retained campaign generation changed",
+        )
+        _require(
+            not require_complete or generation_count == SEGMENT_COUNT,
+            "retained campaign is not complete",
         )
 
         worker_sha256 = _file_sha256(worker_path)
@@ -1573,6 +1707,7 @@ def verify_retained_store(
             worker_sha256,
             metallib_sha256,
             plan["schedule_sha256"],
+            forced_process_restart,
         )
         expected_plan = _seal_plan_from_first_report(
             expected_initial,
@@ -1677,6 +1812,10 @@ def verify_retained_store(
             "completed": entries[-1]["cumulative_completed"],
             "campaign_id_sha256": plan["campaign_id_sha256"],
             "final_entry_sha256": entries[-1]["entry_sha256"],
+            "forced_process_restart": forced_process_restart,
+            "forced_process_kills": (
+                1 if forced_process_restart and len(entries) >= 6 else 0
+            ),
             "output_dir": root,
         }
     finally:
@@ -1689,6 +1828,7 @@ def verify_campaign(
     worker: os.PathLike[str] | str,
     metallib: os.PathLike[str] | str,
     output_dir: os.PathLike[str] | str,
+    forced_process_restart: bool = False,
 ) -> dict[str, Any]:
     worker_path = os.fspath(worker)
     metallib_path = os.fspath(metallib)
@@ -1697,7 +1837,10 @@ def verify_campaign(
     metallib_sha256 = _file_sha256(metallib_path)
     inner._native_build_sha256(worker_sha256, metallib_sha256)
     supervisor_sha256 = _supervisor_sha256()
-    schedule_sha256 = _schedule_sha256(supervisor_sha256)
+    schedule_sha256 = _schedule_sha256(
+        supervisor_sha256,
+        forced_process_restart,
+    )
     authority_challenge = os.urandom(32)
     _require(authority_challenge != ZERO_DIGEST, "random challenge is zero")
 
@@ -1709,6 +1852,7 @@ def verify_campaign(
         worker_sha256,
         metallib_sha256,
         schedule_sha256,
+        forced_process_restart,
     )
     campaign_id_sha256 = campaign.derive_campaign_id(initial_plan)
 
@@ -1751,6 +1895,7 @@ def verify_campaign(
                         persistent.process_source_sha256,
                         ordinal,
                         _process_generation(ordinal),
+                        forced_process_restart,
                     )
                     challenge = campaign.derive_segment_challenge(
                         campaign_id_sha256,
@@ -1798,7 +1943,14 @@ def verify_campaign(
 
                     phase_terminal = _is_phase_terminal(ordinal)
                     if phase_terminal:
-                        persistent.close_cleanly()
+                        if (
+                            forced_process_restart
+                            and ordinal
+                            == RESTART_AFTER_SEGMENT - 1
+                        ):
+                            persistent.kill_for_campaign()
+                        else:
+                            persistent.close_cleanly()
                     value = _entry_value(
                         plan,
                         decoded,
@@ -1875,6 +2027,9 @@ def verify_campaign(
             previous_report_sha256 = entries[-1][
                 "verified_report_sha256"
             ]
+            cumulative_duration_ns = entries[-1][
+                "cumulative_duration_ns"
+            ]
 
         _require(plan is not None, "native campaign did not seal a plan")
         _require(
@@ -1906,6 +2061,9 @@ def verify_campaign(
             "events": EXPECTED_TOTAL_EVENTS,
             "campaign_id_sha256": campaign_id_sha256,
             "final_entry_sha256": entries[-1]["entry_sha256"],
+            "forced_process_kills": (
+                1 if forced_process_restart else 0
+            ),
             "output_dir": Path(output_dir),
         }
     except (
@@ -1921,10 +2079,113 @@ def verify_campaign(
         store.close()
 
 
+def _force_kill_process_group(
+    process: subprocess.Popen[bytes],
+) -> None:
+    """Remove every descendant in a private watchdog process group."""
+    with contextlib.suppress(OSError):
+        os.killpg(process.pid, signal.SIGKILL)
+    if process.poll() is None:
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=1.0)
+
+
+def _run_offline_verifier(
+    worker: str,
+    metallib: str,
+    output_dir: str,
+    forced_process_restart: bool,
+    ephemeral_output: bool,
+    repository_root: Path,
+    environment: Mapping[str, str],
+) -> int:
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--worker",
+        os.path.abspath(worker),
+        "--metallib",
+        os.path.abspath(metallib),
+        "--output-dir",
+        os.path.abspath(output_dir),
+        "--verify-store",
+    ]
+    if forced_process_restart:
+        command.append("--forced-process-restart")
+    command.append("--require-complete")
+    if ephemeral_output:
+        command.append("--ephemeral-output")
+    process: Optional[subprocess.Popen[bytes]] = None
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=repository_root,
+            env=dict(environment),
+            close_fds=True,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = process.communicate(
+                timeout=OFFLINE_VERIFY_TIMEOUT_SECONDS
+            )
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(OSError):
+                os.killpg(process.pid, signal.SIGTERM)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=1.0)
+            _force_kill_process_group(process)
+            stdout, stderr = process.communicate()
+            if stderr:
+                sys.stderr.buffer.write(
+                    stderr[:MAX_SUPERVISOR_OUTPUT_BYTES]
+                )
+            print(
+                "error: native Metal campaign offline verification "
+                "exceeded %.0fs"
+                % OFFLINE_VERIFY_TIMEOUT_SECONDS,
+                file=sys.stderr,
+            )
+            return 1
+        returncode = process.returncode
+        _force_kill_process_group(process)
+        process = None
+        if (
+            len(stdout) > MAX_SUPERVISOR_OUTPUT_BYTES
+            or len(stderr) > MAX_SUPERVISOR_OUTPUT_BYTES
+        ):
+            print(
+                "error: native Metal offline verifier output "
+                "exceeded its bound",
+                file=sys.stderr,
+            )
+            return 1
+        if stdout:
+            sys.stdout.buffer.write(stdout)
+        if stderr:
+            sys.stderr.buffer.write(stderr)
+        return returncode
+    except OSError as error:
+        print(
+            "error: could not start native Metal offline verifier: %s"
+            % error,
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        if process is not None:
+            _force_kill_process_group(process)
+
+
 def _run_with_watchdog(
     worker: str,
     metallib: str,
     output_dir: Optional[str],
+    forced_process_restart: bool = False,
+    *,
+    _supervised_command: Optional[Sequence[str]] = None,
 ) -> int:
     temporary: Optional[tempfile.TemporaryDirectory[str]] = None
     output = output_dir
@@ -1934,19 +2195,26 @@ def _run_with_watchdog(
             prefix="glacier-native-metal-soak."
         )
         output = temporary.name
-    command = [
-        sys.executable,
-        str(Path(__file__).resolve()),
-        "--worker",
-        os.path.abspath(worker),
-        "--metallib",
-        os.path.abspath(metallib),
-        "--output-dir",
-        os.path.abspath(output),
-        "--supervised-child",
-    ]
-    if ephemeral:
-        command.append("--ephemeral-output")
+    _require(output is not None, "native campaign output path is missing")
+    if _supervised_command is None:
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--worker",
+            os.path.abspath(worker),
+            "--metallib",
+            os.path.abspath(metallib),
+            "--output-dir",
+            os.path.abspath(output),
+            "--supervised-child",
+        ]
+        if ephemeral:
+            command.append("--ephemeral-output")
+        if forced_process_restart:
+            command.append("--forced-process-restart")
+    else:
+        command = list(_supervised_command)
+        _require(command, "test supervised command is empty")
     repository_root = Path(__file__).resolve().parent.parent
     environment = {
         "LC_ALL": "C",
@@ -1973,12 +2241,14 @@ def _run_with_watchdog(
         except subprocess.TimeoutExpired:
             with contextlib.suppress(OSError):
                 os.killpg(process.pid, signal.SIGTERM)
-            try:
-                stdout, stderr = process.communicate(timeout=1.0)
-            except subprocess.TimeoutExpired:
-                with contextlib.suppress(OSError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                stdout, stderr = process.communicate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=1.0)
+            # Always escalate against the process group. The supervisor
+            # leader may already have exited while a descendant ignored
+            # SIGTERM.
+            _force_kill_process_group(process)
+            stdout, stderr = process.communicate()
+            process = None
             if stderr:
                 sys.stderr.buffer.write(
                     stderr[:MAX_SUPERVISOR_OUTPUT_BYTES]
@@ -1990,6 +2260,9 @@ def _run_with_watchdog(
                 file=sys.stderr,
             )
             return 1
+        returncode = process.returncode
+        _force_kill_process_group(process)
+        process = None
         if (
             len(stdout) > MAX_SUPERVISOR_OUTPUT_BYTES
             or len(stderr) > MAX_SUPERVISOR_OUTPUT_BYTES
@@ -1999,11 +2272,28 @@ def _run_with_watchdog(
                 file=sys.stderr,
             )
             return 1
+        if returncode != 0:
+            if stdout:
+                sys.stdout.buffer.write(stdout)
+            if stderr:
+                sys.stderr.buffer.write(stderr)
+            return returncode
+        offline_returncode = _run_offline_verifier(
+            worker,
+            metallib,
+            output,
+            forced_process_restart,
+            ephemeral,
+            repository_root,
+            environment,
+        )
+        if offline_returncode != 0:
+            return offline_returncode
         if stdout:
             sys.stdout.buffer.write(stdout)
         if stderr:
             sys.stderr.buffer.write(stderr)
-        return process.returncode
+        return 0
     except OSError as error:
         print(
             "error: could not start native Metal soak watchdog: %s" % error,
@@ -2011,11 +2301,8 @@ def _run_with_watchdog(
         )
         return 1
     finally:
-        if process is not None and process.poll() is None:
-            with contextlib.suppress(OSError):
-                os.killpg(process.pid, signal.SIGKILL)
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                process.wait(timeout=1.0)
+        if process is not None:
+            _force_kill_process_group(process)
         if temporary is not None:
             temporary.cleanup()
 
@@ -2023,7 +2310,7 @@ def _run_with_watchdog(
 def _main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the fixed 12-segment, two-process native Metal soak gate"
+            "Run a fixed 12-segment, two-process native Metal campaign"
         )
     )
     parser.add_argument(
@@ -2052,7 +2339,20 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
         ),
     )
     parser.add_argument(
+        "--forced-process-restart",
+        action="store_true",
+        help=(
+            "run or require the W7b-b profile that SIGKILLs the first "
+            "worker after its sixth verified segment"
+        ),
+    )
+    parser.add_argument(
         "--supervised-child",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--require-complete",
         action="store_true",
         help=argparse.SUPPRESS,
     )
@@ -2064,10 +2364,12 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
     arguments = parser.parse_args(argv)
 
     if arguments.verify_store:
-        if arguments.supervised_child or arguments.ephemeral_output:
+        if arguments.supervised_child:
             parser.error(
                 "--verify-store cannot use internal supervisor options"
             )
+        if arguments.ephemeral_output and not arguments.require_complete:
+            parser.error("--ephemeral-output is internal")
         if arguments.output_dir is None:
             parser.error("--verify-store requires --output-dir")
         try:
@@ -2075,6 +2377,12 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
                 arguments.worker,
                 arguments.metallib,
                 arguments.output_dir,
+                arguments.forced_process_restart,
+                arguments.require_complete,
+            )
+            _require(
+                not arguments.require_complete or result["complete"],
+                "retained campaign is not complete",
             )
         except (
             NativeMetalSoakError,
@@ -2086,50 +2394,71 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
             print("error: %s" % error, file=sys.stderr)
             return 1
         print(
-            "ok native-metal-soak-store-v1 "
+            "ok %s "
             "status=%s segments=%d processes=%d records=%d completed=%d "
-            "campaign_id_sha256=%s final_entry_sha256=%s retained=%s"
+            "forced_process_kills=%d campaign_id_sha256=%s "
+            "final_entry_sha256=%s%s"
             % (
+                (
+                    "native-metal-process-kill-store-v1"
+                    if result["forced_process_restart"]
+                    else "native-metal-soak-store-v1"
+                ),
                 "complete" if result["complete"] else "partial",
                 result["segments"],
                 result["process_generations"],
                 result["records"],
                 result["completed"],
+                result["forced_process_kills"],
                 result["campaign_id_sha256"].hex(),
                 result["final_entry_sha256"].hex(),
-                result["output_dir"],
+                (
+                    " ephemeral=true"
+                    if arguments.ephemeral_output
+                    else " retained=%s" % result["output_dir"]
+                ),
             )
         )
         return 0
 
     if not arguments.supervised_child:
-        if arguments.ephemeral_output:
-            parser.error("--ephemeral-output is internal")
+        if arguments.ephemeral_output or arguments.require_complete:
+            parser.error("internal supervisor option used directly")
         return _run_with_watchdog(
             arguments.worker,
             arguments.metallib,
             arguments.output_dir,
+            arguments.forced_process_restart,
         )
 
     if arguments.output_dir is None:
         parser.error("supervised child requires --output-dir")
+    if arguments.require_complete:
+        parser.error("--require-complete requires --verify-store")
     try:
         result = verify_campaign(
             arguments.worker,
             arguments.metallib,
             arguments.output_dir,
+            arguments.forced_process_restart,
         )
     except (NativeMetalSoakError, OSError) as error:
         print("error: %s" % error, file=sys.stderr)
         return 1
 
     print(
-        "ok native-metal-soak-report-v1 "
+        "ok %s "
         "segments=%d processes=%d duration_ns=%d records=%d "
         "completed=%d cancelled=%d failed=%d capacity_rejected=%d "
-        "pins=%d events=%d campaign_id_sha256=%s "
+        "pins=%d events=%d forced_process_kills=%d "
+        "campaign_id_sha256=%s "
         "final_entry_sha256=%s%s"
         % (
+            (
+                "native-metal-process-kill-report-v1"
+                if arguments.forced_process_restart
+                else "native-metal-soak-report-v1"
+            ),
             result["segments"],
             result["process_generations"],
             result["duration_ns"],
@@ -2140,6 +2469,7 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
             result["capacity_rejected"],
             result["pins"],
             result["events"],
+            result["forced_process_kills"],
             result["campaign_id_sha256"].hex(),
             result["final_entry_sha256"].hex(),
             " retained=%s" % result["output_dir"]
