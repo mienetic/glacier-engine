@@ -927,10 +927,17 @@ independently checks the three-token acknowledged suffix against the complete
 four-token oracle. See
 [Acknowledged Prepared-Text Delivery](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md).
 
-**Next slice:** recover source interruption before generation two and during
-initial sink creation without inventing exit or acknowledgement evidence, then
-move the same contract to a declared redistributable model/tokenizer fixture
-and retained native POSIX hosts.
+**Completed R1j source-recovery slice:** generation one now retains a canonical
+pointer-free replay contract and an exact empty-sink identity. A fresh source
+may replay only the unpublished deterministic prefix under the same exclusive
+lease; the successful process creates its own real source-exit receipt and
+generation two retains the byte-identical contract. The combined compile-once
+campaign covers seven bootstrap, 23 source-transition, and 19 target-transition
+`SIGKILL` boundaries, then independently converges to the four-token oracle.
+
+**Next slice:** move the same contract to a declared redistributable
+model/tokenizer fixture and retained native POSIX hosts, then add deterministic
+cancellation and bounded repeated-handoff evidence around the replay boundary.
 
 ### Paged-KV ownership restore fixture
 

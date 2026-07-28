@@ -1,16 +1,18 @@
 # Acknowledged Prepared-Text Delivery
 
-Glacier's R1i path is an experimental local delivery protocol for the bounded
-prepared-text runtime. It joins each committed target token to a canonical
-result acknowledgement, a descriptor-relative durable sink, an immutable
-progress checkpoint, and the exact selector generation that may authorize the
-next target process.
+Glacier's R1j path is an experimental local recovery and delivery protocol for
+the bounded prepared-text runtime. It retains a canonical source replay
+contract in generation one, requires an exact empty descriptor-relative sink
+before the source computes, and joins each committed target token to a
+canonical result acknowledgement, immutable progress checkpoint, and exact
+selector generation that may authorize the next process.
 
-The immediate goal is narrow and user-visible: after generation two has
-selected a clean source exit, killing a target must not apply the same visible
-token twice. A fresh target may recompute an unacknowledged transaction, but it
-may advance durable progress only with the exact acknowledgement returned by
-the sink.
+The immediate goal is narrow and user-visible. Before generation two, a fresh
+source process may replay only the unpublished deterministic prefix named by
+generation one; after generation two, killing a target must not apply the same
+visible token twice. A fresh target may recompute an unacknowledged
+transaction, but it may advance durable progress only with the exact
+acknowledgement returned by the sink.
 
 This is an experimental Zig surface and retained correctness fixture. It is
 not a distributed lease, a remote-provider exactly-once protocol, a physical
@@ -39,6 +41,44 @@ The implementation keeps four responsibilities separate:
 
 `prepared_text_acknowledged_delivery.zig` is the compile-once public facade for
 those layers.
+
+The source-side composition uses three additional reusable contracts:
+
+1. `prepared_text_source_recovery.zig` canonically records the pre-tokenized
+   input, validated plan bindings, source runtime identity, target ownership,
+   and exact empty-sink identity required for replay.
+2. `prepared_text_source_lease.zig` retains that contract beside the
+   generation-one source-live marker without turning the bytes into runnable
+   authority.
+3. `prepared_text_durable_handoff.zig` embeds the same bytes in generation two
+   and requires a target to validate the retained generation-one predecessor
+   plus the selected sink's exact replay state before it can receive an
+   activation grant.
+
+## Source replay boundary
+
+The source holds the exclusive checkpoint lease while it publishes or
+recovers generation one, opens or creates the contract's exact empty sink, and
+computes the first unpublished token. If the process dies before generation
+two is selected, a fresh process repeats that prefix under the same lease and
+contract.
+
+Replay does not fabricate a source-exit receipt for the dead process. The
+successful fresh process performs a normal handoff, obtains its own real
+source-exit receipt, and publishes generation two with the byte-identical
+generation-one contract. This replay is valid only because the retained
+profile exposes no durable acknowledgement or external effect before
+generation two. A nonempty, foreign, partial, or identity-drifted sink rejects
+instead of being reset.
+
+Generation two does not supersede its own trust anchor. Target admission loads
+the retained generation-one set by the parent checkpoint root, reconstructs
+its selector, compares the embedded contract byte for byte, and checks the
+selected sink is either the contract's exact empty ledger or the exact
+one-transaction-ahead acknowledgement produced before a prior target death.
+The target retains the sink lock across admission, activation, and apply so
+that state cannot drift between validation and replay. Candidate and orphan
+files carry no authority.
 
 ## Transaction boundary
 
@@ -116,11 +156,11 @@ descriptor-relative identity. Orphan candidates carry no selection authority.
 ## Selector generations
 
 The fixed four-token fixture starts its acknowledged-delivery scope after the
-clean source has published one token and selected generation two:
+successful source attempt has published one token and selected generation two:
 
 ```text
-generation 1  source live
-  → generation 2  source exited, resume at sequence 1
+generation 1  source live + canonical replay contract
+  → generation 2  real source exit + restart archive + replay contract
   → generation 3  sequence 1 acknowledged, resume at sequence 2
   → generation 4  sequence 2 acknowledged, resume at sequence 3
   → generation 5  sequence 3 acknowledged, terminal at sequence 4
@@ -149,20 +189,26 @@ content root and revalidates the complete set before returning borrowed bytes.
 The current claim is limited to:
 
 - cooperative local processes on the descriptor-relative POSIX adapter;
+- strict initial-checkpoint recovery available on macOS, iOS, and Linux; the
+  full process gate supports native macOS/Linux, retained 49-victim evidence is
+  currently macOS-only, and other durable hosts fail closed until their atomic
+  no-replace primitive is implemented;
 - one fixed-length, pre-tokenized synthetic text fixture;
-- target-process `SIGKILL` at named host-operation boundaries;
+- source- and target-process `SIGKILL` at named host-operation boundaries;
+- deterministic replay of the unpublished generation-one prefix only while no
+  durable acknowledgement or external effect exists;
 - exactly one durable local sink application for each target-side global
   sequence; and
 - canonical terminal token output equal to the uninterrupted fixture oracle.
 
 It does not yet cover:
 
-- interruption while the source creates the sink's initial empty selector;
-- source death before generation two;
 - raw-text tokenization or variable-length/early-EOS output;
 - remote APIs, databases, queues, or non-idempotent tools;
+- replay after any external source-side effect;
 - device-resident/GPU continuation;
 - physical storage or system power loss;
+- hostile or non-cooperative local writers;
 - Win32 durable-file behavior;
 - native Linux/FreeBSD recovery evidence; or
 - a production model and tokenizer.
@@ -193,15 +239,24 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
-The gate launches 19 real `SIGKILL` victims: one after the model step, ten
-across sink publication, one after sink acknowledgement, and seven across
-checkpoint publication. It independently observes nine previous and ten
-successor sink selectors, plus 17 previous and two successor checkpoint
-selectors. Every baseline, source, victim, recovery, and audit process has a
-distinct PID. The final audit requires three sink applications at global
-sequences `1..3`, a generation-five terminal set at sequence four, a canonical
-four-token output equal to the uninterrupted oracle, matching final
-acknowledgement/prefix lineage, and zero live runtime ownership.
+The gate compiles one worker and reuses it for 49 real `SIGKILL` victims:
+seven generation-one bootstrap boundaries, 23 source-transition boundaries,
+and 19 target-transition boundaries. The source matrix covers recovery
+admission, all ten empty-sink publication phases, the first model step,
+handoff preparation, real source-exit commit, every generation-two checkpoint
+publication phase, and observation after generation two. The target matrix
+retains the model-step, sink, acknowledgement, and progress-checkpoint
+boundaries.
+
+Each victim emits a gated ready frame and self-raises `SIGKILL`; the controller
+requires the exact signal exit and a distinct PID. An independent Python
+decoder admits only the declared absent, exact-predecessor, or
+exact-successor checkpoint/sink state at each boundary, then a fresh process
+recovers through generation five. The final audit requires three sink
+applications at global sequences `1..3`, a generation-five terminal set at
+sequence four, a canonical four-token output equal to the uninterrupted
+oracle, matching final acknowledgement/prefix lineage, and zero live runtime
+ownership.
 
 The report is evidence only for the declared fixture and crash model.
 
@@ -214,7 +269,7 @@ Useful independent slices include:
 - reproduce the POSIX campaign on a native Linux filesystem and retain its
   machine/filesystem envelope;
 - add malformed nested-progress fixtures to the independent decoder;
-- design the separate pre-generation-two source journal without weakening the
-  source-exit barrier; and
+- add deterministic cancellation and bounded repeated-handoff campaigns around
+  the source replay boundary; and
 - connect a declared redistributable model/tokenizer profile after the raw-text
   golden path is frozen.

@@ -24,7 +24,10 @@ receipt-independent terminal-semantic comparison across separate processes.
 R1i extends the post-generation-two target path with a canonical result
 acknowledgement, an idempotent local POSIX sink, and immediate acknowledged
 progress through generations three to five under real target-process death.
-These are integrated experimental slices, not the completed R1 text runtime.
+R1j adds a canonical generation-one replay contract, exact empty-sink
+admission, and fresh-source replay of only the unpublished deterministic prefix
+before a successful process creates its own real source-exit receipt. These are
+integrated experimental slices, not the completed R1 text runtime.
 
 ## Supported envelope
 
@@ -53,6 +56,7 @@ These are integrated experimental slices, not the completed R1 text runtime.
 | Fresh-process target authority | Five-object canonical restart archive, selector-selected generation-two source exit, lease-backed one-shot activation grant retained through cancellation or generation-three terminal selection and retirement |
 | Terminal comparison | Receipt-independent terminal semantic joining model/request identity, token domains, output, logical KV, RNG, sampling state, and final position across separately completed baseline and target runs |
 | R1i acknowledged target progress | Post-generation-two one-token fresh targets, a canonical ACK from an idempotent descriptor-relative local POSIX sink, immediate progress generations three through five, and a 19-boundary real-`SIGKILL` campaign |
+| R1j source replay | Canonical generation-one request/runtime/target/empty-sink contract, exact retained-predecessor validation before target authority, and a combined seven-bootstrap/23-source/19-target real-`SIGKILL` campaign |
 
 `eos_token` must be outside the model vocabulary in this version. Fixed-length
 execution keeps the admitted service count identical to the number of
@@ -430,9 +434,17 @@ frame and self-raises real `SIGKILL`. The controller requires that exact signal
 exit, then independently verifies the acknowledged three-token suffix and
 complete four-token terminal output against the uninterrupted oracle.
 
-This is not arbitrary exactly-once external delivery. Source death before
-generation two and interruption during initial empty-sink creation remain
-fail-closed and unavailable. The ACK codec assumes trusted sink-before-progress
+R1j closes the retained source window. Generation one carries the canonical
+replay contract and exact empty-sink facts. A fresh source holding the exclusive
+lease may replay the unpublished prefix, but it cannot infer source exit or
+reuse a receipt from the dead process. The successful attempt performs the
+ordinary close and embeds the byte-identical contract in generation two.
+Target admission reloads and verifies the retained generation-one predecessor
+and the sink before creating its recoverable activation grant.
+
+This is not arbitrary exactly-once external delivery. Replay is allowed only
+while the retained source prefix has produced no durable acknowledgement or
+external effect. The ACK codec assumes trusted sink-before-progress
 ordering; it is not an authenticated hostile-writer capability. Remote
 providers, databases, queues, tools, physical storage or power loss, Windows
 durable files, GPU/device-resident continuation, production models, and native
@@ -615,9 +627,10 @@ the LaneWeave publication-adoption unit tests, the retained evidence verifies:
 - separate baseline, source, and target workers with distinct source/target
   process IDs, exclusive lease evidence, terminal-semantic equality, and zero
   source/target logical ownership;
-- one compiled R1i worker reused across 19 real target-process deaths, with
-  previous-or-exact-successor sink/checkpoint recovery, three canonical ACKs,
-  generation-five terminal output, distinct PIDs, and zero live authority;
+- one compiled R1j worker reused across seven bootstrap, 23 source-transition,
+  and 19 target-transition real process deaths, with boundary-specific
+  sink/checkpoint recovery, three canonical ACKs, generation-five terminal
+  output, distinct PIDs, and zero live authority;
 - pending-permit rollback after an injected pre-publication failure;
 - zero used resources after retirement;
 - zero used resources after an injected initialization-allocation failure.
@@ -646,10 +659,11 @@ succeeded. R1h-b can consume that exact capability into a process-local target.
 The base durable composition adds selected source exit, exclusive fresh-process
 activation, and receipt-independent terminal-semantic equivalence. R1i adds
 replay-safe target progress only for the retained post-generation-two local
-POSIX fixture. The combined path does not recover source interruption before
-generation two or during initial sink creation, provide arbitrary remote
-exactly-once effects, implement Windows durable files, continue GPU-resident
-state, or establish production-model/native-platform performance.
+POSIX fixture. R1j adds generation-one replay only before any durable
+acknowledgement or external effect. The combined path does not provide
+arbitrary remote exactly-once effects, hostile-writer or physical power-loss
+guarantees, Windows durable files, GPU-resident continuation, or
+production-model/native-platform performance.
 
 `BoundPlanV1`, `ExecutionResidencyBindingV1`, and the Session bridge are still
 an experimental Zig/direct API. There is no fixed `BoundPlanV1` wire, projected

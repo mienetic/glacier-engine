@@ -423,13 +423,25 @@ Results from different modes are not merged into one headline number.
     physical storage/power-loss, remote exactly-once, GPU/Win32, production
     model, or native multi-OS evidence. See
     [Acknowledged Prepared-Text Delivery](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md).
+  - [x] **R1j — Fixed prepared-text source replay.** Generation one retains a
+    canonical pointer-free replay contract and exact empty-sink identity. A
+    fresh source under the exclusive lease may repeat only the unpublished
+    deterministic prefix; the successful process creates its own real
+    source-exit receipt and generation two embeds the byte-identical contract.
+    The combined compile-once campaign covers seven bootstrap, 23
+    source-transition, and 19 target-transition victims. Independent decoding
+    accepts only each boundary's declared absent, exact-predecessor, or
+    exact-successor state before a fresh process converges to generation five.
+    This is not replay after external effects, remote exactly-once,
+    hostile-writer or power-loss evidence, GPU/Win32 continuation, production
+    execution, or native multi-OS evidence.
   - [ ] **W7b-b — Remaining broader disruption.** Add the broader bounded
     supervisor/recovery interruption matrix, active-kernel and adapter-loss,
     physical storage/power, and physical-device fault schedules with explicit
     synthetic-versus-physical provenance. Include prepared-text repeated
-    handoff, pre-generation-two and initial-sink source death, broader target
-    interruption, selector corruption, native-host replication, and lease
-    contention without relabelling fail-closed unavailability as recovery.
+    handoff and cancellation, broader target interruption, selector corruption,
+    native-host replication, and lease contention without relabelling
+    fail-closed unavailability as recovery.
 - [ ] **W8 — Native platform replication.** Retain independently verifiable
   campaigns on every claimed operating system and backend. Cross-compilation
   does not count as native workload evidence.

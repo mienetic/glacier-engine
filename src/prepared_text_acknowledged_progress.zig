@@ -30,6 +30,8 @@ const publication = @import("lane_publication_txn.zig");
 const restart_manifest =
     @import("prepared_text_restart_manifest.zig");
 const result_sink = @import("prepared_text_result_sink.zig");
+const source_recovery =
+    @import("prepared_text_source_recovery.zig");
 const session = @import("prepared_text_session.zig");
 const successor = @import("prepared_text_successor.zig");
 const terminal_semantic =
@@ -444,6 +446,7 @@ const DecodedProducerContextV1 = struct {
     manifest: restart_manifest.DecodedV1,
     artifacts: successor.ArtifactsV1,
     checkpoint: checkpoint.DecodedV1,
+    source_recovery_contract: ?source_recovery.DecodedV1 = null,
 };
 
 /// Recover the plan and ownership that produced the immediate predecessor.
@@ -466,6 +469,7 @@ fn decodeProducerContextV1(
             .manifest = source_exited.evidence.manifest,
             .artifacts = source_exited.evidence.artifacts,
             .checkpoint = source_exited.evidence.checkpoint,
+            .source_recovery_contract = source_exited.source_recovery_contract,
         };
     }
     if (predecessor.set.object_count != nonterminal_object_count)
@@ -1023,13 +1027,26 @@ fn validateAcknowledgementEdgeV1(
             value.result_sink_prefix_sha256,
         ))
             return Error.InvalidAcknowledgement;
-    } else if (acknowledgement.application_ordinal != 1 or
-        !isZero(
-            acknowledgement.predecessor_acknowledgement_sha256,
-        ) or !isZero(
-        acknowledgement.predecessor_sink_prefix_sha256,
-    )) {
-        return Error.InvalidAcknowledgement;
+    } else {
+        if (acknowledgement.application_ordinal != 1 or
+            !isZero(
+                acknowledgement.predecessor_acknowledgement_sha256,
+            ) or !isZero(
+            acknowledgement.predecessor_sink_prefix_sha256,
+        ))
+            return Error.InvalidAcknowledgement;
+        if (producer.source_recovery_contract) |contract| {
+            if (acknowledgement.transaction_sequence !=
+                contract.sink.initial_sequence or
+                !digestEqual(
+                    acknowledgement.sink_implementation_sha256,
+                    contract.sink.implementation_sha256,
+                ) or !digestEqual(
+                acknowledgement.sink_instance_sha256,
+                contract.sink.instance_sha256,
+            ))
+                return Error.InvalidAcknowledgement;
+        }
     }
 }
 

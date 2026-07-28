@@ -538,21 +538,29 @@ zero.
 R1h-b alone is process-local. The durable handoff layer composes it with a
 canonical five-object restart archive, an atomic selector, exclusive lease and
 consumer grant, exact source-authority close, generation-two source exit, and a
-distinct-process terminal-semantic comparison. R1i extends only that
-post-generation-two target path: each fresh target applies one token through
-an idempotent descriptor-relative local POSIX sink, retains the canonical ACK
-in its immediate progress successor, and advances generations three through
-five. In a compile-once campaign, 19 distinct targets emit their gated ready
-frame and self-raise real `SIGKILL` across model-step, sink, and checkpoint
-boundaries; independent recovery admits only previous or exact-successor
-roots.
+distinct-process terminal-semantic comparison. R1i adds acknowledged target
+progress: each fresh target applies one token through an idempotent
+descriptor-relative local POSIX sink, retains the canonical ACK in its
+immediate progress successor, and advances generations three through five.
+
+R1j adds a canonical generation-one replay contract plus exact empty-sink
+identity. If a source dies before generation two, a fresh process under the
+same exclusive lease may replay only the unpublished deterministic prefix. It
+does not infer or fabricate source exit; the successful process obtains its own
+real exit receipt, and generation two embeds the byte-identical contract.
+Target admission reloads the retained generation-one predecessor and verifies
+that contract and sink before granting authority. One compile-once campaign
+covers seven bootstrap, 23 source-transition, and 19 target-transition real
+`SIGKILL` boundaries; independent recovery admits only the declared
+absent/predecessor/successor roots and converges to the terminal oracle.
 
 The combined lifecycle still does not add early EOS,
 fewer-than-admitted outputs, a raw-text tokenizer, stable package or license
-byte attestation, source recovery before generation two or during initial sink
-creation, arbitrary remote exactly-once effects, GPU-resident continuation,
-Windows durable files, production-model evidence, strict cross-platform
-numerical equivalence, or native multi-OS performance/recovery evidence.
+byte attestation, replay after a source-side external effect, arbitrary remote
+exactly-once effects, hostile-writer or physical power-loss guarantees,
+GPU-resident continuation, Windows durable files, production-model evidence,
+strict cross-platform numerical equivalence, or native multi-OS
+performance/recovery evidence.
 The `deinit` safety path may abandon terminal evidence while closing and
 releasing the adopted lifecycle; it does not count as a successful result seal.
 
@@ -1350,7 +1358,8 @@ targets remain gated until their named native adapters and evidence pass.
   the base distinct-process terminal comparison.
 - [Acknowledged prepared-text delivery](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md):
   local POSIX sink/ACK progress, generations three through five, and the
-  retained 19-boundary target-process-death campaign.
+  retained R1i target-only 19-boundary plus R1j combined source/target
+  49-boundary process-death campaigns.
 - [Continuation capsule](CONTINUATION_CAPSULE.md): checkpoint manifest ABI.
 - [Continuation object resolver](CONTINUATION_OBJECT_RESOLVER.md): scoped
   lookup and quota contract.

@@ -112,6 +112,7 @@ EXPECTED_PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS = frozenset(
         "src/prepared_text_result_sink_file.zig",
         "src/prepared_text_acknowledged_progress.zig",
         "src/prepared_text_acknowledged_restore.zig",
+        "src/prepared_text_source_recovery.zig",
     }
 )
 
@@ -1189,7 +1190,7 @@ class VerificationPolicyTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            '"prepared-text-recovery-test requires a native macOS, Linux, "',
+            '"prepared-text-recovery-test requires a native macOS or Linux "',
             source,
         )
         self.assertIn(

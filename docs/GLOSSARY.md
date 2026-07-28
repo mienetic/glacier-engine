@@ -535,6 +535,13 @@ the pending Scheduler adoption. It continues at global publication base `N`
 and does not by itself prove durable selection, source exit, or exclusive
 process handoff.
 
+**Prepared-text source replay contract** — A canonical pointer-free R1j record
+retained in generation one and embedded byte-for-byte in generation two. It
+binds the pre-tokenized request, validated plan/model roots, stable source
+runtime identity, target ownership, and exact empty-sink facts. It permits a
+lease-holding source to replay only the unpublished deterministic prefix and
+grants no runtime, checkpoint, sink, or target authority by itself.
+
 **Prepared-text result acknowledgement** — A canonical 424-byte R1i record
 returned only after the retained sink has durably accepted or exactly replayed
 one request/global-sequence delivery. It binds token, proposal, transition,
@@ -542,10 +549,11 @@ commit receipt, sink identity, application ordinal, predecessor ACK, and sink
 prefix. It is hash-canonical evidence, not an authenticated capability.
 
 **Durable prepared-text result sink** — The bounded descriptor-relative local
-POSIX R1i adapter that selects one immutable complete acknowledgement ledger
-through an atomic root switch. An exact delivery replay returns the original
-ACK without another application or durable write; gaps, conflicts, unsafe
-storage, and identity drift reject.
+POSIX adapter used by R1i target delivery and R1j exact empty-sink enrollment.
+It selects one immutable complete acknowledgement ledger through an atomic root
+switch. An exact delivery replay returns the original ACK without another
+application or durable write; gaps, conflicts, unsafe storage, and identity
+drift reject.
 
 **Acknowledged prepared-text progress generation** — The immediate
 post-generation-two selector successor that joins the exact predecessor,

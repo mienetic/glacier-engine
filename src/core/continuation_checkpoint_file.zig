@@ -7,10 +7,19 @@
 //! only the exact previous or successor selector.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const platform_capabilities = @import("platform_capabilities.zig");
 const capsule = @import("continuation_capsule.zig");
 const sweep_file = @import("continuation_object_sweep_file.zig");
 const sweep_record = @import("continuation_object_sweep_record.zig");
+
+extern "c" fn renameatx_np(
+    old_directory: std.posix.fd_t,
+    old_name: [*:0]const u8,
+    new_directory: std.posix.fd_t,
+    new_name: [*:0]const u8,
+    flags: c_uint,
+) c_int;
 
 pub const Digest = [32]u8;
 pub const set_abi: u64 = 0x4743_5345_0000_0001;
@@ -30,6 +39,15 @@ pub const selector_body_bytes: usize = selector_bytes - 32;
 pub const allowed_flags: u64 = 0;
 pub const lock_name = ".glacier-checkpoint-lock-v1";
 pub const active_selector_name = ".glacier-checkpoint-active-v1";
+/// Strict initial recovery needs an atomic no-replace rename in addition to the
+/// baseline durable POSIX file adapter.
+pub const initial_recovery_available_v1 =
+    platform_capabilities.current_adapter_availability_v1
+        .posix_durable_file_adapter and
+    switch (builtin.os.tag) {
+        .linux, .macos, .ios => true,
+        else => false,
+    };
 
 const set_domain = "glacier-continuation-checkpoint-set-v1\x00";
 const object_domain = "glacier-continuation-checkpoint-object-v1\x00";
@@ -170,6 +188,15 @@ pub const ApplyReceiptV1 = struct {
     checkpoint_sha256: Digest,
 };
 
+pub const InitialDispositionV1 = enum(u8) {
+    /// This call created the lock and both candidate-to-final publications.
+    created,
+    /// This call completed a pre-existing lock, final archive, or candidate.
+    recovered,
+    /// The exact active selector/archive pair existed when the lock was taken.
+    already_selected,
+};
+
 pub const LeaseStateV1 = enum(u8) {
     ready,
     poisoned,
@@ -277,6 +304,250 @@ pub const LeaseV1 = struct {
             .active_bytes = initial_set.bytes.len,
             .max_set_bytes = max_set_bytes,
             .selector = selector,
+        };
+    }
+
+    pub fn createOrRecoverInitialV1(
+        directory: std.fs.Dir,
+        storage_epoch: u64,
+        challenge_sha256: Digest,
+        initial_set: PreparedSetV1,
+        initial_selector: PreparedSelectorV1,
+        max_set_bytes: usize,
+        lock_storage: []u8,
+        active_storage: []u8,
+    ) !InitialLeaseResultV1 {
+        return createOrRecoverInitialObservedV1(
+            directory,
+            storage_epoch,
+            challenge_sha256,
+            initial_set,
+            initial_selector,
+            max_set_bytes,
+            lock_storage,
+            active_storage,
+            null,
+        );
+    }
+
+    /// Create or recover the exact generation-one selector under one
+    /// create-or-open exclusive lock. Candidate files may be repaired because
+    /// they are not authority. A mismatched immutable archive or any partial or
+    /// foreign active selector is rejected without rewriting either final.
+    pub fn createOrRecoverInitialObservedV1(
+        directory: std.fs.Dir,
+        storage_epoch: u64,
+        challenge_sha256: Digest,
+        initial_set: PreparedSetV1,
+        initial_selector: PreparedSelectorV1,
+        max_set_bytes: usize,
+        lock_storage: []u8,
+        active_storage: []u8,
+        observer: ?ObserverV1,
+    ) !InitialLeaseResultV1 {
+        if (comptime !initial_recovery_available_v1)
+            return Error.UnsupportedPlatform;
+        if (storage_epoch == 0 or isZero(challenge_sha256) or
+            initial_set.bytes.len > max_set_bytes or
+            active_storage.len < max_set_bytes)
+            return Error.InvalidState;
+        const set = try decodeSetV1(initial_set.bytes);
+        const selector = try decodeSelectorV1(&initial_selector.bytes);
+        try validatePreparedPairV1(
+            initial_set,
+            initial_selector,
+            set,
+            selector,
+        );
+        if (set.metadata.generation != 1 or
+            !isZero(set.metadata.parent_checkpoint_sha256) or
+            selector.generation != 1 or
+            !isZero(selector.previous_selector_sha256) or
+            !std.mem.eql(
+                u8,
+                &selector.challenge_sha256,
+                &challenge_sha256,
+            ))
+            return Error.InvalidSelector;
+
+        const lock_options: sweep_file.AcquireOptionsV1 = .{
+            .storage_epoch = storage_epoch,
+            .max_bytes = sweep_record.encoded_bytes,
+        };
+        var lock_created = true;
+        var lock = sweep_file.FileLeaseV1.create(
+            directory,
+            lock_name,
+            lock_options,
+            lock_storage,
+        ) catch |err| switch (err) {
+            error.PathAlreadyExists => opened: {
+                lock_created = false;
+                break :opened try sweep_file.FileLeaseV1.open(
+                    directory,
+                    lock_name,
+                    lock_options,
+                    lock_storage,
+                );
+            },
+            else => return err,
+        };
+        errdefer lock.close();
+        if (lock.stream().len != 0)
+            return Error.StorageIdentityChanged;
+
+        var archive_name_storage: [max_generated_name_bytes]u8 =
+            undefined;
+        const archive_name = try archiveNameV1(
+            initial_set.checkpoint_sha256,
+            &archive_name_storage,
+        );
+        var archive_candidate_storage: [
+            max_generated_name_bytes
+        ]u8 = undefined;
+        const archive_candidate = try archiveCandidateNameV1(
+            initial_set.checkpoint_sha256,
+            &archive_candidate_storage,
+        );
+        var selector_candidate_storage: [
+            max_generated_name_bytes
+        ]u8 = undefined;
+        const selector_candidate = try selectorCandidateNameV1(
+            initial_selector.selector_sha256,
+            &selector_candidate_storage,
+        );
+        try auditInitialNamespaceV1(
+            directory,
+            archive_name,
+            archive_candidate,
+            selector_candidate,
+        );
+        const active_state = try exactFileStateV1(
+            directory,
+            active_selector_name,
+            &initial_selector.bytes,
+        );
+        switch (active_state) {
+            .mismatched => return Error.InvalidSelector,
+            .exact => {
+                if (try exactFileStateV1(
+                    directory,
+                    archive_name,
+                    initial_set.bytes,
+                ) != .exact)
+                    return Error.CheckpointMismatch;
+                try syncNamedFileV1(
+                    directory,
+                    archive_name,
+                    initial_set.bytes,
+                );
+                try syncNamedFileV1(
+                    directory,
+                    active_selector_name,
+                    &initial_selector.bytes,
+                );
+                try syncDirectory(directory);
+                try auditInitialNamespaceV1(
+                    directory,
+                    archive_name,
+                    archive_candidate,
+                    selector_candidate,
+                );
+                const lease = try initializedLeaseV1(
+                    directory,
+                    lock,
+                    storage_epoch,
+                    challenge_sha256,
+                    initial_set,
+                    initial_selector,
+                    max_set_bytes,
+                    active_storage,
+                );
+                return .{
+                    .lease = lease,
+                    .disposition = .already_selected,
+                };
+            },
+            .missing => {},
+        }
+
+        var recovered_debris = !lock_created;
+        switch (try exactFileStateV1(
+            directory,
+            archive_name,
+            initial_set.bytes,
+        )) {
+            .mismatched => return Error.CheckpointMismatch,
+            .exact => {
+                recovered_debris = true;
+                try syncNamedFileV1(
+                    directory,
+                    archive_name,
+                    initial_set.bytes,
+                );
+                try syncDirectory(directory);
+            },
+            .missing => {
+                recovered_debris = (try publishInitialCandidateV1(
+                    directory,
+                    archive_candidate,
+                    archive_name,
+                    initial_set.bytes,
+                    .archive_write,
+                    .archive_sync,
+                    null,
+                    .archive_directory_sync,
+                    observer,
+                )) or recovered_debris;
+            },
+        }
+
+        try auditInitialNamespaceV1(
+            directory,
+            archive_name,
+            archive_candidate,
+            selector_candidate,
+        );
+        if (try exactFileStateV1(
+            directory,
+            active_selector_name,
+            &initial_selector.bytes,
+        ) != .missing)
+            return Error.PublicationMismatch;
+        recovered_debris = (try publishInitialCandidateV1(
+            directory,
+            selector_candidate,
+            active_selector_name,
+            &initial_selector.bytes,
+            .selector_write,
+            .selector_sync,
+            .selector_rename,
+            .selector_directory_sync,
+            observer,
+        )) or recovered_debris;
+        try auditInitialNamespaceV1(
+            directory,
+            archive_name,
+            archive_candidate,
+            selector_candidate,
+        );
+
+        const lease = try initializedLeaseV1(
+            directory,
+            lock,
+            storage_epoch,
+            challenge_sha256,
+            initial_set,
+            initial_selector,
+            max_set_bytes,
+            active_storage,
+        );
+        return .{
+            .lease = lease,
+            .disposition = if (recovered_debris)
+                .recovered
+            else
+                .created,
         };
     }
 
@@ -479,6 +750,11 @@ pub const LeaseV1 = struct {
     }
 };
 
+pub const InitialLeaseResultV1 = struct {
+    lease: LeaseV1,
+    disposition: InitialDispositionV1,
+};
+
 const LoadedActiveV1 = struct {
     set_bytes: usize,
     selector: DecodedSelectorV1,
@@ -493,6 +769,12 @@ const FileViewV1 = struct {
     device: u64,
     inode: u64,
     size: usize,
+};
+
+const ExactFileStateV1 = enum {
+    missing,
+    exact,
+    mismatched,
 };
 
 pub fn encodeSetV1(
@@ -1158,12 +1440,281 @@ fn loadActiveV1(
     };
 }
 
+fn initializedLeaseV1(
+    directory: std.fs.Dir,
+    lock: sweep_file.FileLeaseV1,
+    storage_epoch: u64,
+    challenge_sha256: Digest,
+    initial_set: PreparedSetV1,
+    initial_selector: PreparedSelectorV1,
+    max_set_bytes: usize,
+    active_storage: []u8,
+) !LeaseV1 {
+    const loaded = try loadActiveV1(
+        directory,
+        challenge_sha256,
+        active_storage,
+        max_set_bytes,
+    );
+    if (loaded.set_bytes != initial_set.bytes.len or
+        !std.mem.eql(
+            u8,
+            &loaded.selector.selector_sha256,
+            &initial_selector.selector_sha256,
+        ) or !std.mem.eql(
+        u8,
+        &loaded.selector.checkpoint_sha256,
+        &initial_set.checkpoint_sha256,
+    ))
+        return Error.CheckpointMismatch;
+    return .{
+        .directory = directory,
+        .lock = lock,
+        .storage_epoch = storage_epoch,
+        .challenge_sha256 = challenge_sha256,
+        .active_storage = active_storage,
+        .active_bytes = loaded.set_bytes,
+        .max_set_bytes = max_set_bytes,
+        .selector = loaded.selector,
+    };
+}
+
+fn exactFileStateV1(
+    directory: std.fs.Dir,
+    name: []const u8,
+    expected: []const u8,
+) !ExactFileStateV1 {
+    const file = openSafeFileV1(
+        directory,
+        name,
+        .existing,
+    ) catch |err| switch (err) {
+        error.FileNotFound => return .missing,
+        else => return err,
+    };
+    defer file.close();
+    const before = try inspectFileV1(file, directory, name);
+    const exact = before.size == expected.len and
+        try fileContentsEqualV1(file, expected);
+    const after = try inspectFileV1(file, directory, name);
+    if (!std.meta.eql(before, after))
+        return Error.StorageIdentityChanged;
+    return if (exact) .exact else .mismatched;
+}
+
+/// Initialization owns a closed namespace: only the exact generation-one
+/// archive/candidates may coexist with its lock and active selector. Refusing
+/// every other reserved name observed while the directory lease is held stops
+/// a missing or rolled-back selector from hiding a durable successor.
+fn auditInitialNamespaceV1(
+    directory: std.fs.Dir,
+    archive_name: []const u8,
+    archive_candidate: []const u8,
+    selector_candidate: []const u8,
+) !void {
+    var scan_directory = try directory.openDir(".", .{
+        .iterate = true,
+        .no_follow = true,
+    });
+    defer scan_directory.close();
+    var iterator = scan_directory.iterate();
+    while (try iterator.next()) |entry| {
+        if (std.mem.eql(u8, entry.name, lock_name) or
+            std.mem.eql(u8, entry.name, active_selector_name) or
+            std.mem.eql(u8, entry.name, archive_name) or
+            std.mem.eql(u8, entry.name, archive_candidate) or
+            std.mem.eql(u8, entry.name, selector_candidate))
+            continue;
+        if (std.mem.startsWith(u8, entry.name, "checkpoint-") or
+            std.mem.startsWith(
+                u8,
+                entry.name,
+                ".glacier-checkpoint-",
+            ))
+            return Error.PublicationMismatch;
+    }
+    try validateOptionalInitialCandidateV1(
+        directory,
+        archive_candidate,
+    );
+    try validateOptionalInitialCandidateV1(
+        directory,
+        selector_candidate,
+    );
+}
+
+fn validateOptionalInitialCandidateV1(
+    directory: std.fs.Dir,
+    name: []const u8,
+) !void {
+    const file = openSafeFileV1(
+        directory,
+        name,
+        .existing,
+    ) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+    const before = try inspectFileV1(file, directory, name);
+    const after = try inspectFileV1(file, directory, name);
+    if (!std.meta.eql(before, after))
+        return Error.StorageIdentityChanged;
+}
+
+/// Publish one repairable candidate beneath a pinned descriptor, then atomically
+/// rename it to an absent final name. The returned flag is true when recovery
+/// reused candidate debris from an earlier attempt.
+fn publishInitialCandidateV1(
+    directory: std.fs.Dir,
+    candidate_name: []const u8,
+    final_name: []const u8,
+    expected: []const u8,
+    write_phase: IoPhaseV1,
+    sync_phase: IoPhaseV1,
+    rename_phase: ?IoPhaseV1,
+    directory_sync_phase: IoPhaseV1,
+    observer: ?ObserverV1,
+) !bool {
+    var candidate_created = true;
+    const file = openSafeFileV1(
+        directory,
+        candidate_name,
+        .create,
+    ) catch |err| switch (err) {
+        error.PathAlreadyExists => opened: {
+            candidate_created = false;
+            break :opened try openSafeFileV1(
+                directory,
+                candidate_name,
+                .existing,
+            );
+        },
+        else => return err,
+    };
+    defer file.close();
+    const initial_view = try inspectFileV1(
+        file,
+        directory,
+        candidate_name,
+    );
+    const needs_write = initial_view.size != expected.len or
+        !try fileContentsEqualV1(file, expected);
+    if (needs_write) {
+        try file.setEndPos(0);
+        try file.pwriteAll(expected, 0);
+        try file.setEndPos(expected.len);
+        if (observer) |value| try value.after(write_phase);
+    }
+    try file.sync();
+    if (observer) |value| try value.after(sync_phase);
+    try verifyPinnedExactFileV1(
+        file,
+        directory,
+        candidate_name,
+        expected,
+        initial_view,
+    );
+
+    try renameNoReplaceV1(
+        directory,
+        candidate_name,
+        final_name,
+    );
+    if (rename_phase) |phase|
+        if (observer) |value| try value.after(phase);
+    try verifyPinnedExactFileV1(
+        file,
+        directory,
+        final_name,
+        expected,
+        initial_view,
+    );
+    try syncDirectory(directory);
+    if (observer) |value| try value.after(
+        directory_sync_phase,
+    );
+    return !candidate_created;
+}
+
+/// Atomically publishes one candidate only while the final name is absent.
+/// Unlike POSIX `rename`, these primitives cannot replace a foreign final that
+/// appears after validation. Unsupported kernels fail closed.
+fn renameNoReplaceV1(
+    directory: std.fs.Dir,
+    candidate_name: []const u8,
+    final_name: []const u8,
+) !void {
+    const candidate_z = try std.posix.toPosixPath(candidate_name);
+    const final_z = try std.posix.toPosixPath(final_name);
+    const operation_errno: std.posix.E = switch (builtin.os.tag) {
+        .macos, .ios => std.posix.errno(renameatx_np(
+            directory.fd,
+            &candidate_z,
+            directory.fd,
+            &final_z,
+            0x0000_0004,
+        )),
+        .linux => linuxSyscallErrnoV1(std.os.linux.renameat2(
+            directory.fd,
+            &candidate_z,
+            directory.fd,
+            &final_z,
+            0x0000_0001,
+        )),
+        else => return Error.UnsupportedPlatform,
+    };
+    switch (operation_errno) {
+        .SUCCESS => return,
+        .EXIST, .NOTEMPTY => return Error.PublicationMismatch,
+        .NOENT => return Error.StorageIdentityChanged,
+        .NOSYS => return Error.UnsupportedPlatform,
+        else => return Error.StorageIo,
+    }
+}
+
+fn linuxSyscallErrnoV1(result: usize) std.posix.E {
+    const signed: isize = @bitCast(result);
+    if (signed >= 0 or signed <= -4096) return .SUCCESS;
+    return @enumFromInt(-signed);
+}
+
+fn verifyPinnedExactFileV1(
+    file: std.fs.File,
+    directory: std.fs.Dir,
+    name: []const u8,
+    expected: []const u8,
+    initial_view: FileViewV1,
+) !void {
+    const current = try inspectFileV1(file, directory, name);
+    if (current.device != initial_view.device or
+        current.inode != initial_view.inode or
+        current.size != expected.len or
+        !try fileContentsEqualV1(file, expected))
+        return Error.StorageIdentityChanged;
+    const verified = try inspectFileV1(file, directory, name);
+    if (!std.meta.eql(current, verified))
+        return Error.StorageIdentityChanged;
+}
+
 fn archiveNameV1(
     checkpoint_sha256: Digest,
     storage: []u8,
 ) ![]const u8 {
     const hex = std.fmt.bytesToHex(checkpoint_sha256, .lower);
     return std.fmt.bufPrint(storage, "checkpoint-{s}.set", .{&hex});
+}
+
+fn archiveCandidateNameV1(
+    checkpoint_sha256: Digest,
+    storage: []u8,
+) ![]const u8 {
+    const hex = std.fmt.bytesToHex(checkpoint_sha256, .lower);
+    return std.fmt.bufPrint(
+        storage,
+        "checkpoint-{s}.set.candidate",
+        .{&hex},
+    );
 }
 
 fn selectorCandidateNameV1(
@@ -1668,4 +2219,1145 @@ test "checkpoint recovery repairs only the prepared inactive successor" {
         "successor",
         (try (try lease.activeSet()).object(.extension, 0)).bytes,
     );
+}
+
+const InitialTestPairV1 = struct {
+    set: PreparedSetV1,
+    selector: PreparedSelectorV1,
+};
+
+fn initialTestPairV1(
+    storage: []u8,
+    challenge_sha256: Digest,
+    request_epoch: u64,
+    payload: []const u8,
+) !InitialTestPairV1 {
+    const objects = [_]ObjectInputV1{.{
+        .kind = .extension,
+        .ordinal = 0,
+        .abi_version = 1,
+        .bytes = payload,
+    }};
+    const set = try encodeSetV1(.{
+        .generation = 1,
+        .request_epoch = request_epoch,
+        .publication_next_sequence = 1,
+        .parent_checkpoint_sha256 = capsule.zero_digest,
+        .challenge_sha256 = challenge_sha256,
+    }, &objects, storage);
+    return .{
+        .set = set,
+        .selector = try prepareInitialSelectorV1(set),
+    };
+}
+
+const InitialFaultObserverV1 = struct {
+    target: IoPhaseV1,
+    calls: usize = 0,
+
+    fn after(
+        raw: *anyopaque,
+        phase: IoPhaseV1,
+    ) Error!void {
+        const self: *InitialFaultObserverV1 =
+            @ptrCast(@alignCast(raw));
+        self.calls += 1;
+        if (phase == self.target) return Error.InjectedFault;
+    }
+};
+
+fn createEmptyCheckpointLockForTestV1(
+    directory: std.fs.Dir,
+    storage_epoch: u64,
+    storage: []u8,
+) !void {
+    var lock = try sweep_file.FileLeaseV1.create(
+        directory,
+        lock_name,
+        .{
+            .storage_epoch = storage_epoch,
+            .max_bytes = sweep_record.encoded_bytes,
+        },
+        storage,
+    );
+    lock.close();
+}
+
+test "initial checkpoint create-or-recover is allocation-free and idempotent" {
+    if (comptime !initial_recovery_available_v1)
+        return error.SkipZigTest;
+    const testing = std.testing;
+    var temporary = testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const challenge = [_]u8{0x81} ** 32;
+    var set_storage: [1024]u8 = undefined;
+    const pair = try initialTestPairV1(
+        &set_storage,
+        challenge,
+        801,
+        "initial-idempotent",
+    );
+
+    var lock_storage: [1]u8 = undefined;
+    var active_storage: [1024]u8 = undefined;
+    var created = try LeaseV1.createOrRecoverInitialV1(
+        temporary.dir,
+        9801,
+        challenge,
+        pair.set,
+        pair.selector,
+        active_storage.len,
+        &lock_storage,
+        &active_storage,
+    );
+    try testing.expectEqual(
+        InitialDispositionV1.created,
+        created.disposition,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        pair.set.bytes,
+        created.lease.stream(),
+    );
+    created.lease.close();
+
+    var reopened_lock_storage: [1]u8 = undefined;
+    var reopened_active_storage: [1024]u8 = undefined;
+    var reopened = try LeaseV1.createOrRecoverInitialV1(
+        temporary.dir,
+        9801,
+        challenge,
+        pair.set,
+        pair.selector,
+        reopened_active_storage.len,
+        &reopened_lock_storage,
+        &reopened_active_storage,
+    );
+    defer reopened.lease.close();
+    try testing.expectEqual(
+        InitialDispositionV1.already_selected,
+        reopened.disposition,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &pair.selector.selector_sha256,
+        &reopened.lease.selector.selector_sha256,
+    );
+
+    {
+        var lock_only_temporary = testing.tmpDir(.{});
+        defer lock_only_temporary.cleanup();
+        var lock_only_set_storage: [1024]u8 = undefined;
+        const lock_only_pair = try initialTestPairV1(
+            &lock_only_set_storage,
+            challenge,
+            802,
+            "initial-lock-only",
+        );
+        var abandoned_lock_storage: [1]u8 = undefined;
+        try createEmptyCheckpointLockForTestV1(
+            lock_only_temporary.dir,
+            9802,
+            &abandoned_lock_storage,
+        );
+        var recovered_lock_storage: [1]u8 = undefined;
+        var recovered_active_storage: [1024]u8 = undefined;
+        var recovered = try LeaseV1.createOrRecoverInitialV1(
+            lock_only_temporary.dir,
+            9802,
+            challenge,
+            lock_only_pair.set,
+            lock_only_pair.selector,
+            recovered_active_storage.len,
+            &recovered_lock_storage,
+            &recovered_active_storage,
+        );
+        defer recovered.lease.close();
+        try testing.expectEqual(
+            InitialDispositionV1.recovered,
+            recovered.disposition,
+        );
+    }
+}
+
+test "initial checkpoint recovery scans privately and recovers archive rename boundary" {
+    if (comptime !initial_recovery_available_v1)
+        return error.SkipZigTest;
+    const testing = std.testing;
+    var temporary = testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var caller_directory = try temporary.dir.openDir(".", .{});
+    defer caller_directory.close();
+    const challenge = [_]u8{0x88} ** 32;
+    var set_storage: [1024]u8 = undefined;
+    const pair = try initialTestPairV1(
+        &set_storage,
+        challenge,
+        810,
+        "archive-rename-boundary",
+    );
+    var abandoned_lock_storage: [1]u8 = undefined;
+    try createEmptyCheckpointLockForTestV1(
+        caller_directory,
+        9810,
+        &abandoned_lock_storage,
+    );
+
+    var archive_name_storage: [max_generated_name_bytes]u8 =
+        undefined;
+    const archive_name = try archiveNameV1(
+        pair.set.checkpoint_sha256,
+        &archive_name_storage,
+    );
+    var candidate_name_storage: [max_generated_name_bytes]u8 =
+        undefined;
+    const candidate_name = try archiveCandidateNameV1(
+        pair.set.checkpoint_sha256,
+        &candidate_name_storage,
+    );
+    try writeNewFileV1(
+        caller_directory,
+        candidate_name,
+        pair.set.bytes,
+    );
+    const candidate = try openSafeFileV1(
+        caller_directory,
+        candidate_name,
+        .existing,
+    );
+    try candidate.sync();
+    candidate.close();
+    try renameNoReplaceV1(
+        caller_directory,
+        candidate_name,
+        archive_name,
+    );
+
+    var recovered_lock_storage: [1]u8 = undefined;
+    var recovered_active_storage: [1024]u8 = undefined;
+    var recovered = try LeaseV1.createOrRecoverInitialV1(
+        caller_directory,
+        9810,
+        challenge,
+        pair.set,
+        pair.selector,
+        recovered_active_storage.len,
+        &recovered_lock_storage,
+        &recovered_active_storage,
+    );
+    defer recovered.lease.close();
+    try testing.expectEqual(
+        InitialDispositionV1.recovered,
+        recovered.disposition,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        pair.set.bytes,
+        recovered.lease.stream(),
+    );
+}
+
+test "every initial checkpoint phase recovers missing or exact selection" {
+    if (comptime !initial_recovery_available_v1)
+        return error.SkipZigTest;
+    const testing = std.testing;
+    const phases = [_]IoPhaseV1{
+        .archive_write,
+        .archive_sync,
+        .archive_directory_sync,
+        .selector_write,
+        .selector_sync,
+        .selector_rename,
+        .selector_directory_sync,
+    };
+    for (phases, 0..) |phase, index| {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        const challenge = [_]u8{0x82} ** 32;
+        var set_storage: [1024]u8 = undefined;
+        const pair = try initialTestPairV1(
+            &set_storage,
+            challenge,
+            820 + index,
+            "initial-phase-recovery",
+        );
+        var observer: InitialFaultObserverV1 = .{
+            .target = phase,
+        };
+        var lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.InjectedFault,
+            LeaseV1.createOrRecoverInitialObservedV1(
+                temporary.dir,
+                9820 + index,
+                challenge,
+                pair.set,
+                pair.selector,
+                active_storage.len,
+                &lock_storage,
+                &active_storage,
+                .{
+                    .context = &observer,
+                    .after_phase_fn = InitialFaultObserverV1.after,
+                },
+            ),
+        );
+        try testing.expect(observer.calls > 0);
+
+        const selected_before_recovery =
+            phase == .selector_rename or
+            phase == .selector_directory_sync;
+        try testing.expectEqual(
+            if (selected_before_recovery)
+                ExactFileStateV1.exact
+            else
+                ExactFileStateV1.missing,
+            try exactFileStateV1(
+                temporary.dir,
+                active_selector_name,
+                &pair.selector.bytes,
+            ),
+        );
+
+        if (phase == .archive_write) {
+            var name_storage: [max_generated_name_bytes]u8 =
+                undefined;
+            const name = try archiveCandidateNameV1(
+                pair.set.checkpoint_sha256,
+                &name_storage,
+            );
+            const file = try openSafeFileV1(
+                temporary.dir,
+                name,
+                .existing,
+            );
+            try file.setEndPos(17);
+            file.close();
+        } else if (phase == .selector_write) {
+            var name_storage: [max_generated_name_bytes]u8 =
+                undefined;
+            const name = try selectorCandidateNameV1(
+                pair.selector.selector_sha256,
+                &name_storage,
+            );
+            const file = try openSafeFileV1(
+                temporary.dir,
+                name,
+                .existing,
+            );
+            try file.setEndPos(17);
+            file.close();
+        }
+
+        var recovered_lock_storage: [1]u8 = undefined;
+        var recovered_active_storage: [1024]u8 = undefined;
+        var recovered = try LeaseV1.createOrRecoverInitialV1(
+            temporary.dir,
+            9820 + index,
+            challenge,
+            pair.set,
+            pair.selector,
+            recovered_active_storage.len,
+            &recovered_lock_storage,
+            &recovered_active_storage,
+        );
+        try testing.expectEqual(
+            if (selected_before_recovery)
+                InitialDispositionV1.already_selected
+            else
+                InitialDispositionV1.recovered,
+            recovered.disposition,
+        );
+        try testing.expectEqualSlices(
+            u8,
+            pair.set.bytes,
+            recovered.lease.stream(),
+        );
+        recovered.lease.close();
+
+        var repeated_lock_storage: [1]u8 = undefined;
+        var repeated_active_storage: [1024]u8 = undefined;
+        var repeated = try LeaseV1.createOrRecoverInitialV1(
+            temporary.dir,
+            9820 + index,
+            challenge,
+            pair.set,
+            pair.selector,
+            repeated_active_storage.len,
+            &repeated_lock_storage,
+            &repeated_active_storage,
+        );
+        defer repeated.lease.close();
+        try testing.expectEqual(
+            InitialDispositionV1.already_selected,
+            repeated.disposition,
+        );
+    }
+}
+
+const InitialIdentityReplacementObserverV1 = struct {
+    directory: *std.fs.Dir,
+    candidate_name: []const u8,
+    replacement: []const u8,
+    replaced: bool = false,
+
+    fn after(
+        raw: *anyopaque,
+        phase: IoPhaseV1,
+    ) Error!void {
+        const self: *InitialIdentityReplacementObserverV1 =
+            @ptrCast(@alignCast(raw));
+        if (phase != .archive_write or self.replaced) return;
+        self.directory.rename(
+            self.candidate_name,
+            "displaced-initial-candidate",
+        ) catch return Error.StorageIo;
+        const replacement = self.directory.createFile(
+            self.candidate_name,
+            .{
+                .read = true,
+                .exclusive = true,
+                .mode = 0o600,
+            },
+        ) catch return Error.StorageIo;
+        defer replacement.close();
+        replacement.writeAll(self.replacement) catch
+            return Error.StorageIo;
+        replacement.sync() catch return Error.StorageIo;
+        self.replaced = true;
+    }
+};
+
+const InitialForeignFinalObserverV1 = struct {
+    directory: *std.fs.Dir,
+    target: IoPhaseV1,
+    final_name: []const u8,
+    foreign_bytes: []const u8,
+    inserted: bool = false,
+
+    fn after(
+        raw: *anyopaque,
+        phase: IoPhaseV1,
+    ) Error!void {
+        const self: *InitialForeignFinalObserverV1 =
+            @ptrCast(@alignCast(raw));
+        if (phase != self.target or self.inserted) return;
+        const file = openSafeFileV1(
+            self.directory.*,
+            self.final_name,
+            .create,
+        ) catch return Error.StorageIo;
+        defer file.close();
+        file.writeAll(self.foreign_bytes) catch
+            return Error.StorageIo;
+        file.sync() catch return Error.StorageIo;
+        self.inserted = true;
+    }
+};
+
+fn publishInitialTestSuccessorV1(
+    lease: *LeaseV1,
+    set_storage: []u8,
+    payload: []const u8,
+) !PreparedPublicationV1 {
+    const objects = [_]ObjectInputV1{.{
+        .kind = .extension,
+        .ordinal = 0,
+        .abi_version = 1,
+        .bytes = payload,
+    }};
+    const set = try encodeSetV1(.{
+        .generation = lease.selector.generation + 1,
+        .request_epoch = lease.selector.request_epoch,
+        .publication_next_sequence = lease.selector.publication_next_sequence + 1,
+        .parent_checkpoint_sha256 = lease.selector.checkpoint_sha256,
+        .challenge_sha256 = lease.challenge_sha256,
+    }, &objects, set_storage);
+    const publication = try preparePublicationV1(lease, set);
+    _ = try publishV1(lease, publication);
+    return publication;
+}
+
+test "initial checkpoint recovery refuses authoritative and namespace drift" {
+    if (comptime !initial_recovery_available_v1)
+        return error.SkipZigTest;
+    const testing = std.testing;
+    const challenge = [_]u8{0x83} ** 32;
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var set_storage: [1024]u8 = undefined;
+        const pair = try initialTestPairV1(
+            &set_storage,
+            challenge,
+            831,
+            "partial-active",
+        );
+        var lock_storage: [1]u8 = undefined;
+        try createEmptyCheckpointLockForTestV1(
+            temporary.dir,
+            9831,
+            &lock_storage,
+        );
+        const partial = pair.selector.bytes[0..17];
+        try writeNewFileV1(
+            temporary.dir,
+            active_selector_name,
+            partial,
+        );
+        var reopen_lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.InvalidSelector,
+            LeaseV1.createOrRecoverInitialV1(
+                temporary.dir,
+                9831,
+                challenge,
+                pair.set,
+                pair.selector,
+                active_storage.len,
+                &reopen_lock_storage,
+                &active_storage,
+            ),
+        );
+        try testing.expectEqual(
+            ExactFileStateV1.exact,
+            try exactFileStateV1(
+                temporary.dir,
+                active_selector_name,
+                partial,
+            ),
+        );
+    }
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var expected_storage: [1024]u8 = undefined;
+        const expected = try initialTestPairV1(
+            &expected_storage,
+            challenge,
+            832,
+            "expected-active",
+        );
+        var foreign_storage: [1024]u8 = undefined;
+        const foreign = try initialTestPairV1(
+            &foreign_storage,
+            challenge,
+            833,
+            "foreign-active",
+        );
+        var lock_storage: [1]u8 = undefined;
+        try createEmptyCheckpointLockForTestV1(
+            temporary.dir,
+            9832,
+            &lock_storage,
+        );
+        try writeNewFileV1(
+            temporary.dir,
+            active_selector_name,
+            &foreign.selector.bytes,
+        );
+        var reopen_lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.InvalidSelector,
+            LeaseV1.createOrRecoverInitialV1(
+                temporary.dir,
+                9832,
+                challenge,
+                expected.set,
+                expected.selector,
+                active_storage.len,
+                &reopen_lock_storage,
+                &active_storage,
+            ),
+        );
+        try testing.expectEqual(
+            ExactFileStateV1.exact,
+            try exactFileStateV1(
+                temporary.dir,
+                active_selector_name,
+                &foreign.selector.bytes,
+            ),
+        );
+    }
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var set_storage: [1024]u8 = undefined;
+        const pair = try initialTestPairV1(
+            &set_storage,
+            challenge,
+            834,
+            "immutable-mismatch",
+        );
+        var lock_storage: [1]u8 = undefined;
+        try createEmptyCheckpointLockForTestV1(
+            temporary.dir,
+            9834,
+            &lock_storage,
+        );
+        var archive_name_storage: [max_generated_name_bytes]u8 =
+            undefined;
+        const archive_name = try archiveNameV1(
+            pair.set.checkpoint_sha256,
+            &archive_name_storage,
+        );
+        const foreign = "foreign immutable bytes";
+        try writeNewFileV1(
+            temporary.dir,
+            archive_name,
+            foreign,
+        );
+        var reopen_lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.CheckpointMismatch,
+            LeaseV1.createOrRecoverInitialV1(
+                temporary.dir,
+                9834,
+                challenge,
+                pair.set,
+                pair.selector,
+                active_storage.len,
+                &reopen_lock_storage,
+                &active_storage,
+            ),
+        );
+        try testing.expectEqual(
+            ExactFileStateV1.exact,
+            try exactFileStateV1(
+                temporary.dir,
+                archive_name,
+                foreign,
+            ),
+        );
+    }
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var set_storage: [1024]u8 = undefined;
+        const pair = try initialTestPairV1(
+            &set_storage,
+            challenge,
+            835,
+            "unsafe-candidate",
+        );
+        var lock_storage: [1]u8 = undefined;
+        try createEmptyCheckpointLockForTestV1(
+            temporary.dir,
+            9835,
+            &lock_storage,
+        );
+        const victim = try temporary.dir.createFile(
+            "candidate-victim",
+            .{
+                .read = true,
+                .exclusive = true,
+                .mode = 0o600,
+            },
+        );
+        try victim.writeAll("victim must not change");
+        victim.close();
+        var candidate_name_storage: [max_generated_name_bytes]u8 =
+            undefined;
+        const candidate_name = try archiveCandidateNameV1(
+            pair.set.checkpoint_sha256,
+            &candidate_name_storage,
+        );
+        try std.posix.linkat(
+            temporary.dir.fd,
+            "candidate-victim",
+            temporary.dir.fd,
+            candidate_name,
+            0,
+        );
+        var reopen_lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.MultipleLinks,
+            LeaseV1.createOrRecoverInitialV1(
+                temporary.dir,
+                9835,
+                challenge,
+                pair.set,
+                pair.selector,
+                active_storage.len,
+                &reopen_lock_storage,
+                &active_storage,
+            ),
+        );
+        try temporary.dir.deleteFile(candidate_name);
+        try testing.expectEqual(
+            ExactFileStateV1.exact,
+            try exactFileStateV1(
+                temporary.dir,
+                "candidate-victim",
+                "victim must not change",
+            ),
+        );
+    }
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var set_storage: [1024]u8 = undefined;
+        const pair = try initialTestPairV1(
+            &set_storage,
+            challenge,
+            836,
+            "symlink-candidate",
+        );
+        var lock_storage: [1]u8 = undefined;
+        try createEmptyCheckpointLockForTestV1(
+            temporary.dir,
+            9836,
+            &lock_storage,
+        );
+        const victim = try temporary.dir.createFile(
+            "symlink-victim",
+            .{
+                .read = true,
+                .exclusive = true,
+                .mode = 0o600,
+            },
+        );
+        victim.close();
+        var candidate_name_storage: [max_generated_name_bytes]u8 =
+            undefined;
+        const candidate_name = try archiveCandidateNameV1(
+            pair.set.checkpoint_sha256,
+            &candidate_name_storage,
+        );
+        try temporary.dir.symLink(
+            "symlink-victim",
+            candidate_name,
+            .{},
+        );
+        var reopen_lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            error.SymLinkLoop,
+            LeaseV1.createOrRecoverInitialV1(
+                temporary.dir,
+                9836,
+                challenge,
+                pair.set,
+                pair.selector,
+                active_storage.len,
+                &reopen_lock_storage,
+                &active_storage,
+            ),
+        );
+    }
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var set_storage: [1024]u8 = undefined;
+        const pair = try initialTestPairV1(
+            &set_storage,
+            challenge,
+            837,
+            "identity-replacement",
+        );
+        var candidate_name_storage: [max_generated_name_bytes]u8 =
+            undefined;
+        const candidate_name = try archiveCandidateNameV1(
+            pair.set.checkpoint_sha256,
+            &candidate_name_storage,
+        );
+        var observer: InitialIdentityReplacementObserverV1 = .{
+            .directory = &temporary.dir,
+            .candidate_name = candidate_name,
+            .replacement = pair.set.bytes,
+        };
+        var lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.StorageIdentityChanged,
+            LeaseV1.createOrRecoverInitialObservedV1(
+                temporary.dir,
+                9837,
+                challenge,
+                pair.set,
+                pair.selector,
+                active_storage.len,
+                &lock_storage,
+                &active_storage,
+                .{
+                    .context = &observer,
+                    .after_phase_fn = InitialIdentityReplacementObserverV1.after,
+                },
+            ),
+        );
+        try testing.expect(observer.replaced);
+        try testing.expectEqual(
+            ExactFileStateV1.missing,
+            try exactFileStateV1(
+                temporary.dir,
+                active_selector_name,
+                &pair.selector.bytes,
+            ),
+        );
+    }
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var set_storage: [1024]u8 = undefined;
+        const pair = try initialTestPairV1(
+            &set_storage,
+            challenge,
+            839,
+            "selected-without-archive",
+        );
+        var lock_storage: [1]u8 = undefined;
+        try createEmptyCheckpointLockForTestV1(
+            temporary.dir,
+            9839,
+            &lock_storage,
+        );
+        try writeNewFileV1(
+            temporary.dir,
+            active_selector_name,
+            &pair.selector.bytes,
+        );
+        var reopen_lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.CheckpointMismatch,
+            LeaseV1.createOrRecoverInitialV1(
+                temporary.dir,
+                9839,
+                challenge,
+                pair.set,
+                pair.selector,
+                active_storage.len,
+                &reopen_lock_storage,
+                &active_storage,
+            ),
+        );
+        try testing.expectEqual(
+            ExactFileStateV1.exact,
+            try exactFileStateV1(
+                temporary.dir,
+                active_selector_name,
+                &pair.selector.bytes,
+            ),
+        );
+    }
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var set_storage: [1024]u8 = undefined;
+        const pair = try initialTestPairV1(
+            &set_storage,
+            challenge,
+            840,
+            "nonempty-lock",
+        );
+        try writeNewFileV1(
+            temporary.dir,
+            lock_name,
+            "x",
+        );
+        var lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.StorageIdentityChanged,
+            LeaseV1.createOrRecoverInitialV1(
+                temporary.dir,
+                9840,
+                challenge,
+                pair.set,
+                pair.selector,
+                active_storage.len,
+                &lock_storage,
+                &active_storage,
+            ),
+        );
+        try testing.expectEqual(
+            ExactFileStateV1.exact,
+            try exactFileStateV1(
+                temporary.dir,
+                lock_name,
+                "x",
+            ),
+        );
+    }
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        const objects = [_]ObjectInputV1{.{
+            .kind = .extension,
+            .ordinal = 0,
+            .abi_version = 1,
+            .bytes = "generation-two",
+        }};
+        var set_storage: [1024]u8 = undefined;
+        const set = try encodeSetV1(.{
+            .generation = 2,
+            .request_epoch = 838,
+            .publication_next_sequence = 2,
+            .parent_checkpoint_sha256 = [_]u8{0x84} ** 32,
+            .challenge_sha256 = challenge,
+        }, &objects, &set_storage);
+        const selector = try encodeSelectorV1(
+            [_]u8{0x85} ** 32,
+            set,
+            try decodeSetV1(set.bytes),
+        );
+        var lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.InvalidSelector,
+            LeaseV1.createOrRecoverInitialV1(
+                temporary.dir,
+                9838,
+                challenge,
+                set,
+                selector,
+                active_storage.len,
+                &lock_storage,
+                &active_storage,
+            ),
+        );
+        try testing.expectEqual(
+            ExactFileStateV1.missing,
+            try exactFileStateV1(
+                temporary.dir,
+                lock_name,
+                &.{},
+            ),
+        );
+    }
+}
+
+test "initial checkpoint publication refuses raced foreign namespace changes" {
+    if (comptime !initial_recovery_available_v1)
+        return error.SkipZigTest;
+    const testing = std.testing;
+    const challenge = [_]u8{0x86} ** 32;
+    const race_cases = [_]IoPhaseV1{
+        .archive_sync,
+        .selector_sync,
+    };
+
+    for (race_cases, 0..) |phase, index| {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var set_storage: [1024]u8 = undefined;
+        const pair = try initialTestPairV1(
+            &set_storage,
+            challenge,
+            850 + index,
+            "foreign-final-race",
+        );
+        var archive_name_storage: [max_generated_name_bytes]u8 =
+            undefined;
+        const archive_name = try archiveNameV1(
+            pair.set.checkpoint_sha256,
+            &archive_name_storage,
+        );
+        const final_name = if (phase == .archive_sync)
+            archive_name
+        else
+            active_selector_name;
+        const foreign = "foreign final must survive";
+        var observer: InitialForeignFinalObserverV1 = .{
+            .directory = &temporary.dir,
+            .target = phase,
+            .final_name = final_name,
+            .foreign_bytes = foreign,
+        };
+        var lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.PublicationMismatch,
+            LeaseV1.createOrRecoverInitialObservedV1(
+                temporary.dir,
+                9850 + index,
+                challenge,
+                pair.set,
+                pair.selector,
+                active_storage.len,
+                &lock_storage,
+                &active_storage,
+                .{
+                    .context = &observer,
+                    .after_phase_fn = InitialForeignFinalObserverV1.after,
+                },
+            ),
+        );
+        try testing.expect(observer.inserted);
+        try testing.expectEqual(
+            ExactFileStateV1.exact,
+            try exactFileStateV1(
+                temporary.dir,
+                final_name,
+                foreign,
+            ),
+        );
+    }
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var set_storage: [1024]u8 = undefined;
+        const pair = try initialTestPairV1(
+            &set_storage,
+            challenge,
+            852,
+            "foreign-successor-race",
+        );
+        var foreign_name_storage: [max_generated_name_bytes]u8 =
+            undefined;
+        const foreign_name = try archiveNameV1(
+            [_]u8{0x99} ** 32,
+            &foreign_name_storage,
+        );
+        const foreign = "successor appeared after initial audit";
+        var observer: InitialForeignFinalObserverV1 = .{
+            .directory = &temporary.dir,
+            .target = .archive_sync,
+            .final_name = foreign_name,
+            .foreign_bytes = foreign,
+        };
+        var lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.PublicationMismatch,
+            LeaseV1.createOrRecoverInitialObservedV1(
+                temporary.dir,
+                9852,
+                challenge,
+                pair.set,
+                pair.selector,
+                active_storage.len,
+                &lock_storage,
+                &active_storage,
+                .{
+                    .context = &observer,
+                    .after_phase_fn = InitialForeignFinalObserverV1.after,
+                },
+            ),
+        );
+        try testing.expect(observer.inserted);
+        try testing.expectEqual(
+            ExactFileStateV1.exact,
+            try exactFileStateV1(
+                temporary.dir,
+                foreign_name,
+                foreign,
+            ),
+        );
+        try testing.expectEqual(
+            ExactFileStateV1.missing,
+            try exactFileStateV1(
+                temporary.dir,
+                active_selector_name,
+                &pair.selector.bytes,
+            ),
+        );
+    }
+}
+
+test "initial checkpoint recovery rejects durable successor rollback" {
+    if (comptime !initial_recovery_available_v1)
+        return error.SkipZigTest;
+    const testing = std.testing;
+    const challenge = [_]u8{0x87} ** 32;
+
+    for ([_]bool{ false, true }, 0..) |
+        restore_initial_selector,
+        index,
+    | {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var initial_storage: [1024]u8 = undefined;
+        const initial = try initialTestPairV1(
+            &initial_storage,
+            challenge,
+            860 + index,
+            "rollback-initial",
+        );
+        var lock_storage: [1]u8 = undefined;
+        var active_storage: [1024]u8 = undefined;
+        var initial_result = try LeaseV1.createOrRecoverInitialV1(
+            temporary.dir,
+            9860 + index,
+            challenge,
+            initial.set,
+            initial.selector,
+            active_storage.len,
+            &lock_storage,
+            &active_storage,
+        );
+        var successor_storage: [1024]u8 = undefined;
+        const successor = try publishInitialTestSuccessorV1(
+            &initial_result.lease,
+            &successor_storage,
+            "durable-generation-two",
+        );
+        initial_result.lease.close();
+
+        try temporary.dir.deleteFile(active_selector_name);
+        if (restore_initial_selector)
+            try writeNewFileV1(
+                temporary.dir,
+                active_selector_name,
+                &initial.selector.bytes,
+            );
+
+        var reopen_lock_storage: [1]u8 = undefined;
+        var reopen_active_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.PublicationMismatch,
+            LeaseV1.createOrRecoverInitialV1(
+                temporary.dir,
+                9860 + index,
+                challenge,
+                initial.set,
+                initial.selector,
+                reopen_active_storage.len,
+                &reopen_lock_storage,
+                &reopen_active_storage,
+            ),
+        );
+
+        var successor_name_storage: [
+            max_generated_name_bytes
+        ]u8 = undefined;
+        const successor_name = try archiveNameV1(
+            successor.set.checkpoint_sha256,
+            &successor_name_storage,
+        );
+        try testing.expectEqual(
+            ExactFileStateV1.exact,
+            try exactFileStateV1(
+                temporary.dir,
+                successor_name,
+                successor.set.bytes,
+            ),
+        );
+        try testing.expectEqual(
+            if (restore_initial_selector)
+                ExactFileStateV1.exact
+            else
+                ExactFileStateV1.missing,
+            try exactFileStateV1(
+                temporary.dir,
+                active_selector_name,
+                &initial.selector.bytes,
+            ),
+        );
+    }
 }

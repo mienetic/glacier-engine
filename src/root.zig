@@ -262,6 +262,8 @@ pub const prepared_text_acknowledged_delivery =
     @import("prepared_text_acknowledged_delivery.zig");
 pub const prepared_text_restart_manifest =
     @import("prepared_text_restart_manifest.zig");
+pub const prepared_text_source_recovery =
+    @import("prepared_text_source_recovery.zig");
 pub const prepared_text_restore_admission =
     @import("prepared_text_restore_admission.zig");
 pub const prepared_text_terminal_equivalence =

@@ -1035,6 +1035,10 @@ pub fn validateBoundPlanV1(value: BoundPlanV1) !void {
             value.execution.input_features or
         value.artifact.output_dimensions !=
             value.execution.output_dimensions or
+        value.artifact.input_element_bytes != @sizeOf(u32) or
+        value.artifact.output_element_bytes != @sizeOf(u32) or
+        value.execution.input_element_bytes != @sizeOf(u32) or
+        value.execution.output_element_bytes != @sizeOf(u32) or
         value.artifact.input_element_bytes !=
             value.execution.input_element_bytes or
         value.artifact.output_element_bytes !=

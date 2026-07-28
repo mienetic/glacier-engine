@@ -4535,7 +4535,7 @@ pub fn build(b: *std.Build) void {
         &prepared_text_live_restart_worker_exe.step,
     );
 
-    // R1i compiles the four acknowledged-delivery layers through one facade
+    // R1j compiles the acknowledged-delivery layers through one facade
     // so the ordinary test, compile-only, and durable-profile gates share the
     // same Zig artifact instead of rebuilding each module as a separate root.
     const prepared_text_acknowledged_delivery_tests = b.addTest(.{
@@ -4582,10 +4582,11 @@ pub fn build(b: *std.Build) void {
     );
 
     // The POSIX recovery worker is compiled once per supported target. A
-    // native worker is then reused by all nineteen process-death cases. Pure
-    // Python protocol/decoder tests run before the real SIGKILL matrix, whose
-    // disposable directory is a declared build output rather than a
-    // repository-local fixture.
+    // native worker is then reused by all 49 process-death cases: seven
+    // generation-one bootstrap boundaries, 23 source-transition boundaries,
+    // and 19 target-transition boundaries. Pure Python protocol/decoder tests
+    // run before the real SIGKILL matrix, whose disposable directory is a
+    // declared build output rather than a repository-local fixture.
     const prepared_text_recovery_target_available =
         target.result.os.tag == .macos or
         target.result.os.tag == .linux or
@@ -4610,10 +4611,11 @@ pub fn build(b: *std.Build) void {
     };
     const prepared_text_recovery_test_step = b.step(
         "prepared-text-recovery-test",
-        "Run acknowledged prepared-text real process-death recovery",
+        "Run prepared-text source and target process-death recovery",
     );
     const prepared_text_recovery_native_available =
-        prepared_text_recovery_target_available and
+        (target.result.os.tag == .macos or
+            target.result.os.tag == .linux) and
         target.result.cpu.arch == builtin.cpu.arch and
         target.result.os.tag == builtin.os.tag and
         target.result.abi == builtin.abi;
@@ -4667,8 +4669,8 @@ pub fn build(b: *std.Build) void {
         );
     } else {
         const prepared_text_recovery_failure = b.addFail(
-            "prepared-text-recovery-test requires a native macOS, Linux, " ++
-                "or FreeBSD target",
+            "prepared-text-recovery-test requires a native macOS or Linux " ++
+                "target",
         );
         prepared_text_recovery_test_step.dependOn(
             &prepared_text_recovery_failure.step,

@@ -17,13 +17,17 @@ const platform_capabilities = core.platform_capabilities;
 const resource_bank = core.resource_bank;
 const source_exit_wire =
     @import("prepared_text_source_exit_wire.zig");
+const source_recovery =
+    @import("prepared_text_source_recovery.zig");
 
 pub const Digest = checkpoint_file.Digest;
 pub const source_live_marker_abi: u64 = 0x4750_544c_0000_0001;
 pub const source_live_grant_abi: u64 = 0x4750_5447_0000_0001;
+pub const source_replay_grant_abi: u64 = 0x4750_5447_0000_0002;
 pub const source_live_set_generation: u64 = 1;
 pub const immediate_successor_generation: u64 = 2;
 pub const source_live_object_ordinal: u64 = 0;
+pub const source_recovery_object_ordinal: u64 = 1;
 pub const source_live_marker =
     "glacier-prepared-text-source-live-v1";
 
@@ -31,8 +35,11 @@ const source_binding_domain =
     "glacier-prepared-text-source-binding-v1\x00";
 const source_live_grant_domain =
     "glacier-prepared-text-source-live-grant-v1\x00";
+const source_replay_grant_domain =
+    "glacier-prepared-text-source-live-grant-v2\x00";
 
 pub const Error = checkpoint_file.Error ||
+    source_recovery.Error ||
     source_exit_wire.Error ||
     error{
         InvalidSourceLiveMarker,
@@ -84,6 +91,7 @@ pub const SourceLiveGrantV1 = struct {
     source_checkpoint_sha256: Digest = [_]u8{0} ** 32,
     source_selector_sha256: Digest = [_]u8{0} ** 32,
     challenge_sha256: Digest = [_]u8{0} ** 32,
+    source_recovery_contract_sha256: Digest = [_]u8{0} ** 32,
 
     source_scheduler_epoch: u64 = 0,
     source_coordinator_id: u64 = 0,
@@ -106,6 +114,7 @@ const SourceLiveAuthorityV1 = struct {
     checkpoint_sha256: Digest,
     selector_sha256: Digest,
     challenge_sha256: Digest,
+    source_recovery_contract_sha256: Digest,
 };
 
 /// Encode the one-object canonical generation-one source-live checkpoint.
@@ -128,6 +137,49 @@ pub fn encodeSourceLiveSetV1(
             .publication_next_sequence = publication_next_sequence,
             .parent_checkpoint_sha256 = [_]u8{0} ** 32,
             .challenge_sha256 = challenge_sha256,
+        },
+        &objects,
+        destination,
+    );
+}
+
+/// Encode a generation-one source authority that retains the exact replay
+/// contract needed by a fresh process. The legacy one-object marker remains
+/// available for retained V1 fixtures, while this two-object form is the
+/// recoverable source enrollment used by later handoff generations.
+pub fn encodeRecoverableSourceLiveSetV1(
+    encoded_contract: source_recovery.EncodedV1,
+    destination: []u8,
+) Error!checkpoint_file.PreparedSetV1 {
+    const contract = try source_recovery.decodeV1(
+        encoded_contract.bytes,
+    );
+    if (!digestEqual(
+        contract.contract_sha256,
+        encoded_contract.contract_sha256,
+    ))
+        return Error.InvalidSourceLiveMarker;
+    const objects = [_]checkpoint_file.ObjectInputV1{
+        .{
+            .kind = .extension,
+            .ordinal = source_live_object_ordinal,
+            .abi_version = source_live_marker_abi,
+            .bytes = source_live_marker,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = source_recovery_object_ordinal,
+            .abi_version = source_recovery.contract_abi,
+            .bytes = encoded_contract.bytes,
+        },
+    };
+    return checkpoint_file.encodeSetV1(
+        .{
+            .generation = source_live_set_generation,
+            .request_epoch = contract.request_epoch,
+            .publication_next_sequence = contract.publication_next_sequence,
+            .parent_checkpoint_sha256 = [_]u8{0} ** 32,
+            .challenge_sha256 = contract.challenge_sha256,
         },
         &objects,
         destination,
@@ -159,6 +211,7 @@ pub fn initSourceLiveGrantV1(
         .source_checkpoint_sha256 = authority.checkpoint_sha256,
         .source_selector_sha256 = authority.selector_sha256,
         .challenge_sha256 = authority.challenge_sha256,
+        .source_recovery_contract_sha256 = authority.source_recovery_contract_sha256,
         .phase = .ready,
     };
     grant.grant_sha256 = sourceLiveGrantRootV1(grant.*);
@@ -263,7 +316,10 @@ pub fn completeSourceHandoffV1(
 
     const active_set = lease.activeSet() catch
         return Error.InvalidSuccessorSelection;
-    if (active_set.object_count != 2 or
+    const recoverable =
+        !isZero(grant.source_recovery_contract_sha256);
+    if (active_set.object_count !=
+        @as(usize, if (recoverable) 3 else 2) or
         lease.selector.generation !=
             immediate_successor_generation or
         active_set.metadata.generation !=
@@ -335,6 +391,23 @@ pub fn completeSourceHandoffV1(
         grant.source_selector_sha256,
     ))
         return Error.InvalidSuccessorSelection;
+    if (recoverable) {
+        const contract_object = active_set.objects[2];
+        if (contract_object.kind != .extension or
+            contract_object.ordinal !=
+                source_recovery_object_ordinal or
+            contract_object.abi_version !=
+                source_recovery.contract_abi)
+            return Error.InvalidSuccessorSelection;
+        const contract = source_recovery.decodeV1(
+            contract_object.bytes,
+        ) catch return Error.InvalidSuccessorSelection;
+        if (!digestEqual(
+            contract.contract_sha256,
+            grant.source_recovery_contract_sha256,
+        ))
+            return Error.InvalidSuccessorSelection;
+    }
 
     if (grant.consumer_claim.selector_generation ==
         source_live_set_generation)
@@ -397,6 +470,9 @@ pub fn validateSourceLiveGrantV1(
     ) or !digestEqual(
         authority.challenge_sha256,
         grant.challenge_sha256,
+    ) or !digestEqual(
+        authority.source_recovery_contract_sha256,
+        grant.source_recovery_contract_sha256,
     ))
         return Error.InvalidSourceLiveGrant;
 }
@@ -430,13 +506,26 @@ pub fn sourceLiveGrantRootV1(
     grant: SourceLiveGrantV1,
 ) Digest {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    hash.update(source_live_grant_domain);
-    hashU64(&hash, source_live_grant_abi);
+    const recoverable =
+        !isZero(grant.source_recovery_contract_sha256);
+    hash.update(if (recoverable)
+        source_replay_grant_domain
+    else
+        source_live_grant_domain);
+    hashU64(
+        &hash,
+        if (recoverable)
+            source_replay_grant_abi
+        else
+            source_live_grant_abi,
+    );
     hashU64(&hash, grant.request_epoch);
     hashU64(&hash, grant.publication_next_sequence);
     hash.update(&grant.source_checkpoint_sha256);
     hash.update(&grant.source_selector_sha256);
     hash.update(&grant.challenge_sha256);
+    if (recoverable)
+        hash.update(&grant.source_recovery_contract_sha256);
     hashU64(&hash, grant.source_scheduler_epoch);
     hashU64(&hash, grant.source_coordinator_id);
     hashU64(&hash, grant.source_bank_epoch);
@@ -462,7 +551,8 @@ fn sourceLiveAuthorityV1(
         return Error.InvalidSourceLiveMarker;
     const active_set = lease.activeSet() catch
         return Error.InvalidSourceLiveMarker;
-    if (active_set.object_count != 1 or
+    if ((active_set.object_count != 1 and
+        active_set.object_count != 2) or
         active_set.metadata.generation !=
             source_live_set_generation or
         lease.selector.generation !=
@@ -495,12 +585,36 @@ fn sourceLiveAuthorityV1(
     if (marker.abi_version != source_live_marker_abi or
         !std.mem.eql(u8, marker.bytes, source_live_marker))
         return Error.InvalidSourceLiveMarker;
+    var recovery_contract_sha256 = [_]u8{0} ** 32;
+    if (active_set.object_count == 2) {
+        const contract_object = active_set.objects[1];
+        if (contract_object.kind != .extension or
+            contract_object.ordinal !=
+                source_recovery_object_ordinal or
+            contract_object.abi_version !=
+                source_recovery.contract_abi)
+            return Error.InvalidSourceLiveMarker;
+        const contract = source_recovery.decodeV1(
+            contract_object.bytes,
+        ) catch return Error.InvalidSourceLiveMarker;
+        if (contract.request_epoch !=
+            active_set.metadata.request_epoch or
+            contract.publication_next_sequence !=
+                active_set.metadata.publication_next_sequence or
+            !digestEqual(
+                contract.challenge_sha256,
+                active_set.metadata.challenge_sha256,
+            ))
+            return Error.InvalidSourceLiveMarker;
+        recovery_contract_sha256 = contract.contract_sha256;
+    }
     return .{
         .request_epoch = active_set.metadata.request_epoch,
         .publication_next_sequence = active_set.metadata.publication_next_sequence,
         .checkpoint_sha256 = active_set.checkpoint_sha256,
         .selector_sha256 = lease.selector.selector_sha256,
         .challenge_sha256 = active_set.metadata.challenge_sha256,
+        .source_recovery_contract_sha256 = recovery_contract_sha256,
     };
 }
 
@@ -579,6 +693,7 @@ fn sourceLiveGrantEmptyV1(grant: SourceLiveGrantV1) bool {
         isZero(grant.source_checkpoint_sha256) and
         isZero(grant.source_selector_sha256) and
         isZero(grant.challenge_sha256) and
+        isZero(grant.source_recovery_contract_sha256) and
         sourceBindingEmptyV1(bindingFromGrantV1(grant)) and
         isZero(grant.source_binding_sha256) and
         isZero(grant.source_exit_sha256) and

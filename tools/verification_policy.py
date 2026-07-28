@@ -205,6 +205,7 @@ PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS = {
     "src/prepared_text_result_sink_file.zig",
     "src/prepared_text_acknowledged_progress.zig",
     "src/prepared_text_acknowledged_restore.zig",
+    "src/prepared_text_source_recovery.zig",
 }
 
 PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS = {

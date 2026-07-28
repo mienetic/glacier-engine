@@ -21,6 +21,9 @@ const source_exit_wire =
     @import("prepared_text_source_exit_wire.zig");
 const source_lease =
     @import("prepared_text_source_lease.zig");
+const source_recovery =
+    @import("prepared_text_source_recovery.zig");
+const session = @import("prepared_text_session.zig");
 const successor = @import("prepared_text_successor.zig");
 const terminal_semantic =
     @import("prepared_text_terminal_equivalence.zig");
@@ -40,6 +43,8 @@ pub const source_exit_wire_body_bytes =
 pub const source_exit_wire_flags = source_exit_wire.wire_flags;
 pub const source_exit_object_ordinal: u64 = 0;
 pub const evidence_archive_object_ordinal: u64 = 0;
+pub const source_recovery_object_ordinal =
+    source_lease.source_recovery_object_ordinal;
 pub const source_live_object_ordinal =
     source_lease.source_live_object_ordinal;
 pub const terminal_source_selector_object_ordinal: u64 = 0;
@@ -53,6 +58,7 @@ pub const source_live_marker =
 pub const Error = checkpoint_file.Error ||
     archive.Error ||
     restore_admission.Error ||
+    source_recovery.Error ||
     source_exit_wire.Error ||
     successor.Error ||
     terminal_semantic.Error ||
@@ -69,6 +75,7 @@ pub const DecodedSourceExitedSetV1 = struct {
     authority_archive: checkpoint_file.DecodedSetV1,
     evidence: archive.DecodedRestartArchiveV1,
     source_exit: lane.SourceExitReceiptV1,
+    source_recovery_contract: ?source_recovery.DecodedV1 = null,
     selector: checkpoint_file.DecodedSelectorV1,
 };
 
@@ -84,6 +91,11 @@ pub const DecodedTerminalSetV1 = struct {
     selector: checkpoint_file.DecodedSelectorV1,
 };
 
+const SourceExitGrantFlavorV1 = enum {
+    legacy,
+    recoverable,
+};
+
 /// Pin the selector-selected generation-two source-exit authority to one
 /// address-stable, process-local grant. The generic lease consumer claim makes
 /// duplicate target activation fail while preserving the durable selector for
@@ -92,6 +104,20 @@ pub fn initSelectedSourceExitGrantV1(
     grant: *restore_admission.SelectedSourceExitGrantV1,
     lease: *checkpoint_file.LeaseV1,
     selected: DecodedSourceExitedSetV1,
+) Error!void {
+    try initSelectedSourceExitGrantCommonV1(
+        grant,
+        lease,
+        selected,
+        .legacy,
+    );
+}
+
+fn initSelectedSourceExitGrantCommonV1(
+    grant: *restore_admission.SelectedSourceExitGrantV1,
+    lease: *checkpoint_file.LeaseV1,
+    selected: DecodedSourceExitedSetV1,
+    flavor: SourceExitGrantFlavorV1,
 ) Error!void {
     if (grant.phase != .empty or grant.lease != null or
         grant.self_address != 0 or grant.lease_address != 0 or
@@ -104,7 +130,15 @@ pub fn initSelectedSourceExitGrantV1(
         return Error.InvalidActivationGrant;
     const active_set = lease.activeSet() catch
         return Error.InvalidActivationGrant;
-    if (!std.meta.eql(lease.selector, selected.selector) or
+    const authority_contract_present =
+        active_set.object_count == 3;
+    if ((active_set.object_count != 2 and
+        active_set.object_count != 3) or
+        !sourceExitGrantFlavorValidV1(
+            authority_contract_present,
+            selected.source_recovery_contract != null,
+            flavor,
+        ) or !std.meta.eql(lease.selector, selected.selector) or
         !digestEqual(
             active_set.checkpoint_sha256,
             selected.authority_archive.checkpoint_sha256,
@@ -178,6 +212,129 @@ pub fn initSelectedSourceExitGrantV1(
     );
 }
 
+/// Pin a recoverable generation-two authority only after independently
+/// loading its retained generation-one predecessor and proving that the
+/// embedded replay contract is byte-identical. The caller supplies bounded
+/// scratch storage; no authority is granted when the predecessor is missing,
+/// foreign, or only coherently re-rooted inside generation two.
+pub fn initSelectedRecoverableSourceExitGrantV1(
+    grant: *restore_admission.SelectedSourceExitGrantV1,
+    lease: *checkpoint_file.LeaseV1,
+    selected: DecodedSourceExitedSetV1,
+    retained_storage: []u8,
+) Error!void {
+    _ = try validateRecoverableSourcePredecessorV1(
+        lease,
+        selected,
+        retained_storage,
+    );
+    try initSelectedSourceExitGrantCommonV1(
+        grant,
+        lease,
+        selected,
+        .recoverable,
+    );
+}
+
+fn sourceExitGrantFlavorValidV1(
+    authority_contract_present: bool,
+    decoded_contract_present: bool,
+    flavor: SourceExitGrantFlavorV1,
+) bool {
+    return authority_contract_present ==
+        decoded_contract_present and
+        authority_contract_present ==
+            (flavor == .recoverable);
+}
+
+/// Prove that a selected one-ahead sink descends from the exact empty selector
+/// committed by the recoverable source contract. A canonical generation-two
+/// selector can otherwise be coherently re-rooted to any nonzero predecessor.
+/// The first acknowledgement must also carry the exact empty semantic
+/// predecessor roots.
+pub fn recoverableOneAheadSinkLineageValidV1(
+    expected_empty_selector_sha256: Digest,
+    selected_previous_selector_sha256: Digest,
+    predecessor_acknowledgement_sha256: Digest,
+    predecessor_sink_prefix_sha256: Digest,
+) bool {
+    return !isZero(expected_empty_selector_sha256) and
+        digestEqual(
+            selected_previous_selector_sha256,
+            expected_empty_selector_sha256,
+        ) and isZero(predecessor_acknowledgement_sha256) and
+        isZero(predecessor_sink_prefix_sha256);
+}
+
+pub fn validateRecoverableSourcePredecessorV1(
+    lease: *checkpoint_file.LeaseV1,
+    selected: DecodedSourceExitedSetV1,
+    retained_storage: []u8,
+) Error!source_recovery.DecodedV1 {
+    const contract = selected.source_recovery_contract orelse
+        return Error.InvalidAuthorityArchive;
+    if (lease.state != .ready or
+        !std.meta.eql(lease.selector, selected.selector))
+        return Error.InvalidActivationGrant;
+    const predecessor_root =
+        selected.authority_archive.metadata
+            .parent_checkpoint_sha256;
+    const retained = lease.loadRetainedSetV1(
+        predecessor_root,
+        retained_storage,
+    ) catch return Error.InvalidAuthorityArchive;
+    if (retained.set.object_count != 2 or
+        retained.set.metadata.generation !=
+            source_lease.source_live_set_generation or
+        retained.set.metadata.request_epoch !=
+            contract.request_epoch or
+        retained.set.metadata.publication_next_sequence !=
+            contract.publication_next_sequence or
+        !isZero(
+            retained.set.metadata.parent_checkpoint_sha256,
+        ) or !digestEqual(
+        retained.set.metadata.challenge_sha256,
+        contract.challenge_sha256,
+    ))
+        return Error.InvalidAuthorityArchive;
+    const marker_object = retained.set.objects[0];
+    const contract_object = retained.set.objects[1];
+    if (marker_object.kind != .extension or
+        marker_object.ordinal !=
+            source_lease.source_live_object_ordinal or
+        marker_object.abi_version !=
+            source_lease.source_live_marker_abi or
+        !std.mem.eql(
+            u8,
+            marker_object.bytes,
+            source_lease.source_live_marker,
+        ) or contract_object.kind != .extension or
+        contract_object.ordinal !=
+            source_recovery_object_ordinal or
+        contract_object.abi_version !=
+            source_recovery.contract_abi or
+        !std.mem.eql(
+            u8,
+            contract_object.bytes,
+            contract.encoded,
+        ))
+        return Error.InvalidAuthorityArchive;
+    const prepared_retained: checkpoint_file.PreparedSetV1 = .{
+        .bytes = retained.bytes,
+        .checkpoint_sha256 = retained.set.checkpoint_sha256,
+    };
+    const predecessor_selector =
+        try checkpoint_file.prepareInitialSelectorV1(
+            prepared_retained,
+        );
+    if (!digestEqual(
+        predecessor_selector.selector_sha256,
+        selected.selector.previous_selector_sha256,
+    ))
+        return Error.InvalidSelector;
+    return contract;
+}
+
 pub const encodeSourceLiveSetV1 =
     source_lease.encodeSourceLiveSetV1;
 
@@ -198,6 +355,20 @@ pub fn encodedSourceExitedSetBytesV1(
         usize,
         with_header,
         checkpoint_file.set_footer_bytes,
+    ) catch return Error.ArithmeticOverflow;
+}
+
+pub fn encodedRecoverableSourceExitedSetBytesV1(
+    evidence_archive_bytes: usize,
+    recovery_contract_bytes: usize,
+) Error!usize {
+    const legacy = try encodedSourceExitedSetBytesV1(
+        evidence_archive_bytes,
+    );
+    return std.math.add(
+        usize,
+        legacy,
+        recovery_contract_bytes,
     ) catch return Error.ArithmeticOverflow;
 }
 
@@ -266,6 +437,92 @@ pub fn encodeSourceExitedSetV1(
     );
 }
 
+/// Encode generation two with the byte-exact generation-one replay contract.
+/// The normal source-exit receipt remains evidence from the successful clean
+/// attempt; the contract proves which deterministic unpublished prefix and
+/// empty result sink that attempt was allowed to publish.
+pub fn encodeRecoverableSourceExitedSetV1(
+    evidence: archive.PreparedArchiveV1,
+    source_exit: lane.SourceExitCommitV1,
+    predecessor_checkpoint_sha256: Digest,
+    encoded_contract: source_recovery.EncodedV1,
+    destination: []u8,
+) Error!checkpoint_file.PreparedSetV1 {
+    if (!lane.sourceExitReceiptValidV1(
+        source_exit.receipt,
+        source_exit.event,
+    ))
+        return Error.InvalidSourceExit;
+    const decoded_evidence =
+        try archive.decodeRestartArchiveV1(
+            evidence.set.bytes,
+            1,
+            [_]u8{0} ** 32,
+        );
+    if (!std.meta.eql(
+        decoded_evidence.artifacts,
+        evidence.artifacts,
+    ))
+        return Error.InvalidAuthorityArchive;
+    try validateEvidenceExitBindingsV1(
+        evidence.set,
+        evidence.artifacts,
+        source_exit.receipt,
+    );
+    if (isZero(predecessor_checkpoint_sha256))
+        return Error.InvalidAuthorityArchive;
+    const contract = try source_recovery.decodeV1(
+        encoded_contract.bytes,
+    );
+    if (!digestEqual(
+        contract.contract_sha256,
+        encoded_contract.contract_sha256,
+    ))
+        return Error.InvalidAuthorityArchive;
+    try validateRecoveryEvidenceBindingsV1(
+        contract,
+        decoded_evidence,
+        source_exit.receipt,
+    );
+
+    var encoded_exit: [source_exit_wire_bytes]u8 = undefined;
+    _ = try encodeSourceExitReceiptV1(
+        source_exit.receipt,
+        &encoded_exit,
+    );
+    const objects = [_]checkpoint_file.ObjectInputV1{
+        .{
+            .kind = .source_process,
+            .ordinal = source_exit_object_ordinal,
+            .abi_version = source_exit_wire_abi,
+            .bytes = &encoded_exit,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = evidence_archive_object_ordinal,
+            .abi_version = evidence_archive_object_abi,
+            .bytes = evidence.set.bytes,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = source_recovery_object_ordinal,
+            .abi_version = source_recovery.contract_abi,
+            .bytes = encoded_contract.bytes,
+        },
+    };
+    return checkpoint_file.encodeSetV1(
+        .{
+            .generation = source_exited_set_generation,
+            .request_epoch = evidence.artifacts.segment.request_epoch,
+            .publication_next_sequence = evidence.artifacts.segment.sequence_base,
+            .parent_checkpoint_sha256 = predecessor_checkpoint_sha256,
+            .challenge_sha256 = evidence.artifacts.segment.challenge_sha256,
+        },
+        &objects,
+        destination,
+    );
+}
+
 /// Decode the selected source-exit record and contextually reproduce every
 /// nested R1e/R1g binding. Slices in the result borrow `encoded_authority`.
 pub fn decodeSourceExitedSetV1(
@@ -277,7 +534,8 @@ pub fn decodeSourceExitedSetV1(
         return Error.InvalidAuthorityArchive;
     const authority_archive =
         try checkpoint_file.decodeSetV1(encoded_authority);
-    if (authority_archive.object_count != 2 or
+    if ((authority_archive.object_count != 2 and
+        authority_archive.object_count != 3) or
         authority_archive.metadata.generation !=
             source_exited_set_generation or
         !digestEqual(
@@ -330,6 +588,26 @@ pub fn decodeSourceExitedSetV1(
         ))
         return Error.InvalidSourceExit;
 
+    var recovery_contract: ?source_recovery.DecodedV1 = null;
+    if (authority_archive.object_count == 3) {
+        const contract_object = authority_archive.objects[2];
+        if (contract_object.kind != .extension or
+            contract_object.ordinal !=
+                source_recovery_object_ordinal or
+            contract_object.abi_version !=
+                source_recovery.contract_abi)
+            return Error.InvalidAuthorityArchive;
+        const decoded_contract = try source_recovery.decodeV1(
+            contract_object.bytes,
+        );
+        try validateRecoveryEvidenceBindingsV1(
+            decoded_contract,
+            evidence,
+            source_exit,
+        );
+        recovery_contract = decoded_contract;
+    }
+
     if (selected_selector.generation !=
         source_exited_set_generation or
         selected_selector.request_epoch !=
@@ -354,6 +632,7 @@ pub fn decodeSourceExitedSetV1(
         .authority_archive = authority_archive,
         .evidence = evidence,
         .source_exit = source_exit,
+        .source_recovery_contract = recovery_contract,
         .selector = selected_selector,
     };
 }
@@ -830,6 +1109,114 @@ fn validateEvidenceExitBindingsV1(
         return Error.InvalidSourceExit;
 }
 
+fn validateRecoveryEvidenceBindingsV1(
+    contract: source_recovery.DecodedV1,
+    evidence: archive.DecodedRestartArchiveV1,
+    source_exit: lane.SourceExitReceiptV1,
+) Error!void {
+    const manifest = evidence.manifest;
+    const artifacts = evidence.artifacts;
+    if (contract.request_epoch !=
+        artifacts.segment.request_epoch or
+        contract.publication_next_sequence !=
+            artifacts.segment.sequence_base or
+        !digestEqual(
+            contract.challenge_sha256,
+            artifacts.segment.challenge_sha256,
+        ) or !digestEqual(
+        contract.plan_sha256,
+        manifest.plan.plan_sha256,
+    ) or !digestEqual(
+        contract.bound_plan_sha256,
+        manifest.bound_plan.bound_plan_sha256,
+    ) or !digestEqual(
+        contract.artifact_sha256,
+        manifest.bound_plan.artifact.artifact_sha256,
+    ) or !digestEqual(
+        contract.execution_plan_sha256,
+        manifest.bound_plan.execution.plan_sha256,
+    ) or !digestEqual(
+        contract.residency_binding_sha256,
+        manifest.bound_plan.residency.binding_sha256,
+    ) or !recoveryBoundPlanBindingsValidV1(
+        contract.bound_plan_input,
+        contract.scheduling,
+        contract.source_runtime,
+        contract.request_epoch,
+        .{
+            .token_domain_sha256 = manifest.bound_plan.token_domain_sha256,
+            .token_domain_config_sha256 = manifest.bound_plan
+                .token_domain_config_sha256,
+            .artifact_license_sha256 = manifest.bound_plan
+                .artifact_license_sha256,
+            .previous_plan_sha256 = manifest.bound_plan.execution
+                .previous_plan_sha256,
+            .ownership_sha256 = manifest.bound_plan.execution
+                .ownership_sha256,
+        },
+    ) or !std.meta.eql(contract.options, manifest.options) or
+        !std.meta.eql(contract.target, manifest.target) or
+        !digestEqual(
+            contract.target_ownership_sha256,
+            source_recovery.targetOwnershipRootV1(
+                manifest.target,
+            ),
+        ) or contract.source_runtime.scheduler_epoch !=
+        source_exit.scheduler_epoch or
+        contract.source_runtime.coordinator_id !=
+            source_exit.coordinator_id or
+        contract.source_runtime.bank_epoch !=
+            source_exit.source_receipt.bank_epoch or
+        source_exit.publication_request_epoch !=
+            contract.request_epoch or
+        source_exit.expected_next_sequence !=
+            contract.publication_next_sequence or
+        contract.promptCount() != manifest.promptCount())
+        return Error.InvalidAuthorityArchive;
+    for (0..contract.promptCount()) |index| {
+        if (try contract.promptToken(index) !=
+            try manifest.promptToken(index))
+            return Error.InvalidAuthorityArchive;
+    }
+}
+
+const RecoveryBoundPlanEvidenceV1 = struct {
+    token_domain_sha256: Digest,
+    token_domain_config_sha256: Digest,
+    artifact_license_sha256: Digest,
+    previous_plan_sha256: Digest,
+    ownership_sha256: Digest,
+};
+
+fn recoveryBoundPlanBindingsValidV1(
+    bound_plan_input: session.BoundPlanInputV1,
+    scheduling: session.SchedulingV1,
+    source_runtime: source_recovery.SourceRuntimeIdentityV1,
+    request_epoch: u64,
+    evidence: RecoveryBoundPlanEvidenceV1,
+) bool {
+    return digestEqual(
+        bound_plan_input.token_domain_sha256,
+        evidence.token_domain_sha256,
+    ) and digestEqual(
+        bound_plan_input.token_domain_config_sha256,
+        evidence.token_domain_config_sha256,
+    ) and digestEqual(
+        bound_plan_input.artifact_license_sha256,
+        evidence.artifact_license_sha256,
+    ) and digestEqual(
+        bound_plan_input.previous_plan_sha256,
+        evidence.previous_plan_sha256,
+    ) and digestEqual(
+        source_recovery.sourceOwnershipRootV1(
+            scheduling,
+            source_runtime,
+            request_epoch,
+        ),
+        evidence.ownership_sha256,
+    );
+}
+
 fn digestEqual(left: Digest, right: Digest) bool {
     return std.mem.eql(u8, &left, &right);
 }
@@ -926,5 +1313,264 @@ test "prepared text source-exit wire rejects coherent stale authority" {
     try testing.expectError(
         Error.InvalidSourceExit,
         encodeSourceExitReceiptV1(changed, &encoded),
+    );
+}
+
+test "recoverable source-exit grants cannot use the legacy admission path" {
+    try std.testing.expect(
+        sourceExitGrantFlavorValidV1(
+            false,
+            false,
+            .legacy,
+        ),
+    );
+    try std.testing.expect(
+        sourceExitGrantFlavorValidV1(
+            true,
+            true,
+            .recoverable,
+        ),
+    );
+    try std.testing.expect(
+        !sourceExitGrantFlavorValidV1(
+            true,
+            true,
+            .legacy,
+        ),
+    );
+    try std.testing.expect(
+        !sourceExitGrantFlavorValidV1(
+            false,
+            false,
+            .recoverable,
+        ),
+    );
+    try std.testing.expect(
+        !sourceExitGrantFlavorValidV1(
+            true,
+            false,
+            .legacy,
+        ),
+    );
+    try std.testing.expect(
+        !sourceExitGrantFlavorValidV1(
+            false,
+            true,
+            .recoverable,
+        ),
+    );
+}
+
+test "recoverable one-ahead sink rejects a coherent selector reroot" {
+    const testing = std.testing;
+    const sink = @import("prepared_text_result_sink.zig");
+    const sink_file =
+        @import("prepared_text_result_sink_file.zig");
+    const request_sha256 = filledDigest(0x31);
+    const implementation_sha256 = filledDigest(0x32);
+    const instance_sha256 = filledDigest(0x33);
+    const request_epoch: u64 = 41;
+    const initial_sequence: u64 = 2;
+
+    var empty_ledger_storage: [
+        sink_file.ledger_header_bytes +
+            sink_file.ledger_footer_bytes
+    ]u8 = undefined;
+    const empty_ledger = try sink_file.encodeLedgerV1(
+        request_sha256,
+        request_epoch,
+        initial_sequence,
+        implementation_sha256,
+        instance_sha256,
+        &.{},
+        &empty_ledger_storage,
+    );
+    const empty_selector =
+        try sink_file.prepareInitialSelectorV1(
+            empty_ledger,
+        );
+    const decoded_empty_selector =
+        try sink_file.decodeSelectorV1(
+            &empty_selector.bytes,
+        );
+
+    var semantic_sink = try sink.ResultSinkV1(1).init(
+        request_sha256,
+        request_epoch,
+        initial_sequence,
+        implementation_sha256,
+        instance_sha256,
+    );
+    const applied = try semantic_sink.apply(.{
+        .request_sha256 = request_sha256,
+        .request_epoch = request_epoch,
+        .transaction_sequence = initial_sequence,
+        .token_id = 7,
+        .proposal_sha256 = filledDigest(0x34),
+        .transition_sha256 = filledDigest(0x35),
+        .commit_receipt_sha256 = filledDigest(0x36),
+    });
+    try testing.expectEqual(
+        sink.ApplyDispositionV1.applied,
+        applied.disposition,
+    );
+    var one_ahead_ledger_storage: [
+        sink_file.ledger_header_bytes +
+            sink.acknowledgement_bytes +
+            sink_file.ledger_footer_bytes
+    ]u8 = undefined;
+    const one_ahead_ledger = try sink_file.encodeLedgerV1(
+        request_sha256,
+        request_epoch,
+        initial_sequence,
+        implementation_sha256,
+        instance_sha256,
+        semantic_sink.acknowledgementSlice(),
+        &one_ahead_ledger_storage,
+    );
+    const canonical_successor =
+        try sink_file.prepareSuccessorSelectorV1(
+            decoded_empty_selector,
+            one_ahead_ledger,
+        );
+    const decoded_canonical_successor =
+        try sink_file.decodeSelectorV1(
+            &canonical_successor.bytes,
+        );
+    try testing.expect(
+        recoverableOneAheadSinkLineageValidV1(
+            empty_selector.selector_sha256,
+            decoded_canonical_successor
+                .previous_selector_sha256,
+            applied.acknowledgement
+                .predecessor_acknowledgement_sha256,
+            applied.acknowledgement
+                .predecessor_sink_prefix_sha256,
+        ),
+    );
+
+    var foreign_predecessor = decoded_empty_selector;
+    foreign_predecessor.selector_sha256 =
+        filledDigest(0x37);
+    const rerooted_successor =
+        try sink_file.prepareSuccessorSelectorV1(
+            foreign_predecessor,
+            one_ahead_ledger,
+        );
+    const decoded_rerooted_successor =
+        try sink_file.decodeSelectorV1(
+            &rerooted_successor.bytes,
+        );
+    try testing.expectEqual(
+        @as(u64, 2),
+        decoded_rerooted_successor.generation,
+    );
+    try testing.expect(
+        !recoverableOneAheadSinkLineageValidV1(
+            empty_selector.selector_sha256,
+            decoded_rerooted_successor
+                .previous_selector_sha256,
+            applied.acknowledgement
+                .predecessor_acknowledgement_sha256,
+            applied.acknowledgement
+                .predecessor_sink_prefix_sha256,
+        ),
+    );
+    try testing.expect(
+        !recoverableOneAheadSinkLineageValidV1(
+            empty_selector.selector_sha256,
+            empty_selector.selector_sha256,
+            filledDigest(0x38),
+            [_]u8{0} ** 32,
+        ),
+    );
+    try testing.expect(
+        !recoverableOneAheadSinkLineageValidV1(
+            empty_selector.selector_sha256,
+            empty_selector.selector_sha256,
+            [_]u8{0} ** 32,
+            filledDigest(0x39),
+        ),
+    );
+}
+
+test "recoverable evidence rejects coherent scheduling and plan reroots" {
+    const testing = std.testing;
+    const request_epoch: u64 = 0x101;
+    const source_runtime: source_recovery
+        .SourceRuntimeIdentityV1 = .{
+        .scheduler_epoch = 0x201,
+        .coordinator_id = 0x202,
+        .bank_epoch = 0x203,
+    };
+    const scheduling: session.SchedulingV1 = .{
+        .tenant_key = 0x301,
+        .request_key = 0x302,
+        .request_generation = 1,
+        .resource_owner_key = 0x303,
+        .weight = 2,
+        .deadline_tick = 0x304,
+    };
+    const bound_plan_input: session.BoundPlanInputV1 = .{
+        .request_epoch = request_epoch,
+        .token_domain_sha256 = filledDigest(0x41),
+        .token_domain_config_sha256 = filledDigest(0x42),
+        .artifact_license_sha256 = filledDigest(0x43),
+        .previous_plan_sha256 = filledDigest(0x44),
+    };
+    const evidence: RecoveryBoundPlanEvidenceV1 = .{
+        .token_domain_sha256 = bound_plan_input.token_domain_sha256,
+        .token_domain_config_sha256 = bound_plan_input.token_domain_config_sha256,
+        .artifact_license_sha256 = bound_plan_input.artifact_license_sha256,
+        .previous_plan_sha256 = bound_plan_input.previous_plan_sha256,
+        .ownership_sha256 = source_recovery.sourceOwnershipRootV1(
+            scheduling,
+            source_runtime,
+            request_epoch,
+        ),
+    };
+    try testing.expect(
+        recoveryBoundPlanBindingsValidV1(
+            bound_plan_input,
+            scheduling,
+            source_runtime,
+            request_epoch,
+            evidence,
+        ),
+    );
+
+    var foreign_weight = scheduling;
+    foreign_weight.weight += 1;
+    try testing.expect(
+        !recoveryBoundPlanBindingsValidV1(
+            bound_plan_input,
+            foreign_weight,
+            source_runtime,
+            request_epoch,
+            evidence,
+        ),
+    );
+    var foreign_deadline = scheduling;
+    foreign_deadline.deadline_tick += 1;
+    try testing.expect(
+        !recoveryBoundPlanBindingsValidV1(
+            bound_plan_input,
+            foreign_deadline,
+            source_runtime,
+            request_epoch,
+            evidence,
+        ),
+    );
+    var foreign_previous_plan = bound_plan_input;
+    foreign_previous_plan.previous_plan_sha256 =
+        filledDigest(0x45);
+    try testing.expect(
+        !recoveryBoundPlanBindingsValidV1(
+            foreign_previous_plan,
+            scheduling,
+            source_runtime,
+            request_epoch,
+            evidence,
+        ),
     );
 }

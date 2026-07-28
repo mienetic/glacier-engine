@@ -18,6 +18,7 @@ const restore = engine.prepared_text_restore_admission;
 const terminal = engine.prepared_text_terminal_equivalence;
 const result_sink = engine.prepared_text_result_sink;
 const result_sink_file = engine.prepared_text_result_sink_file;
+const source_recovery = engine.prepared_text_source_recovery;
 const progress = engine.prepared_text_acknowledged_progress;
 const acknowledged_restore =
     engine.prepared_text_acknowledged_restore;
@@ -35,6 +36,8 @@ const max_result_ledger_bytes: usize =
     result_sink_file.ledger_header_bytes +
     sink_capacity * result_sink.acknowledgement_bytes +
     result_sink_file.ledger_footer_bytes;
+const DurableResultSinkV1 =
+    result_sink_file.ResultSinkFileV1(sink_capacity);
 
 const storage_epoch: u64 = 0x5231_4953_0000_0001;
 const sink_storage_epoch: u64 = 0x5231_4952_0000_0001;
@@ -65,6 +68,38 @@ const scheduling: prepared.SchedulingV1 = .{
 };
 
 const CrashPoint = enum(u8) {
+    bootstrap_checkpoint_archive_write,
+    bootstrap_checkpoint_archive_sync,
+    bootstrap_checkpoint_archive_directory_sync,
+    bootstrap_checkpoint_selector_write,
+    bootstrap_checkpoint_selector_sync,
+    bootstrap_checkpoint_selector_rename,
+    bootstrap_checkpoint_selector_directory_sync,
+
+    source_after_recovery_admission,
+    source_sink_ledger_body_write,
+    source_sink_ledger_body_sync,
+    source_sink_ledger_footer_write,
+    source_sink_ledger_file_sync,
+    source_sink_ledger_immutable_rename,
+    source_sink_ledger_directory_sync,
+    source_sink_selector_temp_write,
+    source_sink_selector_temp_sync,
+    source_sink_selector_replace,
+    source_sink_selector_directory_sync,
+    source_after_initial_sink,
+    source_after_step,
+    source_after_handoff_prepare,
+    source_after_exit_commit,
+    source_checkpoint_archive_write,
+    source_checkpoint_archive_sync,
+    source_checkpoint_archive_directory_sync,
+    source_checkpoint_selector_write,
+    source_checkpoint_selector_sync,
+    source_checkpoint_selector_rename,
+    source_checkpoint_selector_directory_sync,
+    source_after_generation_two,
+
     after_step_before_sink,
     sink_ledger_body_write,
     sink_ledger_body_sync,
@@ -147,6 +182,37 @@ const CrashController = struct {
             return result_sink_file.Error.InjectedFault;
     }
 
+    fn afterSourceSinkPhase(
+        raw: *anyopaque,
+        phase: result_sink_file.IoPhaseV1,
+    ) result_sink_file.Error!void {
+        const self: *CrashController =
+            @ptrCast(@alignCast(raw));
+        const point: CrashPoint = switch (phase) {
+            .ledger_body_write => .source_sink_ledger_body_write,
+            .ledger_body_sync => .source_sink_ledger_body_sync,
+            .ledger_footer_write => .source_sink_ledger_footer_write,
+            .ledger_file_sync => .source_sink_ledger_file_sync,
+            .ledger_immutable_rename => .source_sink_ledger_immutable_rename,
+            .ledger_directory_sync => .source_sink_ledger_directory_sync,
+            .selector_temp_write => .source_sink_selector_temp_write,
+            .selector_temp_sync => .source_sink_selector_temp_sync,
+            .selector_replace => .source_sink_selector_replace,
+            .selector_directory_sync => .source_sink_selector_directory_sync,
+        };
+        if (phase == .selector_replace or
+            phase == .selector_directory_sync)
+        {
+            self.sink_count = self.successor_sink_count;
+            self.sink_ledger_sha256 =
+                self.successor_sink_ledger_sha256;
+            self.sink_selector_sha256 =
+                self.successor_sink_selector_sha256;
+        }
+        self.maybeCrash(point) catch
+            return result_sink_file.Error.InjectedFault;
+    }
+
     fn afterCheckpointPhase(
         raw: *anyopaque,
         phase: checkpoint_file.IoPhaseV1,
@@ -161,6 +227,56 @@ const CrashController = struct {
             .selector_sync => .checkpoint_selector_sync,
             .selector_rename => .checkpoint_selector_rename,
             .selector_directory_sync => .checkpoint_selector_directory_sync,
+        };
+        if (phase == .selector_rename or
+            phase == .selector_directory_sync)
+        {
+            self.checkpoint_selector_sha256 =
+                self.successor_checkpoint_selector_sha256;
+        }
+        self.maybeCrash(point) catch
+            return checkpoint_file.Error.PublicationMismatch;
+    }
+
+    fn afterBootstrapCheckpointPhase(
+        raw: *anyopaque,
+        phase: checkpoint_file.IoPhaseV1,
+    ) checkpoint_file.Error!void {
+        const self: *CrashController =
+            @ptrCast(@alignCast(raw));
+        const point: CrashPoint = switch (phase) {
+            .archive_write => .bootstrap_checkpoint_archive_write,
+            .archive_sync => .bootstrap_checkpoint_archive_sync,
+            .archive_directory_sync => .bootstrap_checkpoint_archive_directory_sync,
+            .selector_write => .bootstrap_checkpoint_selector_write,
+            .selector_sync => .bootstrap_checkpoint_selector_sync,
+            .selector_rename => .bootstrap_checkpoint_selector_rename,
+            .selector_directory_sync => .bootstrap_checkpoint_selector_directory_sync,
+        };
+        if (phase == .selector_rename or
+            phase == .selector_directory_sync)
+        {
+            self.checkpoint_selector_sha256 =
+                self.successor_checkpoint_selector_sha256;
+        }
+        self.maybeCrash(point) catch
+            return checkpoint_file.Error.PublicationMismatch;
+    }
+
+    fn afterSourceCheckpointPhase(
+        raw: *anyopaque,
+        phase: checkpoint_file.IoPhaseV1,
+    ) checkpoint_file.Error!void {
+        const self: *CrashController =
+            @ptrCast(@alignCast(raw));
+        const point: CrashPoint = switch (phase) {
+            .archive_write => .source_checkpoint_archive_write,
+            .archive_sync => .source_checkpoint_archive_sync,
+            .archive_directory_sync => .source_checkpoint_archive_directory_sync,
+            .selector_write => .source_checkpoint_selector_write,
+            .selector_sync => .source_checkpoint_selector_sync,
+            .selector_rename => .source_checkpoint_selector_rename,
+            .selector_directory_sync => .source_checkpoint_selector_directory_sync,
         };
         if (phase == .selector_rename or
             phase == .selector_directory_sync)
@@ -234,10 +350,21 @@ const SourceRuntime = struct {
     scheduler: lane.Scheduler = undefined,
 
     fn init(self: *SourceRuntime) !void {
+        try self.initWithIdentity(.{
+            .scheduler_epoch = source_scheduler_epoch,
+            .coordinator_id = source_coordinator_id,
+            .bank_epoch = source_bank_epoch,
+        });
+    }
+
+    fn initWithIdentity(
+        self: *SourceRuntime,
+        identity: source_recovery.SourceRuntimeIdentityV1,
+    ) !void {
         self.bank = try bank_api.Bank.init(
             &self.bank_slots,
             .{},
-            source_bank_epoch,
+            identity.bank_epoch,
         );
         self.scheduler = try lane.Scheduler.init(
             &self.bank,
@@ -246,8 +373,8 @@ const SourceRuntime = struct {
                 .projection = &self.projection_slots,
             },
             .{
-                .scheduler_epoch = source_scheduler_epoch,
-                .coordinator_id = source_coordinator_id,
+                .scheduler_epoch = identity.scheduler_epoch,
+                .coordinator_id = identity.coordinator_id,
                 .challenge = challenge,
                 .max_weight = 1,
             },
@@ -343,6 +470,34 @@ pub fn main() !void {
     if (std.mem.eql(u8, arguments[1], "baseline")) {
         if (arguments.len != 3) return error.InvalidArguments;
         try runBaselineV1(allocator, directory);
+    } else if (std.mem.eql(
+        u8,
+        arguments[1],
+        "source-bootstrap",
+    )) {
+        const crash_point = if (arguments.len == 4)
+            try parseCrashPointV1(arguments[3])
+        else
+            null;
+        try runSourceBootstrapV1(
+            allocator,
+            directory,
+            crash_point,
+        );
+    } else if (std.mem.eql(
+        u8,
+        arguments[1],
+        "source-transition",
+    )) {
+        const crash_point = if (arguments.len == 4)
+            try parseCrashPointV1(arguments[3])
+        else
+            null;
+        try runSourceTransitionV1(
+            allocator,
+            directory,
+            crash_point,
+        );
     } else if (std.mem.eql(u8, arguments[1], "source")) {
         if (arguments.len != 3) return error.InvalidArguments;
         try runSourceV1(allocator, directory);
@@ -492,6 +647,745 @@ fn runBaselineV1(
         .output_tokens = &output_copy,
         .terminal_semantic_sha256 = semantic.semantic_sha256,
     });
+}
+
+fn runSourceBootstrapV1(
+    allocator: std.mem.Allocator,
+    absolute_directory: []const u8,
+    requested_crash: ?CrashPoint,
+) !void {
+    const image_path = try modelPathV1(
+        allocator,
+        absolute_directory,
+        model_image_name,
+    );
+    defer allocator.free(image_path);
+    var model =
+        try engine.loader.loadPrepared(allocator, image_path);
+    defer model.deinit();
+    var directory =
+        try std.fs.openDirAbsolute(absolute_directory, .{});
+    defer directory.close();
+
+    var runtime: SourceRuntime = .{};
+    try runtime.init();
+    var runtime_closed = false;
+    defer {
+        if (!runtime_closed)
+            _ = runtime.scheduler.close() catch {};
+    }
+    const local_plan =
+        try prepared.makePlanV1(model, &prompt, options);
+    const bound_input = try boundInputV1();
+    const bound_plan = try prepared.makeBoundPlanV1(
+        model,
+        &prompt,
+        options,
+        local_plan,
+        scheduling,
+        &runtime.scheduler,
+        bound_input,
+    );
+    const target = try targetOwnershipForStageV1(
+        2,
+        bound_plan,
+    );
+    const runtime_identity: source_recovery.SourceRuntimeIdentityV1 = .{
+        .scheduler_epoch = source_scheduler_epoch,
+        .coordinator_id = source_coordinator_id,
+        .bank_epoch = source_bank_epoch,
+    };
+    const contract_storage = try allocator.alloc(
+        u8,
+        try source_recovery.encodedBytesV1(prompt.len),
+    );
+    defer allocator.free(contract_storage);
+    const encoded_contract = try source_recovery.encodeV1(
+        .{
+            .prompt = &prompt,
+            .options = options,
+            .scheduling = scheduling,
+            .bound_plan_input = bound_input,
+            .plan = local_plan,
+            .bound_plan = bound_plan,
+            .source_runtime = runtime_identity,
+            .request_epoch = request_epoch,
+            .publication_next_sequence = 1,
+            .challenge_sha256 = challenge,
+            .target = target,
+            .sink_storage_epoch = sink_storage_epoch,
+            .sink_capacity = sink_capacity,
+            .sink_initial_sequence = 1,
+            .sink_implementation_sha256 = sink_implementation_sha256,
+            .sink_instance_sha256 = sink_instance_sha256,
+        },
+        contract_storage,
+    );
+    const live_storage = try allocator.alloc(
+        u8,
+        checkpoint_file.set_payload_offset +
+            durable.source_live_marker.len +
+            encoded_contract.bytes.len +
+            checkpoint_file.set_footer_bytes,
+    );
+    defer allocator.free(live_storage);
+    const live_set =
+        try source_lease.encodeRecoverableSourceLiveSetV1(
+            encoded_contract,
+            live_storage,
+        );
+    const live_selector =
+        try checkpoint_file.prepareInitialSelectorV1(live_set);
+    const active_storage =
+        try allocator.alloc(u8, max_authority_bytes);
+    defer allocator.free(active_storage);
+    var checkpoint_lock_storage: [1]u8 = undefined;
+    var controller: CrashController = .{
+        .requested = requested_crash,
+        .input_generation = 0,
+        .input_sequence = 0,
+        .sink_count = 0,
+        .sink_ledger_sha256 = zero_digest,
+        .sink_selector_sha256 = zero_digest,
+        .checkpoint_selector_sha256 = zero_digest,
+        .successor_checkpoint_selector_sha256 = live_selector.selector_sha256,
+    };
+    const initialization =
+        try checkpoint_file.LeaseV1
+            .createOrRecoverInitialObservedV1(
+            directory,
+            storage_epoch,
+            challenge,
+            live_set,
+            live_selector,
+            max_authority_bytes,
+            &checkpoint_lock_storage,
+            active_storage,
+            .{
+                .context = &controller,
+                .after_phase_fn = CrashController
+                    .afterBootstrapCheckpointPhase,
+            },
+        );
+    var lease = initialization.lease;
+    defer lease.close();
+    if (!std.mem.eql(u8, lease.stream(), live_set.bytes) or
+        lease.selector.generation != 1 or
+        !digestEqual(
+            lease.selector.selector_sha256,
+            live_selector.selector_sha256,
+        ))
+        return error.InvalidSourceBootstrap;
+
+    try requireRuntimeZeroV1(
+        &runtime.bank,
+        &runtime.scheduler,
+    );
+    _ = try runtime.scheduler.close();
+    runtime_closed = true;
+    const checkpoint_selector = lease.selector;
+    lease.close();
+    const no_tokens = [_]u32{};
+    try emitResultV1(.{
+        .mode = "source-bootstrap",
+        .input_generation = 0,
+        .input_sequence = 0,
+        .output_generation = checkpoint_selector.generation,
+        .output_sequence = checkpoint_selector.publication_next_sequence,
+        .sink_disposition = .none,
+        .sink_count = 0,
+        .sink_next_sequence = 0,
+        .sink_ledger_sha256 = zero_digest,
+        .sink_selector_sha256 = zero_digest,
+        .checkpoint_selector_sha256 = checkpoint_selector.selector_sha256,
+        .terminal = false,
+        .ownership_zero = true,
+        .output_tokens = &no_tokens,
+        .terminal_semantic_sha256 = zero_digest,
+    });
+}
+
+fn runSourceTransitionV1(
+    allocator: std.mem.Allocator,
+    absolute_directory: []const u8,
+    requested_crash: ?CrashPoint,
+) !void {
+    var directory =
+        try std.fs.openDirAbsolute(absolute_directory, .{});
+    defer directory.close();
+    const active_storage =
+        try allocator.alloc(u8, max_authority_bytes);
+    defer allocator.free(active_storage);
+    const retained_storage =
+        try allocator.alloc(u8, max_authority_bytes);
+    defer allocator.free(retained_storage);
+    var checkpoint_lock_storage: [1]u8 = undefined;
+    var lease = try checkpoint_file.LeaseV1.open(
+        directory,
+        storage_epoch,
+        challenge,
+        max_authority_bytes,
+        &checkpoint_lock_storage,
+        active_storage,
+    );
+    defer lease.close();
+    const active_set = try lease.activeSet();
+    if (active_set.metadata.generation ==
+        durable.source_exited_set_generation)
+    {
+        try emitAlreadySelectedSourceTransitionV1(
+            &lease,
+            directory,
+            retained_storage,
+        );
+        return;
+    }
+    if (active_set.metadata.generation !=
+        source_lease.source_live_set_generation)
+        return error.InvalidSourceRecoveryGeneration;
+    const contract = try selectedSourceRecoveryContractV1(
+        &lease,
+    );
+    const encoded_contract: source_recovery.EncodedV1 = .{
+        .bytes = contract.encoded,
+        .contract_sha256 = contract.contract_sha256,
+    };
+
+    const prompt_storage =
+        try allocator.alloc(u32, contract.promptCount());
+    defer allocator.free(prompt_storage);
+    for (prompt_storage, 0..) |*token, index|
+        token.* = try contract.promptToken(index);
+    const image_path = try modelPathV1(
+        allocator,
+        absolute_directory,
+        model_image_name,
+    );
+    defer allocator.free(image_path);
+    var model =
+        try engine.loader.loadPrepared(allocator, image_path);
+    defer model.deinit();
+    var runtime: SourceRuntime = .{};
+    try runtime.initWithIdentity(contract.source_runtime);
+    var runtime_closed = false;
+    defer {
+        if (!runtime_closed)
+            _ = runtime.scheduler.close() catch {};
+    }
+    const local_plan = try prepared.makePlanV1(
+        model,
+        prompt_storage,
+        contract.options,
+    );
+    const bound_plan = try prepared.makeBoundPlanV1(
+        model,
+        prompt_storage,
+        contract.options,
+        local_plan,
+        contract.scheduling,
+        &runtime.scheduler,
+        contract.bound_plan_input,
+    );
+    const target = try targetOwnershipForStageV1(
+        2,
+        bound_plan,
+    );
+    try source_recovery.verifyContextV1(
+        contract,
+        .{
+            .prompt = prompt_storage,
+            .options = contract.options,
+            .scheduling = contract.scheduling,
+            .bound_plan_input = contract.bound_plan_input,
+            .plan = local_plan,
+            .bound_plan = bound_plan,
+            .source_runtime = contract.source_runtime,
+            .request_epoch = contract.request_epoch,
+            .publication_next_sequence = contract.publication_next_sequence,
+            .challenge_sha256 = contract.challenge_sha256,
+            .target = target,
+            .sink_storage_epoch = contract.sink.storage_epoch,
+            .sink_capacity = std.math.cast(
+                usize,
+                contract.sink.capacity,
+            ) orelse return error.InvalidSourceRecoveryContract,
+            .sink_initial_sequence = contract.sink.initial_sequence,
+            .sink_implementation_sha256 = contract.sink.implementation_sha256,
+            .sink_instance_sha256 = contract.sink.instance_sha256,
+        },
+    );
+
+    var live_grant: source_lease.SourceLiveGrantV1 = .{};
+    try source_lease.initSourceLiveGrantV1(
+        &live_grant,
+        &lease,
+    );
+    defer if (live_grant.lease != null and
+        (live_grant.phase == .ready or
+            live_grant.phase == .bound))
+    {
+        source_lease.releaseSourceLiveGrantV1(
+            &live_grant,
+        ) catch {};
+    };
+    var controller: CrashController = .{
+        .requested = requested_crash,
+        .input_generation = source_lease.source_live_set_generation,
+        .input_sequence = contract.publication_next_sequence,
+        .sink_count = 0,
+        .sink_ledger_sha256 = zero_digest,
+        .sink_selector_sha256 = zero_digest,
+        .checkpoint_selector_sha256 = lease.selector.selector_sha256,
+        .successor_sink_count = 0,
+        .successor_sink_ledger_sha256 = contract.sink.empty_ledger_sha256,
+        .successor_sink_selector_sha256 = contract.sink.empty_selector_sha256,
+    };
+    try controller.maybeCrash(
+        .source_after_recovery_admission,
+    );
+
+    var sink_lock_storage: [1]u8 = undefined;
+    const sink_initialization =
+        try result_sink_file.ResultSinkFileV1(
+            sink_capacity,
+        ).createOrRecoverEmpty(
+            directory,
+            contract.sink.storage_epoch,
+            local_plan.plan_sha256,
+            contract.request_epoch,
+            contract.sink.initial_sequence,
+            contract.sink.implementation_sha256,
+            contract.sink.instance_sha256,
+            &sink_lock_storage,
+            .{
+                .context = &controller,
+                .after_phase_fn = CrashController.afterSourceSinkPhase,
+            },
+        );
+    var sink_store = sink_initialization.store;
+    defer sink_store.close();
+    try validateEmptySinkSelectionV1(
+        sink_store.selector,
+        contract,
+    );
+    controller.sink_ledger_sha256 =
+        sink_store.selector.ledger_sha256;
+    controller.sink_selector_sha256 =
+        sink_store.selector.selector_sha256;
+    try controller.maybeCrash(.source_after_initial_sink);
+
+    var session: prepared.SessionV3 = .{};
+    defer session.deinit();
+    try requireStartedV1(try session.start(
+        allocator,
+        &model,
+        prompt_storage,
+        contract.options,
+        local_plan,
+        contract.bound_plan_input,
+        bound_plan,
+        contract.scheduling,
+        &runtime.scheduler,
+        &runtime.bank,
+    ));
+    var step_sink: ReceiptSink = .{};
+    _ = try session.step(
+        try runtime.scheduler.prepareService(),
+        step_sink.interface(),
+    );
+    if (step_sink.commit_calls != 1 or
+        session.outputTokens().len !=
+            contract.publication_next_sequence)
+        return error.InvalidSourceSequence;
+    const source_output = [1]u32{
+        session.outputTokens()[0],
+    };
+    try controller.maybeCrash(.source_after_step);
+    try session.attachSourceLiveGrantV1(&live_grant);
+
+    const encoded_checkpoint =
+        try session.captureCheckpointV1(
+            allocator,
+            contract.challenge_sha256,
+        );
+    defer allocator.free(encoded_checkpoint);
+    const context = try checkpointContextV1(
+        &session,
+        &model,
+        bound_plan,
+        local_plan,
+    );
+    if (context.boundary.base.publication.next_sequence !=
+        contract.publication_next_sequence)
+        return error.InvalidSourceSequence;
+    const manifest_bytes =
+        try restart_manifest.encodedBytesV1(
+            prompt_storage.len,
+        );
+    const manifest_storage =
+        try allocator.alloc(u8, manifest_bytes);
+    defer allocator.free(manifest_storage);
+    const encoded_manifest = try restart_manifest.encodeV1(
+        .{
+            .prompt = prompt_storage,
+            .options = contract.options,
+            .plan = local_plan,
+            .bound_plan = bound_plan,
+            .expected_checkpoint = context.expected,
+            .source = context.source,
+            .target = target,
+        },
+        manifest_storage,
+    );
+    const evidence_bytes =
+        try archive.encodedRestartArchiveBytesV1(
+            encoded_checkpoint.len,
+            encoded_manifest.bytes.len,
+        );
+    const evidence_storage =
+        try allocator.alloc(u8, evidence_bytes);
+    defer allocator.free(evidence_storage);
+    const evidence = try archive.encodeRestartArchiveV1(
+        contract.publication_next_sequence,
+        zero_digest,
+        encoded_checkpoint,
+        encoded_manifest.bytes,
+        evidence_storage,
+    );
+    _ = try session.beginDurableHandoffV1(
+        encoded_checkpoint,
+        contract.challenge_sha256,
+        target,
+        evidence.set.checkpoint_sha256,
+        lease.selectorRoot(),
+    );
+    try session.validateDurableHandoffV1();
+    try controller.maybeCrash(
+        .source_after_handoff_prepare,
+    );
+    const source_exit =
+        try session.commitDurableHandoffV1();
+    controller.maybeCrash(
+        .source_after_exit_commit,
+    ) catch failStopSourceTransitionV1();
+
+    const authority_bytes =
+        durable.encodedRecoverableSourceExitedSetBytesV1(
+            evidence.set.bytes.len,
+            encoded_contract.bytes.len,
+        ) catch failStopSourceTransitionV1();
+    const authority_storage =
+        allocator.alloc(
+            u8,
+            authority_bytes,
+        ) catch failStopSourceTransitionV1();
+    defer allocator.free(authority_storage);
+    const authority =
+        durable.encodeRecoverableSourceExitedSetV1(
+            evidence,
+            source_exit,
+            active_set.checkpoint_sha256,
+            encoded_contract,
+            authority_storage,
+        ) catch failStopSourceTransitionV1();
+    const checkpoint_publication =
+        checkpoint_file.preparePublicationV1(
+            &lease,
+            authority,
+        ) catch failStopSourceTransitionV1();
+    controller.successor_checkpoint_selector_sha256 =
+        checkpoint_publication.selector.selector_sha256;
+    const checkpoint_applied = if (requested_crash != null)
+        checkpoint_file.publishObservedV1(
+            &lease,
+            checkpoint_publication,
+            .{
+                .context = &controller,
+                .after_phase_fn = CrashController.afterSourceCheckpointPhase,
+            },
+        ) catch failStopSourceTransitionV1()
+    else
+        checkpoint_file.recoverV1(
+            &lease,
+            checkpoint_publication,
+        ) catch failStopSourceTransitionV1();
+    session.completeDurableHandoffV1(.{
+        .checkpoint_sha256 = checkpoint_applied.checkpoint_sha256,
+        .selector_sha256 = checkpoint_applied.selector_sha256,
+    }) catch failStopSourceTransitionV1();
+    if (live_grant.phase != .completed)
+        failStopSourceTransitionV1();
+    requireRuntimeZeroV1(
+        &runtime.bank,
+        &runtime.scheduler,
+    ) catch failStopSourceTransitionV1();
+    _ = runtime.scheduler.close() catch
+        failStopSourceTransitionV1();
+    runtime_closed = true;
+    controller.checkpoint_selector_sha256 =
+        checkpoint_applied.selector_sha256;
+    controller.maybeCrash(
+        .source_after_generation_two,
+    ) catch failStopSourceTransitionV1();
+
+    const sink_selector = sink_store.selector;
+    sink_store.close();
+    const checkpoint_selector = lease.selector;
+    lease.close();
+    emitResultV1(.{
+        .mode = "source-transition",
+        .input_generation = source_lease.source_live_set_generation,
+        .input_sequence = contract.publication_next_sequence,
+        .output_generation = checkpoint_selector.generation,
+        .output_sequence = checkpoint_selector.publication_next_sequence,
+        .sink_disposition = .none,
+        .sink_count = sink_selector.acknowledgement_count,
+        .sink_next_sequence = sink_selector.next_sequence,
+        .sink_ledger_sha256 = sink_selector.ledger_sha256,
+        .sink_selector_sha256 = sink_selector.selector_sha256,
+        .checkpoint_selector_sha256 = checkpoint_selector.selector_sha256,
+        .terminal = false,
+        .ownership_zero = true,
+        .output_tokens = &source_output,
+        .terminal_semantic_sha256 = zero_digest,
+    }) catch failStopSourceTransitionV1();
+}
+
+fn selectedSourceRecoveryContractV1(
+    lease: *checkpoint_file.LeaseV1,
+) !source_recovery.DecodedV1 {
+    const selected = try lease.activeSet();
+    if (selected.object_count != 2 or
+        selected.metadata.generation !=
+            source_lease.source_live_set_generation or
+        selected.metadata.request_epoch == 0 or
+        selected.metadata.publication_next_sequence == 0 or
+        !std.mem.allEqual(
+            u8,
+            &selected.metadata.parent_checkpoint_sha256,
+            0,
+        ))
+        return error.InvalidSourceRecoveryContract;
+    const marker = selected.objects[0];
+    const contract_object = selected.objects[1];
+    if (marker.kind != .extension or
+        marker.ordinal !=
+            source_lease.source_live_object_ordinal or
+        marker.abi_version !=
+            source_lease.source_live_marker_abi or
+        !std.mem.eql(
+            u8,
+            marker.bytes,
+            source_lease.source_live_marker,
+        ) or contract_object.kind != .extension or
+        contract_object.ordinal !=
+            source_lease.source_recovery_object_ordinal or
+        contract_object.abi_version !=
+            source_recovery.contract_abi)
+        return error.InvalidSourceRecoveryContract;
+    const contract = try source_recovery.decodeV1(
+        contract_object.bytes,
+    );
+    if (contract.request_epoch !=
+        selected.metadata.request_epoch or
+        contract.publication_next_sequence !=
+            selected.metadata.publication_next_sequence or
+        !digestEqual(
+            contract.challenge_sha256,
+            selected.metadata.challenge_sha256,
+        ))
+        return error.InvalidSourceRecoveryContract;
+    return contract;
+}
+
+fn validateEmptySinkSelectionV1(
+    selector: result_sink_file.DecodedSelectorV1,
+    contract: source_recovery.DecodedV1,
+) !void {
+    if (contract.sink.capacity != sink_capacity or
+        selector.generation != 1 or
+        selector.acknowledgement_count != 0 or
+        selector.initial_sequence !=
+            contract.sink.initial_sequence or
+        selector.next_sequence !=
+            contract.sink.initial_sequence or
+        selector.request_epoch != contract.request_epoch or
+        !digestEqual(
+            selector.request_sha256,
+            contract.plan_sha256,
+        ) or !digestEqual(
+        selector.sink_implementation_sha256,
+        contract.sink.implementation_sha256,
+    ) or !digestEqual(
+        selector.sink_instance_sha256,
+        contract.sink.instance_sha256,
+    ) or !digestEqual(
+        selector.ledger_sha256,
+        contract.sink.empty_ledger_sha256,
+    ) or !digestEqual(
+        selector.selector_sha256,
+        contract.sink.empty_selector_sha256,
+    ))
+        return error.InvalidSourceSinkBootstrap;
+}
+
+/// Before recoverable G2 admission the durable sink may be either the exact
+/// empty state named by the source contract or the single exact logical edge
+/// left visible by a target that died before publishing G3. The latter remains
+/// provisional until `apply` exact-replays the freshly recomputed delivery
+/// while this same store keeps the file lease held.
+fn validateRecoverableTargetSinkSelectionV1(
+    store: *const DurableResultSinkV1,
+    contract: source_recovery.DecodedV1,
+    selected_sequence: u64,
+) !void {
+    if (selected_sequence != contract.sink.initial_sequence or
+        contract.sink.capacity != sink_capacity)
+        return error.InvalidSourceSinkBootstrap;
+    if (store.selector.acknowledgement_count == 0) {
+        try validateEmptySinkSelectionV1(
+            store.selector,
+            contract,
+        );
+        return;
+    }
+
+    const expected_next = std.math.add(
+        u64,
+        selected_sequence,
+        1,
+    ) catch return error.InvalidSourceSinkBootstrap;
+    const acknowledgements =
+        store.sink.acknowledgementSlice();
+    if (store.selector.generation != 2 or
+        store.selector.acknowledgement_count != 1 or
+        store.selector.initial_sequence !=
+            contract.sink.initial_sequence or
+        store.selector.next_sequence != expected_next or
+        store.selector.request_epoch != contract.request_epoch or
+        !digestEqual(
+            store.selector.request_sha256,
+            contract.plan_sha256,
+        ) or !digestEqual(
+        store.selector.sink_implementation_sha256,
+        contract.sink.implementation_sha256,
+    ) or !digestEqual(
+        store.selector.sink_instance_sha256,
+        contract.sink.instance_sha256,
+    ) or store.sink.applied_count != 1 or
+        store.sink.next_sequence != expected_next or
+        acknowledgements.len != 1)
+        return error.InvalidSourceSinkBootstrap;
+
+    const acknowledgement = acknowledgements[0];
+    try result_sink.validateAcknowledgementV1(
+        acknowledgement,
+    );
+    if (acknowledgement.request_epoch !=
+        contract.request_epoch or
+        acknowledgement.transaction_sequence !=
+            selected_sequence or
+        acknowledgement.application_ordinal != 1 or
+        acknowledgement.application_count != 1 or
+        !digestEqual(
+            acknowledgement.request_sha256,
+            contract.plan_sha256,
+        ) or !digestEqual(
+        acknowledgement.sink_implementation_sha256,
+        contract.sink.implementation_sha256,
+    ) or !digestEqual(
+        acknowledgement.sink_instance_sha256,
+        contract.sink.instance_sha256,
+    ) or !durable
+        .recoverableOneAheadSinkLineageValidV1(
+        contract.sink.empty_selector_sha256,
+        store.selector.previous_selector_sha256,
+        acknowledgement
+            .predecessor_acknowledgement_sha256,
+        acknowledgement.predecessor_sink_prefix_sha256,
+    ))
+        return error.InvalidSourceSinkBootstrap;
+}
+
+fn emitAlreadySelectedSourceTransitionV1(
+    lease: *checkpoint_file.LeaseV1,
+    directory: std.fs.Dir,
+    retained_storage: []u8,
+) !void {
+    const active = try lease.activeSet();
+    const selected =
+        try durable.decodeSourceExitedSetV1(
+            lease.stream(),
+            lease.selector,
+            active.metadata.parent_checkpoint_sha256,
+        );
+    const contract =
+        try durable.validateRecoverableSourcePredecessorV1(
+            lease,
+            selected,
+            retained_storage,
+        );
+    if (contract.sink.capacity != sink_capacity)
+        return error.InvalidSourceRecoveryContract;
+    var sink_lock_storage: [1]u8 = undefined;
+    var ledger_storage: [max_result_ledger_bytes]u8 =
+        undefined;
+    var sink_store =
+        try result_sink_file.ResultSinkFileV1(
+            sink_capacity,
+        ).open(
+            directory,
+            contract.sink.storage_epoch,
+            contract.plan_sha256,
+            contract.request_epoch,
+            contract.sink.initial_sequence,
+            contract.sink.implementation_sha256,
+            contract.sink.instance_sha256,
+            &sink_lock_storage,
+            &ledger_storage,
+            null,
+        );
+    defer sink_store.close();
+    try validateEmptySinkSelectionV1(
+        sink_store.selector,
+        contract,
+    );
+    const decoded_checkpoint = selected.evidence.checkpoint;
+    if (decoded_checkpoint.output_count != 1 or
+        decoded_checkpoint.canonical_output_u32_le.len !=
+            @sizeOf(u32))
+        return error.InvalidSourceSequence;
+    const source_output = [1]u32{std.mem.readInt(
+        u32,
+        decoded_checkpoint.canonical_output_u32_le[0..4],
+        .little,
+    )};
+    const sink_selector = sink_store.selector;
+    try emitResultV1(.{
+        .mode = "source-transition",
+        .input_generation = source_lease.source_live_set_generation,
+        .input_sequence = contract.publication_next_sequence,
+        .output_generation = lease.selector.generation,
+        .output_sequence = lease.selector.publication_next_sequence,
+        .sink_disposition = .none,
+        .sink_count = sink_selector.acknowledgement_count,
+        .sink_next_sequence = sink_selector.next_sequence,
+        .sink_ledger_sha256 = sink_selector.ledger_sha256,
+        .sink_selector_sha256 = sink_selector.selector_sha256,
+        .checkpoint_selector_sha256 = lease.selector.selector_sha256,
+        .terminal = false,
+        .ownership_zero = true,
+        .output_tokens = &source_output,
+        .terminal_semantic_sha256 = zero_digest,
+    });
+}
+
+fn failStopSourceTransitionV1() noreturn {
+    std.process.exit(74);
+}
+
+fn digestEqual(left: Digest, right: Digest) bool {
+    return std.mem.eql(u8, &left, &right);
 }
 
 fn runSourceV1(
@@ -662,41 +1556,44 @@ fn runSourceV1(
     const source_exit =
         try session.commitDurableHandoffV1();
     const authority_bytes =
-        try durable.encodedSourceExitedSetBytesV1(
+        durable.encodedSourceExitedSetBytesV1(
             evidence.set.bytes.len,
-        );
+        ) catch failStopSourceTransitionV1();
     const authority_storage =
-        try allocator.alloc(u8, authority_bytes);
+        allocator.alloc(
+            u8,
+            authority_bytes,
+        ) catch failStopSourceTransitionV1();
     defer allocator.free(authority_storage);
     const authority =
-        try durable.encodeSourceExitedSetV1(
+        durable.encodeSourceExitedSetV1(
             evidence,
             source_exit,
             live_set.checkpoint_sha256,
             authority_storage,
-        );
+        ) catch failStopSourceTransitionV1();
     const checkpoint_publication =
-        try checkpoint_file.preparePublicationV1(
+        checkpoint_file.preparePublicationV1(
             &lease,
             authority,
-        );
+        ) catch failStopSourceTransitionV1();
     const checkpoint_applied =
-        try checkpoint_file.publishV1(
+        checkpoint_file.publishV1(
             &lease,
             checkpoint_publication,
-        );
+        ) catch failStopSourceTransitionV1();
     if (checkpoint_applied.disposition != .applied)
-        return error.SourcePublicationFailed;
-    try session.completeDurableHandoffV1(.{
+        failStopSourceTransitionV1();
+    session.completeDurableHandoffV1(.{
         .checkpoint_sha256 = checkpoint_applied.checkpoint_sha256,
         .selector_sha256 = checkpoint_applied.selector_sha256,
-    });
+    }) catch failStopSourceTransitionV1();
     if (live_grant.phase != .completed)
-        return error.SourceGrantNotCompleted;
+        failStopSourceTransitionV1();
 
     var sink_lock_storage: [1]u8 = undefined;
     var sink_store =
-        try result_sink_file.ResultSinkFileV1(
+        result_sink_file.ResultSinkFileV1(
             sink_capacity,
         ).create(
             directory,
@@ -708,19 +1605,20 @@ fn runSourceV1(
             sink_instance_sha256,
             &sink_lock_storage,
             null,
-        );
+        ) catch failStopSourceTransitionV1();
     const sink_selector = sink_store.selector;
     sink_store.close();
     const checkpoint_selector = lease.selector;
     lease.close();
 
-    try requireRuntimeZeroV1(
+    requireRuntimeZeroV1(
         &runtime.bank,
         &runtime.scheduler,
-    );
-    _ = try runtime.scheduler.close();
+    ) catch failStopSourceTransitionV1();
+    _ = runtime.scheduler.close() catch
+        failStopSourceTransitionV1();
     runtime_closed = true;
-    try emitResultV1(.{
+    emitResultV1(.{
         .mode = "source",
         .input_generation = 1,
         .input_sequence = 0,
@@ -736,7 +1634,7 @@ fn runSourceV1(
         .ownership_zero = true,
         .output_tokens = &source_output,
         .terminal_semantic_sha256 = zero_digest,
-    });
+    }) catch failStopSourceTransitionV1();
 }
 
 fn runTargetV1(
@@ -810,40 +1708,84 @@ fn runTargetV1(
 
     var activation_grant: restore.SelectedRestartGrantV1 = .{};
     var selected: SelectedRestartV1 = undefined;
+    var source_sink_contract: ?source_recovery.DecodedV1 = null;
+    var preactivation_sink_lock_storage: [1]u8 = undefined;
+    var preactivation_sink_ledger_storage: [
+        max_result_ledger_bytes
+    ]u8 = undefined;
+    var preactivation_sink: ?DurableResultSinkV1 = null;
+    defer if (preactivation_sink) |*store| store.close();
     if (input_generation ==
         durable.source_exited_set_generation)
     {
-        const live_storage = try allocator.alloc(
-            u8,
-            checkpoint_file.set_payload_offset +
-                durable.source_live_marker.len +
-                checkpoint_file.set_footer_bytes,
-        );
-        defer allocator.free(live_storage);
-        const expected_live =
-            try durable.encodeSourceLiveSetV1(
-                request_epoch,
-                1,
-                challenge,
-                live_storage,
-            );
-        if (!std.mem.eql(
-            u8,
-            retained.bytes,
-            expected_live.bytes,
-        ))
-            return error.RetainedSourceLiveDrift;
         const decoded =
             try durable.decodeSourceExitedSetV1(
                 lease.stream(),
                 lease.selector,
-                expected_live.checkpoint_sha256,
+                active_decoded.metadata
+                    .parent_checkpoint_sha256,
             );
-        try durable.initSelectedSourceExitGrantV1(
-            &activation_grant,
-            &lease,
-            decoded,
-        );
+        if (decoded.source_recovery_contract) |_| {
+            const contract =
+                try durable
+                    .validateRecoverableSourcePredecessorV1(
+                    &lease,
+                    decoded,
+                    retained_storage,
+                );
+            preactivation_sink =
+                try DurableResultSinkV1.open(
+                    directory,
+                    contract.sink.storage_epoch,
+                    contract.plan_sha256,
+                    contract.request_epoch,
+                    contract.sink.initial_sequence,
+                    contract.sink.implementation_sha256,
+                    contract.sink.instance_sha256,
+                    &preactivation_sink_lock_storage,
+                    &preactivation_sink_ledger_storage,
+                    null,
+                );
+            try validateRecoverableTargetSinkSelectionV1(
+                &preactivation_sink.?,
+                contract,
+                input_sequence,
+            );
+            try durable
+                .initSelectedRecoverableSourceExitGrantV1(
+                &activation_grant,
+                &lease,
+                decoded,
+                retained_storage,
+            );
+            source_sink_contract = contract;
+        } else {
+            const live_storage = try allocator.alloc(
+                u8,
+                checkpoint_file.set_payload_offset +
+                    durable.source_live_marker.len +
+                    checkpoint_file.set_footer_bytes,
+            );
+            defer allocator.free(live_storage);
+            const expected_live =
+                try durable.encodeSourceLiveSetV1(
+                    request_epoch,
+                    1,
+                    challenge,
+                    live_storage,
+                );
+            if (!std.mem.eql(
+                u8,
+                retained.bytes,
+                expected_live.bytes,
+            ))
+                return error.RetainedSourceLiveDrift;
+            try durable.initSelectedSourceExitGrantV1(
+                &activation_grant,
+                &lease,
+                decoded,
+            );
+        }
         const encoded_plan =
             try decoded.evidence.archive.object(
                 .extension,
@@ -1002,25 +1944,44 @@ fn runTargetV1(
     };
     var sink_lock_storage: [1]u8 = undefined;
     var sink_ledger_storage: [max_result_ledger_bytes]u8 = undefined;
-    var sink_store =
-        try result_sink_file.ResultSinkFileV1(
-            sink_capacity,
-        ).open(
+    var sink_store: DurableResultSinkV1 = undefined;
+    if (preactivation_sink) |store| {
+        sink_store = store;
+        preactivation_sink = null;
+    } else {
+        sink_store = try DurableResultSinkV1.open(
             directory,
-            sink_storage_epoch,
+            if (source_sink_contract) |contract|
+                contract.sink.storage_epoch
+            else
+                sink_storage_epoch,
             selected.manifest.plan.plan_sha256,
-            request_epoch,
-            1,
-            sink_implementation_sha256,
-            sink_instance_sha256,
+            if (source_sink_contract) |contract|
+                contract.request_epoch
+            else
+                request_epoch,
+            if (source_sink_contract) |contract|
+                contract.sink.initial_sequence
+            else
+                1,
+            if (source_sink_contract) |contract|
+                contract.sink.implementation_sha256
+            else
+                sink_implementation_sha256,
+            if (source_sink_contract) |contract|
+                contract.sink.instance_sha256
+            else
+                sink_instance_sha256,
             &sink_lock_storage,
             &sink_ledger_storage,
-            .{
-                .context = &crash,
-                .after_phase_fn = CrashController.afterSinkPhase,
-            },
+            null,
         );
+    }
     defer sink_store.close();
+    sink_store.observer = .{
+        .context = &crash,
+        .after_phase_fn = CrashController.afterSinkPhase,
+    };
     crash.sink_count =
         sink_store.selector.acknowledgement_count;
     crash.sink_ledger_sha256 =

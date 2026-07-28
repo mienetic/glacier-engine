@@ -240,11 +240,22 @@ death campaign admits only previous or exact-successor sink/checkpoint roots
 and independently verifies the three acknowledged suffix tokens against the
 complete uninterrupted output.
 
+R1j adds the predecessor-side admission proof. Generation one retains a
+canonical source replay contract and exact empty-sink identity. A fresh source
+may replay only the unpublished deterministic prefix under the exclusive
+checkpoint lease, and the successful process obtains its own real source-exit
+receipt. Generation two embeds the same contract. Before constructing a
+recoverable `SelectedSourceExitGrantV1`, the target reloads the retained
+generation-one set by its parent checkpoint root, reconstructs the predecessor
+selector, compares the contract byte for byte, and validates the selected sink
+against the contract. The legacy grant initializer rejects recoverable
+generation two so callers cannot bypass that proof.
+
 The combined path does not:
 
-- recover source death before generation two is published;
-- recover interruption during the initial empty-sink creation;
+- replay source work after an external effect or acknowledgement;
 - make arbitrary remote or hostile-writer effects exactly once;
+- claim physical power-loss durability;
 - provide a Windows durable-file adapter or GPU-resident continuation; or
 - establish production-model, native-platform, quality, or performance
   evidence.
@@ -270,9 +281,10 @@ The retained suite covers:
   cancellation; and
 - one separate-process baseline/source/target path selecting generation three
   and matching the receipt-independent terminal semantic; and
-- one compiled R1i worker reused across 19 distinct target deaths, three
-  ACK-bound progress successors, a generation-five terminal result, exact
-  previous-or-successor recovery, and zero final runtime/file authority.
+- one compiled R1j worker reused across seven bootstrap, 23 source-transition,
+  and 19 target-transition deaths, three ACK-bound progress successors, a
+  generation-five terminal result, exact boundary-specific recovery, and zero
+  final runtime/file authority.
 
 Use the ephemeral cache wrapper for focused Zig checks:
 

@@ -1474,6 +1474,136 @@ const TestFixture = struct {
     }
 };
 
+fn withTokenElementWidthsForTest(
+    original: session.BoundPlanV1,
+    input_element_bytes: u64,
+    output_element_bytes: u64,
+) !session.BoundPlanV1 {
+    const artifact =
+        try model_contract.makeArtifactManifestFromDigestV1(
+            original.artifact.family,
+            original.artifact.artifact_abi,
+            original.artifact.input_kind,
+            original.artifact.output_kind,
+            original.artifact.numerical_policy,
+            original.artifact.max_batch_items,
+            original.artifact.input_features,
+            original.artifact.output_dimensions,
+            input_element_bytes,
+            output_element_bytes,
+            original.artifact.weight_element_bytes,
+            original.artifact.weight_bytes,
+            original.artifact.weights_sha256,
+            original.artifact.metadata_sha256,
+            original.artifact.license_sha256,
+        );
+    const execution = try model_contract.makeExecutionPlanV1(
+        artifact,
+        original.execution.operation,
+        .{
+            .request_epoch = original.execution.request_epoch,
+            .generation = original.execution.generation,
+            .batch_items = original.execution.batch_items,
+            .publication_next_sequence = original.execution.publication_next_sequence,
+            .maximum_absolute_output = original.execution.maximum_absolute_output,
+            .required_capabilities = original.execution.required_capabilities,
+            .claim = original.execution.claim,
+            .media_object_sha256 = original.execution.media_object_sha256,
+            .processor_state_sha256 = original.execution.processor_state_sha256,
+            .processor_bundle_sha256 = original.execution.processor_bundle_sha256,
+            .cache_bundle_sha256 = original.execution.cache_bundle_sha256,
+            .cache_payload_sha256 = original.execution.cache_payload_sha256,
+            .ownership_sha256 = original.execution.ownership_sha256,
+            .challenge_sha256 = original.execution.challenge_sha256,
+            .previous_plan_sha256 = original.execution.previous_plan_sha256,
+            .input_schema_sha256 = original.execution.input_schema_sha256,
+            .output_schema_sha256 = original.execution.output_schema_sha256,
+            .scratch_bytes = original.execution.scratch_bytes,
+        },
+    );
+    const residency =
+        try model_contract.makeExecutionResidencyBindingV1(
+            execution,
+            original.residency.residency,
+            original.residency.resident_weight_bytes,
+            original.residency.request_claim,
+        );
+    var value = original;
+    value.artifact = artifact;
+    value.execution = execution;
+    value.residency = residency;
+    value.bound_plan_sha256 = [_]u8{0} ** 32;
+    value.bound_plan_sha256 = session.boundPlanRootV1(value);
+    return value;
+}
+
+test "prepared bound plan rejects coherent foreign token element widths" {
+    const fixture = try TestFixture.init();
+    const cases = [_]struct {
+        input_element_bytes: u64,
+        output_element_bytes: u64,
+    }{
+        .{
+            .input_element_bytes = @sizeOf(u16),
+            .output_element_bytes = @sizeOf(u32),
+        },
+        .{
+            .input_element_bytes = @sizeOf(u32),
+            .output_element_bytes = @sizeOf(u16),
+        },
+    };
+
+    for (cases) |case| {
+        const foreign = try withTokenElementWidthsForTest(
+            fixture.bound_plan,
+            case.input_element_bytes,
+            case.output_element_bytes,
+        );
+        try model_contract.validateArtifactManifestV1(
+            foreign.artifact,
+        );
+        try model_contract.validateExecutionPlanV1(
+            foreign.execution,
+        );
+        try model_contract.validateExecutionResidencyBindingV1(
+            foreign.residency,
+            foreign.execution,
+        );
+        try std.testing.expectEqual(
+            foreign.artifact.input_element_bytes,
+            foreign.execution.input_element_bytes,
+        );
+        try std.testing.expectEqual(
+            foreign.artifact.output_element_bytes,
+            foreign.execution.output_element_bytes,
+        );
+        try std.testing.expectEqualDeep(
+            fixture.bound_plan.local_plan_sha256,
+            foreign.local_plan_sha256,
+        );
+        try std.testing.expectEqualDeep(
+            fixture.bound_plan.token_domain_sha256,
+            foreign.token_domain_sha256,
+        );
+        try std.testing.expectEqualDeep(
+            fixture.bound_plan.token_domain_config_sha256,
+            foreign.token_domain_config_sha256,
+        );
+        try std.testing.expectEqualDeep(
+            fixture.bound_plan.artifact_license_sha256,
+            foreign.artifact_license_sha256,
+        );
+        try std.testing.expectEqualDeep(
+            foreign.bound_plan_sha256,
+            session.boundPlanRootV1(foreign),
+        );
+        try std.testing.expectError(
+            session.Error.InvalidBoundPlan,
+            session.validateBoundPlanV1(foreign),
+        );
+    }
+}
+
 test "prepared text restart manifest is canonical and complete" {
     const fixture = try TestFixture.init();
     const required = try encodedBytesV1(fixture.prompt.len);

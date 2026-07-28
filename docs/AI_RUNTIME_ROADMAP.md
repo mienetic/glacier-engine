@@ -357,13 +357,15 @@ paged-KV remap, sampler/output restore, two-process next-token publication,
 atomic complete checkpoint selection, and a synthetic two-step latent chain
 that restores its intermediate state in a distinct process. The prepared-text
 slice now also carries a canonical restart manifest and checkpoint/successor
-evidence through source-live and source-exited selection, then advances three
-one-token target processes through acknowledged generations three to five. An
-exclusive POSIX lease and one-shot activation grant fence each fresh target;
-an idempotent durable local sink suppresses replay, and a receipt-independent
-terminal semantic matches a separately retired baseline. Production-model
-state adapters, pre-handoff source recovery, GPU-resident continuation,
-Windows durable files, and native multi-OS recovery campaigns remain pending.
+evidence through a recoverable generation-one source selection and
+source-exited generation two, then advances three one-token target processes
+through acknowledged generations three to five. An exclusive POSIX lease,
+canonical replay contract, exact empty-sink admission, and one-shot activation
+grant fence each attempt; an idempotent durable local sink suppresses target
+replay, and a receipt-independent terminal semantic matches a separately
+retired baseline. Production-model state adapters, repeated/cancelled handoff
+evidence, GPU-resident continuation, Windows durable files, and native
+multi-OS recovery campaigns remain pending.
 
 Promotion gate: uninterrupted and resumed output satisfy one declared numerical
 mode, foreign state rejects, and all reacquired ownership returns to zero after
@@ -920,12 +922,11 @@ reporting:
    remains open for the broader supervisor/recovery interruption matrix,
    active-kernel and adapter faults, physical storage/power/driver, and
    physical-device-fault schedules with explicit synthetic-versus-physical
-   provenance. Prepared-text additions should cover repeated handoffs,
-   source death before generation two and during initial sink creation,
-   broader target interruption beyond the fixed R1i boundary set, native POSIX
-   replication, selector corruption, lease contention, remote-adapter
-   reconciliation, and recovery memory growth without relabelling fail-closed
-   unavailability as success.
+   provenance. Prepared-text additions should cover repeated handoffs and
+   cancellation, broader target interruption beyond the fixed R1j boundary
+   set, native POSIX replication, selector corruption, lease contention,
+   remote-adapter reconciliation, and recovery memory growth without
+   relabelling fail-closed unavailability as success.
 
 Native open-loop arrival-rate campaigns and closed-loop concurrency campaigns
 must remain distinct from each other and from deterministic logical-step
@@ -984,7 +985,7 @@ expand the base adapter's capabilities.
 
 | Family | Representative operations | Current state | First retained slice | Integration gate |
 | --- | --- | --- | --- | --- |
-| Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication, fresh-process handoff, and acknowledged local sink progress integrated experimentally on the POSIX durable adapter | Extend the retained synthetic multi-target proof to one small legal artifact and recover the pre-handoff source window | Declared numerical equivalence, exact KV ownership, recoverable source exit, replay-safe external publication |
+| Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication, generation-one source replay, fresh-process handoff, and acknowledged local sink progress integrated experimentally on the POSIX durable adapter | Extend the retained synthetic multi-target proof to one small legal artifact and add repeated/cancelled handoff evidence | Declared numerical equivalence, exact KV ownership, recoverable source exit, replay-safe external publication |
 | Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result plus vision, audio, and temporal-video embedding fixtures integrated | Add a non-media stateless encoder under the same wire | Deterministic batch mapping, stable normalization, typed vector/score publication |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, fresh-process stateful transcript continuation, and restartable exact word-timing/speaker publication integrated; production model gated | Add language/punctuation, overlapping-speaker policy, and crash-atomic checkpoint composition | No sample loss/duplication, exact streaming restart, annotation lineage, calibrated production quality |
@@ -1408,11 +1409,12 @@ generation 1 source-live
 ```
 
 This base handoff closes the evidence-only-to-runnable-target gap for its
-retained synthetic fixed-length profile. A source crash before generation-two
-publication still leaves generation one selected and the request
-fail-closed/unavailable. The base generation-three path can also replay after a
-target crash; R1i below replaces that retained target path with acknowledged
-one-token progress and a durable local sink.
+retained synthetic fixed-length profile. By itself, a source crash before
+generation-two publication leaves generation one selected and unavailable, and
+the base generation-three path can replay after a target crash. R1i below
+replaces the retained target path with acknowledged one-token progress; R1j
+then adds generation-one enrollment and safe replay of the unpublished source
+prefix.
 
 The current durable adapter is descriptor-relative POSIX. Cross-compilation
 does not establish Win32 durable-file behavior or native OS support. GPU
@@ -1466,19 +1468,56 @@ and terminal semantic equal the uninterrupted oracle.
 This is local replay-safe delivery evidence for a pre-tokenized synthetic
 fixture, not arbitrary exactly-once effects. ACK bytes are canonical evidence,
 not authenticated capabilities; generic callers must preserve the trusted
-sink-before-progress order. Interruption while creating the initial empty sink,
-source death before generation two, remote providers/databases/queues/tools,
-physical power loss, GPU-resident recovery, Win32 durability, production
-models, and native multi-OS recovery remain outside the claim. See
+sink-before-progress order. R1i alone does not cover interruption while
+creating the initial empty sink or source death before generation two. Remote
+providers/databases/queues/tools, physical power loss, GPU-resident recovery,
+Win32 durability, production models, and native multi-OS recovery remain
+outside its claim. See
 [Acknowledged Prepared-Text Delivery](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md).
+
+#### R1j — Generation-one source replay and combined recovery
+
+Status: **integrated experimental source/target recovery slice**. The retained
+path now:
+
+- encodes a canonical pointer-free generation-one contract containing the
+  pre-tokenized request, options and scheduling inputs, recomputed plan/model
+  roots, stable source runtime identity, request/sequence/challenge, target
+  ownership, and exact empty-sink facts;
+- atomically creates or recovers the initial checkpoint without overwriting a
+  foreign final object or rolling back durable successor evidence;
+- opens or creates only the contract's exact empty sink before the source model
+  step and never resets a nonempty ledger;
+- permits a fresh lease-holding source to replay only the unpublished
+  deterministic prefix, then requires that successful process to perform the
+  normal close and produce its own real source-exit receipt;
+- embeds the byte-identical contract in generation two and makes recoverable
+  target admission reload and verify the retained generation-one predecessor
+  and sink before constructing an activation grant; and
+- reuses one compiled worker across seven generation-one bootstrap, 23
+  source-transition, and the existing 19 target-transition real-`SIGKILL`
+  boundaries.
+
+Each victim emits a gated ready frame and self-raises the signal. The
+independent controller requires the exact signal exit and distinct PID,
+decodes optional/selected checkpoint and sink files without trusting worker
+claims, admits only the boundary's declared absent, exact-predecessor, or
+exact-successor state, then runs fresh recovery through generation five and
+the uninterrupted four-token semantic oracle.
+
+Replay is valid only because the retained prefix has no durable
+acknowledgement or external effect before generation two. R1j does not cover
+remote or non-idempotent effects, hostile writers, physical power loss,
+GPU-resident recovery, Win32 durable files, production models, or retained
+native multi-OS execution.
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with
 exact ownership and output evidence on the promoted native platform, including
 recoverable source-exit and replay-safe external publication. The retained
 synthetic fresh-process proof now includes replay-safe local sink progress, but
-does not complete its production artifact, raw-text/tokenizer, recoverable
-source-exit, remote-delivery, GPU, or multi-OS requirements.
+does not complete its production artifact, raw-text/tokenizer, remote-delivery,
+GPU, or multi-OS requirements.
 
 ### R2 — Stateless tensor families
 
@@ -1726,7 +1765,7 @@ Contributors can work on the runtime without downloading a large model:
 - one retained generated-workload seed, exact shrink signature, deterministic
   closed-loop plan or lineage mutation, summary oracle, or native campaign
   adapter;
-- one prepared-text source-exit/initial-sink journal state, read-only
+- one prepared-text repeated-handoff/cancellation state, read-only
   acknowledgement/progress inspector, or malformed nested-progress fixture
   with explicit crash and claim boundaries;
 - one replicated non-macOS POSIX recovery campaign or bounded Win32
