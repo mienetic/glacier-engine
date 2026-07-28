@@ -139,6 +139,9 @@ pub const RunConfigV1 = struct {
     build_sha256: Digest,
     /// Nonzero campaign challenge supplied by the invoking authority.
     challenge_sha256: Digest,
+    /// Optional minimum spacing between controlled-disruption epoch starts.
+    /// Zero preserves the original fixed W7 campaign schedule.
+    epoch_start_spacing_ns: u64 = 0,
 };
 
 pub const StateV1 = enum {
@@ -227,6 +230,104 @@ const EventClockV1 = struct {
     }
 };
 
+fn controlledEpochStartTargetNsV1(
+    epoch_index: usize,
+    spacing_ns: u64,
+) !u64 {
+    const one_based_epoch = std.math.add(
+        usize,
+        epoch_index,
+        1,
+    ) catch return error.EpochStartSpacingOverflow;
+    const one_based_epoch_u64 = std.math.cast(
+        u64,
+        one_based_epoch,
+    ) orelse return error.EpochStartSpacingOverflow;
+    return std.math.mul(
+        u64,
+        one_based_epoch_u64,
+        spacing_ns,
+    ) catch return error.EpochStartSpacingOverflow;
+}
+
+fn validateControlledEpochStartSpacingV1(
+    spacing_ns: u64,
+) !void {
+    if (spacing_ns == 0) return;
+    _ = try controlledEpochStartTargetNsV1(
+        disruption_epoch_count - 1,
+        spacing_ns,
+    );
+}
+
+fn validateNativeWorkloadEpochStartSpacingV1(
+    spacing_ns: u64,
+) !void {
+    if (spacing_ns != 0)
+        return error.EpochStartSpacingRequiresControlledDisruption;
+}
+
+fn waitForControlledEpochStartV1(
+    clock: *EventClockV1,
+    epoch_index: usize,
+    spacing_ns: u64,
+) !void {
+    // Preserve the original W7 schedule exactly when pacing is disabled,
+    // including avoiding an additional timer read.
+    if (spacing_ns == 0) return;
+    const target_ns = try controlledEpochStartTargetNsV1(
+        epoch_index,
+        spacing_ns,
+    );
+    while (true) {
+        const elapsed_ns = clock.timer.read();
+        if (elapsed_ns >= target_ns) return;
+        std.Thread.sleep(target_ns - elapsed_ns);
+    }
+}
+
+test "controlled epoch start targets use checked one-based spacing" {
+    try std.testing.expectEqual(
+        @as(u64, 100),
+        try controlledEpochStartTargetNsV1(0, 100),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 5_000),
+        try controlledEpochStartTargetNsV1(49, 100),
+    );
+    const maximum_spacing =
+        std.math.maxInt(u64) / disruption_epoch_count;
+    try std.testing.expectEqual(
+        maximum_spacing * disruption_epoch_count,
+        try controlledEpochStartTargetNsV1(
+            disruption_epoch_count - 1,
+            maximum_spacing,
+        ),
+    );
+    try std.testing.expectError(
+        error.EpochStartSpacingOverflow,
+        controlledEpochStartTargetNsV1(
+            disruption_epoch_count - 1,
+            maximum_spacing + 1,
+        ),
+    );
+    try std.testing.expectError(
+        error.EpochStartSpacingOverflow,
+        controlledEpochStartTargetNsV1(
+            std.math.maxInt(usize),
+            1,
+        ),
+    );
+}
+
+test "epoch start spacing is controlled-disruption only" {
+    try validateNativeWorkloadEpochStartSpacingV1(0);
+    try std.testing.expectError(
+        error.EpochStartSpacingRequiresControlledDisruption,
+        validateNativeWorkloadEpochStartSpacingV1(1),
+    );
+}
+
 const PendingRecordV1 = struct {
     ordinal: u32,
     cohort: native_report.CohortV1,
@@ -255,6 +356,9 @@ pub fn runV1(
     if (digestIsZero(config.build_sha256) or
         digestIsZero(config.challenge_sha256))
         return error.InvalidIdentity;
+    try validateNativeWorkloadEpochStartSpacingV1(
+        config.epoch_start_spacing_ns,
+    );
     storage.state = .running;
     storage.backend = backend;
     errdefer storage.state = .failed_retained;
@@ -275,6 +379,9 @@ pub fn runControlledDisruptionV1(
     if (digestIsZero(config.build_sha256) or
         digestIsZero(config.challenge_sha256))
         return error.InvalidIdentity;
+    try validateControlledEpochStartSpacingV1(
+        config.epoch_start_spacing_ns,
+    );
     storage.state = .running;
     storage.backend = backend;
     errdefer storage.state = .failed_retained;
@@ -562,6 +669,7 @@ fn runBoundCampaignV1(
                 initial_device,
                 initial_device.recommended_max_working_set_size,
                 completed_dispatches_before,
+                config.epoch_start_spacing_ns,
                 &clock,
             );
         },
@@ -2458,12 +2566,18 @@ fn runControlledDisruptionEpochsV1(
     initial_device: metal.MetalDeviceInfo,
     recommended_max_working_set_size: u64,
     completed_dispatches_before: u64,
+    epoch_start_spacing_ns: u64,
     clock: *EventClockV1,
 ) !void {
     if (recommended_max_working_set_size == 0)
         return error.InvalidAllocatedContext;
     var allocated_context_high_water: u64 = 0;
     for (0..disruption_epoch_count) |epoch_index| {
+        try waitForControlledEpochStartV1(
+            clock,
+            epoch_index,
+            epoch_start_spacing_ns,
+        );
         const base = epoch_index *
             disruption_records_per_epoch;
         try runCancellationDisruptionV1(

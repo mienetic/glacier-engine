@@ -32,11 +32,14 @@ ownership. W7a reuses the unchanged wire for 50 fixed controlled-disruption
 epochs around 100 real Metal commands, retaining cancellation, malformed
 pre-submit rejection, full-slot rejection, same-epoch recovery, bounded
 ownership, and terminal closure without treating injected conditions as
-physical device faults. Provider, stateful, streaming, batched, preemptible,
-device-backed, live-service, and OS-isolated real-credential profiles, direct
-physical CPU/device adapters, retained multi-machine load matrices,
-duration-bounded soak and physical-fault campaigns, and native platform
-replication remain staged work.
+physical device faults. W7b-a adds a fixed segmented native Metal soak: 12
+paced segments cross one clean six-segment process restart while retaining a
+content-addressed checkpoint after every segment and bounding observed RSS and
+Metal allocation context within each process generation. Provider, stateful,
+streaming, batched, preemptible, device-backed, live-service, and OS-isolated
+real-credential profiles, direct physical CPU/device adapters, retained
+multi-machine load matrices, broader disruption and physical-fault campaigns,
+and native platform replication remain staged work.
 A logical driver step is never reported as a millisecond, and a logical
 resource claim is never reported as RSS, device residency, energy, or
 temperature.
@@ -273,13 +276,47 @@ Results from different modes are not merged into one headline number.
     The three controlled branches submit no GPU command and do not represent
     physical device loss, driver failure, power loss, residency loss, or a
     performance result.
-  - [ ] **W7b — Duration-bounded soak and broader disruption.** Add segmented
-    long-duration campaigns with fixed restart, adapter-loss, storage-pressure,
-    and cancellation-storm schedules; retained progress checkpoints; direct
-    memory-growth observations where available; and explicit synthetic versus
-    physical-fault provenance. Include prepared-text repeated handoff,
-    source/target death, idempotent sink replay, selector corruption, and lease
-    contention without relabelling fail-closed unavailability as recovery.
+  - [x] **W7b-a — Segmented native Metal soak.** The fixed production-native
+    macOS Metal gate runs 12 paced segments across two worker processes, six
+    segments per process, with one planned clean exit and restart. Each segment
+    contains 50 epochs, 250 raw records, 100 completed real Metal commands, and
+    a 5-second minimum/15-second maximum duration under a 180-second campaign
+    watchdog. The complete campaign therefore verifies 600 epochs, 3,000 raw
+    records (120 warmup and 2,880 measured), 1,200 completed commands, 600
+    cancel-before-submit outcomes, 600 malformed pre-submit rejections, 600
+    full-slot capacity rejections, 2,400 Bank-pin acquisitions and
+    completions, and 15,000 ordered host event points. Segment challenges bind
+    the campaign, scheduled action, process generation, and preceding entry
+    and report; the RSS source remains stable within one process and changes
+    across the restart.
+
+    Worker RSS and Metal `currentAllocatedSize` before/maximum/after must remain
+    within 64 MiB of the first observation in each process generation. The
+    latter is device-wide allocation context, not owned, committed, or resident
+    GPU memory. Strict before/after environment snapshots require AC power,
+    low-power mode disabled, nominal `pmset` and Foundation thermal state, no
+    admission reason, and the same host/boot-session fingerprint.
+
+    The optional crash-atomic, content-addressed store publishes a canonical
+    fixed-size manifest and active selector after every segment, retains raw
+    segments and environment objects, and is bounded to 4 MiB and 32 regular
+    files. Its fresh offline verifier, independent of the live supervisor's
+    in-memory state, reopens the active prefix and rebuilds
+    the exact manifest sequence, reruns both verification layers over every
+    retained inner wire, rechecks component and environment bindings, and
+    rejects missing, additional, corrupted, symlinked, or chain-substituted
+    objects. See
+    [Native Metal segmented soak report](NATIVE_METAL_SOAK_REPORT.md).
+    This is finite paced correctness, recovery, ownership, durable-continuity,
+    and observed-growth evidence for the invoking host. It is not a latency or
+    throughput benchmark, a no-leak proof, physical residency evidence, or a
+    physical device, driver, power, or storage-failure campaign.
+  - [ ] **W7b-b — Broader disruption.** Add bounded process-kill,
+    storage-pressure, cancellation-storm, adapter-loss, and physical-device
+    fault schedules with explicit synthetic-versus-physical provenance.
+    Include prepared-text repeated handoff, source/target death, idempotent
+    sink replay, selector corruption, and lease contention without relabelling
+    fail-closed unavailability as recovery.
 - [ ] **W8 — Native platform replication.** Retain independently verifiable
   campaigns on every claimed operating system and backend. Cross-compilation
   does not count as native workload evidence.
@@ -526,6 +563,26 @@ Add `-Dnative-metal-disruption-report-output=PATH` for atomic retention after
 both verification layers pass. It is a finite recovery and ownership
 campaign, not a duration-bounded soak, physical-fault test, or performance
 benchmark.
+
+Run the W7b-a segmented production-native Metal soak separately:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  native-metal-soak-report-test \
+  -Dmetal=true -Doptimize=ReleaseSafe -j2
+```
+
+This runs 12 independently challenged and verified segments across two clean
+worker lifetimes. Add `-Dnative-metal-soak-output-dir=PATH` to publish the
+bounded content-addressed checkpoint store after every segment. When that
+option is present, the build gate closes the live writer and launches the
+`--verify-store` offline path, which reopens the retained selector, manifests,
+environment objects, and every referenced inner wire without trusting the
+supervisor's in-memory results. See
+[Native Metal segmented soak report](NATIVE_METAL_SOAK_REPORT.md). The gate is
+finite paced recovery and observed-growth evidence, not a performance
+benchmark, physical fault injection, device residency measurement, or an
+unbounded no-leak proof.
 
 When retention is requested from the serialized `native-metal-suite-test`, use
 `-Dnative-metal-suite-report-output=PATH`. It is mutually exclusive with the

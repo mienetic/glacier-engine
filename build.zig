@@ -59,6 +59,15 @@ pub fn build(b: *std.Build) void {
         if (path.len == 0)
             @panic("-Dnative-metal-disruption-report-output must not be empty");
     }
+    const native_metal_soak_output_dir = b.option(
+        []const u8,
+        "native-metal-soak-output-dir",
+        "Optional directory that retains the verified native Metal soak campaign store",
+    );
+    if (native_metal_soak_output_dir) |path| {
+        if (path.len == 0)
+            @panic("-Dnative-metal-soak-output-dir must not be empty");
+    }
     if (native_metal_report_output != null and
         native_metal_suite_report_output != null)
         @panic(
@@ -1697,6 +1706,80 @@ pub fn build(b: *std.Build) void {
         native_workload_report_compile_step,
     );
 
+    // W7 keeps the 256-record W6 ABI fixed and composes independently
+    // verified inner wires through a bounded, canonical outer campaign
+    // manifest. The portable gate checks the Zig codec and an independent
+    // Python model; foreign targets are compile-only evidence.
+    const native_workload_campaign_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/core/native_workload_campaign_manifest.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    const run_native_workload_campaign_tests = b.addRunArtifact(
+        native_workload_campaign_tests,
+    );
+    const run_native_workload_campaign_model =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_native_workload_campaign",
+        });
+    run_native_workload_campaign_model.setCwd(b.path("."));
+    run_native_workload_campaign_model.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_native_workload_campaign_model.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    const native_workload_campaign_test_step = b.step(
+        "native-workload-campaign-test",
+        "Run the segmented workload campaign codec and independent model",
+    );
+    native_workload_campaign_test_step.dependOn(
+        &run_native_workload_campaign_tests.step,
+    );
+    native_workload_campaign_test_step.dependOn(
+        &run_native_workload_campaign_model.step,
+    );
+    const native_workload_campaign_compile_step = b.step(
+        "native-workload-campaign-compile",
+        "Compile the segmented workload campaign codec tests",
+    );
+    native_workload_campaign_compile_step.dependOn(
+        &native_workload_campaign_tests.step,
+    );
+    const native_workload_campaign_cross_compile_step = b.step(
+        "native-workload-campaign-cross-compile",
+        "Cross-compile the segmented campaign codec tests for portable targets",
+    );
+    for (native_workload_report_cross_targets) |cross_query| {
+        const cross_target = b.resolveTargetQuery(cross_query);
+        const cross_campaign_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "src/core/native_workload_campaign_manifest.zig",
+                ),
+                .target = cross_target,
+                .optimize = optimize,
+            }),
+        });
+        native_workload_campaign_cross_compile_step.dependOn(
+            &cross_campaign_tests.step,
+        );
+    }
+    test_step.dependOn(native_workload_campaign_test_step);
+    test_compile_step.dependOn(
+        native_workload_campaign_compile_step,
+    );
+
     // W5b-a is an explicitly invoked native macOS gate. Its Python verifier
     // launches the only real fixed-input Metal dispatch after all pure Zig
     // and Python mutation tests finish. Unlike the broad test suite, this
@@ -1741,9 +1824,21 @@ pub fn build(b: *std.Build) void {
         "native-metal-disruption-report-compile",
         "Compile the production-native Metal disruption report producer",
     );
+    const native_metal_soak_report_test_step = b.step(
+        "native-metal-soak-report-test",
+        "Run the hard 60-second segmented native Metal soak gate",
+    );
+    const native_metal_soak_report_pure_test_step = b.step(
+        "native-metal-soak-report-pure-test",
+        "Run pure segmented Metal soak supervisor and store tests",
+    );
+    const native_metal_soak_report_compile_step = b.step(
+        "native-metal-soak-report-compile",
+        "Compile the persistent native Metal soak worker",
+    );
     const native_metal_suite_test_step = b.step(
         "native-metal-suite-test",
-        "Run serialized Metal readiness, allocation, workload-report, disruption, fault, and correctness gates",
+        "Run serialized Metal readiness, allocation, workload-report, disruption, soak, fault, and correctness gates",
     );
     if (metal_shim != null and
         builtin.os.tag == .macos and
@@ -2100,6 +2195,138 @@ pub fn build(b: *std.Build) void {
             &run_native_metal_disruption_report_verifier.step,
         );
 
+        // W7b keeps one Metal backend alive for six paced five-second
+        // segments, checkpoints every independently verified W7 wire, then
+        // repeats in a fresh worker process. This makes the 60-second soak
+        // gate serialized with W7a while preserving a focused invocation.
+        const native_metal_soak_worker_exe = b.addExecutable(.{
+            .name = "glacier-native-metal-soak-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "examples/native_metal_soak_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+        native_metal_soak_worker_exe.root_module.addImport(
+            "engine",
+            engine_mod,
+        );
+        native_metal_soak_worker_exe.linkLibC();
+        native_metal_soak_worker_exe.linkLibrary(shim);
+        native_metal_soak_worker_exe.linkFramework("Metal");
+        native_metal_soak_worker_exe.linkFramework("Foundation");
+        native_metal_soak_report_compile_step.dependOn(
+            &native_metal_soak_worker_exe.step,
+        );
+
+        const run_native_metal_soak_report_model =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "unittest",
+                "bench.tests.test_native_metal_soak_report",
+                "bench.tests.test_native_metal_soak_protocol",
+            });
+        run_native_metal_soak_report_model.setCwd(b.path("."));
+        run_native_metal_soak_report_model.setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_native_metal_soak_report_model.setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+        run_native_metal_soak_report_model.step.dependOn(
+            &run_native_workload_campaign_model.step,
+        );
+        run_native_metal_soak_report_model.step.dependOn(
+            &run_native_metal_disruption_report_model.step,
+        );
+        native_metal_soak_report_pure_test_step.dependOn(
+            &run_native_metal_soak_report_model.step,
+        );
+        native_metal_soak_report_pure_test_step.dependOn(
+            &run_native_workload_campaign_tests.step,
+        );
+
+        const run_native_metal_soak_report_verifier =
+            b.addSystemCommand(&.{"python3"});
+        const run_native_metal_soak_report_suite =
+            b.addSystemCommand(&.{"python3"});
+        for ([_]*std.Build.Step.Run{
+            run_native_metal_soak_report_verifier,
+            run_native_metal_soak_report_suite,
+        }) |run_soak| {
+            run_soak.setCwd(b.path("."));
+            run_soak.setEnvironmentVariable(
+                "PYTHONDONTWRITEBYTECODE",
+                "1",
+            );
+            run_soak.setEnvironmentVariable(
+                "PYTHONPATH",
+                ".",
+            );
+            run_soak.addFileArg(
+                b.path("bench/native_metal_soak_report.py"),
+            );
+            run_soak.addArg("--worker");
+            run_soak.addArtifactArg(native_metal_soak_worker_exe);
+            run_soak.addArg("--metallib");
+            run_soak.addArg(metal_library_path);
+            run_soak.step.dependOn(&native_metal_lib.step);
+            run_soak.step.dependOn(
+                &run_native_metal_soak_report_model.step,
+            );
+            run_soak.step.dependOn(
+                &run_native_workload_campaign_tests.step,
+            );
+        }
+        if (native_metal_soak_output_dir) |path| {
+            run_native_metal_soak_report_verifier.addArg(
+                "--output-dir",
+            );
+            run_native_metal_soak_report_verifier.addArg(path);
+            const verify_native_metal_soak_store =
+                b.addSystemCommand(&.{"python3"});
+            verify_native_metal_soak_store.setCwd(b.path("."));
+            verify_native_metal_soak_store.setEnvironmentVariable(
+                "PYTHONDONTWRITEBYTECODE",
+                "1",
+            );
+            verify_native_metal_soak_store.setEnvironmentVariable(
+                "PYTHONPATH",
+                ".",
+            );
+            verify_native_metal_soak_store.addFileArg(
+                b.path("bench/native_metal_soak_report.py"),
+            );
+            verify_native_metal_soak_store.addArg("--worker");
+            verify_native_metal_soak_store.addArtifactArg(
+                native_metal_soak_worker_exe,
+            );
+            verify_native_metal_soak_store.addArg("--metallib");
+            verify_native_metal_soak_store.addArg(metal_library_path);
+            verify_native_metal_soak_store.addArg("--output-dir");
+            verify_native_metal_soak_store.addArg(path);
+            verify_native_metal_soak_store.addArg("--verify-store");
+            verify_native_metal_soak_store.step.dependOn(
+                &run_native_metal_soak_report_verifier.step,
+            );
+            native_metal_soak_report_test_step.dependOn(
+                &verify_native_metal_soak_store.step,
+            );
+        } else {
+            native_metal_soak_report_test_step.dependOn(
+                &run_native_metal_soak_report_verifier.step,
+            );
+        }
+        run_native_metal_soak_report_suite.step.dependOn(
+            &run_native_metal_disruption_report_suite.step,
+        );
+
         // The fault shim is a second, non-installed build of the same bridge.
         // Its control symbols and state exist only when this private macro is
         // set and never enter the normal engine module or production archive.
@@ -2235,7 +2462,7 @@ pub fn build(b: *std.Build) void {
             &check_metal_fault_symbols.step,
         );
         run_native_metal_fault_suite.step.dependOn(
-            &run_native_metal_disruption_report_suite.step,
+            &run_native_metal_soak_report_suite.step,
         );
         const run_native_metal_correctness_suite =
             b.addRunArtifact(metal_tests);
@@ -2293,6 +2520,15 @@ pub fn build(b: *std.Build) void {
             &native_metal_failure.step,
         );
         native_metal_disruption_report_compile_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_soak_report_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_soak_report_pure_test_step.dependOn(
+            &native_metal_failure.step,
+        );
+        native_metal_soak_report_compile_step.dependOn(
             &native_metal_failure.step,
         );
         native_metal_suite_test_step.dependOn(

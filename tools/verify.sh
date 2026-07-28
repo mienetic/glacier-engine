@@ -614,7 +614,10 @@ if [ "$profile" = "affected" ] &&
             run_zig_build \
             native-workload-report-test \
             native-workload-report-compile \
-            native-workload-report-cross-compile
+            native-workload-report-cross-compile \
+            native-workload-campaign-test \
+            native-workload-campaign-compile \
+            native-workload-campaign-cross-compile
     else
         record_skip "portable/workload-report" \
             "requires working zig and python3 executables"

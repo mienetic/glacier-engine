@@ -147,6 +147,7 @@ METAL_NATIVE_SOURCE_PATHS = {
     "tests/support/metal_fault_control.zig",
     "examples/native_metal_disruption_report.zig",
     "examples/native_metal_observation.zig",
+    "examples/native_metal_soak_worker.zig",
     "examples/native_metal_workload_report.zig",
     "bench/metal_kernel.zig",
 }
@@ -186,9 +187,12 @@ DURABLE_RUNTIME_PROFILE_PATHS = {
 }
 
 WORKLOAD_REPORT_PORTABLE_PATHS = {
+    "src/core/native_workload_campaign_manifest.zig",
     "src/core/native_workload_report.zig",
     "examples/native_workload_report.zig",
+    "bench/native_workload_campaign.py",
     "bench/native_workload_report.py",
+    "bench/tests/test_native_workload_campaign.py",
     "bench/tests/test_native_workload_report.py",
 }
 
@@ -616,8 +620,11 @@ def _decision_for_path(path: str) -> PathDecision:
         if lower in {
             "bench/native_metal_disruption_report.py",
             "bench/native_metal_readiness.py",
+            "bench/native_metal_soak_report.py",
             "bench/native_metal_workload_report.py",
             "bench/tests/test_native_metal_disruption_report.py",
+            "bench/tests/test_native_metal_soak_protocol.py",
+            "bench/tests/test_native_metal_soak_report.py",
             "bench/tests/test_native_metal_workload_report.py",
         }:
             python_flags.add("metal-native")

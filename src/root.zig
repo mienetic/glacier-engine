@@ -39,6 +39,8 @@ pub const native_observation_runner =
     core.native_observation_runner;
 pub const native_workload_report =
     core.native_workload_report;
+pub const native_workload_campaign_manifest =
+    core.native_workload_campaign_manifest;
 pub const tool_action_contract = core.tool_action_contract;
 pub const tool_action_harness = core.tool_action_harness;
 pub const tool_action_outbox_record =
@@ -120,6 +122,8 @@ pub const NativeObservationContract =
     core.NativeObservationContract;
 pub const NativeObservationRunner = core.NativeObservationRunner;
 pub const NativeWorkloadReport = core.NativeWorkloadReport;
+pub const NativeWorkloadCampaignManifest =
+    core.NativeWorkloadCampaignManifest;
 pub const ToolActionContract = core.ToolActionContract;
 pub const ToolActionHarness = core.ToolActionHarness;
 pub const ToolActionOutboxRecord = core.ToolActionOutboxRecord;

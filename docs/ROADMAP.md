@@ -37,8 +37,8 @@ evidence. The plane and model-family sequence is specified in the
 | Context efficiency | Integrated fixture | Lossless mapping, exact wire observations, reconciled admission | Real adapter campaigns and privacy review |
 | Durable provider evidence | Integrated; outer inspection prototype | Crash-recoverable journal, compact evidence join, and a deterministic read-only inspector for outer framing/checksum and self-asserted fields | Optional caller-supplied nested-composition inspection, export, retention, and operational policy |
 | Platform portability | macOS development host plus cross-build candidates | Portable wires/state machines, CPU fallbacks, exported package modules, a compile-time adapter-availability inventory, target-specific affected-path selection with named core/CPU/durable/device/host-tool profiles, a complete consumer compile closure, and full per-target fallback, one shared DAG per selected target, a CLI-only default install with opt-in benchmarks, full production/benchmark/test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64, POSIX/Windows read-only model mapping, portable process-ID/forced-termination fixtures, and Android/iOS AArch64 core compile probes | Separate durable POSIX authority from the transitional core; promote verification profiles into distributable products; add native Linux/Windows/FreeBSD CPU, mapping, recovery, telemetry, and packaging gates; then add mobile lifecycle gates and a reduced edge profile |
-| Benchmark evidence | W6a portable reports, W6b production-native Metal reports, and W7a controlled-disruption recovery integrated with W5a, a bounded Linux host source, native macOS Metal diagnostic readiness, allocation/pinned-dispatch ownership, bounded two-slot lifetime evidence, lifecycle no-event evidence, and build-isolated fault/reconciliation conformance | Paired harnesses, machine envelope, fixed native-observation ABI, strict Linux `MemAvailable` parsing, one fixed readiness dispatch, the retained W6b 20-command capture, and a separate 50-epoch W7a campaign retaining 250 records around 100 real Metal commands, 50 pre-submit cancellations, 50 malformed pre-submit rejections, 50 full-slot rejections, CPU-oracle correctness, direct same-command GPU timing, bounded persistent ownership, independent wire/profile verification, and 200/200 terminal pin closure; controlled disruptions are not physical faults, logical slots are not physical parallelism, and `currentAllocatedSize` is not residency | Retain reproducible native Linux and broader Metal campaign matrices; add duration-bounded segmented soak, process/storage/cancellation disruption, removable-hardware notification, direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters; and add reproducible native machines |
-| Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, W5a, bounded W5b Linux-source and macOS Metal readiness implementations, the native bounded two-slot proof, W6a/W6b reports, and W7a native controlled-disruption recovery integrated; W4b, W5, W7b, and W8 remain open | W7a feeds the unchanged report contract from 50 fixed epochs, requires two controlled pre-submit outcomes to settle before each real two-command Metal pair, proves a distinct full-slot request preserves the named public snapshots, tickets, and generation cursors, verifies both GPU outputs against CPU oracles, revalidates device/placement identity per epoch, retains exact host/device clock domains and schedule identities, and closes with zero ownership; it makes no duration-soak, physical-fault, performance, hardware-queue, residency, utilization, or physical-parallel claim | Next: remaining W4 profiles, retained native Linux and broader Metal observer/campaign evidence, direct physical CPU/GPU adapters, W7b duration-bounded and broader disruption campaigns, and W8 native multi-OS replication |
+| Benchmark evidence | W6a portable reports, W6b production-native Metal reports, W7a controlled-disruption recovery, and W7b-a segmented soak integrated with W5a, a bounded Linux host source, native macOS Metal diagnostic readiness, allocation/pinned-dispatch ownership, bounded two-slot lifetime evidence, lifecycle no-event evidence, and build-isolated fault/reconciliation conformance | Paired harnesses, machine envelope, fixed native-observation ABI, strict Linux `MemAvailable` parsing, one fixed readiness dispatch, the retained W6b 20-command capture, the 50-epoch W7a campaign, and the W7b-a canonical campaign codec/selector, optional content-addressed store, offline verifier, and hard native gate: 12 by 50 paced epochs, a 60-second minimum, 1,200 real Metal commands across two worker generations, exact closure, process RSS, and bounded `currentAllocatedSize` context; controlled disruptions are not physical faults, and `currentAllocatedSize` is not residency | Retain reproducible native Linux and broader Metal campaign matrices; complete W7b-b process/storage/cancellation and physical-fault work; add removable-hardware notification plus direct CPU/device power, thermal, frequency, utilization, residency, and energy adapters; and add reproducible native machines |
+| Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, W5a, bounded W5b Linux-source and macOS Metal readiness implementations, the native bounded two-slot proof, W6a/W6b reports, W7a native controlled-disruption recovery, and W7b-a segmented soak integrated; W4b, W5, W7b-b, and W8 remain open | W7b-a chains 12 independently verified W7 reports across two clean worker generations, covers 600 paced epochs and 1,200 correctness-gated real commands in at least 60 seconds, publishes each canonical manifest/selector prefix, optionally retains a bounded store for offline audit without append or resume authority, bounds process RSS and device-wide `currentAllocatedSize` context per generation, and closes exact ownership; it makes no performance, physical-fault, hardware-queue, residency, utilization, or physical-parallel claim | Next: remaining W4 profiles, retained native Linux and broader Metal observer/campaign evidence, direct physical CPU/GPU adapters, W7b-b broader process/storage/cancellation and physical-fault campaigns, and W8 native multi-OS replication |
 | Weight paging | Prototype | Tested mechanics and precision rejection | Real generation integration without eager duplicate weights |
 
 ## P0 — Open-source usability
@@ -543,10 +543,27 @@ process, clock, telemetry, and accelerator authority into explicit adapters.
   performance result, residency observation, or physical-parallelism claim.
   See
   [Native Metal controlled-disruption report](NATIVE_METAL_DISRUPTION_REPORT.md).
-- [ ] Retain native per-OS mixed-family load and bounded soak campaigns with
-  CPU/GPU identity and placement, host/device timing, memory residency, power,
-  thermal, backend, fault-schedule, memory-growth, recovery, and zero-orphan
-  evidence.
+- [x] Complete W7b-a with a bounded production-native segmented-soak gate and
+  canonical campaign layer. Twelve independently verified 50-epoch W7 reports
+  cover 600 paced epochs, 3,000 raw records, and 1,200 CPU-oracle-checked real
+  Metal commands in a minimum of 60 seconds across two persistent worker
+  generations separated by one planned clean restart. The fixed-width
+  manifest and selector publish only contiguous verified prefixes; the
+  optional content-addressed store synchronizes each segment, immutable
+  manifest, environment snapshot, and active selector, then reopens through an
+  offline verifier after the writer closes. The active prefix is an audit
+  anchor and does not authorize append or resume. Per-generation bounds use
+  process RSS and device-wide Metal `currentAllocatedSize` observations. The
+  latter is allocation context, not residency, owned GPU memory, utilization,
+  or physical parallelism. Pure supervisor/store tests are model evidence;
+  only the hard native gate executes the 1,200 commands. See the
+  [Native Metal segmented soak report](NATIVE_METAL_SOAK_REPORT.md).
+- [ ] Complete W7b-b with reproducible process-kill, storage-exhaustion,
+  cancellation-storm, removable-hardware, driver, and power-fault campaigns;
+  retain exact fault schedules, recovery/closure evidence, and only those
+  physical metrics supplied by direct observers. Continue native per-OS
+  mixed-family campaign replication without treating cross-compilation or
+  deterministic fault models as native evidence.
 
 See [Deterministic Workload Pressure](WORKLOAD_PRESSURE.md) for the implemented
 V1 contract, exact reference campaign, claim boundary, and contributor slices.
@@ -575,8 +592,11 @@ summary algorithm, independent-verification boundary, portable and
 production-native gates, retention boundary, and physical-evidence nonclaims.
 See
 [Native Metal controlled-disruption report](NATIVE_METAL_DISRUPTION_REPORT.md)
-for the W7a schedule, native-versus-controlled evidence boundary, recovery
-checks, and remaining duration-soak work.
+for the W7a schedule, native-versus-controlled evidence boundary, and recovery
+checks. See
+[Native Metal segmented soak report](NATIVE_METAL_SOAK_REPORT.md) for the
+W7b-a campaign codec, two-generation schedule, durable store, offline
+verification, memory-observation boundary, and remaining W7b-b work.
 See [Runtime Workload Lab](RUNTIME_WORKLOAD_LAB.md) for the W0–W8 workload,
 native-observation, resilience, and platform-replication sequence.
 See [Platform Portability](PLATFORM_PORTABILITY.md) for the evidence matrix,
@@ -1517,8 +1537,14 @@ The readiness invocation retains no addressable result. The separate W6b
 campaign can retain its raw wire at an explicitly requested path only after
 portable and native-profile verification. Both remain self-asserted live
 captures with composition/corruption verification rather than cryptographic
-authentication. W5b remains open for direct physical observers and broader
-native coverage.
+authentication. W7b-a now composes 12 such independently verified segments
+through a canonical manifest, selector, optional synchronized store, and
+offline verifier across two worker generations. Its minimum 60-second schedule
+retains process RSS and device-wide `currentAllocatedSize` bounds, but neither
+the schedule nor the latter allocation context supplies GPU residency,
+utilization, power, thermal, frequency, energy, or leak-freedom evidence. W5b
+remains open for direct physical observers and broader native coverage; W7b-b
+remains open for broader fault campaigns.
 
 The Stage-5 device capability slice separately binds stable Metal facts to a
 portable capability fingerprint, one local discovery epoch, and the dispatch

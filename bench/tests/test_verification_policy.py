@@ -52,6 +52,7 @@ EXPECTED_METAL_NATIVE_SOURCE_PATHS = frozenset(
         "tests/support/metal_fault_control.zig",
         "examples/native_metal_disruption_report.zig",
         "examples/native_metal_observation.zig",
+        "examples/native_metal_soak_worker.zig",
         "examples/native_metal_workload_report.zig",
         "bench/metal_kernel.zig",
     }
@@ -101,9 +102,12 @@ EXPECTED_DURABLE_RUNTIME_PROFILE_PATHS = frozenset(
 
 EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
     {
+        "src/core/native_workload_campaign_manifest.zig",
         "src/core/native_workload_report.zig",
         "examples/native_workload_report.zig",
+        "bench/native_workload_campaign.py",
         "bench/native_workload_report.py",
+        "bench/tests/test_native_workload_campaign.py",
         "bench/tests/test_native_workload_report.py",
     }
 )
@@ -204,6 +208,30 @@ class VerificationPolicyTests(unittest.TestCase):
         for changed_path in (
             "bench/native_metal_disruption_report.py",
             "bench/tests/test_native_metal_disruption_report.py",
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    plan.flags,
+                    frozenset(
+                        {
+                            "python-changed",
+                            "python-full",
+                            "metal-native",
+                        }
+                    ),
+                )
+
+    def test_native_metal_soak_paths_select_hardware_gate(self):
+        plan = self.assert_targets(
+            ["examples/native_metal_soak_worker.zig"],
+            (),
+        )
+        self.assertEqual(plan.flags, frozenset({"metal-native"}))
+        for changed_path in (
+            "bench/native_metal_soak_report.py",
+            "bench/tests/test_native_metal_soak_protocol.py",
+            "bench/tests/test_native_metal_soak_report.py",
         ):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
@@ -1395,6 +1423,9 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                     "build native-workload-report-test "
                     "native-workload-report-compile "
                     "native-workload-report-cross-compile "
+                    "native-workload-campaign-test "
+                    "native-workload-campaign-compile "
+                    "native-workload-campaign-cross-compile "
                 )
             ]
             self.assertEqual(1, len(report_calls), report_calls)
