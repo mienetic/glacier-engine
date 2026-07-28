@@ -40,9 +40,7 @@ FOCUSED_TARGET_STEPS: Tuple[str, ...] = (
     "profile-device-compile",
     "profile-host-tool-compile",
 )
-COMPLETE_COMPILE_TARGET_STEPS: Tuple[str, ...] = (
-    "profile-complete-compile",
-)
+COMPLETE_COMPILE_TARGET_STEPS: Tuple[str, ...] = ("profile-complete-compile",)
 
 GITHUB_CONTROL_PREFIXES = (
     ".github/workflows/",
@@ -72,9 +70,7 @@ POLICY_CONTROL_PATHS = {
             "workload-store-fault-posix",
         }
     ),
-    "tools/zig-with-ephemeral-cache.sh": frozenset(
-        {"python-full", "shell-changed"}
-    ),
+    "tools/zig-with-ephemeral-cache.sh": frozenset({"python-full", "shell-changed"}),
     "tools/check-metal-fault-isolation.sh": frozenset(
         {"metal-native", "shell-changed"}
     ),
@@ -203,6 +199,20 @@ DURABLE_RUNTIME_PROFILE_PATHS = {
     "bench/continuation_checkpoint_file_worker.zig",
 }
 
+PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS = {
+    "src/prepared_text_acknowledged_delivery.zig",
+    "src/prepared_text_result_sink.zig",
+    "src/prepared_text_result_sink_file.zig",
+    "src/prepared_text_acknowledged_progress.zig",
+    "src/prepared_text_acknowledged_restore.zig",
+}
+
+PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS = {
+    "bench/prepared_text_recovery_worker.zig",
+    "bench/prepared_text_recovery_campaign.py",
+    "bench/tests/test_prepared_text_recovery_campaign.py",
+}
+
 WORKLOAD_REPORT_PORTABLE_PATHS = {
     "src/core/native_metal_supervisor_recovery_death_report.zig",
     "src/core/native_workload_campaign_manifest.zig",
@@ -285,15 +295,11 @@ def read_paths0(path: Union[os.PathLike, str]) -> Tuple[str, ...]:
     return _decode_paths0(Path(path).read_bytes(), "the affected path stream")
 
 
-def write_paths0(
-    paths: Sequence[str], output: Union[os.PathLike, str]
-) -> None:
+def write_paths0(paths: Sequence[str], output: Union[os.PathLike, str]) -> None:
     normalized = tuple(
         sorted({_validated_path(path) for path in paths}, key=os.fsencode)
     )
-    Path(output).write_bytes(
-        b"".join(os.fsencode(path) + b"\0" for path in normalized)
-    )
+    Path(output).write_bytes(b"".join(os.fsencode(path) + b"\0" for path in normalized))
 
 
 def collect_git_paths(
@@ -304,8 +310,7 @@ def collect_git_paths(
 
     if (
         not isinstance(merge_base, str)
-        or re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", merge_base)
-        is None
+        or re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", merge_base) is None
     ):
         raise ValueError("merge base must be a full Git commit object ID")
     commands = (
@@ -363,9 +368,7 @@ def collect_git_paths(
                 "Git path output from " + " ".join(command[:3]),
             )
         )
-    return tuple(
-        sorted({_validated_path(path) for path in paths}, key=os.fsencode)
-    )
+    return tuple(sorted({_validated_path(path) for path in paths}, key=os.fsencode))
 
 
 def _is_documentation_or_metadata(path: str) -> bool:
@@ -408,9 +411,7 @@ def _has_basename_token(path: str, name: str) -> bool:
     lower = path.lower()
     components = lower.split("/")
     stem = Path(components[-1]).stem
-    basename_tokens = tuple(
-        token for token in re.split(r"[^a-z0-9]+", stem) if token
-    )
+    basename_tokens = tuple(token for token in re.split(r"[^a-z0-9]+", stem) if token)
     return name in basename_tokens
 
 
@@ -419,9 +420,7 @@ def _platform_requirements(
 ) -> Tuple[FrozenSet[str], Tuple[str, ...]]:
     flags = set()
     selected_targets = set()
-    if _has_platform_token(path, "darwin") or _has_platform_token(
-        path, "macos"
-    ):
+    if _has_platform_token(path, "darwin") or _has_platform_token(path, "macos"):
         flags.add("darwin-native")
     if _has_platform_token(path, "windows"):
         selected_targets.update(WINDOWS_TARGETS)
@@ -429,22 +428,16 @@ def _platform_requirements(
         selected_targets.update(LINUX_TARGETS)
     if _has_platform_token(path, "freebsd"):
         selected_targets.update(FREEBSD_TARGETS)
-    if _has_platform_token(path, "posix") or _has_platform_token(
-        path, "unix"
-    ):
+    if _has_platform_token(path, "posix") or _has_platform_token(path, "unix"):
         selected_targets.update(POSIX_TARGETS)
         flags.add("darwin-native")
-    targets = tuple(
-        target for target in RETAINED_TARGETS if target in selected_targets
-    )
+    targets = tuple(target for target in RETAINED_TARGETS if target in selected_targets)
     return frozenset(flags), targets
 
 
 def _is_github_control(path: str) -> bool:
     lower = path.lower()
-    return lower in GITHUB_CONTROL_PATHS or lower.startswith(
-        GITHUB_CONTROL_PREFIXES
-    )
+    return lower in GITHUB_CONTROL_PATHS or lower.startswith(GITHUB_CONTROL_PREFIXES)
 
 
 def _compiled_flags(suffix: str) -> FrozenSet[str]:
@@ -474,9 +467,7 @@ def _decision_for_path(path: str) -> PathDecision:
     policy_flags = POLICY_CONTROL_PATHS.get(lower)
     if policy_flags is not None:
         policy_targets = (
-            ()
-            if lower == "tools/zig-with-ephemeral-cache.sh"
-            else RETAINED_TARGETS
+            () if lower == "tools/zig-with-ephemeral-cache.sh" else RETAINED_TARGETS
         )
         return PathDecision(
             path,
@@ -588,8 +579,7 @@ def _decision_for_path(path: str) -> PathDecision:
         return PathDecision(
             path,
             "portable Metal public surface changed; compile every retained target and run native Metal",
-            _compiled_flags(suffix) |
-            frozenset({"metal-native"}),
+            _compiled_flags(suffix) | frozenset({"metal-native"}),
             RETAINED_TARGETS,
             ("profile-device-compile",),
         )
@@ -632,6 +622,27 @@ def _decision_for_path(path: str) -> PathDecision:
             ("profile-durable-compile",),
         )
 
+    if path in PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS:
+        return PathDecision(
+            path,
+            "prepared-text acknowledged delivery or durable recovery changed",
+            _compiled_flags(suffix),
+            RETAINED_TARGETS,
+            ("profile-durable-compile",),
+        )
+
+    if path in PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS:
+        recovery_flags = set(_compiled_flags(suffix))
+        if suffix == ".py":
+            recovery_flags.add("python-changed")
+        return PathDecision(
+            path,
+            "prepared-text real process-death campaign changed",
+            frozenset(recovery_flags),
+            POSIX_TARGETS,
+            ("profile-durable-compile",),
+        )
+
     if (
         path != "src/core/root.zig"
         and path.startswith("src/core/")
@@ -645,13 +656,9 @@ def _decision_for_path(path: str) -> PathDecision:
             COMPLETE_COMPILE_TARGET_STEPS,
         )
 
-    if (
-        (
-            path.startswith("src/backends/cpu/")
-            or path.startswith("src/model/")
-        )
-        and Path(path).suffix == ".zig"
-    ):
+    if (path.startswith("src/backends/cpu/") or path.startswith("src/model/")) and Path(
+        path
+    ).suffix == ".zig":
         return PathDecision(
             path,
             "CPU runtime or model implementation changed",
@@ -660,10 +667,7 @@ def _decision_for_path(path: str) -> PathDecision:
             COMPLETE_COMPILE_TARGET_STEPS,
         )
 
-    if (
-        path.startswith("src/cli/")
-        and Path(path).suffix == ".zig"
-    ):
+    if path.startswith("src/cli/") and Path(path).suffix == ".zig":
         return PathDecision(
             path,
             "CLI or retained host inspector changed",
@@ -734,14 +738,11 @@ def _decision_for_path(path: str) -> PathDecision:
             RETAINED_TARGETS,
         )
 
-    if (
-        suffix in SHARED_CODE_SUFFIXES
-        and (
-            path.startswith("src/backends/metal/")
-            or (
-                first_component in {"bench", "examples", "tests"}
-                and _has_basename_token(path, "metal")
-            )
+    if suffix in SHARED_CODE_SUFFIXES and (
+        path.startswith("src/backends/metal/")
+        or (
+            first_component in {"bench", "examples", "tests"}
+            and _has_basename_token(path, "metal")
         )
     ):
         return PathDecision(
@@ -769,9 +770,7 @@ def _decision_for_path(path: str) -> PathDecision:
     if lower in BUILD_CONTROL_PATHS:
         build_flags = {"native-full", "python-full"}
         if lower in {"build.zig", "build.zig.zon"}:
-            build_flags.update(
-                {"metal-native", "workload-store-fault-posix"}
-            )
+            build_flags.update({"metal-native", "workload-store-fault-posix"})
         return PathDecision(
             path,
             "build or package control changed; validate every retained target",
@@ -816,14 +815,10 @@ def _validated_decision_steps(
         not steps
         or len(set(steps)) != len(steps)
         or any(step not in FOCUSED_TARGET_STEPS for step in steps)
-        or tuple(
-            step for step in FOCUSED_TARGET_STEPS if step in steps
-        )
-        != steps
+        or tuple(step for step in FOCUSED_TARGET_STEPS if step in steps) != steps
     ):
         raise ValueError(
-            "path decision has an invalid target-step plan: "
-            + decision.path
+            "path decision has an invalid target-step plan: " + decision.path
         )
     return steps
 
@@ -840,9 +835,7 @@ def _build_target_plans(
         steps = _validated_decision_steps(decision)
         for target in decision.targets:
             if target not in selected_steps:
-                raise ValueError(
-                    "path decision selected an unknown target: " + target
-                )
+                raise ValueError("path decision selected an unknown target: " + target)
             if steps == FULL_TARGET_STEPS:
                 full_targets.add(target)
             elif steps == COMPLETE_COMPILE_TARGET_STEPS:
@@ -864,9 +857,7 @@ def _build_target_plans(
             )
             continue
         steps = tuple(
-            step
-            for step in FOCUSED_TARGET_STEPS
-            if step in selected_steps[target]
+            step for step in FOCUSED_TARGET_STEPS if step in selected_steps[target]
         )
         if steps:
             plans.append(TargetBuildPlan(target, steps))
@@ -878,9 +869,7 @@ def classify_paths(paths: Iterable[str]) -> VerificationPlan:
     ordered_paths = tuple(sorted(unique_paths, key=os.fsencode))
     decisions = tuple(_decision_for_path(path) for path in ordered_paths)
 
-    flags = frozenset(
-        flag for decision in decisions for flag in decision.flags
-    )
+    flags = frozenset(flag for decision in decisions for flag in decision.flags)
     target_plans = _build_target_plans(decisions)
     targets = tuple(target_plan.target for target_plan in target_plans)
     return VerificationPlan(
@@ -911,8 +900,7 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
             names.append(label)
     target_step_label = "+".join(decision.target_steps)
     names.extend(
-        "portability/" + target + "/" + target_step_label
-        for target in decision.targets
+        "portability/" + target + "/" + target_step_label for target in decision.targets
     )
     return tuple(names)
 
@@ -946,12 +934,7 @@ def print_report(plan: VerificationPlan) -> None:
     if plan.target_plans:
         print("Selected target plans:")
         for target_plan in plan.target_plans:
-            print(
-                "  "
-                + target_plan.target
-                + ": "
-                + ", ".join(target_plan.steps)
-            )
+            print("  " + target_plan.target + ": " + ", ".join(target_plan.steps))
     else:
         print("Selected target plans: (none)")
 
@@ -962,17 +945,12 @@ def write_flags(plan: VerificationPlan, output: Union[os.PathLike, str]) -> None
     Path(output).write_text("".join(flag + "\n" for flag in flags), encoding="utf-8")
 
 
-def write_targets(
-    targets: Sequence[str], output: Union[os.PathLike, str]
-) -> None:
-    if (
-        len(set(targets)) != len(targets)
-        or any(target not in RETAINED_TARGETS for target in targets)
+def write_targets(targets: Sequence[str], output: Union[os.PathLike, str]) -> None:
+    if len(set(targets)) != len(targets) or any(
+        target not in RETAINED_TARGETS for target in targets
     ):
         raise ValueError("target plan is not a unique retained-target subset")
-    ordered_targets = tuple(
-        target for target in RETAINED_TARGETS if target in targets
-    )
+    ordered_targets = tuple(target for target in RETAINED_TARGETS if target in targets)
     if tuple(targets) != ordered_targets:
         raise ValueError("target plan is not in retained-target order")
     Path(output).write_text(
@@ -989,12 +967,9 @@ def write_target_steps(
     if (
         len(set(targets)) != len(targets)
         or any(target not in RETAINED_TARGETS for target in targets)
-        or targets
-        != tuple(target for target in RETAINED_TARGETS if target in targets)
+        or targets != tuple(target for target in RETAINED_TARGETS if target in targets)
     ):
-        raise ValueError(
-            "target-step plan is not a unique retained-target subset"
-        )
+        raise ValueError("target-step plan is not a unique retained-target subset")
 
     records = []
     for target_plan in target_plans:
@@ -1027,9 +1002,7 @@ def _shell_syntax_command(path: Path) -> Tuple[str, ...]:
     with path.open("rb") as source:
         first_line = source.readline(MAXIMUM_SHEBANG_BYTES + 1)
     if len(first_line) > MAXIMUM_SHEBANG_BYTES:
-        raise ValueError(
-            str(path) + " has a shebang outside the retained byte bound"
-        )
+        raise ValueError(str(path) + " has a shebang outside the retained byte bound")
     try:
         shebang = first_line.rstrip(b"\r\n").decode("ascii")
     except UnicodeDecodeError as error:

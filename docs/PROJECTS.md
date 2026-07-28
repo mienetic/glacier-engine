@@ -912,10 +912,25 @@ restored transition with uninterrupted output, logical KV, RNG, and sampling
 state, then closes allocator backing, funded ownership, the tree, receipt, and
 Scheduler lane to zero. Fresh-session publication remains base zero.
 
-**Next slice:** compose the prepared checkpoint and successor records through a
-durable selector, prove source exit and exclusive target ownership across a
-process boundary, then compare uninterrupted and resumed terminal results.
-Process-local activation is not evidence for those properties.
+**Completed durable handoff slice:** the checkpoint and successor records now
+form a canonical five-object restart archive. A source-live grant closes exact
+publication authority before generation two is selected; a distinct target
+process holds the exclusive lease, consumes one activation grant, restores at
+the global sequence, and matches an independently completed terminal semantic.
+See [Durable Prepared-Text Handoff](PREPARED_TEXT_DURABLE_HANDOFF.md).
+
+**Completed R1i target-recovery slice:** a canonical ACK and idempotent local
+POSIX sink now precede each progress selector. Distinct one-token targets
+advance generation two through terminal generation five while a 19-point real
+`SIGKILL` campaign accepts only previous or exact-successor roots and
+independently checks the three-token acknowledged suffix against the complete
+four-token oracle. See
+[Acknowledged Prepared-Text Delivery](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md).
+
+**Next slice:** recover source interruption before generation two and during
+initial sink creation without inventing exit or acknowledgement evidence, then
+move the same contract to a declared redistributable model/tokenizer fixture
+and retained native POSIX hosts.
 
 ### Paged-KV ownership restore fixture
 

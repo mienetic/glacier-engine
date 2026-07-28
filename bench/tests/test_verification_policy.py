@@ -105,6 +105,24 @@ EXPECTED_DURABLE_RUNTIME_PROFILE_PATHS = frozenset(
     }
 )
 
+EXPECTED_PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS = frozenset(
+    {
+        "src/prepared_text_acknowledged_delivery.zig",
+        "src/prepared_text_result_sink.zig",
+        "src/prepared_text_result_sink_file.zig",
+        "src/prepared_text_acknowledged_progress.zig",
+        "src/prepared_text_acknowledged_restore.zig",
+    }
+)
+
+EXPECTED_PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS = frozenset(
+    {
+        "bench/prepared_text_recovery_worker.zig",
+        "bench/prepared_text_recovery_campaign.py",
+        "bench/tests/test_prepared_text_recovery_campaign.py",
+    }
+)
+
 EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
     {
         "src/core/native_metal_supervisor_recovery_death_report.zig",
@@ -173,9 +191,7 @@ class VerificationPolicyTests(unittest.TestCase):
             ".github/dependabot.yml",
         ):
             with self.subTest(changed_path=changed_path):
-                plan = self.assert_targets(
-                    [changed_path], policy.RETAINED_TARGETS
-                )
+                plan = self.assert_targets([changed_path], policy.RETAINED_TARGETS)
                 self.assertTrue(plan.requires("native-full"))
                 self.assertTrue(plan.requires("python-full"))
 
@@ -192,9 +208,7 @@ class VerificationPolicyTests(unittest.TestCase):
         plan = self.assert_targets(["bench/native_metal_readiness.py"], ())
         self.assertEqual(
             plan.flags,
-            frozenset(
-                {"python-changed", "python-full", "metal-native"}
-            ),
+            frozenset({"python-changed", "python-full", "metal-native"}),
         )
 
     def test_native_metal_workload_report_paths_select_hardware_gate(self):
@@ -324,10 +338,7 @@ class VerificationPolicyTests(unittest.TestCase):
     ):
         for changed_path in (
             "bench/native_metal_supervisor_recovery_death_campaign.py",
-            (
-                "bench/tests/"
-                "test_native_metal_supervisor_recovery_death_protocol.py"
-            ),
+            ("bench/tests/test_native_metal_supervisor_recovery_death_protocol.py"),
         ):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
@@ -392,9 +403,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 self.assertTrue(plan.requires("python-full"))
                 if changed_path == "build.zig":
                     self.assertTrue(plan.requires("metal-native"))
-                    self.assertTrue(
-                        plan.requires("workload-store-fault-posix")
-                    )
+                    self.assertTrue(plan.requires("workload-store-fault-posix"))
                 self.assertEqual(
                     tuple(
                         policy.TargetBuildPlan(
@@ -419,6 +428,14 @@ class VerificationPolicyTests(unittest.TestCase):
             EXPECTED_DURABLE_RUNTIME_PROFILE_PATHS,
             policy.DURABLE_RUNTIME_PROFILE_PATHS,
         )
+        self.assertEqual(
+            EXPECTED_PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS,
+            policy.PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS,
+            policy.PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS,
+        )
         for changed_path in sorted(EXPECTED_CORE_CONTRACT_PATHS):
             with self.subTest(changed_path=changed_path):
                 self.assert_target_steps(
@@ -431,9 +448,7 @@ class VerificationPolicyTests(unittest.TestCase):
                         for target in policy.RETAINED_TARGETS
                     ),
                 )
-        for changed_path in sorted(
-            EXPECTED_SHARED_RUNTIME_COMPLETE_PATHS
-        ):
+        for changed_path in sorted(EXPECTED_SHARED_RUNTIME_COMPLETE_PATHS):
             with self.subTest(changed_path=changed_path):
                 self.assert_target_steps(
                     [changed_path],
@@ -445,9 +460,7 @@ class VerificationPolicyTests(unittest.TestCase):
                         for target in policy.RETAINED_TARGETS
                     ),
                 )
-        for changed_path in sorted(
-            EXPECTED_DURABLE_RUNTIME_PROFILE_PATHS
-        ):
+        for changed_path in sorted(EXPECTED_DURABLE_RUNTIME_PROFILE_PATHS):
             with self.subTest(changed_path=changed_path):
                 self.assert_target_steps(
                     [changed_path],
@@ -459,34 +472,50 @@ class VerificationPolicyTests(unittest.TestCase):
                         for target in policy.RETAINED_TARGETS
                     ),
                 )
+        for changed_path in sorted(EXPECTED_PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS):
+            with self.subTest(changed_path=changed_path):
+                self.assert_target_steps(
+                    [changed_path],
+                    tuple(
+                        (
+                            target,
+                            ("profile-durable-compile",),
+                        )
+                        for target in policy.RETAINED_TARGETS
+                    ),
+                )
+        for changed_path in sorted(EXPECTED_PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_target_steps(
+                    [changed_path],
+                    tuple(
+                        (
+                            target,
+                            ("profile-durable-compile",),
+                        )
+                        for target in policy.POSIX_TARGETS
+                    ),
+                )
+                expected_flags = {"native-full", "python-full"}
+                if changed_path.endswith(".py"):
+                    expected_flags.add("python-changed")
+                self.assertEqual(
+                    frozenset(expected_flags),
+                    plan.flags,
+                )
         cases = {
-            "src/core/scheduler.zig": (
-                "profile-complete-compile",
-            ),
-            "src/ffi/model_contract_c.zig": (
-                "profile-core-compile",
-            ),
-            "src/backends/cpu/backend.zig": (
-                "profile-complete-compile",
-            ),
-            "src/model/runtime_image.zig": (
-                "profile-complete-compile",
-            ),
-            "src/cli/main.zig": (
-                "profile-host-tool-compile",
-            ),
-            "src/continuation_live_restart.zig": (
-                "profile-complete-compile",
-            ),
+            "src/core/scheduler.zig": ("profile-complete-compile",),
+            "src/ffi/model_contract_c.zig": ("profile-core-compile",),
+            "src/backends/cpu/backend.zig": ("profile-complete-compile",),
+            "src/model/runtime_image.zig": ("profile-complete-compile",),
+            "src/cli/main.zig": ("profile-host-tool-compile",),
+            "src/continuation_live_restart.zig": ("profile-complete-compile",),
         }
         for changed_path, steps in cases.items():
             with self.subTest(changed_path=changed_path):
                 self.assert_target_steps(
                     [changed_path],
-                    tuple(
-                        (target, steps)
-                        for target in policy.RETAINED_TARGETS
-                    ),
+                    tuple((target, steps) for target in policy.RETAINED_TARGETS),
                 )
 
         self.assert_target_steps(
@@ -521,8 +550,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 )
                 self.assertTrue(
                     all(
-                        target_plan.steps
-                        == policy.FULL_TARGET_STEPS
+                        target_plan.steps == policy.FULL_TARGET_STEPS
                         for target_plan in plan.target_plans
                     )
                 )
@@ -541,9 +569,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 for target in policy.RETAINED_TARGETS
             ),
         )
-        self.assertTrue(
-            complete_plus_focused.requires("native-full")
-        )
+        self.assertTrue(complete_plus_focused.requires("native-full"))
 
         per_target = self.assert_target_steps(
             [
@@ -599,14 +625,24 @@ class VerificationPolicyTests(unittest.TestCase):
                 plan = self.assert_targets([changed_path], ())
                 self.assertEqual(frozenset({"python-full"}), plan.flags)
 
+    def test_prepared_text_result_sink_python_paths_stay_python_only(self):
+        for changed_path in (
+            "bench/prepared_text_result_sink.py",
+            "bench/tests/test_prepared_text_result_sink.py",
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    frozenset({"python-changed", "python-full"}),
+                    plan.flags,
+                )
+
     def test_workload_report_paths_select_only_the_focused_portable_gate(self):
         self.assertEqual(
             EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS,
             policy.WORKLOAD_REPORT_PORTABLE_PATHS,
         )
-        for changed_path in sorted(
-            EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS
-        ):
+        for changed_path in sorted(EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
                 expected_flags = {"workload-report-portable"}
@@ -633,9 +669,7 @@ class VerificationPolicyTests(unittest.TestCase):
             EXPECTED_WORKLOAD_STORE_FAULT_METAL_PATHS,
             policy.WORKLOAD_STORE_FAULT_METAL_PATHS,
         )
-        for changed_path in sorted(
-            EXPECTED_WORKLOAD_STORE_FAULT_POSIX_PATHS
-        ):
+        for changed_path in sorted(EXPECTED_WORKLOAD_STORE_FAULT_POSIX_PATHS):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
                 expected_flags = {
@@ -691,9 +725,7 @@ class VerificationPolicyTests(unittest.TestCase):
             with self.subTest(changed_path=changed_path):
                 plan = policy.classify_paths([changed_path])
                 self.assertEqual(expected_flags, plan.flags)
-                self.assertFalse(
-                    plan.requires("workload-report-portable")
-                )
+                self.assertFalse(plan.requires("workload-report-portable"))
                 self.assertFalse(plan.requires("metal-native"))
 
     def test_workload_report_and_native_metal_gates_remain_independent(self):
@@ -845,9 +877,7 @@ class VerificationPolicyTests(unittest.TestCase):
             EXPECTED_METAL_PORTABLE_SOURCE_PATHS,
             policy.METAL_PORTABLE_SOURCE_PATHS,
         )
-        for changed_path in sorted(
-            EXPECTED_METAL_PORTABLE_SOURCE_PATHS
-        ):
+        for changed_path in sorted(EXPECTED_METAL_PORTABLE_SOURCE_PATHS):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets(
                     [changed_path],
@@ -865,8 +895,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 )
                 self.assertTrue(
                     all(
-                        target_plan.steps ==
-                        ("profile-device-compile",)
+                        target_plan.steps == ("profile-device-compile",)
                         for target_plan in plan.target_plans
                     )
                 )
@@ -875,9 +904,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 plan = self.assert_targets([changed_path], ())
                 expected_flags = {"metal-native"}
                 if changed_path.endswith(".py"):
-                    expected_flags.update(
-                        {"python-changed", "python-full"}
-                    )
+                    expected_flags.update({"python-changed", "python-full"})
                 self.assertEqual(
                     plan.flags,
                     frozenset(expected_flags),
@@ -893,9 +920,7 @@ class VerificationPolicyTests(unittest.TestCase):
                     policy.RETAINED_TARGETS,
                 )
                 self.assertEqual(
-                    frozenset(
-                        {"metal-native", "native-full", "python-full"}
-                    ),
+                    frozenset({"metal-native", "native-full", "python-full"}),
                     unclassified.flags,
                 )
                 self.assertTrue(
@@ -922,12 +947,8 @@ class VerificationPolicyTests(unittest.TestCase):
 
     def test_python_shell_and_fixtures_override_platform_name(self):
         cases = {
-            "bench/linux/adapter.py": frozenset(
-                {"python-changed", "python-full"}
-            ),
-            "docs/linux/example.py": frozenset(
-                {"python-changed", "python-full"}
-            ),
+            "bench/linux/adapter.py": frozenset({"python-changed", "python-full"}),
+            "docs/linux/example.py": frozenset({"python-changed", "python-full"}),
             "tools/windows/bootstrap.sh": frozenset({"shell-changed"}),
             "tests/fixtures/linux/reference.json": frozenset({"python-full"}),
         }
@@ -963,9 +984,7 @@ class VerificationPolicyTests(unittest.TestCase):
         )
         self.assertTrue(shell_plan.requires("shell-changed"))
         self.assertTrue(shell_plan.requires("native-full"))
-        self.assertTrue(
-            shell_plan.requires("workload-store-fault-posix")
-        )
+        self.assertTrue(shell_plan.requires("workload-store-fault-posix"))
 
         python_plan = self.assert_targets(
             ["tools/verification_policy.py"],
@@ -973,9 +992,7 @@ class VerificationPolicyTests(unittest.TestCase):
         )
         self.assertTrue(python_plan.requires("python-changed"))
         self.assertTrue(python_plan.requires("native-full"))
-        self.assertTrue(
-            python_plan.requires("workload-store-fault-posix")
-        )
+        self.assertTrue(python_plan.requires("workload-store-fault-posix"))
 
         wrapper_plan = self.assert_targets(
             ["tools/zig-with-ephemeral-cache.sh"],
@@ -1032,9 +1049,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 self.assertEqual(flags, plan.flags)
 
     def test_build_graph_keeps_profiles_and_benchmarks_opt_in(self):
-        source = (REPOSITORY_ROOT / "build.zig").read_text(
-            encoding="utf-8"
-        )
+        source = (REPOSITORY_ROOT / "build.zig").read_text(encoding="utf-8")
         for step in policy.FOCUSED_TARGET_STEPS:
             with self.subTest(step=step):
                 self.assertEqual(1, source.count('"' + step + '"'))
@@ -1057,8 +1072,7 @@ class VerificationPolicyTests(unittest.TestCase):
             source.count('"native-workload-store-fault-test"'),
         )
         self.assertIn(
-            "test_step.dependOn("
-            "native_workload_store_fault_report_test_step)",
+            "test_step.dependOn(native_workload_store_fault_report_test_step)",
             source,
         )
         self.assertIn(
@@ -1074,8 +1088,7 @@ class VerificationPolicyTests(unittest.TestCase):
             source,
         )
         self.assertNotIn(
-            "test_step.dependOn("
-            "native_workload_store_fault_test_step)",
+            "test_step.dependOn(native_workload_store_fault_test_step)",
             source,
         )
         self.assertEqual(1, source.count("b.installArtifact("))
@@ -1084,8 +1097,7 @@ class VerificationPolicyTests(unittest.TestCase):
             source,
         )
         self.assertNotIn(
-            "profile_cpu_compile_step.dependOn("
-            "profile_core_compile_step)",
+            "profile_cpu_compile_step.dependOn(profile_core_compile_step)",
             source,
         )
         self.assertIn(
@@ -1100,13 +1112,92 @@ class VerificationPolicyTests(unittest.TestCase):
             "    );",
             source,
         )
+        self.assertEqual(
+            1,
+            source.count('"prepared-text-acknowledged-delivery-test"'),
+        )
+        self.assertEqual(
+            1,
+            source.count('"prepared-text-acknowledged-delivery-compile"'),
+        )
+        self.assertIn(
+            "prepared_text_acknowledged_delivery_compile_step"
+            ".dependOn(\n"
+            "        &prepared_text_acknowledged_delivery_tests.step,\n"
+            "    );",
+            source,
+        )
+        self.assertIn(
+            "test_step.dependOn(\n"
+            "        prepared_text_acknowledged_delivery_test_step,\n"
+            "    );",
+            source,
+        )
+        self.assertIn(
+            "test_compile_step.dependOn(\n"
+            "        prepared_text_acknowledged_delivery_compile_step,\n"
+            "    );",
+            source,
+        )
+        self.assertIn(
+            "profile_durable_compile_step.dependOn(\n"
+            "        prepared_text_acknowledged_delivery_compile_step,\n"
+            "    );",
+            source,
+        )
+        self.assertNotIn(
+            '"prepared-text-recovery-compile"',
+            source,
+        )
+        self.assertEqual(
+            1,
+            source.count('"prepared-text-recovery-test"'),
+        )
+        self.assertEqual(
+            1,
+            source.count('"bench/prepared_text_recovery_worker.zig"'),
+        )
+        self.assertIn(
+            "const prepared_text_recovery_target_available =\n"
+            "        target.result.os.tag == .macos or\n"
+            "        target.result.os.tag == .linux or\n"
+            "        target.result.os.tag == .freebsd;",
+            source,
+        )
+        self.assertIn(
+            "if (!prepared_text_recovery_target_available) break :blk null;",
+            source,
+        )
+        self.assertIn(
+            "run_prepared_text_recovery_campaign.addArtifactArg(\n"
+            "            prepared_text_recovery_worker_exe.?,\n"
+            "        );",
+            source,
+        )
+        self.assertIn(
+            "test_step.dependOn(prepared_text_recovery_test_step);",
+            source,
+        )
+        self.assertIn(
+            "if (prepared_text_recovery_worker_exe) |worker|\n"
+            "        test_compile_step.dependOn(&worker.step);",
+            source,
+        )
+        self.assertIn(
+            "if (prepared_text_recovery_worker_exe) |worker|\n"
+            "        profile_durable_compile_step.dependOn(&worker.step);",
+            source,
+        )
+        self.assertIn(
+            '"prepared-text-recovery-test requires a native macOS, Linux, "',
+            source,
+        )
         self.assertIn(
             "test_compile_step.dependOn(profile_core_compile_step)",
             source,
         )
         self.assertIn(
-            "test_compile_step.dependOn("
-            "profile_host_tool_compile_step)",
+            "test_compile_step.dependOn(profile_host_tool_compile_step)",
             source,
         )
         self.assertIn(
@@ -1114,18 +1205,15 @@ class VerificationPolicyTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            "host_runtime_compile_step.dependOn("
-            "contract_c_compile_step)",
+            "host_runtime_compile_step.dependOn(contract_c_compile_step)",
             source,
         )
         self.assertNotIn(
-            "profile_durable_compile_step.dependOn("
-            "profile_cpu_compile_step)",
+            "profile_durable_compile_step.dependOn(profile_cpu_compile_step)",
             source,
         )
         self.assertNotIn(
-            "profile_device_compile_step.dependOn("
-            "profile_cpu_compile_step)",
+            "profile_device_compile_step.dependOn(profile_cpu_compile_step)",
             source,
         )
         self.assertIn(
@@ -1150,9 +1238,7 @@ class VerificationPolicyTests(unittest.TestCase):
             1,
             source.count("buildMetalLib(b, metal_output_dir)"),
         )
-        frontier_start = source.index(
-            "for ([_]*std.Build.Step.Compile{"
-        )
+        frontier_start = source.index("for ([_]*std.Build.Step.Compile{")
         frontier_source = source[
             frontier_start : source.index(
                 "const run_native_metal_inflight_process_kill_report",
@@ -1270,9 +1356,7 @@ class VerificationPolicyTests(unittest.TestCase):
         )
         self.assertEqual(
             3,
-            metal_lib_source.count(
-                "addFileInput(toolchain_identity)"
-            ),
+            metal_lib_source.count("addFileInput(toolchain_identity)"),
         )
         self.assertIn(
             "run_native_metal_correctness_tests.step.dependOn(\n"
@@ -1280,9 +1364,7 @@ class VerificationPolicyTests(unittest.TestCase):
             "        );",
             source,
         )
-        complete_profile_start = source.index(
-            "const profile_complete_compile_step"
-        )
+        complete_profile_start = source.index("const profile_complete_compile_step")
         complete_profile_source = source[
             complete_profile_start : source.index(
                 "const run_cmd",
@@ -1290,8 +1372,7 @@ class VerificationPolicyTests(unittest.TestCase):
             )
         ]
         self.assertIn(
-            "profile_complete_compile_step.dependOn("
-            "test_compile_step)",
+            "profile_complete_compile_step.dependOn(test_compile_step)",
             complete_profile_source,
         )
         for artifact in (
@@ -1314,9 +1395,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 )
 
     def test_paths_are_deduplicated_and_byte_sorted(self):
-        plan = policy.classify_paths(
-            ["docs/z.md", "docs/a\nname.md", "docs/z.md"]
-        )
+        plan = policy.classify_paths(["docs/z.md", "docs/a\nname.md", "docs/z.md"])
         self.assertEqual(
             plan.paths,
             tuple(sorted({"docs/z.md", "docs/a\nname.md"}, key=os.fsencode)),
@@ -1346,9 +1425,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 policy.read_paths0(path_stream)
 
     def test_target_plan_is_ordered_validated_and_separate_from_flags(self):
-        plan = policy.classify_paths(
-            ["src/platform/windows/dispatch.zig"]
-        )
+        plan = policy.classify_paths(["src/platform/windows/dispatch.zig"])
         with tempfile.TemporaryDirectory() as temporary_directory:
             flags = Path(temporary_directory) / "flags"
             targets = Path(temporary_directory) / "targets"
@@ -1362,13 +1439,10 @@ class VerificationPolicyTests(unittest.TestCase):
                 list(policy.WINDOWS_TARGETS),
             )
             self.assertEqual(
-                target_steps.read_text(
-                    encoding="ascii"
-                ).splitlines(),
+                target_steps.read_text(encoding="ascii").splitlines(),
                 [
                     policy.WINDOWS_TARGETS[0] + " install",
-                    policy.WINDOWS_TARGETS[0]
-                    + " install-benchmarks",
+                    policy.WINDOWS_TARGETS[0] + " install-benchmarks",
                     policy.WINDOWS_TARGETS[0] + " test-compile",
                 ],
             )
@@ -1384,14 +1458,10 @@ class VerificationPolicyTests(unittest.TestCase):
             policy.write_target_steps(focused_plan, target_steps)
             self.assertEqual(
                 [
-                    policy.RETAINED_TARGETS[0]
-                    + " profile-core-compile",
-                    policy.RETAINED_TARGETS[0]
-                    + " profile-cpu-compile",
+                    policy.RETAINED_TARGETS[0] + " profile-core-compile",
+                    policy.RETAINED_TARGETS[0] + " profile-cpu-compile",
                 ],
-                target_steps.read_text(
-                    encoding="ascii"
-                ).splitlines(),
+                target_steps.read_text(encoding="ascii").splitlines(),
             )
             complete_plan = (
                 policy.TargetBuildPlan(
@@ -1401,13 +1471,8 @@ class VerificationPolicyTests(unittest.TestCase):
             )
             policy.write_target_steps(complete_plan, target_steps)
             self.assertEqual(
-                [
-                    policy.RETAINED_TARGETS[0]
-                    + " profile-complete-compile"
-                ],
-                target_steps.read_text(
-                    encoding="ascii"
-                ).splitlines(),
+                [policy.RETAINED_TARGETS[0] + " profile-complete-compile"],
+                target_steps.read_text(encoding="ascii").splitlines(),
             )
             with self.assertRaises(ValueError):
                 policy.write_targets(
@@ -1498,9 +1563,7 @@ class VerificationPolicyTests(unittest.TestCase):
             root = Path(temporary_directory)
             valid = root / "valid.py"
             invalid = root / "invalid.py"
-            valid.write_bytes(
-                b"# -*- coding: latin-1 -*-\nlabel = 'caf\\xe9'\n"
-            )
+            valid.write_bytes(b"# -*- coding: latin-1 -*-\nlabel = 'caf\\xe9'\n")
             invalid.write_bytes(b"if True print('broken')\n")
             policy.check_changed_python([str(valid)])
             with self.assertRaises(SyntaxError):
@@ -1517,9 +1580,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 encoding="ascii",
             )
             with mock.patch.object(policy.subprocess, "run") as run:
-                policy.check_changed_shell(
-                    (str(sh_script), str(bash_script))
-                )
+                policy.check_changed_shell((str(sh_script), str(bash_script)))
             self.assertEqual(
                 run.call_args_list,
                 [
@@ -1540,9 +1601,7 @@ class VerificationPolicyTests(unittest.TestCase):
             unknown = root / "unknown.sh"
             oversized = root / "oversized.sh"
             unknown.write_text("#!/usr/bin/env zsh\n", encoding="ascii")
-            oversized.write_bytes(
-                b"#!" + b"x" * policy.MAXIMUM_SHEBANG_BYTES + b"\n"
-            )
+            oversized.write_bytes(b"#!" + b"x" * policy.MAXIMUM_SHEBANG_BYTES + b"\n")
             with self.assertRaises(ValueError):
                 policy.check_changed_shell((str(unknown),))
             with self.assertRaises(ValueError):
@@ -1555,9 +1614,7 @@ class GitRepositoryMixin:
             ("git",) + arguments,
             cwd=repository,
             check=True,
-            stdout=(
-                subprocess.PIPE if capture else subprocess.DEVNULL
-            ),
+            stdout=(subprocess.PIPE if capture else subprocess.DEVNULL),
             text=True,
         )
 
@@ -1601,12 +1658,8 @@ class VerificationGitIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.run_git(repository, "add", staged.name)
             staged.write_text("base\n", encoding="ascii")
 
-            (repository / "unstaged.txt").write_text(
-                "unstaged\n", encoding="ascii"
-            )
-            (repository / "untracked.txt").write_text(
-                "untracked\n", encoding="ascii"
-            )
+            (repository / "unstaged.txt").write_text("unstaged\n", encoding="ascii")
+            (repository / "untracked.txt").write_text("untracked\n", encoding="ascii")
 
             self.assertEqual(
                 policy.collect_git_paths(merge_base, repository),
@@ -1649,18 +1702,11 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             repository / "tools" / "verification_policy.py",
         )
         (repository / "tools" / "verify.sh").chmod(0o755)
-        (repository / "bench" / "__init__.py").write_text(
-            "", encoding="ascii"
-        )
+        (repository / "bench" / "__init__.py").write_text("", encoding="ascii")
         (repository / "bench" / "tests" / "__init__.py").write_text(
             "", encoding="ascii"
         )
-        (
-            repository
-            / "bench"
-            / "tests"
-            / "test_public_markdown_policy.py"
-        ).write_text(
+        (repository / "bench" / "tests" / "test_public_markdown_policy.py").write_text(
             "import unittest\n"
             "class PublicMarkdownPolicyTests(unittest.TestCase):\n"
             "    def test_fixture(self):\n"
@@ -1716,9 +1762,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
         environment = dict(os.environ)
         environment["PATH"] = str(fake_bin) + os.pathsep + environment["PATH"]
         environment["TMPDIR"] = str(root)
-        environment["VERIFY_INTEGRATION_ZIG_LOG"] = str(
-            root / "zig.calls"
-        )
+        environment["VERIFY_INTEGRATION_ZIG_LOG"] = str(root / "zig.calls")
         environment.pop("GLACIER_VERIFY_BASE", None)
         environment.pop("GLACIER_VERIFY_REQUIRE_NATIVE", None)
         environment.pop("PYTHONPATH", None)
@@ -1883,8 +1927,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             self.assertFalse(
                 any(
-                    line.startswith("build native-metal-suite-test ")
-                    for line in calls
+                    line.startswith("build native-metal-suite-test ") for line in calls
                 ),
                 calls,
             )
@@ -1893,12 +1936,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             repository, merge_base, environment = self.make_repository(root)
-            report_path = (
-                repository
-                / "src"
-                / "core"
-                / "native_workload_report.zig"
-            )
+            report_path = repository / "src" / "core" / "native_workload_report.zig"
             report_path.parent.mkdir(parents=True)
             report_path.write_text("", encoding="ascii")
 
@@ -1969,9 +2007,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             with self.subTest(changed_path=changed_path):
                 with tempfile.TemporaryDirectory() as temporary_directory:
                     root = Path(temporary_directory)
-                    repository, merge_base, environment = (
-                        self.make_repository(root)
-                    )
+                    repository, merge_base, environment = self.make_repository(root)
                     path = repository / changed_path
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text("", encoding="ascii")
@@ -1995,15 +2031,15 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                         "PASS  portable/workload-report:",
                         result.stdout,
                     )
-                    calls = Path(
-                        environment["VERIFY_INTEGRATION_ZIG_LOG"]
-                    ).read_text(encoding="ascii").splitlines()
+                    calls = (
+                        Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                        .read_text(encoding="ascii")
+                        .splitlines()
+                    )
                     hard_calls = [
                         line
                         for line in calls
-                        if line.startswith(
-                            "build native-workload-store-fault-test "
-                        )
+                        if line.startswith("build native-workload-store-fault-test ")
                     ]
                     self.assertEqual(1, len(hard_calls), hard_calls)
                     self.assertIn("-Dmetal=false ", hard_calls[0])
@@ -2067,35 +2103,21 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "unknown",
                 '"x86_64-linux-musl",',
                 '"a-valid-but-unknown-target",',
-                "policy emitted an unknown target: "
-                "a-valid-but-unknown-target",
+                "policy emitted an unknown target: a-valid-but-unknown-target",
             ),
             (
                 "out-of-order",
-                (
-                    '    "x86_64-linux-musl",\n'
-                    '    "aarch64-linux-musl",'
-                ),
-                (
-                    '    "aarch64-linux-musl",\n'
-                    '    "x86_64-linux-musl",'
-                ),
-                (
-                    "policy emitted targets out of retained order: "
-                    "x86_64-linux-musl"
-                ),
+                ('    "x86_64-linux-musl",\n    "aarch64-linux-musl",'),
+                ('    "aarch64-linux-musl",\n    "x86_64-linux-musl",'),
+                ("policy emitted targets out of retained order: x86_64-linux-musl"),
             ),
         )
         for name, before, after, expected_message in mutations:
             with self.subTest(name=name):
                 with tempfile.TemporaryDirectory() as temporary_directory:
                     root = Path(temporary_directory)
-                    repository, merge_base, environment = (
-                        self.make_repository(root)
-                    )
-                    policy_path = (
-                        repository / "tools" / "verification_policy.py"
-                    )
+                    repository, merge_base, environment = self.make_repository(root)
+                    policy_path = repository / "tools" / "verification_policy.py"
                     source = policy_path.read_text(encoding="utf-8")
                     self.assertEqual(1, source.count(before))
                     policy_path.write_text(
@@ -2113,9 +2135,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                     self.assertIn(expected_message, result.stdout)
                     target_calls = [
                         line
-                        for line in Path(
-                            environment["VERIFY_INTEGRATION_ZIG_LOG"]
-                        )
+                        for line in Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
                         .read_text(encoding="ascii")
                         .splitlines()
                         if " -Dtarget=" in line
@@ -2127,14 +2147,10 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             root = Path(temporary_directory)
             repository, merge_base, environment = self.make_repository(root)
 
-            darwin_path = (
-                repository / "src" / "platform" / "darwin" / "runtime.zig"
-            )
+            darwin_path = repository / "src" / "platform" / "darwin" / "runtime.zig"
             darwin_path.parent.mkdir(parents=True)
             darwin_path.write_text("", encoding="ascii")
-            ordinary = self.run_verify(
-                repository, merge_base, environment
-            )
+            ordinary = self.run_verify(repository, merge_base, environment)
             self.assertEqual(
                 ordinary.returncode,
                 0,
@@ -2147,9 +2163,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
 
             strict_environment = dict(environment)
             strict_environment["GLACIER_VERIFY_REQUIRE_NATIVE"] = "1"
-            strict = self.run_verify(
-                repository, merge_base, strict_environment
-            )
+            strict = self.run_verify(repository, merge_base, strict_environment)
             self.assertNotEqual(strict.returncode, 0)
             self.assertIn(
                 "FAIL  native/darwin: requires native Darwin execution",
@@ -2184,9 +2198,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 )
             target_calls = [
                 line
-                for line in zig_log.read_text(
-                    encoding="ascii"
-                ).splitlines()
+                for line in zig_log.read_text(encoding="ascii").splitlines()
                 if " -Dtarget=" in line
             ]
             self.assertEqual(
@@ -2196,9 +2208,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             self.assertTrue(
                 all(
-                    line.startswith(
-                        "build install install-benchmarks test-compile "
-                    )
+                    line.startswith("build install install-benchmarks test-compile ")
                     for line in target_calls
                 ),
                 target_calls,
@@ -2206,17 +2216,12 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             for target in policy.RETAINED_TARGETS:
                 self.assertEqual(
                     1,
-                    sum(
-                        " -Dtarget=" + target + " " in line
-                        for line in target_calls
-                    ),
+                    sum(" -Dtarget=" + target + " " in line for line in target_calls),
                     target_calls,
                 )
 
             shared_path.unlink()
-            rust_path = (
-                repository / "examples" / "interop" / "rust_verify.rs"
-            )
+            rust_path = repository / "examples" / "interop" / "rust_verify.rs"
             rust_path.parent.mkdir(parents=True)
             rust_path.write_text("fn main() {}\n", encoding="ascii")
             zig_log.write_text("", encoding="ascii")
@@ -2231,9 +2236,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertFalse(
                 any(
                     " -Dtarget=" in line
-                    for line in zig_log.read_text(
-                        encoding="ascii"
-                    ).splitlines()
+                    for line in zig_log.read_text(encoding="ascii").splitlines()
                 )
             )
 
@@ -2241,13 +2244,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             repository, merge_base, environment = self.make_repository(root)
-            windows_path = (
-                repository
-                / "src"
-                / "platform"
-                / "windows"
-                / "runtime.zig"
-            )
+            windows_path = repository / "src" / "platform" / "windows" / "runtime.zig"
             windows_path.parent.mkdir(parents=True)
             windows_path.write_text("", encoding="ascii")
             target = policy.WINDOWS_TARGETS[0]
@@ -2268,9 +2265,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             target_calls = [
                 line
-                for line in Path(
-                    environment["VERIFY_INTEGRATION_ZIG_LOG"]
-                )
+                for line in Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
                 .read_text(encoding="ascii")
                 .splitlines()
                 if " -Dtarget=" in line
@@ -2290,9 +2285,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             core_path = repository / "src" / "core" / "scheduler.zig"
             core_path.parent.mkdir(parents=True)
             core_path.write_text("", encoding="ascii")
-            cpu_path = (
-                repository / "src" / "backends" / "cpu" / "backend.zig"
-            )
+            cpu_path = repository / "src" / "backends" / "cpu" / "backend.zig"
             cpu_path.parent.mkdir(parents=True)
             cpu_path.write_text("", encoding="ascii")
 
@@ -2309,9 +2302,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             target_calls = [
                 line
-                for line in Path(
-                    environment["VERIFY_INTEGRATION_ZIG_LOG"]
-                )
+                for line in Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
                 .read_text(encoding="ascii")
                 .splitlines()
                 if " -Dtarget=" in line
@@ -2322,20 +2313,14 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 target_calls,
             )
             for target in policy.RETAINED_TARGETS:
-                expected = (
-                    "build profile-complete-compile -Dtarget="
-                    + target
-                    + " "
-                )
+                expected = "build profile-complete-compile -Dtarget=" + target + " "
                 self.assertEqual(
                     1,
                     sum(line.startswith(expected) for line in target_calls),
                     target_calls,
                 )
                 self.assertIn(
-                    "PASS  portability/"
-                    + target
-                    + "/profile-complete-compile:",
+                    "PASS  portability/" + target + "/profile-complete-compile:",
                     result.stdout,
                 )
 
@@ -2346,13 +2331,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             core_path = repository / "src" / "core" / "scheduler.zig"
             core_path.parent.mkdir(parents=True)
             core_path.write_text("", encoding="ascii")
-            windows_path = (
-                repository
-                / "src"
-                / "platform"
-                / "windows"
-                / "dispatch.zig"
-            )
+            windows_path = repository / "src" / "platform" / "windows" / "dispatch.zig"
             windows_path.parent.mkdir(parents=True)
             windows_path.write_text("", encoding="ascii")
 
@@ -2369,9 +2348,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             target_calls = [
                 line
-                for line in Path(
-                    environment["VERIFY_INTEGRATION_ZIG_LOG"]
-                )
+                for line in Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
                 .read_text(encoding="ascii")
                 .splitlines()
                 if " -Dtarget=" in line
@@ -2384,20 +2361,14 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             windows_target = policy.WINDOWS_TARGETS[0]
             for target in policy.RETAINED_TARGETS:
                 if target == windows_target:
-                    expected_steps = (
-                        "install install-benchmarks test-compile"
-                    )
+                    expected_steps = "install install-benchmarks test-compile"
                 else:
                     expected_steps = "profile-complete-compile"
                 self.assertEqual(
                     1,
                     sum(
                         line.startswith(
-                            "build "
-                            + expected_steps
-                            + " -Dtarget="
-                            + target
-                            + " "
+                            "build " + expected_steps + " -Dtarget=" + target + " "
                         )
                         for line in target_calls
                     ),
@@ -2418,9 +2389,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             target_calls = [
                 line
-                for line in Path(
-                    environment["VERIFY_INTEGRATION_ZIG_LOG"]
-                )
+                for line in Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
                 .read_text(encoding="ascii")
                 .splitlines()
                 if " -Dtarget=" in line
@@ -2432,9 +2401,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             self.assertTrue(
                 all(
-                    line.startswith(
-                        "build install install-benchmarks test-compile "
-                    )
+                    line.startswith("build install install-benchmarks test-compile ")
                     for line in target_calls
                 ),
                 target_calls,
@@ -2443,15 +2410,15 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "PASS  native/workload-store-fault:",
                 result.stdout,
             )
-            all_calls = Path(
-                environment["VERIFY_INTEGRATION_ZIG_LOG"]
-            ).read_text(encoding="ascii").splitlines()
+            all_calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
             self.assertEqual(
                 1,
                 sum(
-                    line.startswith(
-                        "build native-workload-store-fault-test "
-                    )
+                    line.startswith("build native-workload-store-fault-test ")
                     for line in all_calls
                 ),
                 all_calls,
@@ -2473,9 +2440,11 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "PASS  native/workload-store-fault:",
                 result.stdout,
             )
-            calls = Path(
-                environment["VERIFY_INTEGRATION_ZIG_LOG"]
-            ).read_text(encoding="ascii").splitlines()
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
             compile_calls = [
                 line
                 for line in calls
@@ -2504,9 +2473,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertEqual(
                 1,
                 sum(
-                    line.startswith(
-                        "build native-workload-store-fault-test "
-                    )
+                    line.startswith("build native-workload-store-fault-test ")
                     for line in calls
                 ),
                 calls,
@@ -2528,13 +2495,14 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  native/workload-store-fault: host test compile "
-                "frontier failed",
+                "SKIP  native/workload-store-fault: host test compile frontier failed",
                 result.stdout,
             )
-            calls = Path(
-                environment["VERIFY_INTEGRATION_ZIG_LOG"]
-            ).read_text(encoding="ascii").splitlines()
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
             self.assertEqual(
                 1,
                 sum(
@@ -2547,9 +2515,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertFalse(
                 any(
                     line.startswith("build test contract-interop-test ")
-                    or line.startswith(
-                        "build native-workload-store-fault-test "
-                    )
+                    or line.startswith("build native-workload-store-fault-test ")
                     for line in calls
                 ),
                 calls,
@@ -2563,9 +2529,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 root / "fake-bin" / "uname",
                 "printf 'Darwin\\n'\n",
             )
-            posix_path = (
-                repository / "src" / "platform" / "posix" / "files.zig"
-            )
+            posix_path = repository / "src" / "platform" / "posix" / "files.zig"
             posix_path.parent.mkdir(parents=True)
             posix_path.write_text("", encoding="ascii")
             zig_log = Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
@@ -2588,15 +2552,12 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout,
             )
             self.assertIn(
-                "PASS  native/darwin: covered by the shared host "
-                "runtime DAG",
+                "PASS  native/darwin: covered by the shared host runtime DAG",
                 result.stdout,
             )
             calls = zig_log.read_text(encoding="ascii").splitlines()
             compile_calls = [
-                line
-                for line in calls
-                if line.startswith("build host-runtime-compile ")
+                line for line in calls if line.startswith("build host-runtime-compile ")
             ]
             native_test_calls = [
                 line
@@ -2624,20 +2585,16 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 failed.stdout,
             )
             self.assertIn(
-                "SKIP  native/releasesafe-suite: shared host runtime "
-                "DAG failed",
+                "SKIP  native/releasesafe-suite: shared host runtime DAG failed",
                 failed.stdout,
             )
             self.assertIn(
-                "FAIL  native/darwin: covering host compile or runtime "
-                "DAG failed",
+                "FAIL  native/darwin: covering host compile or runtime DAG failed",
                 failed.stdout,
             )
             failed_native_test_calls = [
                 line
-                for line in zig_log.read_text(
-                    encoding="ascii"
-                ).splitlines()
+                for line in zig_log.read_text(encoding="ascii").splitlines()
                 if line.startswith("build test contract-interop-test ")
             ]
             self.assertEqual(
@@ -2652,14 +2609,12 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             repository, merge_base, environment = self.make_repository(root)
             self.make_fake_command(
                 root / "fake-bin" / "uname",
-                "case \"${1:-}\" in\n"
+                'case "${1:-}" in\n'
                 "    -m) printf 'x86_64\\n' ;;\n"
                 "    *) printf 'Darwin\\n' ;;\n"
                 "esac\n",
             )
-            source_path = (
-                repository / "src" / "backends" / "cpu" / "int4_neon.c"
-            )
+            source_path = repository / "src" / "backends" / "cpu" / "int4_neon.c"
             source_path.parent.mkdir(parents=True)
             source_path.write_text("", encoding="ascii")
             zig_log = Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
@@ -2676,15 +2631,12 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 intel.stdout + intel.stderr,
             )
             self.assertIn(
-                "SKIP  native/darwin-aarch64: "
-                "requires native Darwin AArch64 execution",
+                "SKIP  native/darwin-aarch64: requires native Darwin AArch64 execution",
                 intel.stdout,
             )
             native_test_calls = [
                 line
-                for line in zig_log.read_text(
-                    encoding="ascii"
-                ).splitlines()
+                for line in zig_log.read_text(encoding="ascii").splitlines()
                 if line.startswith("build test contract-interop-test ")
             ]
             self.assertEqual(1, len(native_test_calls), native_test_calls)
@@ -2698,14 +2650,13 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             self.assertNotEqual(0, strict.returncode)
             self.assertIn(
-                "FAIL  native/darwin-aarch64: "
-                "requires native Darwin AArch64 execution",
+                "FAIL  native/darwin-aarch64: requires native Darwin AArch64 execution",
                 strict.stdout,
             )
 
             self.make_fake_command(
                 root / "fake-bin" / "uname",
-                "case \"${1:-}\" in\n"
+                'case "${1:-}" in\n'
                 "    -m) printf 'arm64\\n' ;;\n"
                 "    *) printf 'Darwin\\n' ;;\n"
                 "esac\n",
@@ -2722,15 +2673,12 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 arm64.stdout + arm64.stderr,
             )
             self.assertIn(
-                "PASS  native/darwin-aarch64: covered by the shared "
-                "host runtime DAG",
+                "PASS  native/darwin-aarch64: covered by the shared host runtime DAG",
                 arm64.stdout,
             )
             arm64_native_test_calls = [
                 line
-                for line in zig_log.read_text(
-                    encoding="ascii"
-                ).splitlines()
+                for line in zig_log.read_text(encoding="ascii").splitlines()
                 if line.startswith("build test contract-interop-test ")
             ]
             self.assertEqual(
@@ -2740,16 +2688,13 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             arm64_target_calls = [
                 line
-                for line in zig_log.read_text(
-                    encoding="ascii"
-                ).splitlines()
+                for line in zig_log.read_text(encoding="ascii").splitlines()
                 if " -Dtarget=" in line
             ]
             self.assertEqual(1, len(arm64_target_calls))
             self.assertTrue(
                 arm64_target_calls[0].startswith(
-                    "build profile-cpu-compile "
-                    "profile-host-tool-compile "
+                    "build profile-cpu-compile profile-host-tool-compile "
                 ),
                 arm64_target_calls,
             )
@@ -2775,8 +2720,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 ordinary.stdout + ordinary.stderr,
             )
             self.assertIn(
-                "SKIP  native/darwin-swift: "
-                "requires native Darwin execution",
+                "SKIP  native/darwin-swift: requires native Darwin execution",
                 ordinary.stdout,
             )
 
@@ -2789,8 +2733,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             self.assertNotEqual(0, strict.returncode)
             self.assertIn(
-                "FAIL  native/darwin-swift: "
-                "requires native Darwin execution",
+                "FAIL  native/darwin-swift: requires native Darwin execution",
                 strict.stdout,
             )
 
@@ -2808,8 +2751,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             swift_path = repository / "bench" / "lane4_process_info.swift"
             swift_path.write_text(
-                "import Foundation\n"
-                "_ = ProcessInfo.processInfo.activeProcessorCount\n",
+                "import Foundation\n_ = ProcessInfo.processInfo.activeProcessorCount\n",
                 encoding="ascii",
             )
 
@@ -2826,8 +2768,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertIn("PASS  native/darwin-swift:", valid.stdout)
 
             swift_path.write_text(
-                "import Foundation\n"
-                "_ = ProcessInfo.processInfo.definitelyMissing\n",
+                "import Foundation\n_ = ProcessInfo.processInfo.definitelyMissing\n",
                 encoding="ascii",
             )
             invalid = self.run_verify(

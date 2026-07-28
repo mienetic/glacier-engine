@@ -37,6 +37,20 @@ before the first stable release.
 
 ### Added
 
+- Added experimental **acknowledged prepared-text target recovery** after a
+  clean generation-two source exit. One-token fresh targets apply through an
+  idempotent descriptor-relative POSIX result sink, retain a canonical
+  acknowledgement in each immediate checkpoint successor, and finish at
+  generation five with the exact four-token terminal output. In a compile-once
+  campaign, 19 distinct target processes emit their gated ready frame and
+  self-raise real `SIGKILL` across the model step, all ten sink-publication
+  boundaries, the post-acknowledgement boundary, and all seven
+  checkpoint-publication boundaries. Independent audits permit only previous
+  or exact-successor roots and require the three acknowledged suffix tokens to
+  equal the uninterrupted oracle. The claim is limited to the retained local
+  pre-tokenized POSIX fixture; it excludes pre-generation-two and initial-sink
+  source recovery, remote delivery, physical power loss, GPU continuation,
+  Win32 durable files, and production model evidence.
 - Added production **Metal Dispatch Retirement Telemetry V1**. The fixed
   256-byte `MetalDispatchRetirementTelemetryV1` snapshot binds one native
   context nonce and device registry ID to successful unique/replayed prepare

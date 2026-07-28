@@ -250,6 +250,16 @@ pub const prepared_text_handoff_archive =
     @import("prepared_text_handoff_archive.zig");
 pub const prepared_text_durable_handoff =
     @import("prepared_text_durable_handoff.zig");
+pub const prepared_text_result_sink =
+    @import("prepared_text_result_sink.zig");
+pub const prepared_text_result_sink_file =
+    @import("prepared_text_result_sink_file.zig");
+pub const prepared_text_acknowledged_progress =
+    @import("prepared_text_acknowledged_progress.zig");
+pub const prepared_text_acknowledged_restore =
+    @import("prepared_text_acknowledged_restore.zig");
+pub const prepared_text_acknowledged_delivery =
+    @import("prepared_text_acknowledged_delivery.zig");
 pub const prepared_text_restart_manifest =
     @import("prepared_text_restart_manifest.zig");
 pub const prepared_text_restore_admission =

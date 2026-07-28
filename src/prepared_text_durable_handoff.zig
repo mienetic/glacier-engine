@@ -165,6 +165,7 @@ pub fn initSelectedSourceExitGrantV1(
         .ownership_intent_sha256 = selected.source_exit
             .target_ownership_intent_sha256,
         .challenge_sha256 = selected.evidence.artifacts.segment.challenge_sha256,
+        .selected_authority_kind = .source_exit,
         .phase = .ready,
     };
     grant.grant_sha256 =

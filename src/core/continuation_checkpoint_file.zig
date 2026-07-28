@@ -109,6 +109,13 @@ pub const DecodedSetV1 = struct {
     }
 };
 
+/// Verified immutable archive retained beneath a live checkpoint-file lease.
+/// `bytes` and every object slice in `set` borrow caller-owned `storage`.
+pub const LoadedRetainedSetV1 = struct {
+    bytes: []const u8,
+    set: DecodedSetV1,
+};
+
 pub const PreparedSelectorV1 = struct {
     bytes: [selector_bytes]u8,
     selector_sha256: Digest,
@@ -419,6 +426,41 @@ pub const LeaseV1 = struct {
     pub fn activeSet(self: *const LeaseV1) Error!DecodedSetV1 {
         if (self.state != .ready) return Error.InvalidState;
         return decodeSetV1(self.stream());
+    }
+
+    /// Load one content-addressed predecessor archive while this lease keeps
+    /// the directory lineage exclusive. The expected root chooses the file
+    /// name but never bypasses full wire/root verification.
+    pub fn loadRetainedSetV1(
+        self: *const LeaseV1,
+        expected_checkpoint_sha256: Digest,
+        storage: []u8,
+    ) !LoadedRetainedSetV1 {
+        if (self.state != .ready or
+            isZero(expected_checkpoint_sha256))
+            return Error.InvalidState;
+        if (slicesOverlap(storage, self.active_storage))
+            return Error.UnsafeDestination;
+        var archive_name_storage: [max_generated_name_bytes]u8 =
+            undefined;
+        const archive_name = archiveNameV1(
+            expected_checkpoint_sha256,
+            &archive_name_storage,
+        ) catch return Error.InvalidState;
+        const bytes = try readExactFileV1(
+            self.directory,
+            archive_name,
+            storage,
+            self.max_set_bytes,
+        );
+        const set = try decodeSetV1(bytes);
+        if (!std.mem.eql(
+            u8,
+            &set.checkpoint_sha256,
+            &expected_checkpoint_sha256,
+        ))
+            return Error.CheckpointMismatch;
+        return .{ .bytes = bytes, .set = set };
     }
 
     pub fn selectorRoot(self: *const LeaseV1) Digest {
@@ -1488,6 +1530,39 @@ test "checkpoint selector promotion recovers exact previous or successor" {
     try testing.expectEqualStrings(
         "checkpoint-two",
         (try (try lease.activeSet()).object(.capsule, 0)).bytes,
+    );
+    const aliased_active_storage = lease.active_storage;
+    try testing.expectError(
+        Error.UnsafeDestination,
+        lease.loadRetainedSetV1(
+            first.checkpoint_sha256,
+            aliased_active_storage,
+        ),
+    );
+    try testing.expectEqualStrings(
+        "checkpoint-two",
+        (try (try lease.activeSet()).object(.capsule, 0)).bytes,
+    );
+    var retained_storage: [1024]u8 = undefined;
+    const retained = try lease.loadRetainedSetV1(
+        first.checkpoint_sha256,
+        &retained_storage,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        first.bytes,
+        retained.bytes,
+    );
+    try testing.expectEqualStrings(
+        "checkpoint-one",
+        (try retained.set.object(.capsule, 0)).bytes,
+    );
+    try testing.expectError(
+        Error.InvalidState,
+        lease.loadRetainedSetV1(
+            capsule.zero_digest,
+            &retained_storage,
+        ),
     );
     lease.close();
 

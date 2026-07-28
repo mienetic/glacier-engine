@@ -59,14 +59,23 @@ pub const ActivationGrantPhase = enum(u8) {
     preparing,
     prepared,
     consumed,
+    successor_selected,
     terminal_selected,
     completed,
 };
 
+pub const SelectedAuthorityKindV1 = enum(u8) {
+    none,
+    source_exit,
+    acknowledged_progress,
+};
+
 /// Address-stable, process-local authority derived only from the active
-/// generation-two selector while its exclusive file lease is held. Copies
-/// fail the self-address fence. The lease must remain open and selector-stable
-/// through restored activation and terminal publication.
+/// restart selector while its exclusive file lease is held. Generation two
+/// selects source-exit authority; later nonterminal generations select
+/// acknowledged progress. Copies fail the self-address fence. The lease must
+/// remain open and selector-stable through restored activation and immediate
+/// successor publication.
 pub const SelectedSourceExitGrantV1 = struct {
     lease: ?*checkpoint_file.LeaseV1 = null,
     self_address: usize = 0,
@@ -99,9 +108,19 @@ pub const SelectedSourceExitGrantV1 = struct {
     ownership_intent_sha256: successor.Digest =
         [_]u8{0} ** 32,
     challenge_sha256: successor.Digest = [_]u8{0} ** 32,
+    selected_authority_kind: SelectedAuthorityKindV1 = .none,
+    selected_acknowledgement_sha256: successor.Digest =
+        [_]u8{0} ** 32,
+    selected_sink_prefix_sha256: successor.Digest =
+        [_]u8{0} ** 32,
     grant_sha256: successor.Digest = [_]u8{0} ** 32,
     phase: ActivationGrantPhase = .empty,
 };
+
+/// Preferred neutral name for the grant now that acknowledged nonterminal
+/// generations can also authorize restored activation. The retained source-
+/// exit name remains an exact type alias for experimental API compatibility.
+pub const SelectedRestartGrantV1 = SelectedSourceExitGrantV1;
 
 pub const PrepareRecoveryPhase = enum(u8) {
     publication_session_bound,
@@ -246,6 +265,20 @@ pub fn validateSelectedSourceExitGrantV1(
         isZeroDigest(grant.successor_segment_sha256) or
         isZeroDigest(grant.ownership_intent_sha256) or
         isZeroDigest(grant.challenge_sha256) or
+        grant.selected_authority_kind == .none or
+        (grant.selected_authority_kind == .source_exit and
+            (!isZeroDigest(
+                grant.selected_acknowledgement_sha256,
+            ) or !isZeroDigest(
+                grant.selected_sink_prefix_sha256,
+            ))) or
+        (grant.selected_authority_kind ==
+            .acknowledged_progress and
+            (isZeroDigest(
+                grant.selected_acknowledgement_sha256,
+            ) or isZeroDigest(
+                grant.selected_sink_prefix_sha256,
+            ))) or
         !std.mem.eql(
             u8,
             &grant.grant_sha256,
@@ -265,7 +298,9 @@ pub fn validateSelectedSourceExitGrantV1(
             &grant.challenge_sha256,
         ))
         return Error.InvalidActivationGrant;
-    if (expected_phase == .terminal_selected) {
+    if (expected_phase == .successor_selected or
+        expected_phase == .terminal_selected)
+    {
         if (lease.selector.generation !=
             grant.terminal_selector_generation or
             active_set.metadata.generation !=
@@ -344,6 +379,12 @@ pub fn selectedSourceExitGrantRootV1(
     hash.update(&grant.successor_segment_sha256);
     hash.update(&grant.ownership_intent_sha256);
     hash.update(&grant.challenge_sha256);
+    hashU8(
+        &hash,
+        @intFromEnum(grant.selected_authority_kind),
+    );
+    hash.update(&grant.selected_acknowledgement_sha256);
+    hash.update(&grant.selected_sink_prefix_sha256);
     var digest: successor.Digest = undefined;
     hash.final(&digest);
     return digest;
@@ -363,6 +404,100 @@ pub fn releaseReadyActivationGrantV1(
     grant.phase = .completed;
 }
 
+/// Advance one consumed grant across an already verified immediate progress
+/// selection. The caller must first verify the selected set's semantic
+/// contents; this function binds only the live lease/claim transition and the
+/// exact canonical roots supplied by that verifier.
+pub fn markAcknowledgedSuccessorSelectedV1(
+    grant: *SelectedSourceExitGrantV1,
+    expected_checkpoint_sha256: successor.Digest,
+    expected_selector_sha256: successor.Digest,
+    expected_publication_next_sequence: u64,
+    terminal: bool,
+) !void {
+    const lease = grant.lease orelse
+        return Error.InvalidActivationGrant;
+    if (grant.phase != .consumed or
+        grant.self_address != @intFromPtr(grant) or
+        grant.lease_address != @intFromPtr(lease) or
+        lease.state != .ready or
+        !std.mem.eql(
+            u8,
+            &grant.grant_sha256,
+            &selectedSourceExitGrantRootV1(grant.*),
+        ) or
+        isZeroDigest(expected_checkpoint_sha256) or
+        isZeroDigest(expected_selector_sha256))
+        return Error.InvalidActivationGrant;
+    const expected_generation = std.math.add(
+        u64,
+        grant.source_selector_generation,
+        1,
+    ) catch return Error.InvalidActivationGrant;
+    const expected_sequence = std.math.add(
+        u64,
+        grant.publication_next_sequence,
+        1,
+    ) catch return Error.InvalidActivationGrant;
+    if (grant.terminal_selector_generation != expected_generation or
+        expected_publication_next_sequence != expected_sequence)
+        return Error.InvalidActivationGrant;
+
+    const active_set = lease.activeSet() catch
+        return Error.InvalidActivationGrant;
+    if (lease.selector.generation != expected_generation or
+        active_set.metadata.generation != expected_generation or
+        lease.selector.request_epoch != grant.request_epoch or
+        active_set.metadata.request_epoch != grant.request_epoch or
+        lease.selector.publication_next_sequence !=
+            expected_publication_next_sequence or
+        active_set.metadata.publication_next_sequence !=
+            expected_publication_next_sequence or
+        lease.selector.checkpoint_bytes !=
+            @as(u64, @intCast(lease.stream().len)) or
+        !std.mem.eql(
+            u8,
+            &lease.selector.previous_selector_sha256,
+            &grant.selected_selector_sha256,
+        ) or !std.mem.eql(
+        u8,
+        &lease.selector.checkpoint_sha256,
+        &expected_checkpoint_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &lease.selector.selector_sha256,
+        &expected_selector_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &active_set.checkpoint_sha256,
+        &expected_checkpoint_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &active_set.metadata.parent_checkpoint_sha256,
+        &grant.authority_checkpoint_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &lease.selector.challenge_sha256,
+        &grant.challenge_sha256,
+    ) or !std.mem.eql(
+        u8,
+        &active_set.metadata.challenge_sha256,
+        &grant.challenge_sha256,
+    ))
+        return Error.InvalidActivationGrant;
+
+    grant.consumer_claim =
+        lease.advanceConsumerClaimV1(
+            grant.consumer_claim,
+        ) catch return Error.InvalidActivationGrant;
+    grant.phase =
+        if (terminal) .terminal_selected else .successor_selected;
+    try validateSelectedSourceExitGrantV1(
+        grant,
+        if (terminal) .terminal_selected else .successor_selected,
+    );
+}
+
 /// Called only after the restored Scheduler/Bank authority is closed. A
 /// terminal target must already have selected generation three; cancellation
 /// releases generation two for deterministic retry.
@@ -371,7 +506,12 @@ pub fn completeRestoredActivationGrantV1(
     terminal: bool,
 ) void {
     const expected_phase: ActivationGrantPhase =
-        if (terminal) .terminal_selected else .consumed;
+        if (terminal)
+            .terminal_selected
+        else if (grant.phase == .successor_selected)
+            .successor_selected
+        else
+            .consumed;
     validateSelectedSourceExitGrantV1(
         grant,
         expected_phase,
@@ -1496,6 +1636,13 @@ fn hashU64(
     var bytes: [8]u8 = undefined;
     std.mem.writeInt(u64, &bytes, @intCast(value), .little);
     hash.update(&bytes);
+}
+
+fn hashU8(
+    hash: *std.crypto.hash.sha2.Sha256,
+    value: u8,
+) void {
+    hash.update(&.{value});
 }
 
 fn isZeroDigest(value: successor.Digest) bool {

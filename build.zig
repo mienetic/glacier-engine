@@ -4535,6 +4535,149 @@ pub fn build(b: *std.Build) void {
         &prepared_text_live_restart_worker_exe.step,
     );
 
+    // R1i compiles the four acknowledged-delivery layers through one facade
+    // so the ordinary test, compile-only, and durable-profile gates share the
+    // same Zig artifact instead of rebuilding each module as a separate root.
+    const prepared_text_acknowledged_delivery_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/prepared_text_acknowledged_delivery.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    prepared_text_acknowledged_delivery_tests.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    prepared_text_acknowledged_delivery_tests.linkLibC();
+    if (int4_neon) |lib|
+        prepared_text_acknowledged_delivery_tests.linkLibrary(lib);
+    const run_prepared_text_acknowledged_delivery_tests =
+        b.addRunArtifact(
+            prepared_text_acknowledged_delivery_tests,
+        );
+    const prepared_text_acknowledged_delivery_test_step = b.step(
+        "prepared-text-acknowledged-delivery-test",
+        "Run prepared-text acknowledged delivery and recovery tests",
+    );
+    prepared_text_acknowledged_delivery_test_step.dependOn(
+        &run_prepared_text_acknowledged_delivery_tests.step,
+    );
+    const prepared_text_acknowledged_delivery_compile_step =
+        b.step(
+            "prepared-text-acknowledged-delivery-compile",
+            "Compile prepared-text acknowledged delivery once",
+        );
+    prepared_text_acknowledged_delivery_compile_step.dependOn(
+        &prepared_text_acknowledged_delivery_tests.step,
+    );
+    test_step.dependOn(
+        prepared_text_acknowledged_delivery_test_step,
+    );
+    test_compile_step.dependOn(
+        prepared_text_acknowledged_delivery_compile_step,
+    );
+
+    // The POSIX recovery worker is compiled once per supported target. A
+    // native worker is then reused by all nineteen process-death cases. Pure
+    // Python protocol/decoder tests run before the real SIGKILL matrix, whose
+    // disposable directory is a declared build output rather than a
+    // repository-local fixture.
+    const prepared_text_recovery_target_available =
+        target.result.os.tag == .macos or
+        target.result.os.tag == .linux or
+        target.result.os.tag == .freebsd;
+    const prepared_text_recovery_worker_exe: ?*std.Build.Step.Compile = blk: {
+        if (!prepared_text_recovery_target_available) break :blk null;
+        const worker = b.addExecutable(.{
+            .name = "glacier-prepared-text-recovery-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/prepared_text_recovery_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+        worker.root_module.addImport("engine", engine_mod);
+        worker.linkLibC();
+        if (int4_neon) |lib| worker.linkLibrary(lib);
+        break :blk worker;
+    };
+    const prepared_text_recovery_test_step = b.step(
+        "prepared-text-recovery-test",
+        "Run acknowledged prepared-text real process-death recovery",
+    );
+    const prepared_text_recovery_native_available =
+        prepared_text_recovery_target_available and
+        target.result.cpu.arch == builtin.cpu.arch and
+        target.result.os.tag == builtin.os.tag and
+        target.result.abi == builtin.abi;
+    if (prepared_text_recovery_native_available) {
+        const run_prepared_text_recovery_model =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "unittest",
+                "bench.tests.test_prepared_text_result_sink",
+                "bench.tests.test_prepared_text_recovery_campaign",
+            });
+        run_prepared_text_recovery_model.setCwd(b.path("."));
+        run_prepared_text_recovery_model.setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_prepared_text_recovery_model.setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+
+        const run_prepared_text_recovery_campaign =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "bench.prepared_text_recovery_campaign",
+                "--worker",
+            });
+        run_prepared_text_recovery_campaign.addArtifactArg(
+            prepared_text_recovery_worker_exe.?,
+        );
+        run_prepared_text_recovery_campaign.addArg("--directory");
+        _ = run_prepared_text_recovery_campaign.addOutputDirectoryArg(
+            "prepared-text-recovery",
+        );
+        run_prepared_text_recovery_campaign.setCwd(b.path("."));
+        run_prepared_text_recovery_campaign.setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_prepared_text_recovery_campaign.setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+        run_prepared_text_recovery_campaign.step.dependOn(
+            &run_prepared_text_recovery_model.step,
+        );
+        prepared_text_recovery_test_step.dependOn(
+            &run_prepared_text_recovery_campaign.step,
+        );
+    } else {
+        const prepared_text_recovery_failure = b.addFail(
+            "prepared-text-recovery-test requires a native macOS, Linux, " ++
+                "or FreeBSD target",
+        );
+        prepared_text_recovery_test_step.dependOn(
+            &prepared_text_recovery_failure.step,
+        );
+    }
+    test_step.dependOn(prepared_text_recovery_test_step);
+    if (prepared_text_recovery_worker_exe) |worker|
+        test_compile_step.dependOn(&worker.step);
+
     // Complete checkpoint sets are immutable archives selected by one fixed
     // root switch. A worker dies after every archive and selector durability
     // phase; fresh recovery accepts only the previous or successor set, then
@@ -6110,6 +6253,11 @@ pub fn build(b: *std.Build) void {
     profile_durable_compile_step.dependOn(
         &prepared_text_live_restart_worker_exe.step,
     );
+    profile_durable_compile_step.dependOn(
+        prepared_text_acknowledged_delivery_compile_step,
+    );
+    if (prepared_text_recovery_worker_exe) |worker|
+        profile_durable_compile_step.dependOn(&worker.step);
     profile_durable_compile_step.dependOn(
         &continuation_checkpoint_file_demo_exe.step,
     );

@@ -13,7 +13,10 @@ grant, and pass the grant through restored admission and activation.
 
 This is a retained correctness fixture and an experimental Zig API. It is not
 yet a production recovery service, a general distributed lease, or a durable
-external result-delivery system.
+external result-delivery system. The
+[acknowledged delivery extension](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md)
+builds a replay-safe local sink/progress chain after this handoff without
+changing the source-exit contract described here.
 
 ## What is canonical
 
@@ -49,7 +52,7 @@ fresh-process path uses the five-object restart archive.
 
 ## Selector generations
 
-One fixed selector advances through three meanings:
+The base handoff uses three selected meanings:
 
 | Generation | Selected state | What it permits |
 | --- | --- | --- |
@@ -63,6 +66,11 @@ Decoders verify this immediate lineage as well as request epoch, publication
 sequence, challenge, object order, ABI, lengths, and roots. The caller still
 supplies the expected generation-one checkpoint root as the lineage anchor; no
 archive is allowed to choose its own trust root.
+
+The acknowledged extension retains generation two as the same source-exit
+authority, then uses nonterminal generations three and four plus terminal
+generation five. Each edge advances exactly one global sequence and carries
+the exact durable sink acknowledgement for that token.
 
 ## Source transition
 
@@ -192,19 +200,22 @@ single-link, file-sync, rename, and directory-sync checks are not a Windows
 durable-file implementation. Portable wire decoding and cross-compilation do
 not change that support boundary.
 
-The protocol prevents a target from activating while generation one is
-selected and prevents two target grants from sharing one live lease. It does
-not yet make arbitrary external side effects exactly once:
+The base protocol prevents a target from activating while generation one is
+selected and prevents two target grants from sharing one live lease. By
+itself, it does not make arbitrary external side effects exactly once:
 
 - a source crash before generation-two publication is fail-closed and
   unavailable, as described above; and
 - a target crash after emitting output but before generation-three publication
   can reopen generation two and replay from `N`.
 
-Applications must therefore use an idempotent sink keyed by request and global
-publication sequence if replay is acceptable. A future durable progress
-generation must join acknowledged sink progress to the selector before Glacier
-can claim exactly-once external delivery across target crashes.
+The R1i extension now supplies that idempotent sink and acknowledged selector
+progress for one fixed local post-generation-two fixture. It applies target
+sequences `1..3` exactly once to the durable POSIX ledger and advances through
+generations three to five under 19 real target-process deaths. This does not
+cover interruption while the source creates the empty sink, and it does not
+turn canonical ACK bytes into authenticated capabilities or establish
+exactly-once behavior for a remote API, database, queue, or tool.
 
 ## Current nonclaims
 
@@ -218,8 +229,8 @@ This slice does not establish:
 - authentication, encryption, remote consensus, host migration, or a
   distributed fencing service;
 - source recovery from the generation-one crash window;
-- exactly-once external delivery without an idempotent sink and durable
-  progress generation; or
+- arbitrary remote or non-idempotent effects outside the acknowledged local
+  sink profile; or
 - production latency, throughput, power, thermal, or soak evidence.
 
 ## Contributor entry points
@@ -228,8 +239,8 @@ Useful bounded follow-up projects include:
 
 - add a pre-source-exit recovery journal that can resolve the
   generation-one-to-two availability gap without inventing exit evidence;
-- design the next selector generation for acknowledged sink progress and
-  target-crash replay suppression;
+- make initial sink creation recoverable without inventing source-exit or
+  acknowledgement evidence;
 - implement a Win32 durable-file adapter with native process-death campaigns;
 - add retained native Linux and FreeBSD filesystem campaigns;
 - add an independent decoder and mutation campaign for the restart manifest
@@ -245,4 +256,7 @@ See [Prepared Text Session](PREPARED_TEXT_SESSION.md),
 [Prepared Text Restore Admission](PREPARED_TEXT_RESTORE_ADMISSION.md),
 [Prepared Text Checkpoint](PREPARED_TEXT_CHECKPOINT.md), and
 [Prepared Text Successor Evidence](PREPARED_TEXT_SUCCESSOR.md) for the
-component contracts composed by this protocol.
+component contracts composed by this protocol. See
+[Acknowledged Prepared-Text Delivery](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md)
+for the post-handoff sink, generations three through five, and target-death
+campaign.

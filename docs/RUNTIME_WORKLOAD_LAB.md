@@ -410,14 +410,26 @@ Results from different modes are not merged into one headline number.
     `fsync` calls are real; ready barriers, kill timing, publication pause,
     and grants are controlled. See the
     [Native Metal supervisor and recovery-process death report](NATIVE_METAL_SUPERVISOR_RECOVERY_DEATH_REPORT.md).
+  - [x] **R1i — Fixed acknowledged prepared-text target recovery.** After one
+    clean generation-two source exit, distinct one-token targets advance
+    through ACK-bound generations three to five. One compiled worker is reused
+    while 19 distinct victims emit a gated ready frame and self-raise real
+    `SIGKILL` at the retained model-step, local POSIX sink, post-ACK, and
+    checkpoint boundaries. The controller requires the exact signal exit;
+    independent decoding admits only previous or exact successors, requires
+    three sink applications, and joins their tokens to the uninterrupted
+    four-token terminal oracle.
+    This is a bounded synthetic local-fixture campaign, not source recovery,
+    physical storage/power-loss, remote exactly-once, GPU/Win32, production
+    model, or native multi-OS evidence. See
+    [Acknowledged Prepared-Text Delivery](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md).
   - [ ] **W7b-b — Remaining broader disruption.** Add the broader bounded
     supervisor/recovery interruption matrix, active-kernel and adapter-loss,
-    physical storage/power, and
-    physical-device fault schedules with explicit
+    physical storage/power, and physical-device fault schedules with explicit
     synthetic-versus-physical provenance. Include prepared-text repeated
-    handoff, source/target death, idempotent sink replay, selector corruption,
-    and lease contention without relabelling fail-closed unavailability as
-    recovery.
+    handoff, pre-generation-two and initial-sink source death, broader target
+    interruption, selector corruption, native-host replication, and lease
+    contention without relabelling fail-closed unavailability as recovery.
 - [ ] **W8 — Native platform replication.** Retain independently verifiable
   campaigns on every claimed operating system and backend. Cross-compilation
   does not count as native workload evidence.

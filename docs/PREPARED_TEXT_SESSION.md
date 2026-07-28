@@ -21,6 +21,9 @@ process-local runnable target at the restored publication sequence. The durable
 handoff slice adds a canonical five-object restart archive, exact source exit,
 an exclusive selector lease, one-shot restored activation, and a
 receipt-independent terminal-semantic comparison across separate processes.
+R1i extends the post-generation-two target path with a canonical result
+acknowledgement, an idempotent local POSIX sink, and immediate acknowledged
+progress through generations three to five under real target-process death.
 These are integrated experimental slices, not the completed R1 text runtime.
 
 ## Supported envelope
@@ -49,6 +52,7 @@ These are integrated experimental slices, not the completed R1 text runtime.
 | Durable source handoff | Address-stable source-live grant under the exclusive selector lease; exact publication-handoff barrier and source-exit receipt; generation-two selection only after the source lane, receipt, and publication binding close |
 | Fresh-process target authority | Five-object canonical restart archive, selector-selected generation-two source exit, lease-backed one-shot activation grant retained through cancellation or generation-three terminal selection and retirement |
 | Terminal comparison | Receipt-independent terminal semantic joining model/request identity, token domains, output, logical KV, RNG, sampling state, and final position across separately completed baseline and target runs |
+| R1i acknowledged target progress | Post-generation-two one-token fresh targets, a canonical ACK from an idempotent descriptor-relative local POSIX sink, immediate progress generations three through five, and a 19-boundary real-`SIGKILL` campaign |
 
 `eos_token` must be outside the model vocabulary in this version. Fixed-length
 execution keeps the admitted service count identical to the number of
@@ -371,7 +375,7 @@ replay guarantees before allowing concurrent scheduler progress.
 
 ## Durable fresh-process handoff
 
-The durable layer composes R1e through R1h-b without serializing any live
+The base durable layer composes R1e through R1h-b without serializing any live
 Session authority:
 
 ```text
@@ -404,8 +408,8 @@ The target activation grant likewise owns the lease's only consumer claim.
 address-stable value. A second concurrent grant, copied grant, selector drift,
 lease drift, or phase replay rejects. Releasing a non-terminal grant permits a
 fresh retry against generation two. The restored Session keeps its active grant
-until a non-terminal cancellation or until the exact generation-three terminal
-semantic has been selected.
+until a non-terminal cancellation or until the exact immediate successor or
+terminal generation has been selected.
 
 The retained `prepared-text-live-restart-demo` runs a completed baseline
 worker, a source worker that selects generation two and exits, and a different
@@ -414,18 +418,32 @@ baseline terminal semantic. It also checks exclusive locking, no source
 resurrection, no duplicate sequence in the retained run, and zero final
 Scheduler/Bank/LeaseTree ownership.
 
-This is not yet exactly-once external delivery across every crash window. A
-source death before generation two leaves generation one selected and the
-request unavailable. A target death after external output but before
-generation three can retry generation two and replay from `N`. Production use
-therefore needs an idempotent sink keyed by request/global sequence; an
-acknowledged durable progress generation remains roadmap work. The current
-durable adapter is POSIX-only. Windows durable files, GPU/device-resident
-continuation, and native multi-OS recovery campaigns remain roadmap work.
+The base three-generation fixture alone does not suppress target replay: a
+target death after publication but before generation three can retry generation
+two from `N`. R1i closes that retained post-generation-two window for its local
+fixture. Each fresh target computes one token, applies it to the exact
+request/sequence key in an idempotent descriptor-relative POSIX sink, retains
+the returned ACK in the immediate successor, and advances generations three
+through five. At every retained model-step, sink-publication, post-ACK, and
+checkpoint-publication boundary, one distinct target emits its gated ready
+frame and self-raises real `SIGKILL`. The controller requires that exact signal
+exit, then independently verifies the acknowledged three-token suffix and
+complete four-token terminal output against the uninterrupted oracle.
+
+This is not arbitrary exactly-once external delivery. Source death before
+generation two and interruption during initial empty-sink creation remain
+fail-closed and unavailable. The ACK codec assumes trusted sink-before-progress
+ordering; it is not an authenticated hostile-writer capability. Remote
+providers, databases, queues, tools, physical storage or power loss, Windows
+durable files, GPU/device-resident continuation, production models, and native
+multi-OS recovery campaigns remain roadmap work.
 
 See
 [Durable Prepared-Text Handoff](PREPARED_TEXT_DURABLE_HANDOFF.md) for the
-generation layouts, lease/grant lifecycle, demo command, and exact nonclaims.
+base generation layouts, lease/grant lifecycle, demo command, and exact
+nonclaims, and
+[Acknowledged Prepared-Text Delivery](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md)
+for the post-handoff ACK/sink/progress chain and target-death campaign.
 
 ## Compatibility lifecycles
 
@@ -597,6 +615,9 @@ the LaneWeave publication-adoption unit tests, the retained evidence verifies:
 - separate baseline, source, and target workers with distinct source/target
   process IDs, exclusive lease evidence, terminal-semantic equality, and zero
   source/target logical ownership;
+- one compiled R1i worker reused across 19 real target-process deaths, with
+  previous-or-exact-successor sink/checkpoint recovery, three canonical ACKs,
+  generation-five terminal output, distinct PIDs, and zero live authority;
 - pending-permit rollback after an injected pre-publication failure;
 - zero used resources after retirement;
 - zero used resources after an injected initialization-allocation failure.
@@ -622,12 +643,13 @@ concurrent same-scheduler progress during startup.
 R1h-a by itself remains a non-runnable bootstrap: its caller-reserved session
 identity is an address-sized future binding rather than proof that activation
 succeeded. R1h-b can consume that exact capability into a process-local target.
-The durable composition adds selected source exit, exclusive fresh-process
-activation, and receipt-independent terminal-semantic equivalence, but it does
-not recover a source crash before generation two, suppress target replay before
-generation three, provide exactly-once external delivery without an idempotent
-sink, implement Windows durable files, continue GPU-resident state, or establish
-production-model/native-platform performance.
+The base durable composition adds selected source exit, exclusive fresh-process
+activation, and receipt-independent terminal-semantic equivalence. R1i adds
+replay-safe target progress only for the retained post-generation-two local
+POSIX fixture. The combined path does not recover source interruption before
+generation two or during initial sink creation, provide arbitrary remote
+exactly-once effects, implement Windows durable files, continue GPU-resident
+state, or establish production-model/native-platform performance.
 
 `BoundPlanV1`, `ExecutionResidencyBindingV1`, and the Session bridge are still
 an experimental Zig/direct API. There is no fixed `BoundPlanV1` wire, projected

@@ -14,11 +14,13 @@ durable layer verifies selected generation two under an exclusive lease.
 the restored Session contain live pointers or generation-fenced handles and
 must not be serialized or treated as transferable authority.
 
-The canonical restart manifest and three-generation selector protocol are
+The canonical restart manifest and base three-generation selector protocol are
 documented in
 [Durable Prepared-Text Handoff](PREPARED_TEXT_DURABLE_HANDOFF.md). This
 document focuses on the process-local admission and activation transaction
-that the durable protocol calls.
+that the durable protocol calls. The post-generation-two acknowledged target
+extension is documented in
+[Acknowledged Prepared-Text Delivery](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md).
 
 ## R1h-a target bootstrap
 
@@ -191,16 +193,19 @@ lease from closing while target authority is retained.
 The phase sequence is:
 
 ```text
-ready → preparing → prepared → consumed → completed (non-terminal cancel)
-                                  └─────→ terminal_selected → completed
+ready → preparing → prepared → consumed → completed (cancel before selection)
+                                  ├─────→ successor_selected → completed
+                                  └─────→ terminal_selected  → completed
 ```
 
 A rejected or explicitly aborted preparation returns the grant to `ready`.
-After restored activation, a non-terminal cancellation completes the consumed
-grant while generation two remains available for a deterministic retry. A
-terminal retirement requires the lease to have selected generation three with
-the exact expected terminal semantic; only then can the Session complete the
-grant and release the consumer claim.
+After restored activation, cancellation before successor selection completes
+the consumed grant while the predecessor remains available for a deterministic
+retry. An acknowledged nonterminal step requires the lease to select the exact
+immediate successor and advances the consumer claim before completion. A
+terminal retirement likewise requires the exact immediate terminal selection.
+Only the selected phase can complete the grant and release its final
+process-local authority.
 
 The durable selector and restart manifest are pointer-free evidence. The lease,
 consumer claim, activation grant, prepared admission, and runnable Session are
@@ -221,15 +226,25 @@ handoff layer proves how one selected source exit reaches that target:
 - restored cancellation returning Scheduler, Bank, tree, scope, and allocation
   counts to zero.
 
-The composed fresh-process fixture additionally proves selected
+The base composed fresh-process fixture additionally proves selected
 source-live-to-source-exited-to-terminal lineage, exclusive lease acquisition,
 separate source and target process identities, and terminal-semantic equality
-with a separately completed baseline. It does not:
+with a separately completed baseline. By itself, that base fixture does not
+prevent replay when a target dies before generation three.
+
+R1i extends the retained post-generation-two path with one-token fresh targets,
+an idempotent descriptor-relative local POSIX sink, canonical ACK-bound
+successors through generations three to five, and consumer-claim advancement
+only after the immediate selector successor is live. A 19-boundary real-process
+death campaign admits only previous or exact-successor sink/checkpoint roots
+and independently verifies the three acknowledged suffix tokens against the
+complete uninterrupted output.
+
+The combined path does not:
 
 - recover source death before generation two is published;
-- prevent output replay if the target dies before generation three;
-- make external effects exactly once without an idempotent sink and durable
-  acknowledged-progress generation;
+- recover interruption during the initial empty-sink creation;
+- make arbitrary remote or hostile-writer effects exactly once;
 - provide a Windows durable-file adapter or GPU-resident continuation; or
 - establish production-model, native-platform, quality, or performance
   evidence.
@@ -245,15 +260,19 @@ The retained suite covers:
 - R1h-a fresh-target identity, prepared validation, reverse abort, setup
   recovery, and stale-capability rejection;
 - generation-two lease pinning, duplicate activation-grant rejection, prepared
-  and consumed grant phases, and grant retention until terminal selection or
-  cancellation;
+  and consumed grant phases, successor/terminal-selected phases, immediate
+  selector validation, consumer-claim advancement, and grant retention until
+  selection or cancellation;
 - publication ABI v2 restored initialization, first transaction at `N`,
   predecessor transcript continuity, and permit `G + 1`;
 - restored contiguous KV/output/RNG binding validation;
 - one synthetic-model restored next-token comparison followed by zero-state
   cancellation; and
 - one separate-process baseline/source/target path selecting generation three
-  and matching the receipt-independent terminal semantic.
+  and matching the receipt-independent terminal semantic; and
+- one compiled R1i worker reused across 19 distinct target deaths, three
+  ACK-bound progress successors, a generation-five terminal result, exact
+  previous-or-successor recovery, and zero final runtime/file authority.
 
 Use the ephemeral cache wrapper for focused Zig checks:
 

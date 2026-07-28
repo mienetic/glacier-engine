@@ -535,6 +535,30 @@ the pending Scheduler adoption. It continues at global publication base `N`
 and does not by itself prove durable selection, source exit, or exclusive
 process handoff.
 
+**Prepared-text result acknowledgement** — A canonical 424-byte R1i record
+returned only after the retained sink has durably accepted or exactly replayed
+one request/global-sequence delivery. It binds token, proposal, transition,
+commit receipt, sink identity, application ordinal, predecessor ACK, and sink
+prefix. It is hash-canonical evidence, not an authenticated capability.
+
+**Durable prepared-text result sink** — The bounded descriptor-relative local
+POSIX R1i adapter that selects one immutable complete acknowledgement ledger
+through an atomic root switch. An exact delivery replay returns the original
+ACK without another application or durable write; gaps, conflicts, unsafe
+storage, and identity drift reject.
+
+**Acknowledged prepared-text progress generation** — The immediate
+post-generation-two selector successor that joins the exact predecessor,
+canonical ACK, and either the next five-object restart archive or terminal
+semantic/output. The retained fixture advances generations three through five,
+one fresh target token at a time.
+
+**Prepared-text selected activation phase** — The process-local
+`successor_selected` or `terminal_selected` grant state entered only after the
+exclusive lease observes the exact immediate selector successor and advances
+its sole consumer claim. It carries no authority after final completion and is
+not reconstructed from serialized evidence.
+
 **Restored ownership receipt** — A domain-separated commitment that replaces a
 dead source's retained-output authority with the fresh Bank epoch, receipt
 identity, owner and claims actually reacquired during restore. It also binds the

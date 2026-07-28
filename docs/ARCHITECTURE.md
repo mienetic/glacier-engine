@@ -535,12 +535,24 @@ retained synthetic-model path compares one target transition with uninterrupted
 output, logical KV, RNG, and sampling state and returns target accounting to
 zero.
 
-This lifecycle does not add early EOS, fewer-than-admitted outputs, a raw-text
-tokenizer, stable package or license byte attestation, durable prepared-session
-checkpoint publication, durable successor selection, source exit, exclusive
-process handoff, fresh-process resume, terminal resumed equivalence,
-production-model evidence, strict cross-platform numerical equivalence, or
-native-platform performance evidence.
+R1h-b alone is process-local. The durable handoff layer composes it with a
+canonical five-object restart archive, an atomic selector, exclusive lease and
+consumer grant, exact source-authority close, generation-two source exit, and a
+distinct-process terminal-semantic comparison. R1i extends only that
+post-generation-two target path: each fresh target applies one token through
+an idempotent descriptor-relative local POSIX sink, retains the canonical ACK
+in its immediate progress successor, and advances generations three through
+five. In a compile-once campaign, 19 distinct targets emit their gated ready
+frame and self-raise real `SIGKILL` across model-step, sink, and checkpoint
+boundaries; independent recovery admits only previous or exact-successor
+roots.
+
+The combined lifecycle still does not add early EOS,
+fewer-than-admitted outputs, a raw-text tokenizer, stable package or license
+byte attestation, source recovery before generation two or during initial sink
+creation, arbitrary remote exactly-once effects, GPU-resident continuation,
+Windows durable files, production-model evidence, strict cross-platform
+numerical equivalence, or native multi-OS performance/recovery evidence.
 The `deinit` safety path may abandon terminal evidence while closing and
 releasing the adopted lifecycle; it does not count as a successful result seal.
 
@@ -1333,6 +1345,12 @@ targets remain gated until their named native adapters and evidence pass.
   barrier-held fresh target receipt, receipt-funded ownership,
   charge-before-materialize process-local activation, global sequence and Bank
   permit fencing, and restored cleanup to zero.
+- [Durable prepared-text handoff](PREPARED_TEXT_DURABLE_HANDOFF.md): canonical
+  restart archive, source-exit selector, exclusive lease/grant authority, and
+  the base distinct-process terminal comparison.
+- [Acknowledged prepared-text delivery](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md):
+  local POSIX sink/ACK progress, generations three through five, and the
+  retained 19-boundary target-process-death campaign.
 - [Continuation capsule](CONTINUATION_CAPSULE.md): checkpoint manifest ABI.
 - [Continuation object resolver](CONTINUATION_OBJECT_RESOLVER.md): scoped
   lookup and quota contract.

@@ -2437,7 +2437,7 @@ pub const SessionV3 = struct {
             return Error.InvalidState;
         const terminal = self.inner.isFinished();
         try self.validateRestoredActivationGrantV1(
-            if (terminal) .terminal_selected else .consumed,
+            self.restoredCloseGrantPhaseV1(terminal),
         );
         const publication_session =
             &self.inner.inner.publication_session;
@@ -2472,7 +2472,7 @@ pub const SessionV3 = struct {
         const terminal =
             self.restored_close.kind == .retire;
         try self.validateRestoredActivationGrantV1(
-            if (terminal) .terminal_selected else .consumed,
+            self.restoredCloseGrantPhaseV1(terminal),
         );
         const publication_session =
             &self.inner.inner.publication_session;
@@ -3399,6 +3399,19 @@ pub const SessionV3 = struct {
         ) catch return Error.InvalidState;
     }
 
+    fn restoredCloseGrantPhaseV1(
+        self: *const SessionV3,
+        terminal: bool,
+    ) prepared_restore.ActivationGrantPhase {
+        if (terminal) return .terminal_selected;
+        const grant = self.restored_activation_grant orelse
+            return .consumed;
+        return if (grant.phase == .successor_selected)
+            .successor_selected
+        else
+            .consumed;
+    }
+
     fn restoredActivationGrantValidV1(
         self: *const SessionV3,
     ) bool {
@@ -3408,6 +3421,7 @@ pub const SessionV3 = struct {
         const expected: prepared_restore.ActivationGrantPhase =
             switch (grant.phase) {
                 .consumed => .consumed,
+                .successor_selected => .successor_selected,
                 .terminal_selected => .terminal_selected,
                 else => return false,
             };
