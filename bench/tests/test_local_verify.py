@@ -221,15 +221,19 @@ class LocalVerifyTests(unittest.TestCase):
             temporary_parent.mkdir()
             outside_cwd = root / "outside"
             outside_cwd.mkdir()
-            result = subprocess.run(
-                [str(VERIFY), "full"],
-                cwd=outside_cwd,
-                env={
-                    **os.environ,
+            environment = os.environ.copy()
+            environment.pop("GLACIER_VERIFY_REQUIRE_NATIVE", None)
+            environment.update(
+                {
                     "PATH": f"{bin_dir}:/usr/bin:/bin",
                     "TMPDIR": str(temporary_parent),
                     "VERIFY_FAKE_LOG": str(log_path),
-                },
+                }
+            )
+            result = subprocess.run(
+                [str(VERIFY), "full"],
+                cwd=outside_cwd,
+                env=environment,
                 check=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
