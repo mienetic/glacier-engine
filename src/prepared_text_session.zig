@@ -237,6 +237,29 @@ pub fn promptTokensSha256V1(prompt: []const u32) [32]u8 {
     return promptSha256(prompt);
 }
 
+/// Compute the same canonical prepared-text prompt root for a byte-token
+/// stream without allocating an intermediate `u32` array. This is used by
+/// durable UTF-8 input decoders before they trust any retained token buffer.
+pub fn promptByteTokensSha256V1(bytes: []const u8) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(prompt_domain);
+    hashU64(&hash, @intCast(bytes.len));
+    for (bytes) |byte| hashU32(&hash, byte);
+    var digest: [32]u8 = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+test "byte-token prompt root matches canonical u32 prompt root" {
+    const bytes = [_]u8{ 0, 7, 127, 128, 255 };
+    const tokens = [_]u32{ 0, 7, 127, 128, 255 };
+    try std.testing.expectEqualSlices(
+        u8,
+        &promptTokensSha256V1(&tokens),
+        &promptByteTokensSha256V1(&bytes),
+    );
+}
+
 fn planSha256(plan: PlanV1) [32]u8 {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
     hash.update(plan_domain);

@@ -67,6 +67,12 @@ test "package exports runtime and core modules independently of host tools" {
         @hasDecl(glacier, "prepared_text_raw_input"),
     );
     try std.testing.expect(
+        @hasDecl(glacier, "model_package_manifest"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "prepared_text_input_archive"),
+    );
+    try std.testing.expect(
         @hasDecl(glacier, "prepared_text_restore_admission"),
     );
     try std.testing.expect(@hasDecl(glacier_core, "ResourceBank"));

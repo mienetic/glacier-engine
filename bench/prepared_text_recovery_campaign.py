@@ -23,6 +23,8 @@ import sys
 import time
 from typing import Callable, Mapping, Sequence, cast
 
+from bench import prepared_text_package as prepared_package
+
 
 CRASH_READY_SCHEMA = "glacier.prepared-text-recovery/crash-ready-v1"
 RESULT_SCHEMA = "glacier.prepared-text-recovery/result-v1"
@@ -37,9 +39,7 @@ BOOTSTRAP_CHECKPOINT_PHASES = (
     "bootstrap_checkpoint_selector_rename",
     "bootstrap_checkpoint_selector_directory_sync",
 )
-BOOTSTRAP_CHECKPOINT_SELECTED_POINTS = frozenset(
-    BOOTSTRAP_CHECKPOINT_PHASES[-2:]
-)
+BOOTSTRAP_CHECKPOINT_SELECTED_POINTS = frozenset(BOOTSTRAP_CHECKPOINT_PHASES[-2:])
 
 SOURCE_CRASH_POINTS = (
     "source_after_recovery_admission",
@@ -67,9 +67,7 @@ SOURCE_CRASH_POINTS = (
     "source_after_generation_two",
 )
 SOURCE_SINK_SELECTED_POINTS = frozenset(SOURCE_CRASH_POINTS[9:])
-SOURCE_CHECKPOINT_GENERATION_TWO_POINTS = frozenset(
-    SOURCE_CRASH_POINTS[20:]
-)
+SOURCE_CHECKPOINT_GENERATION_TWO_POINTS = frozenset(SOURCE_CRASH_POINTS[20:])
 
 AFTER_STEP_BEFORE_SINK = "after_step_before_sink"
 SINK_PHASES = (
@@ -140,6 +138,7 @@ BASELINE_FIXTURE_NAMES = (
     "prepared-text-fixture.safetensors",
     "prepared-text-fixture.glacier",
     "prepared-text-fixture.glrt",
+    "prepared-text-fixture.glpkg",
     "prepared-text-terminal-semantic.bin",
 )
 
@@ -183,6 +182,7 @@ CHECKPOINT_SET_FOOTER_BYTES = 32
 CHECKPOINT_SET_DOMAIN = b"glacier-continuation-checkpoint-set-v1\x00"
 CHECKPOINT_OBJECT_DOMAIN = b"glacier-continuation-checkpoint-object-v1\x00"
 TERMINAL_OUTPUT_TOKENS_ABI = 0x4750_544F_0000_0001
+TERMINAL_SEMANTIC_ABI = 0x4750_5453_0000_0001
 
 # Independent generation-one source-replay contract constants.
 SOURCE_LIVE_MARKER_ABI = 0x4750_544C_0000_0001
@@ -197,12 +197,8 @@ SOURCE_REPLAY_DOMAIN = b"glacier-prepared-text-source-replay-contract-v1\x00"
 SOURCE_PROMPT_DOMAIN = b"glacier-prepared-text-prompt-v1\x00"
 SOURCE_TARGET_DOMAIN = b"glacier-prepared-text-source-replay-target-v1\x00"
 SOURCE_OWNERSHIP_DOMAIN = b"glacier-prepared-text-ownership-v1\x00"
-SOURCE_EXIT_RECEIPT_DOMAIN = (
-    b"glacier-lane-weave-qos-source-exit-receipt-v1\x00"
-)
-RESOURCE_RECEIPT_DOMAIN = (
-    b"glacier-lane-weave-qos-resource-receipt-v1\x00"
-)
+SOURCE_EXIT_RECEIPT_DOMAIN = b"glacier-lane-weave-qos-source-exit-receipt-v1\x00"
+RESOURCE_RECEIPT_DOMAIN = b"glacier-lane-weave-qos-resource-receipt-v1\x00"
 SOURCE_OWNERSHIP_INTENT_ABI = 0x474C_544F_0000_0001
 RESOURCE_BANK_ABI = 0x4752_424B_0000_0001
 PREPARED_TEXT_PLAN_ABI = 0x474C_5450_0000_0001
@@ -258,9 +254,7 @@ MODEL_RESIDENCY_DOMAIN = b"glacier-model-execution-residency-binding-v1\x00"
 SUCCESSOR_SEGMENT_MAGIC = b"GLTSEG01"
 SUCCESSOR_SEGMENT_BYTES = 512
 SUCCESSOR_SEGMENT_BODY_BYTES = 480
-SUCCESSOR_SEGMENT_DOMAIN = (
-    b"glacier-prepared-text-successor-transcript-segment-v1\x00"
-)
+SUCCESSOR_SEGMENT_DOMAIN = b"glacier-prepared-text-successor-transcript-segment-v1\x00"
 
 
 class CampaignError(RuntimeError):
@@ -341,10 +335,35 @@ class SourceContractFacts:
 
 
 @dataclass(frozen=True)
+class DurableInputFacts:
+    encoded: bytes
+    archive_sha256: bytes
+    package_sha256: bytes
+    representation_sha256: bytes
+    raw_text_sha256: bytes
+    raw_text: bytes
+    prompt_tokens: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class EmbeddedSelectorFacts:
+    encoded: bytes
+    generation: int
+    request_epoch: int
+    next_sequence: int
+    checkpoint_bytes: int
+    previous_selector_sha256: bytes
+    checkpoint_sha256: bytes
+    challenge_sha256: bytes
+    selector_sha256: bytes
+
+
+@dataclass(frozen=True)
 class WireFacts:
     sink: SinkWireFacts | None
     checkpoint: CheckpointWireFacts | None
     source_contract: SourceContractFacts | None = None
+    durable_input: DurableInputFacts | None = None
 
 
 def _require(condition: bool, message: str) -> None:
@@ -613,9 +632,7 @@ def _validate_ready_frame(
 
     if expected_crash_point in SOURCE_CRASH_POINTS:
         _require(
-            expected_generation == 1
-            and expected_sequence == 1
-            and sink_count == 0,
+            expected_generation == 1 and expected_sequence == 1 and sink_count == 0,
             "source-transition ready frame exposes impossible input state",
         )
         sink_selected = expected_crash_point in SOURCE_SINK_SELECTED_POINTS
@@ -641,9 +658,7 @@ def _validate_ready_frame(
         "target sink visibility changed",
     )
     _require(
-        sink_ledger != zero
-        and sink_selector != zero
-        and checkpoint_selector != zero,
+        sink_ledger != zero and sink_selector != zero and checkpoint_selector != zero,
         "target ready frame contains a zero selected root",
     )
 
@@ -1073,8 +1088,7 @@ def _decode_checkpoint_set(
     previous_selector_sha256: bytes = ZERO_DIGEST,
 ) -> CheckpointWireFacts:
     _require(
-        len(checkpoint)
-        >= CHECKPOINT_SET_PAYLOAD_OFFSET + CHECKPOINT_SET_FOOTER_BYTES,
+        len(checkpoint) >= CHECKPOINT_SET_PAYLOAD_OFFSET + CHECKPOINT_SET_FOOTER_BYTES,
         "checkpoint set is too small",
     )
     _require(
@@ -1325,8 +1339,7 @@ def _empty_sink_roots(
 
 def _decode_source_replay_contract(encoded: bytes) -> SourceContractFacts:
     _require(
-        len(encoded)
-        >= SOURCE_REPLAY_PROMPT_OFFSET + SOURCE_REPLAY_FOOTER_BYTES,
+        len(encoded) >= SOURCE_REPLAY_PROMPT_OFFSET + SOURCE_REPLAY_FOOTER_BYTES,
         "source replay contract is too small",
     )
     prompt_count = _u64(encoded, 48)
@@ -1341,9 +1354,7 @@ def _decode_source_replay_contract(encoded: bytes) -> SourceContractFacts:
         and prompt_count > 0
         and prompt_bytes == prompt_count * 4
         and len(encoded)
-        == SOURCE_REPLAY_PROMPT_OFFSET
-        + prompt_bytes
-        + SOURCE_REPLAY_FOOTER_BYTES
+        == SOURCE_REPLAY_PROMPT_OFFSET + prompt_bytes + SOURCE_REPLAY_FOOTER_BYTES
         and encoded[64:SOURCE_REPLAY_HEADER_BYTES]
         == bytes(SOURCE_REPLAY_HEADER_BYTES - 64),
         "invalid source replay contract header",
@@ -1383,12 +1394,8 @@ def _decode_source_replay_contract(encoded: bytes) -> SourceContractFacts:
     sink_instance_sha256 = encoded[864:896]
     sink_empty_ledger_sha256 = encoded[896:928]
     sink_empty_selector_sha256 = encoded[928:960]
-    prompt_wire = encoded[
-        SOURCE_REPLAY_PROMPT_OFFSET : -SOURCE_REPLAY_FOOTER_BYTES
-    ]
-    prompt_tokens = tuple(
-        struct.unpack("<" + "I" * prompt_count, prompt_wire)
-    )
+    prompt_wire = encoded[SOURCE_REPLAY_PROMPT_OFFSET:-SOURCE_REPLAY_FOOTER_BYTES]
+    prompt_tokens = tuple(struct.unpack("<" + "I" * prompt_count, prompt_wire))
 
     _require(
         max_new_tokens > publication_next_sequence > 0
@@ -1561,10 +1568,8 @@ def _validate_source_execution_bindings(
         and _u64(execution, 80) == contract.scheduling[2]
         and _u64(execution, 144) == 0
         and execution[320:352] == contract.prompt_sha256
-        and execution[352:384]
-        == contract.bound_token_domain_sha256
-        and execution[384:416]
-        == contract.bound_token_domain_config_sha256
+        and execution[352:384] == contract.bound_token_domain_sha256
+        and execution[384:416] == contract.bound_token_domain_config_sha256
         and execution[512:544] == contract.challenge_sha256
         and execution[544:576] == contract.bound_previous_plan_sha256,
         "source execution context differs from source contract",
@@ -1618,12 +1623,8 @@ def _validate_restart_execution_context(
     residency: bytes,
     plan_claim: tuple[int, ...],
 ) -> None:
-    execution_claim = tuple(
-        _u64(execution, 176 + index * 8) for index in range(10)
-    )
-    residency_claim = tuple(
-        _u64(residency, 144 + index * 8) for index in range(10)
-    )
+    execution_claim = tuple(_u64(execution, 176 + index * 8) for index in range(10))
+    residency_claim = tuple(_u64(residency, 144 + index * 8) for index in range(10))
     _checked_claim_host_bytes(
         execution_claim,
         label="source execution",
@@ -1661,13 +1662,10 @@ def _validate_prepared_bound_profile(
 ) -> None:
     prompt_bytes = len(contract.prompt_tokens) * 4
     output_bytes = contract.options[0] * 4
-    execution_claim = tuple(
-        _u64(execution, 176 + index * 8) for index in range(10)
-    )
+    execution_claim = tuple(_u64(execution, 176 + index * 8) for index in range(10))
     _require(
         (_u64(artifact, 32), _u64(execution, 32)) == (1, 1)
-        and _u64(artifact, 40)
-        == PREPARED_TEXT_ARTIFACT_PROFILE_ABI
+        and _u64(artifact, 40) == PREPARED_TEXT_ARTIFACT_PROFILE_ABI
         and (_u64(artifact, 48), _u64(execution, 48)) == (1, 1)
         and (_u64(artifact, 56), _u64(execution, 56)) == (11, 11)
         and (_u64(artifact, 64), _u64(execution, 64)) == (4, 4)
@@ -1754,8 +1752,7 @@ def _validate_restart_expected_source_context(
 
     maximum_absolute_output = _u64(execution, 152)
     _require(
-        maximum_absolute_output < U64_MAX
-        and vocab_size == maximum_absolute_output + 1,
+        maximum_absolute_output < U64_MAX and vocab_size == maximum_absolute_output + 1,
         "restart manifest expected vocabulary binding mismatch",
     )
     _require(
@@ -1818,8 +1815,7 @@ def _validate_restart_expected_source_context(
         and _u64(state, 104) == output_count
         and _u64(state, 104) == _u64(source, 96)
         and state[112:144] != ZERO_DIGEST
-        and state[144:176]
-        == _hash(LANE_STATE_COMMITMENT_DOMAIN, state[:144])
+        and state[144:176] == _hash(LANE_STATE_COMMITMENT_DOMAIN, state[:144])
         and source[296:328] != ZERO_DIGEST
         and _u64(execution, 72) == request_epoch
         and _u64(execution, 144) < publication_next_sequence,
@@ -1844,8 +1840,7 @@ def _decode_restart_manifest(
     contract: SourceContractFacts,
 ) -> tuple[bytes, bytes, bytes]:
     _require(
-        len(encoded)
-        >= RESTART_MANIFEST_PROMPT_OFFSET + SOURCE_REPLAY_FOOTER_BYTES,
+        len(encoded) >= RESTART_MANIFEST_PROMPT_OFFSET + SOURCE_REPLAY_FOOTER_BYTES,
         "restart manifest is too small",
     )
     prompt_count = _u64(encoded, 48)
@@ -1864,9 +1859,7 @@ def _decode_restart_manifest(
         and _u64(encoded, 80) == MODEL_RESIDENCY_BYTES
         and _u64(encoded, 88) == 0
         and len(encoded)
-        == RESTART_MANIFEST_PROMPT_OFFSET
-        + prompt_bytes
-        + SOURCE_REPLAY_FOOTER_BYTES,
+        == RESTART_MANIFEST_PROMPT_OFFSET + prompt_bytes + SOURCE_REPLAY_FOOTER_BYTES,
         "invalid restart manifest header",
     )
     _require(
@@ -1920,9 +1913,7 @@ def _decode_restart_manifest(
         label="execution plan",
     )
     _validate_source_execution_bindings(execution, contract)
-    residency = encoded[
-        RESTART_RESIDENCY_OFFSET:RESTART_EXPECTED_BINDINGS_OFFSET
-    ]
+    residency = encoded[RESTART_RESIDENCY_OFFSET:RESTART_EXPECTED_BINDINGS_OFFSET]
     residency_root = _validate_fixed_rooted_wire(
         residency,
         magic=MODEL_RESIDENCY_MAGIC,
@@ -1948,17 +1939,14 @@ def _decode_restart_manifest(
         and _u64(artifact, 88) == contract.options[0]
         and _u64(artifact, 104) == _u64(plan, 72)
         and artifact[112:144] == plan[80:112]
-        and artifact[176:208]
-        == contract.bound_artifact_license_sha256
+        and artifact[176:208] == contract.bound_artifact_license_sha256
         and execution[256:288] == artifact_root
         and execution[288:320] == artifact[112:144]
         and _u64(execution, 96) == _u64(artifact, 80)
         and _u64(execution, 104) == _u64(artifact, 88)
         and _u64(execution, 160) == _u64(artifact, 104)
-        and execution[352:384]
-        == contract.bound_token_domain_sha256
-        and execution[384:416]
-        == contract.bound_token_domain_config_sha256
+        and execution[352:384] == contract.bound_token_domain_sha256
+        and execution[384:416] == contract.bound_token_domain_config_sha256
         and contract.bound_plan_sha256 == canonical_bound_plan_root,
         "restart manifest canonical bound plan context mismatch",
     )
@@ -1982,9 +1970,7 @@ def _decode_restart_manifest(
         "restart manifest model roots differ from source contract",
     )
 
-    expected = encoded[
-        RESTART_EXPECTED_BINDINGS_OFFSET:2296
-    ]
+    expected = encoded[RESTART_EXPECTED_BINDINGS_OFFSET:2296]
     source = encoded[2296:RESTART_TARGET_OFFSET]
     _validate_restart_expected_source_context(
         expected,
@@ -2002,12 +1988,152 @@ def _decode_restart_manifest(
     prompt_wire = encoded[RESTART_MANIFEST_PROMPT_OFFSET:-32]
     _require(
         prompt_wire
-        == contract.encoded[
-            SOURCE_REPLAY_PROMPT_OFFSET:-SOURCE_REPLAY_FOOTER_BYTES
-        ],
+        == contract.encoded[SOURCE_REPLAY_PROMPT_OFFSET:-SOURCE_REPLAY_FOOTER_BYTES],
         "restart manifest prompt differs from source contract",
     )
     return execution, residency, source_receipt
+
+
+def _decode_progress_restart_manifest(
+    encoded: bytes,
+    contract: SourceContractFacts,
+) -> None:
+    """Authenticate a later manifest while allowing derived bound state."""
+
+    _require(
+        len(encoded) >= RESTART_MANIFEST_PROMPT_OFFSET + SOURCE_REPLAY_FOOTER_BYTES,
+        "progress restart manifest is too small",
+    )
+    prompt_count = _u64(encoded, 48)
+    prompt_bytes = _u64(encoded, 56)
+    _require(
+        encoded[:8] == RESTART_MANIFEST_MAGIC
+        and _u64(encoded, 8) == RESTART_MANIFEST_ABI
+        and _u64(encoded, 16) == len(encoded)
+        and _u64(encoded, 24) == 0
+        and _u64(encoded, 32) == RESTART_MANIFEST_HEADER_BYTES
+        and _u64(encoded, 40) == RESTART_MANIFEST_FIXED_PAYLOAD_BYTES
+        and prompt_count == len(contract.prompt_tokens)
+        and prompt_bytes == prompt_count * 4
+        and _u64(encoded, 64) == MODEL_ARTIFACT_BYTES
+        and _u64(encoded, 72) == MODEL_EXECUTION_PLAN_BYTES
+        and _u64(encoded, 80) == MODEL_RESIDENCY_BYTES
+        and _u64(encoded, 88) == 0
+        and len(encoded)
+        == RESTART_MANIFEST_PROMPT_OFFSET + prompt_bytes + SOURCE_REPLAY_FOOTER_BYTES
+        and encoded[-32:] == _hash(RESTART_MANIFEST_DOMAIN, encoded[:-32])
+        and (
+            _u64(encoded, 96),
+            struct.unpack_from("<I", encoded, 104)[0],
+            _u64(encoded, 112),
+        )
+        == contract.options
+        and encoded[108:112] == bytes(4),
+        "invalid progress restart manifest",
+    )
+
+    plan = encoded[RESTART_PLAN_OFFSET:RESTART_BOUND_PLAN_OFFSET]
+    plan_root, plan_claim = _decode_restart_plan(plan, contract)
+    bound = encoded[RESTART_BOUND_PLAN_OFFSET:576]
+    _require(
+        len(bound) == 168
+        and _u64(bound, 0) == PREPARED_TEXT_BOUND_PLAN_ABI
+        and bound[8:40] == plan_root
+        and bound[40:72] == contract.bound_token_domain_sha256
+        and bound[72:104] == contract.bound_token_domain_config_sha256
+        and bound[104:136] == contract.bound_artifact_license_sha256,
+        "progress restart stable binding mismatch",
+    )
+
+    artifact = encoded[576:RESTART_EXECUTION_OFFSET]
+    artifact_root = _validate_fixed_rooted_wire(
+        artifact,
+        magic=MODEL_ARTIFACT_MAGIC,
+        abi=MODEL_ARTIFACT_ABI,
+        total_bytes=MODEL_ARTIFACT_BYTES,
+        body_bytes=MODEL_ARTIFACT_BODY_BYTES,
+        domain=MODEL_ARTIFACT_DOMAIN,
+        label="progress model artifact",
+    )
+    execution = encoded[RESTART_EXECUTION_OFFSET:RESTART_RESIDENCY_OFFSET]
+    execution_root = _validate_fixed_rooted_wire(
+        execution,
+        magic=MODEL_EXECUTION_PLAN_MAGIC,
+        abi=EXECUTION_PLAN_OBJECT_ABI,
+        total_bytes=MODEL_EXECUTION_PLAN_BYTES,
+        body_bytes=MODEL_EXECUTION_PLAN_BODY_BYTES,
+        domain=MODEL_EXECUTION_PLAN_DOMAIN,
+        label="progress execution plan",
+    )
+    residency = encoded[RESTART_RESIDENCY_OFFSET:RESTART_EXPECTED_BINDINGS_OFFSET]
+    residency_root = _validate_fixed_rooted_wire(
+        residency,
+        magic=MODEL_RESIDENCY_MAGIC,
+        abi=EXECUTION_RESIDENCY_OBJECT_ABI,
+        total_bytes=MODEL_RESIDENCY_BYTES,
+        body_bytes=MODEL_RESIDENCY_BODY_BYTES,
+        domain=MODEL_RESIDENCY_DOMAIN,
+        label="progress execution residency",
+    )
+    current_bound_root = _hash(
+        RESTART_BOUND_PLAN_DOMAIN,
+        struct.pack("<Q", PREPARED_TEXT_BOUND_PLAN_ABI)
+        + plan_root
+        + artifact_root
+        + execution_root
+        + residency_root
+        + contract.bound_token_domain_sha256
+        + contract.bound_token_domain_config_sha256
+        + contract.bound_artifact_license_sha256,
+    )
+    _require(
+        bound[136:168] == current_bound_root
+        and artifact_root == contract.artifact_sha256
+        and artifact[176:208] == contract.bound_artifact_license_sha256
+        and _u64(artifact, 80) == len(contract.prompt_tokens)
+        and _u64(artifact, 88) == contract.options[0]
+        and execution[256:288] == artifact_root
+        and execution[288:320] == artifact[112:144]
+        and execution[320:352] == contract.prompt_sha256
+        and execution[352:384] == contract.bound_token_domain_sha256
+        and execution[384:416] == contract.bound_token_domain_config_sha256
+        and _u64(execution, 72) == contract.request_epoch,
+        "progress restart package or execution context changed",
+    )
+    _validate_restart_execution_context(
+        plan,
+        execution,
+        execution_root,
+        residency,
+        plan_claim,
+    )
+    _validate_prepared_bound_profile(
+        plan,
+        artifact,
+        execution,
+        contract,
+    )
+
+    expected = encoded[RESTART_EXPECTED_BINDINGS_OFFSET:2296]
+    source = encoded[2296:RESTART_TARGET_OFFSET]
+    _require(
+        len(expected) == 376
+        and len(source) == 448
+        and expected[0:32] == plan_root
+        and expected[32:64] == current_bound_root
+        and expected[64:96] == artifact_root
+        and expected[96:128] == execution_root
+        and expected[128:160] == residency_root
+        and expected[344:376] == contract.challenge_sha256
+        and _u64(expected, 256) == contract.request_epoch
+        and _u64(expected, 272) == len(contract.prompt_tokens)
+        and _u64(expected, 280) == contract.options[0]
+        and source[0:32] == current_bound_root
+        and _u64(source, 72) == contract.request_epoch
+        and encoded[RESTART_MANIFEST_PROMPT_OFFSET:-SOURCE_REPLAY_FOOTER_BYTES]
+        == contract.encoded[SOURCE_REPLAY_PROMPT_OFFSET:-SOURCE_REPLAY_FOOTER_BYTES],
+        "progress restart derived context mismatch",
+    )
 
 
 def _initial_checkpoint_selector_root(
@@ -2028,16 +2154,87 @@ def _initial_checkpoint_selector_root(
     return _hash(CHECKPOINT_SELECTOR_DOMAIN, bytes(selector[:160]))
 
 
-def _decode_source_generation_one(
+def _decode_durable_input_archive(
+    encoded: bytes,
+    contract: SourceContractFacts,
+) -> DurableInputFacts:
+    try:
+        decoded = prepared_package.decode_archive(encoded)
+    except prepared_package.PreparedTextPackageError as error:
+        raise CampaignError("invalid durable input archive") from error
+    binding = cast(Mapping[str, object], decoded["binding"])
+    package = cast(Mapping[str, object], decoded["package"])
+    representation = cast(
+        Mapping[str, object],
+        decoded["representation"],
+    )
+    prompt_tokens = cast(tuple[int, ...], decoded["tokens"])
+    raw_text = cast(bytes, decoded["raw_text"])
+    _require(
+        prompt_tokens == contract.prompt_tokens
+        and binding["request_epoch"] == contract.request_epoch
+        and binding["prompt_tokens"] == len(contract.prompt_tokens)
+        and binding["prompt_bytes"] == len(raw_text)
+        and binding["tokenizer_domain_sha256"] == contract.bound_token_domain_sha256
+        and binding["tokenizer_config_sha256"]
+        == contract.bound_token_domain_config_sha256
+        and binding["prepared_prompt_sha256"] == contract.prompt_sha256
+        and binding["local_plan_sha256"] == contract.plan_sha256
+        and binding["bound_plan_sha256"] == contract.bound_plan_sha256
+        and binding["artifact_sha256"] == contract.artifact_sha256
+        and binding["execution_plan_sha256"] == contract.execution_plan_sha256
+        and binding["residency_binding_sha256"] == contract.residency_binding_sha256
+        and binding["artifact_license_sha256"] == contract.bound_artifact_license_sha256
+        and package["license_sha256"] == contract.bound_artifact_license_sha256,
+        "durable input differs from source replay contract",
+    )
+    return DurableInputFacts(
+        encoded=encoded,
+        archive_sha256=cast(bytes, decoded["archive_sha256"]),
+        package_sha256=cast(bytes, package["package_sha256"]),
+        representation_sha256=cast(
+            bytes,
+            representation["representation_sha256"],
+        ),
+        raw_text_sha256=cast(bytes, binding["raw_text_sha256"]),
+        raw_text=raw_text,
+        prompt_tokens=prompt_tokens,
+    )
+
+
+def _require_same_durable_input(
+    expected: DurableInputFacts | None,
+    actual: DurableInputFacts | None,
+    *,
+    label: str,
+) -> None:
+    _require(
+        (expected is None and actual is None)
+        or (
+            expected is not None
+            and actual is not None
+            and actual.encoded == expected.encoded
+            and actual.archive_sha256 == expected.archive_sha256
+            and actual.package_sha256 == expected.package_sha256
+            and actual.representation_sha256 == expected.representation_sha256
+            and actual.raw_text_sha256 == expected.raw_text_sha256
+            and actual.raw_text == expected.raw_text
+            and actual.prompt_tokens == expected.prompt_tokens
+        ),
+        f"{label} durable input changed",
+    )
+
+
+def _decode_source_generation_one_evidence(
     checkpoint: CheckpointWireFacts,
-) -> SourceContractFacts:
+) -> tuple[SourceContractFacts, DurableInputFacts | None]:
     _require(
         checkpoint.generation == 1
         and checkpoint.parent_checkpoint_sha256 == "0" * 64
-        and len(checkpoint.objects) == 2,
+        and len(checkpoint.objects) in (2, 3),
         "invalid generation-one source checkpoint",
     )
-    marker, contract_object = checkpoint.objects
+    marker, contract_object = checkpoint.objects[:2]
     _require(
         (marker.kind, marker.ordinal, marker.abi_version)
         == (7, 0, SOURCE_LIVE_MARKER_ABI)
@@ -2051,13 +2248,35 @@ def _decode_source_generation_one(
         "generation-one source objects changed",
     )
     contract = _decode_source_replay_contract(contract_object.payload)
+    durable_input: DurableInputFacts | None = None
+    if len(checkpoint.objects) == 3:
+        input_object = checkpoint.objects[2]
+        _require(
+            (
+                input_object.kind,
+                input_object.ordinal,
+                input_object.abi_version,
+            )
+            == (7, 2, prepared_package.ARCHIVE_ABI),
+            "generation-one durable input object changed",
+        )
+        durable_input = _decode_durable_input_archive(
+            input_object.payload,
+            contract,
+        )
     _require(
         checkpoint.request_epoch == contract.request_epoch
         and checkpoint.next_sequence == contract.publication_next_sequence
         and checkpoint.challenge_sha256 == contract.challenge_sha256.hex(),
         "generation-one source metadata differs from replay contract",
     )
-    return contract
+    return contract, durable_input
+
+
+def _decode_source_generation_one(
+    checkpoint: CheckpointWireFacts,
+) -> SourceContractFacts:
+    return _decode_source_generation_one_evidence(checkpoint)[0]
 
 
 def _mix64(value: int) -> int:
@@ -2072,9 +2291,7 @@ def _mix64(value: int) -> int:
 
 def _resource_receipt_integrity(receipt: tuple[int, ...]) -> int:
     _require(len(receipt) == 15, "source receipt field count changed")
-    result = _mix64(
-        RESOURCE_RECEIPT_INTEGRITY_DOMAIN ^ receipt[0]
-    )
+    result = _mix64(RESOURCE_RECEIPT_INTEGRITY_DOMAIN ^ receipt[0])
     for value in receipt[1:14]:
         result = _mix64(result ^ value)
     return result
@@ -2101,12 +2318,8 @@ def _canonical_resource_receipt_wire(
 
 
 def _source_exit_semantic_root(encoded: bytes) -> bytes:
-    identities = tuple(
-        _u64(encoded, 32 + index * 8) for index in range(12)
-    )
-    receipt = tuple(
-        _u64(encoded, 128 + index * 8) for index in range(15)
-    )
+    identities = tuple(_u64(encoded, 32 + index * 8) for index in range(12))
+    receipt = tuple(_u64(encoded, 128 + index * 8) for index in range(15))
     canonical_receipt = _canonical_resource_receipt_wire(receipt)
     semantic_body = (
         struct.pack(
@@ -2140,23 +2353,15 @@ def _source_exit_semantic_root(encoded: bytes) -> bytes:
 
 
 def _validate_source_exit_semantics(encoded: bytes) -> None:
-    identities = tuple(
-        _u64(encoded, 32 + index * 8) for index in range(12)
-    )
-    receipt = tuple(
-        _u64(encoded, 128 + index * 8) for index in range(15)
-    )
+    identities = tuple(_u64(encoded, 32 + index * 8) for index in range(12))
+    receipt = tuple(_u64(encoded, 128 + index * 8) for index in range(15))
     receipt_claim = receipt[4:14]
     _checked_claim_host_bytes(
         receipt_claim,
         label="source receipt",
     )
     _require(
-        all(
-            value > 0
-            for index, value in enumerate(identities)
-            if index != 4
-        )
+        all(value > 0 for index, value in enumerate(identities) if index != 4)
         and identities[3] == identities[0]
         and identities[4] <= (1 << 32) - 1
         and identities[11] != U64_MAX
@@ -2189,8 +2394,7 @@ def _validate_source_exit_semantics(encoded: bytes) -> None:
         "source receipt root mismatch",
     )
     _require(
-        encoded[512:544]
-        == _source_exit_semantic_root(encoded),
+        encoded[512:544] == _source_exit_semantic_root(encoded),
         "source-exit semantic root mismatch",
     )
 
@@ -2254,10 +2458,10 @@ def _validate_source_exit(
     )
 
 
-def _decode_source_generation_two(
+def _decode_source_generation_two_evidence(
     directory: Path,
     checkpoint: CheckpointWireFacts,
-) -> SourceContractFacts:
+) -> tuple[SourceContractFacts, DurableInputFacts | None]:
     _require(
         checkpoint.generation == 2
         and len(checkpoint.objects) == 3
@@ -2290,17 +2494,13 @@ def _decode_source_generation_two(
         "generation-two source metadata differs from replay contract",
     )
 
-    retained_name = (
-        "checkpoint-" + checkpoint.parent_checkpoint_sha256 + ".set"
-    )
+    retained_name = "checkpoint-" + checkpoint.parent_checkpoint_sha256 + ".set"
     retained_encoded = _read_regular_file(directory / retained_name)
     retained = _decode_checkpoint_set(
         retained_encoded,
-        expected_checkpoint_sha256=bytes.fromhex(
-            checkpoint.parent_checkpoint_sha256
-        ),
+        expected_checkpoint_sha256=bytes.fromhex(checkpoint.parent_checkpoint_sha256),
     )
-    retained_contract = _decode_source_generation_one(retained)
+    retained_contract, retained_input = _decode_source_generation_one_evidence(retained)
     _require(
         retained_contract.encoded == contract.encoded,
         "generation-two replay contract differs from retained parent",
@@ -2321,23 +2521,35 @@ def _decode_source_generation_two(
         and nested.request_epoch == contract.request_epoch
         and nested.next_sequence == contract.publication_next_sequence
         and nested.challenge_sha256 == contract.challenge_sha256.hex()
-        and len(nested.objects) == 5,
+        and len(nested.objects) in (5, 6),
         "invalid nested restart evidence archive",
     )
-    expected_objects = (
+    expected_objects = [
         (7, 0, CHECKPOINT_PAYLOAD_OBJECT_ABI),
         (7, 1, EXECUTION_PLAN_OBJECT_ABI),
         (7, 2, EXECUTION_RESIDENCY_OBJECT_ABI),
         (7, 3, SUCCESSOR_SEGMENT_OBJECT_ABI),
         (7, 4, RESTART_MANIFEST_ABI),
-    )
+    ]
+    if len(nested.objects) == 6:
+        expected_objects.append((7, 6, prepared_package.ARCHIVE_ABI))
     _require(
-        tuple(
-            (item.kind, item.ordinal, item.abi_version)
-            for item in nested.objects
-        )
-        == expected_objects,
+        tuple((item.kind, item.ordinal, item.abi_version) for item in nested.objects)
+        == tuple(expected_objects),
         "nested restart evidence object matrix changed",
+    )
+    nested_input = (
+        _decode_durable_input_archive(
+            nested.objects[5].payload,
+            contract,
+        )
+        if len(nested.objects) == 6
+        else None
+    )
+    _require_same_durable_input(
+        retained_input,
+        nested_input,
+        label="generation-two restart",
     )
     manifest = nested.objects[4].payload
     source_execution, source_residency, source_receipt = _decode_restart_manifest(
@@ -2379,9 +2591,7 @@ def _decode_source_generation_two(
         == contract.options[0] - contract.publication_next_sequence
         and _u64(segment, 56) == _u64(manifest, 2400)
         and _u64(segment, 64)
-        == len(contract.prompt_tokens)
-        + contract.publication_next_sequence
-        - 1
+        == len(contract.prompt_tokens) + contract.publication_next_sequence - 1
         and _u64(segment, 72) == contract.publication_next_sequence
         and _u64(segment, 80) == contract.publication_next_sequence
         and _u64(segment, 88) == _u64(source_execution, 80)
@@ -2419,18 +2629,16 @@ def _decode_source_generation_two(
     expected_successor_execution[480:512] = segment[416:448]
     expected_successor_execution[512:544] = contract.challenge_sha256
     expected_successor_execution[544:576] = contract.execution_plan_sha256
-    expected_successor_execution[
-        MODEL_EXECUTION_PLAN_BODY_BYTES:
-    ] = successor_execution_root
+    expected_successor_execution[MODEL_EXECUTION_PLAN_BODY_BYTES:] = (
+        successor_execution_root
+    )
     _require(
         bytes(expected_successor_execution) == successor_execution,
         "successor execution plan is not the exact source derivation",
     )
     expected_successor_residency = bytearray(source_residency)
     expected_successor_residency[112:144] = successor_execution_root
-    expected_successor_residency[MODEL_RESIDENCY_BODY_BYTES:] = (
-        successor_residency_root
-    )
+    expected_successor_residency[MODEL_RESIDENCY_BODY_BYTES:] = successor_residency_root
     _require(
         bytes(expected_successor_residency) == successor_residency,
         "successor residency is not the exact source derivation",
@@ -2444,7 +2652,222 @@ def _decode_source_generation_two(
         source_receipt=source_receipt,
         predecessor_selector_sha256=predecessor_selector,
     )
-    return contract
+    return contract, nested_input
+
+
+def _decode_source_generation_two(
+    directory: Path,
+    checkpoint: CheckpointWireFacts,
+) -> SourceContractFacts:
+    return _decode_source_generation_two_evidence(
+        directory,
+        checkpoint,
+    )[0]
+
+
+def _decode_embedded_selector(encoded: bytes) -> EmbeddedSelectorFacts:
+    _require(
+        len(encoded) == CHECKPOINT_SELECTOR_BYTES
+        and encoded[:8] == CHECKPOINT_SELECTOR_MAGIC
+        and _u64(encoded, 8) == CHECKPOINT_SELECTOR_ABI
+        and _u64(encoded, 16) == CHECKPOINT_SELECTOR_BYTES
+        and _u64(encoded, 56) == 0
+        and encoded[160:192] == _hash(CHECKPOINT_SELECTOR_DOMAIN, encoded[:160]),
+        "invalid embedded predecessor selector",
+    )
+    generation = _u64(encoded, 24)
+    request_epoch = _u64(encoded, 32)
+    next_sequence = _u64(encoded, 40)
+    checkpoint_bytes = _u64(encoded, 48)
+    previous_selector_sha256 = encoded[64:96]
+    checkpoint_sha256 = encoded[96:128]
+    challenge_sha256 = encoded[128:160]
+    _require(
+        generation > 0
+        and request_epoch > 0
+        and next_sequence > 0
+        and checkpoint_bytes
+        >= CHECKPOINT_SET_PAYLOAD_OFFSET + CHECKPOINT_SET_FOOTER_BYTES
+        and checkpoint_sha256 != ZERO_DIGEST
+        and challenge_sha256 != ZERO_DIGEST
+        and (
+            (generation == 1 and previous_selector_sha256 == ZERO_DIGEST)
+            or (generation > 1 and previous_selector_sha256 != ZERO_DIGEST)
+        ),
+        "invalid embedded predecessor selector fields",
+    )
+    return EmbeddedSelectorFacts(
+        encoded=encoded,
+        generation=generation,
+        request_epoch=request_epoch,
+        next_sequence=next_sequence,
+        checkpoint_bytes=checkpoint_bytes,
+        previous_selector_sha256=previous_selector_sha256,
+        checkpoint_sha256=checkpoint_sha256,
+        challenge_sha256=challenge_sha256,
+        selector_sha256=encoded[160:192],
+    )
+
+
+def _decode_immediate_predecessor(
+    directory: Path,
+    selected: CheckpointWireFacts,
+    encoded_selector: bytes,
+    *,
+    embedded_set: bytes | None = None,
+) -> CheckpointWireFacts:
+    selector = _decode_embedded_selector(encoded_selector)
+    _require(
+        selected.generation == selector.generation + 1
+        and selected.request_epoch == selector.request_epoch
+        and selected.next_sequence == selector.next_sequence + 1
+        and selected.parent_checkpoint_sha256 == selector.checkpoint_sha256.hex()
+        and selected.previous_selector_sha256 == selector.selector_sha256.hex()
+        and selected.challenge_sha256 == selector.challenge_sha256.hex(),
+        "checkpoint does not retain its immediate predecessor",
+    )
+    if embedded_set is None:
+        predecessor_name = "checkpoint-" + selector.checkpoint_sha256.hex() + ".set"
+        encoded_set = _read_regular_file(
+            directory / predecessor_name,
+            exact_bytes=selector.checkpoint_bytes,
+        )
+    else:
+        _require(
+            len(embedded_set) == selector.checkpoint_bytes,
+            "embedded predecessor set length mismatch",
+        )
+        encoded_set = embedded_set
+    predecessor = _decode_checkpoint_set(
+        encoded_set,
+        expected_checkpoint_sha256=selector.checkpoint_sha256,
+        selector_sha256=selector.selector_sha256,
+        previous_selector_sha256=selector.previous_selector_sha256,
+    )
+    _require(
+        predecessor.generation == selector.generation
+        and predecessor.request_epoch == selector.request_epoch
+        and predecessor.next_sequence == selector.next_sequence
+        and predecessor.challenge_sha256 == selector.challenge_sha256.hex(),
+        "embedded predecessor selector differs from set",
+    )
+    return predecessor
+
+
+def _validate_checkpoint_acknowledgement(encoded: bytes) -> None:
+    _require(
+        len(encoded) == ACK_BYTES
+        and encoded[:8] == ACK_MAGIC
+        and _u64(encoded, 8) == ACK_ABI
+        and _u64(encoded, 16) == ACK_BYTES
+        and _u64(encoded, 24) == 0
+        and encoded[392:424] == _hash(ACK_DOMAIN, encoded[:392]),
+        "invalid checkpoint acknowledgement",
+    )
+    _validate_acknowledgement_derived_roots(encoded)
+
+
+def _decode_checkpoint_input_lineage(
+    directory: Path,
+    checkpoint: CheckpointWireFacts,
+    *,
+    seen: set[str] | None = None,
+) -> tuple[SourceContractFacts, DurableInputFacts | None]:
+    lineage = set() if seen is None else seen
+    _require(
+        checkpoint.checkpoint_sha256 not in lineage,
+        "cyclic checkpoint input lineage",
+    )
+    lineage.add(checkpoint.checkpoint_sha256)
+    if checkpoint.generation == 1:
+        return _decode_source_generation_one_evidence(checkpoint)
+    if checkpoint.generation == 2:
+        return _decode_source_generation_two_evidence(
+            directory,
+            checkpoint,
+        )
+
+    if checkpoint.terminal_tokens is not None:
+        expected_terminal_objects = (
+            (7, 0, CHECKPOINT_SELECTOR_ABI),
+            (7, 1, CHECKPOINT_SET_ABI),
+            (7, 2, TERMINAL_SEMANTIC_ABI),
+            (7, 3, ACK_ABI),
+            (7, 4, TERMINAL_OUTPUT_TOKENS_ABI),
+        )
+        _require(
+            len(checkpoint.objects) == 5
+            and tuple(
+                (item.kind, item.ordinal, item.abi_version)
+                for item in checkpoint.objects
+            )
+            == expected_terminal_objects,
+            "terminal checkpoint object matrix changed",
+        )
+        _validate_checkpoint_acknowledgement(checkpoint.objects[3].payload)
+        predecessor = _decode_immediate_predecessor(
+            directory,
+            checkpoint,
+            checkpoint.objects[0].payload,
+            embedded_set=checkpoint.objects[1].payload,
+        )
+        return _decode_checkpoint_input_lineage(
+            directory,
+            predecessor,
+            seen=lineage,
+        )
+
+    _require(
+        len(checkpoint.objects) in (7, 8),
+        "invalid acknowledged nonterminal object count",
+    )
+    expected_nonterminal_objects = [
+        (5, 0, CHECKPOINT_SELECTOR_ABI),
+        (7, 0, CHECKPOINT_PAYLOAD_OBJECT_ABI),
+        (7, 1, EXECUTION_PLAN_OBJECT_ABI),
+        (7, 2, EXECUTION_RESIDENCY_OBJECT_ABI),
+        (7, 3, SUCCESSOR_SEGMENT_OBJECT_ABI),
+        (7, 4, RESTART_MANIFEST_ABI),
+        (7, 5, ACK_ABI),
+    ]
+    if len(checkpoint.objects) == 8:
+        expected_nonterminal_objects.append((7, 6, prepared_package.ARCHIVE_ABI))
+    _require(
+        tuple(
+            (item.kind, item.ordinal, item.abi_version) for item in checkpoint.objects
+        )
+        == tuple(expected_nonterminal_objects),
+        "acknowledged nonterminal object matrix changed",
+    )
+    _validate_checkpoint_acknowledgement(checkpoint.objects[6].payload)
+    predecessor = _decode_immediate_predecessor(
+        directory,
+        checkpoint,
+        checkpoint.objects[0].payload,
+    )
+    contract, predecessor_input = _decode_checkpoint_input_lineage(
+        directory,
+        predecessor,
+        seen=lineage,
+    )
+    _decode_progress_restart_manifest(
+        checkpoint.objects[5].payload,
+        contract,
+    )
+    selected_input = (
+        _decode_durable_input_archive(
+            checkpoint.objects[7].payload,
+            contract,
+        )
+        if len(checkpoint.objects) == 8
+        else None
+    )
+    _require_same_durable_input(
+        predecessor_input,
+        selected_input,
+        label=f"generation-{checkpoint.generation}",
+    )
+    return contract, selected_input
 
 
 def _require_one_ahead_sink_parent(
@@ -2458,12 +2881,9 @@ def _require_one_ahead_sink_parent(
         and sink.next_sequence == contract.sink_initial_sequence + 1
         and sink.request_epoch == contract.request_epoch
         and sink.request_sha256 == contract.plan_sha256.hex()
-        and sink.sink_implementation_sha256
-        == contract.sink_implementation_sha256.hex()
-        and sink.sink_instance_sha256
-        == contract.sink_instance_sha256.hex()
-        and sink.previous_selector_sha256
-        == contract.sink_empty_selector_sha256.hex(),
+        and sink.sink_implementation_sha256 == contract.sink_implementation_sha256.hex()
+        and sink.sink_instance_sha256 == contract.sink_instance_sha256.hex()
+        and sink.previous_selector_sha256 == contract.sink_empty_selector_sha256.hex(),
         "one-ahead sink identity or source-empty lineage mismatch",
     )
 
@@ -2498,14 +2918,11 @@ def audit_wire_state(
         "checkpoint active-selector presence changed",
     )
     source_contract: SourceContractFacts | None = None
+    durable_input: DurableInputFacts | None = None
     if checkpoint is not None:
-        if checkpoint.generation == 1:
-            source_contract = _decode_source_generation_one(checkpoint)
-        elif checkpoint.generation == 2:
-            source_contract = _decode_source_generation_two(
-                directory,
-                checkpoint,
-            )
+        source_contract, durable_input = _decode_checkpoint_input_lineage(
+            directory, checkpoint
+        )
     if expected_checkpoint_state == "source-live":
         _require(
             checkpoint is not None and checkpoint.generation == 1,
@@ -2524,12 +2941,9 @@ def audit_wire_state(
         if sink is not None and source_contract is not None:
             _require(
                 sink.generation == 1
-                and sink.initial_sequence
-                == source_contract.sink_initial_sequence
-                and sink.next_sequence
-                == source_contract.sink_initial_sequence
-                and sink.ledger_sha256
-                == source_contract.sink_empty_ledger_sha256.hex()
+                and sink.initial_sequence == source_contract.sink_initial_sequence
+                and sink.next_sequence == source_contract.sink_initial_sequence
+                and sink.ledger_sha256 == source_contract.sink_empty_ledger_sha256.hex()
                 and sink.selector_sha256
                 == source_contract.sink_empty_selector_sha256.hex(),
                 "selected empty sink differs from source replay contract",
@@ -2595,6 +3009,7 @@ def audit_wire_state(
         sink=sink,
         checkpoint=checkpoint,
         source_contract=source_contract,
+        durable_input=durable_input,
     )
 
 
@@ -2616,8 +3031,7 @@ def _require_frame_matches_wire(
             and frame["sink_next_sequence"] == 0
             and frame["sink_ledger_sha256"] == "0" * 64
             and frame["sink_selector_sha256"] == "0" * 64
-            and frame["checkpoint_selector_sha256"]
-            == checkpoint.selector_sha256
+            and frame["checkpoint_selector_sha256"] == checkpoint.selector_sha256
             and frame["output_generation"] == checkpoint.generation
             and frame["output_sequence"] == checkpoint.next_sequence
             and frame["output_tokens"] == [],
@@ -2661,9 +3075,7 @@ def _require_ready_matches_wire(
     sink_count = 0 if sink is None else sink.count
     sink_ledger = "0" * 64 if sink is None else sink.ledger_sha256
     sink_selector = "0" * 64 if sink is None else sink.selector_sha256
-    checkpoint_selector = (
-        "0" * 64 if checkpoint is None else checkpoint.selector_sha256
-    )
+    checkpoint_selector = "0" * 64 if checkpoint is None else checkpoint.selector_sha256
     _require(
         frame["sink_count"] == sink_count
         and frame["sink_ledger_sha256"] == sink_ledger
@@ -2809,9 +3221,7 @@ def run_campaign(
                 expected_mode="source-bootstrap",
                 timeout_seconds=timeout_seconds,
             )
-            setup_pids.append(
-                _record_distinct_pid(result, seen_pids, role)
-            )
+            setup_pids.append(_record_distinct_pid(result, seen_pids, role))
             wire = audit_wire_state(
                 case_directory,
                 require_terminal=False,
@@ -2829,7 +3239,8 @@ def run_campaign(
                 and checkpoint is not None
                 and checkpoint.generation == 1
                 and checkpoint.next_sequence == 1
-                and wire.source_contract is not None,
+                and wire.source_contract is not None
+                and wire.durable_input is not None,
                 "source-bootstrap did not establish exact generation one",
             )
             return result, wire
@@ -2842,9 +3253,7 @@ def run_campaign(
                 expected_mode="source-transition",
                 timeout_seconds=timeout_seconds,
             )
-            setup_pids.append(
-                _record_distinct_pid(result, seen_pids, role)
-            )
+            setup_pids.append(_record_distinct_pid(result, seen_pids, role))
             wire = audit_wire_state(
                 case_directory,
                 require_terminal=False,
@@ -2870,7 +3279,8 @@ def run_campaign(
                 and checkpoint is not None
                 and checkpoint.generation == 2
                 and checkpoint.next_sequence == 1
-                and wire.source_contract is not None,
+                and wire.source_contract is not None
+                and wire.durable_input is not None,
                 "source-transition did not establish exact generation two",
             )
             return result, wire
@@ -2904,9 +3314,7 @@ def run_campaign(
                 seen_pids,
                 f"{crash_point}:victim",
             )
-            checkpoint_selected = (
-                crash_point in BOOTSTRAP_CHECKPOINT_SELECTED_POINTS
-            )
+            checkpoint_selected = crash_point in BOOTSTRAP_CHECKPOINT_SELECTED_POINTS
             post_crash_wire = audit_wire_state(
                 case_directory,
                 require_terminal=False,
@@ -2917,13 +3325,9 @@ def run_campaign(
             )
             _require_ready_matches_wire(ready, post_crash_wire)
             sink_visibility = "absent"
-            checkpoint_visibility = (
-                "source-live" if checkpoint_selected else "absent"
-            )
+            checkpoint_visibility = "source-live" if checkpoint_selected else "absent"
             run_bootstrap(f"{crash_point}:bootstrap-recovery")
-            _, source_wire = run_source_transition(
-                f"{crash_point}:source-transition"
-            )
+            _, source_wire = run_source_transition(f"{crash_point}:source-transition")
         elif crash_point in SOURCE_CRASH_POINTS:
             victim_mode = "source-transition"
             run_bootstrap(f"{crash_point}:bootstrap")
@@ -2953,31 +3357,21 @@ def run_campaign(
             post_crash_wire = audit_wire_state(
                 case_directory,
                 require_terminal=False,
-                expected_sink_state=(
-                    "empty" if sink_selected else "absent"
-                ),
+                expected_sink_state=("empty" if sink_selected else "absent"),
                 expected_checkpoint_state=(
-                    "source-exited"
-                    if checkpoint_generation_two
-                    else "source-live"
+                    "source-exited" if checkpoint_generation_two else "source-live"
                 ),
             )
             _require_ready_matches_wire(ready, post_crash_wire)
             sink_visibility = "empty" if sink_selected else "absent"
             checkpoint_visibility = (
-                "source-exited"
-                if checkpoint_generation_two
-                else "source-live"
+                "source-exited" if checkpoint_generation_two else "source-live"
             )
-            _, source_wire = run_source_transition(
-                f"{crash_point}:source-recovery"
-            )
+            _, source_wire = run_source_transition(f"{crash_point}:source-recovery")
         else:
             victim_mode = "target"
             run_bootstrap(f"{crash_point}:bootstrap")
-            _, source_wire = run_source_transition(
-                f"{crash_point}:source-transition"
-            )
+            _, source_wire = run_source_transition(f"{crash_point}:source-transition")
             selected_generation = 2
             selected_sequence = 1
             ready = run_crash_worker(
@@ -3009,36 +3403,24 @@ def run_campaign(
             post_checkpoint = post_crash_wire.checkpoint
             if post_sink is None or post_checkpoint is None:
                 raise CampaignError("target crash lost selected durable state")
-            expected_sink_successor = (
-                crash_point in SINK_SUCCESSOR_VISIBLE_POINTS
-            )
+            expected_sink_successor = crash_point in SINK_SUCCESSOR_VISIBLE_POINTS
             expected_checkpoint_successor = (
                 crash_point in CHECKPOINT_SUCCESSOR_VISIBLE_POINTS
             )
             _require(
                 post_sink.initial_sequence == 1
-                and post_sink.count
-                == (1 if expected_sink_successor else 0)
-                and post_sink.next_sequence
-                == (2 if expected_sink_successor else 1)
+                and post_sink.count == (1 if expected_sink_successor else 0)
+                and post_sink.next_sequence == (2 if expected_sink_successor else 1)
                 and (
                     post_checkpoint.generation,
                     post_checkpoint.next_sequence,
                 )
-                == (
-                    (3, 2)
-                    if expected_checkpoint_successor
-                    else (2, 1)
-                ),
+                == ((3, 2) if expected_checkpoint_successor else (2, 1)),
                 "target crash visibility matrix changed",
             )
-            sink_visibility = (
-                "successor" if expected_sink_successor else "previous"
-            )
+            sink_visibility = "successor" if expected_sink_successor else "previous"
             checkpoint_visibility = (
-                "successor"
-                if expected_checkpoint_successor
-                else "previous"
+                "successor" if expected_checkpoint_successor else "previous"
             )
             source_wire = post_crash_wire
 
@@ -3069,8 +3451,7 @@ def run_campaign(
             output_generation = _required_int(recovered, "output_generation")
             output_sequence = _required_int(recovered, "output_sequence")
             _require(
-                (input_generation, input_sequence)
-                == (last_generation, last_sequence)
+                (input_generation, input_sequence) == (last_generation, last_sequence)
                 and output_generation == input_generation + 1
                 and output_sequence == input_sequence + 1,
                 "fresh target did not select and commit one contiguous edge",
@@ -3084,6 +3465,11 @@ def run_campaign(
                 expected_checkpoint_state="selected",
             )
             _require_frame_matches_wire(recovered, current_wire)
+            _require_same_durable_input(
+                source_wire.durable_input,
+                current_wire.durable_input,
+                label="fresh-process recovery",
+            )
             if recovered["terminal"]:
                 terminal_result = recovered
                 break
@@ -3112,8 +3498,14 @@ def run_campaign(
             expected_checkpoint_state="selected",
         )
         _require_frame_matches_wire(audit, final_wire)
+        _require_same_durable_input(
+            source_wire.durable_input,
+            final_wire.durable_input,
+            label="terminal predecessor",
+        )
         _require(
-            tuple(cast(list[int], audit["output_tokens"])) == baseline_tokens,
+            tuple(cast(list[int], audit["output_tokens"])) == baseline_tokens
+            and final_wire.durable_input is not None,
             "recovered output differs from baseline",
         )
         if baseline_semantic is not None:
@@ -3155,17 +3547,21 @@ def run_campaign(
                     if final_wire.checkpoint is not None
                     else "0" * 64
                 ),
+                "input_archive_sha256": (
+                    final_wire.durable_input.archive_sha256.hex()
+                    if final_wire.durable_input is not None
+                    else "0" * 64
+                ),
+                "package_manifest_verified": True,
+                "durable_raw_input_verified": True,
+                "fresh_process_retokenization_verified": True,
                 "verified": True,
             }
         )
 
-    by_point = {
-        cast(str, case["crash_point"]): case for case in case_summaries
-    }
+    by_point = {cast(str, case["crash_point"]): case for case in case_summaries}
     selected_bootstrap = tuple(
-        point
-        for point in selected_crash_points
-        if point in BOOTSTRAP_CHECKPOINT_PHASES
+        point for point in selected_crash_points if point in BOOTSTRAP_CHECKPOINT_PHASES
     )
     selected_source = tuple(
         point for point in selected_crash_points if point in SOURCE_CRASH_POINTS
@@ -3197,11 +3593,7 @@ def run_campaign(
         )
         and all(
             by_point[point]["post_crash_sink"]
-            == (
-                "successor"
-                if point in SINK_SUCCESSOR_VISIBLE_POINTS
-                else "previous"
-            )
+            == ("successor" if point in SINK_SUCCESSOR_VISIBLE_POINTS else "previous")
             and by_point[point]["post_crash_checkpoint"]
             == (
                 "successor"
@@ -3221,15 +3613,13 @@ def run_campaign(
         "worker image changed during compile-once campaign",
     )
     bootstrap_checkpoint_selected_count = sum(
-        point in BOOTSTRAP_CHECKPOINT_SELECTED_POINTS
-        for point in selected_bootstrap
+        point in BOOTSTRAP_CHECKPOINT_SELECTED_POINTS for point in selected_bootstrap
     )
     source_sink_selected_count = sum(
         point in SOURCE_SINK_SELECTED_POINTS for point in selected_source
     )
     source_checkpoint_generation_two_count = sum(
-        point in SOURCE_CHECKPOINT_GENERATION_TWO_POINTS
-        for point in selected_source
+        point in SOURCE_CHECKPOINT_GENERATION_TWO_POINTS for point in selected_source
     )
     target_sink_successor_count = sum(
         point in SINK_SUCCESSOR_VISIBLE_POINTS for point in selected_target
@@ -3248,12 +3638,8 @@ def run_campaign(
         "bootstrap_checkpoint_absent_count": (
             len(selected_bootstrap) - bootstrap_checkpoint_selected_count
         ),
-        "bootstrap_checkpoint_selected_count": (
-            bootstrap_checkpoint_selected_count
-        ),
-        "source_sink_absent_count": (
-            len(selected_source) - source_sink_selected_count
-        ),
+        "bootstrap_checkpoint_selected_count": (bootstrap_checkpoint_selected_count),
+        "source_sink_absent_count": (len(selected_source) - source_sink_selected_count),
         "source_sink_selected_count": source_sink_selected_count,
         "source_checkpoint_generation_one_count": (
             len(selected_source) - source_checkpoint_generation_two_count
@@ -3268,9 +3654,10 @@ def run_campaign(
         "target_checkpoint_previous_count": (
             len(selected_target) - target_checkpoint_successor_count
         ),
-        "target_checkpoint_successor_count": (
-            target_checkpoint_successor_count
-        ),
+        "target_checkpoint_successor_count": (target_checkpoint_successor_count),
+        "package_manifest_verified": True,
+        "durable_raw_input_verified": True,
+        "fresh_process_retokenization_verified": True,
         "distinct_pid_count": len(seen_pids),
         "cases": case_summaries,
         "verified": True,

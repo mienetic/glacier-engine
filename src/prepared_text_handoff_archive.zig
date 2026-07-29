@@ -1,10 +1,11 @@
 //! Durable, selector-compatible archive for prepared-text handoff evidence.
 //!
-//! The archive contains exactly four extension objects: the source checkpoint,
-//! successor execution plan, successor residency binding, and successor
-//! segment. Decoding is contextual: canonical bytes alone cannot choose their
-//! own checkpoint bindings, source context, target ownership, or archive
-//! lineage.
+//! The base archive contains exactly four extension objects: the source
+//! checkpoint, successor execution plan, successor residency binding, and
+//! successor segment. A five-object restart variant adds fresh-process
+//! context; an additive six-object variant also retains stable package,
+//! tokenizer, and raw-input evidence. Decoding is contextual: canonical bytes
+//! alone cannot choose their own archive lineage.
 //!
 //! This module publishes evidence only. It does not exit a source process,
 //! grant target authority, or create a live restored session.
@@ -15,6 +16,8 @@ const checkpoint_file = core.continuation_checkpoint_file;
 const model_contract = core.model_contract;
 const resource_bank = core.resource_bank;
 const checkpoint = @import("prepared_text_checkpoint.zig");
+const input_archive =
+    @import("prepared_text_input_archive.zig");
 const restart_manifest =
     @import("prepared_text_restart_manifest.zig");
 const successor = @import("prepared_text_successor.zig");
@@ -25,11 +28,15 @@ const publication = @import("lane_publication_txn.zig");
 pub const Digest = [32]u8;
 pub const archive_object_count: usize = 4;
 pub const restart_archive_object_count: usize = 5;
+pub const bound_restart_archive_object_count: usize = 6;
 pub const checkpoint_object_ordinal: u64 = 0;
 pub const successor_plan_object_ordinal: u64 = 1;
 pub const successor_residency_object_ordinal: u64 = 2;
 pub const successor_segment_object_ordinal: u64 = 3;
 pub const restart_manifest_object_ordinal: u64 = 4;
+/// Ordinal five is reserved for a result acknowledgement when the restart
+/// archive is promoted into an acknowledged-progress generation.
+pub const input_archive_object_ordinal: u64 = 6;
 pub const archive_fixed_payload_bytes: usize =
     model_contract.execution_plan_bytes +
     model_contract.execution_residency_binding_bytes +
@@ -40,6 +47,7 @@ pub const archive_overhead_bytes: usize =
 
 pub const Error = checkpoint_file.Error ||
     checkpoint.Error ||
+    input_archive.Error ||
     restart_manifest.Error ||
     successor.Error ||
     error{
@@ -67,6 +75,17 @@ pub const DecodedRestartArchiveV1 = struct {
     manifest: restart_manifest.DecodedV1,
     checkpoint: checkpoint.DecodedV1,
     artifacts: successor.ArtifactsV1,
+};
+
+/// Fresh-process archive that also carries the exact retained UTF-8 input,
+/// tokenizer evidence, and stable package identity. The input context borrows
+/// object six from the encoded archive.
+pub const DecodedBoundRestartArchiveV1 = struct {
+    archive: checkpoint_file.DecodedSetV1,
+    manifest: restart_manifest.DecodedV1,
+    checkpoint: checkpoint.DecodedV1,
+    artifacts: successor.ArtifactsV1,
+    input_archive: input_archive.DecodedV1,
 };
 
 pub fn encodedArchiveBytesV1(
@@ -451,6 +470,239 @@ pub fn decodeRestartArchiveV1(
     };
 }
 
+pub fn encodedBoundRestartArchiveBytesV1(
+    encoded_checkpoint_bytes: usize,
+    encoded_manifest_bytes: usize,
+    encoded_input_archive_bytes: usize,
+) Error!usize {
+    const legacy = try encodedRestartArchiveBytesV1(
+        encoded_checkpoint_bytes,
+        encoded_manifest_bytes,
+    );
+    return std.math.add(
+        usize,
+        legacy,
+        encoded_input_archive_bytes,
+    ) catch return Error.ArithmeticOverflow;
+}
+
+/// Encode the additive six-object restart archive. The input context is
+/// verified against the manifest's current local and bound plans before any
+/// destination byte is published.
+pub fn encodeBoundRestartArchiveV1(
+    archive_generation: u64,
+    parent_archive_sha256: Digest,
+    encoded_checkpoint: []const u8,
+    encoded_manifest: []const u8,
+    encoded_input_archive: []const u8,
+    destination: []u8,
+) Error!PreparedArchiveV1 {
+    try validateArchiveLineageV1(
+        archive_generation,
+        parent_archive_sha256,
+    );
+    const manifest = try restart_manifest.decodeV1(
+        encoded_manifest,
+    );
+    const input_context = try input_archive.decodeV1(
+        encoded_input_archive,
+    );
+    try input_archive.verifyCurrentPlanV1(
+        input_context,
+        manifest.plan,
+        manifest.bound_plan,
+    );
+    _ = try checkpoint.decodeCheckpointV1(
+        encoded_checkpoint,
+        manifest.expected_checkpoint,
+    );
+    const artifacts = try successor.makeForCheckpointV1(
+        encoded_checkpoint,
+        manifest.expected_checkpoint,
+        manifest.source,
+        manifest.target,
+    );
+
+    var encoded_plan: [model_contract.execution_plan_bytes]u8 =
+        undefined;
+    var encoded_residency: [
+        model_contract.execution_residency_binding_bytes
+    ]u8 = undefined;
+    var encoded_segment: [successor.successor_segment_bytes]u8 =
+        undefined;
+    try successor.encodeArtifactsV1(
+        artifacts,
+        &encoded_plan,
+        &encoded_residency,
+        &encoded_segment,
+    );
+    const objects = [_]checkpoint_file.ObjectInputV1{
+        .{
+            .kind = .extension,
+            .ordinal = checkpoint_object_ordinal,
+            .abi_version = checkpoint.checkpoint_abi,
+            .bytes = encoded_checkpoint,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = successor_plan_object_ordinal,
+            .abi_version = model_contract.execution_plan_abi,
+            .bytes = &encoded_plan,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = successor_residency_object_ordinal,
+            .abi_version = model_contract.execution_residency_binding_abi,
+            .bytes = &encoded_residency,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = successor_segment_object_ordinal,
+            .abi_version = successor.successor_segment_abi,
+            .bytes = &encoded_segment,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = restart_manifest_object_ordinal,
+            .abi_version = restart_manifest.manifest_abi,
+            .bytes = encoded_manifest,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = input_archive_object_ordinal,
+            .abi_version = input_archive.archive_abi,
+            .bytes = encoded_input_archive,
+        },
+    };
+    const set = try checkpoint_file.encodeSetV1(
+        .{
+            .generation = archive_generation,
+            .request_epoch = artifacts.segment.request_epoch,
+            .publication_next_sequence = artifacts.segment.sequence_base,
+            .parent_checkpoint_sha256 = parent_archive_sha256,
+            .challenge_sha256 = artifacts.segment.challenge_sha256,
+        },
+        &objects,
+        destination,
+    );
+    return .{
+        .set = set,
+        .artifacts = artifacts,
+    };
+}
+
+/// Decode the exact six-object restart shape and verify that object six
+/// independently authenticates the same current request and bound plan as
+/// the restart manifest.
+pub fn decodeBoundRestartArchiveV1(
+    encoded_archive: []const u8,
+    expected_archive_generation: u64,
+    expected_parent_archive_sha256: Digest,
+) Error!DecodedBoundRestartArchiveV1 {
+    try validateArchiveLineageV1(
+        expected_archive_generation,
+        expected_parent_archive_sha256,
+    );
+    const decoded_archive = try checkpoint_file.decodeSetV1(
+        encoded_archive,
+    );
+    if (decoded_archive.object_count !=
+        bound_restart_archive_object_count or
+        decoded_archive.metadata.generation !=
+            expected_archive_generation or
+        !digestEqual(
+            decoded_archive.metadata.parent_checkpoint_sha256,
+            expected_parent_archive_sha256,
+        ))
+        return Error.InvalidArchive;
+
+    const checkpoint_object = try exactObjectV1(
+        decoded_archive,
+        0,
+        checkpoint_object_ordinal,
+        checkpoint.checkpoint_abi,
+    );
+    const plan_object = try exactObjectV1(
+        decoded_archive,
+        1,
+        successor_plan_object_ordinal,
+        model_contract.execution_plan_abi,
+    );
+    const residency_object = try exactObjectV1(
+        decoded_archive,
+        2,
+        successor_residency_object_ordinal,
+        model_contract.execution_residency_binding_abi,
+    );
+    const segment_object = try exactObjectV1(
+        decoded_archive,
+        3,
+        successor_segment_object_ordinal,
+        successor.successor_segment_abi,
+    );
+    const manifest_object = try exactObjectV1(
+        decoded_archive,
+        4,
+        restart_manifest_object_ordinal,
+        restart_manifest.manifest_abi,
+    );
+    const input_object = try exactObjectV1(
+        decoded_archive,
+        5,
+        input_archive_object_ordinal,
+        input_archive.archive_abi,
+    );
+    const manifest = try restart_manifest.decodeV1(
+        manifest_object.bytes,
+    );
+    const input_context = try input_archive.decodeV1(
+        input_object.bytes,
+    );
+    try input_archive.verifyCurrentPlanV1(
+        input_context,
+        manifest.plan,
+        manifest.bound_plan,
+    );
+    const decoded_checkpoint = try checkpoint.decodeCheckpointV1(
+        checkpoint_object.bytes,
+        manifest.expected_checkpoint,
+    );
+    const artifacts =
+        try successor.decodeAndVerifyForCheckpointV1(
+            plan_object.bytes,
+            residency_object.bytes,
+            segment_object.bytes,
+            checkpoint_object.bytes,
+            manifest.expected_checkpoint,
+            manifest.source,
+            manifest.target,
+        );
+    if (decoded_archive.metadata.request_epoch !=
+        artifacts.segment.request_epoch or
+        decoded_archive.metadata.publication_next_sequence !=
+            artifacts.segment.sequence_base or
+        !digestEqual(
+            decoded_archive.metadata.challenge_sha256,
+            artifacts.segment.challenge_sha256,
+        ) or decoded_archive.metadata.request_epoch !=
+        decoded_checkpoint.request_epoch or
+        decoded_archive.metadata.publication_next_sequence !=
+            decoded_checkpoint.publication_next_sequence or
+        !digestEqual(
+            decoded_archive.metadata.challenge_sha256,
+            decoded_checkpoint.challenge_sha256,
+        ))
+        return Error.InvalidArchive;
+
+    return .{
+        .archive = decoded_archive,
+        .manifest = manifest,
+        .checkpoint = decoded_checkpoint,
+        .artifacts = artifacts,
+        .input_archive = input_context,
+    };
+}
+
 fn validateArchiveLineageV1(
     generation: u64,
     parent_archive_sha256: Digest,
@@ -483,6 +735,36 @@ fn digestEqual(left: Digest, right: Digest) bool {
 
 fn isZero(value: Digest) bool {
     return std.mem.eql(u8, &value, &([_]u8{0} ** 32));
+}
+
+test "bound restart archive sizing is additive and fail atomic" {
+    const legacy = try encodedRestartArchiveBytesV1(101, 203);
+    try std.testing.expectEqual(
+        legacy + 307,
+        try encodedBoundRestartArchiveBytesV1(
+            101,
+            203,
+            307,
+        ),
+    );
+
+    var destination = [_]u8{0xa5} ** 32;
+    try std.testing.expectError(
+        Error.InvalidArchiveLineage,
+        encodeBoundRestartArchiveV1(
+            0,
+            [_]u8{0} ** 32,
+            &.{},
+            &.{},
+            &.{},
+            &destination,
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        &destination,
+        0xa5,
+    ));
 }
 
 const TestFixture = struct {

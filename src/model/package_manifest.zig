@@ -1,0 +1,848 @@
+//! Stable, request-independent model package identity.
+//!
+//! `ManifestV1` binds portable model provenance, resolved model geometry,
+//! tokenizer behavior, and the license byte count plus SHA-256 identity. It
+//! deliberately excludes license payloads, prompts, request epochs, output
+//! limits, scheduler identities, and native execution-image bytes, so the same
+//! package root can be used across requests and operating-system/architecture-
+//! specific preparations.
+//!
+//! `PreparedRepresentationV1` is the separate contextual bridge to one exact
+//! validated `.glrt` representation. A package can therefore have multiple
+//! native representations without changing its portable identity.
+
+const std = @import("std");
+const core = @import("core");
+const model_contract = core.model_contract;
+const runtime_image = @import("runtime_image.zig");
+
+pub const Digest = [32]u8;
+
+pub const manifest_abi: u64 = 0x474c_504b_0000_0001;
+pub const config_abi: u64 = 0x474c_5043_0000_0001;
+pub const prepared_representation_abi: u64 =
+    0x474c_5052_0000_0001;
+pub const manifest_bytes: usize = 640;
+pub const manifest_body_bytes: usize = manifest_bytes - 32;
+pub const prepared_representation_bytes: usize = 256;
+pub const prepared_representation_body_bytes: usize =
+    prepared_representation_bytes - 32;
+pub const allowed_flags: u64 = 0;
+
+pub const manifest_magic =
+    [_]u8{ 'G', 'L', 'P', 'K', 'G', '0', '1', 0 };
+pub const prepared_representation_magic =
+    [_]u8{ 'G', 'L', 'P', 'R', 'E', 'P', '1', 0 };
+
+const manifest_domain =
+    "glacier-model-package-manifest-v1\x00";
+const config_domain =
+    "glacier-model-package-config-v1\x00";
+const prepared_representation_domain =
+    "glacier-model-prepared-representation-v1\x00";
+
+pub const Error = error{
+    InvalidLength,
+    InvalidManifest,
+    InvalidConfig,
+    InvalidPreparedRepresentation,
+    UnsafeDestination,
+};
+
+pub const SourceFormatV1 = enum(u64) {
+    safetensors = 1,
+    gguf = 2,
+    onnx = 3,
+    other = 255,
+};
+
+/// Canonical, architecture-independent resolved model geometry.
+pub const ConfigV1 = struct {
+    dim: u32,
+    hidden_dim: u32,
+    layers: u32,
+    vocab: u32,
+    heads: u32,
+    head_dim: u32,
+    kv_heads: u32,
+    rms_eps: f32,
+    rope_theta: f32,
+    tie_embeddings: bool,
+};
+
+pub const InputV1 = struct {
+    family: model_contract.ModelFamilyIdV1,
+    source_format: SourceFormatV1,
+    portable_format_abi: u64,
+    conversion_profile_abi: u64,
+    conversion_plan_abi: u64,
+    tokenizer_manifest_abi: u64,
+    tokenizer_manifest_bytes: u64,
+    source_bytes: u64,
+    portable_bytes: u64,
+    portable_page_count: u64,
+    license_bytes: u64,
+    config: ConfigV1,
+    source_sha256: Digest,
+    portable_artifact_sha256: Digest,
+    conversion_profile_sha256: Digest,
+    conversion_plan_sha256: Digest,
+    model_content_sha256: Digest,
+    tokenizer_config_sha256: Digest,
+    tokenizer_domain_sha256: Digest,
+    tokenizer_behavior_sha256: Digest,
+    license_sha256: Digest,
+};
+
+pub const ManifestV1 = struct {
+    abi_version: u64 = manifest_abi,
+    family: model_contract.ModelFamilyIdV1,
+    source_format: SourceFormatV1,
+    portable_format_abi: u64,
+    conversion_profile_abi: u64,
+    conversion_plan_abi: u64,
+    tokenizer_manifest_abi: u64,
+    tokenizer_manifest_bytes: u64,
+    source_bytes: u64,
+    portable_bytes: u64,
+    portable_page_count: u64,
+    license_bytes: u64,
+    config: ConfigV1,
+    source_sha256: Digest,
+    portable_artifact_sha256: Digest,
+    conversion_profile_sha256: Digest,
+    conversion_plan_sha256: Digest,
+    resolved_config_sha256: Digest,
+    model_content_sha256: Digest,
+    tokenizer_config_sha256: Digest,
+    tokenizer_domain_sha256: Digest,
+    tokenizer_behavior_sha256: Digest,
+    license_sha256: Digest,
+    package_sha256: Digest,
+};
+
+pub const PreparedRepresentationV1 = struct {
+    abi_version: u64 = prepared_representation_abi,
+    format_abi: u64,
+    format_version: u64,
+    container_bytes: u64,
+    package_sha256: Digest,
+    resolved_config_sha256: Digest,
+    source_fingerprint: Digest,
+    abi_fingerprint: Digest,
+    container_sha256: Digest,
+    representation_sha256: Digest,
+};
+
+pub fn makeV1(input: InputV1) Error!ManifestV1 {
+    try validateConfigV1(input.config);
+    var value: ManifestV1 = .{
+        .family = input.family,
+        .source_format = input.source_format,
+        .portable_format_abi = input.portable_format_abi,
+        .conversion_profile_abi = input.conversion_profile_abi,
+        .conversion_plan_abi = input.conversion_plan_abi,
+        .tokenizer_manifest_abi = input.tokenizer_manifest_abi,
+        .tokenizer_manifest_bytes = input.tokenizer_manifest_bytes,
+        .source_bytes = input.source_bytes,
+        .portable_bytes = input.portable_bytes,
+        .portable_page_count = input.portable_page_count,
+        .license_bytes = input.license_bytes,
+        .config = input.config,
+        .source_sha256 = input.source_sha256,
+        .portable_artifact_sha256 = input.portable_artifact_sha256,
+        .conversion_profile_sha256 = input.conversion_profile_sha256,
+        .conversion_plan_sha256 = input.conversion_plan_sha256,
+        .resolved_config_sha256 = resolvedConfigRootV1(input.config),
+        .model_content_sha256 = input.model_content_sha256,
+        .tokenizer_config_sha256 = input.tokenizer_config_sha256,
+        .tokenizer_domain_sha256 = input.tokenizer_domain_sha256,
+        .tokenizer_behavior_sha256 = input.tokenizer_behavior_sha256,
+        .license_sha256 = input.license_sha256,
+        .package_sha256 = undefined,
+    };
+    if (!manifestShapeValidV1(value))
+        return Error.InvalidManifest;
+    var body: [manifest_body_bytes]u8 = undefined;
+    writeManifestBodyV1(value, &body);
+    value.package_sha256 = manifestRootV1(&body);
+    try validateV1(value);
+    return value;
+}
+
+pub fn validateV1(value: ManifestV1) Error!void {
+    if (!manifestShapeValidV1(value))
+        return Error.InvalidManifest;
+    var body: [manifest_body_bytes]u8 = undefined;
+    writeManifestBodyV1(value, &body);
+    if (!digestEqual(
+        value.package_sha256,
+        manifestRootV1(&body),
+    ))
+        return Error.InvalidManifest;
+}
+
+pub fn encodeV1(
+    value: ManifestV1,
+    destination: []u8,
+) Error![]u8 {
+    if (destination.len != manifest_bytes)
+        return Error.InvalidLength;
+    try validateV1(value);
+    var local: [manifest_bytes]u8 = undefined;
+    writeManifestBodyV1(
+        value,
+        local[0..manifest_body_bytes],
+    );
+    @memcpy(
+        local[manifest_body_bytes..],
+        &value.package_sha256,
+    );
+    if (slicesOverlap(destination, &local))
+        return Error.UnsafeDestination;
+    @memcpy(destination, &local);
+    return destination;
+}
+
+pub fn decodeV1(encoded: []const u8) Error!ManifestV1 {
+    if (encoded.len != manifest_bytes)
+        return Error.InvalidLength;
+    if (!std.mem.eql(u8, encoded[0..8], &manifest_magic) or
+        readU64(encoded, 8) != manifest_abi or
+        readU64(encoded, 16) != manifest_bytes or
+        readU64(encoded, 24) != allowed_flags or
+        readU64(encoded, 120) != config_abi or
+        readU32(encoded, 168) != 0 or
+        readU32(encoded, 172) != 0 or
+        !allZero(encoded[496..manifest_body_bytes]))
+        return Error.InvalidManifest;
+    const family = std.meta.intToEnum(
+        model_contract.ModelFamilyIdV1,
+        readU64(encoded, 32),
+    ) catch return Error.InvalidManifest;
+    const source_format = std.meta.intToEnum(
+        SourceFormatV1,
+        readU64(encoded, 40),
+    ) catch return Error.InvalidManifest;
+    const config: ConfigV1 = .{
+        .dim = readU32(encoded, 128),
+        .hidden_dim = readU32(encoded, 132),
+        .layers = readU32(encoded, 136),
+        .vocab = readU32(encoded, 140),
+        .heads = readU32(encoded, 144),
+        .head_dim = readU32(encoded, 148),
+        .kv_heads = readU32(encoded, 152),
+        .tie_embeddings = switch (readU32(encoded, 156)) {
+            0 => false,
+            1 => true,
+            else => return Error.InvalidConfig,
+        },
+        .rms_eps = @bitCast(readU32(encoded, 160)),
+        .rope_theta = @bitCast(readU32(encoded, 164)),
+    };
+    const value: ManifestV1 = .{
+        .family = family,
+        .source_format = source_format,
+        .portable_format_abi = readU64(encoded, 48),
+        .conversion_profile_abi = readU64(encoded, 56),
+        .conversion_plan_abi = readU64(encoded, 64),
+        .tokenizer_manifest_abi = readU64(encoded, 72),
+        .tokenizer_manifest_bytes = readU64(encoded, 80),
+        .source_bytes = readU64(encoded, 88),
+        .portable_bytes = readU64(encoded, 96),
+        .portable_page_count = readU64(encoded, 104),
+        .license_bytes = readU64(encoded, 112),
+        .config = config,
+        .source_sha256 = encoded[176..208].*,
+        .portable_artifact_sha256 = encoded[208..240].*,
+        .conversion_profile_sha256 = encoded[240..272].*,
+        .conversion_plan_sha256 = encoded[272..304].*,
+        .resolved_config_sha256 = encoded[304..336].*,
+        .model_content_sha256 = encoded[336..368].*,
+        .tokenizer_config_sha256 = encoded[368..400].*,
+        .tokenizer_domain_sha256 = encoded[400..432].*,
+        .tokenizer_behavior_sha256 = encoded[432..464].*,
+        .license_sha256 = encoded[464..496].*,
+        .package_sha256 = encoded[manifest_body_bytes..][0..32].*,
+    };
+    try validateV1(value);
+    return value;
+}
+
+pub fn resolvedConfigRootV1(config: ConfigV1) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(config_domain);
+    hashU64(&hash, config_abi);
+    hashU32(&hash, config.dim);
+    hashU32(&hash, config.hidden_dim);
+    hashU32(&hash, config.layers);
+    hashU32(&hash, config.vocab);
+    hashU32(&hash, config.heads);
+    hashU32(&hash, config.head_dim);
+    hashU32(&hash, config.kv_heads);
+    hashU32(&hash, @intFromBool(config.tie_embeddings));
+    hashU32(&hash, @bitCast(config.rms_eps));
+    hashU32(&hash, @bitCast(config.rope_theta));
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+pub fn makePreparedRepresentationV1(
+    package: ManifestV1,
+    format_abi: u64,
+    format_version: u64,
+    identity: runtime_image.ImageIdentityV1,
+) Error!PreparedRepresentationV1 {
+    try validateV1(package);
+    var value: PreparedRepresentationV1 = .{
+        .format_abi = format_abi,
+        .format_version = format_version,
+        .container_bytes = identity.container_bytes,
+        .package_sha256 = package.package_sha256,
+        .resolved_config_sha256 = package.resolved_config_sha256,
+        .source_fingerprint = identity.source_fingerprint,
+        .abi_fingerprint = identity.abi_fingerprint,
+        .container_sha256 = identity.container_sha256,
+        .representation_sha256 = undefined,
+    };
+    if (!preparedRepresentationShapeValidV1(value) or
+        !digestEqual(
+            value.source_fingerprint,
+            package.model_content_sha256,
+        ))
+        return Error.InvalidPreparedRepresentation;
+    var body: [prepared_representation_body_bytes]u8 =
+        undefined;
+    writePreparedRepresentationBodyV1(value, &body);
+    value.representation_sha256 =
+        preparedRepresentationRootV1(&body);
+    try validatePreparedRepresentationV1(package, value);
+    return value;
+}
+
+pub fn validatePreparedRepresentationV1(
+    package: ManifestV1,
+    value: PreparedRepresentationV1,
+) Error!void {
+    try validateV1(package);
+    if (!preparedRepresentationShapeValidV1(value) or
+        !digestEqual(
+            value.package_sha256,
+            package.package_sha256,
+        ) or !digestEqual(
+        value.resolved_config_sha256,
+        package.resolved_config_sha256,
+    ) or !digestEqual(
+        value.source_fingerprint,
+        package.model_content_sha256,
+    ))
+        return Error.InvalidPreparedRepresentation;
+    var body: [prepared_representation_body_bytes]u8 =
+        undefined;
+    writePreparedRepresentationBodyV1(value, &body);
+    if (!digestEqual(
+        value.representation_sha256,
+        preparedRepresentationRootV1(&body),
+    ))
+        return Error.InvalidPreparedRepresentation;
+}
+
+pub fn encodePreparedRepresentationV1(
+    value: PreparedRepresentationV1,
+    destination: []u8,
+) Error![]u8 {
+    if (destination.len != prepared_representation_bytes)
+        return Error.InvalidLength;
+    if (!preparedRepresentationShapeValidV1(value))
+        return Error.InvalidPreparedRepresentation;
+    var body: [prepared_representation_body_bytes]u8 =
+        undefined;
+    writePreparedRepresentationBodyV1(value, &body);
+    if (!digestEqual(
+        value.representation_sha256,
+        preparedRepresentationRootV1(&body),
+    ))
+        return Error.InvalidPreparedRepresentation;
+    var local: [prepared_representation_bytes]u8 = undefined;
+    @memcpy(
+        local[0..prepared_representation_body_bytes],
+        &body,
+    );
+    @memcpy(
+        local[prepared_representation_body_bytes..],
+        &value.representation_sha256,
+    );
+    if (slicesOverlap(destination, &local))
+        return Error.UnsafeDestination;
+    @memcpy(destination, &local);
+    return destination;
+}
+
+pub fn decodePreparedRepresentationV1(
+    encoded: []const u8,
+) Error!PreparedRepresentationV1 {
+    if (encoded.len != prepared_representation_bytes)
+        return Error.InvalidLength;
+    if (!std.mem.eql(
+        u8,
+        encoded[0..8],
+        &prepared_representation_magic,
+    ) or readU64(encoded, 8) !=
+        prepared_representation_abi or
+        readU64(encoded, 16) !=
+            prepared_representation_bytes or
+        readU64(encoded, 24) != allowed_flags or
+        readU64(encoded, 56) != 0)
+        return Error.InvalidPreparedRepresentation;
+    const value: PreparedRepresentationV1 = .{
+        .format_abi = readU64(encoded, 32),
+        .format_version = readU64(encoded, 40),
+        .container_bytes = readU64(encoded, 48),
+        .package_sha256 = encoded[64..96].*,
+        .resolved_config_sha256 = encoded[96..128].*,
+        .source_fingerprint = encoded[128..160].*,
+        .abi_fingerprint = encoded[160..192].*,
+        .container_sha256 = encoded[192..224].*,
+        .representation_sha256 = encoded[prepared_representation_body_bytes..][0..32].*,
+    };
+    if (!preparedRepresentationShapeValidV1(value) or
+        !digestEqual(
+            value.representation_sha256,
+            preparedRepresentationRootV1(
+                encoded[0..prepared_representation_body_bytes],
+            ),
+        ))
+        return Error.InvalidPreparedRepresentation;
+    return value;
+}
+
+fn validateConfigV1(config: ConfigV1) Error!void {
+    if (config.dim == 0 or
+        config.hidden_dim == 0 or
+        config.layers == 0 or
+        config.vocab == 0 or
+        config.heads == 0 or
+        config.head_dim == 0 or
+        config.kv_heads == 0 or
+        config.kv_heads > config.heads or
+        config.heads % config.kv_heads != 0 or
+        config.dim !=
+            @as(u64, config.heads) * config.head_dim or
+        !std.math.isFinite(config.rms_eps) or
+        config.rms_eps <= 0 or
+        !std.math.isFinite(config.rope_theta) or
+        config.rope_theta <= 0)
+        return Error.InvalidConfig;
+}
+
+fn manifestShapeValidV1(value: ManifestV1) bool {
+    validateConfigV1(value.config) catch return false;
+    return value.abi_version == manifest_abi and
+        value.portable_format_abi != 0 and
+        value.conversion_profile_abi != 0 and
+        value.conversion_plan_abi != 0 and
+        value.tokenizer_manifest_abi != 0 and
+        value.tokenizer_manifest_bytes != 0 and
+        value.source_bytes != 0 and
+        value.portable_bytes != 0 and
+        value.portable_page_count != 0 and
+        value.license_bytes != 0 and
+        digestEqual(
+            value.resolved_config_sha256,
+            resolvedConfigRootV1(value.config),
+        ) and
+        !isZero(value.source_sha256) and
+        !isZero(value.portable_artifact_sha256) and
+        !isZero(value.conversion_profile_sha256) and
+        !isZero(value.conversion_plan_sha256) and
+        !isZero(value.model_content_sha256) and
+        !isZero(value.tokenizer_config_sha256) and
+        !isZero(value.tokenizer_domain_sha256) and
+        !isZero(value.tokenizer_behavior_sha256) and
+        !isZero(value.license_sha256);
+}
+
+fn preparedRepresentationShapeValidV1(
+    value: PreparedRepresentationV1,
+) bool {
+    return value.abi_version ==
+        prepared_representation_abi and
+        value.format_abi != 0 and
+        value.format_version != 0 and
+        value.container_bytes != 0 and
+        !isZero(value.package_sha256) and
+        !isZero(value.resolved_config_sha256) and
+        !isZero(value.source_fingerprint) and
+        !isZero(value.abi_fingerprint) and
+        !isZero(value.container_sha256);
+}
+
+fn writeManifestBodyV1(
+    value: ManifestV1,
+    destination: []u8,
+) void {
+    std.debug.assert(destination.len == manifest_body_bytes);
+    @memset(destination, 0);
+    @memcpy(destination[0..8], &manifest_magic);
+    writeU64(destination, 8, manifest_abi);
+    writeU64(destination, 16, manifest_bytes);
+    writeU64(destination, 24, allowed_flags);
+    writeU64(destination, 32, @intFromEnum(value.family));
+    writeU64(
+        destination,
+        40,
+        @intFromEnum(value.source_format),
+    );
+    writeU64(destination, 48, value.portable_format_abi);
+    writeU64(destination, 56, value.conversion_profile_abi);
+    writeU64(destination, 64, value.conversion_plan_abi);
+    writeU64(destination, 72, value.tokenizer_manifest_abi);
+    writeU64(destination, 80, value.tokenizer_manifest_bytes);
+    writeU64(destination, 88, value.source_bytes);
+    writeU64(destination, 96, value.portable_bytes);
+    writeU64(destination, 104, value.portable_page_count);
+    writeU64(destination, 112, value.license_bytes);
+    writeU64(destination, 120, config_abi);
+    writeU32(destination, 128, value.config.dim);
+    writeU32(destination, 132, value.config.hidden_dim);
+    writeU32(destination, 136, value.config.layers);
+    writeU32(destination, 140, value.config.vocab);
+    writeU32(destination, 144, value.config.heads);
+    writeU32(destination, 148, value.config.head_dim);
+    writeU32(destination, 152, value.config.kv_heads);
+    writeU32(
+        destination,
+        156,
+        @intFromBool(value.config.tie_embeddings),
+    );
+    writeU32(
+        destination,
+        160,
+        @bitCast(value.config.rms_eps),
+    );
+    writeU32(
+        destination,
+        164,
+        @bitCast(value.config.rope_theta),
+    );
+    @memcpy(destination[176..208], &value.source_sha256);
+    @memcpy(
+        destination[208..240],
+        &value.portable_artifact_sha256,
+    );
+    @memcpy(
+        destination[240..272],
+        &value.conversion_profile_sha256,
+    );
+    @memcpy(
+        destination[272..304],
+        &value.conversion_plan_sha256,
+    );
+    @memcpy(
+        destination[304..336],
+        &value.resolved_config_sha256,
+    );
+    @memcpy(
+        destination[336..368],
+        &value.model_content_sha256,
+    );
+    @memcpy(
+        destination[368..400],
+        &value.tokenizer_config_sha256,
+    );
+    @memcpy(
+        destination[400..432],
+        &value.tokenizer_domain_sha256,
+    );
+    @memcpy(
+        destination[432..464],
+        &value.tokenizer_behavior_sha256,
+    );
+    @memcpy(destination[464..496], &value.license_sha256);
+}
+
+fn writePreparedRepresentationBodyV1(
+    value: PreparedRepresentationV1,
+    destination: []u8,
+) void {
+    std.debug.assert(
+        destination.len == prepared_representation_body_bytes,
+    );
+    @memset(destination, 0);
+    @memcpy(
+        destination[0..8],
+        &prepared_representation_magic,
+    );
+    writeU64(destination, 8, prepared_representation_abi);
+    writeU64(
+        destination,
+        16,
+        prepared_representation_bytes,
+    );
+    writeU64(destination, 24, allowed_flags);
+    writeU64(destination, 32, value.format_abi);
+    writeU64(destination, 40, value.format_version);
+    writeU64(destination, 48, value.container_bytes);
+    @memcpy(destination[64..96], &value.package_sha256);
+    @memcpy(
+        destination[96..128],
+        &value.resolved_config_sha256,
+    );
+    @memcpy(
+        destination[128..160],
+        &value.source_fingerprint,
+    );
+    @memcpy(
+        destination[160..192],
+        &value.abi_fingerprint,
+    );
+    @memcpy(destination[192..224], &value.container_sha256);
+}
+
+fn manifestRootV1(body: []const u8) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(manifest_domain);
+    hash.update(body);
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+fn preparedRepresentationRootV1(body: []const u8) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(prepared_representation_domain);
+    hash.update(body);
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+fn writeU32(
+    destination: []u8,
+    offset: usize,
+    value: u32,
+) void {
+    std.mem.writeInt(
+        u32,
+        destination[offset..][0..4],
+        value,
+        .little,
+    );
+}
+
+fn writeU64(
+    destination: []u8,
+    offset: usize,
+    value: u64,
+) void {
+    std.mem.writeInt(
+        u64,
+        destination[offset..][0..8],
+        value,
+        .little,
+    );
+}
+
+fn readU32(source: []const u8, offset: usize) u32 {
+    return std.mem.readInt(
+        u32,
+        source[offset..][0..4],
+        .little,
+    );
+}
+
+fn readU64(source: []const u8, offset: usize) u64 {
+    return std.mem.readInt(
+        u64,
+        source[offset..][0..8],
+        .little,
+    );
+}
+
+fn hashU32(
+    hash: *std.crypto.hash.sha2.Sha256,
+    value: u32,
+) void {
+    var encoded: [4]u8 = undefined;
+    std.mem.writeInt(u32, &encoded, value, .little);
+    hash.update(&encoded);
+}
+
+fn hashU64(
+    hash: *std.crypto.hash.sha2.Sha256,
+    value: u64,
+) void {
+    var encoded: [8]u8 = undefined;
+    std.mem.writeInt(u64, &encoded, value, .little);
+    hash.update(&encoded);
+}
+
+fn digestEqual(left: Digest, right: Digest) bool {
+    return std.mem.eql(u8, &left, &right);
+}
+
+fn isZero(value: Digest) bool {
+    return std.mem.allEqual(u8, &value, 0);
+}
+
+fn allZero(bytes: []const u8) bool {
+    for (bytes) |byte| if (byte != 0) return false;
+    return true;
+}
+
+fn slicesOverlap(left: []const u8, right: []const u8) bool {
+    if (left.len == 0 or right.len == 0) return false;
+    const left_start = @intFromPtr(left.ptr);
+    const right_start = @intFromPtr(right.ptr);
+    const left_end = left_start + left.len;
+    const right_end = right_start + right.len;
+    return left_start < right_end and
+        right_start < left_end;
+}
+
+fn filledDigest(byte: u8) Digest {
+    return [_]u8{byte} ** 32;
+}
+
+fn testManifestV1() !ManifestV1 {
+    return makeV1(.{
+        .family = .autoregressive,
+        .source_format = .safetensors,
+        .portable_format_abi = 0x474c_4143_0000_0001,
+        .conversion_profile_abi = 0x474c_4350_0000_0001,
+        .conversion_plan_abi = 0x474c_434e_0000_0001,
+        .tokenizer_manifest_abi = 0x4754_4f4b_0000_0001,
+        .tokenizer_manifest_bytes = 192,
+        .source_bytes = 1000,
+        .portable_bytes = 700,
+        .portable_page_count = 4,
+        .license_bytes = 21,
+        .config = .{
+            .dim = 64,
+            .hidden_dim = 128,
+            .layers = 2,
+            .vocab = 256,
+            .heads = 1,
+            .head_dim = 64,
+            .kv_heads = 1,
+            .rms_eps = 1e-5,
+            .rope_theta = 10000,
+            .tie_embeddings = false,
+        },
+        .source_sha256 = filledDigest(0x11),
+        .portable_artifact_sha256 = filledDigest(0x22),
+        .conversion_profile_sha256 = filledDigest(0x33),
+        .conversion_plan_sha256 = filledDigest(0x44),
+        .model_content_sha256 = filledDigest(0x55),
+        .tokenizer_config_sha256 = filledDigest(0x66),
+        .tokenizer_domain_sha256 = filledDigest(0x77),
+        .tokenizer_behavior_sha256 = filledDigest(0x88),
+        .license_sha256 = filledDigest(0x99),
+    });
+}
+
+test "stable package manifest round trips without request state" {
+    const value = try testManifestV1();
+    var wire: [manifest_bytes]u8 = undefined;
+    _ = try encodeV1(value, &wire);
+    const decoded = try decodeV1(&wire);
+    try std.testing.expectEqualDeep(value, decoded);
+
+    var changed_representation: runtime_image.ImageIdentityV1 = .{
+        .source_fingerprint = value.model_content_sha256,
+        .abi_fingerprint = filledDigest(0xa1),
+        .container_bytes = 901,
+        .container_sha256 = filledDigest(0xa2),
+    };
+    const first = try makePreparedRepresentationV1(
+        value,
+        0x474c_5254_0000_0002,
+        2,
+        changed_representation,
+    );
+    changed_representation.abi_fingerprint =
+        filledDigest(0xb1);
+    changed_representation.container_sha256 =
+        filledDigest(0xb2);
+    const second = try makePreparedRepresentationV1(
+        value,
+        0x474c_5254_0000_0002,
+        2,
+        changed_representation,
+    );
+    try std.testing.expectEqual(
+        first.package_sha256,
+        second.package_sha256,
+    );
+    try std.testing.expect(!digestEqual(
+        first.representation_sha256,
+        second.representation_sha256,
+    ));
+}
+
+test "prepared representation is package and byte exact" {
+    const package = try testManifestV1();
+    const identity: runtime_image.ImageIdentityV1 = .{
+        .source_fingerprint = package.model_content_sha256,
+        .abi_fingerprint = filledDigest(0xa1),
+        .container_bytes = 901,
+        .container_sha256 = filledDigest(0xa2),
+    };
+    const value = try makePreparedRepresentationV1(
+        package,
+        0x474c_5254_0000_0002,
+        2,
+        identity,
+    );
+    var wire: [prepared_representation_bytes]u8 =
+        undefined;
+    _ = try encodePreparedRepresentationV1(value, &wire);
+    const decoded =
+        try decodePreparedRepresentationV1(&wire);
+    try std.testing.expectEqualDeep(value, decoded);
+    try validatePreparedRepresentationV1(package, decoded);
+
+    var foreign = package;
+    foreign.model_content_sha256 = filledDigest(0xfe);
+    var foreign_body: [manifest_body_bytes]u8 = undefined;
+    writeManifestBodyV1(foreign, &foreign_body);
+    foreign.package_sha256 = manifestRootV1(&foreign_body);
+    try std.testing.expectError(
+        Error.InvalidPreparedRepresentation,
+        validatePreparedRepresentationV1(foreign, decoded),
+    );
+}
+
+test "package codecs reject mutations and preserve destinations" {
+    const value = try testManifestV1();
+    var wire: [manifest_bytes]u8 = undefined;
+    _ = try encodeV1(value, &wire);
+
+    var corrupted = wire;
+    corrupted[208] ^= 1;
+    try std.testing.expectError(
+        Error.InvalidManifest,
+        decodeV1(&corrupted),
+    );
+    corrupted = wire;
+    corrupted[520] = 1;
+    try std.testing.expectError(
+        Error.InvalidManifest,
+        decodeV1(&corrupted),
+    );
+
+    var invalid = value;
+    invalid.source_bytes = 0;
+    var destination = [_]u8{0x6d} ** manifest_bytes;
+    const before = destination;
+    try std.testing.expectError(
+        Error.InvalidManifest,
+        encodeV1(invalid, &destination),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &before,
+        &destination,
+    );
+}

@@ -410,10 +410,13 @@ the shared mapping.
 
 The Common Model Contract artifact manifest is intentionally specific to the
 request profile: prompt and output dimensions affect its root, while the
-weight digest remains the exact `.glrt` container digest. It is not a stable
-package identity. Token-domain, token-domain-configuration, and
-artifact-license roots are opaque caller assertions; the bridge binds but does
-not inspect or attest their bytes.
+weight digest remains the exact `.glrt` container digest. R1k-b2 therefore
+keeps a separate request-independent 640-byte package manifest over portable
+provenance, resolved geometry, tokenizer behavior, and the license byte count
+plus SHA-256 identity, plus a 256-byte prepared-representation identity for the
+exact `.glrt` container.
+Direct Common-contract constructors still treat token-domain,
+token-domain-configuration, and artifact-license roots as caller assertions.
 
 R1k-b1 adds a narrower supported constructor for one raw-text profile. The
 `utf8-byte-v1` manifest rejects vocabularies below 256, validates strict UTF-8,
@@ -423,8 +426,11 @@ provenance, geometry, and repository license digest; a fixed raw-input wire
 then joins the tokenizer receipt to the prepared prompt, local plan, Common
 artifact/execution/residency records, request epoch, and license root before
 `SessionV3` admission. This removes caller-asserted tokenizer and license roots
-for that fixture command only; existing direct R1c constructors retain their
-experimental caller-supplied inputs.
+for that fixture command. R1k-b2 also retains the package, prepared
+representation, tokenizer wires, binding, and exact UTF-8 bytes as one
+canonical durable input archive; fresh recovery processes re-tokenize before
+admission. Existing direct R1c constructors retain their experimental
+caller-supplied inputs.
 
 The bridge currently accepts only profiles whose local activation claim covers
 the Common Execution Plan's exact `u32` prompt-input bytes. A
@@ -565,12 +571,14 @@ covers seven bootstrap, 23 source-transition, and 19 target-transition real
 `SIGKILL` boundaries; independent recovery admits only the declared
 absent/predecessor/successor roots and converges to the terminal oracle.
 
-The durable recovery lifecycle still receives pre-tokenized input. The
-separate R1k-b1 process-local path attests one raw-text tokenizer and exact
-license bytes, but does not persist that binding into the checkpoint, result
-sink, or fresh-process recovery chain. The combined work still does not add
-early EOS, fewer-than-admitted outputs, a stable package identity, replay after
-a source-side external effect, arbitrary remote exactly-once effects,
+R1k-b2 adds a raw-recoverable branch beside the legacy pre-tokenized lifecycle.
+Generation one retains the exact input archive; generation two carries it in a
+six-object restart set; acknowledged nonterminal generations carry it in an
+eight-object set; and the terminal set embeds that predecessor transitively.
+Every fresh source or target re-tokenizes and checks the current local/Common
+plan before admission. The combined work still does not add early EOS,
+fewer-than-admitted outputs, a stable public package ABI, replay after a
+source-side external effect, arbitrary remote exactly-once effects,
 hostile-writer or physical power-loss guarantees, GPU-resident continuation,
 Windows durable files, production-model evidence, strict cross-platform
 numerical equivalence, or native multi-OS performance/recovery evidence.
@@ -1357,8 +1365,9 @@ targets remain gated until their named native adapters and evidence pass.
 - [Prepared text session](PREPARED_TEXT_SESSION.md): exact prepared-image
   execution, publication, boundary, and terminal-result lifecycle.
 - [Verified raw-text runtime path](PREPARED_TEXT_RAW_INPUT.md): strict
-  tokenizer identity, raw-input/Common-plan binding, and the bounded
-  process-local command sequence.
+  tokenizer identity, request-independent package/prepared-representation
+  records, raw-input/Common-plan binding, the bounded process-local command,
+  and the composed CPU/POSIX recovery fixture.
 - [Prepared text checkpoint](PREPARED_TEXT_CHECKPOINT.md): canonical
   non-terminal output/RNG/contiguous-KV state, detached materialization, and
   same-process exact-boundary rebind under retained authority.

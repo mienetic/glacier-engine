@@ -228,6 +228,8 @@ pub const metal_library_path: [*:0]const u8 = blk: {
 };
 
 pub const model = @import("model/format.zig");
+pub const model_package_manifest =
+    @import("model/package_manifest.zig");
 pub const safetensors = @import("model/safetensors.zig");
 pub const converter = @import("model/converter.zig");
 pub const converter_durable =
@@ -264,6 +266,8 @@ pub const prepared_text_checkpoint =
 pub const prepared_text_session = @import("prepared_text_session.zig");
 pub const prepared_text_raw_input =
     @import("prepared_text_raw_input.zig");
+pub const prepared_text_input_archive =
+    @import("prepared_text_input_archive.zig");
 pub const prepared_text_source_lease =
     @import("prepared_text_source_lease.zig");
 pub const prepared_text_successor =

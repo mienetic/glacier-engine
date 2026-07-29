@@ -1,6 +1,7 @@
 # Verified Raw-Text Runtime Path
 
-Status: **integrated experimental R1k-b1 slice**.
+Status: **integrated experimental R1k-b1 ingress and R1k-b2 CPU/POSIX
+recovery slice**.
 
 This path gives one supported command sequence a verifiable join from exact
 raw UTF-8 bytes to the prepared-text runtime:
@@ -9,10 +10,11 @@ raw UTF-8 bytes to the prepared-text runtime:
 Safetensors fixture
   -> sealed portable .glacier publication
   -> recoverable prepared .glrt publication
+  -> stable package + prepared-representation identities
   -> canonical UTF-8 byte tokenizer
   -> prepared-text and Common Model Contract plans
-  -> SessionV3 execution
-  -> transactional in-process token publication
+  -> process-local SessionV3 command, or
+  -> durable source/target recovery with exact raw-input retention
   -> terminal result evidence and zero logical ownership
 ```
 
@@ -48,7 +50,8 @@ the prepared source fingerprint, complete geometry, tokenizer profile, and
 repository `LICENSE` digest must match. Another valid `.glrt` image or changed
 license file rejects. This fixture restriction prevents an arbitrary
 subword-tokenized model from being mislabeled as byte-token compatible while a
-stable package manifest remains roadmap work.
+stable package manifest and broader tokenizer admission remain separate from
+the standalone command.
 
 `text-run` requires valid nonempty UTF-8 input and `1..64` requested output
 tokens. The current command profile limits input to 4,096 bytes. It emits one
@@ -181,6 +184,43 @@ anonymization. They reveal equality across runs and may permit guessing of
 low-entropy prompts. Do not publish reports containing sensitive prompt
 identities without an application-specific privacy policy.
 
+## Stable package and durable input archive
+
+R1k-b2 separates portable package identity from both requests and native
+preparation:
+
+- `package_manifest.ManifestV1` is exactly 640 bytes. It binds source and portable
+  artifact identities, conversion profile and plan, resolved model geometry,
+  tokenizer domain/configuration/behavior, and the license byte count plus
+  SHA-256 identity. It excludes the license payload, prompt, request epoch,
+  output limit, Scheduler identity, and `.glrt` bytes.
+- `package_manifest.PreparedRepresentationV1` is exactly 256 bytes. It binds one package/config
+  pair to an exact prepared container plus source and ABI fingerprints. A
+  second platform preparation may therefore have another representation root
+  without changing the package root.
+- The `prepared_text_input_archive` V1 wire has a 1,952-byte fixed prefix, the exact nonempty
+  raw UTF-8 bytes, and a 32-byte footer. Its prefix contains the package and
+  representation wires, the 192-byte tokenizer manifest, 256-byte prompt
+  receipt, and 480-byte raw-input binding.
+
+The archive decoder revalidates every inner wire, byte count, package/
+representation relationship, tokenizer behavior, receipt, token-stream root,
+binding, and whole-archive root. A fresh source or target re-tokenizes the
+retained bytes and revalidates the current prepared-text/Common plan before
+model admission.
+
+The additive durable path carries the exact archive as extension ordinal 2 in
+generation one and extension ordinal 6 in restart and acknowledged-progress
+sets. Every later nonterminal generation requires byte-identical archive bytes;
+the terminal generation retains them transitively through its immediate
+predecessor. Compatibility five-object restart and seven-object progress
+decoders remain available for pre-tokenized callers.
+
+The independent standard-library Python oracle decodes the actual package,
+representation, and input-archive bytes, reconstructs the same roots and
+re-tokenization relationship, rejects every component/archive byte mutation,
+and rejects coherently re-rooted substitutions.
+
 ## Verification gate
 
 Run the complete retained gate with:
@@ -234,15 +274,17 @@ process-local CPU paths: `transactional_publication=true`, while
 `durable_result_sink=false` and `fresh_process_recovery=false` are explicit in
 the command report.
 
-The prepared image has an exact platform-bound file digest, but the current
-Common artifact manifest remains a request-profile identity and changes with
-prompt context. It is not yet a stable distributable package identity.
-`BoundPlanV1` also remains an experimental Zig/direct structure rather than a
-fixed cross-language wire.
+The Common artifact manifest remains a request-profile identity and changes
+with prompt context. R1k-b2 supplies a separate stable package identity, but it
+is still an experimental wire rather than a stable public distribution ABI.
+`BoundPlanV1` likewise remains an experimental Zig/direct structure rather
+than a fixed cross-language wire.
 
-R1k-b remains open. The next slice must carry this exact tokenizer/raw-input
-identity into the durable result sink and fresh-process source/target recovery
-path, then add a stable package manifest and retained native multi-OS
-execution. GPU execution, production model quality, performance, remote
-delivery, hostile writers, and physical power-loss persistence are not claimed
-by R1k-b1.
+The separate recovery fixture now carries this exact tokenizer/raw-input
+identity into the durable local sink and fresh-process source/target chain. The
+standalone `text-run` command remains process-local, and committed-token text
+rendering plus a unified user command remain open. The retained fixture is
+synthetic CPU execution on the descriptor-relative POSIX durability adapter.
+GPU/device-resident recovery, production model quality, performance, remote
+delivery, hostile writers, native multi-OS durability, and physical power-loss
+persistence are not claimed.

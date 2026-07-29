@@ -143,10 +143,6 @@ pub fn makeBindingV1(
             local_plan.claim,
             bound_plan.residency.request_claim,
         ) or
-        !digestEqual(
-            bound_plan.execution.challenge_sha256,
-            tokenized.receipt.receipt_sha256,
-        ) or
         bound_plan.execution.request_epoch == 0 or
         bound_plan.execution.batch_items != 1 or
         bound_plan.execution.input_features !=

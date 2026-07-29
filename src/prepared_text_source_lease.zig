@@ -17,6 +17,8 @@ const platform_capabilities = core.platform_capabilities;
 const resource_bank = core.resource_bank;
 const source_exit_wire =
     @import("prepared_text_source_exit_wire.zig");
+const input_archive =
+    @import("prepared_text_input_archive.zig");
 const source_recovery =
     @import("prepared_text_source_recovery.zig");
 
@@ -28,6 +30,7 @@ pub const source_live_set_generation: u64 = 1;
 pub const immediate_successor_generation: u64 = 2;
 pub const source_live_object_ordinal: u64 = 0;
 pub const source_recovery_object_ordinal: u64 = 1;
+pub const source_input_object_ordinal: u64 = 2;
 pub const source_live_marker =
     "glacier-prepared-text-source-live-v1";
 
@@ -39,6 +42,7 @@ const source_replay_grant_domain =
     "glacier-prepared-text-source-live-grant-v2\x00";
 
 pub const Error = checkpoint_file.Error ||
+    input_archive.Error ||
     source_recovery.Error ||
     source_exit_wire.Error ||
     error{
@@ -171,6 +175,65 @@ pub fn encodeRecoverableSourceLiveSetV1(
             .ordinal = source_recovery_object_ordinal,
             .abi_version = source_recovery.contract_abi,
             .bytes = encoded_contract.bytes,
+        },
+    };
+    return checkpoint_file.encodeSetV1(
+        .{
+            .generation = source_live_set_generation,
+            .request_epoch = contract.request_epoch,
+            .publication_next_sequence = contract.publication_next_sequence,
+            .parent_checkpoint_sha256 = [_]u8{0} ** 32,
+            .challenge_sha256 = contract.challenge_sha256,
+        },
+        &objects,
+        destination,
+    );
+}
+
+/// Add the exact package/tokenizer/raw-text context to generation one while
+/// retaining the V1 replay contract as the stable compatibility object.
+pub fn encodeRawRecoverableSourceLiveSetV1(
+    encoded_contract: source_recovery.EncodedV1,
+    encoded_input: input_archive.EncodedV1,
+    destination: []u8,
+) Error!checkpoint_file.PreparedSetV1 {
+    const contract = try source_recovery.decodeV1(
+        encoded_contract.bytes,
+    );
+    if (!digestEqual(
+        contract.contract_sha256,
+        encoded_contract.contract_sha256,
+    ))
+        return Error.InvalidSourceLiveMarker;
+    const input = try input_archive.decodeV1(
+        encoded_input.bytes,
+    );
+    if (!digestEqual(
+        input.archive_sha256,
+        encoded_input.archive_sha256,
+    ) or !recoveryInputMatchesContractV1(
+        input,
+        contract,
+    ))
+        return Error.InvalidSourceLiveMarker;
+    const objects = [_]checkpoint_file.ObjectInputV1{
+        .{
+            .kind = .extension,
+            .ordinal = source_live_object_ordinal,
+            .abi_version = source_live_marker_abi,
+            .bytes = source_live_marker,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = source_recovery_object_ordinal,
+            .abi_version = source_recovery.contract_abi,
+            .bytes = encoded_contract.bytes,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = source_input_object_ordinal,
+            .abi_version = input_archive.archive_abi,
+            .bytes = encoded_input.bytes,
         },
     };
     return checkpoint_file.encodeSetV1(
@@ -552,7 +615,8 @@ fn sourceLiveAuthorityV1(
     const active_set = lease.activeSet() catch
         return Error.InvalidSourceLiveMarker;
     if ((active_set.object_count != 1 and
-        active_set.object_count != 2) or
+        active_set.object_count != 2 and
+        active_set.object_count != 3) or
         active_set.metadata.generation !=
             source_live_set_generation or
         lease.selector.generation !=
@@ -586,7 +650,7 @@ fn sourceLiveAuthorityV1(
         !std.mem.eql(u8, marker.bytes, source_live_marker))
         return Error.InvalidSourceLiveMarker;
     var recovery_contract_sha256 = [_]u8{0} ** 32;
-    if (active_set.object_count == 2) {
+    if (active_set.object_count >= 2) {
         const contract_object = active_set.objects[1];
         if (contract_object.kind != .extension or
             contract_object.ordinal !=
@@ -607,6 +671,23 @@ fn sourceLiveAuthorityV1(
             ))
             return Error.InvalidSourceLiveMarker;
         recovery_contract_sha256 = contract.contract_sha256;
+        if (active_set.object_count == 3) {
+            const input_object = active_set.objects[2];
+            if (input_object.kind != .extension or
+                input_object.ordinal !=
+                    source_input_object_ordinal or
+                input_object.abi_version !=
+                    input_archive.archive_abi)
+                return Error.InvalidSourceLiveMarker;
+            const input = input_archive.decodeV1(
+                input_object.bytes,
+            ) catch return Error.InvalidSourceLiveMarker;
+            if (!recoveryInputMatchesContractV1(
+                input,
+                contract,
+            ))
+                return Error.InvalidSourceLiveMarker;
+        }
     }
     return .{
         .request_epoch = active_set.metadata.request_epoch,
@@ -616,6 +697,54 @@ fn sourceLiveAuthorityV1(
         .challenge_sha256 = active_set.metadata.challenge_sha256,
         .source_recovery_contract_sha256 = recovery_contract_sha256,
     };
+}
+
+/// The raw archive is authoritative only when its independently decodable
+/// tokenizer, prompt, plan, artifact, and license identities reproduce the
+/// legacy replay contract exactly.
+pub fn recoveryInputMatchesContractV1(
+    input: input_archive.DecodedV1,
+    contract: source_recovery.DecodedV1,
+) bool {
+    if (input.binding.request_epoch != contract.request_epoch or
+        input.binding.prompt_tokens != contract.promptCount() or
+        input.binding.raw_text_bytes != contract.promptCount() or
+        !digestEqual(
+            input.binding.local_plan_sha256,
+            contract.plan_sha256,
+        ) or !digestEqual(
+        input.binding.bound_plan_sha256,
+        contract.bound_plan_sha256,
+    ) or !digestEqual(
+        input.binding.prepared_prompt_sha256,
+        contract.prompt_sha256,
+    ) or !digestEqual(
+        input.binding.artifact_sha256,
+        contract.artifact_sha256,
+    ) or !digestEqual(
+        input.binding.execution_plan_sha256,
+        contract.execution_plan_sha256,
+    ) or !digestEqual(
+        input.binding.residency_binding_sha256,
+        contract.residency_binding_sha256,
+    ) or !digestEqual(
+        input.binding.tokenizer_domain_sha256,
+        contract.bound_plan_input.token_domain_sha256,
+    ) or !digestEqual(
+        input.binding.tokenizer_config_sha256,
+        contract.bound_plan_input
+            .token_domain_config_sha256,
+    ) or !digestEqual(
+        input.binding.artifact_license_sha256,
+        contract.bound_plan_input.artifact_license_sha256,
+    ))
+        return false;
+    for (input.raw_text, 0..) |byte, index| {
+        const token = contract.promptToken(index) catch
+            return false;
+        if (token != byte) return false;
+    }
+    return true;
 }
 
 fn validateSourceLiveGrantShapeV1(

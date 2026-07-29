@@ -4,11 +4,15 @@ const engine = @import("engine");
 
 const core = engine.core;
 const checkpoint_file = core.continuation_checkpoint_file;
+const model_contract = core.model_contract;
 const bank_api = engine.resource_bank;
 const lane = engine.lane_weave_qos;
 const publication = engine.lane_publication_txn;
+const package_manifest = engine.model_package_manifest;
 const prepared = engine.prepared_text_session;
 const checkpoint = engine.prepared_text_checkpoint;
+const input_archive = engine.prepared_text_input_archive;
+const raw_input = engine.prepared_text_raw_input;
 const source_lease = engine.prepared_text_source_lease;
 const successor = engine.prepared_text_successor;
 const archive = engine.prepared_text_handoff_archive;
@@ -22,13 +26,19 @@ const source_recovery = engine.prepared_text_source_recovery;
 const progress = engine.prepared_text_acknowledged_progress;
 const acknowledged_restore =
     engine.prepared_text_acknowledged_restore;
+const tokenizer = engine.tokenizer;
 
 const Digest = [32]u8;
 const dim: usize = 64;
 const hidden: usize = 64;
-const vocab: usize = 64;
+const vocab: usize = 256;
 const num_layers: usize = 1;
-const prompt = [_]u32{ 1, 2, 3 };
+const legacy_prompt = [_]u32{ 1, 2, 3 };
+const raw_prompt = "Ice ❄";
+const raw_prompt_max_bytes: u64 = 4096;
+const artifact_license =
+    "SPDX-License-Identifier: Apache-2.0\n" ++
+    "Synthetic recovery fixture only.\n";
 const options: prepared.OptionsV1 = .{ .max_new_tokens = 4 };
 const sink_capacity: usize = options.max_new_tokens - 1;
 const max_authority_bytes: usize = 1024 * 1024;
@@ -57,7 +67,10 @@ const sink_instance_sha256 = [_]u8{0x93} ** 32;
 const model_source_name = "prepared-text-fixture.safetensors";
 const model_container_name = "prepared-text-fixture.glacier";
 const model_image_name = "prepared-text-fixture.glrt";
+const model_package_name = "prepared-text-fixture.glpkg";
 const terminal_semantic_name = "prepared-text-terminal-semantic.bin";
+const portable_format_abi_v1: u64 = 0x474c_4143_0000_0001;
+const prepared_format_abi_v2: u64 = 0x474c_5254_0000_0002;
 
 const scheduling: prepared.SchedulingV1 = .{
     .tenant_key = 0x501,
@@ -126,6 +139,24 @@ const SinkDisposition = enum {
     applied,
     replayed,
 };
+
+fn requireStaleLocalPlanRejectionV1(
+    decoded_input: input_archive.DecodedV1,
+    local_plan: prepared.PlanV1,
+    bound_plan: prepared.BoundPlanV1,
+) !void {
+    var stale_local_plan = local_plan;
+    stale_local_plan.prompt_tokens += 1;
+    input_archive.verifyCurrentPlanV1(
+        decoded_input,
+        stale_local_plan,
+        bound_plan,
+    ) catch |err| switch (err) {
+        error.InvalidContext => return,
+        else => return err,
+    };
+    return error.StaleLocalPlanAccepted;
+}
 
 const CrashController = struct {
     requested: ?CrashPoint,
@@ -447,6 +478,7 @@ const SelectedRestartV1 = struct {
     manifest: restart_manifest.DecodedV1,
     checkpoint: checkpoint.DecodedV1,
     artifacts: successor.ArtifactsV1,
+    input_archive: ?input_archive.DecodedV1 = null,
     encoded_checkpoint: []const u8,
     encoded_plan: []const u8,
     encoded_residency: []const u8,
@@ -455,6 +487,11 @@ const SelectedRestartV1 = struct {
     predecessor_selector: []const u8,
     active_set: []const u8,
     active_selector: []const u8,
+};
+
+const SelectedSourceRecoveryV1 = struct {
+    contract: source_recovery.DecodedV1,
+    input_archive: input_archive.DecodedV1,
 };
 
 pub fn main() !void {
@@ -556,12 +593,25 @@ fn runBaselineV1(
         if (!runtime_closed)
             _ = runtime.scheduler.close() catch {};
     }
+    const tokenizer_manifest =
+        try fixtureTokenizerManifestV1();
+    var tokenized = try tokenizer.tokenizeUtf8BytesV1(
+        allocator,
+        tokenizer_manifest,
+        raw_prompt,
+    );
+    defer tokenized.deinit();
     const local_plan =
-        try prepared.makePlanV1(model, &prompt, options);
-    const bound_input = try boundInputV1();
+        try prepared.makePlanV1(
+            model,
+            tokenized.tokens,
+            options,
+        );
+    const bound_input =
+        try fixtureBoundInputV1(tokenizer_manifest);
     const bound_plan = try prepared.makeBoundPlanV1(
         model,
-        &prompt,
+        tokenized.tokens,
         options,
         local_plan,
         scheduling,
@@ -573,7 +623,7 @@ fn runBaselineV1(
     try requireStartedV1(try session.start(
         allocator,
         &model,
-        &prompt,
+        tokenized.tokens,
         options,
         local_plan,
         bound_input,
@@ -674,12 +724,30 @@ fn runSourceBootstrapV1(
         if (!runtime_closed)
             _ = runtime.scheduler.close() catch {};
     }
+    const package = try readPackageManifestV1(directory);
+    const representation = try preparedRepresentationV1(
+        package,
+        &model,
+    );
+    const tokenizer_manifest =
+        try fixtureTokenizerManifestV1();
+    var tokenized = try tokenizer.tokenizeUtf8BytesV1(
+        allocator,
+        tokenizer_manifest,
+        raw_prompt,
+    );
+    defer tokenized.deinit();
     const local_plan =
-        try prepared.makePlanV1(model, &prompt, options);
-    const bound_input = try boundInputV1();
+        try prepared.makePlanV1(
+            model,
+            tokenized.tokens,
+            options,
+        );
+    const bound_input =
+        try fixtureBoundInputV1(tokenizer_manifest);
     const bound_plan = try prepared.makeBoundPlanV1(
         model,
-        &prompt,
+        tokenized.tokens,
         options,
         local_plan,
         scheduling,
@@ -697,12 +765,14 @@ fn runSourceBootstrapV1(
     };
     const contract_storage = try allocator.alloc(
         u8,
-        try source_recovery.encodedBytesV1(prompt.len),
+        try source_recovery.encodedBytesV1(
+            tokenized.tokens.len,
+        ),
     );
     defer allocator.free(contract_storage);
     const encoded_contract = try source_recovery.encodeV1(
         .{
-            .prompt = &prompt,
+            .prompt = tokenized.tokens,
             .options = options,
             .scheduling = scheduling,
             .bound_plan_input = bound_input,
@@ -721,17 +791,35 @@ fn runSourceBootstrapV1(
         },
         contract_storage,
     );
+    const input_storage = try allocator.alloc(
+        u8,
+        try input_archive.encodedBytesV1(raw_prompt.len),
+    );
+    defer allocator.free(input_storage);
+    const encoded_input = try input_archive.encodeV1(
+        .{
+            .package = package,
+            .representation = representation,
+            .raw_text = raw_prompt,
+            .tokenized = &tokenized,
+            .local_plan = local_plan,
+            .bound_plan = bound_plan,
+        },
+        input_storage,
+    );
     const live_storage = try allocator.alloc(
         u8,
         checkpoint_file.set_payload_offset +
             durable.source_live_marker.len +
             encoded_contract.bytes.len +
+            encoded_input.bytes.len +
             checkpoint_file.set_footer_bytes,
     );
     defer allocator.free(live_storage);
     const live_set =
-        try source_lease.encodeRecoverableSourceLiveSetV1(
+        try source_lease.encodeRawRecoverableSourceLiveSetV1(
             encoded_contract,
+            encoded_input,
             live_storage,
         );
     const live_selector =
@@ -843,19 +931,29 @@ fn runSourceTransitionV1(
     if (active_set.metadata.generation !=
         source_lease.source_live_set_generation)
         return error.InvalidSourceRecoveryGeneration;
-    const contract = try selectedSourceRecoveryContractV1(
-        &lease,
-    );
+    const source_context =
+        try selectedSourceRecoveryContextV1(
+            &lease,
+        );
+    const contract = source_context.contract;
+    const recovery_input = source_context.input_archive;
     const encoded_contract: source_recovery.EncodedV1 = .{
         .bytes = contract.encoded,
         .contract_sha256 = contract.contract_sha256,
     };
 
-    const prompt_storage =
-        try allocator.alloc(u32, contract.promptCount());
-    defer allocator.free(prompt_storage);
-    for (prompt_storage, 0..) |*token, index|
-        token.* = try contract.promptToken(index);
+    var tokenized = try input_archive.retokenizeV1(
+        allocator,
+        recovery_input,
+    );
+    defer tokenized.deinit();
+    const prompt_storage = tokenized.tokens;
+    if (prompt_storage.len != contract.promptCount())
+        return error.InvalidSourceRecoveryContract;
+    for (prompt_storage, 0..) |token, index| {
+        if (token != try contract.promptToken(index))
+            return error.InvalidSourceRecoveryContract;
+    }
     const image_path = try modelPathV1(
         allocator,
         absolute_directory,
@@ -913,6 +1011,12 @@ fn runSourceTransitionV1(
             .sink_implementation_sha256 = contract.sink.implementation_sha256,
             .sink_instance_sha256 = contract.sink.instance_sha256,
         },
+    );
+    try input_archive.verifySourceContextV1(
+        recovery_input,
+        &tokenized,
+        local_plan,
+        bound_plan,
     );
 
     var live_grant: source_lease.SourceLiveGrantV1 = .{};
@@ -1038,18 +1142,20 @@ fn runSourceTransitionV1(
         manifest_storage,
     );
     const evidence_bytes =
-        try archive.encodedRestartArchiveBytesV1(
+        try archive.encodedBoundRestartArchiveBytesV1(
             encoded_checkpoint.len,
             encoded_manifest.bytes.len,
+            recovery_input.encoded.len,
         );
     const evidence_storage =
         try allocator.alloc(u8, evidence_bytes);
     defer allocator.free(evidence_storage);
-    const evidence = try archive.encodeRestartArchiveV1(
+    const evidence = try archive.encodeBoundRestartArchiveV1(
         contract.publication_next_sequence,
         zero_digest,
         encoded_checkpoint,
         encoded_manifest.bytes,
+        recovery_input.encoded,
         evidence_storage,
     );
     _ = try session.beginDurableHandoffV1(
@@ -1081,7 +1187,7 @@ fn runSourceTransitionV1(
         ) catch failStopSourceTransitionV1();
     defer allocator.free(authority_storage);
     const authority =
-        durable.encodeRecoverableSourceExitedSetV1(
+        durable.encodeRawRecoverableSourceExitedSetV1(
             evidence,
             source_exit,
             active_set.checkpoint_sha256,
@@ -1151,11 +1257,11 @@ fn runSourceTransitionV1(
     }) catch failStopSourceTransitionV1();
 }
 
-fn selectedSourceRecoveryContractV1(
+fn selectedSourceRecoveryContextV1(
     lease: *checkpoint_file.LeaseV1,
-) !source_recovery.DecodedV1 {
+) !SelectedSourceRecoveryV1 {
     const selected = try lease.activeSet();
-    if (selected.object_count != 2 or
+    if (selected.object_count != 3 or
         selected.metadata.generation !=
             source_lease.source_live_set_generation or
         selected.metadata.request_epoch == 0 or
@@ -1168,6 +1274,7 @@ fn selectedSourceRecoveryContractV1(
         return error.InvalidSourceRecoveryContract;
     const marker = selected.objects[0];
     const contract_object = selected.objects[1];
+    const input_object = selected.objects[2];
     if (marker.kind != .extension or
         marker.ordinal !=
             source_lease.source_live_object_ordinal or
@@ -1181,10 +1288,17 @@ fn selectedSourceRecoveryContractV1(
         contract_object.ordinal !=
             source_lease.source_recovery_object_ordinal or
         contract_object.abi_version !=
-            source_recovery.contract_abi)
+            source_recovery.contract_abi or
+        input_object.kind != .extension or
+        input_object.ordinal !=
+            source_lease.source_input_object_ordinal or
+        input_object.abi_version != input_archive.archive_abi)
         return error.InvalidSourceRecoveryContract;
     const contract = try source_recovery.decodeV1(
         contract_object.bytes,
+    );
+    const decoded_input = try input_archive.decodeV1(
+        input_object.bytes,
     );
     if (contract.request_epoch !=
         selected.metadata.request_epoch or
@@ -1193,9 +1307,15 @@ fn selectedSourceRecoveryContractV1(
         !digestEqual(
             contract.challenge_sha256,
             selected.metadata.challenge_sha256,
-        ))
+        ) or !source_lease.recoveryInputMatchesContractV1(
+        decoded_input,
+        contract,
+    ))
         return error.InvalidSourceRecoveryContract;
-    return contract;
+    return .{
+        .contract = contract,
+        .input_archive = decoded_input,
+    };
 }
 
 fn validateEmptySinkSelectionV1(
@@ -1457,11 +1577,11 @@ fn runSourceV1(
             _ = runtime.scheduler.close() catch {};
     }
     const local_plan =
-        try prepared.makePlanV1(model, &prompt, options);
+        try prepared.makePlanV1(model, &legacy_prompt, options);
     const bound_input = try boundInputV1();
     const bound_plan = try prepared.makeBoundPlanV1(
         model,
-        &prompt,
+        &legacy_prompt,
         options,
         local_plan,
         scheduling,
@@ -1477,7 +1597,7 @@ fn runSourceV1(
     try requireStartedV1(try session.start(
         allocator,
         &model,
-        &prompt,
+        &legacy_prompt,
         options,
         local_plan,
         bound_input,
@@ -1514,13 +1634,15 @@ fn runSourceV1(
     if (context.boundary.base.publication.next_sequence != 1)
         return error.InvalidSourceSequence;
     const manifest_bytes =
-        try restart_manifest.encodedBytesV1(prompt.len);
+        try restart_manifest.encodedBytesV1(
+            legacy_prompt.len,
+        );
     const manifest_storage =
         try allocator.alloc(u8, manifest_bytes);
     defer allocator.free(manifest_storage);
     const encoded_manifest = try restart_manifest.encodeV1(
         .{
-            .prompt = &prompt,
+            .prompt = &legacy_prompt,
             .options = options,
             .plan = local_plan,
             .bound_plan = bound_plan,
@@ -1805,6 +1927,7 @@ fn runTargetV1(
             .manifest = decoded.evidence.manifest,
             .checkpoint = decoded.evidence.checkpoint,
             .artifacts = decoded.evidence.artifacts,
+            .input_archive = decoded.input_archive,
             .encoded_checkpoint = decoded.evidence.checkpoint.encoded,
             .encoded_plan = encoded_plan.bytes,
             .encoded_residency = encoded_residency.bytes,
@@ -1816,7 +1939,9 @@ fn runTargetV1(
         };
     } else {
         if (active_decoded.object_count !=
-            progress.nonterminal_object_count)
+            progress.nonterminal_object_count and
+            active_decoded.object_count !=
+                progress.bound_nonterminal_object_count)
             return error.InvalidSelectedProgress;
         const embedded_selector =
             active_decoded.objects[0];
@@ -1844,6 +1969,7 @@ fn runTargetV1(
             .manifest = decoded.manifest,
             .checkpoint = decoded.checkpoint,
             .artifacts = decoded.artifacts,
+            .input_archive = decoded.input_archive,
             .encoded_checkpoint = active_decoded.objects[1].bytes,
             .encoded_plan = active_decoded.objects[2].bytes,
             .encoded_residency = active_decoded.objects[3].bytes,
@@ -1871,6 +1997,19 @@ fn runTargetV1(
     defer allocator.free(recovered_prompt);
     for (recovered_prompt, 0..) |*token, index|
         token.* = try selected.manifest.promptToken(index);
+    if (selected.input_archive) |decoded_input| {
+        var retokenized = try input_archive.retokenizeV1(
+            allocator,
+            decoded_input,
+        );
+        defer retokenized.deinit();
+        if (!std.mem.eql(
+            u32,
+            retokenized.tokens,
+            recovered_prompt,
+        ))
+            return error.RestartRawInputDrift;
+    }
     const local_plan = try prepared.makePlanV1(
         model,
         recovered_prompt,
@@ -1881,6 +2020,18 @@ fn runTargetV1(
     try prepared.validateBoundPlanV1(
         selected.manifest.bound_plan,
     );
+    if (selected.input_archive) |decoded_input| {
+        try input_archive.verifyCurrentPlanV1(
+            decoded_input,
+            local_plan,
+            selected.manifest.bound_plan,
+        );
+        try requireStaleLocalPlanRejectionV1(
+            decoded_input,
+            local_plan,
+            selected.manifest.bound_plan,
+        );
+    }
 
     var runtime: TargetRuntime = .{};
     try runtime.init(selected.manifest.target);
@@ -2126,7 +2277,13 @@ fn runTargetV1(
                 },
                 manifest_storage,
             );
-        const restart_bytes =
+        const restart_bytes = if (selected.input_archive) |decoded_input|
+            try archive.encodedBoundRestartArchiveBytesV1(
+                encoded_checkpoint.len,
+                encoded_manifest.bytes.len,
+                decoded_input.encoded.len,
+            )
+        else
             try archive.encodedRestartArchiveBytesV1(
                 encoded_checkpoint.len,
                 encoded_manifest.bytes.len,
@@ -2134,20 +2291,43 @@ fn runTargetV1(
         const restart_storage =
             try allocator.alloc(u8, restart_bytes);
         defer allocator.free(restart_storage);
-        _ = try archive.encodeRestartArchiveV1(
-            output_generation,
-            active_decoded.checkpoint_sha256,
-            encoded_checkpoint,
-            encoded_manifest.bytes,
-            restart_storage,
-        );
-        const selected_bytes =
+        if (selected.input_archive) |decoded_input| {
+            _ = try archive.encodeBoundRestartArchiveV1(
+                output_generation,
+                active_decoded.checkpoint_sha256,
+                encoded_checkpoint,
+                encoded_manifest.bytes,
+                decoded_input.encoded,
+                restart_storage,
+            );
+        } else {
+            _ = try archive.encodeRestartArchiveV1(
+                output_generation,
+                active_decoded.checkpoint_sha256,
+                encoded_checkpoint,
+                encoded_manifest.bytes,
+                restart_storage,
+            );
+        }
+        const selected_bytes = if (selected.input_archive != null)
+            try progress.encodedBoundNonterminalBytesV1(
+                restart_storage.len,
+            )
+        else
             try progress.encodedNonterminalBytesV1(
                 restart_storage.len,
             );
         selected_storage =
             try allocator.alloc(u8, selected_bytes);
-        const encoded_progress =
+        const encoded_progress = if (selected.input_archive != null)
+            try progress.encodeBoundNonterminalV1(
+                selected.active_set,
+                selected.active_selector,
+                restart_storage,
+                &encoded_ack,
+                selected_storage.?,
+            )
+        else
             try progress.encodeNonterminalV1(
                 selected.active_set,
                 selected.active_selector,
@@ -2758,6 +2938,91 @@ fn readExactFileV1(
         return error.OversizedFixtureFile;
 }
 
+fn readPackageManifestV1(
+    directory: std.fs.Dir,
+) !package_manifest.ManifestV1 {
+    var encoded: [package_manifest.manifest_bytes]u8 =
+        undefined;
+    try readExactFileV1(
+        directory,
+        model_package_name,
+        &encoded,
+    );
+    return package_manifest.decodeV1(&encoded);
+}
+
+fn preparedRepresentationV1(
+    package: package_manifest.ManifestV1,
+    model: *const engine.loader.LoadedModel,
+) !package_manifest.PreparedRepresentationV1 {
+    const expected_config = try packageConfigV1(model.config);
+    if (!std.meta.eql(package.config, expected_config))
+        return error.PackageModelConfigDrift;
+    const image = if (model.prepared_image) |*value|
+        value
+    else
+        return error.MissingPreparedImage;
+    return package_manifest.makePreparedRepresentationV1(
+        package,
+        prepared_format_abi_v2,
+        @intCast(engine.runtime_image.VERSION),
+        image.identityV1(),
+    );
+}
+
+fn packageConfigV1(
+    config: engine.loader.ModelConfig,
+) !package_manifest.ConfigV1 {
+    return .{
+        .dim = std.math.cast(u32, config.dim) orelse
+            return error.InvalidFixtureConfig,
+        .hidden_dim = std.math.cast(
+            u32,
+            config.hidden_dim,
+        ) orelse return error.InvalidFixtureConfig,
+        .layers = std.math.cast(
+            u32,
+            config.num_layers,
+        ) orelse return error.InvalidFixtureConfig,
+        .vocab = std.math.cast(
+            u32,
+            config.vocab_size,
+        ) orelse return error.InvalidFixtureConfig,
+        .heads = std.math.cast(
+            u32,
+            config.num_heads,
+        ) orelse return error.InvalidFixtureConfig,
+        .head_dim = std.math.cast(
+            u32,
+            config.head_dim,
+        ) orelse return error.InvalidFixtureConfig,
+        .kv_heads = std.math.cast(
+            u32,
+            config.num_kv_heads,
+        ) orelse return error.InvalidFixtureConfig,
+        .rms_eps = config.rms_eps,
+        .rope_theta = config.rope_theta,
+        .tie_embeddings = config.tie_word_embeddings,
+    };
+}
+
+fn fixtureTokenizerManifestV1() !tokenizer.Utf8ByteManifestV1 {
+    return tokenizer.makeUtf8ByteManifestV1(
+        @intCast(vocab),
+        raw_prompt_max_bytes,
+    );
+}
+
+fn fixtureBoundInputV1(
+    manifest: tokenizer.Utf8ByteManifestV1,
+) !prepared.BoundPlanInputV1 {
+    return raw_input.makeBoundPlanInputV1(
+        request_epoch,
+        manifest,
+        model_contract.sha256(artifact_license),
+    );
+}
+
 fn writePreparedFixtureV1(
     allocator: std.mem.Allocator,
     absolute_directory: []const u8,
@@ -2785,16 +3050,17 @@ fn writePreparedFixtureV1(
         allocator,
         source_path,
     );
-    _ = try engine.converter.convertSafetensors(
-        allocator,
-        source_path,
-        container_path,
-        .{
-            .quantize_int4 = true,
-            .quant_group_size = 16,
-            .page_size_bytes = 1 << 16,
-        },
-    );
+    const conversion =
+        try engine.converter.convertSafetensors(
+            allocator,
+            source_path,
+            container_path,
+            .{
+                .quantize_int4 = true,
+                .quant_group_size = 16,
+                .page_size_bytes = 1 << 16,
+            },
+        );
     var reader = try engine.model.FileReader.open(
         allocator,
         container_path,
@@ -2812,6 +3078,45 @@ fn writePreparedFixtureV1(
         &compact,
         image_path,
         compact.source_fingerprint,
+    );
+    const tokenizer_manifest =
+        try fixtureTokenizerManifestV1();
+    const package = try package_manifest.makeV1(.{
+        .family = .autoregressive,
+        .source_format = .safetensors,
+        .portable_format_abi = portable_format_abi_v1,
+        .conversion_profile_abi = engine.converter.conversion_profile_abi,
+        .conversion_plan_abi = engine.converter.conversion_plan_abi,
+        .tokenizer_manifest_abi = tokenizer.utf8_byte_manifest_abi,
+        .tokenizer_manifest_bytes = tokenizer.utf8_byte_manifest_bytes,
+        .source_bytes = conversion.source_bytes,
+        .portable_bytes = conversion.output_bytes,
+        .portable_page_count = conversion.num_pages,
+        .license_bytes = artifact_license.len,
+        .config = try packageConfigV1(compact.config),
+        .source_sha256 = conversion.source_sha256,
+        .portable_artifact_sha256 = conversion.output_sha256,
+        .conversion_profile_sha256 = conversion.conversion_profile_sha256,
+        .conversion_plan_sha256 = conversion.conversion_plan_sha256,
+        .model_content_sha256 = compact.source_fingerprint,
+        .tokenizer_config_sha256 = tokenizer_manifest.config_sha256,
+        .tokenizer_domain_sha256 = tokenizer_manifest.domain_sha256,
+        .tokenizer_behavior_sha256 = tokenizer_manifest.behavior_sha256,
+        .license_sha256 = model_contract.sha256(artifact_license),
+    });
+    var encoded_package: [package_manifest.manifest_bytes]u8 =
+        undefined;
+    _ = try package_manifest.encodeV1(
+        package,
+        &encoded_package,
+    );
+    var directory =
+        try std.fs.openDirAbsolute(absolute_directory, .{});
+    defer directory.close();
+    try writeSyncedFileV1(
+        directory,
+        model_package_name,
+        &encoded_package,
     );
 }
 

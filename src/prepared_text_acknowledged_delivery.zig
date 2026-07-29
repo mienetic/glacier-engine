@@ -8,6 +8,8 @@
 
 pub const result_sink =
     @import("prepared_text_result_sink.zig");
+pub const input_archive =
+    @import("prepared_text_input_archive.zig");
 pub const result_sink_file =
     @import("prepared_text_result_sink_file.zig");
 pub const progress =

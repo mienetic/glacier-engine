@@ -4,7 +4,8 @@ Glacier's prepared-text handoff is an experimental fresh-process continuation
 protocol for the fixed-length `SessionV3` path. It joins canonical restart
 context, checkpoint and successor evidence, an exact source-exit receipt, an
 exclusive selector lease, a canonical generation-one replay contract, one
-target activation grant, and a receipt-independent terminal semantic.
+target activation grant, a stable package plus exact raw-input archive, and a
+receipt-independent terminal semantic.
 
 The protocol is designed to fail closed. A target cannot become runnable from
 checkpoint evidence alone: it must open the selected source-exited generation,
@@ -44,7 +45,7 @@ the exact empty-sink implementation, instance, ledger, and selector roots. The
 contract is pointer-free replay evidence only. It grants no Scheduler, Bank,
 checkpoint, sink, or target authority.
 
-The durable fresh-process archive contains exactly five ordered objects:
+The compatibility fresh-process archive contains exactly five ordered objects:
 
 1. the canonical prepared-text checkpoint;
 2. the canonical successor execution plan;
@@ -56,16 +57,24 @@ The checkpoint and three successor records remain independently verifiable.
 The fifth object supplies the bounded trusted context that a fresh target needs
 to reproduce those checks without a native-struct or JSON sidecar. A
 four-object evidence helper may still be useful inside one process, but the
-fresh-process path uses the five-object restart archive.
+pre-tokenized compatibility path uses the five-object restart archive.
+
+The additive raw-input path adds a sixth object at extension ordinal 6; ordinal
+5 remains reserved for a result acknowledgement when the restart objects are
+embedded in progress. That object is the complete canonical input archive: a
+request-independent package manifest, one prepared-representation record,
+tokenizer manifest and prompt receipt, raw-input binding, and exact UTF-8
+bytes. A fresh process re-tokenizes those bytes and revalidates the recovered
+plan before admission. Legacy five-object archives remain decodable.
 
 ## Selector generations
 
-The base handoff uses three selected meanings:
+The retained raw-input handoff uses three selected meanings:
 
 | Generation | Selected state | What it permits |
 | --- | --- | --- |
-| 1 | `source-live` marker plus replay contract | A source may run or replay the unpublished prefix only while it holds the exclusive lease and its source-live grant remains valid. No target activation is allowed. |
-| 2 | `source-exited` authority | A successful source process has closed the exact publication binding; the selected set carries its real source-exit receipt, the five-object restart archive, and the byte-identical replay contract. A fresh target may hold one live lease-pinned activation at a time; releasing it permits a deterministic retry. |
+| 1 | `source-live` marker, replay contract, and raw-input archive | A source may run or replay the unpublished prefix only while it holds the exclusive lease, its source-live grant remains valid, and the exact retained UTF-8/tokenizer/package context matches the contract. No target activation is allowed. |
+| 2 | `source-exited` authority | A successful source process has closed the exact publication binding; the selected set carries its real source-exit receipt, the six-object bound restart archive, and the byte-identical replay contract. A fresh target may hold one live lease-pinned activation at a time; releasing it permits a deterministic retry. |
 | 3 | terminal semantic | The target reached the declared terminal position and selected a canonical terminal semantic that recursively retains the generation-two authority lineage. |
 
 The generation-two selector names the generation-one predecessor. Before
@@ -87,8 +96,8 @@ the exact durable sink acknowledgement for that token.
 The source acquires the durable selector lease before becoming live. It then:
 
 1. canonically validates the source replay input and publishes or recovers the
-   exact generation-one marker plus contract without replacing a foreign or
-   successor checkpoint;
+   exact generation-one marker, contract, and raw-input archive without
+   replacing a foreign or successor checkpoint;
 2. creates an address-stable `SourceLiveGrantV1` over that exact selection and
    the lease's sole consumer claim;
 3. opens or creates only the contract's exact empty sink before the first model
@@ -143,8 +152,9 @@ the whole activation lifecycle. It:
 3. opens the sink under lock, accepts only the contract's exact empty state or
    the exact one-transaction-ahead replay state for the selected generation,
    and retains that lock across activation and apply;
-4. decodes the canonical restart manifest and reconstructs the checkpoint,
-   source, target, prompt, option, plan, and bound-plan context;
+4. decodes the canonical restart manifest and raw-input archive, re-tokenizes
+   the exact retained UTF-8 bytes, and reconstructs the checkpoint, source,
+   target, prompt, option, plan, and bound-plan context;
 5. creates one address-stable `SelectedSourceExitGrantV1` backed by a consumer
    claim on the live lease;
 6. passes that grant to `prepareRestoredAdmissionV1`, which creates the
@@ -211,10 +221,11 @@ The parent executable runs three bounded worker invocations:
    commits source exit, selects generation two, returns source Scheduler/Bank
    ownership to zero, and exits; and
 3. **target:** starts in a different process, proves that a competing durable
-   lease would block, decodes the five-object archive, consumes the one-shot
-   activation grant, resumes at `N`, reaches the terminal position, selects
-   generation three, matches the baseline terminal semantic, and returns its
-   Scheduler/Bank/LeaseTree ownership to zero.
+   lease would block, decodes the six-object archive, re-tokenizes its retained
+   raw input, consumes the one-shot activation grant, resumes at `N`, reaches
+   the terminal position, selects generation three, matches the baseline
+   terminal semantic, and returns its Scheduler/Bank/LeaseTree ownership to
+   zero.
 
 The fixture checks distinct source and target process IDs, no source
 reconstruction in the target, no duplicate sequence in the retained run, and
@@ -259,7 +270,8 @@ This slice does not establish:
 - a Win32 durable selector/locking adapter or native Windows recovery evidence;
 - GPU execution, GPU-resident checkpointing, device-loss recovery, or
   cross-device numerical equivalence;
-- production-model quality, broad tokenizer support, early EOS, or
+- production-model quality, tokenizer profiles beyond the retained strict
+  UTF-8 byte identity, early EOS, or
   variable-length terminal output;
 - authentication, encryption, remote consensus, host migration, or a
   distributed fencing service;

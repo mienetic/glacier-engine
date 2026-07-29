@@ -1,11 +1,12 @@
 # Acknowledged Prepared-Text Delivery
 
-Glacier's R1j path is an experimental local recovery and delivery protocol for
-the bounded prepared-text runtime. It retains a canonical source replay
-contract in generation one, requires an exact empty descriptor-relative sink
-before the source computes, and joins each committed target token to a
-canonical result acknowledgement, immutable progress checkpoint, and exact
-selector generation that may authorize the next process.
+Glacier's R1j/R1k-b2 path is an experimental local recovery and delivery
+protocol for the bounded prepared-text runtime. It retains a canonical source
+replay contract plus the exact package/tokenizer/raw UTF-8 input in generation
+one, requires an exact empty descriptor-relative sink before the source
+computes, and joins each committed target token to a canonical result
+acknowledgement, immutable progress checkpoint, and exact selector generation
+that may authorize the next process.
 
 The immediate goal is narrow and user-visible. Before generation two, a fresh
 source process may replay only the unpublished deterministic prefix named by
@@ -44,10 +45,12 @@ those layers.
 
 The source-side composition uses three additional reusable contracts:
 
-1. `prepared_text_source_recovery.zig` canonically records the pre-tokenized
-   input, validated plan bindings, source runtime identity, target ownership,
-   and exact empty-sink identity required for replay.
-2. `prepared_text_source_lease.zig` retains that contract beside the
+1. `prepared_text_source_recovery.zig` canonically records the validated plan
+   bindings, source runtime identity, target ownership, and exact empty-sink
+   identity required for replay.
+2. `prepared_text_input_archive.zig` joins the stable package and prepared
+   representation to tokenizer evidence, the raw-input binding, and exact UTF-8
+   bytes; `prepared_text_source_lease.zig` retains it beside the contract and
    generation-one source-live marker without turning the bytes into runnable
    authority.
 3. `prepared_text_durable_handoff.zig` embeds the same bytes in generation two
@@ -159,14 +162,14 @@ The fixed four-token fixture starts its acknowledged-delivery scope after the
 successful source attempt has published one token and selected generation two:
 
 ```text
-generation 1  source live + canonical replay contract
-  → generation 2  real source exit + restart archive + replay contract
+generation 1  source live + replay contract + raw-input archive
+  → generation 2  real source exit + bound restart archive + replay contract
   → generation 3  sequence 1 acknowledged, resume at sequence 2
   → generation 4  sequence 2 acknowledged, resume at sequence 3
   → generation 5  sequence 3 acknowledged, terminal at sequence 4
 ```
 
-Each nonterminal generation contains seven ordered objects:
+The pre-tokenized compatibility shape contains seven ordered objects:
 
 1. the exact immediate predecessor selector;
 2. the new canonical prepared-text checkpoint;
@@ -175,6 +178,13 @@ Each nonterminal generation contains seven ordered objects:
 5. the successor transcript segment;
 6. the restart manifest; and
 7. the result acknowledgement.
+
+The additive raw-input shape contains an eighth object: the byte-identical
+input archive at extension ordinal 6. The restart manifest remains ordinal 4
+and the acknowledgement remains ordinal 5. Every successor re-tokenizes and
+revalidates the archive against its current plan, and rejects archive omission
+or substitution after a bound predecessor. The five-object terminal shape is
+unchanged because it embeds the complete immediate predecessor set.
 
 The terminal generation contains the predecessor selector and set, terminal
 semantic, final acknowledgement, and canonical little-endian `u32` output.
@@ -193,7 +203,8 @@ The current claim is limited to:
   full process gate supports native macOS/Linux, retained 49-victim evidence is
   currently macOS-only, and other durable hosts fail closed until their atomic
   no-replace primitive is implemented;
-- one fixed-length, pre-tokenized synthetic text fixture;
+- one fixed-length synthetic CPU text fixture with a strict UTF-8 byte
+  tokenizer and exact retained raw-input archive;
 - source- and target-process `SIGKILL` at named host-operation boundaries;
 - deterministic replay of the unpublished generation-one prefix only while no
   durable acknowledgement or external effect exists;
@@ -203,7 +214,8 @@ The current claim is limited to:
 
 It does not yet cover:
 
-- raw-text tokenization or variable-length/early-EOS output;
+- tokenizer profiles beyond the retained strict UTF-8 byte identity or
+  variable-length/early-EOS output;
 - remote APIs, databases, queues, or non-idempotent tools;
 - replay after any external source-side effect;
 - device-resident/GPU continuation;
@@ -227,6 +239,7 @@ Run the independent Python sink verifier:
 
 ```bash
 python3 -m unittest \
+  bench.tests.test_prepared_text_package \
   bench.tests.test_prepared_text_result_sink
 ```
 
@@ -271,5 +284,5 @@ Useful independent slices include:
 - add malformed nested-progress fixtures to the independent decoder;
 - add deterministic cancellation and bounded repeated-handoff campaigns around
   the source replay boundary; and
-- connect a declared redistributable model/tokenizer profile after the raw-text
-  golden path is frozen.
+- add a production-quality declared model/tokenizer package without weakening
+  the retained exact-byte fixture.

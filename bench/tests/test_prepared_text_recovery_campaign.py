@@ -8,6 +8,8 @@ import tempfile
 import textwrap
 import unittest
 
+from bench import prepared_text_package as prepared_package
+from bench import prepared_text_raw_input as raw_input
 from bench import prepared_text_recovery_campaign as campaign
 from bench import prepared_text_result_sink as reference_sink
 
@@ -286,9 +288,7 @@ class ReadyVisibilityTests(unittest.TestCase):
             "sink_count": sink_count,
             "sink_ledger_sha256": "11" * 32 if sink_selected else zero,
             "sink_selector_sha256": "22" * 32 if sink_selected else zero,
-            "checkpoint_selector_sha256": (
-                "33" * 32 if checkpoint_selected else zero
-            ),
+            "checkpoint_selector_sha256": ("33" * 32 if checkpoint_selected else zero),
         }
 
     def validate(
@@ -548,14 +548,10 @@ class WireFrameCouplingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             ledger_name = (
-                "prepared-text-result-ledger-"
-                + ledger.ledger_sha256.hex()
-                + ".bin"
+                "prepared-text-result-ledger-" + ledger.ledger_sha256.hex() + ".bin"
             )
             (root / ledger_name).write_bytes(ledger_encoded)
-            (root / campaign.SINK_ACTIVE_SELECTOR_NAME).write_bytes(
-                selector_encoded
-            )
+            (root / campaign.SINK_ACTIVE_SELECTOR_NAME).write_bytes(selector_encoded)
             decoded = campaign._decode_sink_wire(root)
         self.assertIsNotNone(decoded)
         assert decoded is not None
@@ -578,9 +574,7 @@ class WireFrameCouplingTests(unittest.TestCase):
         contract = campaign._decode_source_replay_contract(
             SourceReplayContractTests().contract()
         )
-        foreign_request = hashlib.sha256(
-            b"foreign-one-ahead-request"
-        ).digest()
+        foreign_request = hashlib.sha256(b"foreign-one-ahead-request").digest()
         acknowledgement = reference_sink.encode_acknowledgement_v1(
             request_sha256=foreign_request,
             request_epoch=contract.request_epoch,
@@ -605,9 +599,7 @@ class WireFrameCouplingTests(unittest.TestCase):
             ledger_encoded,
             expected_request_sha256=foreign_request,
             expected_request_epoch=contract.request_epoch,
-            expected_sink_implementation_sha256=(
-                contract.sink_implementation_sha256
-            ),
+            expected_sink_implementation_sha256=(contract.sink_implementation_sha256),
             expected_sink_instance_sha256=contract.sink_instance_sha256,
             expected_base_global_sequence=contract.sink_initial_sequence,
             expected_maximum_results=contract.sink_capacity,
@@ -619,14 +611,10 @@ class WireFrameCouplingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             ledger_name = (
-                "prepared-text-result-ledger-"
-                + ledger.ledger_sha256.hex()
-                + ".bin"
+                "prepared-text-result-ledger-" + ledger.ledger_sha256.hex() + ".bin"
             )
             (root / ledger_name).write_bytes(ledger_encoded)
-            (root / campaign.SINK_ACTIVE_SELECTOR_NAME).write_bytes(
-                selector_encoded
-            )
+            (root / campaign.SINK_ACTIVE_SELECTOR_NAME).write_bytes(selector_encoded)
             decoded = campaign._decode_sink_wire(root)
         self.assertIsNotNone(decoded)
         assert decoded is not None
@@ -738,9 +726,7 @@ class SourceReplayContractTests(unittest.TestCase):
 
         prompt_wire = struct.pack("<II", *prompt)
         prompt_root = hashlib.sha256(
-            campaign.SOURCE_PROMPT_DOMAIN
-            + struct.pack("<Q", len(prompt))
-            + prompt_wire
+            campaign.SOURCE_PROMPT_DOMAIN + struct.pack("<Q", len(prompt)) + prompt_wire
         ).digest()
         bindings = (
             self.digest("plan"),
@@ -816,6 +802,107 @@ class SourceReplayContractTests(unittest.TestCase):
             campaign.SOURCE_REPLAY_DOMAIN + encoded[:-32]
         ).digest()
 
+    def durable_input_fixture(
+        self,
+    ) -> tuple[campaign.SourceContractFacts, bytes]:
+        raw_text = bytes((7, 11))
+        tokens, tokenizer_manifest, tokenizer_prompt = raw_input.tokenize(
+            raw_text.decode("utf-8"),
+            vocab_size=256,
+            max_input_bytes=4096,
+        )
+        tokenizer_facts = raw_input.decode_manifest(tokenizer_manifest)
+        prompt_facts = raw_input.decode_prompt(tokenizer_prompt)
+
+        contract_wire = bytearray(self.contract())
+        contract_wire[208:240] = tokenizer_facts["domain_sha256"]
+        contract_wire[240:272] = tokenizer_facts["config_sha256"]
+        self.reroot(contract_wire)
+        contract = campaign._decode_source_replay_contract(bytes(contract_wire))
+
+        binding = raw_input.binding_wire_from_report(
+            {
+                "tokenizer_domain_sha256": (contract.bound_token_domain_sha256.hex()),
+                "tokenizer_config_sha256": (
+                    contract.bound_token_domain_config_sha256.hex()
+                ),
+                "prompt_receipt_sha256": prompt_facts["receipt_sha256"].hex(),
+                "raw_text_sha256": raw_input.raw_text_sha256(raw_text).hex(),
+                "token_ids_sha256": raw_input.token_ids_sha256(tokens).hex(),
+                "prepared_prompt_sha256": (contract.prompt_sha256.hex()),
+                "local_plan_sha256": contract.plan_sha256.hex(),
+                "bound_plan_sha256": (contract.bound_plan_sha256.hex()),
+                "artifact_sha256": contract.artifact_sha256.hex(),
+                "execution_plan_sha256": (contract.execution_plan_sha256.hex()),
+                "residency_binding_sha256": (contract.residency_binding_sha256.hex()),
+                "artifact_license_sha256": (
+                    contract.bound_artifact_license_sha256.hex()
+                ),
+                "request_epoch": contract.request_epoch,
+                "prompt_tokens": len(tokens),
+                "prompt_bytes": len(raw_text),
+            }
+        )
+        model_content = self.digest("package-model-content")
+        package_wire = prepared_package.encode_manifest(
+            {
+                "family": 1,
+                "source_format": 1,
+                "portable_format_abi": 1,
+                "conversion_profile_abi": 2,
+                "conversion_plan_abi": 3,
+                "tokenizer_manifest_abi": raw_input.MANIFEST_ABI,
+                "tokenizer_manifest_bytes": raw_input.MANIFEST_BYTES,
+                "source_bytes": 1024,
+                "portable_bytes": 2048,
+                "portable_page_count": 1,
+                "license_bytes": 32,
+                "config": {
+                    "dim": 4,
+                    "hidden_dim": 8,
+                    "layers": 1,
+                    "vocab": 256,
+                    "heads": 1,
+                    "head_dim": 4,
+                    "kv_heads": 1,
+                    "tie_embeddings": True,
+                    "rms_eps": 0.00001,
+                    "rope_theta": 10000.0,
+                },
+                "source_sha256": self.digest("package-source"),
+                "portable_artifact_sha256": self.digest("package-portable"),
+                "conversion_profile_sha256": self.digest("package-conversion-profile"),
+                "conversion_plan_sha256": self.digest("package-conversion-plan"),
+                "model_content_sha256": model_content,
+                "tokenizer_config_sha256": tokenizer_facts["config_sha256"],
+                "tokenizer_domain_sha256": tokenizer_facts["domain_sha256"],
+                "tokenizer_behavior_sha256": tokenizer_facts["behavior_sha256"],
+                "license_sha256": (contract.bound_artifact_license_sha256),
+            }
+        )
+        package_facts = prepared_package.decode_manifest(package_wire)
+        representation_wire = prepared_package.encode_prepared_representation(
+            {
+                "format_abi": 11,
+                "format_version": 1,
+                "container_bytes": 2048,
+                "package_sha256": package_facts["package_sha256"],
+                "resolved_config_sha256": package_facts["resolved_config_sha256"],
+                "source_fingerprint": model_content,
+                "abi_fingerprint": self.digest("package-abi-fingerprint"),
+                "container_sha256": self.digest("package-container"),
+            }
+        )
+        archive = prepared_package.archive_wire(
+            package=package_wire,
+            representation=representation_wire,
+            tokenizer_manifest=tokenizer_manifest,
+            tokenizer_prompt=tokenizer_prompt,
+            binding=binding,
+            raw_text=raw_text,
+        )
+        return contract, archive
+
     def contract_and_execution(
         self,
     ) -> tuple[bytes, bytes]:
@@ -840,18 +927,14 @@ class SourceReplayContractTests(unittest.TestCase):
         struct.pack_into("<Q", execution, 144, 0)
         execution[320:352] = facts.prompt_sha256
         execution[352:384] = facts.bound_token_domain_sha256
-        execution[384:416] = (
-            facts.bound_token_domain_config_sha256
-        )
+        execution[384:416] = facts.bound_token_domain_config_sha256
         execution[480:512] = campaign._source_ownership_root(facts)
         execution[512:544] = facts.challenge_sha256
         execution[544:576] = facts.bound_previous_plan_sha256
-        execution[campaign.MODEL_EXECUTION_PLAN_BODY_BYTES :] = (
-            hashlib.sha256(
-                campaign.MODEL_EXECUTION_PLAN_DOMAIN
-                + execution[: campaign.MODEL_EXECUTION_PLAN_BODY_BYTES]
-            ).digest()
-        )
+        execution[campaign.MODEL_EXECUTION_PLAN_BODY_BYTES :] = hashlib.sha256(
+            campaign.MODEL_EXECUTION_PLAN_DOMAIN
+            + execution[: campaign.MODEL_EXECUTION_PLAN_BODY_BYTES]
+        ).digest()
         contract[536:568] = execution[-32:]
         self.reroot(contract)
         return bytes(contract), bytes(execution)
@@ -862,9 +945,7 @@ class SourceReplayContractTests(unittest.TestCase):
         plan: bytearray,
     ) -> campaign.SourceContractFacts:
         plan_root = hashlib.sha256(
-            campaign.RESTART_PLAN_DOMAIN
-            + plan[:164]
-            + plan[168:256]
+            campaign.RESTART_PLAN_DOMAIN + plan[:164] + plan[168:256]
         ).digest()
         plan[256:288] = plan_root
         contract[408:440] = plan_root
@@ -1134,9 +1215,7 @@ class SourceReplayContractTests(unittest.TestCase):
         )
         receipt = (
             *receipt_without_integrity[:-1],
-            campaign._resource_receipt_integrity(
-                receipt_without_integrity
-            ),
+            campaign._resource_receipt_integrity(receipt_without_integrity),
         )
         struct.pack_into("<" + "Q" * 15, source, 328, *receipt)
 
@@ -1168,8 +1247,7 @@ class SourceReplayContractTests(unittest.TestCase):
         expected[344:376] = facts.challenge_sha256
 
         prompt_wire = facts.encoded[
-            campaign.SOURCE_REPLAY_PROMPT_OFFSET :
-            -campaign.SOURCE_REPLAY_FOOTER_BYTES
+            campaign.SOURCE_REPLAY_PROMPT_OFFSET : -campaign.SOURCE_REPLAY_FOOTER_BYTES
         ]
         encoded = bytearray(
             campaign.RESTART_MANIFEST_PROMPT_OFFSET
@@ -1219,6 +1297,95 @@ class SourceReplayContractTests(unittest.TestCase):
         self.assertEqual(facts.publication_next_sequence, 1)
         self.assertEqual(facts.sink_capacity, 3)
         self.assertNotEqual(facts.contract_sha256, bytes(32))
+
+    def test_durable_input_independently_recovers_exact_prompt(self) -> None:
+        contract, encoded = self.durable_input_fixture()
+        decoded = campaign._decode_durable_input_archive(
+            encoded,
+            contract,
+        )
+        self.assertEqual(decoded.raw_text, bytes((7, 11)))
+        self.assertEqual(decoded.prompt_tokens, contract.prompt_tokens)
+        self.assertEqual(decoded.encoded, encoded)
+        self.assertNotEqual(decoded.package_sha256, bytes(32))
+
+    def test_generation_one_accepts_bound_and_legacy_shapes(self) -> None:
+        contract, encoded_input = self.durable_input_fixture()
+
+        def checkpoint(
+            objects: tuple[campaign.CheckpointObject, ...],
+        ) -> campaign.CheckpointWireFacts:
+            return campaign.CheckpointWireFacts(
+                generation=1,
+                request_epoch=contract.request_epoch,
+                next_sequence=contract.publication_next_sequence,
+                parent_checkpoint_sha256="0" * 64,
+                checkpoint_sha256=self.digest("checkpoint").hex(),
+                challenge_sha256=contract.challenge_sha256.hex(),
+                previous_selector_sha256="0" * 64,
+                selector_sha256=self.digest("selector").hex(),
+                objects=objects,
+                terminal_tokens=None,
+            )
+
+        marker = campaign.CheckpointObject(
+            kind=7,
+            ordinal=0,
+            abi_version=campaign.SOURCE_LIVE_MARKER_ABI,
+            payload=campaign.SOURCE_LIVE_MARKER,
+            object_sha256=self.digest("marker-object"),
+        )
+        replay = campaign.CheckpointObject(
+            kind=7,
+            ordinal=1,
+            abi_version=campaign.SOURCE_REPLAY_CONTRACT_ABI,
+            payload=contract.encoded,
+            object_sha256=self.digest("contract-object"),
+        )
+        durable = campaign.CheckpointObject(
+            kind=7,
+            ordinal=2,
+            abi_version=prepared_package.ARCHIVE_ABI,
+            payload=encoded_input,
+            object_sha256=self.digest("input-object"),
+        )
+        decoded_contract, decoded_input = (
+            campaign._decode_source_generation_one_evidence(
+                checkpoint((marker, replay, durable))
+            )
+        )
+        self.assertEqual(decoded_contract.encoded, contract.encoded)
+        self.assertIsNotNone(decoded_input)
+        legacy_contract, legacy_input = campaign._decode_source_generation_one_evidence(
+            checkpoint((marker, replay))
+        )
+        self.assertEqual(legacy_contract.encoded, contract.encoded)
+        self.assertIsNone(legacy_input)
+
+    def test_durable_input_persistence_requires_identical_bytes(self) -> None:
+        contract, encoded = self.durable_input_fixture()
+        expected = campaign._decode_durable_input_archive(
+            encoded,
+            contract,
+        )
+        altered = campaign.DurableInputFacts(
+            encoded=expected.encoded + b"\x00",
+            archive_sha256=expected.archive_sha256,
+            package_sha256=expected.package_sha256,
+            representation_sha256=expected.representation_sha256,
+            raw_text_sha256=expected.raw_text_sha256,
+            raw_text=expected.raw_text,
+            prompt_tokens=expected.prompt_tokens,
+        )
+        with self.assertRaisesRegex(
+            campaign.CampaignError,
+            "durable input changed",
+        ):
+            campaign._require_same_durable_input(
+                expected,
+                altered,
+                label="test generation",
+            )
 
     def test_bad_contract_footer_is_rejected(self) -> None:
         encoded = bytearray(self.contract())
@@ -1336,9 +1503,7 @@ class SourceReplayContractTests(unittest.TestCase):
                     struct.unpack_from("<Q", encoded, offset)[0] + 1,
                 )
                 self.reroot(encoded)
-                rerooted = campaign._decode_source_replay_contract(
-                    bytes(encoded)
-                )
+                rerooted = campaign._decode_source_replay_contract(bytes(encoded))
                 with self.assertRaisesRegex(
                     campaign.CampaignError,
                     r"source execution (?:context|ownership) differs",
@@ -1491,9 +1656,7 @@ class SourceReplayContractTests(unittest.TestCase):
     def test_coherently_rerooted_foreign_execution_operation_is_rejected(
         self,
     ) -> None:
-        plan, artifact, execution, facts = (
-            self.prepared_profile_fixture()
-        )
+        plan, artifact, execution, facts = self.prepared_profile_fixture()
         campaign._validate_prepared_bound_profile(
             bytes(plan),
             bytes(artifact),
@@ -1552,9 +1715,7 @@ class SourceReplayContractTests(unittest.TestCase):
 
     def test_coherent_foreign_state_commitment_is_rejected(self) -> None:
         encoded, facts = self.restart_manifest_fixture()
-        expected_commitment_offset = (
-            campaign.RESTART_EXPECTED_BINDINGS_OFFSET + 224
-        )
+        expected_commitment_offset = campaign.RESTART_EXPECTED_BINDINGS_OFFSET + 224
         source_commitment_offset = 2296 + 264
         encoded[expected_commitment_offset] ^= 1
         encoded[source_commitment_offset] ^= 1
@@ -1590,9 +1751,7 @@ class SourceExitSemanticOracleTests(unittest.TestCase):
 
     @staticmethod
     def reroot(encoded: bytearray) -> None:
-        encoded[512:544] = campaign._source_exit_semantic_root(
-            bytes(encoded)
-        )
+        encoded[512:544] = campaign._source_exit_semantic_root(bytes(encoded))
         encoded[608:640] = hashlib.sha256(
             campaign.SOURCE_EXIT_WIRE_DOMAIN + encoded[:608]
         ).digest()
@@ -1606,8 +1765,7 @@ class SourceExitSemanticOracleTests(unittest.TestCase):
     @staticmethod
     def refresh_receipt_root(encoded: bytearray) -> None:
         receipt = tuple(
-            struct.unpack_from("<Q", encoded, 128 + index * 8)[0]
-            for index in range(15)
+            struct.unpack_from("<Q", encoded, 128 + index * 8)[0] for index in range(15)
         )
         encoded[256:288] = hashlib.sha256(
             campaign.RESOURCE_RECEIPT_DOMAIN
@@ -1653,17 +1811,13 @@ class SourceExitSemanticOracleTests(unittest.TestCase):
             *claim,
             0,
         )
-        integrity = campaign._resource_receipt_integrity(
-            receipt_without_integrity
-        )
+        integrity = campaign._resource_receipt_integrity(receipt_without_integrity)
         receipt = (*receipt_without_integrity[:-1], integrity)
         struct.pack_into("<" + "Q" * 15, encoded, 128, *receipt)
         struct.pack_into("<Q", encoded, 248, 301)
         self.refresh_receipt_root(encoded)
         for index, offset in enumerate(range(288, 512, 32)):
-            encoded[offset : offset + 32] = self.digest(
-                f"source-exit-digest-{index}"
-            )
+            encoded[offset : offset + 32] = self.digest(f"source-exit-digest-{index}")
         self.reroot(encoded)
         return bytes(encoded)
 

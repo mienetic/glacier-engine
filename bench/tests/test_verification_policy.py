@@ -81,6 +81,9 @@ EXPECTED_CORE_CONTRACT_PATHS = frozenset(
 
 EXPECTED_SHARED_RUNTIME_COMPLETE_PATHS = frozenset(
     {
+        "src/model/package_manifest.zig",
+        "src/prepared_text_handoff_archive.zig",
+        "src/prepared_text_input_archive.zig",
         "src/prepared_text_source_lease.zig",
         "src/prepared_text_durable_handoff.zig",
         "src/continuation_live_restart.zig",
@@ -118,8 +121,10 @@ EXPECTED_PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS = frozenset(
 
 EXPECTED_PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS = frozenset(
     {
+        "bench/prepared_text_package.py",
         "bench/prepared_text_recovery_worker.zig",
         "bench/prepared_text_recovery_campaign.py",
+        "bench/tests/test_prepared_text_package.py",
         "bench/tests/test_prepared_text_recovery_campaign.py",
     }
 )
@@ -1307,6 +1312,10 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertEqual(
             1,
             source.count('"bench/prepared_text_recovery_worker.zig"'),
+        )
+        self.assertEqual(
+            1,
+            source.count('"bench.tests.test_prepared_text_package"'),
         )
         self.assertIn(
             "const prepared_text_recovery_target_available =\n"

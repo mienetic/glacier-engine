@@ -15,6 +15,8 @@ const checkpoint_file = core.continuation_checkpoint_file;
 const lane = core.lane_weave_qos;
 const resource_bank = core.resource_bank;
 const archive = @import("prepared_text_handoff_archive.zig");
+const input_archive =
+    @import("prepared_text_input_archive.zig");
 const restore_admission =
     @import("prepared_text_restore_admission.zig");
 const source_exit_wire =
@@ -45,6 +47,8 @@ pub const source_exit_object_ordinal: u64 = 0;
 pub const evidence_archive_object_ordinal: u64 = 0;
 pub const source_recovery_object_ordinal =
     source_lease.source_recovery_object_ordinal;
+pub const source_input_object_ordinal =
+    source_lease.source_input_object_ordinal;
 pub const source_live_object_ordinal =
     source_lease.source_live_object_ordinal;
 pub const terminal_source_selector_object_ordinal: u64 = 0;
@@ -57,6 +61,7 @@ pub const source_live_marker =
 
 pub const Error = checkpoint_file.Error ||
     archive.Error ||
+    input_archive.Error ||
     restore_admission.Error ||
     source_recovery.Error ||
     source_exit_wire.Error ||
@@ -76,6 +81,7 @@ pub const DecodedSourceExitedSetV1 = struct {
     evidence: archive.DecodedRestartArchiveV1,
     source_exit: lane.SourceExitReceiptV1,
     source_recovery_contract: ?source_recovery.DecodedV1 = null,
+    input_archive: ?input_archive.DecodedV1 = null,
     selector: checkpoint_file.DecodedSelectorV1,
 };
 
@@ -283,7 +289,9 @@ pub fn validateRecoverableSourcePredecessorV1(
         predecessor_root,
         retained_storage,
     ) catch return Error.InvalidAuthorityArchive;
-    if (retained.set.object_count != 2 or
+    const expected_object_count: usize =
+        if (selected.input_archive == null) 2 else 3;
+    if (retained.set.object_count != expected_object_count or
         retained.set.metadata.generation !=
             source_lease.source_live_set_generation or
         retained.set.metadata.request_epoch !=
@@ -319,6 +327,29 @@ pub fn validateRecoverableSourcePredecessorV1(
             contract.encoded,
         ))
         return Error.InvalidAuthorityArchive;
+    if (selected.input_archive) |selected_input| {
+        const input_object = retained.set.objects[2];
+        if (input_object.kind != .extension or
+            input_object.ordinal != source_input_object_ordinal or
+            input_object.abi_version != input_archive.archive_abi or
+            !std.mem.eql(
+                u8,
+                input_object.bytes,
+                selected_input.encoded,
+            ))
+            return Error.InvalidAuthorityArchive;
+        const predecessor_input = try input_archive.decodeV1(
+            input_object.bytes,
+        );
+        if (!digestEqual(
+            predecessor_input.archive_sha256,
+            selected_input.archive_sha256,
+        ) or !source_lease.recoveryInputMatchesContractV1(
+            predecessor_input,
+            contract,
+        ))
+            return Error.InvalidAuthorityArchive;
+    }
     const prepared_retained: checkpoint_file.PreparedSetV1 = .{
         .bytes = retained.bytes,
         .checkpoint_sha256 = retained.set.checkpoint_sha256,
@@ -370,6 +401,16 @@ pub fn encodedRecoverableSourceExitedSetBytesV1(
         legacy,
         recovery_contract_bytes,
     ) catch return Error.ArithmeticOverflow;
+}
+
+pub fn encodedRawRecoverableSourceExitedSetBytesV1(
+    bound_evidence_archive_bytes: usize,
+    recovery_contract_bytes: usize,
+) Error!usize {
+    return encodedRecoverableSourceExitedSetBytesV1(
+        bound_evidence_archive_bytes,
+        recovery_contract_bytes,
+    );
 }
 
 /// Encode the selected source-exited authority archive. `source_exit` must be
@@ -523,6 +564,141 @@ pub fn encodeRecoverableSourceExitedSetV1(
     );
 }
 
+/// Encode generation two with the exact raw-input archive already nested in
+/// the six-object restart evidence. The outer shape remains the recoverable
+/// three-object authority archive, preserving existing selector semantics.
+pub fn encodeRawRecoverableSourceExitedSetV1(
+    evidence: archive.PreparedArchiveV1,
+    source_exit: lane.SourceExitCommitV1,
+    predecessor_checkpoint_sha256: Digest,
+    encoded_contract: source_recovery.EncodedV1,
+    destination: []u8,
+) Error!checkpoint_file.PreparedSetV1 {
+    if (!lane.sourceExitReceiptValidV1(
+        source_exit.receipt,
+        source_exit.event,
+    ))
+        return Error.InvalidSourceExit;
+    const decoded_bound =
+        try archive.decodeBoundRestartArchiveV1(
+            evidence.set.bytes,
+            1,
+            [_]u8{0} ** 32,
+        );
+    if (!std.meta.eql(
+        decoded_bound.artifacts,
+        evidence.artifacts,
+    ))
+        return Error.InvalidAuthorityArchive;
+    try validateEvidenceExitBindingsV1(
+        evidence.set,
+        evidence.artifacts,
+        source_exit.receipt,
+    );
+    if (isZero(predecessor_checkpoint_sha256))
+        return Error.InvalidAuthorityArchive;
+    const contract = try source_recovery.decodeV1(
+        encoded_contract.bytes,
+    );
+    if (!digestEqual(
+        contract.contract_sha256,
+        encoded_contract.contract_sha256,
+    ) or !source_lease.recoveryInputMatchesContractV1(
+        decoded_bound.input_archive,
+        contract,
+    ))
+        return Error.InvalidAuthorityArchive;
+    const decoded_evidence: archive.DecodedRestartArchiveV1 = .{
+        .archive = decoded_bound.archive,
+        .manifest = decoded_bound.manifest,
+        .checkpoint = decoded_bound.checkpoint,
+        .artifacts = decoded_bound.artifacts,
+    };
+    try validateRecoveryEvidenceBindingsV1(
+        contract,
+        decoded_evidence,
+        source_exit.receipt,
+    );
+
+    var encoded_exit: [source_exit_wire_bytes]u8 = undefined;
+    _ = try encodeSourceExitReceiptV1(
+        source_exit.receipt,
+        &encoded_exit,
+    );
+    const objects = [_]checkpoint_file.ObjectInputV1{
+        .{
+            .kind = .source_process,
+            .ordinal = source_exit_object_ordinal,
+            .abi_version = source_exit_wire_abi,
+            .bytes = &encoded_exit,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = evidence_archive_object_ordinal,
+            .abi_version = evidence_archive_object_abi,
+            .bytes = evidence.set.bytes,
+        },
+        .{
+            .kind = .extension,
+            .ordinal = source_recovery_object_ordinal,
+            .abi_version = source_recovery.contract_abi,
+            .bytes = encoded_contract.bytes,
+        },
+    };
+    return checkpoint_file.encodeSetV1(
+        .{
+            .generation = source_exited_set_generation,
+            .request_epoch = evidence.artifacts.segment.request_epoch,
+            .publication_next_sequence = evidence.artifacts.segment.sequence_base,
+            .parent_checkpoint_sha256 = predecessor_checkpoint_sha256,
+            .challenge_sha256 = evidence.artifacts.segment.challenge_sha256,
+        },
+        &objects,
+        destination,
+    );
+}
+
+const DecodedEvidenceArchiveV1 = struct {
+    evidence: archive.DecodedRestartArchiveV1,
+    input_archive: ?input_archive.DecodedV1 = null,
+};
+
+fn decodeEvidenceArchiveV1(
+    encoded_evidence: []const u8,
+) Error!DecodedEvidenceArchiveV1 {
+    const shape = try checkpoint_file.decodeSetV1(
+        encoded_evidence,
+    );
+    if (shape.object_count == archive.restart_archive_object_count) {
+        return .{
+            .evidence = try archive.decodeRestartArchiveV1(
+                encoded_evidence,
+                1,
+                [_]u8{0} ** 32,
+            ),
+        };
+    }
+    if (shape.object_count ==
+        archive.bound_restart_archive_object_count)
+    {
+        const bound = try archive.decodeBoundRestartArchiveV1(
+            encoded_evidence,
+            1,
+            [_]u8{0} ** 32,
+        );
+        return .{
+            .evidence = .{
+                .archive = bound.archive,
+                .manifest = bound.manifest,
+                .checkpoint = bound.checkpoint,
+                .artifacts = bound.artifacts,
+            },
+            .input_archive = bound.input_archive,
+        };
+    }
+    return Error.InvalidAuthorityArchive;
+}
+
 /// Decode the selected source-exit record and contextually reproduce every
 /// nested R1e/R1g binding. Slices in the result borrow `encoded_authority`.
 pub fn decodeSourceExitedSetV1(
@@ -558,11 +734,10 @@ pub fn decodeSourceExitedSetV1(
     const source_exit = try decodeSourceExitReceiptV1(
         exit_object.bytes,
     );
-    const evidence = try archive.decodeRestartArchiveV1(
+    const decoded_evidence = try decodeEvidenceArchiveV1(
         evidence_object.bytes,
-        1,
-        [_]u8{0} ** 32,
     );
+    const evidence = decoded_evidence.evidence;
     try validateEvidenceExitBindingsV1(
         .{
             .bytes = evidence_object.bytes,
@@ -605,7 +780,16 @@ pub fn decodeSourceExitedSetV1(
             evidence,
             source_exit,
         );
+        if (decoded_evidence.input_archive) |input_context| {
+            if (!source_lease.recoveryInputMatchesContractV1(
+                input_context,
+                decoded_contract,
+            ))
+                return Error.InvalidAuthorityArchive;
+        }
         recovery_contract = decoded_contract;
+    } else if (decoded_evidence.input_archive != null) {
+        return Error.InvalidAuthorityArchive;
     }
 
     if (selected_selector.generation !=
@@ -633,6 +817,7 @@ pub fn decodeSourceExitedSetV1(
         .evidence = evidence,
         .source_exit = source_exit,
         .source_recovery_contract = recovery_contract,
+        .input_archive = decoded_evidence.input_archive,
         .selector = selected_selector,
     };
 }
@@ -996,7 +1181,8 @@ fn validateSourceExitedPairV1(
     const set = try checkpoint_file.decodeSetV1(encoded_set);
     const selector =
         try checkpoint_file.decodeSelectorV1(encoded_selector);
-    if (set.object_count != 2 or
+    if ((set.object_count != 2 and
+        set.object_count != 3) or
         set.metadata.generation != source_exited_set_generation or
         isZero(set.metadata.parent_checkpoint_sha256) or
         selector.generation != source_exited_set_generation or
@@ -1026,14 +1212,11 @@ fn validateSourceExitedPairV1(
 
     const source_exit =
         try decodeSourceExitReceiptV1(exit_object.bytes);
-    const decoded_evidence =
-        try archive.decodeRestartArchiveV1(
-            evidence_object.bytes,
-            1,
-            [_]u8{0} ** 32,
-        );
-    const evidence_set = decoded_evidence.archive;
-    const artifacts = decoded_evidence.artifacts;
+    const decoded_evidence = try decodeEvidenceArchiveV1(
+        evidence_object.bytes,
+    );
+    const evidence_set = decoded_evidence.evidence.archive;
+    const artifacts = decoded_evidence.evidence.artifacts;
     try validateEvidenceExitBindingsV1(
         .{
             .bytes = evidence_object.bytes,
@@ -1042,6 +1225,32 @@ fn validateSourceExitedPairV1(
         artifacts,
         source_exit,
     );
+    if (set.object_count == 3) {
+        const contract_object = set.objects[2];
+        if (contract_object.kind != .extension or
+            contract_object.ordinal !=
+                source_recovery_object_ordinal or
+            contract_object.abi_version !=
+                source_recovery.contract_abi)
+            return Error.InvalidAuthorityArchive;
+        const contract = try source_recovery.decodeV1(
+            contract_object.bytes,
+        );
+        try validateRecoveryEvidenceBindingsV1(
+            contract,
+            decoded_evidence.evidence,
+            source_exit,
+        );
+        if (decoded_evidence.input_archive) |input_context| {
+            if (!source_lease.recoveryInputMatchesContractV1(
+                input_context,
+                contract,
+            ))
+                return Error.InvalidAuthorityArchive;
+        }
+    } else if (decoded_evidence.input_archive != null) {
+        return Error.InvalidAuthorityArchive;
+    }
     if (set.metadata.request_epoch !=
         artifacts.segment.request_epoch or
         set.metadata.publication_next_sequence !=

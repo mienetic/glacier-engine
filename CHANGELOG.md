@@ -57,6 +57,22 @@ before the first stable release.
 
 ### Added
 
+- Added the R1k-b2 stable package and recoverable raw-input identity slice. A
+  fixed 640-byte request-independent package manifest binds portable
+  provenance, resolved model geometry, tokenizer behavior, and the license
+  byte count plus SHA-256 identity, while a separate 256-byte record binds one
+  architecture-specific prepared representation without changing the package
+  root. A variable
+  canonical input archive retains both records, the tokenizer manifest and
+  prompt receipt, the raw-input/Common-plan binding, and exact UTF-8 bytes.
+  Additive source-live, six-object restart, and eight-object acknowledged
+  progress shapes carry those byte-identical inputs through fresh-process
+  recovery; legacy pre-tokenized shapes remain decodable. A fresh worker
+  re-tokenizes before admission, and an independent standard-library Python
+  verifier rejects mutations and coherently re-rooted substitutions. The
+  retained fixture is synthetic CPU execution on the descriptor-relative
+  POSIX durability path; this adds no GPU-resident or native multi-OS recovery
+  claim.
 - Added the R1k-b1 verified raw-text runtime path. Fixed 192-byte tokenizer
   manifests, 256-byte prompt receipts, and 480-byte raw-input plan bindings
   join strict UTF-8 bytes to exact token, prepared prompt, local/Common plan,

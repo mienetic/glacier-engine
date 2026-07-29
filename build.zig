@@ -4895,6 +4895,7 @@ pub fn build(b: *std.Build) void {
                 "python3",
                 "-m",
                 "unittest",
+                "bench.tests.test_prepared_text_package",
                 "bench.tests.test_prepared_text_result_sink",
                 "bench.tests.test_prepared_text_recovery_campaign",
             });

@@ -1586,17 +1586,50 @@ and the slice does not establish production-model quality, GPU execution,
 performance, remote delivery, native multi-OS execution, hostile-writer
 security, or physical power-loss persistence.
 
-R1k-b2 is next: introduce a stable package manifest, carry the exact
-tokenizer/raw-input binding through durable publication and generation-one
-source replay, and retain fresh-process convergence without reintroducing
-caller-asserted tokenizer roots.
+#### R1k-b2 — Stable package and durable raw-input recovery
+
+Status: **integrated experimental CPU/POSIX recovery slice**.
+
+R1k-b2 adds a 640-byte request-independent model package manifest over portable
+source/conversion identities, resolved model geometry, tokenizer behavior, and
+the license byte count plus SHA-256 identity. The license payload, prompt,
+request epoch, output limit, Scheduler identity, and native prepared bytes are
+excluded. A separate 256-byte prepared
+representation record binds one exact `.glrt` container, source/ABI
+fingerprints, and the package/config roots, so another platform preparation
+does not silently redefine the portable package.
+
+A variable canonical input archive joins those two records to the tokenizer
+manifest, prompt receipt, raw-input/Common-plan binding, and exact original
+UTF-8 bytes. The additive recovery shapes retain the archive at extension
+ordinal 2 in generation one and extension ordinal 6 in restart and
+acknowledged-progress sets while preserving the legacy pre-tokenized five- and
+seven-object decoders. Every fresh source or target re-tokenizes the retained
+bytes and revalidates the current local/Common plan before model admission;
+later generations require the byte-identical archive, and the terminal set
+carries it transitively through its immediate predecessor.
+
+The standard-library Python verifier independently decodes the package,
+prepared representation, and complete input archive, reconstructs their roots
+and tokenizer relationship, rejects every component/archive byte mutation,
+and rejects coherently re-rooted context substitution. It runs in the
+compile-once prepared-text recovery gate with the existing source/target death
+matrix.
+
+R1k-b2 does not make the standalone `text-run` command durable, provide
+committed-token text rendering, or establish a stable public ABI. The retained
+model is synthetic, execution is CPU-only, and durable storage uses the
+descriptor-relative POSIX adapter. Production model/tokenizer quality,
+GPU-resident continuation, Win32 durability, native Linux/FreeBSD recovery
+evidence, native multi-OS execution, remote delivery, hostile writers, and
+physical power-loss persistence remain open.
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with
 exact ownership and output evidence on the promoted native platform, including
 recoverable source-exit and replay-safe external publication. The retained
 synthetic fresh-process proof now includes replay-safe local sink progress, but
-does not complete its stable production package, durable raw-text recovery,
+does not complete its production package, committed-text inspection,
 remote-delivery, GPU, or multi-OS requirements.
 
 ### R2 — Stateless tensor families

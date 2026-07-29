@@ -3,9 +3,11 @@
 //! This module composes one result-sink acknowledgement with the exact
 //! checkpoint selector that preceded it. A non-terminal successor contains
 //! that selector, the five canonical prepared-text restart objects, and the
-//! acknowledgement. A terminal successor contains the immediate predecessor
-//! selector/archive, the receipt-independent terminal semantic, the final
-//! acknowledgement, and the complete canonical output-token record.
+//! acknowledgement. The additive bound shape carries an eighth object with
+//! the byte-identical package, tokenizer, and raw-input context. A terminal
+//! successor contains the immediate predecessor selector/archive, the
+//! receipt-independent terminal semantic, the final acknowledgement, and the
+//! complete canonical output-token record.
 //!
 //! The values here are authority-free canonical evidence.  Encoding and
 //! decoding perform no filesystem I/O, acquire no lease, and create no
@@ -23,6 +25,8 @@ const archive = @import("prepared_text_handoff_archive.zig");
 const checkpoint = @import("prepared_text_checkpoint.zig");
 const durable_handoff =
     @import("prepared_text_durable_handoff.zig");
+const input_archive =
+    @import("prepared_text_input_archive.zig");
 const kv = @import("kv_cache.zig");
 const lane_contiguous =
     @import("lane_contiguous_publication.zig");
@@ -41,6 +45,7 @@ pub const Digest = [32]u8;
 pub const minimum_predecessor_generation: u64 = 2;
 
 pub const nonterminal_object_count: usize = 7;
+pub const bound_nonterminal_object_count: usize = 8;
 pub const nonterminal_predecessor_selector_object_ordinal: u64 = 0;
 pub const checkpoint_object_ordinal: u64 = 0;
 pub const successor_plan_object_ordinal: u64 = 1;
@@ -48,6 +53,7 @@ pub const successor_residency_object_ordinal: u64 = 2;
 pub const successor_segment_object_ordinal: u64 = 3;
 pub const restart_manifest_object_ordinal: u64 = 4;
 pub const acknowledgement_object_ordinal: u64 = 5;
+pub const input_archive_object_ordinal: u64 = 6;
 
 pub const terminal_output_tokens_abi: u64 =
     0x4750_544f_0000_0001;
@@ -63,6 +69,7 @@ pub const Error = checkpoint_file.Error ||
     archive.Error ||
     checkpoint.Error ||
     durable_handoff.Error ||
+    input_archive.Error ||
     restart_manifest.Error ||
     result_sink.Error ||
     successor.Error ||
@@ -97,6 +104,7 @@ pub const DecodedNonterminalV1 = struct {
     checkpoint: checkpoint.DecodedV1,
     artifacts: successor.ArtifactsV1,
     acknowledgement: result_sink.ResultAcknowledgementV1,
+    input_archive: ?input_archive.DecodedV1 = null,
 };
 
 pub const PreparedTerminalV1 = struct {
@@ -198,7 +206,7 @@ pub fn validateImmediateSuccessorV1(
         return Error.InvalidLineage;
 }
 
-/// The seven-object set adds the exact predecessor selector and one
+/// The legacy seven-object set adds the exact predecessor selector and one
 /// acknowledgement payload to an already canonical five-object archive.
 pub fn encodedNonterminalBytesV1(
     encoded_restart_archive_bytes: usize,
@@ -247,6 +255,7 @@ pub fn encodeNonterminalV1(
     try validateProducerLineageV1(
         producer,
         restart.manifest,
+        null,
     );
     const acknowledgement =
         try result_sink.decodeAcknowledgementV1(
@@ -294,6 +303,96 @@ pub fn encodeNonterminalV1(
     };
 }
 
+/// Size the additive eight-object generation. The input archive bytes are
+/// already included in `encoded_bound_restart_archive_bytes`.
+pub fn encodedBoundNonterminalBytesV1(
+    encoded_bound_restart_archive_bytes: usize,
+) Error!usize {
+    return encodedNonterminalBytesV1(
+        encoded_bound_restart_archive_bytes,
+    );
+}
+
+/// Encode a non-terminal generation that retains the canonical raw-input
+/// archive. The acknowledgement remains ordinal five and precedes input
+/// ordinal six, so later generations can carry the input bytes unchanged.
+pub fn encodeBoundNonterminalV1(
+    predecessor_set: []const u8,
+    predecessor_selector: []const u8,
+    encoded_bound_restart_archive: []const u8,
+    encoded_acknowledgement: []const u8,
+    destination: []u8,
+) Error!PreparedNonterminalV1 {
+    const predecessor = try decodeSelectionV1(
+        predecessor_set,
+        predecessor_selector,
+    );
+    if (predecessor.selector.generation <
+        minimum_predecessor_generation)
+        return Error.InvalidLineage;
+    const next_generation = std.math.add(
+        u64,
+        predecessor.selector.generation,
+        1,
+    ) catch return Error.ArithmeticOverflow;
+    const restart = try archive.decodeBoundRestartArchiveV1(
+        encoded_bound_restart_archive,
+        next_generation,
+        predecessor.set.checkpoint_sha256,
+    );
+    const producer = try decodeProducerContextV1(predecessor);
+    try validateProducerLineageV1(
+        producer,
+        restart.manifest,
+        restart.input_archive,
+    );
+    const acknowledgement =
+        try result_sink.decodeAcknowledgementV1(
+            encoded_acknowledgement,
+        );
+    try validateAcknowledgementEdgeV1(
+        predecessor,
+        producer,
+        acknowledgement,
+    );
+    try validateNonterminalPayloadV1(
+        predecessor,
+        restart.archive,
+        restart.checkpoint,
+        acknowledgement,
+    );
+
+    const objects = [_]checkpoint_file.ObjectInputV1{
+        .{
+            .kind = .runtime_state,
+            .ordinal = nonterminal_predecessor_selector_object_ordinal,
+            .abi_version = checkpoint_file.selector_abi,
+            .bytes = predecessor_selector,
+        },
+        inputFromView(restart.archive.objects[0]),
+        inputFromView(restart.archive.objects[1]),
+        inputFromView(restart.archive.objects[2]),
+        inputFromView(restart.archive.objects[3]),
+        inputFromView(restart.archive.objects[4]),
+        .{
+            .kind = .extension,
+            .ordinal = acknowledgement_object_ordinal,
+            .abi_version = result_sink.acknowledgement_abi,
+            .bytes = encoded_acknowledgement,
+        },
+        inputFromView(restart.archive.objects[5]),
+    };
+    const set = try checkpoint_file.encodeSetV1(
+        restart.archive.metadata,
+        &objects,
+        destination,
+    );
+    return .{
+        .set = set,
+        .acknowledgement = acknowledgement,
+    };
+}
+
 /// Decode a selected non-terminal generation against its exact predecessor.
 pub fn decodeNonterminalV1(
     predecessor_set: []const u8,
@@ -311,7 +410,9 @@ pub fn decodeNonterminalV1(
     );
     try validateImmediateSuccessorV1(predecessor, selected);
     const producer = try decodeProducerContextV1(predecessor);
-    if (selected.set.object_count != nonterminal_object_count)
+    if (selected.set.object_count != nonterminal_object_count and
+        selected.set.object_count !=
+            bound_nonterminal_object_count)
         return Error.InvalidNonterminalProgress;
 
     const embedded_predecessor_selector_object =
@@ -386,11 +487,35 @@ pub fn decodeNonterminalV1(
         acknowledgement_object_ordinal,
         result_sink.acknowledgement_abi,
     );
+    const selected_input_archive: ?input_archive.DecodedV1 =
+        if (selected.set.object_count ==
+        bound_nonterminal_object_count)
+            try input_archive.decodeV1(
+                (try exactObjectV1(
+                    selected.set,
+                    7,
+                    .extension,
+                    input_archive_object_ordinal,
+                    input_archive.archive_abi,
+                )).bytes,
+            )
+        else
+            null;
 
     const manifest = try restart_manifest.decodeV1(
         manifest_object.bytes,
     );
-    try validateProducerLineageV1(producer, manifest);
+    if (selected_input_archive) |input_context|
+        try input_archive.verifyCurrentPlanV1(
+            input_context,
+            manifest.plan,
+            manifest.bound_plan,
+        );
+    try validateProducerLineageV1(
+        producer,
+        manifest,
+        selected_input_archive,
+    );
     const decoded_checkpoint =
         try checkpoint.decodeCheckpointV1(
             checkpoint_object.bytes,
@@ -439,6 +564,7 @@ pub fn decodeNonterminalV1(
         .checkpoint = decoded_checkpoint,
         .artifacts = artifacts,
         .acknowledgement = acknowledgement,
+        .input_archive = selected_input_archive,
     };
 }
 
@@ -447,6 +573,7 @@ const DecodedProducerContextV1 = struct {
     artifacts: successor.ArtifactsV1,
     checkpoint: checkpoint.DecodedV1,
     source_recovery_contract: ?source_recovery.DecodedV1 = null,
+    input_archive: ?input_archive.DecodedV1 = null,
 };
 
 /// Recover the plan and ownership that produced the immediate predecessor.
@@ -470,9 +597,12 @@ fn decodeProducerContextV1(
             .artifacts = source_exited.evidence.artifacts,
             .checkpoint = source_exited.evidence.checkpoint,
             .source_recovery_contract = source_exited.source_recovery_contract,
+            .input_archive = source_exited.input_archive,
         };
     }
-    if (predecessor.set.object_count != nonterminal_object_count)
+    if (predecessor.set.object_count != nonterminal_object_count and
+        predecessor.set.object_count !=
+            bound_nonterminal_object_count)
         return Error.InvalidLineage;
 
     const embedded_selector_object = try exactObjectV1(
@@ -551,6 +681,26 @@ fn decodeProducerContextV1(
     const manifest = try restart_manifest.decodeV1(
         manifest_object.bytes,
     );
+    const producer_input_archive: ?input_archive.DecodedV1 =
+        if (predecessor.set.object_count ==
+        bound_nonterminal_object_count)
+            try input_archive.decodeV1(
+                (try exactObjectV1(
+                    predecessor.set,
+                    7,
+                    .extension,
+                    input_archive_object_ordinal,
+                    input_archive.archive_abi,
+                )).bytes,
+            )
+        else
+            null;
+    if (producer_input_archive) |input_context|
+        try input_archive.verifyCurrentPlanV1(
+            input_context,
+            manifest.plan,
+            manifest.bound_plan,
+        );
     const decoded_checkpoint =
         try checkpoint.decodeCheckpointV1(
             checkpoint_object.bytes,
@@ -586,12 +736,14 @@ fn decodeProducerContextV1(
         .manifest = manifest,
         .artifacts = artifacts,
         .checkpoint = decoded_checkpoint,
+        .input_archive = producer_input_archive,
     };
 }
 
 fn validateProducerLineageV1(
     producer: DecodedProducerContextV1,
     selected_manifest: restart_manifest.DecodedV1,
+    selected_input_archive: ?input_archive.DecodedV1,
 ) Error!void {
     const producer_target = producer.manifest.target;
     const expected_bound_plan =
@@ -617,6 +769,23 @@ fn validateProducerLineageV1(
         producer.artifacts.successor_residency,
     ))
         return Error.InvalidLineage;
+
+    if ((producer.input_archive == null) !=
+        (selected_input_archive == null))
+        return Error.InvalidLineage;
+    if (producer.input_archive) |producer_input| {
+        const selected_input = selected_input_archive orelse
+            return Error.InvalidLineage;
+        if (!digestEqual(
+            producer_input.archive_sha256,
+            selected_input.archive_sha256,
+        ) or !std.mem.eql(
+            u8,
+            producer_input.encoded,
+            selected_input.encoded,
+        ))
+            return Error.InvalidLineage;
+    }
 }
 
 pub fn encodedTerminalBytesV1(
@@ -1057,7 +1226,9 @@ fn progressAcknowledgementV1(
     if (predecessor.selector.generation ==
         minimum_predecessor_generation)
         return null;
-    if (predecessor.set.object_count != nonterminal_object_count)
+    if (predecessor.set.object_count != nonterminal_object_count and
+        predecessor.set.object_count !=
+            bound_nonterminal_object_count)
         return Error.InvalidLineage;
     const object = try exactObjectV1(
         predecessor.set,
@@ -1130,6 +1301,30 @@ fn digestEqual(left: Digest, right: Digest) bool {
 
 fn isZero(value: Digest) bool {
     return std.mem.eql(u8, &value, &([_]u8{0} ** 32));
+}
+
+test "bound nonterminal sizing keeps legacy overhead" {
+    const embedded_bytes: usize = 4096;
+    try std.testing.expectEqual(
+        try encodedNonterminalBytesV1(embedded_bytes),
+        try encodedBoundNonterminalBytesV1(embedded_bytes),
+    );
+
+    var destination = [_]u8{0xa5} ** 32;
+    if (encodeBoundNonterminalV1(
+        &.{},
+        &.{},
+        &.{},
+        &.{},
+        &destination,
+    )) |_| {
+        return error.ExpectedFailure;
+    } else |_| {}
+    try std.testing.expect(std.mem.allEqual(
+        u8,
+        &destination,
+        0xa5,
+    ));
 }
 
 const TestFixture = struct {

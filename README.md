@@ -282,13 +282,14 @@ formats, and independent verifiers.
   reacquires a fresh `ResourceBank`/`LeaseTree`, charges every allocation before
   materialization, verifies exact reconstructed bytes, and only then marks the
   batch live at its restored publication sequence.
-- **Exclusive fresh-process prepared-text handoff.** A five-object canonical
-  restart archive carries checkpoint, successor, and bounded manifest context
-  without native pointers or JSON sidecars. One durable selector advances from
-  source-live to source-exited to terminal; an exclusive POSIX lease and
-  one-shot activation grant fence the restored target, while a
-  receipt-independent terminal semantic compares it with a separately retired
-  uninterrupted oracle.
+- **Exclusive fresh-process prepared-text handoff.** The compatibility archive
+  retains its five canonical restart objects; the raw-input path adds a sixth
+  object carrying the exact package, prepared representation, tokenizer
+  evidence, binding, and UTF-8 bytes without native pointers or JSON sidecars.
+  One durable selector advances from source-live to source-exited to terminal;
+  an exclusive POSIX lease and one-shot activation grant fence the restored
+  target, while a receipt-independent terminal semantic compares it with a
+  separately retired uninterrupted oracle.
 - **Tenant-scoped object resolution.** A least-authority grant admits only exact
   capsule objects under bounded scan, object, total-byte, and resolution limits.
 - **Canonical continuation bundles.** Semantic roots remain kind-specific while
@@ -353,9 +354,22 @@ formats, and independent verifiers.
   zero. The boundary-snapshot root and publication transcript remain opaque
   bound leaves, the current sink is transactional but process-local, and the
   independent gate does not independently reconstruct the boundary snapshot or
-  replay the publication transcript; durable result recovery remains roadmap
-  work. See
+  replay the publication transcript. The standalone command remains
+  process-local; the separate durable recovery fixture described next carries
+  the same raw-input identity. See
   [Verified Raw-Text Runtime Path](docs/PREPARED_TEXT_RAW_INPUT.md).
+- **Stable package and recoverable raw-input identity.** A request-independent
+  640-byte model package manifest binds portable provenance, resolved geometry,
+  tokenizer behavior, and the license byte count plus SHA-256 identity. A
+  separate 256-byte prepared representation binds one platform-specific
+  `.glrt` image without changing the package root. The durable raw-input
+  archive carries both records, exact
+  tokenizer and prompt wires, the plan binding, and original UTF-8 bytes
+  through generation-one replay, restart, acknowledged progress, and terminal
+  lineage. A fresh CPU process re-tokenizes those bytes before admission; an
+  independent Python verifier rejects component and whole-archive mutations.
+  The retained recovery evidence is synthetic and POSIX-hosted, not GPU or
+  native multi-OS durability evidence.
 - **Identity-fenced file publication.** A descriptor-relative POSIX adapter
   adds exclusive locking, no-follow lookup, single-link/private-mode checks,
   acquired directory authority, file and directory sync,
@@ -1149,7 +1163,7 @@ hardware-independent surface without those native backend dependencies.
 
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
-| AI runtime | CPU execution, an optional macOS Metal kernel path, sealed POSIX publication for portable `.glacier` conversion, recoverable POSIX publication for prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial text request profiles, exact canonical UTF-8 byte-tokenizer and raw-input binding wires, a retained-fixture-only experimental raw-text command, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture, same-process exact-current-boundary rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, an experimental fresh-process source-exit handoff with canonical generation-one replay, acknowledged one-token target progress through an idempotent durable local POSIX sink and generation-five terminal result, a canonical exact-integer dense-tensor reranker, and portable exact Q30 L2 dense embeddings, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic ten-profile retained-reference compatibility inspector | Carry raw-input identity through the durable result/recovery path, add a stable package manifest, extend ownership/accounting and repeated-handoff coverage, compose normalized embeddings into retrieval, add production fixtures, native multi-OS validation, and broader production device execution |
+| AI runtime | CPU execution, an optional macOS Metal kernel path, sealed POSIX publication for portable `.glacier` conversion, recoverable POSIX publication for prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial text request profiles, a request-independent package manifest with a separate prepared-representation identity, exact canonical UTF-8 byte-tokenizer and raw-input binding wires, a retained-fixture-only experimental raw-text command, durable retention and fresh-process re-tokenization of the exact raw-input archive, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture, same-process exact-current-boundary rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, an experimental fresh-process source-exit handoff with canonical generation-one replay, acknowledged one-token target progress through an idempotent durable local POSIX sink and generation-five terminal result, a canonical exact-integer dense-tensor reranker, and portable exact Q30 L2 dense embeddings, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic ten-profile retained-reference compatibility inspector | Add committed-token text rendering, extend ownership/accounting and repeated-handoff coverage, compose normalized embeddings into retrieval, add production fixtures, native multi-OS validation, and broader production device execution |
 | Language interop | Installed experimental C header plus shared/static contract libraries; source and staged-install C consumers; C++ linkage check; standard-library Python `ctypes`; dependency-free Rust `extern "C"` gate; fixed profile enumeration and support-mask queries | Retained symbol/layout gates, native multi-OS consumers, stability policy, packages, then model/session execution bindings |
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, a generic dense-tensor reranker with canonical ranked items, a generic normalized dense-tensor embedding fixture, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, one process-local typed tool transaction, a durable POSIX external-action handoff store, and a same-process generation-fenced fake dispatch/status authority for retained reference profiles | Generic classification, retrieval composition, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, OS-isolated real-credential adapters, live tools and agent loops, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor evidence, receipt-funded restored activation with a global publication sequence base, recoverable generation-one source enrollment, experimental durable source exit, exclusive fresh-process activation, and generation-two-through-five acknowledged local POSIX target progress with semantic oracle comparison; plus capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Native Linux recovery, Win32 durable files, remote delivery adapters, device-resident continuation, repeated/cancelled handoff evidence, and durable lifecycle metadata |
@@ -1162,10 +1176,14 @@ hardware-independent surface without those native backend dependencies.
 | Runtime Workload Lab | W0 deterministic mixed-media open-loop conformance, W1 scheduler-coupled media execution, the W2 four-seed/32-case generated corpus, W3 finite-source closed-loop conformance, W4a mixed typed-perception conformance, the W4b-a typed tool transaction, W4b-b ActionOutbox record recovery, the W4b-c durable POSIX store, W4b-d generation-fenced fake dispatch/status, W5a native observation, a bounded Linux host-source implementation, native macOS Metal readiness, pinned-allocation and bounded two-slot pressure gates, the portable W6a raw-record/summary/closure foundation, the W6b production-native 20-request Metal report producer, W7a finite controlled disruption, W7b-b3 paired-thread concurrent-caller cancellation, W7b-b4 controlled event-blocked in-flight process kill with a fresh production control, W7b-a bounded segmented soak, W7b-b1 quiescent-worker process kill, the W7b-b2 production-publisher/reference-recovery campaign-store process-death/error roll-forward, and W7b-b5 generation-six supervisor-death plus prepared-generation-twelve recovery-process-death cover overload, fairness, timeout, cancellation, turnover, typed publication/effect delivery, uncertain external handoff, fenced safe retry, deterministic crash modeling, explicit machine-state availability, fail-closed pre-run admission, retained post-run contamination, strict unavailable-not-zero behavior, independently recomputed workload evidence, correctness-gated accelerator dispatches, clean and forced worker restart, canonical checkpoint publication/offline audit, and controlled recovery without performance or physical-residency claims | Complete W7b-b active-kernel, broader supervisor/recovery interruption, adapter, and physical device/storage/driver/power campaigns; retain native Linux and broader accelerator campaign matrices; add trustworthy direct CPU/GPU metrics where platform sources exist; then W8 multi-OS replication |
 | Tooling | Zig build, exported `glacier`/`glacier_core` package modules, deterministic demos, benchmark harnesses, five domain compile profiles plus one complete consumer-closure profile, CLI-only default install, and opt-in benchmark installation | Distributable product profiles, installer, stable library API, and simpler fixture workflow |
 
-The R1d prepared-text path binds a request-profile manifest, not a stable
-package identity. Shared read-only residency is logical accounting rather than
-physical RSS evidence, and its token-domain, configuration, and license roots
-are caller assertions. For a completed fixed-length run, `SessionV3` seals one
+The R1d Common artifact remains request-specific, while the additive R1k-b2
+package manifest supplies a separate request-independent portable identity and
+keeps each platform-specific prepared representation distinct. Direct R1d
+constructors still accept caller-supplied token-domain, configuration, and
+license roots; the retained R1k path derives and verifies those identities
+from the supplied bytes. Shared read-only residency is logical accounting
+rather than physical RSS evidence.
+For a completed fixed-length run, `SessionV3` seals one
 terminal `ResultEnvelopeV1` against the actual request-charged receipt,
 canonical little-endian `u32` output root, and V2 boundary/source mapping, then
 advances its result state exactly once from zero to one before explicit
@@ -1262,11 +1280,11 @@ generation-one bootstrap, 23 source-transition, and 19 target-transition
 independent decoder admits only the exact state declared at each boundary and
 then requires convergence to the uninterrupted four-token oracle.
 
-The durable recovery path still accepts pre-tokenized input only and does not
-cover every V1-valid request shape. The separate R1k-b1 command now attests one
-strict raw-text tokenizer and the retained fixture license bytes through process-local
-terminal execution, but does not yet carry those roots into durable recovery or
-provide a stable package identity. The combined work does not support early EOS or
+The compatibility durable recovery APIs still accept pre-tokenized input and
+do not cover every V1-valid request shape. The additive R1k-b2 path now carries
+one strict raw-text tokenizer, the retained fixture license, a stable package
+identity, and exact UTF-8 bytes through fresh-process recovery. The standalone
+`text-run` command remains process-local. The combined work does not support early EOS or
 fewer-than-admitted outputs, provide concurrent Session mutation, replay a
 source prefix after an external effect, execute the handoff on GPU, or
 establish production native performance. The durable adapter for this path is
