@@ -368,9 +368,10 @@ formats, and independent verifiers.
   result/state relationships, and retirement returns logical ownership to
   zero. The boundary-snapshot root and publication transcript remain opaque
   bound leaves, and the independent gate does not reconstruct the boundary
-  snapshot or replay the publication transcript. Ordinary multi-token output
-  remains a process-local transaction; an admitted one-token package can use
-  the checked direct-terminal durable route described next. See
+  snapshot or replay the publication transcript. Ordinary output remains a
+  process-local transaction unless package admission also supplies
+  `--durable-dir` and `--request-id`; that opt-in selects the sink-free direct
+  route for `--n 1` or acknowledged delivery for fixed counts `2..64`. See
   [Verified Raw-Text Runtime Path](docs/PREPARED_TEXT_RAW_INPUT.md).
 - **Stable package and recoverable raw-input identity.** A request-independent
   640-byte model package manifest binds portable provenance, resolved geometry,
@@ -393,9 +394,11 @@ formats, and independent verifiers.
   --package` derives the actual GLRT identity and compares it with the embedded
   receipt before admission. Another representation needs another bundle but
   can retain the same portable package root. The command performs no network
-  access. Counts `2..64` publish token IDs through the process-local path;
-  `--n 1` can instead use a sink-free POSIX checkpoint, deliberate
-  fresh-process continuation, and selector-rechecked committed output. The
+  access. Without durable options, counts `1..64` publish token IDs through the
+  process-local path. With durable options, `--n 1` uses a sink-free POSIX
+  checkpoint and counts `2..64` use acknowledged delivery with capacity
+  `N - 1`; both support deliberate fresh-process continuation and
+  selector-rechecked committed output. The
   bundle proves content integrity, not publisher authenticity. See
   [Ordinary Model Package](docs/MODEL_PACKAGE.md).
 - **Identity-fenced file publication.** A descriptor-relative POSIX adapter
@@ -1139,7 +1142,7 @@ local Safetensors source and admit that exact package into the CPU text path:
 
 mkdir -m 700 /tmp/glacier-package-run
 ./zig-out/bin/glacier text-run out.glrt \
-  --text "Hello" --license LICENSE --package out.glpkg --n 1 \
+  --text "Hello" --license LICENSE --package out.glpkg --n 4 \
   --durable-dir /tmp/glacier-package-run \
   --request-id 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
@@ -1147,9 +1150,11 @@ mkdir -m 700 /tmp/glacier-package-run
 The command performs no network access. The `.glpkg` file is a fixed 896-byte
 admission bundle containing a 640-byte portable/request-independent manifest
 and the 256-byte receipt for the exact GLRT container. It is not a model archive
-or proof of publisher authenticity. Counts `2..64` remain token IDs in a
-process-local transaction. The one-token command uses a sink-free POSIX
-checkpoint and can continue generation one in a fresh process. Choose and
+or proof of publisher authenticity. Without durable options, counts `1..64`
+remain token IDs in a process-local transaction. With durable options, count
+one uses the sink-free generation-one-to-two route and counts `2..64` use the
+acknowledged route with capacity `N - 1`; both can continue generation one in
+a fresh process and render checked committed output. Choose and
 externally retain a new request ID for each logical request; reuse it only for
 continuation or retry, with one initially empty private state directory per
 request. A selected directory has no in-place reset command. Its default report
@@ -1254,7 +1259,7 @@ hardware-independent surface without those native backend dependencies.
 
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
-| AI runtime | CPU execution, an optional macOS Metal kernel path, sealed POSIX publication for portable `.glacier` conversion, recoverable POSIX publication for prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial text request profiles, an ordinary Safetensors package producer with a fixed 896-byte admission bundle containing a request-independent 640-byte manifest and embedded 256-byte exact prepared-representation identity, exact canonical UTF-8 byte-tokenizer and raw-input binding wires, package-aware user-model admission for process-local multi-token output plus a checked one-token durable direct-terminal `text-run` route, durable retention and fresh-process re-tokenization of the exact raw-input archive, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture, same-process exact-current-boundary rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, an experimental fresh-process source-exit handoff with canonical generation-one replay, acknowledged one-token target progress through an idempotent durable local POSIX sink and generation-five terminal result, public one-step bootstrap/source/target durable-runtime APIs used by the retained 49-boundary campaign, a sink-free direct-terminal generation-one-to-two path for fixed output count one with a separate four-boundary real-process-death smoke and independent decoder, a concrete durable store accepting runtime acknowledgement capacities `0..63` without per-capacity production-runtime monomorphization, public read-only committed-output filesystem APIs, metadata-first R1k-b3 inspection, a canonical exact-integer dense-tensor reranker, and portable exact Q30 L2 dense embeddings, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic ten-profile retained-reference compatibility inspector | Extend checked package-aware durable output to acknowledged multi-token and future serving surfaces, extend ownership/accounting and repeated-handoff coverage, add exhaustive direct-terminal storage/power-loss evidence, broaden tokenizer/model/package/GPU profiles, compose normalized embeddings into retrieval, add production fixtures and non-POSIX native evidence, and broaden production device execution |
+| AI runtime | CPU execution, an optional macOS Metal kernel path, sealed POSIX publication for portable `.glacier` conversion, recoverable POSIX publication for prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial text request profiles, an ordinary Safetensors package producer with a fixed 896-byte admission bundle containing a request-independent 640-byte manifest and embedded 256-byte exact prepared-representation identity, exact canonical UTF-8 byte-tokenizer and raw-input binding wires, package-aware user-model admission for process-local output plus checked fixed-output durable `text-run` routes: sink-free direct for count one and acknowledged for counts `2..64`, durable retention and fresh-process re-tokenization of the exact raw-input archive, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture, same-process exact-current-boundary rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, an experimental fresh-process source-exit handoff with canonical generation-one replay, one-token-per-target acknowledged progress through an idempotent durable local POSIX sink and generation-five terminal result, public one-step bootstrap/source/target durable-runtime APIs used by the retained 49-boundary campaign, a sink-free direct-terminal generation-one-to-two path for fixed output count one with a separate four-boundary real-process-death smoke and independent decoder, a concrete durable store accepting runtime acknowledgement capacities `0..63` without per-capacity production-runtime monomorphization, public read-only committed-output filesystem APIs, metadata-first R1k-b3 inspection, a canonical exact-integer dense-tensor reranker, and portable exact Q30 L2 dense embeddings, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic ten-profile retained-reference compatibility inspector | Extend fixed-output durable package execution into unary/streaming serving, add early EOS or fewer-than-admitted output, extend ownership/accounting and repeated-handoff coverage, add exhaustive storage/power-loss evidence, broaden tokenizer/model/package/GPU profiles, compose normalized embeddings into retrieval, add production fixtures and non-POSIX native evidence, and broaden production device execution |
 | Language interop | Installed experimental C header plus shared/static contract libraries; source and staged-install C consumers; C++ linkage check; standard-library Python `ctypes`; dependency-free Rust `extern "C"` gate; fixed profile enumeration and support-mask queries | Retained symbol/layout gates, native multi-OS consumers, stability policy, packages, then model/session execution bindings |
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, a generic dense-tensor reranker with canonical ranked items, a generic normalized dense-tensor embedding fixture, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, one process-local typed tool transaction, a durable POSIX external-action handoff store, and a same-process generation-fenced fake dispatch/status authority for retained reference profiles | Generic classification, retrieval composition, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, OS-isolated real-credential adapters, live tools and agent loops, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor evidence, receipt-funded restored activation with a global publication sequence base, recoverable generation-one source enrollment, experimental durable source exit, exclusive fresh-process activation, and generation-two-through-five acknowledged local POSIX target progress with semantic oracle comparison; plus capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Native Linux recovery, Win32 durable files, remote delivery adapters, device-resident continuation, repeated/cancelled handoff evidence, and durable lifecycle metadata |
@@ -1392,11 +1397,13 @@ one strict raw-text tokenizer, the retained fixture license, a stable package
 identity, and exact UTF-8 bytes through fresh-process recovery. The standalone
 `text-run` command now also admits a user-supplied model when `--package`
 validates the exact package/config/tokenizer/license/prepared-image
-relationship. Counts `2..64` retain the process-local token-ID sink; the
-one-token package profile can instead select and continue the sink-free
-generation-one-to-two POSIX route with checked committed output. R1k-b3
-separately adds a read-only join over an acknowledged checkpoint and durable
-sink. It accepts only aligned state or a nonterminal sink exactly one
+relationship. Without durable options, counts `1..64` use the process-local
+token-ID sink. With durable options, the command selects the sink-free
+generation-one-to-two POSIX route for count one or the acknowledged
+source/target route with capacity `N - 1` for counts `2..64`. The acknowledged
+challenge binds exact `--n`.
+R1k-b3 separately adds a read-only join over an acknowledged checkpoint and
+durable sink. It accepts only aligned state or a nonterminal sink exactly one
 acknowledgement ahead, omits payload by default, and requires
 `--reveal-output` for exact token and byte disclosure. Neither route provides
 ordinary serving output, and exposed metadata is not confidential.
@@ -1407,11 +1414,17 @@ uses capacity `N - 1` for fixed output counts `2..64`; fixed output count one
 uses the sink-free direct-terminal generation-one-to-two path. A bounded
 four-boundary real-process-death smoke now covers post-step, post-retirement,
 selector-rename, and post-generation-two recovery with an independent oracle.
+The same focused `text-runtime-golden-path-test` compile root also checks the
+direct count-one route plus acknowledged counts `2`, `4`, and `64`: capacities
+`1`, `3`, and `63`, a count-four fresh-process continuation, independent full
+checkpoint/sink lineage decoding, equality with ordinary output, and an
+immutable terminal retry.
 The public experimental package producer now covers one Safetensors/INT4/
-`utf8-byte-v1`/CPU profile. Extending its checked durable output to the
-acknowledged multi-token path remains open, along with broader
-model/tokenizer/GPU profiles and exhaustive storage-fault, power-loss, and
-native multi-OS evidence.
+`utf8-byte-v1`/CPU profile, and the checked package CLI covers fixed counts
+`1..64`. Early EOS,
+fewer-than-admitted output, unary/streaming serving, broader
+model/tokenizer/GPU profiles, and exhaustive storage-fault, power-loss, and
+native multi-OS evidence remain open.
 The combined work does not support early
 EOS or fewer-than-admitted outputs, provide concurrent Session mutation, replay
 a source prefix after an external effect, execute the handoff on GPU, or

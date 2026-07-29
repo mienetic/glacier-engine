@@ -1,7 +1,7 @@
 # Verified Raw-Text Runtime Path
 
 Status: **integrated experimental R1k-b1 ingress, R1k-b2 CPU/POSIX
-recovery, and package-aware direct-terminal CLI slice**.
+recovery, and package-aware fixed-output durable CLI slice**.
 
 This path gives one supported command sequence a verifiable join from exact
 raw UTF-8 bytes to the prepared-text runtime:
@@ -15,7 +15,7 @@ Safetensors fixture
   -> prepared-text and Common Model Contract plans
   -> one of:
        process-local SessionV3 command
-       package-aware durable one-token command
+       package-aware durable fixed-output command
        durable source/target recovery with exact raw-input retention
   -> terminal result evidence and zero logical ownership
 ```
@@ -73,12 +73,13 @@ admission requires the byte count and digest recorded by that package. This
 proves which bytes were supplied; it does not interpret the license or decide
 whether a model may legally be used.
 
-## Durable one-token package run
+## Durable package run
 
-The first package-aware durable command profile supports exactly one output
-token. It reuses the public direct-terminal checkpoint writer and read-only
-view; it does not introduce a CLI-specific journal, selector, or recovery
-format.
+The package-aware durable command supports fixed output counts `1..64`. Count
+one reuses the public sink-free direct-terminal writer and view. Counts
+`2..64` reuse the public acknowledged source/target writer and committed-output
+view with sink capacity `N - 1`. Neither route introduces a CLI-specific
+journal, selector, or recovery format.
 
 Create a private, existing state directory and run:
 
@@ -104,21 +105,25 @@ cleanup command. The command combines the ID with the admitted package, exact
 prepared representation, license, and raw-text roots to derive the request
 challenge and all process-stable runtime identities. Changing any
 challenge-bound request or artifact input therefore rejects before writer
-authority or selected-checkpoint mutation.
+authority or selected-checkpoint mutation. The acknowledged route uses a
+separate challenge domain and also binds the exact output count, so changing
+`--n` cannot resume an existing request.
 
 By default the terminal report omits the token payload. Add `--reveal-output`
-to include one checked token ID with `output_encoding="token-ids"`. Digest and
+to include the checked token IDs with `output_encoding="token-ids"`. Digest and
 lineage metadata can still reveal or correlate low-entropy output; the default
 is not a confidentiality boundary. The default checkpoint-set allocation bound
 is 8 MiB. `--max-set-bytes` accepts a cap in the parser range
 `1..67108864`; a cap smaller than the encoded set still fails closed.
 
-The normal command creates or recovers generation one, advances it to the
-sink-free terminal generation two, closes runtime ownership, and renders only
-the selector-rechecked verified view. Repeating the exact command returns
-`already_selected` without another model step. `--bootstrap-only` stops after
-generation one so an orchestrator can deliberately hand execution to a fresh
-process:
+The normal command creates or recovers generation one. Count one advances it
+to sink-free terminal generation two. Counts `2..64` advance the source to
+generation two, then reconstruct one target runtime per remaining token until
+terminal generation `N + 1`. Both routes close runtime ownership and render
+only a selector-rechecked view. Exact terminal retry returns
+`already_selected` for count one or `already_terminal` for acknowledged
+counts without another model step. `--bootstrap-only` stops after generation
+one so an orchestrator can deliberately hand execution to a fresh process:
 
 ```sh
 mkdir -m 700 /tmp/glacier-run-002
@@ -141,13 +146,14 @@ The JSON schema `glacier.prepared-text-durable-run/v1` is discriminated by
 
 | Operation | Required fields |
 | --- | --- |
-| `bootstrap` | `profile`, `route`, `selection_before`, `bootstrap_disposition`, `durable_checkpoint`, `fresh_process_boundary_ready`, `checked_committed_output`, `terminal`, `ownership_closed`, `request_epoch`, `generation`, `publication_next_sequence`, `max_set_bytes`, the four request/artifact identity roots, and the selected set/selector, source-contract, and input-archive roots |
-| `advance` | `profile`, `route`, `selection_before`, `disposition`, nullable `bootstrap_disposition`, `durable_checkpoint`, `fresh_process_continuation_supported`, `preexisting_generation_continuation_performed`, `checked_committed_output`, `terminal`, `ownership_closed`, `model_execution_performed`, all counters, all request/artifact/input/terminal/checkpoint/predecessor/view roots, and the three output-disclosure fields |
+| `bootstrap` | `profile`, `route`, `selection_before`, `bootstrap_disposition`, `durable_checkpoint`, `fresh_process_boundary_ready`, `checked_committed_output`, `terminal`, `ownership_closed`, `request_epoch`, `generation`, `publication_next_sequence`, `max_set_bytes`, request/artifact identity roots, and the selected set/selector, source-contract, and input-archive roots; the acknowledged profile also reports requested count, sink capacity, and sink identities |
+| `advance` | `profile`, `route`, `selection_before`, `disposition`, nullable bootstrap/source dispositions, `durable_checkpoint`, `fresh_process_continuation_supported`, `preexisting_generation_continuation_performed`, `checked_committed_output`, `terminal`, `ownership_closed`, `model_execution_performed`, route-specific counters and committed roots, and the three output-disclosure fields |
 
-For `advance`, `preexisting_generation_continuation_performed` is true only
-when bootstrap recovered or selected an existing generation one and this
-invocation advanced it. `fresh_process_continuation_supported` is a capability,
-not proof of the prior publisher's process identity.
+For `advance`, `preexisting_generation_continuation_performed` is true when
+the invocation starts from any preexisting nonterminal generation and performs
+at least one model transition. A zero-step terminal retry reports false.
+`fresh_process_continuation_supported` is a capability, not proof of the prior
+publisher's process identity.
 `model_execution_performed` records whether the model step ran;
 `ownership_closed` separately records closed runtime ownership on return.
 `checked_committed_output` means structural receipt, selected-wire,
@@ -156,25 +162,18 @@ oracle. `output_encoding` is `token-ids`, and `output_tokens` is `null` unless
 explicitly revealed.
 
 Both operations include `request_id_sha256`, `package_sha256`,
-`representation_sha256`, and `challenge_sha256`. Bootstrap additionally names
-`checkpoint_set_sha256`, `checkpoint_selector_sha256`,
-`terminal_source_contract_sha256`, and `input_archive_sha256`.
-The advance counters are `request_epoch`, `generation`,
-`publication_next_sequence`, `acknowledgement_count`, `token_count`, and
-`max_set_bytes`. Its identity/input roots are `request_id_sha256`,
-`package_sha256`, `representation_sha256`, `challenge_sha256`,
-`input_archive_sha256`, and `terminal_source_contract_sha256`. Its terminal and
-filesystem roots are `terminal_semantic_sha256`, `terminal_output_sha256`,
-`terminal_state_sha256`, `checkpoint_selector_sha256`,
-`checkpoint_set_sha256`, `predecessor_selector_sha256`,
-`predecessor_set_sha256`, and `view_sha256`. The disclosure fields are
+`representation_sha256`, and `challenge_sha256`. Direct-terminal reports keep
+their predecessor, terminal-source, semantic, output, state, and direct-view
+roots. Acknowledged reports instead expose the requested count, capacity,
+source/target transition counts, input/local-plan/tokenizer roots, selected
+checkpoint and sink roots, acknowledgement head/prefix, visible token/byte
+roots, and committed `view_sha256`. The disclosure fields remain
 `output_disclosed`, `output_encoding`, and `output_tokens`.
 
-The state directory contains only the existing checkpoint lock, active
-selector, and content-addressed predecessor/successor sets. This direct route
-has no result-sink ledger. Fixed output counts `2..64` still use the
-acknowledged source/target runtime API and are not yet exposed by the
-package-aware CLI.
+The count-one state directory contains only the checkpoint lock, active
+selector, and content-addressed predecessor/successor sets. Counts `2..64`
+also contain the existing result-sink lock, selector, and immutable ledgers.
+The CLI creates neither a new namespace nor a second recovery format.
 
 ## Canonical tokenizer profile
 
@@ -368,7 +367,11 @@ The gate:
     directory and separately covers the empty-directory one-shot route;
 11. requires the durable token to equal the first token from ordinary execution
     of the same admitted package and prompt; and
-12. rejects incompatible durable options, unsafe directory selection,
+12. independently decodes acknowledged counts `2`, `4`, and `64`, covers sink
+    capacities `1`, `3`, and `63`, proves count-bound identity and a
+    generation-one fresh-process continuation for count four, and requires all
+    durable tokens to equal ordinary execution; and
+13. rejects incompatible durable options, unsafe directory selection,
     oversized input, and malformed UTF-8 before model execution.
 
 The gate neither reconstructs the boundary snapshot nor independently replays
@@ -390,11 +393,10 @@ This is cross-compilation evidence, not native Windows execution evidence.
 ## Scope and next boundary
 
 The retained fixture is synthetic and download-free. Its output tokens do not
-claim language quality. Ordinary multi-token execution remains a process-local
-CPU path. The package-aware one-token route is a local POSIX durable checkpoint
-path with checked committed output and fresh-process continuation; it is
-intentionally sink-free, so `durable_result_sink=false` is not a durability
-failure for that route.
+claim language quality. Ordinary execution remains a process-local CPU path.
+The package-aware durable CPU/POSIX command supports fixed counts `1..64`:
+count one is intentionally sink-free, while counts `2..64` use acknowledged
+result-sink state with capacity `N - 1`.
 
 The Common artifact manifest remains a request-profile identity and changes
 with prompt context. R1k-b2 supplies a separate stable package identity, but it
@@ -402,10 +404,10 @@ is still an experimental wire rather than a stable public distribution ABI.
 `BoundPlanV1` likewise remains an experimental Zig/direct structure rather
 than a fixed cross-language wire.
 
-The package-aware direct-terminal command now carries the exact
-tokenizer/raw-input identity through generation one and renders the checked
-generation-two view after runtime ownership closes. Extending the same CLI to
-the acknowledged source/target chain for output counts `2..64` remains open.
+The package-aware command carries exact tokenizer/raw-input identity through
+every retained generation and renders checked committed output only after
+runtime ownership closes. Variable-length or early-EOS output, general
+tokenizer text rendering, and serving integration remain open.
 The overall invocation still enters the idempotent writer/lease workflow before
 calling the read-only view; it is not a post-hoc read-only inspector.
 The retained durable path is CPU execution on the descriptor-relative POSIX

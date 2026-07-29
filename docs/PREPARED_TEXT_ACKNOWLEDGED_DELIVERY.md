@@ -296,10 +296,9 @@ It does not yet cover:
 - Win32 durable-file behavior;
 - native Linux/FreeBSD recovery evidence;
 - a production model and tokenizer;
-- authentication, historical attestation, confidentiality, or privacy; or
-- checked durable `text-run`, unary serving, or streaming result rendering for
-  the separate ordinary-model package producer and process-local admission
-  path; or
+- authentication, historical attestation, confidentiality, or privacy;
+- unary or streaming serving over the checked package-aware durable command;
+  or
 - non-POSIX native recovery evidence.
 
 ## Focused verification

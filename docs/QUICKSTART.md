@@ -516,10 +516,13 @@ printf '%s' 'Ice' > /tmp/glacier-prompt.txt
 
 This synthetic fixture proves identity and runtime composition, not language
 quality. R1k-b1 accepts only this exact fixture provenance and repository
-license profile. Output is rendered as token IDs. Publication during
-`text-run` is transactional but process-local; the JSON report states that
-durable result storage and fresh-process recovery are false. Deterministic
-prompt hashes are correlatable evidence, not anonymization. See
+license profile. Output is rendered as token IDs. The invocation shown above
+has no package or durable request identity, so publication is transactional but
+process-local and its JSON reports no durable result storage or fresh-process
+recovery. Package-aware `--durable-dir` plus `--request-id` instead opts into
+the sink-free direct route for `N=1` or acknowledged local POSIX execution for
+fixed `N=2..64`. Deterministic prompt hashes are correlatable evidence, not
+anonymization. See
 [Verified Raw-Text Runtime Path](PREPARED_TEXT_RAW_INPUT.md).
 
 Run its independent retained gate with:
@@ -557,7 +560,8 @@ text.
 
 The inspector accepts only an aligned checkpoint/sink view or a nonterminal
 sink exactly one acknowledgement ahead. It performs no recovery or write and
-does not make the process-local `text-run` command durable. See
+grants no durability; publication must already have been selected by a
+compatible durable writer, including package-aware `text-run`. See
 [Prepared-Text Result Inspector](PREPARED_TEXT_RESULT_INSPECTOR.md).
 
 ## 12. Make a first contribution

@@ -37,6 +37,30 @@ PROMPT = "Ice"
 NEW_TOKENS = 3
 DURABLE_REQUEST_ID = "18c4d5a16c7f7a5df70c6c7d4e6f6dd1" * 2
 DURABLE_MAX_SET_BYTES = 8 * 1024 * 1024
+DURABLE_ACKNOWLEDGED_CHALLENGE_DOMAIN = (
+    b"glacier-prepared-text-durable-cli-acknowledged-challenge-v1\x00"
+)
+DURABLE_RUNTIME_IDENTITY_DOMAIN = (
+    b"glacier-prepared-text-durable-cli-runtime-v1\x00"
+)
+DURABLE_SINK_INSTANCE_IDENTITY_DOMAIN = (
+    b"glacier-prepared-text-durable-cli-sink-instance-v1\x00"
+)
+DURABLE_SINK_IMPLEMENTATION_DOMAIN = (
+    b"glacier-prepared-text-durable-cli-sink-implementation-v1\x00"
+)
+TERMINAL_SEMANTIC_MAGIC = b"GPTSEM1\x00"
+TERMINAL_SEMANTIC_ABI = 0x4750_5453_0000_0001
+TERMINAL_SEMANTIC_BYTES = 640
+TERMINAL_SEMANTIC_BODY_BYTES = TERMINAL_SEMANTIC_BYTES - 32
+TERMINAL_SEMANTIC_DOMAIN = (
+    b"glacier-prepared-text-terminal-semantic-v1\x00"
+)
+TERMINAL_OUTPUT_DOMAIN = (
+    b"glacier-prepared-text-terminal-output-semantic-v1\x00"
+)
+STATE_COMMITMENT_ABI = 0x474C_5053_0000_0001
+STATE_COMMITMENT_DOMAIN = b"glacier-lane-publication-state-v1\x00"
 TIMEOUT_SECONDS = 30
 
 
@@ -96,6 +120,7 @@ def _run_text(
     prompt_path: Path,
     *,
     package_path: Path | None = None,
+    new_tokens: int = NEW_TOKENS,
 ) -> dict[str, object]:
     prompt_path.write_bytes(text.encode("utf-8", "strict"))
     command = [
@@ -107,7 +132,7 @@ def _run_text(
         "--license",
         str(license_path),
         "--n",
-        str(NEW_TOKENS),
+        str(new_tokens),
     ]
     if package_path is not None:
         command.extend(("--package", str(package_path)))
@@ -348,6 +373,515 @@ def _verify_durable_terminal_report(
         )
         raise GoldenPathError(
             "durable terminal report mismatch: " + ", ".join(differing)
+        )
+
+
+def _durable_acknowledged_challenge(
+    *,
+    request_id: str,
+    package_sha256: bytes,
+    representation_sha256: bytes,
+    license_sha256: bytes,
+    raw_text_sha256: bytes,
+    output_count: int,
+) -> bytes:
+    return hashlib.sha256(
+        DURABLE_ACKNOWLEDGED_CHALLENGE_DOMAIN
+        + bytes.fromhex(request_id)
+        + package_sha256
+        + representation_sha256
+        + license_sha256
+        + raw_text_sha256
+        + struct.pack("<Q", output_count)
+    ).digest()
+
+
+def _durable_derived_root(domain: bytes, challenge: bytes) -> bytes:
+    return hashlib.sha256(domain + challenge).digest()
+
+
+def _durable_u64(root: bytes, offset: int) -> int:
+    value = struct.unpack_from("<Q", root, offset)[0]
+    return value if value != 0 else 1
+
+
+def _acknowledged_bootstrap_facts(
+    directory: Path,
+) -> tuple[
+    direct_oracle.recovery.CheckpointWireFacts,
+    direct_oracle.recovery.SourceContractFacts,
+    direct_oracle.recovery.DurableInputFacts,
+]:
+    checkpoint = direct_oracle.recovery._decode_checkpoint_wire(directory)
+    if checkpoint is None or checkpoint.generation != 1:
+        raise GoldenPathError(
+            "acknowledged bootstrap checkpoint is not generation one"
+        )
+    contract, durable_input = (
+        direct_oracle.recovery._decode_checkpoint_input_lineage(
+            directory,
+            checkpoint,
+        )
+    )
+    if durable_input is None:
+        raise GoldenPathError(
+            "acknowledged bootstrap lacks durable input lineage"
+        )
+    return checkpoint, contract, durable_input
+
+
+def _verify_acknowledged_bootstrap_report(
+    report: Mapping[str, object],
+    *,
+    checkpoint: direct_oracle.recovery.CheckpointWireFacts,
+    contract: direct_oracle.recovery.SourceContractFacts,
+    durable_input: direct_oracle.recovery.DurableInputFacts,
+    package_sha256: bytes,
+    representation_sha256: bytes,
+    license_sha256: bytes,
+    raw_text: bytes,
+    output_count: int,
+    selection_before: str,
+    bootstrap_disposition: str,
+) -> None:
+    challenge = _durable_acknowledged_challenge(
+        request_id=DURABLE_REQUEST_ID,
+        package_sha256=package_sha256,
+        representation_sha256=representation_sha256,
+        license_sha256=license_sha256,
+        raw_text_sha256=raw_input.raw_text_sha256(raw_text),
+        output_count=output_count,
+    )
+    request_epoch = _durable_u64(
+        _durable_derived_root(
+            DURABLE_RUNTIME_IDENTITY_DOMAIN,
+            challenge,
+        ),
+        0,
+    )
+    sink_instance = _durable_derived_root(
+        DURABLE_SINK_INSTANCE_IDENTITY_DOMAIN,
+        challenge,
+    )
+    sink_implementation = hashlib.sha256(
+        DURABLE_SINK_IMPLEMENTATION_DOMAIN
+    ).digest()
+    expected = {
+        "schema": "glacier.prepared-text-durable-run/v1",
+        "operation": "bootstrap",
+        "profile": "ordinary-package-acknowledged-v1",
+        "route": "acknowledged",
+        "selection_before": selection_before,
+        "bootstrap_disposition": bootstrap_disposition,
+        "requested_token_count": output_count,
+        "sink_capacity": output_count - 1,
+        "durable_checkpoint": True,
+        "fresh_process_boundary_ready": True,
+        "checked_committed_output": False,
+        "terminal": False,
+        "ownership_closed": True,
+        "request_epoch": request_epoch,
+        "generation": 1,
+        "publication_next_sequence": 1,
+        "max_set_bytes": DURABLE_MAX_SET_BYTES,
+        "request_id_sha256": hashlib.sha256(
+            bytes.fromhex(DURABLE_REQUEST_ID)
+        ).hexdigest(),
+        "package_sha256": package_sha256.hex(),
+        "representation_sha256": representation_sha256.hex(),
+        "challenge_sha256": challenge.hex(),
+        "sink_implementation_sha256": sink_implementation.hex(),
+        "sink_instance_sha256": sink_instance.hex(),
+        "checkpoint_set_sha256": checkpoint.checkpoint_sha256,
+        "checkpoint_selector_sha256": checkpoint.selector_sha256,
+        "source_recovery_contract_sha256": (
+            contract.contract_sha256.hex()
+        ),
+        "input_archive_sha256": durable_input.archive_sha256.hex(),
+    }
+    if dict(report) != expected:
+        differing = sorted(
+            name
+            for name in set(report) | set(expected)
+            if report.get(name) != expected.get(name)
+        )
+        decoded_challenge = _durable_acknowledged_challenge(
+            request_id=DURABLE_REQUEST_ID,
+            package_sha256=durable_input.package_sha256,
+            representation_sha256=durable_input.representation_sha256,
+            license_sha256=contract.bound_artifact_license_sha256,
+            raw_text_sha256=durable_input.raw_text_sha256,
+            output_count=output_count,
+        )
+        raise GoldenPathError(
+            "acknowledged bootstrap report mismatch: "
+            + ", ".join(
+                f"{name}={report.get(name)!r}/{expected.get(name)!r}"
+                for name in differing
+            )
+            + f"; decoded_challenge={decoded_challenge.hex()}"
+            + (
+                "; inputs="
+                f"package:{durable_input.package_sha256 == package_sha256},"
+                "representation:"
+                f"{durable_input.representation_sha256 == representation_sha256},"
+                "license:"
+                f"{contract.bound_artifact_license_sha256 == license_sha256},"
+                "raw:"
+                f"{durable_input.raw_text_sha256 == raw_input.raw_text_sha256(raw_text)}"
+            )
+        )
+    if (
+        checkpoint.request_epoch != request_epoch
+        or checkpoint.next_sequence != 1
+        or checkpoint.challenge_sha256 != challenge.hex()
+        or contract.options[0] != output_count
+        or contract.sink_capacity != output_count - 1
+        or contract.sink_initial_sequence != 1
+        or contract.challenge_sha256 != challenge
+        or contract.sink_implementation_sha256
+        != sink_implementation
+        or contract.sink_instance_sha256 != sink_instance
+        or contract.bound_artifact_license_sha256 != license_sha256
+        or durable_input.package_sha256 != package_sha256
+        or durable_input.representation_sha256
+        != representation_sha256
+        or durable_input.raw_text != raw_text
+    ):
+        raise GoldenPathError(
+            "acknowledged bootstrap lineage mismatch"
+        )
+
+
+def _terminal_semantic_sha256(
+    checkpoint: direct_oracle.recovery.CheckpointWireFacts,
+    contract: direct_oracle.recovery.SourceContractFacts,
+    tokens: Sequence[int],
+    image_container_sha256: bytes,
+) -> str:
+    if len(checkpoint.objects) != 5:
+        raise GoldenPathError(
+            "acknowledged terminal semantic object is absent"
+        )
+    encoded = checkpoint.objects[2].payload
+    if (
+        len(encoded) != TERMINAL_SEMANTIC_BYTES
+        or encoded[:8] != TERMINAL_SEMANTIC_MAGIC
+        or struct.unpack_from("<Q", encoded, 8)[0]
+        != TERMINAL_SEMANTIC_ABI
+        or struct.unpack_from("<Q", encoded, 16)[0]
+        != TERMINAL_SEMANTIC_BYTES
+        or struct.unpack_from("<Q", encoded, 24)[0] != 0
+        or any(encoded[496:TERMINAL_SEMANTIC_BODY_BYTES])
+    ):
+        raise GoldenPathError(
+            "acknowledged terminal semantic header is invalid"
+        )
+    (
+        request_epoch,
+        publication_next_sequence,
+        prompt_token_count,
+        max_new_tokens,
+        kv_position,
+        sampling_calls,
+        output_length,
+        output_bytes,
+        execution_abi,
+        rng_state_abi,
+    ) = struct.unpack_from("<10Q", encoded, 32)
+    output_root = hashlib.sha256(
+        TERMINAL_OUTPUT_DOMAIN
+        + contract.artifact_sha256
+        + contract.bound_token_domain_sha256
+        + contract.bound_token_domain_config_sha256
+        + struct.pack("<Q", len(tokens))
+        + b"".join(struct.pack("<I", token) for token in tokens)
+    ).digest()
+    expected_root = hashlib.sha256(
+        TERMINAL_SEMANTIC_DOMAIN
+        + encoded[:TERMINAL_SEMANTIC_BODY_BYTES]
+    ).digest()
+    expected_state_commitment = hashlib.sha256(
+        STATE_COMMITMENT_DOMAIN
+        + struct.pack(
+            "<QQQ",
+            STATE_COMMITMENT_ABI,
+            execution_abi,
+            kv_position,
+        )
+        + encoded[368:400]
+        + struct.pack("<Q", rng_state_abi)
+        + encoded[400:432]
+        + struct.pack("<QQ", sampling_calls, output_length)
+        + encoded[432:464]
+    ).digest()
+    actual_root = encoded[TERMINAL_SEMANTIC_BODY_BYTES:]
+    if (
+        request_epoch != checkpoint.request_epoch
+        or publication_next_sequence != len(tokens)
+        or prompt_token_count != len(contract.prompt_tokens)
+        or max_new_tokens != len(tokens)
+        or kv_position != prompt_token_count + len(tokens) - 1
+        or sampling_calls != len(tokens)
+        or output_length != len(tokens)
+        or output_bytes != len(tokens) * 4
+        or execution_abi == 0
+        or rng_state_abi == 0
+        or encoded[112:144] != contract.plan_sha256
+        or encoded[144:176] != contract.artifact_sha256
+        or encoded[176:208] != contract.bound_token_domain_sha256
+        or encoded[208:240]
+        != contract.bound_token_domain_config_sha256
+        or encoded[240:272] != image_container_sha256
+        or encoded[272:304] != contract.prompt_sha256
+        or encoded[304:336] != output_root
+        or any(
+            encoded[offset : offset + 32] == bytes(32)
+            for offset in range(240, 496, 32)
+        )
+        or encoded[464:496] != expected_state_commitment
+        or actual_root != expected_root
+        or actual_root == bytes(32)
+    ):
+        raise GoldenPathError(
+            "acknowledged terminal semantic lineage mismatch"
+        )
+    return actual_root.hex()
+
+
+def _archive_container_sha256(
+    durable_input: direct_oracle.recovery.DurableInputFacts,
+) -> bytes:
+    try:
+        archive = package_oracle.decode_archive(durable_input.encoded)
+    except package_oracle.PreparedTextPackageError as error:
+        raise GoldenPathError(
+            "acknowledged durable input archive is invalid"
+        ) from error
+    representation = archive.get("representation")
+    if not isinstance(representation, dict):
+        raise GoldenPathError(
+            "acknowledged archive representation is absent"
+        )
+    container_sha256 = representation.get("container_sha256")
+    if (
+        not isinstance(container_sha256, bytes)
+        or len(container_sha256) != 32
+        or container_sha256 == bytes(32)
+    ):
+        raise GoldenPathError(
+            "acknowledged archive container root is invalid"
+        )
+    return container_sha256
+
+
+def _tokens_are_utf8(tokens: Sequence[int]) -> bool:
+    try:
+        bytes(tokens).decode("utf-8", "strict")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def _acknowledged_terminal_facts(
+    directory: Path,
+    *,
+    output_count: int,
+    package_sha256: bytes,
+    representation_sha256: bytes,
+    license_sha256: bytes,
+    raw_text: bytes,
+    expected_tokens: Sequence[int],
+) -> tuple[
+    direct_oracle.recovery.WireFacts,
+    dict[str, str],
+]:
+    checkpoint = direct_oracle.recovery._decode_checkpoint_wire(directory)
+    sink = direct_oracle.recovery._decode_sink_wire(directory)
+    if checkpoint is None or sink is None:
+        raise GoldenPathError(
+            "acknowledged terminal selection is incomplete"
+        )
+    contract, durable_input = (
+        direct_oracle.recovery._decode_checkpoint_input_lineage(
+            directory,
+            checkpoint,
+        )
+    )
+    if durable_input is None or checkpoint.terminal_tokens is None:
+        raise GoldenPathError(
+            "acknowledged terminal lineage is incomplete"
+        )
+    challenge = _durable_acknowledged_challenge(
+        request_id=DURABLE_REQUEST_ID,
+        package_sha256=package_sha256,
+        representation_sha256=representation_sha256,
+        license_sha256=license_sha256,
+        raw_text_sha256=raw_input.raw_text_sha256(raw_text),
+        output_count=output_count,
+    )
+    tokens = tuple(expected_tokens)
+    if (
+        not tokens
+        or any(
+            type(token) is not int or token < 0 or token > 0xFF
+            for token in tokens
+        )
+        or contract.bound_artifact_license_sha256 != license_sha256
+        or checkpoint.generation != output_count + 1
+        or checkpoint.next_sequence != output_count
+        or checkpoint.request_epoch != contract.request_epoch
+        or checkpoint.challenge_sha256 != challenge.hex()
+        or checkpoint.terminal_tokens != tokens
+        or sink.generation != output_count
+        or sink.count != output_count - 1
+        or sink.initial_sequence != 1
+        or sink.next_sequence != output_count
+        or sink.request_epoch != contract.request_epoch
+        or sink.request_sha256 != contract.plan_sha256.hex()
+        or sink.sink_implementation_sha256
+        != contract.sink_implementation_sha256.hex()
+        or sink.sink_instance_sha256
+        != contract.sink_instance_sha256.hex()
+        or sink.acknowledgement_tokens != tokens[1:]
+        or contract.options[0] != output_count
+        or contract.sink_capacity != output_count - 1
+        or contract.sink_initial_sequence != 1
+        or contract.challenge_sha256 != challenge
+        or durable_input.package_sha256 != package_sha256
+        or durable_input.representation_sha256
+        != representation_sha256
+        or durable_input.raw_text != raw_text
+        or durable_input.raw_text_sha256
+        != raw_input.raw_text_sha256(raw_text)
+    ):
+        raise GoldenPathError(
+            "acknowledged terminal wire lineage mismatch"
+        )
+    terminal_acknowledgement = checkpoint.objects[3].payload
+    if (
+        len(terminal_acknowledgement)
+        != direct_oracle.recovery.ACK_BYTES
+        or terminal_acknowledgement[-32:].hex()
+        != sink.head_acknowledgement_sha256
+    ):
+        raise GoldenPathError(
+            "terminal acknowledgement is not the sink head"
+        )
+    _terminal_semantic_sha256(
+        checkpoint,
+        contract,
+        tokens,
+        _archive_container_sha256(durable_input),
+    )
+    wire = direct_oracle.recovery.WireFacts(
+        sink=sink,
+        checkpoint=checkpoint,
+        source_contract=contract,
+        durable_input=durable_input,
+    )
+    roots = direct_oracle.recovery._expected_committed_output_roots(
+        wire,
+        tokens,
+    )
+    if len(_durable_directory_manifest(directory)) != 2 * output_count + 5:
+        raise GoldenPathError(
+            "acknowledged terminal namespace size mismatch"
+        )
+    return wire, roots
+
+
+def _verify_acknowledged_terminal_report(
+    report: Mapping[str, object],
+    *,
+    wire: direct_oracle.recovery.WireFacts,
+    roots: Mapping[str, str],
+    output_count: int,
+    selection_before: str,
+    disposition: str,
+    bootstrap_disposition: str | None,
+    source_disposition: str | None,
+    target_call_count: int,
+    advanced_target_count: int,
+    output_disclosed: bool,
+) -> None:
+    checkpoint = wire.checkpoint
+    sink = wire.sink
+    contract = wire.source_contract
+    durable_input = wire.durable_input
+    if (
+        checkpoint is None
+        or sink is None
+        or contract is None
+        or durable_input is None
+    ):
+        raise GoldenPathError("acknowledged report lacks wire facts")
+    challenge = checkpoint.challenge_sha256
+    tokens = tuple(checkpoint.terminal_tokens or ())
+    terminal_semantic_sha256 = _terminal_semantic_sha256(
+        checkpoint,
+        contract,
+        tokens,
+        _archive_container_sha256(durable_input),
+    )
+    expected_scalars: dict[str, object] = {
+        "schema": "glacier.prepared-text-durable-run/v1",
+        "operation": "advance",
+        "profile": "ordinary-package-acknowledged-v1",
+        "route": "acknowledged",
+        "selection_before": selection_before,
+        "disposition": disposition,
+        "bootstrap_disposition": bootstrap_disposition,
+        "source_disposition": source_disposition,
+        "requested_token_count": output_count,
+        "sink_capacity": output_count - 1,
+        "target_call_count": target_call_count,
+        "advanced_target_count": advanced_target_count,
+        "durable_checkpoint": True,
+        "fresh_process_continuation_supported": True,
+        "preexisting_generation_continuation_performed": (
+            selection_before != "absent"
+            and (source_disposition == "advanced"
+                 or advanced_target_count != 0)
+        ),
+        "checked_committed_output": True,
+        "terminal": True,
+        "ownership_closed": True,
+        "model_execution_performed": (
+            source_disposition == "advanced"
+            or advanced_target_count != 0
+        ),
+        "output_disclosed": output_disclosed,
+        "output_encoding": "token-ids",
+        "request_epoch": checkpoint.request_epoch,
+        "generation": output_count + 1,
+        "publication_next_sequence": output_count,
+        "visible_next_sequence": output_count,
+        "acknowledgement_count": output_count - 1,
+        "token_count": output_count,
+        "max_set_bytes": DURABLE_MAX_SET_BYTES,
+        "request_id_sha256": hashlib.sha256(
+            bytes.fromhex(DURABLE_REQUEST_ID)
+        ).hexdigest(),
+        "challenge_sha256": challenge,
+        "terminal_semantic_sha256": terminal_semantic_sha256,
+        "utf8_valid": _tokens_are_utf8(tokens),
+        "output_tokens": (
+            list(tokens)
+            if output_disclosed
+            else None
+        ),
+    }
+    expected = {**expected_scalars, **roots}
+    if dict(report) != expected:
+        differing = sorted(
+            name
+            for name in set(report) | set(expected)
+            if report.get(name) != expected.get(name)
+        )
+        raise GoldenPathError(
+            "acknowledged terminal report mismatch: "
+            + ", ".join(differing)
         )
 
 
@@ -618,6 +1152,7 @@ def _verify_report(
     image: Path,
     package_facts: Mapping[str, object] | None = None,
     representation_sha256: str | None = None,
+    expected_new_tokens: int = NEW_TOKENS,
 ) -> None:
     tokens, manifest, prompt = raw_input.tokenize(
         text,
@@ -682,7 +1217,7 @@ def _verify_report(
     output_tokens = report.get("output_tokens")
     if (
         not isinstance(output_tokens, list)
-        or len(output_tokens) != NEW_TOKENS
+        or len(output_tokens) != expected_new_tokens
         or any(
             type(token) is not int or not 0 <= token < 256 for token in output_tokens
         )
@@ -1319,6 +1854,17 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             executable,
             foreign_image,
             foreign_package,
+            license_path,
+            prompt_path,
+            durable_directory,
+            new_tokens=2,
+            expect_success=False,
+            expected_error="DurableRequestMismatch",
+        )
+        _run_durable_text(
+            executable,
+            foreign_image,
+            foreign_package,
             changed_license_path,
             prompt_path,
             durable_directory,
@@ -1345,7 +1891,6 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             expected_error="DurableRequestMismatch",
         )
         for invalid_options in (
-            {"new_tokens": 2},
             {"request_id": DURABLE_REQUEST_ID.upper()},
             {"max_set_bytes": 0},
             {"max_set_bytes": 64 * 1024 * 1024 + 1},
@@ -1361,6 +1906,26 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 expect_success=False,
                 **invalid_options,
             )
+        _run(
+            (
+                str(executable),
+                "text-run",
+                str(foreign_image),
+                "--text-file",
+                str(prompt_path),
+                "--license",
+                str(license_path),
+                "--package",
+                str(foreign_package),
+                "--durable-dir",
+                str(durable_directory),
+                "--request-id",
+                DURABLE_REQUEST_ID,
+                "--max-set-bytes",
+                str(DURABLE_MAX_SET_BYTES),
+            ),
+            expect_success=False,
+        )
         durable_directory_link = root / "durable-direct-terminal-link"
         durable_directory_link.symlink_to(
             durable_directory,
@@ -1487,6 +2052,298 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             raise GoldenPathError(
                 "one-shot and continued durable terminal facts differ"
             )
+
+        # The acknowledged route uses the same compiled CLI artifact. N=4
+        # proves a fresh-process source continuation, while N=2 and N=64
+        # cover the minimum and maximum runtime-selected sink capacities.
+        acknowledged_tokens: dict[int, tuple[int, ...]] = {}
+        for acknowledged_output_count in (4, 2, 64):
+            acknowledged_ordinary = _run_text(
+                executable,
+                foreign_image,
+                license_path,
+                PROMPT,
+                prompt_path,
+                package_path=foreign_package,
+                new_tokens=acknowledged_output_count,
+            )
+            _verify_report(
+                acknowledged_ordinary,
+                text=PROMPT,
+                license_bytes=license_bytes,
+                image=foreign_image,
+                package_facts=package_facts,
+                representation_sha256=representation_sha256,
+                expected_new_tokens=acknowledged_output_count,
+            )
+            ordinary_tokens_value = acknowledged_ordinary.get(
+                "output_tokens"
+            )
+            if not isinstance(ordinary_tokens_value, list):
+                raise GoldenPathError(
+                    "acknowledged ordinary output is absent"
+                )
+            ordinary_tokens = tuple(ordinary_tokens_value)
+            acknowledged_tokens[acknowledged_output_count] = (
+                ordinary_tokens
+            )
+            acknowledged_directory = (
+                root
+                / (
+                    "durable-acknowledged-"
+                    + str(acknowledged_output_count)
+                )
+            )
+            acknowledged_directory.mkdir(mode=0o700)
+            prompt_path.write_bytes(PROMPT.encode("utf-8"))
+
+            if acknowledged_output_count == 4:
+                acknowledged_bootstrap = _run_durable_text(
+                    executable,
+                    foreign_image,
+                    foreign_package,
+                    license_path,
+                    prompt_path,
+                    acknowledged_directory,
+                    new_tokens=acknowledged_output_count,
+                    bootstrap_only=True,
+                )
+                if acknowledged_bootstrap is None:
+                    raise GoldenPathError(
+                        "acknowledged bootstrap report is absent"
+                    )
+                (
+                    acknowledged_checkpoint,
+                    acknowledged_contract,
+                    acknowledged_input,
+                ) = _acknowledged_bootstrap_facts(
+                    acknowledged_directory
+                )
+                _verify_acknowledged_bootstrap_report(
+                    acknowledged_bootstrap,
+                    checkpoint=acknowledged_checkpoint,
+                    contract=acknowledged_contract,
+                    durable_input=acknowledged_input,
+                    package_sha256=package_facts["package_sha256"],
+                    representation_sha256=bytes.fromhex(
+                        representation_sha256
+                    ),
+                    license_sha256=hashlib.sha256(
+                        license_bytes
+                    ).digest(),
+                    raw_text=PROMPT.encode("utf-8"),
+                    output_count=acknowledged_output_count,
+                    selection_before="absent",
+                    bootstrap_disposition="created",
+                )
+                acknowledged_source_manifest = (
+                    _durable_directory_manifest(
+                        acknowledged_directory
+                    )
+                )
+                acknowledged_bootstrap_retry = _run_durable_text(
+                    executable,
+                    foreign_image,
+                    foreign_package,
+                    license_path,
+                    prompt_path,
+                    acknowledged_directory,
+                    new_tokens=acknowledged_output_count,
+                    bootstrap_only=True,
+                )
+                if acknowledged_bootstrap_retry is None:
+                    raise GoldenPathError(
+                        "acknowledged bootstrap retry is absent"
+                    )
+                (
+                    retry_checkpoint,
+                    retry_contract,
+                    retry_input,
+                ) = _acknowledged_bootstrap_facts(
+                    acknowledged_directory
+                )
+                _verify_acknowledged_bootstrap_report(
+                    acknowledged_bootstrap_retry,
+                    checkpoint=retry_checkpoint,
+                    contract=retry_contract,
+                    durable_input=retry_input,
+                    package_sha256=package_facts["package_sha256"],
+                    representation_sha256=bytes.fromhex(
+                        representation_sha256
+                    ),
+                    license_sha256=hashlib.sha256(
+                        license_bytes
+                    ).digest(),
+                    raw_text=PROMPT.encode("utf-8"),
+                    output_count=acknowledged_output_count,
+                    selection_before="source-live",
+                    bootstrap_disposition="already_selected",
+                )
+                if (
+                    _durable_directory_manifest(
+                        acknowledged_directory
+                    )
+                    != acknowledged_source_manifest
+                ):
+                    raise GoldenPathError(
+                        "acknowledged bootstrap retry changed state"
+                    )
+                _run_durable_text(
+                    executable,
+                    foreign_image,
+                    foreign_package,
+                    license_path,
+                    prompt_path,
+                    acknowledged_directory,
+                    new_tokens=acknowledged_output_count + 1,
+                    expect_success=False,
+                    expected_error="DurableRequestMismatch",
+                )
+                if (
+                    _durable_directory_manifest(
+                        acknowledged_directory
+                    )
+                    != acknowledged_source_manifest
+                ):
+                    raise GoldenPathError(
+                        "changed output count mutated durable state"
+                    )
+
+            acknowledged_report = _run_durable_text(
+                executable,
+                foreign_image,
+                foreign_package,
+                license_path,
+                prompt_path,
+                acknowledged_directory,
+                new_tokens=acknowledged_output_count,
+                reveal_output=acknowledged_output_count != 4,
+            )
+            if acknowledged_report is None:
+                raise GoldenPathError(
+                    "acknowledged terminal report is absent"
+                )
+            acknowledged_wire, acknowledged_roots = (
+                _acknowledged_terminal_facts(
+                    acknowledged_directory,
+                    output_count=acknowledged_output_count,
+                    package_sha256=package_facts["package_sha256"],
+                    representation_sha256=bytes.fromhex(
+                        representation_sha256
+                    ),
+                    license_sha256=hashlib.sha256(
+                        license_bytes
+                    ).digest(),
+                    raw_text=PROMPT.encode("utf-8"),
+                    expected_tokens=ordinary_tokens,
+                )
+            )
+            _verify_acknowledged_terminal_report(
+                acknowledged_report,
+                wire=acknowledged_wire,
+                roots=acknowledged_roots,
+                output_count=acknowledged_output_count,
+                selection_before=(
+                    "source-live"
+                    if acknowledged_output_count == 4
+                    else "absent"
+                ),
+                disposition="advanced",
+                bootstrap_disposition=(
+                    "already_selected"
+                    if acknowledged_output_count == 4
+                    else "created"
+                ),
+                source_disposition="advanced",
+                target_call_count=acknowledged_output_count - 1,
+                advanced_target_count=acknowledged_output_count - 1,
+                output_disclosed=acknowledged_output_count != 4,
+            )
+
+            acknowledged_terminal_manifest = (
+                _durable_directory_manifest(
+                    acknowledged_directory
+                )
+            )
+            if acknowledged_output_count == 4:
+                prompt_path.write_bytes(
+                    (PROMPT + "!").encode("utf-8")
+                )
+                _run_durable_text(
+                    executable,
+                    foreign_image,
+                    foreign_package,
+                    license_path,
+                    prompt_path,
+                    acknowledged_directory,
+                    new_tokens=acknowledged_output_count,
+                    reveal_output=True,
+                    expect_success=False,
+                    expected_error="DurableRequestMismatch",
+                )
+                prompt_path.write_bytes(PROMPT.encode("utf-8"))
+                if (
+                    _durable_directory_manifest(
+                        acknowledged_directory
+                    )
+                    != acknowledged_terminal_manifest
+                ):
+                    raise GoldenPathError(
+                        "foreign terminal input mutated durable state"
+                    )
+                acknowledged_retry = _run_durable_text(
+                    executable,
+                    foreign_image,
+                    foreign_package,
+                    license_path,
+                    prompt_path,
+                    acknowledged_directory,
+                    new_tokens=acknowledged_output_count,
+                    reveal_output=True,
+                )
+                if acknowledged_retry is None:
+                    raise GoldenPathError(
+                        "acknowledged terminal retry is absent"
+                    )
+                retry_wire, retry_roots = (
+                    _acknowledged_terminal_facts(
+                        acknowledged_directory,
+                        output_count=acknowledged_output_count,
+                        package_sha256=package_facts[
+                            "package_sha256"
+                        ],
+                        representation_sha256=bytes.fromhex(
+                            representation_sha256
+                        ),
+                        license_sha256=hashlib.sha256(
+                            license_bytes
+                        ).digest(),
+                        raw_text=PROMPT.encode("utf-8"),
+                        expected_tokens=ordinary_tokens,
+                    )
+                )
+                _verify_acknowledged_terminal_report(
+                    acknowledged_retry,
+                    wire=retry_wire,
+                    roots=retry_roots,
+                    output_count=acknowledged_output_count,
+                    selection_before="terminal",
+                    disposition="already_terminal",
+                    bootstrap_disposition=None,
+                    source_disposition=None,
+                    target_call_count=1,
+                    advanced_target_count=0,
+                    output_disclosed=True,
+                )
+                if (
+                    _durable_directory_manifest(
+                        acknowledged_directory
+                    )
+                    != acknowledged_terminal_manifest
+                ):
+                    raise GoldenPathError(
+                        "acknowledged terminal retry changed state"
+                    )
 
         retry_result = _run(
             (
@@ -1906,9 +2763,16 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             "invalid_utf8_rejected": True,
             "network_required": False,
             "production_model": False,
-            "durable_result_sink": False,
+            "durable_result_sink": True,
             "durable_direct_terminal": True,
             "durable_output_count": 1,
+            "durable_acknowledged": True,
+            "durable_acknowledged_output_range": [2, 64],
+            "durable_acknowledged_capacities_verified": [1, 3, 63],
+            "durable_acknowledged_fresh_process_continuation": True,
+            "durable_acknowledged_count_bound_identity": True,
+            "durable_acknowledged_independent_lineage_decode": True,
+            "durable_acknowledged_output_matches_ordinary": True,
             "fresh_process_continuation": True,
             "checked_committed_output": True,
             "durable_output_matches_ordinary": True,

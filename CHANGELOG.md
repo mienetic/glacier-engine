@@ -76,6 +76,18 @@ before the first stable release.
 
 ### Added
 
+- Added package-aware acknowledged durable execution for fixed output counts
+  `2..64`. The existing `glacier text-run --package` command now routes those
+  counts through the public generation-one bootstrap, source exit, bounded
+  target transitions, runtime-capacity result sink, and checked committed
+  output view; count one retains its compatible sink-free direct route. The
+  acknowledged challenge binds exact output count, so a changed `--n` rejects
+  before mutation. The focused gate compiles the same `glacier` executable
+  once, proves a fresh-process `N=4` continuation and immutable terminal retry,
+  covers `N=2` and `N=64` capacities `1` and `63`, independently decodes the
+  complete checkpoint/input/sink lineage, and requires equality with ordinary
+  execution. This adds no early-EOS, unary/streaming serving, exhaustive
+  storage/power-loss, GPU-resident, hostile-writer, or non-POSIX native claim.
 - Added a checked one-token durable command for an admitted ordinary package.
   `glacier text-run --package ... --n 1 --durable-dir ... --request-id ...`
   composes the existing sink-free direct-terminal writer and reader without
@@ -89,8 +101,9 @@ before the first stable release.
   options, covers the one-shot route, and compares the durable token with
   ordinary execution. The default report omits payload but exposes
   non-confidential lineage metadata.
-  Acknowledged multi-token CLI/serving output, exhaustive storage and power
-  faults, GPU execution, and native non-POSIX evidence remain open.
+  The acknowledged fixed-output CLI route is described above. Serving,
+  exhaustive storage and power faults, GPU execution, and native non-POSIX
+  evidence remain open.
 - Added the experimental ordinary-model package production and admission
   slice. `glacier package-model` consumes a typed same-process
   durable conversion receipt and publishes a validated portable `.glacier`
@@ -117,8 +130,9 @@ before the first stable release.
   regular-file reads on supported POSIX hosts. An independent Python oracle
   decodes the package and prepared relationship and rejects package mutation,
   changed licenses, and embedded-receipt/image substitution. The path performs
-  no network access. Counts `2..64` render token IDs to a process-local sink;
-  the one-token profile can use the direct durable route above. It does not
+  no network access. Without durable options, counts `1..64` render token IDs
+  to a process-local sink. With durable options, count one uses the direct
+  route and counts `2..64` use the acknowledged route above. It does not
   read ambient
   `<output>.json` configuration sidecars; a future explicit bounded/no-follow
   `--config` input remains roadmap work. It adds no signed
@@ -149,9 +163,9 @@ before the first stable release.
   writer authority. The existing seven bootstrap, 23 source-transition, and
   19 target-transition process-death boundaries now call these public APIs.
   This foundation remains a caller-orchestrated Zig surface over the bounded
-  POSIX fixture. The ordinary-model producer and checked one-token durable
-  command now compose its direct-terminal branch, while acknowledged
-  multi-token serving output, non-POSIX native evidence, physical power-loss
+  POSIX fixture. The ordinary-model producer and checked fixed-output durable
+  command now compose its direct and acknowledged branches, while serving
+  output, non-POSIX native evidence, physical power-loss
   persistence, production-model coverage, and performance claims remain open.
   One concrete durable store now accepts acknowledgement capacities `0..63`;
   fixed output count one uses the separate sink-free direct-terminal path.
@@ -199,9 +213,9 @@ before the first stable release.
   publication transcript are opaque bound leaves: the boundary snapshot is not
   independently reconstructed and the transcript is not independently
   replayed. Its sink remains process-local. The later ordinary-package slice
-  adds package production/admission, and the direct-terminal slice adds checked
-  one-token durability. Production quality, GPU execution, acknowledged
-  multi-token durability, and native multi-OS evidence remain open.
+  adds package production/admission, and the durable slices add checked
+  fixed-output `1..64` continuity. Production quality, GPU execution, serving,
+  variable-length output, and native multi-OS evidence remain open.
 - Added sealed POSIX publication for Safetensors-to-`.glacier` conversion. One
   acquired parent-directory authority, directory-scoped lock, and private
   bounded candidate protect the visible target; source, conversion profile,

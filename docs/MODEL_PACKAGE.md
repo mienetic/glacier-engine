@@ -1,7 +1,7 @@
 # Ordinary Model Package
 
 Status: **experimental CPU vertical slice with process-local execution and a
-one-token POSIX durable route**.
+fixed-output POSIX durable route**.
 
 Glacier can turn one supported Safetensors model into a portable model
 container, a prepared runtime image, and a fixed package manifest:
@@ -139,7 +139,7 @@ package root, needs its own matching bundle.
 The normal `1..64` output route returns token IDs in deterministic JSON and
 publishes transactionally in process.
 
-The package-aware durable route currently supports exactly one output token:
+The package-aware durable route supports fixed output counts `1..64`:
 
 ```sh
 mkdir -m 700 /tmp/glacier-package-run
@@ -148,25 +148,30 @@ mkdir -m 700 /tmp/glacier-package-run
   --text "Hello" \
   --license LICENSE \
   --package out.glpkg \
-  --n 1 \
+  --n 4 \
   --durable-dir /tmp/glacier-package-run \
   --request-id 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-This route creates or recovers the existing sink-free generation-one
-checkpoint, advances or replays its generation-two terminal selection, closes
-runtime ownership, and renders the selector-rechecked view. It omits the token
-payload unless `--reveal-output` is explicit; exposed roots remain metadata,
-not a confidentiality boundary. Choose and externally retain a new
-`--request-id` per logical request, then reuse that exact ID only for
-continuation or retry. Use one initially empty private directory per request;
-once selected, it has no in-place reset or cleanup command. `--bootstrap-only`
-makes generation one an intentional process boundary; the same command without
-that flag can continue in a fresh process. Exact terminal retries return
+Count one selects the sink-free direct-terminal route. Counts `2..64` select
+the acknowledged source/target route with result-sink capacity `N - 1`. Both
+routes close runtime ownership before rendering selector-rechecked committed
+output and omit token payloads unless `--reveal-output` is explicit; exposed
+roots remain metadata, not a confidentiality boundary.
+
+Choose and externally retain a new `--request-id` per logical request, then
+reuse that exact ID only for continuation or retry. Use one initially empty
+private directory per request; once selected, it has no in-place reset or
+cleanup command. `--bootstrap-only` makes generation one an intentional
+process boundary; the same command without that flag can continue in a fresh
+process. The acknowledged request challenge binds the exact output count in
+addition to request, package, representation, license, and raw-input identity.
+An exact terminal retry returns `already_terminal`; a changed count or other
+bound input rejects before mutation. The direct count-one retry remains
 `already_selected`.
 
-The command does not yet expose the acknowledged source/target chain for
-counts `2..64`, render general tokenizer text, or provide a serving API.
+The command does not yet render general tokenizer text, support
+variable-length or early-EOS durable output, or provide a serving API.
 
 ## Verification workflow
 
@@ -182,22 +187,26 @@ input helper, or independent package oracle select the existing focused
 and package `already_current` dispositions, deterministic prepared-image
 recreation, independent Python decoding, process-local admission, distinct
 processes for durable bootstrap/resume/retry, direct checkpoint/output-wire
-decoding, package mutation, changed-license rejection, and
+decoding, acknowledged `N=2`, `N=4`, and `N=64` checkpoint/sink lineage
+decoding, output-count mismatch rejection without mutation, equality with
+ordinary execution, package mutation, changed-license rejection, and
 embedded-receipt/prepared-image substitution rejection without compiling the
 broad runtime and foreign-target suites.
 
-Run `tools/verify.sh full` or the deeper platform matrices at integration,
-release, shared-ABI, or cross-platform boundaries. The focused route is a
-development-time compile reduction, not a replacement for those promotion
-gates.
+The complete `affected` tier additionally compiles the selected retained
+host-tool portability profiles. Run `tools/verify.sh full` or the deeper
+platform matrices at integration, release, shared-ABI, or cross-platform
+boundaries. The focused route is a development-time compile reduction, not a
+replacement for those promotion gates.
 
 ## Roadmap boundary
 
 This slice establishes ordinary model package production, exact process-local
-admission, and checked durable one-token continuation for one narrow CPU
-profile. The next text-runtime milestone is to expose the existing acknowledged
-source/target chain for package-aware fixed output counts `2..64` without
-duplicating its recovery protocol.
+admission, and checked fixed-output durable continuation for `1..64` tokens on
+one narrow CPU/POSIX profile. The next text-runtime boundaries are
+variable-length or early-EOS output, serving integration, and broader
+tokenizer/model/device profiles without weakening package admission or
+recovery lineage.
 
 Still open:
 
@@ -207,6 +216,7 @@ Still open:
 - GPU/device package preparation and execution evidence;
 - native non-POSIX package production and durable recovery;
 - signed provenance and authenticated distribution;
-- acknowledged multi-token durable rendering and serving integration;
+- variable-length or early-EOS durable output, general tokenizer rendering,
+  and serving integration;
 - exhaustive storage-fault and physical power-loss campaigns; and
 - production-model quality, compatibility, performance, and stability claims.

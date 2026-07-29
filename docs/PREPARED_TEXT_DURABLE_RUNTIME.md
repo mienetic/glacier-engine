@@ -1,13 +1,14 @@
 # Public Prepared-Text Durable Runtime
 
-Status: **integrated experimental Zig composition surface plus one
-package-aware direct-terminal CLI profile**.
+Status: **integrated experimental Zig composition surface plus package-aware
+fixed-output CLI profiles for counts `1..64`**.
 
 This document describes the current public filesystem foundation for the
-retained prepared-text recovery path. `glacier text-run` now composes the
-sink-free one-token route with ordinary package admission, fresh-process
-continuation, and checked committed output. Acknowledged multi-token CLI and
-serving integration remain open.
+retained prepared-text recovery path. `glacier text-run` now composes ordinary
+package admission with either the sink-free one-token route or the
+acknowledged source/target route for fixed counts `2..64`, fresh-process
+continuation, and checked committed output. Unary and streaming serving
+integration remain open.
 
 ## Public modules
 
@@ -148,39 +149,49 @@ archive, semantic, and one canonical little-endian token, then rereads the
 selector before returning. Its view reports terminal state and zero
 acknowledgements without opening a sink namespace.
 
-## Package-aware direct-terminal command
+## Package-aware durable command
 
-`glacier text-run ... --package ... --n 1 --durable-dir ... --request-id ...`
-is a thin orchestrator over the direct writer and reader APIs above. It adds no
-checkpoint wire or recovery implementation.
+`glacier text-run ... --package ... --n 1..64 --durable-dir ... --request-id
+...` is a thin orchestrator over the writer and reader APIs above. It adds no
+checkpoint wire or recovery implementation. `fixedOutputPlanV1` selects the
+sink-free direct route for count one and the acknowledged route with capacity
+`N - 1` for counts `2..64`.
 
 - any selected request epoch and challenge are matched read-only before writer
   authority is entered;
-- an absent or generation-one selector is passed through
-  `bootstrapDirectTerminalFileV1`;
-- generation one is advanced through
-  `advanceDirectTerminalSourceFileV1`;
-- selected generation two is replayed through that same idempotent advance
-  operation; and
-- user-visible output is rendered only from
-  `prepared_text_direct_terminal_output.inspectDirectoryV1` after the writer
-  reports closed ownership.
+- count one passes an absent or generation-one selector through
+  `bootstrapDirectTerminalFileV1`, advances or replays generation two through
+  `advanceDirectTerminalSourceFileV1`, and renders the direct-terminal view;
+- counts `2..64` pass an absent or generation-one selector through
+  `bootstrapFileV1`, advance the source once, then create a fresh target
+  runtime for each bounded `advanceTargetFileV1` call until terminal; and
+- user-visible output is rendered only from the applicable read-only
+  committed-output view after the writer reports closed ownership.
 
 The request challenge binds the caller's lowercase 32-byte request identity,
 admitted package and representation roots, exact license root, and exact raw
 text root. Callers choose and externally retain a new ID per logical request,
 use one initially empty private directory for it, then reuse that ID and
 directory only for continuation or retry. There is no in-place reset command.
+The acknowledged challenge uses a distinct domain and additionally binds the
+exact fixed output count, so changing `--n` rejects before writer mutation.
 An exact retry recreates the same Scheduler, Bank, checkpoint, and step-sink
 identities in a fresh process. A changed input derives a different challenge
 and rejects before the writer workflow.
 
 `--bootstrap-only` exposes generation one as an intentional process boundary;
-the normal command continues it. The focused golden path first proves an exact
-bootstrap retry and foreign-input rejection leave generation one byte-identical,
-then continues in a separate process, independently decodes both checkpoint
-generations, joins the committed token to ordinary execution, and requires an
-`already_selected` terminal retry to leave the directory byte-identical.
+the normal command continues it. The acknowledged command may resume any valid
+selected target generation and runs only the remaining bounded transitions.
+The focused golden path proves exact bootstrap retry and changed-count
+rejection leave generation one byte-identical, then continues in a separate
+process. It separately proves foreign-input rejection leaves terminal state
+byte-identical. The direct route independently decodes both checkpoint
+generations.
+The acknowledged route independently walks the complete retained lineage,
+reconciles checkpoint and sink roots, compares all tokens with ordinary
+execution, and requires an `already_terminal` retry to leave the directory
+byte-identical. Counts `2`, `4`, and `64` cover capacities `1`, `3`, and `63`
+without adding another executable compile root.
 
 `checked_committed_output=true` means the selected wire, predecessor, contract,
 archive, and receipt lineage reconciled. It is not an independent model-quality
@@ -189,9 +200,9 @@ omitted but its digest metadata remains observable and is not confidential.
 The CLI still enters the idempotent writer/lease workflow before using the
 read-only view; it is not a post-hoc read-only inspector.
 
-This CLI profile is fixed to one token and the descriptor-relative POSIX
-adapter. It does not expose the acknowledged result-sink/target chain used for
-counts `2..64`.
+These CLI profiles are fixed-length and use the descriptor-relative POSIX
+adapter. They do not support early EOS, fewer-than-admitted outputs, unary
+serving, or streaming serving.
 
 ## Retained process-death evidence
 
@@ -238,8 +249,7 @@ compilation.
 This foundation does not yet provide:
 
 - an exhaustive direct-terminal I/O-fault, storage-fault, or power-loss matrix;
-- acknowledged multi-token package-aware `text-run`, unary serving, or
-  streaming serving integration;
+- unary or streaming serving integration over the durable command;
 - a stable public ABI or cross-language session binding;
 - variable-length or early-EOS durable output;
 - GPU-resident continuation, remote delivery, or distributed exactly-once

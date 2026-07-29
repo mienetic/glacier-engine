@@ -19,10 +19,22 @@ const default_durable_max_set_bytes: usize = 8 * 1024 * 1024;
 const maximum_durable_max_set_bytes: usize = 64 * 1024 * 1024;
 const durable_challenge_domain =
     "glacier-prepared-text-durable-cli-challenge-v1\x00";
+const durable_acknowledged_challenge_domain =
+    "glacier-prepared-text-durable-cli-acknowledged-challenge-v1\x00";
 const durable_runtime_identity_domain =
     "glacier-prepared-text-durable-cli-runtime-v1\x00";
 const durable_scheduling_identity_domain =
     "glacier-prepared-text-durable-cli-scheduling-v1\x00";
+const durable_sink_instance_identity_domain =
+    "glacier-prepared-text-durable-cli-sink-instance-v1\x00";
+const durable_sink_implementation_domain =
+    "glacier-prepared-text-durable-cli-sink-implementation-v1\x00";
+const durable_target_runtime_identity_domain =
+    "glacier-prepared-text-durable-cli-target-runtime-v1\x00";
+const durable_target_primary_keys_domain =
+    "glacier-prepared-text-durable-cli-target-primary-keys-v1\x00";
+const durable_target_secondary_keys_domain =
+    "glacier-prepared-text-durable-cli-target-secondary-keys-v1\x00";
 const request_epoch: u64 = 0x5231_4b42_0000_0001;
 const bank_epoch: u64 = 0x5231_4b42_0000_0002;
 const scheduler_epoch: u64 = 0x5231_4b42_0000_0003;
@@ -43,6 +55,7 @@ const retained_fixture_license_sha256 = [32]u8{
 const DurableSelectionV1 = enum {
     absent,
     source_live,
+    target_ready,
     terminal,
 };
 
@@ -58,8 +71,13 @@ const DurableIdentityV1 = struct {
     storage_epoch: u64,
     source_runtime: engine.prepared_text_durable_runtime
         .TerminalSourceRuntimeIdentityV1,
+    acknowledged_source_runtime: engine.prepared_text_durable_runtime
+        .SourceRuntimeIdentityV1,
     scheduling: engine.prepared_text_session.SchedulingV1,
     step_sink: engine.prepared_text_durable_runtime.SourceStepSinkV1,
+    sink_storage_epoch: u64,
+    sink_implementation_sha256: [32]u8,
+    sink_instance_sha256: [32]u8,
 };
 
 const DurableSourceRuntimeV1 = struct {
@@ -76,10 +94,39 @@ const DurableSourceRuntimeV1 = struct {
             .TerminalSourceRuntimeIdentityV1,
         challenge_sha256: [32]u8,
     ) !void {
+        return self.initValues(
+            identity.bank_epoch,
+            identity.scheduler_epoch,
+            identity.coordinator_id,
+            challenge_sha256,
+        );
+    }
+
+    fn initAcknowledged(
+        self: *DurableSourceRuntimeV1,
+        identity: engine.prepared_text_durable_runtime
+            .SourceRuntimeIdentityV1,
+        challenge_sha256: [32]u8,
+    ) !void {
+        return self.initValues(
+            identity.bank_epoch,
+            identity.scheduler_epoch,
+            identity.coordinator_id,
+            challenge_sha256,
+        );
+    }
+
+    fn initValues(
+        self: *DurableSourceRuntimeV1,
+        source_bank_epoch: u64,
+        source_scheduler_epoch: u64,
+        source_coordinator_id: u64,
+        challenge_sha256: [32]u8,
+    ) !void {
         self.bank = try engine.resource_bank.Bank.init(
             &self.bank_slots,
             .{},
-            identity.bank_epoch,
+            source_bank_epoch,
         );
         self.scheduler = try engine.lane_weave_qos.Scheduler.init(
             &self.bank,
@@ -88,12 +135,75 @@ const DurableSourceRuntimeV1 = struct {
                 .projection = &self.projection_slots,
             },
             .{
-                .scheduler_epoch = identity.scheduler_epoch,
-                .coordinator_id = identity.coordinator_id,
+                .scheduler_epoch = source_scheduler_epoch,
+                .coordinator_id = source_coordinator_id,
                 .challenge = challenge_sha256,
                 .max_weight = 1,
             },
         );
+    }
+};
+
+const DurableTargetResolverV1 = struct {
+    challenge_sha256: [32]u8,
+};
+
+const DurableTargetRuntimeV1 = struct {
+    bank_slots: [2]engine.resource_bank.Slot = undefined,
+    tree_roots: [2]engine.resource_bank.LeaseTreeRootSlot = undefined,
+    tree_nodes: [4]engine.resource_bank.LeaseNodeSlot = undefined,
+    lane_slots: [2]engine.lane_weave_qos.Slot = undefined,
+    projection_slots: [2]engine.lane_weave_qos.ProjectionSlot =
+        undefined,
+    bank: engine.resource_bank.Bank = undefined,
+    scheduler: engine.lane_weave_qos.Scheduler = undefined,
+    challenge_sha256: [32]u8,
+    initialized: bool = false,
+
+    fn init(
+        self: *DurableTargetRuntimeV1,
+        target: engine.prepared_text_durable_runtime.TargetOwnershipV1,
+    ) !void {
+        const claim = target.request_claim;
+        self.bank = try engine.resource_bank.Bank.initWithLeaseTree(
+            &self.bank_slots,
+            &self.tree_roots,
+            &self.tree_nodes,
+            .{
+                .host_bytes = try claim.hostBytes(),
+                .capsule_bytes = claim.capsule_bytes,
+                .kv_bytes = claim.kv_bytes,
+                .activation_bytes = claim.activation_bytes,
+                .partial_bytes = claim.partial_bytes,
+                .logits_bytes = claim.logits_bytes,
+                .output_journal_bytes = claim.output_journal_bytes,
+                .staging_bytes = claim.staging_bytes,
+                .device_bytes = claim.device_bytes,
+                .io_bytes = claim.io_bytes,
+                .queue_slots = claim.queue_slots,
+            },
+            target.bank_epoch,
+        );
+        self.scheduler =
+            try engine.lane_weave_qos.Scheduler.initWithLeaseTree(
+                &self.bank,
+                .{
+                    .slots = &self.lane_slots,
+                    .projection = &self.projection_slots,
+                },
+                .{
+                    .scheduler_epoch = target.scheduler_epoch,
+                    .coordinator_id = target.coordinator_id,
+                    .challenge = self.challenge_sha256,
+                    .max_weight = 1,
+                },
+            );
+        self.initialized = true;
+        const actual = try self.scheduler.identityV1();
+        if (actual.scheduler_epoch != target.scheduler_epoch or
+            actual.coordinator_id != target.coordinator_id or
+            actual.bank_epoch != target.bank_epoch)
+            return error.DurableTargetIdentityDrift;
     }
 };
 
@@ -241,7 +351,7 @@ pub fn run(
     if (durable_requested) {
         if (package_path == null or
             durable_request_id == null or
-            new_tokens != 1 or
+            !new_tokens_supplied or
             !std.fs.path.isAbsolute(durable_directory.?) or
             (durable_bootstrap_only and reveal_output) or
             durable_max_set_bytes == 0 or
@@ -397,22 +507,46 @@ pub fn run(
             return error.PackageRequiredForDurableRun;
         const representation = admitted_representation orelse
             return error.PackageRequiredForDurableRun;
-        return runDurableDirectTerminalV1(
-            allocator,
-            writer,
-            &model,
-            admission.package,
-            representation,
-            text,
-            tokenized.receipt.raw_text_sha256,
-            manifest,
-            artifact_license_sha256,
-            durable_request_id.?,
-            directory_path,
-            durable_max_set_bytes,
-            durable_bootstrap_only,
-            reveal_output,
-        );
+        const fixed_output_plan =
+            try engine.prepared_text_durable_runtime
+                .fixedOutputPlanV1(new_tokens);
+        return switch (fixed_output_plan.route) {
+            .direct_terminal => runDurableDirectTerminalV1(
+                allocator,
+                writer,
+                &model,
+                admission.package,
+                representation,
+                text,
+                tokenized.receipt.raw_text_sha256,
+                manifest,
+                artifact_license_sha256,
+                durable_request_id.?,
+                directory_path,
+                durable_max_set_bytes,
+                durable_bootstrap_only,
+                reveal_output,
+            ),
+            .acknowledged => runDurableAcknowledgedV1(
+                allocator,
+                writer,
+                &model,
+                admission.package,
+                representation,
+                text,
+                tokenized.tokens,
+                tokenized.receipt.raw_text_sha256,
+                manifest,
+                artifact_license_sha256,
+                durable_request_id.?,
+                directory_path,
+                new_tokens,
+                fixed_output_plan.sink_capacity,
+                durable_max_set_bytes,
+                durable_bootstrap_only,
+                reveal_output,
+            ),
+        };
     }
 
     var bank_slots: [2]engine.resource_bank.Slot = undefined;
@@ -887,6 +1021,7 @@ fn runDurableDirectTerminalV1(
         representation.representation_sha256,
         artifact_license_sha256,
         raw_text_sha256,
+        1,
     );
     var directory = try std.fs.openDirAbsolute(
         directory_path,
@@ -899,7 +1034,7 @@ fn runDurableDirectTerminalV1(
     defer directory.close();
 
     const selection_before =
-        try classifyDurableSelectionV1(directory);
+        try classifyDurableSelectionV1(directory, 1);
     if (selection_before.selector) |selector| {
         if (selector.request_epoch != identity.request_epoch or
             !std.mem.eql(
@@ -1028,13 +1163,323 @@ fn runDurableDirectTerminalV1(
     );
 }
 
+fn runDurableAcknowledgedV1(
+    allocator: std.mem.Allocator,
+    writer: *std.Io.Writer,
+    model: *engine.loader.LoadedModel,
+    package: engine.model_package_manifest.ManifestV1,
+    representation: engine.model_package_manifest.PreparedRepresentationV1,
+    raw_text: []const u8,
+    prompt_tokens: []const u32,
+    raw_text_sha256: [32]u8,
+    tokenizer_manifest: engine.tokenizer.Utf8ByteManifestV1,
+    artifact_license_sha256: [32]u8,
+    request_id_hex: []const u8,
+    directory_path: []const u8,
+    output_count: usize,
+    sink_capacity: usize,
+    max_set_bytes: usize,
+    bootstrap_only: bool,
+    reveal_output: bool,
+) !void {
+    if (comptime !engine.prepared_text_durable_runtime
+        .bootstrap_file_available_v1)
+        return error.UnsupportedPlatform;
+    if (output_count < 2 or
+        output_count > maximum_new_tokens or
+        sink_capacity != output_count - 1)
+        return error.InvalidDurableOutputPlan;
+
+    const identity = try deriveDurableIdentityV1(
+        request_id_hex,
+        package.package_sha256,
+        representation.representation_sha256,
+        artifact_license_sha256,
+        raw_text_sha256,
+        output_count,
+    );
+    const sink = acknowledgedSinkConfigV1(
+        identity,
+        sink_capacity,
+    );
+    var directory = try std.fs.openDirAbsolute(
+        directory_path,
+        .{
+            .access_sub_paths = true,
+            .iterate = false,
+            .no_follow = true,
+        },
+    );
+    defer directory.close();
+
+    const selection_before =
+        try classifyDurableSelectionV1(directory, output_count);
+    if (selection_before.selector) |selector| {
+        if (selector.request_epoch != identity.request_epoch or
+            !std.mem.eql(
+                u8,
+                &selector.challenge_sha256,
+                &identity.challenge_sha256,
+            ))
+            return error.DurableRequestMismatch;
+    }
+    if (bootstrap_only and
+        (selection_before.kind == .target_ready or
+            selection_before.kind == .terminal))
+        return error.DurableRequestAlreadyAdvanced;
+
+    const options: engine.prepared_text_session.OptionsV1 = .{
+        .max_new_tokens = output_count,
+    };
+    const local_plan = try engine.prepared_text_session.makePlanV1(
+        model.*,
+        prompt_tokens,
+        options,
+    );
+    const bound_plan_input =
+        try engine.prepared_text_raw_input.makeBoundPlanInputV1(
+            identity.request_epoch,
+            tokenizer_manifest,
+            artifact_license_sha256,
+        );
+    var bootstrap_receipt: ?engine.prepared_text_durable_runtime
+        .BootstrapFileReceiptV1 = null;
+    var source_receipt: ?engine.prepared_text_durable_runtime
+        .AdvanceSourceFileReceiptV1 = null;
+
+    if (selection_before.kind == .absent or
+        selection_before.kind == .source_live)
+    {
+        var runtime: DurableSourceRuntimeV1 = .{};
+        try runtime.initAcknowledged(
+            identity.acknowledged_source_runtime,
+            identity.challenge_sha256,
+        );
+        var runtime_closed = false;
+        defer if (!runtime_closed) {
+            _ = runtime.scheduler.close() catch {};
+        };
+
+        const bound_plan =
+            try engine.prepared_text_session.makeBoundPlanV1(
+                model.*,
+                prompt_tokens,
+                options,
+                local_plan,
+                identity.scheduling,
+                &runtime.scheduler,
+                bound_plan_input,
+            );
+        const target = try acknowledgedTargetOwnershipV1(
+            identity.challenge_sha256,
+            bound_plan,
+        );
+        if (target.request_generation != 2)
+            return error.InvalidDurableTargetGeneration;
+
+        const bootstrap =
+            try engine.prepared_text_durable_runtime.bootstrapFileV1(
+                allocator,
+                .{
+                    .model = model,
+                    .package = package,
+                    .representation = representation,
+                    .raw_text = raw_text,
+                    .tokenizer_manifest = tokenizer_manifest,
+                    .options = options,
+                    .scheduling = identity.scheduling,
+                    .bound_plan_input = bound_plan_input,
+                    .source_runtime = identity.acknowledged_source_runtime,
+                    .scheduler = &runtime.scheduler,
+                    .target = target,
+                    .sink = sink,
+                    .file = .{
+                        .directory = directory,
+                        .storage_epoch = identity.storage_epoch,
+                        .max_set_bytes = max_set_bytes,
+                    },
+                },
+            );
+        try verifyDurableAcknowledgedBootstrapV1(
+            identity,
+            bootstrap,
+        );
+        bootstrap_receipt = bootstrap;
+
+        if (bootstrap_only) {
+            try requireDurableRuntimeZeroV1(&runtime);
+            _ = try runtime.scheduler.close();
+            runtime_closed = true;
+            return emitDurableAcknowledgedBootstrapV1(
+                writer,
+                package,
+                representation,
+                identity,
+                selection_before.kind,
+                bootstrap,
+                output_count,
+                sink_capacity,
+                max_set_bytes,
+            );
+        }
+
+        var resolver: DurableTargetResolverV1 = .{
+            .challenge_sha256 = identity.challenge_sha256,
+        };
+        var fail_stop_context: u8 = 0;
+        const advanced =
+            try engine.prepared_text_durable_runtime
+                .advanceSourceFileV1(
+                sink_capacity,
+                allocator,
+                .{
+                    .model = model,
+                    .runtime = .{
+                        .bank = &runtime.bank,
+                        .scheduler = &runtime.scheduler,
+                    },
+                    .target = .{
+                        .context = &resolver,
+                        .resolve_fn = resolveDurableAcknowledgedTargetV1,
+                    },
+                    .step_sink = identity.step_sink,
+                    .sink = sink,
+                    .file = .{
+                        .directory = directory,
+                        .storage_epoch = identity.storage_epoch,
+                        .max_set_bytes = max_set_bytes,
+                    },
+                    .fail_stop = .{
+                        .context = &fail_stop_context,
+                        .invoke_fn = durableFailStopV1,
+                    },
+                },
+            );
+        runtime_closed = true;
+        try verifyDurableAcknowledgedSourceV1(advanced);
+        source_receipt = advanced;
+    } else if (bootstrap_only) {
+        return error.DurableRequestAlreadyAdvanced;
+    }
+
+    var target_output_storage: [maximum_new_tokens]u32 =
+        undefined;
+    var final_target_receipt: ?engine.prepared_text_durable_runtime
+        .AdvanceTargetFileReceiptV1 = null;
+    var advanced_target_count: usize = 0;
+    var target_call_count: usize = 0;
+    while (target_call_count < output_count) {
+        var target_runtime: DurableTargetRuntimeV1 = .{
+            .challenge_sha256 = identity.challenge_sha256,
+        };
+        var target_runtime_closed = false;
+        defer if (target_runtime.initialized and
+            !target_runtime_closed)
+        {
+            _ = target_runtime.scheduler.close() catch {};
+        };
+        var resolver: DurableTargetResolverV1 = .{
+            .challenge_sha256 = identity.challenge_sha256,
+        };
+        var fail_stop_context: u8 = 0;
+        const advanced =
+            try engine.prepared_text_durable_runtime
+                .advanceTargetFileV1(
+                sink_capacity,
+                allocator,
+                .{
+                    .model = model,
+                    .runtime_factory = .{
+                        .context = &target_runtime,
+                        .init_fn = initDurableTargetRuntimeForAdvanceV1,
+                    },
+                    .next_target = .{
+                        .context = &resolver,
+                        .resolve_fn = resolveDurableAcknowledgedTargetV1,
+                    },
+                    .step_sink = identity.step_sink,
+                    .request_epoch = identity.request_epoch,
+                    .sink_initial_sequence = 1,
+                    .challenge_sha256 = identity.challenge_sha256,
+                    .sink = sink,
+                    .file = .{
+                        .directory = directory,
+                        .storage_epoch = identity.storage_epoch,
+                        .max_set_bytes = max_set_bytes,
+                    },
+                    .output_storage = target_output_storage[0..output_count],
+                    .fail_stop = .{
+                        .context = &fail_stop_context,
+                        .invoke_fn = durableFailStopV1,
+                    },
+                },
+            );
+        target_runtime_closed = true;
+        try verifyDurableAcknowledgedTargetV1(
+            advanced,
+            output_count,
+        );
+        target_call_count += 1;
+        if (advanced.disposition == .advanced)
+            advanced_target_count += 1;
+        final_target_receipt = advanced;
+        if (advanced.terminal) break;
+    }
+    const terminal_receipt = final_target_receipt orelse
+        return error.InvalidDurableTargetTransition;
+    if (!terminal_receipt.terminal)
+        return error.InvalidDurableTargetTransition;
+
+    var committed_output_storage: [maximum_new_tokens]u8 =
+        undefined;
+    const view =
+        try engine.prepared_text_committed_output_file
+            .inspectDirectoryV1(
+            allocator,
+            directory,
+            .{ .max_set_bytes = max_set_bytes },
+            committed_output_storage[0..output_count],
+        );
+    try verifyDurableAcknowledgedTerminalV1(
+        package,
+        representation,
+        tokenizer_manifest,
+        local_plan,
+        identity,
+        sink,
+        terminal_receipt,
+        view,
+        output_count,
+    );
+    try emitDurableAcknowledgedTerminalV1(
+        writer,
+        package,
+        representation,
+        identity,
+        selection_before.kind,
+        bootstrap_receipt,
+        source_receipt,
+        terminal_receipt,
+        view,
+        output_count,
+        sink_capacity,
+        target_call_count,
+        advanced_target_count,
+        max_set_bytes,
+        reveal_output,
+    );
+}
+
 fn deriveDurableIdentityV1(
     request_id_hex: []const u8,
     package_sha256: [32]u8,
     representation_sha256: [32]u8,
     artifact_license_sha256: [32]u8,
     raw_text_sha256: [32]u8,
+    output_count: usize,
 ) !DurableIdentityV1 {
+    if (output_count == 0 or output_count > maximum_new_tokens)
+        return error.InvalidDurableOutputPlan;
     if (request_id_hex.len != 64)
         return error.InvalidDurableRequestId;
     for (request_id_hex) |character| {
@@ -1049,12 +1494,25 @@ fn deriveDurableIdentityV1(
     ) catch return error.InvalidDurableRequestId;
 
     var challenge_hash = std.crypto.hash.sha2.Sha256.init(.{});
-    challenge_hash.update(durable_challenge_domain);
+    challenge_hash.update(if (output_count == 1)
+        durable_challenge_domain
+    else
+        durable_acknowledged_challenge_domain);
     challenge_hash.update(&request_id);
     challenge_hash.update(&package_sha256);
     challenge_hash.update(&representation_sha256);
     challenge_hash.update(&artifact_license_sha256);
     challenge_hash.update(&raw_text_sha256);
+    if (output_count != 1) {
+        var output_count_wire: [8]u8 = undefined;
+        std.mem.writeInt(
+            u64,
+            &output_count_wire,
+            @intCast(output_count),
+            .little,
+        );
+        challenge_hash.update(&output_count_wire);
+    }
     var challenge_sha256: [32]u8 = undefined;
     challenge_hash.final(&challenge_sha256);
 
@@ -1066,18 +1524,33 @@ fn deriveDurableIdentityV1(
         durable_scheduling_identity_domain,
         challenge_sha256,
     );
+    const sink_instance_sha256 = durableDerivedRootV1(
+        durable_sink_instance_identity_domain,
+        challenge_sha256,
+    );
+    const sink_implementation_sha256 =
+        engine.core.model_contract.sha256(
+            durable_sink_implementation_domain,
+        );
+    const source_bank_epoch = durableU64V1(runtime_root, 16);
+    const source_scheduler_epoch =
+        durableU64V1(runtime_root, 24);
+    const source_coordinator_id =
+        durableU64V1(scheduling_root, 0);
     return .{
         .request_id_sha256 = engine.core.model_contract.sha256(&request_id),
         .challenge_sha256 = challenge_sha256,
         .request_epoch = durableU64V1(runtime_root, 0),
         .storage_epoch = durableU64V1(runtime_root, 8),
         .source_runtime = .{
-            .bank_epoch = durableU64V1(runtime_root, 16),
-            .scheduler_epoch = durableU64V1(runtime_root, 24),
-            .coordinator_id = durableU64V1(
-                scheduling_root,
-                0,
-            ),
+            .bank_epoch = source_bank_epoch,
+            .scheduler_epoch = source_scheduler_epoch,
+            .coordinator_id = source_coordinator_id,
+        },
+        .acknowledged_source_runtime = .{
+            .bank_epoch = source_bank_epoch,
+            .scheduler_epoch = source_scheduler_epoch,
+            .coordinator_id = source_coordinator_id,
         },
         .scheduling = .{
             .tenant_key = durableU64V1(scheduling_root, 8),
@@ -1096,6 +1569,12 @@ fn deriveDurableIdentityV1(
             .sink_epoch = durableU64V1(challenge_sha256, 0),
             .reservation_id = durableU64V1(challenge_sha256, 8),
         },
+        .sink_storage_epoch = durableU64V1(
+            sink_instance_sha256,
+            0,
+        ),
+        .sink_implementation_sha256 = sink_implementation_sha256,
+        .sink_instance_sha256 = sink_instance_sha256,
     };
 }
 
@@ -1123,9 +1602,111 @@ fn durableU64V1(
     return if (value == 0) 1 else value;
 }
 
+fn durableGenerationRootV1(
+    domain: []const u8,
+    challenge_sha256: [32]u8,
+    generation: u64,
+) [32]u8 {
+    var generation_wire: [8]u8 = undefined;
+    std.mem.writeInt(
+        u64,
+        &generation_wire,
+        generation,
+        .little,
+    );
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(domain);
+    hash.update(&challenge_sha256);
+    hash.update(&generation_wire);
+    var output: [32]u8 = undefined;
+    hash.final(&output);
+    return output;
+}
+
+fn acknowledgedSinkConfigV1(
+    identity: DurableIdentityV1,
+    sink_capacity: usize,
+) engine.prepared_text_durable_runtime.SinkConfigV1 {
+    return .{
+        .storage_epoch = identity.sink_storage_epoch,
+        .capacity = sink_capacity,
+        .implementation_sha256 = identity.sink_implementation_sha256,
+        .instance_sha256 = identity.sink_instance_sha256,
+    };
+}
+
+fn acknowledgedTargetOwnershipV1(
+    challenge_sha256: [32]u8,
+    bound_plan: engine.prepared_text_session.BoundPlanV1,
+) !engine.prepared_text_durable_runtime.TargetOwnershipV1 {
+    const generation = try std.math.add(
+        u64,
+        bound_plan.execution.generation,
+        1,
+    );
+    const runtime_root = durableGenerationRootV1(
+        durable_target_runtime_identity_domain,
+        challenge_sha256,
+        generation,
+    );
+    const primary_keys = durableGenerationRootV1(
+        durable_target_primary_keys_domain,
+        challenge_sha256,
+        generation,
+    );
+    const secondary_keys = durableGenerationRootV1(
+        durable_target_secondary_keys_domain,
+        challenge_sha256,
+        generation,
+    );
+    return .{
+        .scheduler_epoch = durableU64V1(runtime_root, 0),
+        .coordinator_id = durableU64V1(runtime_root, 8),
+        .bank_epoch = durableU64V1(runtime_root, 16),
+        .request_generation = generation,
+        .resource_owner_key = durableU64V1(primary_keys, 0),
+        .tree_key = durableU64V1(primary_keys, 8),
+        .authority_key = durableU64V1(primary_keys, 16),
+        .tenant_key = durableU64V1(primary_keys, 24),
+        .scope_key = durableU64V1(secondary_keys, 0),
+        .cache_node_key = durableU64V1(secondary_keys, 8),
+        .cache_binding_key = durableU64V1(secondary_keys, 16),
+        .intent_generation = generation,
+        .request_claim = bound_plan.residency.request_claim,
+    };
+}
+
+fn resolveDurableAcknowledgedTargetV1(
+    raw: *anyopaque,
+    bound_plan: engine.prepared_text_session.BoundPlanV1,
+) anyerror!engine.prepared_text_durable_runtime.TargetOwnershipV1 {
+    const resolver: *DurableTargetResolverV1 =
+        @ptrCast(@alignCast(raw));
+    return acknowledgedTargetOwnershipV1(
+        resolver.challenge_sha256,
+        bound_plan,
+    );
+}
+
+fn initDurableTargetRuntimeForAdvanceV1(
+    raw: *anyopaque,
+    target: engine.prepared_text_durable_runtime.TargetOwnershipV1,
+) anyerror!engine.prepared_text_durable_runtime.TargetRuntimeV1 {
+    const runtime: *DurableTargetRuntimeV1 =
+        @ptrCast(@alignCast(raw));
+    try runtime.init(target);
+    return .{
+        .bank = &runtime.bank,
+        .scheduler = &runtime.scheduler,
+    };
+}
+
 fn classifyDurableSelectionV1(
     directory: std.fs.Dir,
+    output_count: usize,
 ) !DurableSelectionFactsV1 {
+    if (output_count == 0 or output_count > maximum_new_tokens)
+        return error.InvalidDurableOutputPlan;
     var selector_storage: [engine.core.continuation_checkpoint_file.selector_bytes]u8 =
         undefined;
     const selector =
@@ -1142,21 +1723,41 @@ fn classifyDurableSelectionV1(
             }
             return err;
         };
+    const terminal_generation =
+        if (output_count == 1)
+            engine.prepared_text_direct_terminal
+                .selected_generation
+        else
+            try std.math.add(
+                u64,
+                @as(u64, @intCast(output_count)),
+                1,
+            );
     if (selector.generation ==
         engine.prepared_text_source_lease
             .source_live_set_generation)
+    {
+        if (selector.publication_next_sequence != 1)
+            return error.UnsupportedDurableSelection;
         return .{
             .kind = .source_live,
             .selector = selector,
         };
-    if (selector.generation ==
-        engine.prepared_text_direct_terminal
-            .selected_generation)
+    }
+    if (selector.generation < 2 or
+        selector.generation > terminal_generation or
+        selector.publication_next_sequence !=
+            selector.generation - 1)
+        return error.UnsupportedDurableSelection;
+    if (selector.generation == terminal_generation)
         return .{
             .kind = .terminal,
             .selector = selector,
         };
-    return error.UnsupportedDurableSelection;
+    return .{
+        .kind = .target_ready,
+        .selector = selector,
+    };
 }
 
 fn requireDurableRuntimeZeroV1(
@@ -1170,6 +1771,233 @@ fn requireDurableRuntimeZeroV1(
 
 fn durableFailStopV1(_: *anyopaque) noreturn {
     std.process.exit(74);
+}
+
+fn digestIsZeroV1(value: [32]u8) bool {
+    return std.mem.allEqual(u8, &value, 0);
+}
+
+fn verifyDurableAcknowledgedBootstrapV1(
+    identity: DurableIdentityV1,
+    receipt: engine.prepared_text_durable_runtime
+        .BootstrapFileReceiptV1,
+) !void {
+    if (receipt.generation != 1 or
+        receipt.request_epoch != identity.request_epoch or
+        receipt.publication_next_sequence != 1 or
+        digestIsZeroV1(receipt.checkpoint_sha256) or
+        digestIsZeroV1(receipt.selector_sha256) or
+        digestIsZeroV1(
+            receipt.source_recovery_contract_sha256,
+        ) or
+        digestIsZeroV1(receipt.input_archive_sha256))
+        return error.InvalidDurableAcknowledgedBootstrap;
+}
+
+fn verifyDurableAcknowledgedSourceV1(
+    receipt: engine.prepared_text_durable_runtime
+        .AdvanceSourceFileReceiptV1,
+) !void {
+    if (!receipt.ownership_closed or
+        receipt.input_generation != 1 or
+        receipt.input_sequence != 1 or
+        receipt.output_generation != 2 or
+        receipt.output_sequence != 1 or
+        receipt.output_token > std.math.maxInt(u8) or
+        receipt.sink_count != 0 or
+        receipt.sink_next_sequence != 1 or
+        digestIsZeroV1(receipt.sink_ledger_sha256) or
+        digestIsZeroV1(receipt.sink_selector_sha256) or
+        digestIsZeroV1(receipt.checkpoint_sha256) or
+        digestIsZeroV1(receipt.checkpoint_selector_sha256) or
+        digestIsZeroV1(
+            receipt.source_recovery_contract_sha256,
+        ))
+        return error.InvalidDurableSourceTransition;
+}
+
+fn verifyDurableAcknowledgedTargetV1(
+    receipt: engine.prepared_text_durable_runtime
+        .AdvanceTargetFileReceiptV1,
+    output_count: usize,
+) !void {
+    const terminal_sequence: u64 = @intCast(output_count);
+    const expected_output_generation = try std.math.add(
+        u64,
+        receipt.output_sequence,
+        1,
+    );
+    const output_token_count = std.math.cast(
+        usize,
+        receipt.output_sequence,
+    ) orelse return error.InvalidDurableTargetTransition;
+    if (!receipt.ownership_closed or
+        receipt.output_sequence == 0 or
+        receipt.output_sequence > terminal_sequence or
+        receipt.output_generation !=
+            expected_output_generation or
+        receipt.output_tokens.len != output_token_count or
+        receipt.sink_count != output_token_count - 1 or
+        receipt.sink_next_sequence !=
+            receipt.output_sequence or
+        receipt.terminal !=
+            (receipt.output_sequence == terminal_sequence) or
+        digestIsZeroV1(receipt.sink_ledger_sha256) or
+        digestIsZeroV1(receipt.sink_selector_sha256) or
+        digestIsZeroV1(receipt.checkpoint_sha256) or
+        digestIsZeroV1(receipt.checkpoint_selector_sha256))
+        return error.InvalidDurableTargetTransition;
+    for (receipt.output_tokens) |token| {
+        if (token > std.math.maxInt(u8))
+            return error.InvalidDurableTargetTransition;
+    }
+    switch (receipt.disposition) {
+        .advanced => {
+            const next_input_sequence = std.math.add(
+                u64,
+                receipt.input_sequence,
+                1,
+            ) catch return error.InvalidDurableTargetTransition;
+            const next_input_generation = std.math.add(
+                u64,
+                receipt.input_generation,
+                1,
+            ) catch return error.InvalidDurableTargetTransition;
+            if (next_input_sequence !=
+                receipt.output_sequence or
+                next_input_generation !=
+                    receipt.output_generation or
+                receipt.input_generation !=
+                    next_input_sequence)
+                return error.InvalidDurableTargetTransition;
+        },
+        .already_terminal => {
+            if (!receipt.terminal or
+                receipt.input_sequence !=
+                    receipt.output_sequence or
+                receipt.input_generation !=
+                    receipt.output_generation or
+                receipt.sink_disposition != .none)
+                return error.InvalidDurableTargetTransition;
+        },
+    }
+    if (receipt.terminal and
+        digestIsZeroV1(receipt.terminal_semantic_sha256))
+        return error.InvalidDurableTargetTransition;
+}
+
+fn verifyDurableAcknowledgedTerminalV1(
+    package: engine.model_package_manifest.ManifestV1,
+    representation: engine.model_package_manifest.PreparedRepresentationV1,
+    tokenizer_manifest: engine.tokenizer.Utf8ByteManifestV1,
+    local_plan: engine.prepared_text_session.PlanV1,
+    identity: DurableIdentityV1,
+    sink: engine.prepared_text_durable_runtime.SinkConfigV1,
+    receipt: engine.prepared_text_durable_runtime
+        .AdvanceTargetFileReceiptV1,
+    view: engine.prepared_text_committed_output.ViewV1,
+    output_count: usize,
+) !void {
+    const terminal_sequence: u64 = @intCast(output_count);
+    const terminal_generation = try std.math.add(
+        u64,
+        terminal_sequence,
+        1,
+    );
+    if (!view.terminal or
+        view.sequence_state != .aligned or
+        view.checkpoint_pending or
+        view.generation != terminal_generation or
+        view.request_epoch != identity.request_epoch or
+        view.checkpoint_next_sequence != terminal_sequence or
+        view.sink_initial_sequence != 1 or
+        view.visible_next_sequence != terminal_sequence or
+        view.acknowledgement_count != output_count - 1 or
+        view.token_count != output_count or
+        view.visible_bytes.len != output_count or
+        !std.mem.eql(
+            u8,
+            &view.request_sha256,
+            &local_plan.plan_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &view.local_plan_sha256,
+            &local_plan.plan_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &view.package_sha256,
+            &package.package_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &view.representation_sha256,
+            &representation.representation_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &view.tokenizer_domain_sha256,
+            &tokenizer_manifest.domain_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &view.tokenizer_behavior_sha256,
+            &tokenizer_manifest.behavior_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &view.tokenizer_config_sha256,
+            &tokenizer_manifest.config_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &view.sink_implementation_sha256,
+            &sink.implementation_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &view.sink_instance_sha256,
+            &sink.instance_sha256,
+        ) or
+        receipt.output_generation != view.generation or
+        receipt.output_sequence !=
+            view.checkpoint_next_sequence or
+        receipt.sink_count != view.acknowledgement_count or
+        receipt.sink_next_sequence !=
+            view.visible_next_sequence or
+        !std.mem.eql(
+            u8,
+            &receipt.checkpoint_sha256,
+            &view.checkpoint_set_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &receipt.checkpoint_selector_sha256,
+            &view.checkpoint_selector_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &receipt.sink_ledger_sha256,
+            &view.sink_ledger_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &receipt.sink_selector_sha256,
+            &view.sink_selector_sha256,
+        ) or
+        digestIsZeroV1(view.input_archive_sha256) or
+        digestIsZeroV1(view.checkpoint_state_sha256) or
+        digestIsZeroV1(view.head_acknowledgement_sha256) or
+        digestIsZeroV1(view.result_sink_prefix_sha256) or
+        digestIsZeroV1(view.visible_tokens_sha256) or
+        digestIsZeroV1(view.visible_bytes_sha256) or
+        digestIsZeroV1(view.view_sha256))
+        return error.InvalidDurableCommittedOutput;
+    for (receipt.output_tokens, 0..) |token, index| {
+        if (token != try view.visibleToken(index))
+            return error.InvalidDurableCommittedOutput;
+    }
 }
 
 fn verifyDurableTerminalV1(
@@ -1500,12 +2328,370 @@ fn emitDurableTerminalV1(
     }
 }
 
+fn emitDurableAcknowledgedBootstrapV1(
+    writer: *std.Io.Writer,
+    package: engine.model_package_manifest.ManifestV1,
+    representation: engine.model_package_manifest.PreparedRepresentationV1,
+    identity: DurableIdentityV1,
+    selection_before: DurableSelectionV1,
+    receipt: engine.prepared_text_durable_runtime
+        .BootstrapFileReceiptV1,
+    output_count: usize,
+    sink_capacity: usize,
+    max_set_bytes: usize,
+) !void {
+    const request_id_hex = std.fmt.bytesToHex(
+        identity.request_id_sha256,
+        .lower,
+    );
+    const package_hex = std.fmt.bytesToHex(
+        package.package_sha256,
+        .lower,
+    );
+    const representation_hex = std.fmt.bytesToHex(
+        representation.representation_sha256,
+        .lower,
+    );
+    const challenge_hex = std.fmt.bytesToHex(
+        identity.challenge_sha256,
+        .lower,
+    );
+    const checkpoint_hex = std.fmt.bytesToHex(
+        receipt.checkpoint_sha256,
+        .lower,
+    );
+    const selector_hex = std.fmt.bytesToHex(
+        receipt.selector_sha256,
+        .lower,
+    );
+    const contract_hex = std.fmt.bytesToHex(
+        receipt.source_recovery_contract_sha256,
+        .lower,
+    );
+    const input_hex = std.fmt.bytesToHex(
+        receipt.input_archive_sha256,
+        .lower,
+    );
+    const sink_implementation_hex = std.fmt.bytesToHex(
+        identity.sink_implementation_sha256,
+        .lower,
+    );
+    const sink_instance_hex = std.fmt.bytesToHex(
+        identity.sink_instance_sha256,
+        .lower,
+    );
+    try writer.print(
+        "{{\"schema\":\"glacier.prepared-text-durable-run/v1\"," ++
+            "\"operation\":\"bootstrap\"," ++
+            "\"profile\":\"ordinary-package-acknowledged-v1\"," ++
+            "\"route\":\"acknowledged\"," ++
+            "\"selection_before\":\"{s}\"," ++
+            "\"bootstrap_disposition\":\"{s}\"," ++
+            "\"requested_token_count\":{d}," ++
+            "\"sink_capacity\":{d}," ++
+            "\"durable_checkpoint\":true," ++
+            "\"fresh_process_boundary_ready\":true," ++
+            "\"checked_committed_output\":false," ++
+            "\"terminal\":false,\"ownership_closed\":true," ++
+            "\"request_epoch\":{d},\"generation\":{d}," ++
+            "\"publication_next_sequence\":{d}," ++
+            "\"max_set_bytes\":{d}," ++
+            "\"request_id_sha256\":\"{s}\"," ++
+            "\"package_sha256\":\"{s}\"," ++
+            "\"representation_sha256\":\"{s}\"," ++
+            "\"challenge_sha256\":\"{s}\"," ++
+            "\"sink_implementation_sha256\":\"{s}\"," ++
+            "\"sink_instance_sha256\":\"{s}\"," ++
+            "\"checkpoint_set_sha256\":\"{s}\"," ++
+            "\"checkpoint_selector_sha256\":\"{s}\"," ++
+            "\"source_recovery_contract_sha256\":\"{s}\"," ++
+            "\"input_archive_sha256\":\"{s}\"}}\n",
+        .{
+            durableSelectionNameV1(selection_before),
+            @tagName(receipt.disposition),
+            output_count,
+            sink_capacity,
+            receipt.request_epoch,
+            receipt.generation,
+            receipt.publication_next_sequence,
+            max_set_bytes,
+            &request_id_hex,
+            &package_hex,
+            &representation_hex,
+            &challenge_hex,
+            &sink_implementation_hex,
+            &sink_instance_hex,
+            &checkpoint_hex,
+            &selector_hex,
+            &contract_hex,
+            &input_hex,
+        },
+    );
+}
+
+fn emitDurableAcknowledgedTerminalV1(
+    writer: *std.Io.Writer,
+    package: engine.model_package_manifest.ManifestV1,
+    representation: engine.model_package_manifest.PreparedRepresentationV1,
+    identity: DurableIdentityV1,
+    selection_before: DurableSelectionV1,
+    bootstrap_receipt: ?engine.prepared_text_durable_runtime
+        .BootstrapFileReceiptV1,
+    source_receipt: ?engine.prepared_text_durable_runtime
+        .AdvanceSourceFileReceiptV1,
+    receipt: engine.prepared_text_durable_runtime
+        .AdvanceTargetFileReceiptV1,
+    view: engine.prepared_text_committed_output.ViewV1,
+    output_count: usize,
+    sink_capacity: usize,
+    target_call_count: usize,
+    advanced_target_count: usize,
+    max_set_bytes: usize,
+    reveal_output: bool,
+) !void {
+    const request_id_hex = std.fmt.bytesToHex(
+        identity.request_id_sha256,
+        .lower,
+    );
+    const package_hex = std.fmt.bytesToHex(
+        package.package_sha256,
+        .lower,
+    );
+    const representation_hex = std.fmt.bytesToHex(
+        representation.representation_sha256,
+        .lower,
+    );
+    const challenge_hex = std.fmt.bytesToHex(
+        identity.challenge_sha256,
+        .lower,
+    );
+    const input_hex = std.fmt.bytesToHex(
+        view.input_archive_sha256,
+        .lower,
+    );
+    const request_hex = std.fmt.bytesToHex(
+        view.request_sha256,
+        .lower,
+    );
+    const local_plan_hex = std.fmt.bytesToHex(
+        view.local_plan_sha256,
+        .lower,
+    );
+    const tokenizer_domain_hex = std.fmt.bytesToHex(
+        view.tokenizer_domain_sha256,
+        .lower,
+    );
+    const tokenizer_behavior_hex = std.fmt.bytesToHex(
+        view.tokenizer_behavior_sha256,
+        .lower,
+    );
+    const tokenizer_config_hex = std.fmt.bytesToHex(
+        view.tokenizer_config_sha256,
+        .lower,
+    );
+    const semantic_hex = std.fmt.bytesToHex(
+        receipt.terminal_semantic_sha256,
+        .lower,
+    );
+    const checkpoint_selector_hex = std.fmt.bytesToHex(
+        view.checkpoint_selector_sha256,
+        .lower,
+    );
+    const checkpoint_set_hex = std.fmt.bytesToHex(
+        view.checkpoint_set_sha256,
+        .lower,
+    );
+    const checkpoint_state_hex = std.fmt.bytesToHex(
+        view.checkpoint_state_sha256,
+        .lower,
+    );
+    const sink_selector_hex = std.fmt.bytesToHex(
+        view.sink_selector_sha256,
+        .lower,
+    );
+    const sink_ledger_hex = std.fmt.bytesToHex(
+        view.sink_ledger_sha256,
+        .lower,
+    );
+    const sink_implementation_hex = std.fmt.bytesToHex(
+        view.sink_implementation_sha256,
+        .lower,
+    );
+    const sink_instance_hex = std.fmt.bytesToHex(
+        view.sink_instance_sha256,
+        .lower,
+    );
+    const head_acknowledgement_hex = std.fmt.bytesToHex(
+        view.head_acknowledgement_sha256,
+        .lower,
+    );
+    const sink_prefix_hex = std.fmt.bytesToHex(
+        view.result_sink_prefix_sha256,
+        .lower,
+    );
+    const visible_tokens_hex = std.fmt.bytesToHex(
+        view.visible_tokens_sha256,
+        .lower,
+    );
+    const visible_bytes_hex = std.fmt.bytesToHex(
+        view.visible_bytes_sha256,
+        .lower,
+    );
+    const view_hex = std.fmt.bytesToHex(
+        view.view_sha256,
+        .lower,
+    );
+    const source_executed = if (source_receipt) |source|
+        source.disposition == .advanced
+    else
+        false;
+    const model_execution_performed =
+        source_executed or advanced_target_count != 0;
+    const preexisting_generation_continuation_performed =
+        selection_before != .absent and
+        model_execution_performed;
+
+    try writer.print(
+        "{{\"schema\":\"glacier.prepared-text-durable-run/v1\"," ++
+            "\"operation\":\"advance\"," ++
+            "\"profile\":\"ordinary-package-acknowledged-v1\"," ++
+            "\"route\":\"acknowledged\"," ++
+            "\"selection_before\":\"{s}\"," ++
+            "\"disposition\":\"{s}\"," ++
+            "\"bootstrap_disposition\":",
+        .{
+            durableSelectionNameV1(selection_before),
+            @tagName(receipt.disposition),
+        },
+    );
+    if (bootstrap_receipt) |bootstrap| {
+        try writer.print(
+            "\"{s}\"",
+            .{@tagName(bootstrap.disposition)},
+        );
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll(",\"source_disposition\":");
+    if (source_receipt) |source| {
+        try writer.print(
+            "\"{s}\"",
+            .{@tagName(source.disposition)},
+        );
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(
+        ",\"requested_token_count\":{d}," ++
+            "\"sink_capacity\":{d}," ++
+            "\"target_call_count\":{d}," ++
+            "\"advanced_target_count\":{d}," ++
+            "\"durable_checkpoint\":true," ++
+            "\"fresh_process_continuation_supported\":true," ++
+            "\"preexisting_generation_continuation_performed\":{s}," ++
+            "\"checked_committed_output\":true," ++
+            "\"terminal\":true,\"ownership_closed\":true," ++
+            "\"model_execution_performed\":{s}," ++
+            "\"output_disclosed\":{s}," ++
+            "\"output_encoding\":\"token-ids\"," ++
+            "\"request_epoch\":{d},\"generation\":{d}," ++
+            "\"publication_next_sequence\":{d}," ++
+            "\"visible_next_sequence\":{d}," ++
+            "\"acknowledgement_count\":{d}," ++
+            "\"token_count\":{d}," ++
+            "\"max_set_bytes\":{d}," ++
+            "\"request_id_sha256\":\"{s}\"," ++
+            "\"package_sha256\":\"{s}\"," ++
+            "\"representation_sha256\":\"{s}\"," ++
+            "\"challenge_sha256\":\"{s}\"," ++
+            "\"input_archive_sha256\":\"{s}\"," ++
+            "\"request_sha256\":\"{s}\"," ++
+            "\"local_plan_sha256\":\"{s}\"," ++
+            "\"tokenizer_domain_sha256\":\"{s}\"," ++
+            "\"tokenizer_behavior_sha256\":\"{s}\"," ++
+            "\"tokenizer_config_sha256\":\"{s}\",",
+        .{
+            output_count,
+            sink_capacity,
+            target_call_count,
+            advanced_target_count,
+            booleanNameV1(
+                preexisting_generation_continuation_performed,
+            ),
+            booleanNameV1(model_execution_performed),
+            booleanNameV1(reveal_output),
+            view.request_epoch,
+            view.generation,
+            view.checkpoint_next_sequence,
+            view.visible_next_sequence,
+            view.acknowledgement_count,
+            view.token_count,
+            max_set_bytes,
+            &request_id_hex,
+            &package_hex,
+            &representation_hex,
+            &challenge_hex,
+            &input_hex,
+            &request_hex,
+            &local_plan_hex,
+            &tokenizer_domain_hex,
+            &tokenizer_behavior_hex,
+            &tokenizer_config_hex,
+        },
+    );
+    try writer.print(
+        "\"terminal_semantic_sha256\":\"{s}\"," ++
+            "\"checkpoint_selector_sha256\":\"{s}\"," ++
+            "\"checkpoint_set_sha256\":\"{s}\"," ++
+            "\"checkpoint_state_sha256\":\"{s}\"," ++
+            "\"sink_selector_sha256\":\"{s}\"," ++
+            "\"sink_ledger_sha256\":\"{s}\"," ++
+            "\"sink_implementation_sha256\":\"{s}\"," ++
+            "\"sink_instance_sha256\":\"{s}\"," ++
+            "\"head_acknowledgement_sha256\":\"{s}\"," ++
+            "\"result_sink_prefix_sha256\":\"{s}\"," ++
+            "\"visible_tokens_sha256\":\"{s}\"," ++
+            "\"visible_bytes_sha256\":\"{s}\"," ++
+            "\"utf8_valid\":{s}," ++
+            "\"view_sha256\":\"{s}\",\"output_tokens\":",
+        .{
+            &semantic_hex,
+            &checkpoint_selector_hex,
+            &checkpoint_set_hex,
+            &checkpoint_state_hex,
+            &sink_selector_hex,
+            &sink_ledger_hex,
+            &sink_implementation_hex,
+            &sink_instance_hex,
+            &head_acknowledgement_hex,
+            &sink_prefix_hex,
+            &visible_tokens_hex,
+            &visible_bytes_hex,
+            booleanNameV1(view.utf8_valid),
+            &view_hex,
+        },
+    );
+    if (!reveal_output) {
+        return writer.writeAll("null}\n");
+    }
+    try writer.writeByte('[');
+    for (0..output_count) |index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.print(
+            "{d}",
+            .{try view.visibleToken(index)},
+        );
+    }
+    try writer.writeAll("]}\n");
+}
+
 fn durableSelectionNameV1(
     selection: DurableSelectionV1,
 ) []const u8 {
     return switch (selection) {
         .absent => "absent",
         .source_live => "source-live",
+        .target_ready => "target-ready",
         .terminal => "terminal",
     };
 }
@@ -1521,7 +2707,7 @@ fn usage(writer: *std.Io.Writer) !void {
             "--license <license-file> [--package <model.glpkg>] " ++
             "[--n 1..64] " ++
             "[--durable-dir <absolute-existing-directory> " ++
-            "--request-id <64-lowercase-hex> --n 1 " ++
+            "--request-id <64-lowercase-hex> --n 1..64 " ++
             "[--bootstrap-only] [--reveal-output] " ++
             "[--max-set-bytes 1..67108864]]\n",
     );

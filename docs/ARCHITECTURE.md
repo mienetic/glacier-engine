@@ -625,18 +625,25 @@ the public composition directly. A separate four-boundary direct-terminal
 smoke covers post-step, post-retirement, selector-rename, and
 post-generation-two deaths, followed by fresh recovery and a zero-step audit.
 One concrete store accepts runtime acknowledgement capacities `0..63`.
-The ordinary-model producer and package admission now compose the direct
-one-token route in `text-run`: request/package/representation/license/raw-text
-roots derive stable cross-process runtime identities, the selected lineage is
-matched read-only before writer authority, `--bootstrap-only` selects
-generation one, and a fresh invocation advances it. After ownership closes,
-the command renders the selector-rechecked view; this does not make the overall
-invocation a post-hoc read-only inspector. The focused golden path uses the
-same `glacier` compile root, independently decodes both selected generations,
-and compares the committed token with ordinary execution. Acknowledged
-multi-token command/serving output, exhaustive
-storage/power-loss evidence, broader tokenizer/model/GPU package profiles, and
-non-POSIX native evidence remain open.
+The ordinary-model producer and package admission now compose both routes in
+`text-run`. Count one is sink-free at generation `1 -> 2`; counts `2..64`
+use acknowledged source/target progress with capacity `N - 1` and terminal
+generation `N + 1`. Request/package/representation/license/raw-text roots
+derive stable cross-process identities, and the acknowledged challenge also
+binds exact `N`. The selected lineage is matched read-only before writer
+authority. `--bootstrap-only` selects generation one; a normal invocation
+resumes selected source or target state using one fresh runtime per bounded
+target call until terminal. After ownership closes, the command renders the
+applicable selector-rechecked view; this does not make the overall invocation
+a post-hoc read-only inspector.
+
+The focused golden path uses the same `glacier` compile root. Direct `N=1`
+independently decodes both generations. Acknowledged `N=4` walks the complete
+checkpoint/sink lineage after fresh-process continuation, while `N=2` and
+`N=64` cover capacities `1` and `63`; every durable output equals ordinary
+execution. Early EOS, fewer-than-admitted outputs, unary/streaming serving,
+exhaustive storage/power-loss evidence, broader tokenizer/model/GPU package
+profiles, and non-POSIX native evidence remain open.
 
 The bound-plan and residency bridge is currently an experimental Zig/direct
 API. It has no fixed `BoundPlanV1` wire, projected C verifier, or retained
@@ -1443,7 +1450,8 @@ targets remain gated until their named native adapters and evidence pass.
   49-boundary process-death campaigns.
 - [Public prepared-text durable runtime](PREPARED_TEXT_DURABLE_RUNTIME.md):
   public caller-owned bootstrap/source/target filesystem transitions and
-  read-only committed-output composition.
+  package-aware fixed-output durable orchestration plus read-only
+  committed-output composition.
 - [Prepared-text result inspector](PREPARED_TEXT_RESULT_INSPECTOR.md):
   metadata-first aligned/exactly-one-ahead committed-output reconciliation,
   explicit lossless disclosure, and the no-lease/no-authority boundary.

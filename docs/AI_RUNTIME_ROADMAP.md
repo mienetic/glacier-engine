@@ -985,7 +985,7 @@ expand the base adapter's capabilities.
 
 | Family | Representative operations | Current state | First retained slice | Integration gate |
 | --- | --- | --- | --- | --- |
-| Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication, generation-one source replay, fresh-process handoff, and acknowledged local sink progress integrated experimentally on the POSIX durable adapter | Extend the retained synthetic multi-target proof to one small legal artifact and add repeated/cancelled handoff evidence | Declared numerical equivalence, exact KV ownership, recoverable source exit, replay-safe external publication |
+| Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication, generation-one source replay, fresh-process handoff, acknowledged local sink progress, and package-aware checked durable fixed-output `1..64` CLI integration are experimental on the POSIX durable adapter | Run the same checked route with one small legal production artifact and add focused target-boundary restart/cancellation evidence | Declared numerical equivalence, exact KV ownership, recoverable source exit, replay-safe external publication |
 | Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result, vision/audio/temporal-video embedding fixtures, a generic exact-integer dense-tensor reranker with canonical ranked items, and a generic dense encoder with exact Q30 L2 normalization integrated | Add a generic classification profile and compose embedding-to-retrieval under the same lifecycle | Typed class-score publication, retrieval/index identity, and production adapters |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, fresh-process stateful transcript continuation, and restartable exact word-timing/speaker publication integrated; production model gated | Add language/punctuation, overlapping-speaker policy, and crash-atomic checkpoint composition | No sample loss/duplication, exact streaming restart, annotation lineage, calibrated production quality |
@@ -1719,9 +1719,9 @@ It compares the embedded receipt with the actual GLRT container identity,
 including its exact hash and size. Another valid representation of the same
 portable package root therefore needs its own matching bundle.
 
-It retains the R1k-b1 execution boundary: output is token IDs in deterministic
-JSON, publication is process-local, and the report remains explicit that it
-has no durable result sink or fresh-process recovery.
+Without durable options, it retains the R1k-b1 execution boundary: output is
+token IDs in deterministic JSON, publication is process-local, and the report
+remains explicit that it has no durable result sink or fresh-process recovery.
 
 The focused golden path independently decodes and reconstructs the package and
 prepared relationship in standard-library Python, checks portable/package
@@ -1732,66 +1732,66 @@ substitution. Affected changes to this slice reuse the existing
 shared-ABI, cross-platform, and release gates.
 
 This does not establish production readiness or general model-family support.
-R1k-b5 adds checked durable output and fresh-process continuation for the
-one-token direct route; acknowledged multi-token execution, broader
+R1k-b5 adds checked durable output and fresh-process continuation for fixed
+output counts `1..64`; serving integration, broader
 tokenizer/model/source/numerical profiles, GPU package production, native
 non-POSIX evidence, authenticated distribution, an explicit bounded/no-follow
 `--config` input, and production-model quality/performance evidence remain
 open. See
 [Ordinary Model Package](MODEL_PACKAGE.md).
 
-#### R1k-b5 — Package-aware direct-terminal durable command
+#### R1k-b5 — Package-aware checked durable text command
 
-Status: **integrated experimental CPU/POSIX one-token vertical slice**.
+Status: **integrated experimental CPU/POSIX fixed-output `1..64` vertical
+slice**.
 
-`text-run` now accepts `--durable-dir`, a caller-chosen 32-byte lowercase
-hexadecimal `--request-id`, and exactly `--n 1` for an admitted ordinary
-package. The CLI composes the existing sink-free operations:
+`text-run` accepts `--durable-dir`, a caller-chosen 32-byte lowercase
+hexadecimal `--request-id`, and fixed `--n 1..64` for an admitted ordinary
+package. The CLI composes two existing routes:
 
-1. read the active selector and match its request epoch and challenge before
-   writer authority;
-2. create or exactly recover generation one with
-   `bootstrapDirectTerminalFileV1`;
-3. advance or replay generation two with
-   `advanceDirectTerminalSourceFileV1`; and
-4. render only the selector-rechecked
-   `prepared_text_direct_terminal_output.inspectDirectoryV1` view after
-   runtime ownership closes.
+1. `N=1` uses `bootstrapDirectTerminalFileV1` and
+   `advanceDirectTerminalSourceFileV1`, then renders the sink-free direct view;
+2. `N=2..64` uses `bootstrapFileV1`, advances the source once through
+   `advanceSourceFileV1`, then creates a fresh target runtime for each bounded
+   `advanceTargetFileV1` call until terminal generation `N + 1`; and
+3. both routes render only a selector-rechecked read-only view after runtime
+   ownership closes.
 
-No CLI-specific checkpoint, selector, lock, decoder, or result journal was
-added. `--bootstrap-only` leaves the exact generation-one selection so a fresh
-process can continue it. Repeating a completed request returns
-`already_selected` without another model step. The default report omits the
-token payload; its digest metadata is not a confidentiality boundary.
+The acknowledged route uses result-sink capacity `N - 1`. No CLI-specific
+checkpoint, selector, lock, sink, decoder, recovery protocol, or executable
+compile root was added. `--bootstrap-only` leaves exact generation one so a
+fresh process can continue it. Exact terminal retry returns `already_selected`
+for the direct route or `already_terminal` for the acknowledged route without
+another model step. The default report omits token payloads; digest metadata is
+not a confidentiality boundary.
 
-The domain-separated request challenge binds the request ID, admitted package
-root, exact prepared-representation root, license root, and raw-text root.
-Callers retain a new ID for each logical request and reuse it only for
-continuation or retry. Stable request, storage, Bank, Scheduler, coordinator,
-scheduling, and step-sink identities are derived from that challenge. A
-changed prompt, license, package, representation, or request ID therefore
-cannot acquire the selected lease before execution or durable mutation.
+The direct count-one challenge retains its existing domain. The acknowledged
+challenge uses a separate domain and also binds the canonical fixed output
+count. Both bind request ID, package, prepared representation, license, and
+raw-text roots. Stable request, storage, Bank, Scheduler, coordinator,
+scheduling, step-sink, result-sink, and generation-derived target identities
+come from that challenge. A changed count or other bound input therefore
+rejects before writer mutation.
 
 The existing `text-runtime-golden-path-test` compiles the same `glacier`
-executable once. Its Python controller bootstraps in process A, resumes and
-executes in process B, independently decodes both selected filesystem
-generations and the direct committed-output view, then retries in process C
-and requires the directory manifest to remain unchanged. Before process B, an
-exact bootstrap retry plus changed prompt, request, license, valid package-root,
-and valid alternate-representation attempts must leave generation one
-byte-identical. The gate also covers one-shot execution, rejects out-of-range
-and incompatible options, and requires numerical equality with the first token
-from ordinary execution of the same package and prompt.
+executable once. Its direct count-one evidence remains intact. For acknowledged
+`N=4`, process A bootstraps and retries generation one, a changed count rejects
+without mutation, process B continues to terminal, and process C proves an
+immutable `already_terminal` retry. One-shot `N=2` and `N=64` cover minimum
+and maximum sink capacities `1` and `63`. Independent Python decoding walks
+the complete checkpoint/input/sink lineage, reconstructs committed-output
+roots, and requires every token sequence to equal ordinary execution.
 
 `checked_committed_output=true` denotes structural and lineage reconciliation,
 not independent model-quality evidence. The command enters the idempotent
 writer workflow before calling the read-only view; it is not a post-hoc
 read-only inspector.
 
-This slice is deliberately not the acknowledged `2..64` route. It has no
-target runtime or result-sink acknowledgement, does not cover early EOS, and
-does not add exhaustive storage-fault, power-loss, GPU-resident, remote,
-hostile-writer, Win32, or native multi-OS evidence.
+This slice remains fixed-length. It does not cover early EOS,
+fewer-than-admitted outputs, package-aware per-target CLI process-death or
+cancellation campaigns, exhaustive storage faults, physical power loss,
+GPU-resident execution, remote effects, hostile writers, Win32 durable
+publication, native multi-OS evidence, or unary/streaming serving.
 
 #### Public durable-runtime composition foundation
 
@@ -1825,13 +1825,14 @@ one source step retires its runtime before selecting generation two at the same
 publication sequence, and a dedicated read-only view verifies the embedded
 generation-one lineage without a sink or acknowledgement.
 
-This is a low-level foundation, not the R1 user-path exit. A bounded
+R1k-b5 now composes this foundation into the checked package-aware fixed-output
+CLI. A bounded
 direct-terminal smoke now injects real process death after the one model step,
 after runtime retirement, after selector rename, and after generation-two
 publication. An independent decoder requires exact generation-one or
 generation-two visibility, fresh convergence, and a zero-step audit. Exhaustive
-storage-fault and power-loss matrices, package-aware checked durable
-multi-token `text-run` and serving integration, non-POSIX native evidence,
+storage-fault and power-loss matrices, serving integration, non-POSIX native
+evidence,
 broader tokenizer/model/GPU package coverage, and stable language bindings
 remain open.
 See
@@ -1844,9 +1845,9 @@ recoverable source-exit and replay-safe external publication. The retained
 synthetic fresh-process proof now includes replay-safe local sink progress, but
 the direct-terminal proof remains a bounded four-boundary POSIX smoke rather
 than an exhaustive storage or power-loss campaign. Ordinary-package production
-and admission now include a checked one-token durable command with deliberate
-fresh-process generation-one continuation for one narrow CPU profile.
-Acknowledged multi-token command/serving rendering, remote delivery, broader
+and admission now include checked durable fixed output `1..64`, with focused
+`N=2`, fresh-process `N=4`, and `N=64` evidence for one narrow CPU/POSIX
+profile. Serving, production artifacts, remote delivery, broader
 tokenizers/models, GPU package execution, and multi-OS requirements remain
 open.
 
