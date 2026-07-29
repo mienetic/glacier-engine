@@ -72,11 +72,54 @@ pub fn makeV1(
     output_tokens: []const u32,
     logical_kv_sha256: Digest,
 ) Error!TerminalSemanticV1 {
-    if (!session.boundarySnapshotValidForBoundPlanV2(
+    return makeForProfileV1(
         boundary,
         bound_plan,
         local_plan,
-    ) or !boundary.base.publication.terminal)
+        output_tokens,
+        logical_kv_sha256,
+        false,
+    );
+}
+
+pub fn makeVariableV1(
+    boundary: session.BoundarySnapshotV2,
+    bound_plan: session.BoundPlanV1,
+    local_plan: session.PlanV1,
+    output_tokens: []const u32,
+    logical_kv_sha256: Digest,
+) Error!TerminalSemanticV1 {
+    return makeForProfileV1(
+        boundary,
+        bound_plan,
+        local_plan,
+        output_tokens,
+        logical_kv_sha256,
+        true,
+    );
+}
+
+fn makeForProfileV1(
+    boundary: session.BoundarySnapshotV2,
+    bound_plan: session.BoundPlanV1,
+    local_plan: session.PlanV1,
+    output_tokens: []const u32,
+    logical_kv_sha256: Digest,
+    variable_terminal: bool,
+) Error!TerminalSemanticV1 {
+    const boundary_valid = if (variable_terminal)
+        session.boundarySnapshotValidForVariableBoundPlanV2(
+            boundary,
+            bound_plan,
+            local_plan,
+        )
+    else
+        session.boundarySnapshotValidForBoundPlanV2(
+            boundary,
+            bound_plan,
+            local_plan,
+        );
+    if (!boundary_valid or !boundary.base.publication.terminal)
         return Error.InvalidTerminalBoundary;
     if (output_tokens.len == 0 or
         output_tokens.len > std.math.maxInt(u64))

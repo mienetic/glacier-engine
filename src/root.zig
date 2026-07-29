@@ -310,6 +310,8 @@ pub const prepared_text_restore_admission =
     @import("prepared_text_restore_admission.zig");
 pub const prepared_text_terminal_equivalence =
     @import("prepared_text_terminal_equivalence.zig");
+pub const prepared_text_variable_terminal =
+    @import("prepared_text_variable_terminal.zig");
 pub const decode_lane4 = @import("decode_lane4.zig");
 pub const sampling = @import("sampling.zig");
 pub const tokenizer = @import("tokenizer.zig");

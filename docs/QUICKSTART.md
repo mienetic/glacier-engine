@@ -521,8 +521,10 @@ has no package or durable request identity, so publication is transactional but
 process-local and its JSON reports no durable result storage or fresh-process
 recovery. Package-aware `--durable-dir` plus `--request-id` instead opts into
 the sink-free direct route for `N=1` or acknowledged local POSIX execution for
-fixed `N=2..64`. Deterministic prompt hashes are correlatable evidence, not
-anonymization. See
+fixed `N=2..64`. A process-local caller may add `--eos-token ID` to make `--n`
+an upper bound; durable requests reject that option until early-completion
+recovery is defined. Deterministic prompt hashes are correlatable evidence,
+not anonymization. See
 [Verified Raw-Text Runtime Path](PREPARED_TEXT_RAW_INPUT.md).
 
 Run its independent retained gate with:

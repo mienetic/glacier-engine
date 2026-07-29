@@ -1190,6 +1190,17 @@ license roots but does not inspect the raw bytes they name; it therefore does
 not establish raw-text tokenizer identity, a stable package identity, or
 license-byte attestation.
 
+An additive process-local variable-terminal profile now composes that
+`SessionV2` boundary with `TerminalSemanticV1`. When an explicit in-vocabulary
+EOS ends generation before the admitted maximum, `CompletedEarlyV1` binds the
+terminal boundary and semantic root to the ordinary LaneWeave quota-close
+event; the enclosing `EvidenceV1` additionally binds the final service receipt.
+A raw cancel event remains cancellation; only the validated aggregate is
+successful early completion. Reaching the maximum retires normally; EOS on
+that final token is explicitly classified as `eos_at_limit` without an
+early-completion sidecar. This addition does not change `SessionV3`,
+`ResultEnvelopeV1`, or durable recovery semantics.
+
 The terminal envelope and `TerminalResultEvidenceV1` are in-process evidence,
 not a durable external result sink or a historical attestation. R1d adds no
 fixed `BoundPlanV1` wire, projected C verifier, prepared-session checkpoint, or
@@ -1419,8 +1430,8 @@ prefix.
 The current durable adapter is descriptor-relative POSIX. Cross-compilation
 does not establish Win32 durable-file behavior or native OS support. GPU
 execution, device-resident checkpointing, device-loss recovery, production
-models, early EOS, native multi-OS recovery, and production workload evidence
-remain roadmap work. See
+models, durable early EOS, native multi-OS recovery, and production workload
+evidence remain roadmap work. See
 [Durable Prepared-Text Handoff](PREPARED_TEXT_DURABLE_HANDOFF.md).
 
 #### R1i — Acknowledged prepared-text delivery and target recovery
@@ -1787,8 +1798,9 @@ not independent model-quality evidence. The command enters the idempotent
 writer workflow before calling the read-only view; it is not a post-hoc
 read-only inspector.
 
-This slice remains fixed-length. It does not cover early EOS,
-fewer-than-admitted outputs, package-aware per-target CLI process-death or
+This durable slice remains fixed-length. The separate process-local command
+supports bounded early EOS, but durable early completion and retry remain
+open. R1k-b5 does not cover package-aware per-target CLI process-death or
 cancellation campaigns, exhaustive storage faults, physical power loss,
 GPU-resident execution, remote effects, hostile writers, Win32 durable
 publication, native multi-OS evidence, or unary/streaming serving.

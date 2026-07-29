@@ -588,7 +588,7 @@ Generation one retains the exact input archive; generation two carries it in a
 six-object restart set; acknowledged nonterminal generations carry it in an
 eight-object set; and the terminal set embeds that predecessor transitively.
 Every fresh source or target re-tokenizes and checks the current local/Common
-plan before admission. The combined work still does not add early EOS,
+plan before admission. This durable work still does not add early EOS,
 fewer-than-admitted outputs, a stable public package ABI, replay after a
 source-side external effect, arbitrary remote exactly-once effects,
 hostile-writer or physical power-loss guarantees, GPU-resident continuation,
@@ -641,9 +641,16 @@ The focused golden path uses the same `glacier` compile root. Direct `N=1`
 independently decodes both generations. Acknowledged `N=4` walks the complete
 checkpoint/sink lineage after fresh-process continuation, while `N=2` and
 `N=64` cover capacities `1` and `63`; every durable output equals ordinary
-execution. Early EOS, fewer-than-admitted outputs, unary/streaming serving,
-exhaustive storage/power-loss evidence, broader tokenizer/model/GPU package
-profiles, and non-POSIX native evidence remain open.
+execution. The same root now covers an additive process-local `SessionV2`
+profile where explicit EOS may finish below the admitted maximum. Its
+`CompletedEarlyV1` sidecar joins the terminal boundary and semantic root to the
+ordinary quota-close event; the enclosing `EvidenceV1` also joins the final
+service receipt. An unadorned cancel event therefore cannot be interpreted as
+success. Durable early EOS, unary/streaming serving, exhaustive
+storage/power-loss evidence, broader tokenizer/model/GPU package profiles, and
+non-POSIX native evidence remain open. EOS sampled exactly at the admitted
+maximum is classified as `eos_at_limit` and follows normal retirement because
+there is no unused quota.
 
 The bound-plan and residency bridge is currently an experimental Zig/direct
 API. It has no fixed `BoundPlanV1` wire, projected C verifier, or retained

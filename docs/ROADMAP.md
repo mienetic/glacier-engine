@@ -24,6 +24,7 @@ evidence. The plane and model-family sequence is specified in the
 
 | Track | Status | What works now | Main gap |
 | --- | --- | --- | --- |
+| Text terminal lifecycle | Integrated process-local slice | Fixed-result `SessionV3` remains byte-compatible; explicit `--eos-token` uses `SessionV2`, treats `--n` as a ceiling, binds early success to terminal semantic plus final-service/close evidence, and returns ownership to zero | Durable early completion/retry, serving integration, production models, and broader native evidence |
 | Exact admission | Integrated | ResourceBank receipts, capacity rejection, release, snapshots | Physical telemetry adapters and long-running pressure campaigns |
 | Hierarchical ownership | Integrated | LeaseTree child scopes, fresh-Bank reacquisition, paged-KV remap, two-process handoff, recoverable generation-one source enrollment, seven-phase checkpoint root-switch recovery, lease-backed single-consumer prepared-text source/target grants, and post-generation-two claim advancement across acknowledged local POSIX target generations | Production-model continuation, repeated/cancelled handoff evidence, and durable lifecycle metadata |
 | Deterministic QoS | Integrated | LaneWeave admission, weighted service, deadlines, cancellation, replay, bounded open-loop and finite-source closed-loop pressure campaigns, exact scheduler-receipt handoff to final-quantum media transactions, one mixed typed vision/audio/temporal-video workload with scheduler-owned publication, and one atomic process-local typed tool transaction profile | Family-aware batching, preemption, placement, provider/stateful/live-tool workload profiles, and broader multi-tenant integration |
@@ -48,8 +49,9 @@ evidence. The plane and model-family sequence is specified in the
 
 ### Product delivery focus
 
-Status: **one supported process-local golden path plus a focused experimental
-package-aware durable fixed-output `1..64` path**.
+Status: **one supported process-local golden path with fixed-result and bounded
+early-EOS profiles, plus a focused experimental package-aware durable
+fixed-output `1..64` path**.
 
 The only project-wide dependency-ordered delivery sequence is
 [R0–R6 in the Glacier AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md#delivery-sequence).
@@ -115,6 +117,17 @@ Next slices:
   existing public bootstrap/source/target APIs and runtime-capacity sink. The
   focused gate retains `N=2`, fresh-process `N=4`, and `N=64` evidence while
   compiling the same `glacier` executable once.
+- [x] Add opt-in bounded early EOS to the process-local package-aware command.
+  `--n` becomes an upper bound only when `--eos-token` is explicit. A
+  successful early close requires a canonical aggregate whose sidecar joins
+  the terminal boundary and portable semantic result to the quota-release
+  event, while the enclosing evidence also joins the final service receipt.
+  An EOS miss retires normally, while EOS exactly at the bound is classified
+  separately and has no unused-quota sidecar. Fixed V1/V2/V3 entry points retain
+  their original EOS rule; the variable profile uses explicit constructors and
+  verifies the live final commit before close. The same golden DAG independently
+  recomputes both new roots. Durable EOS rejects before state mutation until
+  its recovery and retry contracts are defined.
 - [ ] Add an explicit bounded/no-follow `package-model --config` input. The
   current command derives configuration from the converted model and does not
   discover ambient `<output>.json` sidecars.
@@ -124,8 +137,9 @@ Next slices:
   unsupported model/tokenizer, capacity rejection, cancellation, source death,
   target death, and exact resume.
 
-Development verification for the producer, package-aware command, bounded
-input helper, and independent package oracle reuses the existing focused
+Development verification for the producer, package-aware command,
+variable-terminal lifecycle, bounded input helper, and independent package
+oracle reuses the existing focused
 `text-runtime-golden-path-test` DAG through `affected-fast`. Broad host and
 foreign-target suites are deferred to shared-ABI, integration, and release
 boundaries; the focused route does not replace those promotion gates.
@@ -340,6 +354,11 @@ retained tests and independent review.
   compiler caches in the private workspace, reuse them inside one run, remove
   them afterward to bound disk growth, and keep one independent DAG per foreign
   target.
+- [x] Route ordinary pull requests and `main` pushes through bounded
+  `affected-fast` gates, then expose complete path-aware `affected` verification
+  as the default manual promotion profile with an explicit base revision.
+  Reserve broad `full`, retained-target `matrix`, and native Metal work for
+  deliberate promotion or tagged-release boundaries.
 - [x] Read-only provider evidence outer-envelope inspector with deterministic
   JSON, independent oracle coverage, explicit self-asserted nested fields, and
   no payload, credential, composition, or authority claim.

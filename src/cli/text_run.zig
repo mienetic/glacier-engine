@@ -3,12 +3,14 @@
 //! This path intentionally bypasses the compatibility `generate` command. It
 //! validates a prepared GLRT image, hashes exact license bytes, tokenizes one
 //! strict UTF-8 prompt, binds that evidence into the Common Model Contract,
-//! executes through SessionV3, seals the terminal result, and proves final
-//! logical ownership returns to zero.
+//! executes through either fixed-result SessionV3 or the opt-in process-local
+//! variable terminal profile, and proves final logical ownership returns to
+//! zero.
 
 const std = @import("std");
 const engine = @import("engine");
 const bounded_input = engine.bounded_file_input;
+const variable_terminal = engine.prepared_text_variable_terminal;
 
 const maximum_license_bytes =
     engine.model_package_producer.maximum_license_bytes;
@@ -277,6 +279,7 @@ pub fn run(
     var durable_max_set_bytes_supplied = false;
     var new_tokens: usize = 4;
     var new_tokens_supplied = false;
+    var eos_token: ?u32 = null;
     var index: usize = 3;
     while (index < args.len) : (index += 1) {
         const argument = args[index];
@@ -309,6 +312,15 @@ pub fn run(
             if (index >= args.len) return error.InvalidUsage;
             new_tokens = std.fmt.parseInt(
                 usize,
+                args[index],
+                10,
+            ) catch return error.InvalidUsage;
+        } else if (std.mem.eql(u8, argument, "--eos-token")) {
+            if (eos_token != null) return error.InvalidUsage;
+            index += 1;
+            if (index >= args.len) return error.InvalidUsage;
+            eos_token = std.fmt.parseInt(
+                u32,
                 args[index],
                 10,
             ) catch return error.InvalidUsage;
@@ -349,6 +361,8 @@ pub fn run(
     }
     const durable_requested = durable_directory != null;
     if (durable_requested) {
+        if (eos_token != null)
+            return error.DurableEosUnsupported;
         if (package_path == null or
             durable_request_id == null or
             !new_tokens_supplied or
@@ -501,6 +515,10 @@ pub fn run(
         text,
     );
     defer tokenized.deinit();
+    if (eos_token) |token| {
+        if (token >= manifest.vocab_size)
+            return error.InvalidEosToken;
+    }
 
     if (durable_directory) |directory_path| {
         const admission = admitted_bundle orelse
@@ -584,19 +602,37 @@ pub fn run(
     };
     const options: engine.prepared_text_session.OptionsV1 = .{
         .max_new_tokens = new_tokens,
+        .eos_token = eos_token orelse std.math.maxInt(u32),
     };
-    const local_plan = try engine.prepared_text_session.makePlanV1(
-        model,
-        tokenized.tokens,
-        options,
-    );
+    const local_plan = if (eos_token != null)
+        try engine.prepared_text_session.makeVariablePlanV1(
+            model,
+            tokenized.tokens,
+            options,
+        )
+    else
+        try engine.prepared_text_session.makePlanV1(
+            model,
+            tokenized.tokens,
+            options,
+        );
     const bound_input =
         try engine.prepared_text_raw_input.makeBoundPlanInputV1(
             request_epoch,
             manifest,
             artifact_license_sha256,
         );
-    const bound_plan =
+    const bound_plan = if (eos_token != null)
+        try engine.prepared_text_session.makeVariableBoundPlanV1(
+            model,
+            tokenized.tokens,
+            options,
+            local_plan,
+            scheduling,
+            &scheduler,
+            bound_input,
+        )
+    else
         try engine.prepared_text_session.makeBoundPlanV1(
             model,
             tokenized.tokens,
@@ -613,6 +649,81 @@ pub fn run(
             local_plan,
             bound_plan,
         );
+
+    if (eos_token != null) {
+        var session: engine.prepared_text_session.SessionV2 = .{};
+        defer session.deinit();
+        const start = try session.startVariableV1(
+            allocator,
+            &model,
+            tokenized.tokens,
+            options,
+            local_plan,
+            bound_input,
+            bound_plan,
+            scheduling,
+            &scheduler,
+            &bank,
+        );
+        switch (start) {
+            .started => {},
+            .rejected => return error.AdmissionRejected,
+        }
+
+        var sink: ReceiptSinkV1 = .{};
+        var final_commit: ?engine.lane_publication_txn.CommitReceiptV1 = null;
+        while (!session.isFinished()) {
+            final_commit = try session.step(
+                try scheduler.prepareService(),
+                sink.interface(),
+            );
+        }
+        const output = session.outputTokens();
+        if (output.len == 0 or final_commit == null)
+            return error.PublicationMismatch;
+        const evidence = try variable_terminal.completeV1(
+            &session,
+            final_commit.?,
+        );
+        if (sink.prepare_calls != output.len or
+            sink.commit_calls != output.len or
+            sink.abort_calls != 0 or
+            evidence.actual_new_tokens !=
+                @as(u64, @intCast(output.len)))
+            return error.PublicationMismatch;
+
+        _ = try scheduler.close();
+        scheduler_closed = true;
+        const bank_snapshot = try bank.snapshot();
+        if (!bank_snapshot.used.isZero() or
+            bank_snapshot.committed_receipts != 0)
+            return error.ResourceLeak;
+
+        return writeVariableTerminalReportV1(
+            writer,
+            evidence,
+            output,
+            if (admitted_bundle != null)
+                "ordinary-package-v1"
+            else
+                "retained-r1kb1-fixture-v1",
+            if (raw_text_path != null) "file" else "argv",
+            text.len,
+            tokenized.tokens.len,
+            manifest.vocab_size,
+            if (admitted_bundle) |admission|
+                admission.package.package_sha256
+            else
+                null,
+            if (admitted_representation) |representation|
+                representation.representation_sha256
+            else
+                null,
+            local_plan.plan_sha256,
+            bound_plan.bound_plan_sha256,
+            bound_plan.execution.challenge_sha256,
+        );
+    }
 
     var session: engine.prepared_text_session.SessionV3 = .{};
     defer session.deinit();
@@ -992,6 +1103,191 @@ pub fn run(
             &residency_binding_wire_hex,
             &result_envelope_wire_hex,
         },
+    );
+}
+
+fn writeVariableTerminalReportV1(
+    writer: *std.Io.Writer,
+    evidence: variable_terminal.EvidenceV1,
+    output_tokens: []const u32,
+    model_profile: []const u8,
+    prompt_source: []const u8,
+    prompt_bytes: usize,
+    prompt_tokens: usize,
+    tokenizer_vocab_size: u32,
+    package_sha256: ?[32]u8,
+    representation_sha256: ?[32]u8,
+    local_plan_sha256: [32]u8,
+    bound_plan_sha256: [32]u8,
+    challenge_sha256: [32]u8,
+) !void {
+    const evidence_hex = std.fmt.bytesToHex(
+        evidence.evidence_sha256,
+        .lower,
+    );
+    const boundary_hex = std.fmt.bytesToHex(
+        evidence.boundary.boundary_sha256,
+        .lower,
+    );
+    const semantic_hex = std.fmt.bytesToHex(
+        evidence.semantic.semantic_sha256,
+        .lower,
+    );
+    const output_hex = std.fmt.bytesToHex(
+        evidence.semantic.output_sha256,
+        .lower,
+    );
+    const final_service_hex = std.fmt.bytesToHex(
+        evidence.final_commit.service_event_sha256,
+        .lower,
+    );
+    const transcript_hex = std.fmt.bytesToHex(
+        evidence.final_commit.transcript_sha256,
+        .lower,
+    );
+    const close_event_hex = std.fmt.bytesToHex(
+        evidence.close_event.event_sha256,
+        .lower,
+    );
+    const local_plan_hex = std.fmt.bytesToHex(
+        local_plan_sha256,
+        .lower,
+    );
+    const bound_plan_hex = std.fmt.bytesToHex(
+        bound_plan_sha256,
+        .lower,
+    );
+    const challenge_hex = std.fmt.bytesToHex(
+        challenge_sha256,
+        .lower,
+    );
+    const unused_quanta = std.math.sub(
+        u64,
+        evidence.max_new_tokens,
+        evidence.actual_new_tokens,
+    ) catch return error.InvalidVariableTerminalEvidence;
+    const close_event_kind = switch (evidence.close_event.kind) {
+        .cancel => "cancel",
+        .retire => "retire",
+        else => return error.InvalidVariableTerminalEvidence,
+    };
+    const termination_reason = switch (evidence.reason) {
+        .length => "length",
+        .eos => "eos",
+        .eos_at_limit => "eos_at_limit",
+    };
+
+    try writer.print(
+        "{{\"schema\":\"glacier.prepared-text-variable-run/v1\"," ++
+            "\"profile\":\"utf8-byte-eos-v1\"," ++
+            "\"model_profile\":\"{s}\"," ++
+            "\"prompt_source\":\"{s}\"," ++
+            "\"output_rendering\":\"token-ids\"," ++
+            "\"prepared_image\":true,\"common_plan\":true," ++
+            "\"transactional_publication\":true," ++
+            "\"fixed_result_envelope\":false," ++
+            "\"durable_result_sink\":false," ++
+            "\"fresh_process_recovery\":false," ++
+            "\"durable_eos_supported\":false," ++
+            "\"package_admission\":{s}," ++
+            "\"prompt_bytes\":{d},\"prompt_tokens\":{d}," ++
+            "\"tokenizer_vocab_size\":{d}," ++
+            "\"variable_terminal_evidence_abi\":{d}," ++
+            "\"completed_early_abi\":{d}," ++
+            "\"request_epoch\":{d}," ++
+            "\"max_token_count\":{d}," ++
+            "\"actual_token_count\":{d}," ++
+            "\"eos_token\":{d}," ++
+            "\"termination_reason\":\"{s}\"," ++
+            "\"unused_quanta\":{d}," ++
+            "\"close_event_kind\":\"{s}\"," ++
+            "\"close_event_sequence\":{d}," ++
+            "\"ownership_closed\":true," ++
+            "\"resource_bank_zero\":true," ++
+            "\"scheduler_closed\":true,",
+        .{
+            model_profile,
+            prompt_source,
+            if (package_sha256 != null) "true" else "false",
+            prompt_bytes,
+            prompt_tokens,
+            tokenizer_vocab_size,
+            variable_terminal.evidence_abi,
+            variable_terminal.completed_early_abi,
+            evidence.boundary.base.publication.request_epoch,
+            evidence.max_new_tokens,
+            evidence.actual_new_tokens,
+            evidence.eos_token,
+            termination_reason,
+            unused_quanta,
+            close_event_kind,
+            evidence.close_event.event_sequence,
+        },
+    );
+    if (package_sha256) |digest| {
+        const package_hex = std.fmt.bytesToHex(digest, .lower);
+        try writer.print(
+            "\"package_sha256\":\"{s}\",",
+            .{&package_hex},
+        );
+    } else {
+        try writer.writeAll("\"package_sha256\":null,");
+    }
+    if (representation_sha256) |digest| {
+        const representation_hex = std.fmt.bytesToHex(
+            digest,
+            .lower,
+        );
+        try writer.print(
+            "\"representation_sha256\":\"{s}\",",
+            .{&representation_hex},
+        );
+    } else {
+        try writer.writeAll("\"representation_sha256\":null,");
+    }
+    if (evidence.completed_early) |completed| {
+        const completed_hex = std.fmt.bytesToHex(
+            completed.completed_early_sha256,
+            .lower,
+        );
+        try writer.print(
+            "\"completed_early_sha256\":\"{s}\",",
+            .{&completed_hex},
+        );
+    } else {
+        try writer.writeAll("\"completed_early_sha256\":null,");
+    }
+    try writer.print(
+        "\"variable_terminal_evidence_sha256\":\"{s}\"," ++
+            "\"terminal_boundary_sha256\":\"{s}\"," ++
+            "\"terminal_semantic_sha256\":\"{s}\"," ++
+            "\"output_sha256\":\"{s}\"," ++
+            "\"final_service_event_sha256\":\"{s}\"," ++
+            "\"publication_transcript_sha256\":\"{s}\"," ++
+            "\"close_event_sha256\":\"{s}\"," ++
+            "\"local_plan_sha256\":\"{s}\"," ++
+            "\"bound_plan_sha256\":\"{s}\"," ++
+            "\"scheduler_challenge_sha256\":\"{s}\"," ++
+            "\"output_tokens\":[",
+        .{
+            &evidence_hex,
+            &boundary_hex,
+            &semantic_hex,
+            &output_hex,
+            &final_service_hex,
+            &transcript_hex,
+            &close_event_hex,
+            &local_plan_hex,
+            &bound_plan_hex,
+            &challenge_hex,
+        },
+    );
+    for (output_tokens, 0..) |token, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.print("{d}", .{token});
+    }
+    try writer.writeAll(
+        "],\"runtime_self_verified\":true}\n",
     );
 }
 
@@ -2705,7 +3001,7 @@ fn usage(writer: *std.Io.Writer) !void {
         "usage: glacier text-run <model.glrt> " ++
             "(--text <utf8>|--text-file <path>) " ++
             "--license <license-file> [--package <model.glpkg>] " ++
-            "[--n 1..64] " ++
+            "[--n 1..64] [--eos-token 0..vocab-1] " ++
             "[--durable-dir <absolute-existing-directory> " ++
             "--request-id <64-lowercase-hex> --n 1..64 " ++
             "[--bootstrap-only] [--reveal-output] " ++

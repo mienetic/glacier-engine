@@ -279,6 +279,8 @@ PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = {
     "src/cli/model_package.zig",
     "src/cli/text_run.zig",
     "src/model/package_producer.zig",
+    "src/prepared_text_session.zig",
+    "src/prepared_text_variable_terminal.zig",
     "bench/prepared_text_package.py",
     "bench/tests/test_prepared_text_package.py",
     "bench/text_runtime_golden_path.py",
@@ -801,9 +803,18 @@ def _decision_for_path(path: str) -> PathDecision:
         if suffix == ".py":
             package_text_flags.add("python-changed")
         package_text_targets = RETAINED_TARGETS if suffix == ".zig" else ()
-        package_text_steps = (
-            ("profile-host-tool-compile",) if suffix == ".zig" else FULL_TARGET_STEPS
-        )
+        if lower == "src/prepared_text_session.zig":
+            package_text_steps = (
+                "profile-cpu-compile",
+                "profile-durable-compile",
+                "profile-host-tool-compile",
+            )
+        else:
+            package_text_steps = (
+                ("profile-host-tool-compile",)
+                if suffix == ".zig"
+                else FULL_TARGET_STEPS
+            )
         return PathDecision(
             path,
             "ordinary model package producer, admission, or focused oracle changed",

@@ -199,6 +199,8 @@ EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = frozenset(
         "src/cli/model_package.zig",
         "src/cli/text_run.zig",
         "src/model/package_producer.zig",
+        "src/prepared_text_session.zig",
+        "src/prepared_text_variable_terminal.zig",
         "bench/prepared_text_package.py",
         "bench/tests/test_prepared_text_package.py",
         "bench/text_runtime_golden_path.py",
@@ -715,11 +717,18 @@ class VerificationPolicyTests(unittest.TestCase):
                 expected_targets = (
                     policy.RETAINED_TARGETS if changed_path.endswith(".zig") else ()
                 )
-                expected_steps = (
-                    ("profile-host-tool-compile",)
-                    if changed_path.endswith(".zig")
-                    else policy.FULL_TARGET_STEPS
-                )
+                if changed_path == "src/prepared_text_session.zig":
+                    expected_steps = (
+                        "profile-cpu-compile",
+                        "profile-durable-compile",
+                        "profile-host-tool-compile",
+                    )
+                else:
+                    expected_steps = (
+                        ("profile-host-tool-compile",)
+                        if changed_path.endswith(".zig")
+                        else policy.FULL_TARGET_STEPS
+                    )
                 plan = self.assert_target_steps(
                     [changed_path],
                     tuple((target, expected_steps) for target in expected_targets),
@@ -734,6 +743,11 @@ class VerificationPolicyTests(unittest.TestCase):
                 self.assertFalse(plan.requires("python-full"))
                 self.assertFalse(plan.requires("prepared-text-recovery-focused"))
                 self.assertFalse(plan.requires("prepared-text-delivery-focused"))
+                for target_plan in plan.target_plans:
+                    self.assertNotIn(
+                        "profile-complete-compile",
+                        target_plan.steps,
+                    )
                 self.assertIn(
                     "native/prepared-text-package-text-run",
                     policy._gate_names(plan.decisions[0]),
@@ -808,6 +822,44 @@ class VerificationPolicyTests(unittest.TestCase):
                     [changed_path],
                     tuple((target, steps) for target in policy.RETAINED_TARGETS),
                 )
+
+    def test_variable_terminal_paths_avoid_broad_compile_profiles(self):
+        cases = {
+            "src/prepared_text_session.zig": (
+                "profile-cpu-compile",
+                "profile-durable-compile",
+                "profile-host-tool-compile",
+            ),
+            "src/prepared_text_variable_terminal.zig": (
+                "profile-host-tool-compile",
+            ),
+        }
+        for changed_path, expected_steps in cases.items():
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_target_steps(
+                    [changed_path],
+                    tuple(
+                        (target, expected_steps)
+                        for target in policy.RETAINED_TARGETS
+                    ),
+                )
+                self.assertEqual(
+                    frozenset(
+                        {"prepared-text-package-text-run-focused"}
+                    ),
+                    plan.flags,
+                )
+                self.assertFalse(plan.requires("native-full"))
+                self.assertFalse(plan.requires("python-full"))
+                for target_plan in plan.target_plans:
+                    self.assertNotEqual(
+                        policy.COMPLETE_COMPILE_TARGET_STEPS,
+                        target_plan.steps,
+                    )
+                    self.assertNotIn(
+                        "profile-complete-compile",
+                        target_plan.steps,
+                    )
 
     def test_prepared_text_inspector_paths_select_focused_gate(self):
         for changed_path in sorted(EXPECTED_PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS):

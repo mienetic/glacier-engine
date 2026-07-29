@@ -61,6 +61,60 @@ TERMINAL_OUTPUT_DOMAIN = (
 )
 STATE_COMMITMENT_ABI = 0x474C_5053_0000_0001
 STATE_COMMITMENT_DOMAIN = b"glacier-lane-publication-state-v1\x00"
+COMPLETED_EARLY_ABI = 0x4750_5445_0000_0001
+VARIABLE_TERMINAL_EVIDENCE_ABI = 0x4750_5456_0000_0001
+COMPLETED_EARLY_DOMAIN = b"glacier-prepared-text-completed-early-v1\x00"
+VARIABLE_TERMINAL_EVIDENCE_DOMAIN = (
+    b"glacier-prepared-text-variable-terminal-evidence-v1\x00"
+)
+VARIABLE_TERMINAL_REPORT_KEYS = frozenset(
+    {
+        "schema",
+        "profile",
+        "model_profile",
+        "prompt_source",
+        "output_rendering",
+        "prepared_image",
+        "common_plan",
+        "transactional_publication",
+        "fixed_result_envelope",
+        "durable_result_sink",
+        "fresh_process_recovery",
+        "durable_eos_supported",
+        "package_admission",
+        "prompt_bytes",
+        "prompt_tokens",
+        "tokenizer_vocab_size",
+        "variable_terminal_evidence_abi",
+        "completed_early_abi",
+        "request_epoch",
+        "max_token_count",
+        "actual_token_count",
+        "eos_token",
+        "termination_reason",
+        "unused_quanta",
+        "close_event_kind",
+        "close_event_sequence",
+        "ownership_closed",
+        "resource_bank_zero",
+        "scheduler_closed",
+        "package_sha256",
+        "representation_sha256",
+        "completed_early_sha256",
+        "variable_terminal_evidence_sha256",
+        "terminal_boundary_sha256",
+        "terminal_semantic_sha256",
+        "output_sha256",
+        "final_service_event_sha256",
+        "publication_transcript_sha256",
+        "close_event_sha256",
+        "local_plan_sha256",
+        "bound_plan_sha256",
+        "scheduler_challenge_sha256",
+        "output_tokens",
+        "runtime_self_verified",
+    }
+)
 TIMEOUT_SECONDS = 30
 
 
@@ -121,6 +175,7 @@ def _run_text(
     *,
     package_path: Path | None = None,
     new_tokens: int = NEW_TOKENS,
+    eos_token: int | None = None,
 ) -> dict[str, object]:
     prompt_path.write_bytes(text.encode("utf-8", "strict"))
     command = [
@@ -136,6 +191,8 @@ def _run_text(
     ]
     if package_path is not None:
         command.extend(("--package", str(package_path)))
+    if eos_token is not None:
+        command.extend(("--eos-token", str(eos_token)))
     result = _run(command)
     try:
         report = json.loads(result.stdout)
@@ -922,6 +979,183 @@ def _report_int(report: Mapping[str, object], name: str) -> int:
     return value
 
 
+def _verify_variable_terminal_report(
+    report: Mapping[str, object],
+    *,
+    expected_output: list[int],
+    max_token_count: int,
+    eos_token: int,
+    termination_reason: str,
+    close_event_kind: str,
+    model_profile: str,
+    prompt_source: str,
+    prompt_bytes: int,
+    prompt_tokens: int,
+    tokenizer_vocab_size: int,
+    package_sha256: str | None,
+    representation_sha256: str | None,
+    request_epoch: int,
+    scheduler_challenge_sha256: bytes,
+) -> bytes:
+    actual_keys = frozenset(report)
+    if actual_keys != VARIABLE_TERMINAL_REPORT_KEYS:
+        missing = sorted(VARIABLE_TERMINAL_REPORT_KEYS - actual_keys)
+        extra = sorted(actual_keys - VARIABLE_TERMINAL_REPORT_KEYS)
+        raise GoldenPathError(
+            "variable terminal report key mismatch: "
+            f"missing={missing}, extra={extra}"
+        )
+    actual_count = len(expected_output)
+    expected_scalars: dict[str, object] = {
+        "schema": "glacier.prepared-text-variable-run/v1",
+        "profile": "utf8-byte-eos-v1",
+        "model_profile": model_profile,
+        "prompt_source": prompt_source,
+        "output_rendering": "token-ids",
+        "prepared_image": True,
+        "common_plan": True,
+        "transactional_publication": True,
+        "fixed_result_envelope": False,
+        "durable_result_sink": False,
+        "fresh_process_recovery": False,
+        "durable_eos_supported": False,
+        "package_admission": package_sha256 is not None,
+        "prompt_bytes": prompt_bytes,
+        "prompt_tokens": prompt_tokens,
+        "tokenizer_vocab_size": tokenizer_vocab_size,
+        "variable_terminal_evidence_abi": VARIABLE_TERMINAL_EVIDENCE_ABI,
+        "completed_early_abi": COMPLETED_EARLY_ABI,
+        "request_epoch": request_epoch,
+        "max_token_count": max_token_count,
+        "actual_token_count": actual_count,
+        "eos_token": eos_token,
+        "termination_reason": termination_reason,
+        "unused_quanta": max_token_count - actual_count,
+        "close_event_kind": close_event_kind,
+        "ownership_closed": True,
+        "resource_bank_zero": True,
+        "scheduler_closed": True,
+        "package_sha256": package_sha256,
+        "representation_sha256": representation_sha256,
+        "runtime_self_verified": True,
+    }
+    for name, expected in expected_scalars.items():
+        actual = report.get(name)
+        if type(actual) is not type(expected) or actual != expected:
+            raise GoldenPathError(
+                f"variable terminal field {name!r}: "
+                f"{actual!r} != {expected!r}"
+            )
+
+    report_output = report.get("output_tokens")
+    if (
+        not isinstance(report_output, list)
+        or len(report_output) != actual_count
+        or any(
+            type(token) is not int or not 0 <= token <= 255
+            for token in report_output
+        )
+        or report_output != expected_output
+    ):
+        raise GoldenPathError("invalid variable terminal output")
+
+    close_event_sequence = _report_int(report, "close_event_sequence")
+    if close_event_sequence != actual_count + 1:
+        raise GoldenPathError(
+            "variable terminal close sequence changed: "
+            f"{close_event_sequence} != {actual_count + 1}"
+        )
+    digest_names = (
+        "variable_terminal_evidence_sha256",
+        "terminal_boundary_sha256",
+        "terminal_semantic_sha256",
+        "output_sha256",
+        "final_service_event_sha256",
+        "publication_transcript_sha256",
+        "close_event_sha256",
+        "local_plan_sha256",
+        "bound_plan_sha256",
+        "scheduler_challenge_sha256",
+    )
+    digests = {
+        name: _report_digest(report, name)
+        for name in digest_names
+    }
+    if (
+        digests["scheduler_challenge_sha256"]
+        != scheduler_challenge_sha256
+    ):
+        raise GoldenPathError("variable terminal scheduler challenge changed")
+
+    completed = report.get("completed_early_sha256")
+    if actual_count < max_token_count:
+        completed_root = _report_digest(
+            report,
+            "completed_early_sha256",
+        )
+        expected_completed_root = hashlib.sha256(
+            COMPLETED_EARLY_DOMAIN
+            + struct.pack("<Q", COMPLETED_EARLY_ABI)
+            + struct.pack("<B", 1)
+            + struct.pack(
+                "<QQQQI",
+                request_epoch,
+                max_token_count,
+                actual_count,
+                max_token_count - actual_count,
+                eos_token,
+            )
+            + digests["local_plan_sha256"]
+            + digests["bound_plan_sha256"]
+            + digests["scheduler_challenge_sha256"]
+            + digests["terminal_boundary_sha256"]
+            + digests["terminal_semantic_sha256"]
+            + digests["output_sha256"]
+            + struct.pack("<Q", close_event_sequence)
+            + digests["close_event_sha256"]
+        ).digest()
+        if completed_root != expected_completed_root:
+            raise GoldenPathError(
+                "completed-early root did not independently verify"
+            )
+    elif completed is not None:
+        raise GoldenPathError(
+            "full-length terminal emitted completed-early evidence"
+        )
+    else:
+        completed_root = bytes(32)
+
+    reason_codes = {
+        "length": 0,
+        "eos": 1,
+        "eos_at_limit": 2,
+    }
+    reason_code = reason_codes.get(termination_reason)
+    if reason_code is None:
+        raise GoldenPathError("invalid expected variable terminal reason")
+    expected_evidence_root = hashlib.sha256(
+        VARIABLE_TERMINAL_EVIDENCE_DOMAIN
+        + struct.pack("<Q", VARIABLE_TERMINAL_EVIDENCE_ABI)
+        + struct.pack("<B", reason_code)
+        + struct.pack("<QQI", max_token_count, actual_count, eos_token)
+        + digests["terminal_boundary_sha256"]
+        + digests["terminal_semantic_sha256"]
+        + digests["publication_transcript_sha256"]
+        + digests["final_service_event_sha256"]
+        + digests["close_event_sha256"]
+        + struct.pack("<B", int(actual_count < max_token_count))
+        + completed_root
+    ).digest()
+    if (
+        digests["variable_terminal_evidence_sha256"]
+        != expected_evidence_root
+    ):
+        raise GoldenPathError(
+            "variable terminal evidence root did not independently verify"
+        )
+    return digests["terminal_semantic_sha256"]
+
+
 def _verify_package_artifacts(
     *,
     source: Path,
@@ -1690,6 +1924,102 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             package_facts=package_facts,
             representation_sha256=representation_sha256,
         )
+        variable_baseline = ordinary_report.get("output_tokens")
+        if (
+            not isinstance(variable_baseline, list)
+            or len(variable_baseline) != NEW_TOKENS
+            or any(
+                type(token) is not int or not 0 <= token <= 255
+                for token in variable_baseline
+            )
+        ):
+            raise GoldenPathError("ordinary output cannot seed EOS cases")
+        variable_hit_eos = variable_baseline[0]
+        used_tokens = set(variable_baseline)
+        variable_miss_eos = next(
+            token for token in range(256) if token not in used_tokens
+        )
+        variable_context = {
+            "model_profile": "ordinary-package-v1",
+            "prompt_source": "file",
+            "prompt_bytes": len(PROMPT.encode("utf-8")),
+            "prompt_tokens": ordinary_report["prompt_tokens"],
+            "tokenizer_vocab_size": ordinary_report[
+                "tokenizer_vocab_size"
+            ],
+            "package_sha256": package_facts["package_sha256"].hex(),
+            "representation_sha256": representation_sha256,
+            "request_epoch": ordinary_report["request_epoch"],
+            "scheduler_challenge_sha256": _report_digest(
+                ordinary_report,
+                "prompt_receipt_sha256",
+            ),
+        }
+        variable_hit_report = _run_text(
+            executable,
+            foreign_image,
+            license_path,
+            PROMPT,
+            prompt_path,
+            package_path=foreign_package,
+            eos_token=variable_hit_eos,
+        )
+        variable_hit_semantic = _verify_variable_terminal_report(
+            variable_hit_report,
+            expected_output=variable_baseline[:1],
+            max_token_count=NEW_TOKENS,
+            eos_token=variable_hit_eos,
+            termination_reason="eos",
+            close_event_kind="cancel",
+            **variable_context,
+        )
+        variable_miss_report = _run_text(
+            executable,
+            foreign_image,
+            license_path,
+            PROMPT,
+            prompt_path,
+            package_path=foreign_package,
+            eos_token=variable_miss_eos,
+        )
+        variable_miss_semantic = _verify_variable_terminal_report(
+            variable_miss_report,
+            expected_output=variable_baseline,
+            max_token_count=NEW_TOKENS,
+            eos_token=variable_miss_eos,
+            termination_reason="length",
+            close_event_kind="retire",
+            **variable_context,
+        )
+        variable_limit_report = _run_text(
+            executable,
+            foreign_image,
+            license_path,
+            PROMPT,
+            prompt_path,
+            package_path=foreign_package,
+            new_tokens=1,
+            eos_token=variable_hit_eos,
+        )
+        variable_limit_semantic = _verify_variable_terminal_report(
+            variable_limit_report,
+            expected_output=variable_baseline[:1],
+            max_token_count=1,
+            eos_token=variable_hit_eos,
+            termination_reason="eos_at_limit",
+            close_event_kind="retire",
+            **variable_context,
+        )
+        if len(
+            {
+                variable_hit_semantic,
+                variable_miss_semantic,
+                variable_limit_semantic,
+            }
+        ) != 3:
+            raise GoldenPathError(
+                "variable terminal cases shared terminal semantics"
+            )
         modified_report = _run_text(
             executable,
             same_package_modified_image,
@@ -1905,6 +2235,41 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 durable_directory,
                 expect_success=False,
                 **invalid_options,
+            )
+        before_eos_rejection = _durable_directory_manifest(
+            durable_directory
+        )
+        durable_eos_rejection = _run(
+            (
+                str(executable),
+                "text-run",
+                str(foreign_image),
+                "--text-file",
+                str(prompt_path),
+                "--license",
+                str(license_path),
+                "--package",
+                str(foreign_package),
+                "--n",
+                "1",
+                "--eos-token",
+                str(variable_hit_eos),
+                "--durable-dir",
+                str(durable_directory),
+                "--request-id",
+                DURABLE_REQUEST_ID,
+                "--max-set-bytes",
+                str(DURABLE_MAX_SET_BYTES),
+            ),
+            expect_success=False,
+        )
+        if (
+            "DurableEosUnsupported" not in durable_eos_rejection.stderr
+            or _durable_directory_manifest(durable_directory)
+            != before_eos_rejection
+        ):
+            raise GoldenPathError(
+                "durable EOS rejection was not mutation-free"
             )
         _run(
             (
@@ -2742,6 +3107,11 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             "ordinary_package_produced": True,
             "ordinary_package_admitted": True,
             "ordinary_package_independently_decoded": True,
+            "variable_eos_hit_verified": True,
+            "variable_eos_miss_verified": True,
+            "variable_eos_at_limit_verified": True,
+            "variable_terminal_accounting_verified": True,
+            "durable_eos_rejected_before_mutation": True,
             "prepared_representation_independently_verified": True,
             "package_manifest_retry_idempotent": True,
             "cross_package_image_substitution_rejected": True,

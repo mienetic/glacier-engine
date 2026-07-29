@@ -28,8 +28,9 @@ The quick profile remains dependency-free. Use CPython 3.10–3.12 and install
 `matrix`, or full unittest discovery.
 
 Pull requests and pushes to `main` run `affected-fast` on Ubuntu. Maintainers
-can dispatch `full` or `matrix` explicitly; `v*` tags run the Linux matrix plus
-the macOS Metal/durability frontier. There is no scheduled exhaustive build.
+can dispatch `affected` (the default, with an explicit `base_ref`), `full`, or
+`matrix`; `v*` tags run the Linux matrix plus the macOS Metal/durability
+frontier. There is no scheduled exhaustive build.
 Full Python discovery imports the retained numeric reference reporters and
 installs their pinned dependency from `bench/requirements-test.txt`; the
 embedding and runtime-contract verifiers remain standard-library-only. The
@@ -122,7 +123,8 @@ changed path.
 | CPU backend or model implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
 | Shared durable core/runtime implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
 | Audited durable recovery demo or worker | Native ReleaseSafe, Python discovery, and the durable profile on every retained target |
-| Ordinary model package producer, package-aware `text-run`, bounded-input helper, or focused package oracle | `affected-fast` reuses the existing `text-runtime-golden-path-test` host DAG once; the complete affected tier adds the selected retained host-tool compile profiles |
+| Ordinary model package producer, package-aware `text-run`, process-local variable-terminal module, bounded-input helper, or focused package oracle | `affected-fast` reuses the existing `text-runtime-golden-path-test` host DAG once; the complete affected tier adds the selected retained host-tool compile profiles |
+| Prepared-text session lifecycle | `affected-fast` reuses the same text-runtime golden DAG; the complete affected tier adds only the CPU, durable, and host-tool compile profiles instead of the complete consumer closure |
 | Prepared-text committed-output inspector or oracle | `affected-fast` runs the inspector and package-module roots in one host DAG; the complete affected tier adds broad host and selected portability coverage |
 | Prepared-text durable writer, runtime, or process-death campaign | `affected-fast` runs the recovery and package-module roots in one host DAG; when inspector paths change in the same worktree, all selected roots share that invocation |
 | CLI or retained read-only inspector | Native ReleaseSafe, Python discovery, and the host-tool profile on every retained target |
@@ -242,9 +244,10 @@ The selected native POSIX store-fault gate runs on Darwin, Linux, or FreeBSD;
 other hosts likewise report it as unavailable. Ordinary pull-request and
 `main` CI uses `affected-fast`. Maintainer and release validation should use
 complete `affected` locally with `GLACIER_VERIFY_REQUIRE_NATIVE=1`, or dispatch
-the hosted `full`/`matrix` profiles; `v*` tags select `matrix` and the macOS
-frontier. Strict native mode turns any unavailable selected native gate into
-`FAIL`.
+the hosted `affected` profile with the intended `base_ref`. Hosted `full` and
+`matrix` remain explicit broad promotion gates; `v*` tags select `matrix` and
+the macOS frontier. Strict native mode turns any unavailable selected native
+gate into `FAIL`.
 
 Prepared-text routing keeps the default loop bounded. Changes limited to the
 direct-terminal controller or its Python tests select only the four-boundary

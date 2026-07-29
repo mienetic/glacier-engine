@@ -15,6 +15,10 @@ before the first stable release.
   Ordinary package-producer, package-aware `text-run`, bounded-input, and
   package-oracle changes reuse the existing focused
   `text-runtime-golden-path-test` DAG.
+  Prepared-text session changes now select only the CPU, durable, and host-tool
+  compile profiles, while the process-local variable-terminal module selects
+  only the host-tool profile; both reuse that same host golden DAG instead of
+  expanding ordinary CI to the complete consumer closure.
   Prepared-text delivery implementation changes compile and test one shared
   facade artifact. Direct-terminal controller changes select only their bounded
   four-boundary smoke, while shared recovery-worker or recovery-harness changes
@@ -22,11 +26,13 @@ before the first stable release.
   for the 49-boundary acknowledged campaign and the direct smoke instead of
   compiling a second worker.
   Pull requests and `main` pushes use this bounded tier and cancel superseded
-  runs; exhaustive `full` or `matrix` CI is explicit, while `v*` tags retain
-  the matrix and macOS frontier. Hosted affected and exhaustive jobs reuse the
-  pinned setup action's Zig cache across runs with configured 1 GiB and 2 GiB
-  action limits, respectively. Local verification still ignores inherited Zig
-  cache paths and removes its private temporary cache after every run.
+  runs. Manual CI now defaults to complete path-aware `affected` verification
+  against an explicit `base_ref`; broad `full` or `matrix` CI remains explicit,
+  while `v*` tags retain the matrix and macOS frontier. Hosted affected and
+  promotion jobs reuse the pinned setup action's Zig cache across runs with
+  configured 1 GiB and 2 GiB action limits, respectively. Local verification
+  still ignores inherited Zig cache paths and removes its private temporary
+  cache after every run.
 - Portable-model conversion now rejects malformed Safetensors integer domains,
   tensor byte geometry, overlap, holes, unsupported source dtypes, and
   source/output aliases before payload publication. Conversion reserves the
@@ -76,6 +82,24 @@ before the first stable release.
 
 ### Added
 
+- Added opt-in process-local variable-length prepared-text completion.
+  `glacier text-run ... --n N --eos-token ID` treats `N` as an admitted upper
+  bound: an EOS hit publishes `1..N-1` tokens, releases the unused quanta, and
+  returns a canonical evidence aggregate. Its `CompletedEarlyV1` sidecar joins
+  the terminal boundary and portable terminal semantics to the ordinary
+  LaneWeave close event; `EvidenceV1` additionally binds the final service
+  receipt. An EOS miss consumes all `N` services and retires normally; EOS
+  exactly on service `N` is classified as `eos_at_limit` and retires without
+  an early sidecar. Explicit variable constructors preserve the fixed V1/V2/V3
+  EOS rules, and final commit/permit/admission bindings are preflighted before
+  close.
+  The fixed `SessionV3`/`ResultEnvelopeV1` path is unchanged.
+  The existing compile-once golden path derives deterministic in-vocabulary
+  early-hit, at-limit, and miss cases, independently recomputes both new
+  evidence roots, proves zero final ownership, and verifies that durable
+  `--eos-token` rejects before state-directory mutation. Durable early
+  completion, recovery, serving, GPU execution, and performance evidence
+  remain open.
 - Added package-aware acknowledged durable execution for fixed output counts
   `2..64`. The existing `glacier text-run --package` command now routes those
   counts through the public generation-one bootstrap, source exit, bounded

@@ -1,7 +1,7 @@
 # Ordinary Model Package
 
-Status: **experimental CPU vertical slice with process-local execution and a
-fixed-output POSIX durable route**.
+Status: **experimental CPU vertical slice with fixed-result and bounded
+early-EOS process-local execution plus a fixed-output POSIX durable route**.
 
 Glacier can turn one supported Safetensors model into a portable model
 container, a prepared runtime image, and a fixed package manifest:
@@ -139,6 +139,13 @@ package root, needs its own matching bundle.
 The normal `1..64` output route returns token IDs in deterministic JSON and
 publishes transactionally in process.
 
+Add `--eos-token ID` to make `--n` a process-local upper bound. A sampled EOS
+before that bound returns the exact prefix with canonical completed-early
+evidence and releases the unused scheduler quota; an EOS miss reaches `--n`
+and retires normally. EOS exactly at `--n` is reported separately as
+`eos_at_limit` and retires because no quota remains. The fixed-result route
+remains the default. This option cannot be combined with durable arguments.
+
 The package-aware durable route supports fixed output counts `1..64`:
 
 ```sh
@@ -181,17 +188,19 @@ For ordinary changes, start with path-aware verification:
 tools/verify.sh affected-fast --base origin/main
 ```
 
-Changes confined to the package producer, package-aware `text-run`, bounded
-input helper, or independent package oracle select the existing focused
+Changes confined to the package producer, package-aware `text-run`,
+process-local variable-terminal lifecycle, bounded input helper, or independent
+package oracle select the existing focused
 `text-runtime-golden-path-test` DAG. That gate exercises production, portable
 and package `already_current` dispositions, deterministic prepared-image
 recreation, independent Python decoding, process-local admission, distinct
 processes for durable bootstrap/resume/retry, direct checkpoint/output-wire
 decoding, acknowledged `N=2`, `N=4`, and `N=64` checkpoint/sink lineage
 decoding, output-count mismatch rejection without mutation, equality with
-ordinary execution, package mutation, changed-license rejection, and
-embedded-receipt/prepared-image substitution rejection without compiling the
-broad runtime and foreign-target suites.
+ordinary execution, deterministic in-vocabulary EOS hit/miss evidence,
+durable-EOS no-mutation rejection, package mutation, changed-license rejection,
+and embedded-receipt/prepared-image substitution rejection without compiling
+the broad runtime and foreign-target suites.
 
 The complete `affected` tier additionally compiles the selected retained
 host-tool portability profiles. Run `tools/verify.sh full` or the deeper
@@ -202,11 +211,11 @@ replacement for those promotion gates.
 ## Roadmap boundary
 
 This slice establishes ordinary model package production, exact process-local
-admission, and checked fixed-output durable continuation for `1..64` tokens on
-one narrow CPU/POSIX profile. The next text-runtime boundaries are
-variable-length or early-EOS output, serving integration, and broader
-tokenizer/model/device profiles without weakening package admission or
-recovery lineage.
+admission with an optional bounded early-EOS terminal, and checked fixed-output
+durable continuation for `1..64` tokens on one narrow CPU/POSIX profile. The
+next text-runtime boundaries are durable variable-length completion, serving
+integration, and broader tokenizer/model/device profiles without weakening
+package admission or recovery lineage.
 
 Still open:
 

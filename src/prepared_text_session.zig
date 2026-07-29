@@ -194,6 +194,29 @@ pub const BoundarySnapshotV2 = struct {
     boundary_sha256: [32]u8,
 };
 
+pub const VariableTerminalCloseModeV1 = enum(u8) {
+    release_unused,
+    retire,
+};
+
+/// Joined process-local close receipt. An early result never escapes as only
+/// a cancel event: the event is returned together with the exact plan,
+/// boundary, final-commit, and service-count bindings that authorized it.
+pub const VariableTerminalCloseV1 = struct {
+    mode: VariableTerminalCloseModeV1,
+    request_epoch: u64,
+    max_new_tokens: u64,
+    actual_new_tokens: u64,
+    eos_token: u32,
+    local_plan_sha256: [32]u8,
+    bound_plan_sha256: [32]u8,
+    challenge_sha256: [32]u8,
+    boundary_sha256: [32]u8,
+    final_transcript_sha256: [32]u8,
+    final_service_event_sha256: [32]u8,
+    close_event: lane.EventV1,
+};
+
 /// Direct terminal evidence for the preferred R1d session. The contained
 /// ResultEnvelope remains the canonical portable wire; this grouping is an
 /// experimental in-process join to the exact V2 boundary and publication
@@ -519,6 +542,36 @@ pub fn boundarySnapshotValidForBoundPlanV2(
     bound_plan: BoundPlanV1,
     local_plan: PlanV1,
 ) bool {
+    return boundarySnapshotValidForProfileV2(
+        snapshot,
+        bound_plan,
+        local_plan,
+        false,
+    );
+}
+
+/// Contextual verification for the additive process-local variable-terminal
+/// profile. The fixed V2 validator above deliberately retains its historical
+/// out-of-vocabulary EOS rule.
+pub fn boundarySnapshotValidForVariableBoundPlanV2(
+    snapshot: BoundarySnapshotV2,
+    bound_plan: BoundPlanV1,
+    local_plan: PlanV1,
+) bool {
+    return boundarySnapshotValidForProfileV2(
+        snapshot,
+        bound_plan,
+        local_plan,
+        true,
+    );
+}
+
+fn boundarySnapshotValidForProfileV2(
+    snapshot: BoundarySnapshotV2,
+    bound_plan: BoundPlanV1,
+    local_plan: PlanV1,
+    variable_terminal: bool,
+) bool {
     if (!boundarySnapshotValidV2(snapshot))
         return false;
     validateBoundPlanV1(bound_plan) catch return false;
@@ -562,8 +615,12 @@ pub fn boundarySnapshotValidForBoundPlanV2(
             bound_plan.residency.request_claim,
             local_plan.claim,
         ) and
-        @as(u64, local_plan.eos_token) >
-            bound_plan.execution.maximum_absolute_output and
+        (if (variable_terminal)
+            @as(u64, local_plan.eos_token) <=
+                bound_plan.execution.maximum_absolute_output
+        else
+            @as(u64, local_plan.eos_token) >
+                bound_plan.execution.maximum_absolute_output) and
         std.mem.eql(
             u8,
             &snapshot.base.image_identity.container_sha256,
@@ -863,11 +920,31 @@ pub fn makePlanV1(
     prompt: []const u32,
     options: OptionsV1,
 ) (generate.GenerateError || Error)!PlanV1 {
-    if (options.max_new_tokens == 0)
+    if (@as(u64, options.eos_token) <
+        @as(u64, @intCast(model.config.vocab_size)))
         return Error.InvalidConfiguration;
-    // V1 retires only after the admission's fixed service count is exhausted.
-    // Early EOS therefore remains outside this exact lifecycle contract.
-    if (options.eos_token < model.config.vocab_size)
+    return makePlanForProfileV1(model, prompt, options);
+}
+
+/// Construct an explicit process-local variable-terminal plan. Keeping this
+/// constructor separate preserves the fixed V1/V2 admission semantics.
+pub fn makeVariablePlanV1(
+    model: loader.LoadedModel,
+    prompt: []const u32,
+    options: OptionsV1,
+) (generate.GenerateError || Error)!PlanV1 {
+    if (@as(u64, options.eos_token) >=
+        @as(u64, @intCast(model.config.vocab_size)))
+        return Error.InvalidConfiguration;
+    return makePlanForProfileV1(model, prompt, options);
+}
+
+fn makePlanForProfileV1(
+    model: loader.LoadedModel,
+    prompt: []const u32,
+    options: OptionsV1,
+) (generate.GenerateError || Error)!PlanV1 {
+    if (options.max_new_tokens == 0)
         return Error.InvalidConfiguration;
     if (model.prepared_mlp_layout != .separate)
         return Error.InvalidConfiguration;
@@ -937,7 +1014,53 @@ pub fn makeBoundPlanV1(
     scheduler: *const lane.Scheduler,
     input: BoundPlanInputV1,
 ) !BoundPlanV1 {
-    const expected_local = try makePlanV1(model, prompt, options);
+    return makeBoundPlanForProfileV1(
+        model,
+        prompt,
+        options,
+        local_plan,
+        scheduling,
+        scheduler,
+        input,
+        false,
+    );
+}
+
+pub fn makeVariableBoundPlanV1(
+    model: loader.LoadedModel,
+    prompt: []const u32,
+    options: OptionsV1,
+    local_plan: PlanV1,
+    scheduling: SchedulingV1,
+    scheduler: *const lane.Scheduler,
+    input: BoundPlanInputV1,
+) !BoundPlanV1 {
+    return makeBoundPlanForProfileV1(
+        model,
+        prompt,
+        options,
+        local_plan,
+        scheduling,
+        scheduler,
+        input,
+        true,
+    );
+}
+
+fn makeBoundPlanForProfileV1(
+    model: loader.LoadedModel,
+    prompt: []const u32,
+    options: OptionsV1,
+    local_plan: PlanV1,
+    scheduling: SchedulingV1,
+    scheduler: *const lane.Scheduler,
+    input: BoundPlanInputV1,
+    variable_terminal: bool,
+) !BoundPlanV1 {
+    const expected_local = if (variable_terminal)
+        try makeVariablePlanV1(model, prompt, options)
+    else
+        try makePlanV1(model, prompt, options);
     if (!std.meta.eql(expected_local, local_plan) or
         input.request_epoch == 0 or
         isZeroDigest(input.token_domain_sha256) or
@@ -1359,10 +1482,66 @@ pub const SessionV1 = struct {
         bank: *resource_bank.Bank,
         request_epoch: u64,
     ) !StartDecisionV1 {
+        return self.startForProfileV1(
+            allocator,
+            model,
+            prompt,
+            options,
+            plan,
+            scheduling,
+            scheduler,
+            bank,
+            request_epoch,
+            false,
+        );
+    }
+
+    fn startVariableForV2V1(
+        self: *SessionV1,
+        allocator: std.mem.Allocator,
+        model: *const loader.LoadedModel,
+        prompt: []const u32,
+        options: OptionsV1,
+        plan: PlanV1,
+        scheduling: SchedulingV1,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+        request_epoch: u64,
+    ) !StartDecisionV1 {
+        return self.startForProfileV1(
+            allocator,
+            model,
+            prompt,
+            options,
+            plan,
+            scheduling,
+            scheduler,
+            bank,
+            request_epoch,
+            true,
+        );
+    }
+
+    fn startForProfileV1(
+        self: *SessionV1,
+        allocator: std.mem.Allocator,
+        model: *const loader.LoadedModel,
+        prompt: []const u32,
+        options: OptionsV1,
+        plan: PlanV1,
+        scheduling: SchedulingV1,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+        request_epoch: u64,
+        variable_terminal: bool,
+    ) !StartDecisionV1 {
         if (self.resources_initialized or self.publication_bound or
             self.recovery_adoption != null)
             return Error.InvalidState;
-        const expected = try makePlanV1(model.*, prompt, options);
+        const expected = if (variable_terminal)
+            try makeVariablePlanV1(model.*, prompt, options)
+        else
+            try makePlanV1(model.*, prompt, options);
         if (!std.meta.eql(expected, plan))
             return Error.InvalidPlan;
         if (scheduler.bank != bank)
@@ -1739,6 +1918,24 @@ pub const SessionV1 = struct {
         return event;
     }
 
+    /// Low-level transport for SessionV2's joined variable-terminal close.
+    /// Kept file-private so no public API can expose a successful early result
+    /// as an unqualified cancel event.
+    fn closeUnusedTerminalForVariableV1(
+        self: *SessionV1,
+    ) !lane.EventV1 {
+        if (!self.resources_initialized or
+            !self.publication_bound or !self.finished or
+            self.output_len == 0 or
+            self.output_len >= self.options.max_new_tokens or
+            self.resources.output[self.output_len - 1] !=
+                self.options.eos_token)
+            return Error.InvalidState;
+        const event = try self.publication_session.cancel();
+        self.publication_bound = false;
+        return event;
+    }
+
     pub fn cancel(self: *SessionV1) !lane.EventV1 {
         if (!self.resources_initialized or
             !self.publication_bound or self.finished)
@@ -1896,6 +2093,7 @@ pub const SessionV2 = struct {
     inner: SessionV1 = .{},
     bound_plan: BoundPlanV1 = undefined,
     contract_bound: bool = false,
+    lifecycle_closed: bool = false,
 
     /// Verify the supplied plan against the independently retained
     /// `bound_input` before making any Scheduler, Bank, or allocator call.
@@ -1912,20 +2110,89 @@ pub const SessionV2 = struct {
         scheduler: *lane.Scheduler,
         bank: *resource_bank.Bank,
     ) !StartDecisionV1 {
-        if (self.contract_bound or self.inner.resources_initialized or
+        return self.startForProfileV1(
+            allocator,
+            model,
+            prompt,
+            options,
+            local_plan,
+            bound_input,
+            bound_plan,
+            scheduling,
+            scheduler,
+            bank,
+            false,
+        );
+    }
+
+    pub fn startVariableV1(
+        self: *SessionV2,
+        allocator: std.mem.Allocator,
+        model: *const loader.LoadedModel,
+        prompt: []const u32,
+        options: OptionsV1,
+        local_plan: PlanV1,
+        bound_input: BoundPlanInputV1,
+        bound_plan: BoundPlanV1,
+        scheduling: SchedulingV1,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+    ) !StartDecisionV1 {
+        return self.startForProfileV1(
+            allocator,
+            model,
+            prompt,
+            options,
+            local_plan,
+            bound_input,
+            bound_plan,
+            scheduling,
+            scheduler,
+            bank,
+            true,
+        );
+    }
+
+    fn startForProfileV1(
+        self: *SessionV2,
+        allocator: std.mem.Allocator,
+        model: *const loader.LoadedModel,
+        prompt: []const u32,
+        options: OptionsV1,
+        local_plan: PlanV1,
+        bound_input: BoundPlanInputV1,
+        bound_plan: BoundPlanV1,
+        scheduling: SchedulingV1,
+        scheduler: *lane.Scheduler,
+        bank: *resource_bank.Bank,
+        variable_terminal: bool,
+    ) !StartDecisionV1 {
+        if (self.contract_bound or self.lifecycle_closed or
+            self.inner.resources_initialized or
             self.inner.publication_bound or
             self.inner.recovery_adoption != null)
             return Error.InvalidState;
 
-        const expected = try makeBoundPlanV1(
-            model.*,
-            prompt,
-            options,
-            local_plan,
-            scheduling,
-            scheduler,
-            bound_input,
-        );
+        const expected = if (variable_terminal)
+            try makeVariableBoundPlanV1(
+                model.*,
+                prompt,
+                options,
+                local_plan,
+                scheduling,
+                scheduler,
+                bound_input,
+            )
+        else
+            try makeBoundPlanV1(
+                model.*,
+                prompt,
+                options,
+                local_plan,
+                scheduling,
+                scheduler,
+                bound_input,
+            );
         if (!std.meta.eql(expected, bound_plan))
             return Error.InvalidBoundPlan;
 
@@ -1933,25 +2200,39 @@ pub const SessionV2 = struct {
         // Scheduler's publication-adoption barrier.
         self.bound_plan = bound_plan;
         self.contract_bound = true;
-        const decision = self.inner.start(
-            allocator,
-            model,
-            prompt,
-            options,
-            local_plan,
-            scheduling,
-            scheduler,
-            bank,
-            bound_input.request_epoch,
-        ) catch |err| {
+        const decision = if (variable_terminal)
+            self.inner.startVariableForV2V1(
+                allocator,
+                model,
+                prompt,
+                options,
+                local_plan,
+                scheduling,
+                scheduler,
+                bank,
+                bound_input.request_epoch,
+            )
+        else
+            self.inner.start(
+                allocator,
+                model,
+                prompt,
+                options,
+                local_plan,
+                scheduling,
+                scheduler,
+                bank,
+                bound_input.request_epoch,
+            );
+        const resolved = decision catch |err| {
             if (err != Error.RecoveryRequired) self.* = .{};
             return err;
         };
-        switch (decision) {
-            .started => return decision,
+        switch (resolved) {
+            .started => return resolved,
             .rejected => {
                 self.* = .{};
-                return decision;
+                return resolved;
             },
         }
     }
@@ -1975,7 +2256,8 @@ pub const SessionV2 = struct {
         permit: lane.ServicePermitV1,
         downstream: publication.SinkV1,
     ) !publication.CommitReceiptV1 {
-        if (!self.contract_bound) return Error.InvalidState;
+        if (!self.contract_bound or self.lifecycle_closed)
+            return Error.InvalidState;
         return self.inner.step(permit, downstream);
     }
 
@@ -1989,7 +2271,21 @@ pub const SessionV2 = struct {
     }
 
     pub fn snapshotVerified(self: *SessionV2) !BoundarySnapshotV2 {
-        if (!self.contract_bound) return Error.InvalidState;
+        return self.snapshotForProfileV1(false);
+    }
+
+    pub fn snapshotVariableVerifiedV1(
+        self: *SessionV2,
+    ) !BoundarySnapshotV2 {
+        return self.snapshotForProfileV1(true);
+    }
+
+    fn snapshotForProfileV1(
+        self: *SessionV2,
+        variable_terminal: bool,
+    ) !BoundarySnapshotV2 {
+        if (!self.contract_bound or self.lifecycle_closed)
+            return Error.InvalidState;
         try validateBoundPlanV1(self.bound_plan);
         const base = try self.inner.snapshotVerified();
         if (!std.mem.eql(
@@ -2020,25 +2316,198 @@ pub const SessionV2 = struct {
             .boundary_sha256 = [_]u8{0} ** 32,
         };
         snapshot.boundary_sha256 = boundaryRootV2(snapshot);
-        if (!boundarySnapshotValidForBoundPlanV2(
-            snapshot,
-            self.bound_plan,
-            self.inner.plan,
-        ))
+        const valid = if (variable_terminal)
+            boundarySnapshotValidForVariableBoundPlanV2(
+                snapshot,
+                self.bound_plan,
+                self.inner.plan,
+            )
+        else
+            boundarySnapshotValidForBoundPlanV2(
+                snapshot,
+                self.bound_plan,
+                self.inner.plan,
+            );
+        if (!valid)
             return Error.InvalidState;
         return snapshot;
     }
 
+    /// Close one explicit variable-terminal lifecycle only after the supplied
+    /// final commit and boundary match this live session. Every fallible
+    /// preflight check runs before the Scheduler consumes close authority.
+    pub fn closeVariableTerminalV1(
+        self: *SessionV2,
+        boundary: BoundarySnapshotV2,
+        final_commit: publication.CommitReceiptV1,
+    ) !VariableTerminalCloseV1 {
+        if (!self.contract_bound or self.lifecycle_closed or
+            !self.inner.isFinished())
+            return Error.InvalidState;
+        const live_boundary = try self.snapshotVariableVerifiedV1();
+        if (!std.meta.eql(live_boundary, boundary))
+            return Error.InvalidState;
+
+        const output = self.inner.outputTokens();
+        if (output.len == 0)
+            return Error.InvalidState;
+        const actual_new_tokens = std.math.cast(
+            u64,
+            output.len,
+        ) orelse return Error.InvalidState;
+        const max_new_tokens = self.inner.plan.max_new_tokens;
+        if (actual_new_tokens > max_new_tokens)
+            return Error.InvalidState;
+        const eos_hit =
+            output[output.len - 1] == self.inner.plan.eos_token;
+        const mode: VariableTerminalCloseModeV1 =
+            if (actual_new_tokens < max_new_tokens) .release_unused else .retire;
+        if (mode == .release_unused and !eos_hit)
+            return Error.InvalidState;
+        if (!terminalCommitMatchesLiveSessionV1(
+            self,
+            boundary,
+            final_commit,
+            actual_new_tokens,
+        ))
+            return Error.InvalidState;
+
+        const close_event = switch (mode) {
+            .release_unused => try self.inner.closeUnusedTerminalForVariableV1(),
+            .retire => try self.inner.retire(),
+        };
+        self.lifecycle_closed = true;
+        return .{
+            .mode = mode,
+            .request_epoch = boundary.base.publication.request_epoch,
+            .max_new_tokens = max_new_tokens,
+            .actual_new_tokens = actual_new_tokens,
+            .eos_token = self.inner.plan.eos_token,
+            .local_plan_sha256 = self.inner.plan.plan_sha256,
+            .bound_plan_sha256 = self.bound_plan.bound_plan_sha256,
+            .challenge_sha256 = self.bound_plan.execution.challenge_sha256,
+            .boundary_sha256 = boundary.boundary_sha256,
+            .final_transcript_sha256 = final_commit.transcript_sha256,
+            .final_service_event_sha256 = final_commit.service_event_sha256,
+            .close_event = close_event,
+        };
+    }
+
     pub fn retire(self: *SessionV2) !lane.EventV1 {
-        if (!self.contract_bound) return Error.InvalidState;
-        return self.inner.retire();
+        if (!self.contract_bound or self.lifecycle_closed)
+            return Error.InvalidState;
+        const event = try self.inner.retire();
+        self.lifecycle_closed = true;
+        return event;
     }
 
     pub fn cancel(self: *SessionV2) !lane.EventV1 {
-        if (!self.contract_bound) return Error.InvalidState;
-        return self.inner.cancel();
+        if (!self.contract_bound or self.lifecycle_closed)
+            return Error.InvalidState;
+        const event = try self.inner.cancel();
+        self.lifecycle_closed = true;
+        return event;
     }
 };
+
+fn terminalCommitMatchesLiveSessionV1(
+    session: *const SessionV2,
+    boundary: BoundarySnapshotV2,
+    final_commit: publication.CommitReceiptV1,
+    actual_new_tokens: u64,
+) bool {
+    if (!publication.commitReceiptValidV1(final_commit))
+        return false;
+    const proposal = final_commit.proposal;
+    const service_event = final_commit.service_event;
+    const admission =
+        session.inner.publication_session.admission;
+    const expected_transaction_sequence = std.math.sub(
+        u64,
+        actual_new_tokens,
+        1,
+    ) catch return false;
+    const expected_remaining = std.math.sub(
+        u64,
+        session.inner.plan.max_new_tokens,
+        actual_new_tokens,
+    ) catch return false;
+    const expected_remaining_before = std.math.add(
+        u64,
+        expected_remaining,
+        1,
+    ) catch return false;
+    return proposal.request_epoch ==
+        boundary.base.publication.request_epoch and
+        proposal.execution_abi ==
+            boundary.base.publication.execution_abi and
+        proposal.sequence_base ==
+            boundary.base.publication.sequence_base and
+        proposal.transaction_sequence ==
+            expected_transaction_sequence and
+        proposal.resource_permit_generation ==
+            boundary.base.publication
+                .last_resource_permit_generation and
+        proposal.transition.terminal and
+        proposal.transition.token_id ==
+            session.inner.outputTokens()[
+                session.inner.outputTokens().len - 1
+            ] and
+        std.meta.eql(
+            proposal.transition.after,
+            boundary.base.publication.state,
+        ) and
+        std.mem.eql(
+            u8,
+            &final_commit.transcript_sha256,
+            &boundary.base.publication.transcript_sha256,
+        ) and
+        std.meta.eql(
+            proposal.receipt,
+            admission.event.resource_receipt,
+        ) and
+        std.mem.eql(
+            u8,
+            &proposal.receipt_sha256,
+            &admission.event.resource_receipt_sha256,
+        ) and
+        std.meta.eql(
+            proposal.service_intent.handle,
+            admission.handle,
+        ) and
+        std.meta.eql(
+            proposal.service_intent.spec,
+            admission.event.spec,
+        ) and
+        std.meta.eql(
+            proposal.service_intent.resource_receipt,
+            admission.event.resource_receipt,
+        ) and
+        admission.event.spec.work_quanta ==
+            session.inner.plan.max_new_tokens and
+        std.meta.eql(
+            admission.event.spec.claim,
+            session.inner.plan.claim,
+        ) and
+        service_event.abi_version == lane.event_abi and
+        service_event.kind == .service and
+        service_event.scheduler_epoch ==
+            admission.event.scheduler_epoch and
+        std.meta.eql(service_event.handle, admission.handle) and
+        std.meta.eql(service_event.spec, admission.event.spec) and
+        std.meta.eql(
+            service_event.resource_receipt,
+            admission.event.resource_receipt,
+        ) and
+        std.mem.eql(
+            u8,
+            &service_event.resource_receipt_sha256,
+            &admission.event.resource_receipt_sha256,
+        ) and
+        service_event.remaining_before ==
+            expected_remaining_before and
+        service_event.remaining_after == expected_remaining;
+}
 
 const CheckpointContextV1 = struct {
     boundary: BoundarySnapshotV2,

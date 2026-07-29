@@ -1,7 +1,8 @@
 # Verified Raw-Text Runtime Path
 
-Status: **integrated experimental R1k-b1 ingress, R1k-b2 CPU/POSIX
-recovery, and package-aware fixed-output durable CLI slice**.
+Status: **integrated experimental R1k-b1 ingress, process-local bounded
+early-EOS completion, R1k-b2 CPU/POSIX recovery, and package-aware fixed-output
+durable CLI slice**.
 
 This path gives one supported command sequence a verifiable join from exact
 raw UTF-8 bytes to the prepared-text runtime:
@@ -15,6 +16,7 @@ Safetensors fixture
   -> prepared-text and Common Model Contract plans
   -> one of:
        process-local SessionV3 command
+       process-local SessionV2 bounded early-EOS command
        package-aware durable fixed-output command
        durable source/target recovery with exact raw-input retention
   -> terminal result evidence and zero logical ownership
@@ -61,6 +63,29 @@ as byte-token compatible. See [Ordinary Model Package](MODEL_PACKAGE.md).
 `text-run` requires valid nonempty UTF-8 input and `1..64` requested output
 tokens. The current command profile limits input to 4,096 bytes. It emits one
 deterministic JSON object and renders model output as token IDs.
+
+For process-local execution, `--eos-token ID` changes `--n` from an exact
+count to an upper bound. The token must be inside the admitted vocabulary.
+An EOS hit before the bound emits
+`glacier.prepared-text-variable-run/v1`, reports
+`termination_reason="eos"`, closes unused scheduler quanta, and includes a
+`CompletedEarlyV1` root. If the token is not sampled, execution reaches the
+bound, reports `termination_reason="length"`, and retires normally without an
+early-completion root. Sampling EOS exactly at the bound reports
+`termination_reason="eos_at_limit"` and also retires normally because no quota
+remains to release. The default command remains the fixed
+`SessionV3`/`ResultEnvelopeV1` profile.
+
+```sh
+./zig-out/bin/glacier text-run model.glrt \
+  --text-file prompt.txt --license LICENSE --package model.glpkg \
+  --n 16 --eos-token 2
+```
+
+The early-completion sidecar is required to classify the close as successful:
+the underlying cancel event by itself retains its ordinary cancellation
+meaning. Durable options cannot be combined with `--eos-token`; the command
+rejects that combination before reading or mutating the state directory.
 
 The preferred input is `--text-file`, which keeps prompt bytes out of process
 arguments and shell history. `--text` remains available for non-sensitive
@@ -371,7 +396,11 @@ The gate:
     capacities `1`, `3`, and `63`, proves count-bound identity and a
     generation-one fresh-process continuation for count four, and requires all
     durable tokens to equal ordinary execution; and
-13. rejects incompatible durable options, unsafe directory selection,
+13. derives in-vocabulary EOS hit and miss cases from the ordinary output,
+    independently recomputes the variable-terminal and completed-early roots,
+    verifies exact unused-quanta closure, and rejects durable EOS before
+    directory mutation; and
+14. rejects incompatible durable options, unsafe directory selection,
     oversized input, and malformed UTF-8 before model execution.
 
 The gate neither reconstructs the boundary snapshot nor independently replays
@@ -397,6 +426,8 @@ claim language quality. Ordinary execution remains a process-local CPU path.
 The package-aware durable CPU/POSIX command supports fixed counts `1..64`:
 count one is intentionally sink-free, while counts `2..64` use acknowledged
 result-sink state with capacity `N - 1`.
+The separate process-local `--eos-token` profile supports successful
+fewer-than-admitted output without changing the fixed durable contracts.
 
 The Common artifact manifest remains a request-profile identity and changes
 with prompt context. R1k-b2 supplies a separate stable package identity, but it
@@ -406,7 +437,7 @@ than a fixed cross-language wire.
 
 The package-aware command carries exact tokenizer/raw-input identity through
 every retained generation and renders checked committed output only after
-runtime ownership closes. Variable-length or early-EOS output, general
+runtime ownership closes. Durable variable-length or early-EOS output, general
 tokenizer text rendering, and serving integration remain open.
 The overall invocation still enters the idempotent writer/lease workflow before
 calling the read-only view; it is not a post-hoc read-only inspector.

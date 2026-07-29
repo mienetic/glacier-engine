@@ -12,11 +12,17 @@ on:
       profile:
         description: Verification depth for this manual run
         required: true
-        default: full
+        default: affected
         type: choice
         options:
+          - affected
           - full
           - matrix
+      base_ref:
+        description: Base revision for a manual affected run
+        required: true
+        default: HEAD^
+        type: string
 
 permissions:
   contents: read
@@ -107,11 +113,13 @@ jobs:
     timeout-minutes: 120
     env:
       GLACIER_VERIFY_REQUIRE_NATIVE: "1"
+      GLACIER_VERIFY_REUSE_ZIG_CACHE: "1"
       VERIFY_PROFILE: ${{ inputs.profile || 'matrix' }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Zig
@@ -130,7 +138,46 @@ jobs:
           --require-hashes
           -r bench/requirements-test.txt
 
+      - name: Resolve manual affected base
+        if: >-
+          ${{
+            github.event_name == 'workflow_dispatch' &&
+            inputs.profile == 'affected'
+          }}
+        id: manual-affected-base
+        shell: bash
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$BASE_REF" ]]; then
+            echo "base_ref must not be empty" >&2
+            exit 64
+          fi
+          if ! base="$(
+            git rev-parse --verify --end-of-options "${BASE_REF}^{commit}"
+          )"; then
+            echo "cannot resolve affected base_ref: $BASE_REF" >&2
+            exit 64
+          fi
+          printf 'base=%s\n' "$base" >>"$GITHUB_OUTPUT"
+
+      - name: Run complete affected verification
+        if: >-
+          ${{
+            github.event_name == 'workflow_dispatch' &&
+            inputs.profile == 'affected'
+          }}
+        run: >-
+          tools/verify.sh affected
+          --base "${{ steps.manual-affected-base.outputs.base }}"
+
       - name: Run requested verification profile
+        if: >-
+          ${{
+            github.event_name != 'workflow_dispatch' ||
+            inputs.profile != 'affected'
+          }}
         env:
           GLACIER_VERIFY_REUSE_ZIG_CACHE: "1"
         run: tools/verify.sh "$VERIFY_PROFILE"
