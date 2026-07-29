@@ -290,12 +290,18 @@ formats, and independent verifiers.
   an exclusive POSIX lease and one-shot activation grant fence the restored
   target, while a receipt-independent terminal semantic compares it with a
   separately retired uninterrupted oracle.
+- **Public prepared-text durability composition.** The experimental
+  [`prepared_text_durable_runtime`](docs/PREPARED_TEXT_DURABLE_RUNTIME.md)
+  Zig surface creates or exactly recovers generation one, advances one source
+  transition, or advances one acknowledged target transition per call. The
+  same public entry points now drive all 49 retained prepared-text
+  process-death boundaries.
 - **Read-only committed-output inspection.** The experimental R1k-b3 inspector
-  joins one selected prepared-text checkpoint to its selected durable sink
-  without taking either writer lease. It accepts only aligned state or a
-  nonterminal sink exactly one acknowledgement ahead. Output stays hidden by
-  default; an explicit disclosure flag renders exact token IDs, byte hex,
-  escaped bytes, and strict UTF-8 text only when valid.
+  and public filesystem API join one selected prepared-text checkpoint to its
+  selected durable sink without taking either writer lease. They accept only
+  aligned state or a nonterminal sink exactly one acknowledgement ahead.
+  Output stays hidden by default; an explicit disclosure flag renders exact
+  token IDs, byte hex, escaped bytes, and strict UTF-8 text only when valid.
 - **Tenant-scoped object resolution.** A least-authority grant admits only exact
   capsule objects under bounded scan, object, total-byte, and resolution limits.
 - **Canonical continuation bundles.** Semantic roots remain kind-specific while
@@ -1059,7 +1065,16 @@ tools/verify.sh
 Every gate is reported as `PASS`, `FAIL`, or `SKIP` with a reason. The default
 quick profile verifies formatting, public-document policy, package imports, and
 the Zig/C/C++/Python contract chain. Its compatible Zig roots share one build
-DAG instead of starting a compiler process for each gate. In a clean
+DAG instead of starting a compiler process for each gate. During ordinary
+branch work, use the path-aware fast tier:
+
+```sh
+tools/verify.sh affected-fast --base origin/main
+```
+
+It avoids a Zig build for documentation-only changes, selects focused
+prepared-text and verification-policy gates when relevant, and reports broad
+host, Python, and foreign-target work as explicitly deferred. In a clean
 environment, install the hash-locked binary dependency before selecting the
 full profile:
 
@@ -1185,7 +1200,7 @@ hardware-independent surface without those native backend dependencies.
 
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
-| AI runtime | CPU execution, an optional macOS Metal kernel path, sealed POSIX publication for portable `.glacier` conversion, recoverable POSIX publication for prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial text request profiles, a request-independent package manifest with a separate prepared-representation identity, exact canonical UTF-8 byte-tokenizer and raw-input binding wires, a retained-fixture-only experimental raw-text command, durable retention and fresh-process re-tokenization of the exact raw-input archive, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture, same-process exact-current-boundary rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, an experimental fresh-process source-exit handoff with canonical generation-one replay, acknowledged one-token target progress through an idempotent durable local POSIX sink and generation-five terminal result, metadata-first R1k-b3 read-only committed-output inspection, a canonical exact-integer dense-tensor reranker, and portable exact Q30 L2 dense embeddings, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic ten-profile retained-reference compatibility inspector | Integrate checked durable output into ordinary `text-run` and future serving surfaces, extend ownership/accounting and repeated-handoff coverage, compose normalized embeddings into retrieval, add production fixtures, native multi-OS validation, and broader production device execution |
+| AI runtime | CPU execution, an optional macOS Metal kernel path, sealed POSIX publication for portable `.glacier` conversion, recoverable POSIX publication for prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial text request profiles, a request-independent package manifest with a separate prepared-representation identity, exact canonical UTF-8 byte-tokenizer and raw-input binding wires, a retained-fixture-only experimental raw-text command, durable retention and fresh-process re-tokenization of the exact raw-input archive, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture, same-process exact-current-boundary rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, an experimental fresh-process source-exit handoff with canonical generation-one replay, acknowledged one-token target progress through an idempotent durable local POSIX sink and generation-five terminal result, public one-step bootstrap/source/target durable-runtime APIs used by the retained 49-boundary campaign, a public read-only committed-output filesystem API, metadata-first R1k-b3 inspection, a canonical exact-integer dense-tensor reranker, and portable exact Q30 L2 dense embeddings, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic ten-profile retained-reference compatibility inspector | Add an ordinary-model package producer and runtime-capacity `1..64` durable driver, integrate checked durable output into ordinary `text-run` and future serving surfaces, extend ownership/accounting and repeated-handoff coverage, compose normalized embeddings into retrieval, add production fixtures and non-POSIX native evidence, and broaden production device execution |
 | Language interop | Installed experimental C header plus shared/static contract libraries; source and staged-install C consumers; C++ linkage check; standard-library Python `ctypes`; dependency-free Rust `extern "C"` gate; fixed profile enumeration and support-mask queries | Retained symbol/layout gates, native multi-OS consumers, stability policy, packages, then model/session execution bindings |
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, a generic dense-tensor reranker with canonical ranked items, a generic normalized dense-tensor embedding fixture, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, one process-local typed tool transaction, a durable POSIX external-action handoff store, and a same-process generation-fenced fake dispatch/status authority for retained reference profiles | Generic classification, retrieval composition, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, OS-isolated real-credential adapters, live tools and agent loops, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor evidence, receipt-funded restored activation with a global publication sequence base, recoverable generation-one source enrollment, experimental durable source exit, exclusive fresh-process activation, and generation-two-through-five acknowledged local POSIX target progress with semantic oracle comparison; plus capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Native Linux recovery, Win32 durable files, remote delivery adapters, device-resident continuation, repeated/cancelled handoff evidence, and durable lifecycle metadata |
@@ -1302,6 +1317,19 @@ generation-one bootstrap, 23 source-transition, and 19 target-transition
 independent decoder admits only the exact state declared at each boundary and
 then requires convergence to the uninterrupted four-token oracle.
 
+The writer-side foundation is now exposed through the public experimental Zig
+module `prepared_text_durable_runtime`. `bootstrapFileV1`,
+`advanceSourceFileV1`, and `advanceTargetFileV1` each perform one bounded
+filesystem/runtime transition without retaining process-local model,
+allocator, directory, or lease authority. Bootstrap leaves the caller-owned
+Scheduler open; successful source and target receipts close their live runtime
+ownership. The public
+`prepared_text_committed_output_file.inspectDirectoryV1` API separately reads
+and reconciles the selected checkpoint and sink without writer authority. The
+existing seven bootstrap, 23 source-transition, and 19 target-transition crash
+boundaries call these public APIs rather than a second benchmark-only
+implementation.
+
 The compatibility durable recovery APIs still accept pre-tokenized input and
 do not cover every V1-valid request shape. The additive R1k-b2 path now carries
 one strict raw-text tokenizer, the retained fixture license, a stable package
@@ -1311,15 +1339,17 @@ join over the selected checkpoint and durable sink. It accepts only aligned
 state or a nonterminal sink exactly one acknowledgement ahead, hides output by
 default, and requires `--reveal-output` for exact token and byte disclosure.
 It does not make `text-run` durable or provide ordinary serving output.
-The combined work does not support early EOS or
-fewer-than-admitted outputs, provide concurrent Session mutation, replay a
-source prefix after an external effect, execute the handoff on GPU, or
+There is not yet a runtime-capacity `1..64` driver or public package producer
+for an ordinary user-supplied model. The combined work does not support early
+EOS or fewer-than-admitted outputs, provide concurrent Session mutation, replay
+a source prefix after an external effect, execute the handoff on GPU, or
 establish production native performance. The durable adapter for this path is
-POSIX-only; Windows durable files remain roadmap work. The local sink prevents
-repeated visible application for its exact request/sequence delivery key, but
-it is not a remote-provider, distributed, hostile-writer, or physical
-power-loss exactly-once protocol. Its acknowledgement codec also relies on the
-trusted sink-before-progress transaction order. The detached R1e payload
+POSIX-only; non-POSIX native recovery evidence and Windows durable files remain
+roadmap work. The local sink prevents repeated visible application for its
+exact request/sequence delivery key, but it is not a remote-provider,
+distributed, hostile-writer, or physical power-loss exactly-once protocol. Its
+acknowledgement codec also relies on the trusted sink-before-progress
+transaction order. The detached R1e payload
 cannot publish another token by itself; R1f installs it only through the
 original address-stable live Session. R1g supplies exact successor evidence,
 R1h-a creates a barrier-held target bootstrap, and R1h-b activates it; the

@@ -5,12 +5,17 @@ set -eu
 usage() {
     cat <<'EOF'
 usage: tools/verify.sh [quick|full|matrix]
+       tools/verify.sh affected-fast --base REV
        tools/verify.sh affected --base REV
+       GLACIER_VERIFY_BASE=REV tools/verify.sh affected-fast
        GLACIER_VERIFY_BASE=REV tools/verify.sh affected
        GLACIER_VERIFY_REQUIRE_NATIVE=1 tools/verify.sh affected --base REV
 
 quick  Run bounded format, documentation-policy, package, and interop gates.
 full   Add broad ReleaseSafe/Python, native POSIX store-fault, and optional Rust.
+affected-fast
+       Select changed-path syntax and focused native gates, while deferring
+       broad ReleaseSafe/Python suites and retained cross-target compilation.
 affected
        Select the union of host and cross-target gates for every path changed
        since the merge base with REV. --base overrides GLACIER_VERIFY_BASE.
@@ -27,8 +32,8 @@ case "$#" in
             quick | full | matrix)
                 profile=$1
                 ;;
-            affected)
-                profile=affected
+            affected | affected-fast)
+                profile=$1
                 ;;
             -h | --help)
                 usage
@@ -42,8 +47,8 @@ case "$#" in
         ;;
     2)
         case "$1:$2" in
-            affected:--base=*)
-                profile=affected
+            affected:--base=* | affected-fast:--base=*)
+                profile=$1
                 base_ref=${2#--base=}
                 ;;
             *)
@@ -53,13 +58,16 @@ case "$#" in
         esac
         ;;
     3)
-        if [ "$1" = "affected" ] && [ "$2" = "--base" ]; then
-            profile=affected
-            base_ref=$3
-        else
-            usage >&2
-            exit 64
-        fi
+        case "$1:$2" in
+            affected:--base | affected-fast:--base)
+                profile=$1
+                base_ref=$3
+                ;;
+            *)
+                usage >&2
+                exit 64
+                ;;
+        esac
         ;;
     *)
         usage >&2
@@ -67,8 +75,13 @@ case "$#" in
         ;;
 esac
 
-if [ "$profile" = "affected" ] && [ -z "$base_ref" ]; then
-    echo "FAIL  verifier/base: affected requires --base REV or GLACIER_VERIFY_BASE" >&2
+affected_profile=0
+case "$profile" in
+    affected | affected-fast) affected_profile=1 ;;
+esac
+
+if [ "$affected_profile" -eq 1 ] && [ -z "$base_ref" ]; then
+    echo "FAIL  verifier/base: $profile requires --base REV or GLACIER_VERIFY_BASE" >&2
     usage >&2
     exit 64
 fi
@@ -251,6 +264,24 @@ run_zig_build() {
         --prefix "$verification_prefix"
 }
 
+run_prepared_text_focused_build() {
+    if [ "$prepared_text_recovery_requested" -eq 1 ] &&
+        [ "$prepared_text_inspector_requested" -eq 1 ]; then
+        run_zig_build \
+            package-module-test \
+            prepared-text-recovery-test \
+            prepared-text-result-inspector-test
+    elif [ "$prepared_text_recovery_requested" -eq 1 ]; then
+        run_zig_build \
+            package-module-test \
+            prepared-text-recovery-test
+    else
+        run_zig_build \
+            package-module-test \
+            prepared-text-result-inspector-test
+    fi
+}
+
 run_zig_metal_build() {
     zig build native-metal-suite-compile \
         -Dmetal-output-dir="$verification_root/metal" \
@@ -287,6 +318,12 @@ run_zig_target_build() {
 plan_has() {
     [ -f "$affected_flags_file" ] &&
         grep -Fqx "$1" "$affected_flags_file"
+}
+
+plan_has_nonquick_flags() {
+    [ -f "$affected_flags_file" ] &&
+        grep -Fvx "quick" "$affected_flags_file" |
+        grep -q .
 }
 
 run_target_gates() {
@@ -530,9 +567,12 @@ else
     record_fail "toolchain/python" "python3 is not on PATH"
 fi
 
+host_name=$(uname -s 2>/dev/null || printf unknown)
+host_arch=$(uname -m 2>/dev/null || printf unknown)
+
 affected_plan_ready=0
 target_plan_ready=0
-if [ "$profile" = "affected" ]; then
+if [ "$affected_profile" -eq 1 ]; then
     if ! command -v git >/dev/null 2>&1; then
         record_fail "toolchain/git" "git is required by the affected profile"
     elif ! base_commit=$(
@@ -577,6 +617,27 @@ elif [ "$profile" = "matrix" ]; then
     fi
 fi
 
+documentation_only_fast=0
+prepared_text_focused_requested=0
+prepared_text_inspector_requested=0
+prepared_text_recovery_requested=0
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "prepared-text-recovery-focused"; then
+    prepared_text_recovery_requested=1
+    prepared_text_focused_requested=1
+fi
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "prepared-text-inspector-focused"; then
+    prepared_text_inspector_requested=1
+    prepared_text_focused_requested=1
+fi
+if [ "$profile" = "affected-fast" ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    [ ! -s "$selected_targets_file" ] &&
+    ! plan_has_nonquick_flags; then
+    documentation_only_fast=1
+fi
+
 run_native_full=0
 run_python_full=0
 case "$profile" in
@@ -608,15 +669,41 @@ else
     record_skip "policy/public-markdown" "requires a working python3 executable"
 fi
 
+host_quick_status=not-run
+prepared_text_focused_in_quick=0
 if [ "$run_native_full" -eq 1 ]; then
     :
+elif [ "$documentation_only_fast" -eq 1 ]; then
+    record_skip "interop/c-cpp-python" \
+        "affected-fast documentation-only plan; no host build needed"
+    record_skip "package/modules" \
+        "affected-fast documentation-only plan; no host build needed"
 elif [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
-    run_gate "host/quick-dag" \
-        run_zig_build contract-interop-test package-module-test
+    if [ "$prepared_text_focused_requested" -eq 1 ]; then
+        case "$host_name" in
+            Darwin | Linux)
+                prepared_text_focused_in_quick=1
+                run_gate "host/prepared-text-focused-dag" \
+                    run_prepared_text_focused_build
+                ;;
+            *)
+                run_gate "host/quick-dag" \
+                    run_zig_build contract-interop-test package-module-test
+                ;;
+        esac
+    else
+        run_gate "host/quick-dag" \
+            run_zig_build contract-interop-test package-module-test
+    fi
     host_quick_status=$last_gate_status
     if [ "$host_quick_status" -eq 0 ]; then
-        record_pass "interop/c-cpp-python" \
-            "covered by the shared host Zig DAG"
+        if [ "$prepared_text_focused_in_quick" -eq 1 ]; then
+            record_skip "interop/c-cpp-python" \
+                "prepared-text focused DAG does not select generic interop"
+        else
+            record_pass "interop/c-cpp-python" \
+                "covered by the shared host Zig DAG"
+        fi
         record_pass "package/modules" \
             "covered by the shared host Zig DAG"
     else
@@ -636,7 +723,51 @@ else
     fi
 fi
 
-if [ "$profile" = "affected" ] &&
+if [ "$prepared_text_focused_requested" -eq 1 ] &&
+    [ "$prepared_text_focused_in_quick" -eq 1 ]; then
+    if [ "$host_quick_status" -eq 0 ]; then
+        if [ "$prepared_text_inspector_requested" -eq 1 ]; then
+            record_pass "native/prepared-text-inspector" \
+                "covered by the focused host Zig DAG"
+        fi
+        if [ "$prepared_text_recovery_requested" -eq 1 ]; then
+            record_pass "native/prepared-text-recovery" \
+                "covered by the focused host Zig DAG"
+        fi
+    else
+        if [ "$prepared_text_inspector_requested" -eq 1 ]; then
+            record_skip "native/prepared-text-inspector" \
+                "focused host Zig DAG failed"
+        fi
+        if [ "$prepared_text_recovery_requested" -eq 1 ]; then
+            record_skip "native/prepared-text-recovery" \
+                "focused host Zig DAG failed"
+        fi
+    fi
+elif [ "$prepared_text_focused_requested" -eq 1 ] &&
+    [ "$run_native_full" -eq 0 ]; then
+    if [ "$host_name" != "Darwin" ] && [ "$host_name" != "Linux" ]; then
+        if [ "$prepared_text_inspector_requested" -eq 1 ]; then
+            record_native_unavailable "native/prepared-text-inspector" \
+                "requires native macOS or Linux execution"
+        fi
+        if [ "$prepared_text_recovery_requested" -eq 1 ]; then
+            record_native_unavailable "native/prepared-text-recovery" \
+                "requires native macOS or Linux execution"
+        fi
+    else
+        if [ "$prepared_text_inspector_requested" -eq 1 ]; then
+            record_native_unavailable "native/prepared-text-inspector" \
+                "requires working zig and python3 executables"
+        fi
+        if [ "$prepared_text_recovery_requested" -eq 1 ]; then
+            record_native_unavailable "native/prepared-text-recovery" \
+                "requires working zig and python3 executables"
+        fi
+    fi
+fi
+
+if [ "$affected_profile" -eq 1 ] &&
     [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "python-changed"; then
     if [ "$has_python" -eq 1 ]; then
@@ -648,7 +779,19 @@ if [ "$profile" = "affected" ] &&
     fi
 fi
 
-if [ "$profile" = "affected" ] &&
+if [ "$profile" = "affected-fast" ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "verification-policy-focused"; then
+    if [ "$has_python" -eq 1 ]; then
+        run_gate "python/verification-policy" \
+            python3 -m unittest bench.tests.test_verification_policy
+    else
+        record_skip "python/verification-policy" \
+            "requires a working python3 executable"
+    fi
+fi
+
+if [ "$affected_profile" -eq 1 ] &&
     [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "shell-changed"; then
     if [ "$has_python" -eq 1 ]; then
@@ -660,7 +803,7 @@ if [ "$profile" = "affected" ] &&
     fi
 fi
 
-if [ "$profile" = "affected" ] &&
+if [ "$affected_profile" -eq 1 ] &&
     [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "workload-report-portable"; then
     if [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
@@ -749,31 +892,74 @@ if [ "$run_native_full" -eq 1 ]; then
     fi
 elif [ "$profile" = "quick" ]; then
     record_skip "native/releasesafe-suite" "quick profile; run tools/verify.sh full"
+elif [ "$profile" = "affected-fast" ]; then
+    record_skip "native/releasesafe-suite" \
+        "affected-fast defers the broad suite; run affected with the same base"
 else
     record_skip "native/releasesafe-suite" "not selected by the affected policy"
 fi
 
+if [ "$profile" = "affected" ] &&
+    [ "$prepared_text_focused_requested" -eq 1 ] &&
+    [ "$prepared_text_focused_in_quick" -eq 0 ]; then
+    if [ "$native_full_status" = "0" ]; then
+        if [ "$prepared_text_inspector_requested" -eq 1 ]; then
+            record_pass "native/prepared-text-inspector" \
+                "covered by the shared host runtime DAG"
+        fi
+        if [ "$prepared_text_recovery_requested" -eq 1 ]; then
+            record_pass "native/prepared-text-recovery" \
+                "covered by the shared host runtime DAG"
+        fi
+    else
+        if [ "$prepared_text_inspector_requested" -eq 1 ]; then
+            record_skip "native/prepared-text-inspector" \
+                "covering host compile or runtime DAG did not pass"
+        fi
+        if [ "$prepared_text_recovery_requested" -eq 1 ]; then
+            record_skip "native/prepared-text-recovery" \
+                "covering host compile or runtime DAG did not pass"
+        fi
+    fi
+fi
+
+python_full_status=not-run
 if [ "$run_python_full" -eq 1 ]; then
     if [ "$has_python" -eq 1 ]; then
         run_gate "python/full-suite" \
             python3 -m unittest discover -s bench/tests
+        python_full_status=$last_gate_status
     else
+        python_full_status=unavailable-python
         record_skip "python/full-suite" "requires a working python3 executable"
     fi
 elif [ "$profile" = "quick" ]; then
     record_skip "python/full-suite" "quick profile; run tools/verify.sh full"
+elif [ "$profile" = "affected-fast" ]; then
+    record_skip "python/full-suite" \
+        "affected-fast defers full discovery; run affected with the same base"
 else
     record_skip "python/full-suite" "not selected by the affected policy"
 fi
 
-host_name=$(uname -s 2>/dev/null || printf unknown)
-host_arch=$(uname -m 2>/dev/null || printf unknown)
+if [ "$profile" = "affected" ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "verification-policy-focused"; then
+    if [ "$python_full_status" = "0" ]; then
+        record_pass "python/verification-policy" \
+            "covered by full Python discovery"
+    else
+        record_skip "python/verification-policy" \
+            "covering full Python discovery did not pass"
+    fi
+fi
+
 run_workload_store_fault=0
 case "$profile" in
     full | matrix)
         run_workload_store_fault=1
         ;;
-    affected)
+    affected | affected-fast)
         if [ "$affected_plan_ready" -eq 1 ] &&
             plan_has "workload-store-fault-posix"; then
             run_workload_store_fault=1
@@ -815,7 +1001,7 @@ case "$profile" in
     quick)
         record_skip "interop/rust" "quick profile; run tools/verify.sh full"
         ;;
-    affected)
+    affected | affected-fast)
         if [ "$affected_plan_ready" -eq 1 ] && plan_has "rust-native"; then
             run_rust_gate=1
             require_rust_gate=1
@@ -858,10 +1044,13 @@ if [ "$run_rust_gate" -eq 1 ]; then
     esac
 fi
 
-if [ "$profile" = "affected" ] &&
+if [ "$affected_profile" -eq 1 ] &&
     [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "darwin-native"; then
-    if [ "$host_name" != "Darwin" ]; then
+    if [ "$profile" = "affected-fast" ]; then
+        record_skip "native/darwin" \
+            "affected-fast has no focused Darwin root; run affected with the same base"
+    elif [ "$host_name" != "Darwin" ]; then
         record_native_unavailable "native/darwin" \
             "requires native Darwin execution"
     else
@@ -869,10 +1058,13 @@ if [ "$profile" = "affected" ] &&
     fi
 fi
 
-if [ "$profile" = "affected" ] &&
+if [ "$affected_profile" -eq 1 ] &&
     [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "darwin-aarch64-native"; then
-    if [ "$host_name" != "Darwin" ]; then
+    if [ "$profile" = "affected-fast" ]; then
+        record_skip "native/darwin-aarch64" \
+            "affected-fast has no focused Darwin AArch64 root; run affected with the same base"
+    elif [ "$host_name" != "Darwin" ]; then
         record_native_unavailable "native/darwin-aarch64" \
             "requires native Darwin AArch64 execution"
     elif [ "$host_arch" != "arm64" ] && [ "$host_arch" != "aarch64" ]; then
@@ -883,7 +1075,7 @@ if [ "$profile" = "affected" ] &&
     fi
 fi
 
-if [ "$profile" = "affected" ] &&
+if [ "$affected_profile" -eq 1 ] &&
     [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "darwin-swift"; then
     if [ "$host_name" != "Darwin" ]; then
@@ -898,7 +1090,7 @@ if [ "$profile" = "affected" ] &&
     fi
 fi
 
-if [ "$profile" = "affected" ] &&
+if [ "$affected_profile" -eq 1 ] &&
     [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "metal-native"; then
     if [ "$host_name" != "Darwin" ]; then
@@ -938,6 +1130,10 @@ case "$profile" in
             record_skip "portability/cross-target" \
                 "no retained foreign target was selected"
         fi
+        ;;
+    affected-fast)
+        record_skip "portability/cross-target" \
+            "affected-fast defers retained targets; run affected with the same base"
         ;;
     quick | full)
         record_skip "portability/cross-target" \

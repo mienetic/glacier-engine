@@ -4,24 +4,106 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   pull_request:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Verification depth for this manual run
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - matrix
 
 permissions:
   contents: read
-
-concurrency:
-  group: ci-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
-  host:
-    name: Host ReleaseSafe verification
+  affected:
+    name: Fast affected verification
+    if: >-
+      ${{
+        github.event_name == 'pull_request' ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 35
+    concurrency:
+      group: ci-fast-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+          use-cache: false
+
+      - name: Resolve affected base
+        id: affected-base
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              base="$PR_BASE_SHA"
+              ;;
+            push)
+              base="$PUSH_BEFORE_SHA"
+              ;;
+            *)
+              echo "unsupported event for affected verification: $GITHUB_EVENT_NAME" >&2
+              exit 64
+              ;;
+          esac
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            echo "event does not provide a usable affected base" >&2
+            exit 64
+          fi
+          event_base="$base"
+          if ! git rev-parse --verify "${base}^{commit}" >/dev/null 2>&1; then
+            if ! git fetch --no-tags --depth=1 origin "$base"; then
+              echo "cannot fetch exact affected base: $event_base" >&2
+              exit 64
+            fi
+          fi
+          if ! base="$(git rev-parse --verify "${event_base}^{commit}")"; then
+            echo "cannot resolve exact affected base: $event_base" >&2
+            exit 64
+          fi
+          printf 'base=%s\n' "$base" >>"$GITHUB_OUTPUT"
+
+      - name: Run bounded affected gates
+        run: >-
+          tools/verify.sh affected-fast
+          --base "${{ steps.affected-base.outputs.base }}"
+
+  exhaustive:
+    name: Exhaustive verification (${{ inputs.profile || 'matrix' }})
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        startsWith(github.ref, 'refs/tags/v')
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GLACIER_VERIFY_REQUIRE_NATIVE: "1"
+      VERIFY_PROFILE: ${{ inputs.profile || 'matrix' }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,54 +115,6 @@ jobs:
         with:
           version: 0.15.2
           use-cache: false
-
-      - name: Report toolchains
-        run: |
-          zig version
-          python3 --version
-          rustc --version
-
-      - name: Check formatting and public documentation
-        run: |
-          zig fmt --check build.zig src bench examples tests
-          python3 -m unittest bench.tests.test_public_markdown_policy
-
-      - name: Compile host test frontier
-        id: host-compile
-        run: zig build host-runtime-compile -Dmetal=false -Doptimize=ReleaseSafe -j2
-
-      - name: Run host and C/C++/Python gates
-        if: ${{ !cancelled() && steps.host-compile.outcome == 'success' }}
-        run: zig build test contract-interop-test -Dmetal=false -Doptimize=ReleaseSafe -j2
-
-      - name: Run Rust interop gate
-        if: ${{ !cancelled() && steps.host-compile.outcome == 'success' }}
-        run: zig build contract-rust-test -Dmetal=false -Doptimize=ReleaseSafe -j1
-
-      - name: Run POSIX store-fault campaign
-        if: ${{ !cancelled() && steps.host-compile.outcome == 'success' }}
-        run: zig build native-workload-store-fault-test -Dmetal=false -Doptimize=ReleaseSafe -j2
-
-  python:
-    name: Python regression
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          version: 0.15.2
-          use-cache: false
-
-      - name: Report toolchains
-        run: |
-          zig version
-          python3 --version
 
       - name: Install Python test dependencies
         run: >-
@@ -90,24 +124,31 @@ jobs:
           --require-hashes
           -r bench/requirements-test.txt
 
-      - name: Run full Python suite
-        run: python3 -m unittest discover -s bench/tests
+      - name: Run requested verification profile
+        run: tools/verify.sh "$VERIFY_PROFILE"
 
-  metal-compile:
-    name: macOS Metal compile frontier
+  macos-frontier:
+    name: macOS Metal and durability frontier
+    if: >-
+      ${{
+        (github.event_name == 'workflow_dispatch' && inputs.profile == 'matrix') ||
+        startsWith(github.ref, 'refs/tags/v')
+      }}
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Set up Zig
+      - name: Set up Zig and bounded cache
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.15.2
-          use-cache: false
+          use-cache: true
+          cache-key: exhaustive-metal
+          cache-size-limit: 2048
 
       - name: Compile Metal closure without execution claims
         run: >-
@@ -120,39 +161,6 @@ jobs:
       - name: Run durable model-conversion recovery
         run: >-
           zig build model-conversion-durable-recovery-test
-          -Dmetal=false
-          -Doptimize=ReleaseSafe
-          -j2
-
-  cross:
-    name: Cross-compile (${{ matrix.target }})
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        target:
-          - x86_64-linux-musl
-          - aarch64-linux-musl
-          - x86_64-windows-gnu
-          - x86_64-freebsd
-    steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          version: 0.15.2
-          use-cache: false
-
-      - name: Compile complete target closure
-        run: >-
-          zig build install install-benchmarks test-compile
-          -Dtarget=${{ matrix.target }}
           -Dmetal=false
           -Doptimize=ReleaseSafe
           -j2

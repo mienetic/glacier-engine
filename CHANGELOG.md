@@ -8,6 +8,13 @@ before the first stable release.
 
 ### Changed
 
+- Contributor verification now has an `affected-fast` tier. Documentation-only
+  changes perform no Zig build, prepared-text reader and writer changes select
+  their focused native DAGs, and verifier changes run the policy regression
+  suite without expanding to broad host or foreign-target compilation.
+  Pull requests and `main` pushes use this bounded tier and cancel superseded
+  runs; exhaustive `full` or `matrix` CI is explicit, while `v*` tags retain
+  the matrix and macOS frontier.
 - Portable-model conversion now rejects malformed Safetensors integer domains,
   tensor byte geometry, overlap, holes, unsupported source dtypes, and
   source/output aliases before payload publication. Conversion reserves the
@@ -57,6 +64,21 @@ before the first stable release.
 
 ### Added
 
+- Added public experimental filesystem composition for the retained
+  prepared-text durability path.
+  `prepared_text_durable_runtime.bootstrapFileV1`,
+  `advanceSourceFileV1`, and `advanceTargetFileV1` respectively create or
+  exactly recover generation one, advance one source transition, and advance
+  one acknowledged target transition. The public
+  `prepared_text_committed_output_file.inspectDirectoryV1` entry point reads
+  and reconciles the selected checkpoint and result sink without acquiring
+  writer authority. The existing seven bootstrap, 23 source-transition, and
+  19 target-transition process-death boundaries now call these public APIs.
+  This foundation remains a caller-orchestrated Zig surface over the bounded
+  POSIX fixture: ordinary `text-run` and serving integration, a runtime-capacity
+  `1..64` driver, a user-facing package producer, non-POSIX native evidence,
+  physical power-loss persistence, production-model coverage, and performance
+  claims remain open.
 - Added the R1k-b3 read-only committed-output inspection slice. The focused
   library and `glacier-prepared-text-result-inspector` command reconcile an
   acknowledged prepared-text checkpoint with its selected immutable

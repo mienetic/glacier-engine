@@ -14,23 +14,29 @@ tools/verify.sh
 
 The default quick profile uses no model or provider credentials and reports
 every gate as `PASS`, `FAIL`, or `SKIP` with a reason. Run
-`tools/verify.sh affected --base origin/main` to select the union of checks for
-your branch, or `tools/verify.sh full` when you need the broad local ReleaseSafe
-and Python suites.
+`tools/verify.sh affected-fast --base origin/main` during ordinary iteration.
+It keeps changed-file checks and explicitly selected Rust, Darwin Swift, Metal,
+portable-report, POSIX fault, and prepared-text focused gates, while deferring
+broad host suites and foreign-target compilation. A documentation-only plan
+runs no Zig build beyond formatting. Before release or when the complete
+path-aware matrix is needed, run
+`tools/verify.sh affected --base origin/main`; use `tools/verify.sh full` for
+the broad local ReleaseSafe and Python suites.
 
 The quick profile remains dependency-free. Use CPython 3.10–3.12 and install
 `bench/requirements-test.txt` in a clean environment before running `full`,
 `matrix`, or full unittest discovery.
 
-Pull requests and pushes to `main` run the host ReleaseSafe and POSIX fault
-gates, the full Python regression suite, and the four retained cross-target
-compile closures in parallel on GitHub Actions. Full Python discovery imports
-the retained numeric reference reporters and installs their pinned dependency
-from `bench/requirements-test.txt`; the embedding and runtime-contract verifiers
-remain standard-library-only. A macOS job compiles the complete Metal closure
-but does not execute or measure it. Native Metal runtime and performance gates
-remain explicit local or maintainer-run checks so hosted CI does not imply
-hardware evidence it did not collect.
+Pull requests and pushes to `main` run `affected-fast` on Ubuntu. Maintainers
+can dispatch `full` or `matrix` explicitly; `v*` tags run the Linux matrix plus
+the macOS Metal/durability frontier. There is no scheduled exhaustive build.
+Full Python discovery imports the retained numeric reference reporters and
+installs their pinned dependency from `bench/requirements-test.txt`; the
+embedding and runtime-contract verifiers remain standard-library-only. The
+macOS frontier compiles the complete Metal closure but does not execute or
+measure it. Native Metal runtime and performance gates remain explicit local or
+maintainer-run checks so hosted CI does not imply hardware evidence it did not
+collect.
 
 Then choose a bounded item from [Contributor projects](PROJECTS.md), open a
 **Claim a contributor slice** issue, and tell us what command will prove it is
@@ -83,14 +89,18 @@ label assumptions and questions clearly.
 
 ## Verification matrix
 
-The quick and full profiles remain stable contributor entry points. The
-affected profile adds every row needed by the complete changed-path set; one
-narrow change never hides the checks required by another changed path.
+The quick and full profiles remain stable contributor entry points.
+`affected-fast` is the iterative path-aware tier: it keeps focused high-risk
+gates but deliberately defers broad ReleaseSafe/Python suites and the retained
+cross-target plan. The `affected` profile adds every row needed by the complete
+changed-path set; one narrow change never hides the checks required by another
+changed path.
 
 | Change | Required checks |
 | --- | --- |
 | Documentation or metadata only | Quick profile, links, spelling/manual review |
 | GitHub workflow, action, or dependency automation | Quick gates, native ReleaseSafe, Python discovery, and every retained target |
+| Verification policy, verifier wrapper, or policy regression test | `affected-fast` runs changed-file syntax and `bench.tests.test_verification_policy` once; broad Python/native/target coverage remains deferred to complete tiers |
 | Python verifier, harness, or retained result without a focused gate below | Changed-file Python syntax and full Python unittest discovery; no foreign Zig target |
 | Portable workload report/campaign codec, verifier, or focused test | Changed-file Python syntax where applicable plus the portable workload report test, native compile, and four-target cross-compile gate; no hard native campaign unless another changed path selects one |
 | W7b-b2 store-fault campaign (`bench/native_workload_store_fault_campaign.py` and `bench/tests/test_native_workload_store_fault_campaign.py`) | Changed-file Python syntax plus the hard native POSIX store-fault gate on Darwin, Linux, or FreeBSD; no foreign Zig target |
@@ -112,6 +122,8 @@ narrow change never hides the checks required by another changed path.
 | CPU backend or model implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
 | Shared durable core/runtime implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
 | Audited durable recovery demo or worker | Native ReleaseSafe, Python discovery, and the durable profile on every retained target |
+| Prepared-text committed-output inspector or oracle | `affected-fast` runs the inspector and package-module roots in one host DAG; the complete affected tier adds broad host and selected portability coverage |
+| Prepared-text durable writer, runtime, or process-death campaign | `affected-fast` runs the recovery and package-module roots in one host DAG; when inspector paths change in the same worktree, all selected roots share that invocation |
 | CLI or retained read-only inspector | Native ReleaseSafe, Python discovery, and the host-tool profile on every retained target |
 | Shared root, unclassified Zig/C/C++/header, or other build input | Native ReleaseSafe, Python discovery, and the full production-install, benchmark-install, and test-compile roots on every retained target |
 | Zig build graph (`build.zig` or `build.zig.zon`) | Native ReleaseSafe, Python discovery, the hard native POSIX store-fault gate, the serialized native Darwin Metal suite, and the full production-install, benchmark-install, and test-compile roots on every retained target |
@@ -133,6 +145,7 @@ Common commands:
 tools/verify.sh
 python3 -m pip install --only-binary=:all: --require-hashes \
   -r bench/requirements-test.txt
+tools/verify.sh affected-fast --base origin/main
 tools/verify.sh affected --base origin/main
 GLACIER_VERIFY_BASE=origin/main tools/verify.sh affected
 GLACIER_VERIFY_REQUIRE_NATIVE=1 tools/verify.sh affected --base origin/main
@@ -204,25 +217,33 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dmetal=true -Doptimize=ReleaseSafe -j2
 ```
 
-`affected` resolves the merge base of `HEAD` and the explicit `--base` value
-(or `GLACIER_VERIFY_BASE`). It then unions four independent NUL-delimited path
-streams: merge base to `HEAD`, `HEAD` to the index, index to worktree, and
-untracked files. Keeping those states separate prevents a worktree reversal
-from hiding a committed or staged change. Whitespace and newlines in a valid
-Git path do not change the selection. The command prints every deduplicated
-path, its selection reason, the union of gates, and the selected targets. A
-missing base, Git, Python, or required Zig toolchain is a failure rather than a
-silent pass.
+`affected-fast` and `affected` resolve the merge base of `HEAD` and the explicit
+`--base` value (or `GLACIER_VERIFY_BASE`). They then union four independent
+NUL-delimited path streams: merge base to `HEAD`, `HEAD` to the index, index to
+worktree, and untracked files. Keeping those states separate prevents a
+worktree reversal from hiding a committed or staged change. Whitespace and
+newlines in a valid Git path do not change the selection. Both commands print
+every deduplicated path and its selection reason. `affected-fast` visibly marks
+the broad native suite, full Python discovery, and selected portability plan as
+`SKIP`; it does not convert those deferred gates into passing evidence.
+`affected` executes the complete selected plan. A missing base, Git, Python, or
+required Zig toolchain is a failure rather than a silent pass.
 
 Changed `.sh` files must declare one of the retained `sh` or `bash` shebangs;
-syntax is checked by that interpreter. Changed Rust source makes the native
-Rust gate required rather than optional. On a non-Darwin host, selected Darwin
-and Metal gates remain visible `SKIP` results for ordinary contributor
-planning. The selected native POSIX store-fault gate runs on Darwin, Linux, or
-FreeBSD; other hosts likewise report it as unavailable. CI and release
-verification should set
-`GLACIER_VERIFY_REQUIRE_NATIVE=1`, which turns any unavailable selected
-native gate into `FAIL`.
+syntax is checked by that interpreter. Both affected tiers keep selected
+changed-Python, shell, Rust, Darwin Swift, Metal, portable-report, POSIX
+store-fault, and prepared-text focused gates. A generic Darwin flag currently
+has only the broad host suite, so `affected-fast` defers it explicitly instead
+of expanding to `zig build test`. Changed Rust source makes the native Rust
+gate required rather than optional. On a non-Darwin host, selected Darwin and
+Metal gates remain visible `SKIP` results for ordinary contributor planning.
+The selected native POSIX store-fault gate runs on Darwin, Linux, or FreeBSD;
+other hosts likewise report it as unavailable. Ordinary pull-request and
+`main` CI uses `affected-fast`. Maintainer and release validation should use
+complete `affected` locally with `GLACIER_VERIFY_REQUIRE_NATIVE=1`, or dispatch
+the hosted `full`/`matrix` profiles; `v*` tags select `matrix` and the macOS
+frontier. Strict native mode turns any unavailable selected native gate into
+`FAIL`.
 
 The retained cross-target set is:
 
@@ -334,8 +355,9 @@ grow a repository cache. Foreign configurations are not merged into one Zig
 graph: each selected target receives exactly one invocation containing its
 audited root union. No persistent repository cache is needed. The quick profile
 intentionally marks broad native, Python, Rust, sanitizer, and cross-target work
-as skipped; it is a contributor smoke gate, not evidence that those matrices
-passed. The matrix profile intentionally retains full
+as skipped. `affected-fast` adds changed-path syntax and focused high-risk gates
+while still deferring broad suites and foreign targets. Neither is evidence
+that the deferred matrices passed. The matrix profile intentionally retains full
 `install install-benchmarks test-compile` coverage for all four targets.
 
 Record an unsupported ThreadSanitizer environment as **not run**, not passed.
