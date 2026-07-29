@@ -8,11 +8,16 @@ before the first stable release.
 
 ### Changed
 
-- POSIX durability paths now reopen a caller-pinned directory through one
-  descriptor-relative sync-capable adapter before directory synchronization.
-  This preserves path-only directory authority on Linux, retries interrupted
-  syncs, and reports unsupported, read-only, capacity, quota, and I/O
-  filesystem-sync outcomes as typed errors.
+- POSIX durability paths now acquire one descriptor-relative, sync-capable
+  directory authority and preflight synchronization before any namespace
+  mutation. The authority owns that same handle through commit, so the caller
+  may close its original `Dir` after acquisition; borrowed directory aliases
+  are never owners. A failed commit poisons the authority, after which checked
+  borrow and commit calls reject while observation and close remain available.
+  Interrupted synchronization is retried, while unsupported, read-only,
+  capacity, quota, and I/O outcomes remain typed. Real `fsync` and process-death
+  tests exercise the host protocol but do not guarantee physical power-loss
+  persistence.
 - Observed Metal INT4 matrix-vector dispatch now keeps candidate output in
   backend-owned storage until command telemetry validates. A physically
   completed command increments dispatch accounting before later evidence or

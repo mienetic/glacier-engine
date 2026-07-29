@@ -61,6 +61,12 @@ fn checkpointAllV1(directory: *std.fs.Dir) !void {
     var scratch: [1]u8 = undefined;
     var checkpoint_storage: [continuation.checkpoint_bytes]u8 =
         undefined;
+    var authority =
+        try core.durable_directory_sync.AuthorityV1.acquire(
+            directory.*,
+        );
+    defer authority.close();
+    var durable_directory = try authority.borrow();
 
     for (0..3) |case_index| {
         const context = try prepareContextV1(
@@ -154,12 +160,12 @@ fn checkpointAllV1(directory: *std.fs.Dir) !void {
                 &checkpoint_storage,
             );
         try writeSyncedV1(
-            directory,
+            &durable_directory,
             checkpoint_names[case_index],
             encoded_checkpoint,
         );
         try writeSyncedV1(
-            directory,
+            &durable_directory,
             output_names[case_index],
             exact_output,
         );
@@ -174,11 +180,11 @@ fn checkpointAllV1(directory: *std.fs.Dir) !void {
         .{currentProcessId()},
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         source_pid_name,
         pid,
     );
-    try core.durable_directory_sync.sync(directory.*);
+    try authority.commit();
 
     var stdout_buffer: [512]u8 = undefined;
     var stdout_writer =

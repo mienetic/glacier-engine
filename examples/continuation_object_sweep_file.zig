@@ -24,15 +24,26 @@ pub fn main() !void {
         ".",
         &absolute_storage,
     );
-    const candidate = try temporary.dir.createFile("candidate.record", .{
-        .read = true,
-        .exclusive = true,
-        .mode = 0o600,
-    });
-    try candidate.writeAll(&fixture.first);
-    try candidate.sync();
-    candidate.close();
-    try core.durable_directory_sync.sync(temporary.dir);
+    {
+        var authority =
+            try core.durable_directory_sync.AuthorityV1.acquire(
+                temporary.dir,
+            );
+        defer authority.close();
+        const durable_directory = try authority.borrow();
+        const candidate = try durable_directory.createFile(
+            "candidate.record",
+            .{
+                .read = true,
+                .exclusive = true,
+                .mode = 0o600,
+            },
+        );
+        try candidate.writeAll(&fixture.first);
+        try candidate.sync();
+        candidate.close();
+        try authority.commit();
+    }
 
     var append_deaths: usize = 0;
     var append_repairs: usize = 0;
@@ -137,16 +148,26 @@ pub fn main() !void {
             .{index},
         );
         const storage_epoch = 800 + index;
-        const raw = try temporary.dir.createFile(name, .{
-            .read = true,
-            .exclusive = true,
-            .mode = 0o600,
-        });
-        try raw.writeAll(&fixture.first);
-        try raw.writeAll(fixture.second[0 .. record.body_bytes + 7]);
-        try raw.sync();
-        raw.close();
-        try core.durable_directory_sync.sync(temporary.dir);
+        {
+            var authority =
+                try core.durable_directory_sync.AuthorityV1.acquire(
+                    temporary.dir,
+                );
+            defer authority.close();
+            const durable_directory = try authority.borrow();
+            const raw = try durable_directory.createFile(name, .{
+                .read = true,
+                .exclusive = true,
+                .mode = 0o600,
+            });
+            try raw.writeAll(&fixture.first);
+            try raw.writeAll(
+                fixture.second[0 .. record.body_bytes + 7],
+            );
+            try raw.sync();
+            raw.close();
+            try authority.commit();
+        }
 
         var epoch_storage: [32]u8 = undefined;
         const epoch_text = try std.fmt.bufPrint(

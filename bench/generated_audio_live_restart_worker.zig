@@ -86,21 +86,39 @@ fn publishSourceV1(directory: *std.fs.Dir) !void {
         return error.SourceOwnershipLeak;
     var state_wire: [audio.state_bytes]u8 = undefined;
     _ = try audio.encodeStateV1(state, &state_wire);
-    try writeSyncedV1(directory, state_name, &state_wire);
+    var authority =
+        try core.durable_directory_sync.AuthorityV1.acquire(
+            directory.*,
+        );
+    defer authority.close();
+    var durable_directory = try authority.borrow();
     try writeSyncedV1(
-        directory,
+        &durable_directory,
+        state_name,
+        &state_wire,
+    );
+    try writeSyncedV1(
+        &durable_directory,
         result_name,
         &published.result_wire,
     );
-    try writeSyncedV1(directory, pcm_name, &published.pcm);
+    try writeSyncedV1(
+        &durable_directory,
+        pcm_name,
+        &published.pcm,
+    );
     var pid_storage: [32]u8 = undefined;
     const pid = try std.fmt.bufPrint(
         &pid_storage,
         "{d}",
         .{currentProcessId()},
     );
-    try writeSyncedV1(directory, source_pid_name, pid);
-    try core.durable_directory_sync.sync(directory.*);
+    try writeSyncedV1(
+        &durable_directory,
+        source_pid_name,
+        pid,
+    );
+    try authority.commit();
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;

@@ -112,18 +112,24 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
             fixture.state_publication,
             &publication_storage,
         );
+    var authority =
+        try core.durable_directory_sync.AuthorityV1.acquire(
+            directory.*,
+        );
+    defer authority.close();
+    var durable_directory = try authority.borrow();
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         checkpoint_name,
         checkpoint_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         publication_name,
         publication_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         payload_name,
         &visible_state,
     );
@@ -133,8 +139,12 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
         "{d}",
         .{currentProcessId()},
     );
-    try writeSyncedV1(directory, source_pid_name, pid);
-    try core.durable_directory_sync.sync(directory.*);
+    try writeSyncedV1(
+        &durable_directory,
+        source_pid_name,
+        pid,
+    );
+    try authority.commit();
     try session.closeAndRelease();
     if (!(try bank.snapshotV3()).used.isZero())
         return error.SourceOwnershipLeak;

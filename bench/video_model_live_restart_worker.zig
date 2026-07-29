@@ -149,6 +149,12 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
         source.link_state,
         &link_state_wire,
     );
+    var authority =
+        try core.durable_directory_sync.AuthorityV1.acquire(
+            directory.*,
+        );
+    defer authority.close();
+    var durable_directory = try authority.borrow();
     inline for (.{
         .{ checkpoint_name, &checkpoint_wire },
         .{ stateful_checkpoint_name, &stateful_checkpoint_wire },
@@ -166,7 +172,7 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
         .{ link_state_name, &link_state_wire },
     }) |entry| {
         try writeSyncedV1(
-            directory,
+            &durable_directory,
             entry[0],
             entry[1],
         );
@@ -178,11 +184,11 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
         .{currentProcessId()},
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         source_pid_name,
         pid,
     );
-    try core.durable_directory_sync.sync(directory.*);
+    try authority.commit();
     const checkpoint_hex = std.fmt.bytesToHex(
         source.checkpoint.checkpoint_sha256,
         .lower,

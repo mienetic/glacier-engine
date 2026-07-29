@@ -18,7 +18,8 @@ to promote additional operating systems without weakening runtime invariants.
 - **Native-verified**: CPU correctness tests run on the named OS and
   architecture.
 - **Recovery-verified**: process-death and durable-file campaigns run on a real
-  filesystem on the named OS.
+  filesystem on the named OS. This verifies the declared host protocol, not
+  physical power-loss persistence.
 - **Accelerator-verified**: a device backend passes numerical, lifetime, and
   synchronization checks against a CPU oracle on real hardware.
 - **Observer-verified**: a named telemetry adapter runs on the real OS, retains
@@ -40,7 +41,7 @@ surface.
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
 | macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox campaign, the 49-death R1j prepared-text source/target campaign, and the W7b-b2 production-publisher/reference-recovery campaign-store gate across 27 real writer deaths, 54 controlled errno cases, and one clean control; physical storage and power-loss evidence remain absent | Portable Zig fake/state tests and an independent Python oracle model deterministic device contracts without a GPU; the native gates use a real `MTLDevice` and real `MTLBuffer` resources, submit and verify one fixed 37x64 INT4 readiness branch, retain zero-command reject/cancel branches, and exercise two disjoint native commands with deliberate out-of-order settlement after both complete, but no device support range is declared | Development host, not a broad platform certification |
-| Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; hosted Ubuntu also compiles the complete GNU host frontier before runtime | Hosted Ubuntu runs the ReleaseSafe runtime and language-interop gates; no CPU performance, packaging, machine range, or retained observation artifact is claimed | Hosted Ubuntu exercises the POSIX restart paths and the 81-case controlled store-fault matrix through a descriptor-relative sync-capable directory adapter; the ephemeral runner is not retained filesystem, physical-fault, or power-loss evidence | No retained Linux accelerator backend | Hosted native correctness/recovery CI plus cross-build evidence; not native-supported |
+| Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; hosted Ubuntu also compiles the complete GNU host frontier before runtime | Hosted Ubuntu runs the ReleaseSafe runtime and language-interop gates; no CPU performance, packaging, machine range, or retained observation artifact is claimed | Hosted Ubuntu exercises the POSIX restart paths and the 81-case controlled store-fault matrix through acquired descriptor-relative directory authority that preflights before namespace mutation and owns one sync-capable handle through commit; the ephemeral runner and its real `fsync`/process-death calls are not retained filesystem, physical-fault, or power-loss evidence | No retained Linux accelerator backend | Hosted native correctness/recovery CI plus cross-build evidence; not native-supported |
 | Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is architecture-neutral; native smoke is not retained | The strict initial-recovery primitive and full R1j gate are supported, but no native Linux filesystem campaign is retained | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
 | FreeBSD / x86_64 | Full artifact, `test-compile`, generated-media conformance, and the R1j worker cross-build gates pass in `ReleaseSafe` | Not established by cross-compilation | Strict initial recovery fails closed until an atomic no-replace primitive is implemented; no retained native FreeBSD filesystem campaign | No retained FreeBSD accelerator backend | Cross-build candidate; not native-supported |
@@ -362,9 +363,9 @@ The main blockers are boundary violations rather than language choice:
 - the default install graph now stages only the production CLI, benchmark and
   diagnostic executables are opt-in through `install-benchmarks`, and affected
   verification has named core, CPU, durable, device, and host-tool compile
-  profiles plus a complete consumer compile closure; the transitional
-  core still exports durable POSIX modules and the profiles are verification
-  roots rather than final distributable products;
+  profiles plus a complete consumer compile closure; the core now exports the
+  acquired durable POSIX authority and related adapters, while the profiles
+  remain verification roots rather than final distributable products;
 - the current core test aggregation includes threaded and filesystem tests,
   which prevents a reduced single-threaded edge target from compiling;
 - 32-bit targets expose unchecked conversions from canonical `u64` lengths and
@@ -422,9 +423,19 @@ One capability should cover safe file opening, regular-file identity, bounded
 reads and writes, file locking, data sync, directory sync, atomic replacement,
 and crash-fixture control.
 
-Candidate implementations:
+The current POSIX path acquires a descriptor-relative, sync-capable directory
+authority and performs a real preflight sync before any namespace mutation.
+The authority owns that exact handle through commit; consumers use borrowed
+aliases that they must not close or retain. Because acquisition duplicates the
+pinned directory authority, the caller may close its original `Dir`
+immediately afterward. A failed commit poisons the authority, after which
+checked borrow and commit calls reject while observation and close remain
+available. These `fsync` and process-death semantics are host-protocol evidence,
+not a physical power-loss guarantee.
 
-- POSIX adapter for macOS and Linux;
+Current and candidate implementations:
+
+- acquired POSIX authority and durable-file adapters for macOS and Linux;
 - Win32 adapter using Windows handles, sharing modes, mapping objects, flush
   operations, and replacement semantics;
 - Android adapter over application-scoped file descriptors and documented

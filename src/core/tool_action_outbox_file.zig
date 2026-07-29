@@ -15,6 +15,7 @@
 //! distributed locking, provider truth, or externally exactly-once effects.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const platform_capabilities = @import("platform_capabilities.zig");
 const durable_directory_sync = @import("durable_directory_sync.zig");
 const outbox = @import("tool_action_outbox_record.zig");
@@ -495,7 +496,7 @@ pub fn contentSnapshotFromRecoveryV1(
 
 pub const StoreV1 = struct {
     file: std.fs.File,
-    directory: std.fs.Dir,
+    directory_authority: durable_directory_sync.AuthorityV1,
     name_storage: [max_name_bytes]u8,
     name_length: usize,
     header: outbox.HeaderV1,
@@ -552,8 +553,17 @@ pub const StoreV1 = struct {
         var name_storage = [_]u8{0} ** max_name_bytes;
         @memcpy(name_storage[0..name.len], name);
 
+        var directory_authority =
+            durable_directory_sync.AuthorityV1.acquire(directory) catch |err|
+                switch (err) {
+                    error.UnsupportedPlatform => return Error.UnsupportedPlatform,
+                    else => return Error.StorageIo,
+                };
+        errdefer directory_authority.close();
+        const authority_directory =
+            directory_authority.borrow() catch return Error.StorageIo;
         const file = try openLockedFile(
-            directory,
+            authority_directory,
             name,
             .create,
             options.lock_nonblocking,
@@ -561,7 +571,7 @@ pub const StoreV1 = struct {
         errdefer file.close();
         const inspected = try inspectInitial(
             file,
-            directory,
+            authority_directory,
             name,
             options.require_private_mode,
         );
@@ -576,7 +586,7 @@ pub const StoreV1 = struct {
             try observer.after(.header_write);
         try verifyInitial(
             file,
-            directory,
+            authority_directory,
             name,
             options.require_private_mode,
             inspected.identity,
@@ -588,19 +598,19 @@ pub const StoreV1 = struct {
             try observer.after(.header_sync);
         try verifyInitial(
             file,
-            directory,
+            authority_directory,
             name,
             options.require_private_mode,
             inspected.identity,
             outbox.header_bytes,
         );
 
-        syncDirectory(directory) catch return Error.StorageIo;
+        directory_authority.commit() catch return Error.StorageIo;
         if (options.observer) |observer|
             try observer.after(.directory_sync);
         try verifyInitial(
             file,
-            directory,
+            authority_directory,
             name,
             options.require_private_mode,
             inspected.identity,
@@ -644,7 +654,7 @@ pub const StoreV1 = struct {
         );
         return .{
             .file = file,
-            .directory = directory,
+            .directory_authority = directory_authority,
             .name_storage = name_storage,
             .name_length = name.len,
             .header = header,
@@ -704,8 +714,17 @@ pub const StoreV1 = struct {
         var name_storage = [_]u8{0} ** max_name_bytes;
         @memcpy(name_storage[0..name.len], name);
 
+        var directory_authority =
+            durable_directory_sync.AuthorityV1.acquire(directory) catch |err|
+                switch (err) {
+                    error.UnsupportedPlatform => return Error.UnsupportedPlatform,
+                    else => return Error.StorageIo,
+                };
+        errdefer directory_authority.close();
+        const authority_directory =
+            directory_authority.borrow() catch return Error.StorageIo;
         const file = try openLockedFile(
-            directory,
+            authority_directory,
             name,
             .existing,
             options.lock_nonblocking,
@@ -713,7 +732,7 @@ pub const StoreV1 = struct {
         errdefer file.close();
         const inspected = try inspectInitial(
             file,
-            directory,
+            authority_directory,
             name,
             options.require_private_mode,
         );
@@ -741,7 +760,7 @@ pub const StoreV1 = struct {
         };
         const verified = try inspectInitial(
             file,
-            directory,
+            authority_directory,
             name,
             options.require_private_mode,
         );
@@ -773,7 +792,7 @@ pub const StoreV1 = struct {
                     try observer.after(.recovery_sync);
                 try verifyInitial(
                     file,
-                    directory,
+                    authority_directory,
                     name,
                     options.require_private_mode,
                     inspected.identity,
@@ -812,7 +831,7 @@ pub const StoreV1 = struct {
 
         return .{
             .file = file,
-            .directory = directory,
+            .directory_authority = directory_authority,
             .name_storage = name_storage,
             .name_length = name.len,
             .header = expected_header,
@@ -1208,13 +1227,15 @@ pub const StoreV1 = struct {
         return receipt;
     }
 
-    /// Closing releases the advisory lock and invalidates the process-local
-    /// lease. Caller-owned directory and storage buffers remain borrowed.
+    /// Closing releases the advisory lock and the store-owned directory
+    /// authority. The caller-owned directory anchor and storage buffers remain
+    /// borrowed.
     pub fn close(self: *StoreV1) void {
         if (self.state == .closed) return;
         self.state = .closed;
         self.lease_generation = 0;
         self.file.close();
+        self.directory_authority.close();
     }
 
     fn verifyCurrent(
@@ -1223,8 +1244,10 @@ pub const StoreV1 = struct {
     ) Error!void {
         const file_stat = std.posix.fstat(self.file.handle) catch
             return Error.StorageIo;
+        const directory =
+            self.directory_authority.borrow() catch return Error.StorageIo;
         const entry_stat = std.posix.fstatat(
-            self.directory.fd,
+            directory.fd,
             self.entryName(),
             std.posix.AT.SYMLINK_NOFOLLOW,
         ) catch return Error.StorageIdentityChanged;
@@ -1472,13 +1495,6 @@ fn reserveLeaseGeneration() Error!u64 {
     }
 }
 
-fn syncDirectory(directory: std.fs.Dir) !void {
-    if (comptime !platform_capabilities
-        .current_adapter_availability_v1.posix_durable_file_adapter)
-        return Error.UnsupportedPlatform;
-    try durable_directory_sync.sync(directory);
-}
-
 fn verifyFileContent(
     file: std.fs.File,
     expected: []const u8,
@@ -1673,6 +1689,43 @@ fn referenceCampaign() !struct {
     };
 }
 
+test "linux outbox preflight rejects before journal creation" {
+    if (comptime builtin.os.tag != .linux)
+        return error.SkipZigTest;
+
+    const fixture = try referenceCampaign();
+    const max_bytes = try maximumFileBytesV1(fixture.header);
+    var proc_self = try std.fs.openDirAbsolute("/proc/self", .{});
+    defer proc_self.close();
+    const unavailable_name =
+        ".glacier-outbox-preflight-must-not-exist";
+    var journal_storage: [
+        outbox.header_bytes +
+            outbox.maximum_supported_records *
+                outbox.record_bytes
+    ]u8 = undefined;
+    var records: [outbox.maximum_supported_records]outbox.RecordV1 =
+        undefined;
+    var states: [outbox.maximum_supported_actions]outbox.ActionStateV1 =
+        undefined;
+    try std.testing.expectError(
+        Error.StorageIo,
+        StoreV1.create(
+            proc_self,
+            unavailable_name,
+            fixture.header,
+            .{},
+            journal_storage[0..max_bytes],
+            records[0..@intCast(fixture.header.maximum_records)],
+            states[0..@intCast(fixture.header.maximum_actions)],
+        ),
+    );
+    try std.testing.expectError(
+        error.FileNotFound,
+        proc_self.openFile(unavailable_name, .{}),
+    );
+}
+
 test "durable outbox creates appends and reopens exact campaign" {
     if (comptime !platform_capabilities
         .current_adapter_availability_v1.posix_durable_file_adapter)
@@ -1690,15 +1743,20 @@ test "durable outbox creates appends and reopens exact campaign" {
         undefined;
     var states: [outbox.maximum_supported_actions]outbox.ActionStateV1 =
         undefined;
-    var store = try StoreV1.create(
-        temporary.dir,
+    var caller_directory = try temporary.dir.openDir(".", .{});
+    var store = StoreV1.create(
+        caller_directory,
         "actions.outbox",
         fixture.header,
         .{},
         journal_storage[0..max_bytes],
         records[0..@intCast(fixture.header.maximum_records)],
         states[0..@intCast(fixture.header.maximum_actions)],
-    );
+    ) catch |err| {
+        caller_directory.close();
+        return err;
+    };
+    caller_directory.close();
     try std.testing.expectEqual(
         DirectorySyncStatusV1.synced,
         store.directory_sync_status,

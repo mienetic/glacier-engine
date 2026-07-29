@@ -8,7 +8,6 @@
 
 const std = @import("std");
 const platform_capabilities = @import("platform_capabilities.zig");
-const durable_directory_sync = @import("durable_directory_sync.zig");
 const capsule = @import("continuation_capsule.zig");
 const bundle = @import("continuation_bundle.zig");
 const object_store = @import("continuation_object_store.zig");
@@ -118,6 +117,8 @@ pub const LeaseStateV1 = enum(u8) {
 };
 
 pub const LeaseV1 = struct {
+    /// Borrowed from `lock`'s owned durable-directory authority. Never close
+    /// this alias directly or retain it after `close`.
     directory: std.fs.Dir,
     lock: sweep_file.FileLeaseV1,
     storage_epoch: u64,
@@ -160,11 +161,17 @@ pub const LeaseV1 = struct {
             lock_storage,
         );
         errdefer lock.close();
-        const active = try openSafeFile(directory, active_name, .create);
+        const durable_directory = lock.directory;
+        const active = try openSafeFile(
+            durable_directory,
+            active_name,
+            .create,
+        );
         errdefer active.close();
         try writeInitialFile(
             active,
-            directory,
+            durable_directory,
+            &lock,
             active_name,
             initial_snapshot,
         );
@@ -175,7 +182,7 @@ pub const LeaseV1 = struct {
             initial_snapshot,
         );
         return .{
-            .directory = directory,
+            .directory = durable_directory,
             .lock = lock,
             .storage_epoch = storage_epoch,
             .tenant_scope_sha256 = tenant_scope_sha256,
@@ -208,15 +215,16 @@ pub const LeaseV1 = struct {
             lock_storage,
         );
         errdefer lock.close();
+        const durable_directory = lock.directory;
         const loaded = try readSnapshotFile(
-            directory,
+            durable_directory,
             active_name,
             tenant_scope_sha256,
             active_storage,
             max_bytes,
         );
         return .{
-            .directory = directory,
+            .directory = durable_directory,
             .lock = lock,
             .storage_epoch = storage_epoch,
             .tenant_scope_sha256 = tenant_scope_sha256,
@@ -244,7 +252,10 @@ pub const LeaseV1 = struct {
             self.tenant_scope_sha256,
             self.active_storage,
             self.max_bytes,
-        ) catch return Error.StorageIo;
+        ) catch {
+            self.state = .poisoned;
+            return Error.StorageIo;
+        };
         self.active_bytes = loaded.bytes;
         self.active_snapshot = loaded.snapshot;
     }
@@ -566,7 +577,7 @@ pub fn publishReclaimRecordObservedV1(
             lease.directory,
             name,
         ) catch return Error.StorageIdentityChanged;
-        syncDirectory(lease.directory) catch return Error.StorageIo;
+        lease.lock.commitDirectory() catch return Error.StorageIo;
         if (observer) |value| try value.after(.plan_directory_sync);
         lease.state = .ready;
         return;
@@ -589,7 +600,7 @@ pub fn publishReclaimRecordObservedV1(
     defer existing_file.close();
     lease.state = .poisoned;
     existing_file.sync() catch return Error.StorageIo;
-    syncDirectory(lease.directory) catch return Error.StorageIo;
+    lease.lock.commitDirectory() catch return Error.StorageIo;
     lease.state = .ready;
 }
 
@@ -683,7 +694,9 @@ pub fn recoverFromPublishedFilesV1(
     ) and lease.active_snapshot.encoded_bytes ==
         decoded.after_encoded_bytes)
     {
-        syncDirectory(lease.directory) catch return Error.StorageIo;
+        lease.state = .poisoned;
+        lease.lock.commitDirectory() catch return Error.StorageIo;
+        lease.state = .ready;
         return .{
             .disposition = .already_applied,
             .active_snapshot = lease.active_snapshot,
@@ -756,7 +769,9 @@ fn applyPublishedPlanV1(
     try verifyPublishedSidecarV1(lease, prepared.record);
     try lease.refresh();
     if (std.meta.eql(lease.active_snapshot, prepared.preview.after)) {
-        syncDirectory(lease.directory) catch return Error.StorageIo;
+        lease.state = .poisoned;
+        lease.lock.commitDirectory() catch return Error.StorageIo;
+        lease.state = .ready;
         return .{
             .disposition = .already_applied,
             .active_snapshot = lease.active_snapshot,
@@ -792,7 +807,7 @@ fn applyPublishedPlanV1(
         active_name,
     ) catch return Error.StorageIo;
     if (observer) |value| try value.after(.promote_rename);
-    syncDirectory(lease.directory) catch return Error.StorageIo;
+    lease.lock.commitDirectory() catch return Error.StorageIo;
     if (observer) |value| try value.after(.directory_sync);
     const promoted = readSnapshotFile(
         lease.directory,
@@ -918,6 +933,7 @@ fn verifyLeaseRecordScopeV1(
 fn writeInitialFile(
     file: std.fs.File,
     directory: std.fs.Dir,
+    directory_authority: *sweep_file.FileLeaseV1,
     name: []const u8,
     bytes: []const u8,
 ) !void {
@@ -925,7 +941,7 @@ fn writeInitialFile(
     try file.sync();
     const view = try inspectFile(file, directory, name);
     if (view.size != bytes.len) return Error.StorageIdentityChanged;
-    try syncDirectory(directory);
+    try directory_authority.commitDirectory();
 }
 
 fn readSnapshotFile(
@@ -1069,10 +1085,6 @@ fn readU64(input: []const u8, offset: usize) u64 {
     return std.mem.readInt(u64, &bytes, .little);
 }
 
-fn syncDirectory(directory: std.fs.Dir) !void {
-    try durable_directory_sync.sync(directory);
-}
-
 fn isZero(value: Digest) bool {
     return std.mem.allEqual(u8, &value, 0);
 }
@@ -1152,15 +1164,20 @@ test "payload file publishes plan and atomically promotes exact successor" {
     defer temporary.cleanup();
     var lock_storage: [1]u8 = undefined;
     var active_storage: [512]u8 = undefined;
-    var lease = try LeaseV1.create(
-        temporary.dir,
+    var caller_directory = try temporary.dir.openDir(".", .{});
+    var lease = LeaseV1.create(
+        caller_directory,
         1,
         tenant,
         initial,
         active_storage.len,
         &lock_storage,
         &active_storage,
-    );
+    ) catch |err| {
+        caller_directory.close();
+        return err;
+    };
+    caller_directory.close();
     var foreign_epoch = record;
     writeU64(&foreign_epoch.bytes, 24, 2);
     foreign_epoch.record_sha256 = reclaimRecordRootV1(

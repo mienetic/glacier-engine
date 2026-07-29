@@ -523,6 +523,8 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
             disposition: EmptyInitializationDispositionV1,
         };
 
+        /// Borrowed from `lock`'s owned durable-directory authority. Never
+        /// close this alias directly or retain it after `close`.
         directory: std.fs.Dir,
         lock: sweep_file.FileLeaseV1,
         sink: SemanticSink,
@@ -555,6 +557,7 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
                 lock_storage,
             );
             errdefer lock.close();
+            const durable_directory = lock.directory;
             const sink = try SemanticSink.init(
                 request_sha256,
                 request_epoch,
@@ -581,20 +584,20 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
                 &ledger_name_storage,
             );
             try writeNewExactFileV1(
-                directory,
+                durable_directory,
                 ledger_name,
                 ledger.bytes,
             );
-            try syncDirectory(directory);
+            try lock.commitDirectory();
             const selector = try prepareInitialSelectorV1(ledger);
             try writeNewExactFileV1(
-                directory,
+                durable_directory,
                 active_selector_name,
                 &selector.bytes,
             );
-            try syncDirectory(directory);
+            try lock.commitDirectory();
             return .{
-                .directory = directory,
+                .directory = durable_directory,
                 .lock = lock,
                 .sink = sink,
                 .selector = try decodeSelectorV1(&selector.bytes),
@@ -680,8 +683,9 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
                 storage_epoch,
                 lock_storage,
             );
+            const durable_directory = acquired.lock.directory;
             var store: Self = .{
-                .directory = directory,
+                .directory = durable_directory,
                 .lock = acquired.lock,
                 .sink = semantic_sink,
                 .selector = decoded_selector,
@@ -690,17 +694,17 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
             errdefer store.close();
 
             if (try exactFileExistsV1(
-                directory,
+                durable_directory,
                 active_selector_name,
                 &prepared_selector.bytes,
             )) {
                 try verifySelectedEmptyV1(
-                    directory,
+                    durable_directory,
                     ledger,
                     prepared_selector,
                 );
                 _ = try inspectEmptyInitializationNamespaceV1(
-                    directory,
+                    durable_directory,
                     true,
                     namespace,
                 );
@@ -712,7 +716,7 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
 
             const evidence =
                 try inspectEmptyInitializationNamespaceV1(
-                    directory,
+                    durable_directory,
                     false,
                     namespace,
                 );
@@ -723,7 +727,7 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
             );
             const ledger_boundary =
                 try inspectEmptyInitializationNamespaceV1(
-                    directory,
+                    durable_directory,
                     false,
                     namespace,
                 );
@@ -737,12 +741,12 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
                 namespace,
             );
             try verifySelectedEmptyV1(
-                directory,
+                durable_directory,
                 ledger,
                 prepared_selector,
             );
             try auditEmptyInitializationPhaseV1(
-                directory,
+                durable_directory,
                 namespace,
                 .{
                     .active_selected = true,
@@ -789,8 +793,9 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
                 lock_storage,
             );
             errdefer lock.close();
+            const durable_directory = lock.directory;
             const loaded = try loadActiveV1(
-                directory,
+                durable_directory,
                 ledger_storage,
                 maximum_ledger_bytes,
             );
@@ -831,7 +836,7 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
                     return Error.InvalidLedger;
             }
             return .{
-                .directory = directory,
+                .directory = durable_directory,
                 .lock = lock,
                 .sink = sink,
                 .selector = loaded.selector,
@@ -974,7 +979,7 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
             }
             try self.directory.rename(candidate_name, immutable_name);
             try self.observe(.ledger_immutable_rename);
-            try syncDirectory(self.directory);
+            try self.lock.commitDirectory();
             try self.observe(.ledger_directory_sync);
             if (!try exactFileExistsV1(
                 self.directory,
@@ -1130,7 +1135,7 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
                 },
             );
 
-            try syncDirectory(self.directory);
+            try self.lock.commitDirectory();
             try self.observe(.ledger_directory_sync);
             try verifyPinnedExactFileV1(
                 file,
@@ -1184,7 +1189,7 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
                 active_selector_name,
             );
             try self.observe(.selector_replace);
-            try syncDirectory(self.directory);
+            try self.lock.commitDirectory();
             try self.observe(.selector_directory_sync);
         }
 
@@ -1283,7 +1288,7 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
                 },
             );
 
-            try syncDirectory(self.directory);
+            try self.lock.commitDirectory();
             try self.observe(.selector_directory_sync);
             try verifyPinnedExactFileV1(
                 file,
@@ -2015,10 +2020,6 @@ fn inspectStatV1(stat: std.posix.Stat) Error!FileViewV1 {
     };
 }
 
-fn syncDirectory(directory: std.fs.Dir) !void {
-    try core.durable_directory_sync.sync(directory);
-}
-
 fn writeU64(output: []u8, offset: usize, value: anytype) void {
     var encoded: [8]u8 = undefined;
     std.mem.writeInt(u64, &encoded, @intCast(value), .little);
@@ -2557,23 +2558,31 @@ test "empty initialization never resets selected or orphaned acknowledgements" {
     reopened.close();
 
     {
-        const rollback = try temporary.dir.createFile(
+        var rollback_authority =
+            try core.durable_directory_sync.AuthorityV1.acquire(
+                temporary.dir,
+            );
+        defer rollback_authority.close();
+        const rollback_directory = try rollback_authority.borrow();
+        {
+            const rollback = try rollback_directory.createFile(
+                ".rollback-selector",
+                .{
+                    .read = true,
+                    .exclusive = true,
+                    .mode = 0o600,
+                },
+            );
+            defer rollback.close();
+            try rollback.writeAll(&empty_selector_wire);
+            try rollback.sync();
+        }
+        try rollback_directory.rename(
             ".rollback-selector",
-            .{
-                .read = true,
-                .exclusive = true,
-                .mode = 0o600,
-            },
+            active_selector_name,
         );
-        defer rollback.close();
-        try rollback.writeAll(&empty_selector_wire);
-        try rollback.sync();
+        try rollback_authority.commit();
     }
-    try temporary.dir.rename(
-        ".rollback-selector",
-        active_selector_name,
-    );
-    try syncDirectory(temporary.dir);
     var rollback_refusal_storage: [1]u8 = undefined;
     try std.testing.expectError(
         Error.InvalidStorage,
@@ -3132,8 +3141,9 @@ test "durable result sink applies reopens and replays exactly" {
     const instance = testDigest("file instance");
     var observer: CountObserver = .{};
     var lock_storage: [1]u8 = undefined;
-    var store = try ResultSinkFileV1(2).create(
-        temporary.dir,
+    var caller_directory = try temporary.dir.openDir(".", .{});
+    var store = ResultSinkFileV1(2).create(
+        caller_directory,
         7001,
         request,
         601,
@@ -3145,7 +3155,11 @@ test "durable result sink applies reopens and replays exactly" {
             .context = &observer,
             .after_phase_fn = CountObserver.after,
         },
-    );
+    ) catch |err| {
+        caller_directory.close();
+        return err;
+    };
+    caller_directory.close();
     var ledger_storage: [2048]u8 = undefined;
     const first = try store.apply(
         testInput(request, 601, 11, 41),

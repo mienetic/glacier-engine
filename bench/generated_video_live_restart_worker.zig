@@ -102,32 +102,54 @@ fn publishSourceV1(directory: *std.fs.Dir) !void {
         return error.SourceOwnershipLeak;
     var state_wire: [video.state_bytes]u8 = undefined;
     _ = try video.encodeStateV1(state, &state_wire);
-    try writeSyncedV1(directory, state_name, &state_wire);
+    var authority =
+        try core.durable_directory_sync.AuthorityV1.acquire(
+            directory.*,
+        );
+    defer authority.close();
+    var durable_directory = try authority.borrow();
     try writeSyncedV1(
-        directory,
+        &durable_directory,
+        state_name,
+        &state_wire,
+    );
+    try writeSyncedV1(
+        &durable_directory,
         manifest_name,
         &published.manifest_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         provenance_name,
         &published.provenance_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         result_name,
         &published.result_wire,
     );
-    try writeSyncedV1(directory, output_name, &published.output);
-    try writeSyncedV1(directory, media_name, &published.media_wire);
+    try writeSyncedV1(
+        &durable_directory,
+        output_name,
+        &published.output,
+    );
+    try writeSyncedV1(
+        &durable_directory,
+        media_name,
+        &published.media_wire,
+    );
     var pid_storage: [32]u8 = undefined;
     const pid = try std.fmt.bufPrint(
         &pid_storage,
         "{d}",
         .{currentProcessId()},
     );
-    try writeSyncedV1(directory, source_pid_name, pid);
-    try core.durable_directory_sync.sync(directory.*);
+    try writeSyncedV1(
+        &durable_directory,
+        source_pid_name,
+        pid,
+    );
+    try authority.commit();
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;

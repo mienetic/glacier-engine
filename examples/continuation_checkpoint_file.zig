@@ -173,18 +173,27 @@ pub fn main() !void {
             .challenge_sha256 = challenge_sha256,
         }, &next_objects, &next_storage);
         checkpoint_bytes = next_set.bytes.len;
-        const publication_file = try directory.createFile(
-            "publication.set",
-            .{
-                .read = true,
-                .exclusive = true,
-                .mode = 0o600,
-            },
-        );
-        try publication_file.writeAll(next_set.bytes);
-        try publication_file.sync();
-        publication_file.close();
-        try core.durable_directory_sync.sync(directory);
+        {
+            var authority =
+                try core.durable_directory_sync.AuthorityV1.acquire(
+                    directory,
+                );
+            defer authority.close();
+            const durable_directory = try authority.borrow();
+            const publication_file =
+                try durable_directory.createFile(
+                    "publication.set",
+                    .{
+                        .read = true,
+                        .exclusive = true,
+                        .mode = 0o600,
+                    },
+                );
+            try publication_file.writeAll(next_set.bytes);
+            try publication_file.sync();
+            publication_file.close();
+            try authority.commit();
+        }
 
         const storage_epoch = 9200 + index;
         var lock_storage: [1]u8 = undefined;

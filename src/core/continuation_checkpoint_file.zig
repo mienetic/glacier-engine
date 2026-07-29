@@ -9,7 +9,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const platform_capabilities = @import("platform_capabilities.zig");
-const durable_directory_sync = @import("durable_directory_sync.zig");
 const capsule = @import("continuation_capsule.zig");
 const sweep_file = @import("continuation_object_sweep_file.zig");
 const sweep_record = @import("continuation_object_sweep_record.zig");
@@ -218,6 +217,8 @@ pub const ConsumerClaimV1 = struct {
 };
 
 pub const LeaseV1 = struct {
+    /// Borrowed from `lock`'s owned durable-directory authority. Never close
+    /// this alias directly or retain it after `close`.
     directory: std.fs.Dir,
     lock: sweep_file.FileLeaseV1,
     storage_epoch: u64,
@@ -274,30 +275,31 @@ pub const LeaseV1 = struct {
             lock_storage,
         );
         errdefer lock.close();
+        const durable_directory = lock.directory;
         var archive_name_storage: [max_generated_name_bytes]u8 = undefined;
         const archive_name = try archiveNameV1(
             initial_set.checkpoint_sha256,
             &archive_name_storage,
         );
         try writeNewFileV1(
-            directory,
+            durable_directory,
             archive_name,
             initial_set.bytes,
         );
-        try syncDirectory(directory);
+        try lock.commitDirectory();
         try writeNewFileV1(
-            directory,
+            durable_directory,
             active_selector_name,
             &initial_selector.bytes,
         );
-        try syncDirectory(directory);
+        try lock.commitDirectory();
         std.mem.copyForwards(
             u8,
             active_storage[0..initial_set.bytes.len],
             initial_set.bytes,
         );
         return .{
-            .directory = directory,
+            .directory = durable_directory,
             .lock = lock,
             .storage_epoch = storage_epoch,
             .challenge_sha256 = challenge_sha256,
@@ -394,6 +396,7 @@ pub const LeaseV1 = struct {
             else => return err,
         };
         errdefer lock.close();
+        const durable_directory = lock.directory;
         if (lock.stream().len != 0)
             return Error.StorageIdentityChanged;
 
@@ -418,13 +421,13 @@ pub const LeaseV1 = struct {
             &selector_candidate_storage,
         );
         try auditInitialNamespaceV1(
-            directory,
+            durable_directory,
             archive_name,
             archive_candidate,
             selector_candidate,
         );
         const active_state = try exactFileStateV1(
-            directory,
+            durable_directory,
             active_selector_name,
             &initial_selector.bytes,
         );
@@ -432,30 +435,30 @@ pub const LeaseV1 = struct {
             .mismatched => return Error.InvalidSelector,
             .exact => {
                 if (try exactFileStateV1(
-                    directory,
+                    durable_directory,
                     archive_name,
                     initial_set.bytes,
                 ) != .exact)
                     return Error.CheckpointMismatch;
                 try syncNamedFileV1(
-                    directory,
+                    durable_directory,
                     archive_name,
                     initial_set.bytes,
                 );
                 try syncNamedFileV1(
-                    directory,
+                    durable_directory,
                     active_selector_name,
                     &initial_selector.bytes,
                 );
-                try syncDirectory(directory);
+                try lock.commitDirectory();
                 try auditInitialNamespaceV1(
-                    directory,
+                    durable_directory,
                     archive_name,
                     archive_candidate,
                     selector_candidate,
                 );
                 const lease = try initializedLeaseV1(
-                    directory,
+                    durable_directory,
                     lock,
                     storage_epoch,
                     challenge_sha256,
@@ -474,7 +477,7 @@ pub const LeaseV1 = struct {
 
         var recovered_debris = !lock_created;
         switch (try exactFileStateV1(
-            directory,
+            durable_directory,
             archive_name,
             initial_set.bytes,
         )) {
@@ -482,15 +485,16 @@ pub const LeaseV1 = struct {
             .exact => {
                 recovered_debris = true;
                 try syncNamedFileV1(
-                    directory,
+                    durable_directory,
                     archive_name,
                     initial_set.bytes,
                 );
-                try syncDirectory(directory);
+                try lock.commitDirectory();
             },
             .missing => {
                 recovered_debris = (try publishInitialCandidateV1(
-                    directory,
+                    durable_directory,
+                    &lock,
                     archive_candidate,
                     archive_name,
                     initial_set.bytes,
@@ -504,19 +508,20 @@ pub const LeaseV1 = struct {
         }
 
         try auditInitialNamespaceV1(
-            directory,
+            durable_directory,
             archive_name,
             archive_candidate,
             selector_candidate,
         );
         if (try exactFileStateV1(
-            directory,
+            durable_directory,
             active_selector_name,
             &initial_selector.bytes,
         ) != .missing)
             return Error.PublicationMismatch;
         recovered_debris = (try publishInitialCandidateV1(
-            directory,
+            durable_directory,
+            &lock,
             selector_candidate,
             active_selector_name,
             &initial_selector.bytes,
@@ -527,14 +532,14 @@ pub const LeaseV1 = struct {
             observer,
         )) or recovered_debris;
         try auditInitialNamespaceV1(
-            directory,
+            durable_directory,
             archive_name,
             archive_candidate,
             selector_candidate,
         );
 
         const lease = try initializedLeaseV1(
-            directory,
+            durable_directory,
             lock,
             storage_epoch,
             challenge_sha256,
@@ -576,14 +581,15 @@ pub const LeaseV1 = struct {
             lock_storage,
         );
         errdefer lock.close();
+        const durable_directory = lock.directory;
         const loaded = try loadActiveV1(
-            directory,
+            durable_directory,
             challenge_sha256,
             active_storage,
             max_set_bytes,
         );
         return .{
-            .directory = directory,
+            .directory = durable_directory,
             .lock = lock,
             .storage_epoch = storage_epoch,
             .challenge_sha256 = challenge_sha256,
@@ -740,12 +746,15 @@ pub const LeaseV1 = struct {
     }
 
     fn refresh(self: *LeaseV1) !void {
-        const loaded = try loadActiveV1(
+        const loaded = loadActiveV1(
             self.directory,
             self.challenge_sha256,
             self.active_storage,
             self.max_set_bytes,
-        );
+        ) catch |err| {
+            self.state = .poisoned;
+            return err;
+        };
         self.active_bytes = loaded.set_bytes;
         self.selector = loaded.selector;
     }
@@ -1057,7 +1066,7 @@ pub fn publishObservedV1(
     if (observer) |value| try value.after(.archive_write);
     try syncNamedFileV1(lease.directory, archive_name, prepared.set.bytes);
     if (observer) |value| try value.after(.archive_sync);
-    try syncDirectory(lease.directory);
+    try lease.lock.commitDirectory();
     if (observer) |value| try value.after(.archive_directory_sync);
 
     var candidate_name_storage: [max_generated_name_bytes]u8 = undefined;
@@ -1079,7 +1088,7 @@ pub fn publishObservedV1(
     if (observer) |value| try value.after(.selector_sync);
     try lease.directory.rename(candidate_name, active_selector_name);
     if (observer) |value| try value.after(.selector_rename);
-    try syncDirectory(lease.directory);
+    try lease.lock.commitDirectory();
     if (observer) |value| try value.after(.selector_directory_sync);
     try lease.refresh();
     if (!std.mem.eql(
@@ -1114,7 +1123,9 @@ pub fn recoverV1(
             &lease.selector.checkpoint_sha256,
             &target.checkpoint_sha256,
         )) return Error.CheckpointMismatch;
-        try syncDirectory(lease.directory);
+        lease.state = .poisoned;
+        try lease.lock.commitDirectory();
+        lease.state = .ready;
         return .{
             .disposition = .already_applied,
             .selector_sha256 = target.selector_sha256,
@@ -1138,7 +1149,7 @@ pub fn recoverV1(
         archive_name,
         prepared.set.bytes,
     );
-    try syncDirectory(lease.directory);
+    try lease.lock.commitDirectory();
     var candidate_name_storage: [max_generated_name_bytes]u8 = undefined;
     const candidate_name = try selectorCandidateNameV1(
         prepared.selector.selector_sha256,
@@ -1150,7 +1161,7 @@ pub fn recoverV1(
         &prepared.selector.bytes,
     );
     try lease.directory.rename(candidate_name, active_selector_name);
-    try syncDirectory(lease.directory);
+    try lease.lock.commitDirectory();
     try lease.refresh();
     if (!std.mem.eql(
         u8,
@@ -1568,6 +1579,7 @@ fn validateOptionalInitialCandidateV1(
 /// reused candidate debris from an earlier attempt.
 fn publishInitialCandidateV1(
     directory: std.fs.Dir,
+    directory_authority: *sweep_file.FileLeaseV1,
     candidate_name: []const u8,
     final_name: []const u8,
     expected: []const u8,
@@ -1631,7 +1643,7 @@ fn publishInitialCandidateV1(
         expected,
         initial_view,
     );
-    try syncDirectory(directory);
+    try directory_authority.commitDirectory();
     if (observer) |value| try value.after(
         directory_sync_phase,
     );
@@ -1894,10 +1906,6 @@ fn inspectStatV1(stat: std.posix.Stat) Error!FileViewV1 {
     };
 }
 
-fn syncDirectory(directory: std.fs.Dir) !void {
-    try durable_directory_sync.sync(directory);
-}
-
 fn writeU64(output: []u8, offset: usize, value: anytype) void {
     var bytes: [8]u8 = undefined;
     std.mem.writeInt(u64, &bytes, @intCast(value), .little);
@@ -2052,8 +2060,9 @@ test "checkpoint selector promotion recovers exact previous or successor" {
     const first_selector = try prepareInitialSelectorV1(first);
     var lock_storage: [1]u8 = undefined;
     var active_storage: [1024]u8 = undefined;
-    var lease = try LeaseV1.create(
-        temporary.dir,
+    var caller_directory = try temporary.dir.openDir(".", .{});
+    var lease = LeaseV1.create(
+        caller_directory,
         9001,
         challenge,
         first,
@@ -2061,7 +2070,11 @@ test "checkpoint selector promotion recovers exact previous or successor" {
         active_storage.len,
         &lock_storage,
         &active_storage,
-    );
+    ) catch |err| {
+        caller_directory.close();
+        return err;
+    };
+    caller_directory.close();
     const second_objects = [_]ObjectInputV1{.{
         .kind = .capsule,
         .ordinal = 0,
@@ -2134,6 +2147,12 @@ test "checkpoint selector promotion recovers exact previous or successor" {
         ApplyDispositionV1.already_applied,
         repeated.disposition,
     );
+    reopened.lock.directory_authority.state = .poisoned;
+    try testing.expectError(
+        error.InvalidAuthorityState,
+        recoverV1(&reopened, publication),
+    );
+    try testing.expectEqual(LeaseStateV1.poisoned, reopened.state);
 }
 
 test "checkpoint recovery repairs only the prepared inactive successor" {

@@ -353,23 +353,31 @@ pub fn main() !void {
                 ".",
                 &absolute_storage,
             );
-        try writeSyncedV1(
-            &directory,
-            "publication.set",
-            second_set.archive.bytes,
-        );
-        var pid_storage: [32]u8 = undefined;
-        const source_pid = try std.fmt.bufPrint(
-            &pid_storage,
-            "{d}",
-            .{currentProcessId()},
-        );
-        try writeSyncedV1(
-            &directory,
-            "source.pid",
-            source_pid,
-        );
-        try core.durable_directory_sync.sync(directory);
+        {
+            var authority =
+                try core.durable_directory_sync.AuthorityV1.acquire(
+                    directory,
+                );
+            defer authority.close();
+            var durable_directory = try authority.borrow();
+            try writeSyncedV1(
+                &durable_directory,
+                "publication.set",
+                second_set.archive.bytes,
+            );
+            var pid_storage: [32]u8 = undefined;
+            const source_pid = try std.fmt.bufPrint(
+                &pid_storage,
+                "{d}",
+                .{currentProcessId()},
+            );
+            try writeSyncedV1(
+                &durable_directory,
+                "source.pid",
+                source_pid,
+            );
+            try authority.commit();
+        }
 
         const initial_selector =
             try checkpoint_file.prepareInitialSelectorV1(
@@ -513,12 +521,20 @@ pub fn main() !void {
         "{d}",
         .{currentProcessId()},
     );
-    try writeSyncedV1(
-        &successor_directory,
-        "source.pid",
-        source_pid,
-    );
-    try core.durable_directory_sync.sync(successor_directory);
+    {
+        var authority =
+            try core.durable_directory_sync.AuthorityV1.acquire(
+                successor_directory,
+            );
+        defer authority.close();
+        var durable_directory = try authority.borrow();
+        try writeSyncedV1(
+            &durable_directory,
+            "source.pid",
+            source_pid,
+        );
+        try authority.commit();
+    }
 
     const successor_storage_epoch: u64 = 19_000;
     const successor_initial_selector =

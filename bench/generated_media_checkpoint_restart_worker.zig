@@ -38,26 +38,70 @@ pub fn main() !void {
 
 fn writeSourceV1(directory: *std.fs.Dir) !void {
     const fixture = try generated.referenceFixtureV1();
-    try writeMemberV1(directory, "image", 1, fixture.image1);
-    try writeMemberV1(directory, "audio", 1, fixture.audio1);
-    try writeMemberV1(directory, "video", 1, fixture.video1);
-    try writeMemberV1(directory, "image", 2, fixture.image2);
-    try writeMemberV1(directory, "audio", 2, fixture.audio2);
-    try writeMemberV1(directory, "video", 2, fixture.video2);
-    try writeCheckpointV1(directory, 1, fixture.checkpoint1);
-    try writeCheckpointV1(directory, 2, fixture.checkpoint2);
+    var authority =
+        try core.durable_directory_sync.AuthorityV1.acquire(
+            directory.*,
+        );
+    defer authority.close();
+    var durable_directory = try authority.borrow();
+    try writeMemberV1(
+        &durable_directory,
+        "image",
+        1,
+        fixture.image1,
+    );
+    try writeMemberV1(
+        &durable_directory,
+        "audio",
+        1,
+        fixture.audio1,
+    );
+    try writeMemberV1(
+        &durable_directory,
+        "video",
+        1,
+        fixture.video1,
+    );
+    try writeMemberV1(
+        &durable_directory,
+        "image",
+        2,
+        fixture.image2,
+    );
+    try writeMemberV1(
+        &durable_directory,
+        "audio",
+        2,
+        fixture.audio2,
+    );
+    try writeMemberV1(
+        &durable_directory,
+        "video",
+        2,
+        fixture.video2,
+    );
+    try writeCheckpointV1(
+        &durable_directory,
+        1,
+        fixture.checkpoint1,
+    );
+    try writeCheckpointV1(
+        &durable_directory,
+        2,
+        fixture.checkpoint2,
+    );
     try writeSelectorV1(
-        directory,
+        &durable_directory,
         selectorNameV1(1),
         fixture.selector1,
     );
     try writeSelectorV1(
-        directory,
+        &durable_directory,
         selectorNameV1(2),
         fixture.selector2,
     );
     try writeSelectorV1(
-        directory,
+        &durable_directory,
         active_selector_name,
         fixture.selector1,
     );
@@ -67,8 +111,12 @@ fn writeSourceV1(directory: *std.fs.Dir) !void {
         "{d}",
         .{currentProcessId()},
     );
-    try writeSyncedV1(directory, source_pid_name, pid);
-    try core.durable_directory_sync.sync(directory.*);
+    try writeSyncedV1(
+        &durable_directory,
+        source_pid_name,
+        pid,
+    );
+    try authority.commit();
     try printSourceEvidenceV1();
 }
 
@@ -82,7 +130,13 @@ fn promoteV1(directory: *std.fs.Dir, phase: u64) !void {
         fixture.selector2,
         &selector_storage,
     );
-    var candidate = try directory.createFile(
+    var authority =
+        try core.durable_directory_sync.AuthorityV1.acquire(
+            directory.*,
+        );
+    defer authority.close();
+    const durable_directory = try authority.borrow();
+    var candidate = try durable_directory.createFile(
         candidate_selector_name,
         .{ .read = true, .truncate = true },
     );
@@ -91,12 +145,12 @@ fn promoteV1(directory: *std.fs.Dir, phase: u64) !void {
     if (phase == 1) killSelfV1();
     try candidate.sync();
     if (phase == 2) killSelfV1();
-    try directory.rename(
+    try durable_directory.rename(
         candidate_selector_name,
         active_selector_name,
     );
     if (phase == 3) killSelfV1();
-    try core.durable_directory_sync.sync(directory.*);
+    try authority.commit();
     if (phase == 4) killSelfV1();
     return error.MissingInjectedDeath;
 }

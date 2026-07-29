@@ -330,6 +330,29 @@ passed. The matrix profile intentionally retains full
 
 Record an unsupported ThreadSanitizer environment as **not run**, not passed.
 
+## Durable directory authority
+
+Every POSIX namespace transaction that claims directory durability must acquire
+`core.durable_directory_sync.AuthorityV1` before its first create, link,
+rename, replace, or unlink operation. Acquisition preflights directory
+synchronization and owns one sync-capable descriptor for the full transaction.
+Use only the `Dir` returned by `borrow()` for namespace operations, never close
+or retain that borrowed alias, sync file contents in protocol order, and finish
+the namespace boundary with `authority.commit()`.
+
+The original caller `Dir` is needed only during acquisition and may be closed
+afterward. A successful commit leaves the same authority available when one
+logical transaction has another declared directory boundary. A failed commit
+poisons it: do not retry, borrow, or mutate through it; close it and enter the
+adapter's normal reopen/recovery path. Do not add a direct POSIX `fsync` call or
+restore the removed one-shot sync wrapper. The directory-authority policy test
+keeps raw synchronization centralized and rejects legacy calls.
+
+Real `fsync` calls and process-death campaigns verify ordering and recovery on
+the named host filesystem. They are not evidence of controller flushes,
+physical-media persistence, sudden power loss, or an exactly-once power-loss
+protocol.
+
 ## Testing contracts, not just success paths
 
 Glacier's value comes from rejecting unsafe transitions. Tests should cover the

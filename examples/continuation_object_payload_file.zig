@@ -82,18 +82,27 @@ pub fn main() !void {
         try temporary.dir.makeDir(directory_name);
         var directory = try temporary.dir.openDir(directory_name, .{});
         defer directory.close();
-        const sweep_output = try directory.createFile(
-            "sweep.records",
-            .{
-                .read = true,
-                .exclusive = true,
-                .mode = 0o600,
-            },
-        );
-        try sweep_output.writeAll(&sweep_bytes);
-        try sweep_output.sync();
-        sweep_output.close();
-        try core.durable_directory_sync.sync(directory);
+        {
+            var authority =
+                try core.durable_directory_sync.AuthorityV1.acquire(
+                    directory,
+                );
+            defer authority.close();
+            const durable_directory = try authority.borrow();
+            const sweep_output =
+                try durable_directory.createFile(
+                    "sweep.records",
+                    .{
+                        .read = true,
+                        .exclusive = true,
+                        .mode = 0o600,
+                    },
+                );
+            try sweep_output.writeAll(&sweep_bytes);
+            try sweep_output.sync();
+            sweep_output.close();
+            try authority.commit();
+        }
 
         const storage_epoch = 1000 + index;
         var lock_storage: [1]u8 = undefined;
@@ -127,18 +136,29 @@ pub fn main() !void {
         if (index == 0)
             first_reclaim_record_sha256 =
                 prepared_reclaim.record.record_sha256;
-        const reclaim_candidate = try directory.createFile(
-            "reclaim.candidate",
-            .{
-                .read = true,
-                .exclusive = true,
-                .mode = 0o600,
-            },
-        );
-        try reclaim_candidate.writeAll(&prepared_reclaim.record.bytes);
-        try reclaim_candidate.sync();
-        reclaim_candidate.close();
-        try core.durable_directory_sync.sync(directory);
+        {
+            var authority =
+                try core.durable_directory_sync.AuthorityV1.acquire(
+                    directory,
+                );
+            defer authority.close();
+            const durable_directory = try authority.borrow();
+            const reclaim_candidate =
+                try durable_directory.createFile(
+                    "reclaim.candidate",
+                    .{
+                        .read = true,
+                        .exclusive = true,
+                        .mode = 0o600,
+                    },
+                );
+            try reclaim_candidate.writeAll(
+                &prepared_reclaim.record.bytes,
+            );
+            try reclaim_candidate.sync();
+            reclaim_candidate.close();
+            try authority.commit();
+        }
         const is_plan_phase = switch (phase) {
             .plan_write, .plan_sync, .plan_directory_sync => true,
             else => false,

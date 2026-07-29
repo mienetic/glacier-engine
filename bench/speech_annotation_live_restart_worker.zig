@@ -104,10 +104,24 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
         fixture.first_transcript,
         &transcript_wire,
     );
-    try writeSyncedV1(directory, state_name, &state_wire);
-    try writeSyncedV1(directory, result_name, &result_wire);
+    var authority =
+        try core.durable_directory_sync.AuthorityV1.acquire(
+            directory.*,
+        );
+    defer authority.close();
+    var durable_directory = try authority.borrow();
     try writeSyncedV1(
-        directory,
+        &durable_directory,
+        state_name,
+        &state_wire,
+    );
+    try writeSyncedV1(
+        &durable_directory,
+        result_name,
+        &result_wire,
+    );
+    try writeSyncedV1(
+        &durable_directory,
         transcript_name,
         &transcript_wire,
     );
@@ -118,11 +132,11 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
         .{currentProcessId()},
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         source_pid_name,
         pid,
     );
-    try core.durable_directory_sync.sync(directory.*);
+    try authority.commit();
     const result_hex = std.fmt.bytesToHex(
         result.result_sha256,
         .lower,

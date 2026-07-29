@@ -293,20 +293,54 @@ fn writeCheckpointV1(
     );
     _ = try capsule.decodeAndVerifyV1(capsule_wire, config, objects);
 
-    try writeSyncedFileV1(directory, "capsule.bin", capsule_wire);
-    try writeSyncedFileV1(directory, "manifest.bin", manifest_wire);
-    try writeSyncedFileV1(directory, "payload.bin", payload_wire);
-    try writeSyncedFileV1(directory, "page-0.bin", page_zero);
-    try writeSyncedFileV1(directory, "page-1.bin", page_one);
-    try writeSyncedFileV1(directory, "runtime.bin", runtime_wire);
+    var authority =
+        try core.durable_directory_sync.AuthorityV1.acquire(
+            directory,
+        );
+    defer authority.close();
+    const durable_directory = try authority.borrow();
+    try writeSyncedFileV1(
+        durable_directory,
+        "capsule.bin",
+        capsule_wire,
+    );
+    try writeSyncedFileV1(
+        durable_directory,
+        "manifest.bin",
+        manifest_wire,
+    );
+    try writeSyncedFileV1(
+        durable_directory,
+        "payload.bin",
+        payload_wire,
+    );
+    try writeSyncedFileV1(
+        durable_directory,
+        "page-0.bin",
+        page_zero,
+    );
+    try writeSyncedFileV1(
+        durable_directory,
+        "page-1.bin",
+        page_one,
+    );
+    try writeSyncedFileV1(
+        durable_directory,
+        "runtime.bin",
+        runtime_wire,
+    );
     var pid_storage: [32]u8 = undefined;
     const pid_wire = try std.fmt.bufPrint(
         &pid_storage,
         "{d}",
         .{currentProcessId()},
     );
-    try writeSyncedFileV1(directory, "source.pid", pid_wire);
-    try core.durable_directory_sync.sync(directory);
+    try writeSyncedFileV1(
+        durable_directory,
+        "source.pid",
+        pid_wire,
+    );
+    try authority.commit();
 
     const retiring = try bank.beginRetireSubtreeForSession(
         tree,

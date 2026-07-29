@@ -132,53 +132,59 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
         source.link_state,
         &link_state_wire,
     );
+    var authority =
+        try core.durable_directory_sync.AuthorityV1.acquire(
+            directory.*,
+        );
+    defer authority.close();
+    var durable_directory = try authority.borrow();
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         checkpoint_name,
         &checkpoint_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         stateful_checkpoint_name,
         &stateful_checkpoint_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         state_publication_name,
         &state_publication_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         state_payload_name,
         &source.state_payload,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         previous_overlap_name,
         &previous_overlap_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         previous_transcript_name,
         &previous_transcript_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         previous_link_name,
         &previous_link_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         next_overlap_name,
         &next_overlap_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         timeline_name,
         &timeline_wire,
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         link_state_name,
         &link_state_wire,
     );
@@ -189,11 +195,11 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
         .{currentProcessId()},
     );
     try writeSyncedV1(
-        directory,
+        &durable_directory,
         source_pid_name,
         pid,
     );
-    try core.durable_directory_sync.sync(directory.*);
+    try authority.commit();
 
     const checkpoint_hex = std.fmt.bytesToHex(
         source.checkpoint.checkpoint_sha256,

@@ -12,6 +12,7 @@
 //! detect a transient or same-length in-place overwrite by an untrusted writer.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const platform_capabilities = @import("platform_capabilities.zig");
 const durable_directory_sync = @import("durable_directory_sync.zig");
 const capsule = @import("continuation_capsule.zig");
@@ -343,6 +344,9 @@ var next_lease_generation = std.atomic.Value(u64).init(1);
 
 pub const FileLeaseV1 = struct {
     file: std.fs.File,
+    directory_authority: durable_directory_sync.AuthorityV1,
+    /// Non-owning alias of `directory_authority` retained for source
+    /// compatibility. Never close this alias or retain it after `close`.
     directory: std.fs.Dir,
     name_storage: [max_name_bytes]u8,
     name_length: usize,
@@ -379,12 +383,16 @@ pub const FileLeaseV1 = struct {
             .current_adapter_availability_v1.posix_durable_file_adapter)
             return Error.UnsupportedPlatform;
         try validateAcquire(name, options);
+        var directory_authority =
+            try durable_directory_sync.AuthorityV1.acquire(directory);
+        errdefer directory_authority.close();
+        const owned_directory = try directory_authority.borrow();
         const generation = try reserveLeaseGeneration();
         var name_storage = [_]u8{0} ** max_name_bytes;
         @memcpy(name_storage[0..name.len], name);
 
         const file = try openLockedFile(
-            directory,
+            owned_directory,
             name,
             .create,
             options.lock_nonblocking,
@@ -392,16 +400,16 @@ pub const FileLeaseV1 = struct {
         errdefer file.close();
         const inspected = try inspectInitial(
             file,
-            directory,
+            owned_directory,
             name,
             options.require_private_mode,
         );
         if (inspected.size != 0) return Error.StorageIdentityChanged;
         try file.sync();
-        try syncDirectory(directory);
+        try directory_authority.commit();
         const verified = try inspectInitial(
             file,
-            directory,
+            owned_directory,
             name,
             options.require_private_mode,
         );
@@ -416,7 +424,8 @@ pub const FileLeaseV1 = struct {
         );
         return .{
             .file = file,
-            .directory = directory,
+            .directory_authority = directory_authority,
+            .directory = owned_directory,
             .name_storage = name_storage,
             .name_length = name.len,
             .stream_storage = stream_storage,
@@ -447,12 +456,16 @@ pub const FileLeaseV1 = struct {
             .current_adapter_availability_v1.posix_durable_file_adapter)
             return Error.UnsupportedPlatform;
         try validateAcquire(name, options);
+        var directory_authority =
+            try durable_directory_sync.AuthorityV1.acquire(directory);
+        errdefer directory_authority.close();
+        const owned_directory = try directory_authority.borrow();
         const generation = try reserveLeaseGeneration();
         var name_storage = [_]u8{0} ** max_name_bytes;
         @memcpy(name_storage[0..name.len], name);
 
         const file = try openLockedFile(
-            directory,
+            owned_directory,
             name,
             .existing,
             options.lock_nonblocking,
@@ -460,7 +473,7 @@ pub const FileLeaseV1 = struct {
         errdefer file.close();
         const inspected = try inspectInitial(
             file,
-            directory,
+            owned_directory,
             name,
             options.require_private_mode,
         );
@@ -473,7 +486,7 @@ pub const FileLeaseV1 = struct {
             return Error.StorageIo;
         const verified = try inspectInitial(
             file,
-            directory,
+            owned_directory,
             name,
             options.require_private_mode,
         );
@@ -487,7 +500,8 @@ pub const FileLeaseV1 = struct {
         );
         return .{
             .file = file,
-            .directory = directory,
+            .directory_authority = directory_authority,
+            .directory = owned_directory,
             .name_storage = name_storage,
             .name_length = name.len,
             .stream_storage = stream_storage,
@@ -511,6 +525,33 @@ pub const FileLeaseV1 = struct {
 
     pub fn stream(self: *const FileLeaseV1) []const u8 {
         return self.stream_storage[0..self.observed_bytes];
+    }
+
+    pub fn borrowDirectory(
+        self: *const FileLeaseV1,
+    ) durable_directory_sync.BorrowError!std.fs.Dir {
+        if (self.state != .ready)
+            return error.InvalidAuthorityState;
+        return self.directory_authority.borrow();
+    }
+
+    /// Commits namespace changes made through `borrowDirectory` or the
+    /// compatibility `directory` alias. Failure poisons both authorities.
+    pub fn commitDirectory(
+        self: *FileLeaseV1,
+    ) durable_directory_sync.SyncError!void {
+        if (self.state != .ready)
+            return error.InvalidAuthorityState;
+        self.state = .poisoned;
+        try self.directory_authority.commit();
+        self.directory_sync_status = .synced;
+        self.state = .ready;
+    }
+
+    pub fn directoryAuthorityObservation(
+        self: *const FileLeaseV1,
+    ) durable_directory_sync.AuthorityObservationV1 {
+        return self.directory_authority.observation();
     }
 
     pub fn appendCapability(
@@ -587,8 +628,9 @@ pub const FileLeaseV1 = struct {
         };
     }
 
-    /// Closing releases the OS lock and invalidates all capabilities. The
-    /// caller owns the directory descriptor and stream buffer.
+    /// Closing releases the OS lock, closes the owned directory authority, and
+    /// invalidates all capabilities. The caller retains its original directory
+    /// descriptor and stream buffer.
     pub fn close(self: *FileLeaseV1) void {
         if (self.state == .closed) return;
         self.state = .closed;
@@ -596,6 +638,7 @@ pub const FileLeaseV1 = struct {
         self.clearAppendAuthorization();
         self.clearRepairAuthorization();
         self.file.close();
+        self.directory_authority.close();
     }
 
     fn verifyCurrent(
@@ -988,13 +1031,6 @@ fn reserveLeaseGeneration() Error!u64 {
     }
 }
 
-fn syncDirectory(directory: std.fs.Dir) !void {
-    if (comptime !platform_capabilities
-        .current_adapter_availability_v1.posix_durable_file_adapter)
-        return Error.UnsupportedPlatform;
-    try durable_directory_sync.sync(directory);
-}
-
 fn testDigest(byte: u8) Digest {
     return [_]u8{byte} ** @sizeOf(Digest);
 }
@@ -1112,18 +1148,31 @@ test "directory lease creates locks appends and reopens exact records" {
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     var initial_storage: [1]u8 = undefined;
-    var lease = try FileLeaseV1.create(
-        temporary.dir,
-        "sweep.records",
-        .{
-            .storage_epoch = 41,
-            .max_bytes = record.encoded_bytes * 3,
-        },
-        &initial_storage,
-    );
+    var lease = lease: {
+        var caller_directory = try temporary.dir.openDir(".", .{});
+        defer caller_directory.close();
+        break :lease try FileLeaseV1.create(
+            caller_directory,
+            "sweep.records",
+            .{
+                .storage_epoch = 41,
+                .max_bytes = record.encoded_bytes * 3,
+            },
+            &initial_storage,
+        );
+    };
     defer lease.close();
     try std.testing.expectEqual(DirectorySyncStatusV1.synced, lease.directory_sync_status);
     try std.testing.expectEqual(@as(u64, 1), lease.file_sync_count);
+    const directory_observation =
+        lease.directoryAuthorityObservation();
+    try std.testing.expect(
+        directory_observation.preflight_sync_completed,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        directory_observation.commit_success_count,
+    );
 
     var locked_storage: [record.encoded_bytes * 3]u8 = undefined;
     try std.testing.expectError(
@@ -1179,6 +1228,87 @@ test "directory lease creates locks appends and reopens exact records" {
         try lease.appendCapability(),
     );
     try std.testing.expectEqual(@as(u64, 3), reopened_writer.next_sequence);
+}
+
+test "directory lease owns its authority after caller directory closes" {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.makeDir("owned-authority");
+    var storage: [1]u8 = undefined;
+    var lease = lease: {
+        var caller_directory = try temporary.dir.openDir(
+            "owned-authority",
+            .{},
+        );
+        defer caller_directory.close();
+        break :lease try FileLeaseV1.create(
+            caller_directory,
+            "sweep.records",
+            .{
+                .storage_epoch = 42,
+                .max_bytes = record.encoded_bytes,
+            },
+            &storage,
+        );
+    };
+    defer lease.close();
+
+    const owned_directory = try lease.borrowDirectory();
+    const marker = try owned_directory.createFile("marker", .{
+        .read = true,
+        .exclusive = true,
+        .mode = 0o600,
+    });
+    try marker.writeAll("owned");
+    try marker.sync();
+    marker.close();
+    try lease.commitDirectory();
+    const observation = lease.directoryAuthorityObservation();
+    try std.testing.expectEqual(
+        durable_directory_sync.AuthorityStateV1.live,
+        observation.state,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 2),
+        observation.commit_success_count,
+    );
+    _ = try lease.appendCapability();
+    lease.state = .poisoned;
+    try std.testing.expectError(
+        error.InvalidAuthorityState,
+        lease.borrowDirectory(),
+    );
+}
+
+test "linux directory preflight fails before lock entry mutation" {
+    if (comptime builtin.os.tag != .linux)
+        return error.SkipZigTest;
+
+    var proc_self = try std.fs.openDirAbsolute("/proc/self", .{});
+    defer proc_self.close();
+    const unavailable_name =
+        ".glacier-directory-preflight-must-not-exist";
+    var storage: [1]u8 = undefined;
+    try std.testing.expectError(
+        error.DirectorySyncUnsupported,
+        FileLeaseV1.create(
+            proc_self,
+            unavailable_name,
+            .{
+                .storage_epoch = 43,
+                .max_bytes = record.encoded_bytes,
+            },
+            &storage,
+        ),
+    );
+    try std.testing.expectError(
+        error.FileNotFound,
+        proc_self.openFile(unavailable_name, .{}),
+    );
 }
 
 test "directory lease rejects unsafe names symlinks hard links and permissions" {

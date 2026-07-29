@@ -12,6 +12,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const durable_directory_sync = @import("durable_directory_sync.zig");
+const platform_capabilities = @import("platform_capabilities.zig");
 const gateway = @import("provider_token_gateway.zig");
 const cost_wire = @import("provider_cost_wire.zig");
 const settlement_wire = @import("provider_settlement_wire.zig");
@@ -207,7 +208,23 @@ pub const StoreV1 = struct {
         );
         if (!headerValidV1(header)) return Error.InvalidHeader;
 
-        const file = try directory.createFile(journal_name, .{
+        var directory_authority: ?durable_directory_sync.AuthorityV1 = null;
+        defer {
+            if (directory_authority) |*authority| authority.close();
+        }
+        const storage_directory =
+            if (comptime platform_capabilities
+                .current_adapter_availability_v1
+                .posix_durable_file_adapter)
+            blk: {
+                directory_authority =
+                    try durable_directory_sync.AuthorityV1.acquire(
+                        directory,
+                    );
+                break :blk try directory_authority.?.borrow();
+            } else directory;
+
+        const file = try storage_directory.createFile(journal_name, .{
             .read = true,
             .truncate = false,
             .exclusive = true,
@@ -220,7 +237,11 @@ pub const StoreV1 = struct {
         var encoded_header: [header_bytes]u8 = undefined;
         try file.writeAll(try encodeHeaderV1(header, &encoded_header));
         try file.sync();
-        const directory_sync_status = try syncDirectoryV1(directory);
+        const directory_sync_status: DirectorySyncStatusV1 =
+            if (directory_authority) |*authority| blk: {
+                try authority.commit();
+                break :blk .synced;
+            } else .unsupported;
         zeroRequests(request_storage);
         return .{
             .file = file,
@@ -401,27 +422,6 @@ fn validateStoreInputs(
     if (frame_storage.len < frame_bytes or
         request_storage.len > max_supported_frames)
         return Error.CapacityExceeded;
-}
-
-fn syncDirectoryV1(
-    directory: std.fs.Dir,
-) !DirectorySyncStatusV1 {
-    return switch (builtin.os.tag) {
-        .linux,
-        .macos,
-        .ios,
-        .freebsd,
-        .netbsd,
-        .dragonfly,
-        .openbsd,
-        .solaris,
-        .illumos,
-        => blk: {
-            try durable_directory_sync.sync(directory);
-            break :blk .synced;
-        },
-        else => .unsupported,
-    };
 }
 
 fn injectFaultV1(
@@ -1480,6 +1480,33 @@ test "journal layout keeps body and commit footer independently appendable" {
     try std.testing.expectEqual(@as(usize, 5079), test_journal_bytes);
     try std.testing.expectEqual(frame_body_bytes, plan.body.len);
     try std.testing.expectEqual(commit_footer_bytes, plan.commit_footer.len);
+}
+
+test "linux cost journal preflight rejects before file creation" {
+    if (comptime builtin.os.tag != .linux)
+        return error.SkipZigTest;
+
+    const fixture = try testJournal();
+    var proc_self = try std.fs.openDirAbsolute("/proc/self", .{});
+    defer proc_self.close();
+    const unavailable_name =
+        ".glacier-cost-preflight-must-not-exist";
+    var frame_storage: [frame_bytes]u8 = undefined;
+    var requests: [test_frame_count]RequestStateV1 = undefined;
+    try std.testing.expectError(
+        error.DirectorySyncUnsupported,
+        StoreV1.create(
+            proc_self,
+            unavailable_name,
+            fixture.header,
+            &frame_storage,
+            &requests,
+        ),
+    );
+    try std.testing.expectError(
+        error.FileNotFound,
+        proc_self.openFile(unavailable_name, .{}),
+    );
 }
 
 test "locked store creates appends and reopens the exact journal" {
