@@ -32,7 +32,7 @@ pub fn main() !void {
     try candidate.writeAll(&fixture.first);
     try candidate.sync();
     candidate.close();
-    try std.posix.fsync(temporary.dir.fd);
+    try core.durable_directory_sync.sync(temporary.dir);
 
     var append_deaths: usize = 0;
     var append_repairs: usize = 0;
@@ -146,7 +146,7 @@ pub fn main() !void {
         try raw.writeAll(fixture.second[0 .. record.body_bytes + 7]);
         try raw.sync();
         raw.close();
-        try std.posix.fsync(temporary.dir.fd);
+        try core.durable_directory_sync.sync(temporary.dir);
 
         var epoch_storage: [32]u8 = undefined;
         const epoch_text = try std.fmt.bufPrint(

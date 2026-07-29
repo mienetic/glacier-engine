@@ -8,6 +8,11 @@ before the first stable release.
 
 ### Changed
 
+- POSIX durability paths now reopen a caller-pinned directory through one
+  descriptor-relative sync-capable adapter before directory synchronization.
+  This preserves path-only directory authority on Linux, retries interrupted
+  syncs, and reports unsupported, read-only, capacity, quota, and I/O
+  filesystem-sync outcomes as typed errors.
 - Observed Metal INT4 matrix-vector dispatch now keeps candidate output in
   backend-owned storage until command telemetry validates. A physically
   completed command increments dispatch accounting before later evidence or
@@ -37,6 +42,12 @@ before the first stable release.
 
 ### Added
 
+- Added a hosted GitHub Actions verification matrix with a compile-first
+  Ubuntu ReleaseSafe runtime/interop/controlled-fault gate, a hash-locked
+  Python regression environment, a compile-only macOS Metal frontier, and
+  complete Linux x86_64/AArch64, Windows x86_64, and FreeBSD x86_64 foreign
+  target closures. Hosted accelerator compilation remains source/build
+  evidence and does not create a native runtime or performance claim.
 - Added a download-free **normalized dense-tensor embedding reference
   fixture**. Bounded row-major `i16` inputs and `i8` projection weights produce
   checked `i64` accumulators and compact `i32` Q30 L2 vectors. A fixed policy

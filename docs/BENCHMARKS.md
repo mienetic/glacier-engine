@@ -982,6 +982,8 @@ tools/zig-with-ephemeral-cache.sh build native-metal-disruption-report-test \
 zig build test -Doptimize=Debug -Dmetal=false
 zig build test -Doptimize=ReleaseSafe -Dmetal=false
 zig build test -Doptimize=ReleaseFast -Dmetal=false
+python3 -m pip install --only-binary=:all: --require-hashes \
+  -r bench/requirements-test.txt
 python3 -m unittest discover -s bench/tests
 ```
 

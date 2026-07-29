@@ -16,6 +16,8 @@ pub const tensor = @import("tensor.zig");
 pub const f16bits = @import("f16bits.zig");
 pub const resource_bank = @import("resource_bank.zig");
 pub const platform_capabilities = @import("platform_capabilities.zig");
+pub const durable_directory_sync =
+    @import("durable_directory_sync.zig");
 pub const device_capability_contract =
     @import("device_capability_contract.zig");
 pub const device_lifecycle_contract =

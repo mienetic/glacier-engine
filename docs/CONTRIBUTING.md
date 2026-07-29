@@ -18,12 +18,19 @@ every gate as `PASS`, `FAIL`, or `SKIP` with a reason. Run
 your branch, or `tools/verify.sh full` when you need the broad local ReleaseSafe
 and Python suites.
 
+The quick profile remains dependency-free. Use CPython 3.10–3.12 and install
+`bench/requirements-test.txt` in a clean environment before running `full`,
+`matrix`, or full unittest discovery.
+
 Pull requests and pushes to `main` run the host ReleaseSafe and POSIX fault
-gates, the full standard-library Python regression suite, and the four retained
-cross-target compile closures in parallel on GitHub Actions. A macOS job
-compiles the complete Metal closure but does not execute or measure it. Native
-Metal runtime and performance gates remain explicit local or maintainer-run
-checks so hosted CI does not imply hardware evidence it did not collect.
+gates, the full Python regression suite, and the four retained cross-target
+compile closures in parallel on GitHub Actions. Full Python discovery imports
+the retained numeric reference reporters and installs their pinned dependency
+from `bench/requirements-test.txt`; the embedding and runtime-contract verifiers
+remain standard-library-only. A macOS job compiles the complete Metal closure
+but does not execute or measure it. Native Metal runtime and performance gates
+remain explicit local or maintainer-run checks so hosted CI does not imply
+hardware evidence it did not collect.
 
 Then choose a bounded item from [Contributor projects](PROJECTS.md), open a
 **Claim a contributor slice** issue, and tell us what command will prove it is
@@ -118,6 +125,8 @@ Common commands:
 
 ```sh
 tools/verify.sh
+python3 -m pip install --only-binary=:all: --require-hashes \
+  -r bench/requirements-test.txt
 tools/verify.sh affected --base origin/main
 GLACIER_VERIFY_BASE=origin/main tools/verify.sh affected
 GLACIER_VERIFY_REQUIRE_NATIVE=1 tools/verify.sh affected --base origin/main

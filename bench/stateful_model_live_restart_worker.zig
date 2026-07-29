@@ -134,7 +134,7 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
         .{currentProcessId()},
     );
     try writeSyncedV1(directory, source_pid_name, pid);
-    try std.posix.fsync(directory.fd);
+    try core.durable_directory_sync.sync(directory.*);
     try session.closeAndRelease();
     if (!(try bank.snapshotV3()).used.isZero())
         return error.SourceOwnershipLeak;

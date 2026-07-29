@@ -100,7 +100,7 @@ fn publishSourceV1(directory: *std.fs.Dir) !void {
         .{currentProcessId()},
     );
     try writeSyncedV1(directory, source_pid_name, pid);
-    try std.posix.fsync(directory.fd);
+    try core.durable_directory_sync.sync(directory.*);
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;

@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const durable_directory_sync = @import("durable_directory_sync.zig");
 const gateway = @import("provider_token_gateway.zig");
 const cost_wire = @import("provider_cost_wire.zig");
 const settlement_wire = @import("provider_settlement_wire.zig");
@@ -416,7 +417,7 @@ fn syncDirectoryV1(
         .solaris,
         .illumos,
         => blk: {
-            try std.posix.fsync(directory.fd);
+            try durable_directory_sync.sync(directory);
             break :blk .synced;
         },
         else => .unsupported,

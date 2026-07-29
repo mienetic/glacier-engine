@@ -77,7 +77,7 @@ pub fn main() !void {
             "source.pid",
             source_pid,
         );
-        try std.posix.fsync(directory.fd);
+        try core.durable_directory_sync.sync(directory);
 
         const initial_selector =
             try checkpoint_file.prepareInitialSelectorV1(

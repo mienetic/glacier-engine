@@ -93,7 +93,7 @@ pub fn main() !void {
         try sweep_output.writeAll(&sweep_bytes);
         try sweep_output.sync();
         sweep_output.close();
-        try std.posix.fsync(directory.fd);
+        try core.durable_directory_sync.sync(directory);
 
         const storage_epoch = 1000 + index;
         var lock_storage: [1]u8 = undefined;
@@ -138,7 +138,7 @@ pub fn main() !void {
         try reclaim_candidate.writeAll(&prepared_reclaim.record.bytes);
         try reclaim_candidate.sync();
         reclaim_candidate.close();
-        try std.posix.fsync(directory.fd);
+        try core.durable_directory_sync.sync(directory);
         const is_plan_phase = switch (phase) {
             .plan_write, .plan_sync, .plan_directory_sync => true,
             else => false,

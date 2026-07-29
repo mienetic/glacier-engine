@@ -977,9 +977,11 @@ compile evidence from native, recovery, accelerator, and packaging support.
 Requirements:
 
 - Zig 0.15.0 or newer;
-- macOS for the retained native development-host workflow; Linux, Windows, and
-  FreeBSD currently have cross-build evidence only;
-- Python 3 for the independent evidence tests;
+- macOS for the retained native development-host workflow; hosted Linux x86_64
+  also runs native correctness and controlled-fault CI gates, while Linux
+  AArch64, Windows, and FreeBSD currently have cross-build evidence only;
+- Python 3.10 or newer for the dependency-free quick checks; CPython 3.10–3.12
+  for the locked full Python suite;
 - Rust is optional and needed only for `contract-rust-test`.
 
 Compile-only core probes also exist for additional targets. They are not native
@@ -996,12 +998,21 @@ tools/verify.sh
 Every gate is reported as `PASS`, `FAIL`, or `SKIP` with a reason. The default
 quick profile verifies formatting, public-document policy, package imports, and
 the Zig/C/C++/Python contract chain. Its compatible Zig roots share one build
-DAG instead of starting a compiler process for each gate. Use
-`tools/verify.sh full` to add the broad native ReleaseSafe and Python suites
-plus the optional Rust gate. The full profile compiles the complete host test
-and contract frontier through `host-runtime-compile` first; runtime tests start
-only after that compile-only gate succeeds, and their compatible roots likewise
-share one Zig DAG.
+DAG instead of starting a compiler process for each gate. In a clean
+environment, install the hash-locked binary dependency before selecting the
+full profile:
+
+```sh
+python3 -m pip install --only-binary=:all: --require-hashes \
+  -r bench/requirements-test.txt
+tools/verify.sh full
+```
+
+The full profile adds the broad native ReleaseSafe and Python suites plus the
+optional Rust gate. It compiles the complete host test and contract frontier
+through `host-runtime-compile` first; runtime tests start only after that
+compile-only gate succeeds, and their compatible roots likewise share one Zig
+DAG.
 
 All Zig invocations in one verifier run reuse the same private local and global
 caches. Clang, Swift, and Metal compiler module caches are rooted in that same
@@ -1065,6 +1076,8 @@ query semantics, fixture authoring, and explicit nonclaims.
 Run the broad verification suites when working across the whole repository:
 
 ```sh
+python3 -m pip install --only-binary=:all: --require-hashes \
+  -r bench/requirements-test.txt
 tools/verify.sh full
 ```
 
@@ -1104,7 +1117,7 @@ hardware-independent surface without those native backend dependencies.
 | Providers | Context packing, gateway, transport harness, settlement and cost wires, a read-only outer-envelope inspector, and a pointer-free ActionOutbox adapter contract exercised by a same-process fake authority whose portable values contain no credentials or payload bytes | Pluggable live adapters outside the credential-free core, OS-isolated credential handling, and optional caller-supplied full-composition inspection |
 | Evidence | Hash-chained events, independent Python verifiers, a scheduled-media execution sidecar with exact receipt/output replay, compact provider evidence join, an experimental read-only provider outer-envelope inspector, a generated-media inspector with exact optional format-sidecar validation, independent ActionOutbox dispatch/status model tests with live canonical Zig-report parity, a fixed native-observation contract with availability, stable source identity, per-event provenance, unavailable-reason identity, per-record sample-clock identity, and value-clock identity for present time metrics, a versioned allocation-free W6a raw-record/summary/closure report codec with deterministic reference runner and independent recomputation, a W6b production-native macOS Metal producer with one retained independently verified 20-record machine result after zero-ownership closure, a W7a finite controlled-disruption producer with 250 ordered records and 100 correctness-gated native Metal commands, the W7b-b3 208-record native cancellation-storm profile with 16 correctness-gated controls, the W7b-b4 real PID-kill boundary around one controlled event-blocked registered command plus a fresh 20-command production control, the W7b-a canonical segmented-soak campaign, the W7b-b1 sealed post-segment process-kill profile, the W7b-b2 production-publisher/reference-recovery 81-fault/one-control campaign, and the W7b-b5 exact generation-six supervisor-death plus prepared-generation-twelve recovery-process-death protocol with a dual-verified 3,520-byte report | Token transaction inspector, provider nested-composition workflow, privacy-safe export and retention policy, retained native campaign matrices, remaining W7b-b active-kernel, broader control-plane interruption, adapter, and physical disruption evidence, direct CPU/GPU utilization, residency, thermal, frequency, power, and energy adapters, and native multi-OS evidence |
 | Multimodal | Shared identity/timeline, bounded decode/transforms, scheduler-coupled final-quantum image/audio/video transactions and typed perception results, per-buffer ownership, chunk chains, six-object input checkpoints, post-restore generation three, image processor progress, overlapping audio context plus fresh-process transcript continuation, exact word/speaker annotation restart, explicit VFR windows plus stateful video restart, typed segments and deterministic merge timelines, exact audio/transcript-video result links, synchronized watermark, restore-before-visible cache ownership, generated-image publication, acknowledged generated-PCM/video publication, one atomic generated image/audio/video checkpoint, one exact eight-object encoded-payload archive, a bounded multi-output registry, typed producer/raw-output admission, host replay of exact deterministic source-model/materializer transitions, validated bounded PNG/WAVE/APNG profiles, and an integrated additive format-conformance sidecar with a maximum-entry repeated-modality composed oracle | External video-timeline normalization, production encoder/container adapters and broader profiles, richer language/punctuation and overlapping-speaker policy, native Linux/Windows execution and power-loss campaigns, additional model/materializer profiles, and authorized physical playback/display and quality evidence |
-| Platforms | Native macOS development-host evidence, including the 49-death ActionOutbox POSIX recovery campaign, the 27-death/54-injected-error workload-store production-publisher/reference-recovery campaign, the 49-death prepared-text source/target recovery campaign, and on-demand Metal diagnostic-readiness, allocation-ownership, production workload-report, controlled-disruption, cancellation-storm, segmented-soak, post-segment process-kill, controlled in-flight process-kill, and supervisor/recovery-process death gates; affected-path verification with target-specific core/CPU/durable/device/host-tool compile profiles, a complete consumer compile closure for shared APIs, full per-target fallback, and one shared DAG per selected target; full opt-in production, benchmark/diagnostic, and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64; a CLI-only default install plus opt-in benchmark installation; a bounded Linux available-memory adapter implementation with native retention still pending; exported package modules; compile-time adapter-availability inventory; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64 | Separate the transitional core from durable POSIX authority and turn verification profiles into distributable products; replicate recovery natively on POSIX filesystems; run native Linux/Windows/FreeBSD CPU, observer, mapping, recovery, telemetry, and packaging gates; implement the Windows durable-file adapter; then add mobile and reduced edge profiles |
+| Platforms | Native macOS development-host evidence, including the 49-death ActionOutbox POSIX recovery campaign, the 27-death/54-injected-error workload-store production-publisher/reference-recovery campaign, the 49-death prepared-text source/target recovery campaign, and on-demand Metal diagnostic-readiness, allocation-ownership, production workload-report, controlled-disruption, cancellation-storm, segmented-soak, post-segment process-kill, controlled in-flight process-kill, and supervisor/recovery-process death gates; hosted Ubuntu x86_64 ReleaseSafe runtime, interop, process-restart, and controlled-fault CI through a descriptor-relative sync-capable directory adapter; affected-path verification with target-specific core/CPU/durable/device/host-tool compile profiles, a complete consumer compile closure for shared APIs, full per-target fallback, and one shared DAG per selected target; full opt-in production, benchmark/diagnostic, and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64; a CLI-only default install plus opt-in benchmark installation; a bounded Linux available-memory adapter implementation with a retained machine envelope still pending; exported package modules; compile-time adapter-availability inventory; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64 | Retain reproducible Linux machine/filesystem envelopes; separate remaining durable POSIX authority from the transitional core and turn verification profiles into distributable products; run native Windows/FreeBSD CPU, observer, mapping, recovery, telemetry, and packaging gates; implement the Windows durable-file adapter; then add mobile and reduced edge profiles |
 | Runtime Workload Lab | W0 deterministic mixed-media open-loop conformance, W1 scheduler-coupled media execution, the W2 four-seed/32-case generated corpus, W3 finite-source closed-loop conformance, W4a mixed typed-perception conformance, the W4b-a typed tool transaction, W4b-b ActionOutbox record recovery, the W4b-c durable POSIX store, W4b-d generation-fenced fake dispatch/status, W5a native observation, a bounded Linux host-source implementation, native macOS Metal readiness, pinned-allocation and bounded two-slot pressure gates, the portable W6a raw-record/summary/closure foundation, the W6b production-native 20-request Metal report producer, W7a finite controlled disruption, W7b-b3 paired-thread concurrent-caller cancellation, W7b-b4 controlled event-blocked in-flight process kill with a fresh production control, W7b-a bounded segmented soak, W7b-b1 quiescent-worker process kill, the W7b-b2 production-publisher/reference-recovery campaign-store process-death/error roll-forward, and W7b-b5 generation-six supervisor-death plus prepared-generation-twelve recovery-process-death cover overload, fairness, timeout, cancellation, turnover, typed publication/effect delivery, uncertain external handoff, fenced safe retry, deterministic crash modeling, explicit machine-state availability, fail-closed pre-run admission, retained post-run contamination, strict unavailable-not-zero behavior, independently recomputed workload evidence, correctness-gated accelerator dispatches, clean and forced worker restart, canonical checkpoint publication/offline audit, and controlled recovery without performance or physical-residency claims | Complete W7b-b active-kernel, broader supervisor/recovery interruption, adapter, and physical device/storage/driver/power campaigns; retain native Linux and broader accelerator campaign matrices; add trustworthy direct CPU/GPU metrics where platform sources exist; then W8 multi-OS replication |
 | Tooling | Zig build, exported `glacier`/`glacier_core` package modules, deterministic demos, benchmark harnesses, five domain compile profiles plus one complete consumer-closure profile, CLI-only default install, and opt-in benchmark installation | Distributable product profiles, installer, stable library API, and simpler fixture workflow |
 

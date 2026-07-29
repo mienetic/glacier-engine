@@ -193,7 +193,7 @@ fn checkpointV1(directory: *std.fs.Dir) !void {
         source_pid_name,
         pid,
     );
-    try std.posix.fsync(directory.fd);
+    try core.durable_directory_sync.sync(directory.*);
 
     const checkpoint_hex = std.fmt.bytesToHex(
         source.checkpoint.checkpoint_sha256,

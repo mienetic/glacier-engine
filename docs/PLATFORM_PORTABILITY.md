@@ -40,7 +40,7 @@ surface.
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
 | macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox campaign, the 49-death R1j prepared-text source/target campaign, and the W7b-b2 production-publisher/reference-recovery campaign-store gate across 27 real writer deaths, 54 controlled errno cases, and one clean control; physical storage and power-loss evidence remain absent | Portable Zig fake/state tests and an independent Python oracle model deterministic device contracts without a GPU; the native gates use a real `MTLDevice` and real `MTLBuffer` resources, submit and verify one fixed 37x64 INT4 readiness branch, retain zero-command reject/cancel branches, and exercise two disjoint native commands with deliberate out-of-order settlement after both complete, but no device support range is declared | Development host, not a broad platform certification |
-| Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is implemented; native smoke is not retained | The strict initial-recovery primitive and full R1j gate are supported, but no native Linux filesystem campaign is retained | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
+| Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; hosted Ubuntu also compiles the complete GNU host frontier before runtime | Hosted Ubuntu runs the ReleaseSafe runtime and language-interop gates; no CPU performance, packaging, machine range, or retained observation artifact is claimed | Hosted Ubuntu exercises the POSIX restart paths and the 81-case controlled store-fault matrix through a descriptor-relative sync-capable directory adapter; the ephemeral runner is not retained filesystem, physical-fault, or power-loss evidence | No retained Linux accelerator backend | Hosted native correctness/recovery CI plus cross-build evidence; not native-supported |
 | Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is architecture-neutral; native smoke is not retained | The strict initial-recovery primitive and full R1j gate are supported, but no native Linux filesystem campaign is retained | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
 | FreeBSD / x86_64 | Full artifact, `test-compile`, generated-media conformance, and the R1j worker cross-build gates pass in `ReleaseSafe` | Not established by cross-compilation | Strict initial recovery fails closed until an atomic no-replace primitive is implemented; no retained native FreeBSD filesystem campaign | No retained FreeBSD accelerator backend | Cross-build candidate; not native-supported |
@@ -55,9 +55,10 @@ adapter. The focused gate includes a native macOS observer smoke on the
 development host. The first follow-up adds a platform-neutral JSON seam and a
 strict bounded Linux `/proc/meminfo` `MemAvailable` adapter implementation.
 Its parser, availability mapping, and injected dispatcher tests run on any
-Python host, but Linux remains a cross-build candidate until the mandatory
-smoke is retained natively. Portable records separate stable source identity
-from per-event provenance and retain a nonzero reason identity only when
+Python host. Hosted Linux correctness is now gated, while the mandatory
+observation artifact and reproducible machine envelope still need retained
+native evidence. Portable records separate stable source identity from
+per-event provenance and retain a nonzero reason identity only when
 unavailable; present records carry none, and host JSON adds a bounded readable
 reason only when unavailable.
 

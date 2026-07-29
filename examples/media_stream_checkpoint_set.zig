@@ -369,7 +369,7 @@ pub fn main() !void {
             "source.pid",
             source_pid,
         );
-        try std.posix.fsync(directory.fd);
+        try core.durable_directory_sync.sync(directory);
 
         const initial_selector =
             try checkpoint_file.prepareInitialSelectorV1(
@@ -518,7 +518,7 @@ pub fn main() !void {
         "source.pid",
         source_pid,
     );
-    try std.posix.fsync(successor_directory.fd);
+    try core.durable_directory_sync.sync(successor_directory);
 
     const successor_storage_epoch: u64 = 19_000;
     const successor_initial_selector =

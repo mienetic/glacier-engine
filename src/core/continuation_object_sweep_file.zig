@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const platform_capabilities = @import("platform_capabilities.zig");
+const durable_directory_sync = @import("durable_directory_sync.zig");
 const capsule = @import("continuation_capsule.zig");
 const bundle = @import("continuation_bundle.zig");
 const object_store = @import("continuation_object_store.zig");
@@ -991,7 +992,7 @@ fn syncDirectory(directory: std.fs.Dir) !void {
     if (comptime !platform_capabilities
         .current_adapter_availability_v1.posix_durable_file_adapter)
         return Error.UnsupportedPlatform;
-    try std.posix.fsync(directory.fd);
+    try durable_directory_sync.sync(directory);
 }
 
 fn testDigest(byte: u8) Digest {

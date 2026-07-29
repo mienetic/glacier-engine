@@ -184,7 +184,7 @@ pub fn main() !void {
         try publication_file.writeAll(next_set.bytes);
         try publication_file.sync();
         publication_file.close();
-        try std.posix.fsync(directory.fd);
+        try core.durable_directory_sync.sync(directory);
 
         const storage_epoch = 9200 + index;
         var lock_storage: [1]u8 = undefined;

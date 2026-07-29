@@ -6,7 +6,8 @@ without downloading a model or supplying provider credentials.
 ## 1. Install prerequisites
 
 - Zig 0.15.0 or newer;
-- Python 3.10 or newer;
+- Python 3.10 or newer for the dependency-free quick checks;
+- CPython 3.10–3.12 for the locked full Python suite;
 - Rust with `rustc` on `PATH` only for the optional Rust interop gate;
 - Git;
 - Xcode command-line tools on macOS when using the Metal backend.
@@ -42,11 +43,14 @@ checks and prints an explicit reason for every skipped broad or platform gate.
 On macOS, Metal is enabled by default. Keep `-Dmetal=false` while learning the
 portable core; remove it when working on the accelerator backend.
 
-Retained native host execution is currently scoped to the macOS development
-host. The complete declared artifact set cross-builds for Linux x86_64/AArch64
-musl, Windows x86_64 GNU, and FreeBSD x86_64, but those are compile/link gates
-rather than native support. Compile-only mobile core probes are
-evidence-development tools, not support claims. See
+Retained development-host execution is scoped to macOS. Hosted CI also runs
+native Linux x86_64 correctness, interop, process-restart, and controlled-fault
+gates without treating its ephemeral runner as a retained machine or physical
+storage campaign. The complete declared artifact set cross-builds for Linux
+x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64; those foreign
+target jobs remain compile/link evidence rather than native support.
+Compile-only mobile core probes are evidence-development tools, not support
+claims. See
 [Platform Portability](PLATFORM_PORTABILITY.md) before adding an OS, mobile, or
 edge adapter.
 
@@ -416,13 +420,16 @@ zig build provider-context-adapter-demo -Doptimize=ReleaseSafe -Dmetal=false
 
 ```sh
 tools/verify.sh
+python3 -m pip install --only-binary=:all: --require-hashes \
+  -r bench/requirements-test.txt
 tools/verify.sh full
 ```
 
-The first command is the bounded quick contributor gate. The second adds the
-native ReleaseSafe suite, full Python discovery, and the Rust interop gate when
-the host and optional `rustc` support it. Both commands distinguish skipped
-work from passing work in their final summaries.
+The first command is the bounded, dependency-free quick contributor gate. The
+install command verifies every downloaded wheel against the repository lock.
+The full profile then adds the native ReleaseSafe suite, full Python discovery,
+and the Rust interop gate when the host and optional `rustc` support it. Both
+profiles distinguish skipped work from passing work in their final summaries.
 
 The producer-transition fixture proves exact deterministic replay on the
 verifying host. It does not prove historical execution, live resource

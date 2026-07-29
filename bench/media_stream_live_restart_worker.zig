@@ -178,7 +178,7 @@ fn checkpointAllV1(directory: *std.fs.Dir) !void {
         source_pid_name,
         pid,
     );
-    try std.posix.fsync(directory.fd);
+    try core.durable_directory_sync.sync(directory.*);
 
     var stdout_buffer: [512]u8 = undefined;
     var stdout_writer =

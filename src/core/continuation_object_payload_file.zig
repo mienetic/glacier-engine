@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const platform_capabilities = @import("platform_capabilities.zig");
+const durable_directory_sync = @import("durable_directory_sync.zig");
 const capsule = @import("continuation_capsule.zig");
 const bundle = @import("continuation_bundle.zig");
 const object_store = @import("continuation_object_store.zig");
@@ -1069,7 +1070,7 @@ fn readU64(input: []const u8, offset: usize) u64 {
 }
 
 fn syncDirectory(directory: std.fs.Dir) !void {
-    try std.posix.fsync(directory.fd);
+    try durable_directory_sync.sync(directory);
 }
 
 fn isZero(value: Digest) bool {

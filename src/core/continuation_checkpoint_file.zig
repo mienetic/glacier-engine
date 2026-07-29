@@ -9,6 +9,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const platform_capabilities = @import("platform_capabilities.zig");
+const durable_directory_sync = @import("durable_directory_sync.zig");
 const capsule = @import("continuation_capsule.zig");
 const sweep_file = @import("continuation_object_sweep_file.zig");
 const sweep_record = @import("continuation_object_sweep_record.zig");
@@ -1894,7 +1895,7 @@ fn inspectStatV1(stat: std.posix.Stat) Error!FileViewV1 {
 }
 
 fn syncDirectory(directory: std.fs.Dir) !void {
-    try std.posix.fsync(directory.fd);
+    try durable_directory_sync.sync(directory);
 }
 
 fn writeU64(output: []u8, offset: usize, value: anytype) void {

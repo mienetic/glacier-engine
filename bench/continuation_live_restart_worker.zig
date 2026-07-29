@@ -306,7 +306,7 @@ fn writeCheckpointV1(
         .{currentProcessId()},
     );
     try writeSyncedFileV1(directory, "source.pid", pid_wire);
-    try std.posix.fsync(directory.fd);
+    try core.durable_directory_sync.sync(directory);
 
     const retiring = try bank.beginRetireSubtreeForSession(
         tree,

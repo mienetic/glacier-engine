@@ -2016,7 +2016,7 @@ fn inspectStatV1(stat: std.posix.Stat) Error!FileViewV1 {
 }
 
 fn syncDirectory(directory: std.fs.Dir) !void {
-    try std.posix.fsync(directory.fd);
+    try core.durable_directory_sync.sync(directory);
 }
 
 fn writeU64(output: []u8, offset: usize, value: anytype) void {

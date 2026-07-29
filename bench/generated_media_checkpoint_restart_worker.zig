@@ -68,7 +68,7 @@ fn writeSourceV1(directory: *std.fs.Dir) !void {
         .{currentProcessId()},
     );
     try writeSyncedV1(directory, source_pid_name, pid);
-    try std.posix.fsync(directory.fd);
+    try core.durable_directory_sync.sync(directory.*);
     try printSourceEvidenceV1();
 }
 
@@ -96,7 +96,7 @@ fn promoteV1(directory: *std.fs.Dir, phase: u64) !void {
         active_selector_name,
     );
     if (phase == 3) killSelfV1();
-    try std.posix.fsync(directory.fd);
+    try core.durable_directory_sync.sync(directory.*);
     if (phase == 4) killSelfV1();
     return error.MissingInjectedDeath;
 }
