@@ -1656,13 +1656,42 @@ persistence, remote exactly-once delivery, GPU execution, Win32 durability,
 native multi-OS evidence, production-model quality, or a stable public ABI.
 See [Prepared-Text Result Inspector](PREPARED_TEXT_RESULT_INSPECTOR.md).
 
+#### Public durable-runtime composition foundation
+
+Status: **integrated experimental Zig surface**.
+
+The retained R1j/R1k-b2 writer path is now available through
+`prepared_text_durable_runtime`. `bootstrapFileV1` creates or exactly recovers
+the canonical generation-one source selection, `advanceSourceFileV1` advances
+one exact source-live selection to generation two, and
+`advanceTargetFileV1` consumes one selected restart and publishes one
+acknowledged successor or the terminal selection. Loaded models, runtime
+storage, directories, routing policy, and fail-stop behavior remain
+caller-owned. Successful calls retain no borrowed file lease; bootstrap leaves
+the caller-owned Scheduler open, while source and target receipts close their
+live runtime ownership.
+
+The separate public `prepared_text_committed_output_file.inspectDirectoryV1`
+entry point reads the selected checkpoint and result sink, performs the same
+aligned/exactly-one-ahead reconciliation used by the inspector, and rereads
+both selectors without acquiring writer authority. All seven bootstrap, 23
+source-transition, and 19 target-transition process-death boundaries in the
+existing 49-victim campaign now call these public reader/writer composition
+APIs rather than a benchmark-only duplicate.
+
+This is a low-level foundation, not the R1 user-path exit. A runtime-capacity
+`1..64` driver, ordinary-model package producer, `text-run` and serving
+integration, non-POSIX native evidence, broader tokenizer/model coverage, and
+stable language bindings remain open. See
+[Public Prepared-Text Durable Runtime](PREPARED_TEXT_DURABLE_RUNTIME.md).
+
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with
 exact ownership and output evidence on the promoted native platform, including
 recoverable source-exit and replay-safe external publication. The retained
 synthetic fresh-process proof now includes replay-safe local sink progress, but
-does not complete its production package, ordinary command/serving rendering,
-remote-delivery, GPU, or multi-OS requirements.
+does not complete its package producer, runtime-capacity driver, ordinary
+command/serving rendering, remote-delivery, GPU, or multi-OS requirements.
 
 ### R2 — Stateless tensor families
 

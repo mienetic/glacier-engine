@@ -25,7 +25,8 @@ evidence, policy, and distribution rather than a model-inference loop alone.
 | Workload conformance | open-loop W0, scheduled-media W1, generated-corpus W2, closed-loop W3, typed-workload W4a, typed tool W4b-a, ActionOutbox W4b-b/W4b-c/W4b-d | Replay bounded admission, service, terminal outcomes, lifecycle callbacks, typed publication, process-local effect delivery, uncertain external-action handoff, generation-fenced fake reconciliation, and durable storage faults without presenting logical steps as native performance |
 | State | contiguous/paged KV, token transactions | Prepare and atomically publish AI-visible state |
 | Continuation | capsule, resolver, bundle, store, collection planner, sweep journal/commit/record/writer, payload file, ownership/KV/runtime state, checkpoint archive and selector | Bind complete checkpoint generations, atomically select one root, reacquire charged ownership, and resume publication across a process boundary |
-| Committed-output inspection | prepared-text committed-output reconciler, checkpoint/result-sink read-only snapshots, result inspector | Join one selected checkpoint to one selected sink only when aligned or exactly one acknowledgement ahead; render metadata by default and disclose exact bytes only when explicitly requested, without acquiring writer or recovery authority |
+| Prepared-text durable runtime | `prepared_text_durable_runtime`, checkpoint-file lease, result-sink file, source/target runtime factories | Create or exactly recover generation one, advance one source transition, or advance one acknowledged target transition per call while keeping model, runtime, routing, storage bounds, and fail-stop policy caller-owned |
+| Committed-output inspection | prepared-text committed-output reconciler, `prepared_text_committed_output_file`, checkpoint/result-sink read-only snapshots, result inspector | Join one selected checkpoint to one selected sink only when aligned or exactly one acknowledgement ahead; render metadata by default and disclose exact bytes only when explicitly requested, without acquiring writer or recovery authority |
 | Media | `MediaObjectV1`, sealed decode/transform plans, bounded fixture executor, `MediaRuntimeTxn`, `MediaRuntimeLease`, `MediaStreamRuntime`, `MediaStreamContinuation`, `MediaStreamCheckpointSet`, `MediaProcessorState`, `MediaProcessorCache`, rational positions, timeline events, publication state | Bind image/audio/video identity and bounds, own buffers and caches exactly, advance bounded chunk chains, atomically select complete generations, and resume outputs plus processor caches after process death |
 | Model adapters | `ModelContract`, `StatelessModelAdapter`, `StatefulModelAdapter`, `StatefulModelContinuation`, `VisionEncoderAdapter`, `AudioWindowAdapter`, `AudioTranscriptAdapter`, `StatefulTranscriptAdapter`, `AudioTranscriptContinuation`, `SpeechAnnotationPublication`, `TemporalVideoAdapter`, `VideoSegmentAdapter`, `VideoSegmentTimeline`, `StatefulVideoAdapter`, `VideoModelContinuation`, `AudioVideoResultLink`, `LatentStepAdapter`, `GeneratedImagePublication`, `GeneratedAudioPlayback`, `GeneratedVideoDisplay`, `GeneratedMediaCheckpoint`, `GeneratedMediaPayloadArchive`, `GeneratedMediaOutputRegistry`, `GeneratedMediaProducerAdmission`, producer-transition replay/evidence | Separate vocabulary from support, bind exact tensor/resource/source schemas, isolate caller-owned candidates, validate typed generated outputs and exact raw bytes, replay retained deterministic producer transitions, and publish only through explicit family and atomic visibility boundaries |
 | Provider | context pack, gateway, transport harness | Reconcile tokens, coalesce work, cancel, and settle usage |
@@ -596,6 +597,20 @@ unless `--reveal-output` explicitly requests exact byte-domain output. It
 creates no lease, performs no recovery, and grants no publication authority.
 This cooperative inspection boundary is not hostile-writer authentication,
 privacy, ordinary `text-run` rendering, or a serving API.
+
+The public composition layer preserves that separation. The writer-side
+`prepared_text_durable_runtime` exposes one bounded operation per call:
+generation-one bootstrap, source-live to source-exited advancement, or one
+acknowledged target advancement. The reader-side
+`prepared_text_committed_output_file.inspectDirectoryV1` opens and reconciles
+the selected filesystem view without writer authority. Both retain
+caller-owned model, runtime, directory, capacity, routing, and output storage;
+successful calls retain no file lease, bootstrap leaves its caller-owned
+Scheduler open, and source/target receipts close live runtime ownership. The
+retained 7/23/19 process-death matrix now exercises these public entry points
+directly. It does not supply the still-open runtime-capacity `1..64` driver,
+package producer, ordinary command/serving integration, or non-POSIX native
+evidence.
 
 The bound-plan and residency bridge is currently an experimental Zig/direct
 API. It has no fixed `BoundPlanV1` wire, projected C verifier, or retained
@@ -1397,6 +1412,9 @@ targets remain gated until their named native adapters and evidence pass.
   local POSIX sink/ACK progress, generations three through five, and the
   retained R1i target-only 19-boundary plus R1j combined source/target
   49-boundary process-death campaigns.
+- [Public prepared-text durable runtime](PREPARED_TEXT_DURABLE_RUNTIME.md):
+  public caller-owned bootstrap/source/target filesystem transitions and
+  read-only committed-output composition.
 - [Prepared-text result inspector](PREPARED_TEXT_RESULT_INSPECTOR.md):
   metadata-first aligned/exactly-one-ahead committed-output reconciliation,
   explicit lossless disclosure, and the no-lease/no-authority boundary.

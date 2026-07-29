@@ -75,6 +75,36 @@ test "package exports runtime and core modules independently of host tools" {
     try std.testing.expect(
         @hasDecl(glacier, "prepared_text_restore_admission"),
     );
+    try std.testing.expect(
+        @hasDecl(glacier, "prepared_text_committed_output_file"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "prepared_text_durable_runtime"),
+    );
+    try std.testing.expect(
+        @hasDecl(
+            glacier.prepared_text_committed_output_file,
+            "inspectDirectoryV1",
+        ),
+    );
+    try std.testing.expect(
+        @hasDecl(
+            glacier.prepared_text_durable_runtime,
+            "bootstrapFileV1",
+        ),
+    );
+    try std.testing.expect(
+        @hasDecl(
+            glacier.prepared_text_durable_runtime,
+            "advanceSourceFileV1",
+        ),
+    );
+    try std.testing.expect(
+        @hasDecl(
+            glacier.prepared_text_durable_runtime,
+            "advanceTargetFileV1",
+        ),
+    );
     try std.testing.expect(@hasDecl(glacier_core, "ResourceBank"));
     try std.testing.expect(
         @hasDecl(glacier_core, "device_allocation_lease_tree"),

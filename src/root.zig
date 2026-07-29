@@ -282,6 +282,10 @@ pub const prepared_text_result_sink_file =
     @import("prepared_text_result_sink_file.zig");
 pub const prepared_text_committed_output =
     @import("prepared_text_committed_output.zig");
+pub const prepared_text_committed_output_file =
+    @import("prepared_text_committed_output_file.zig");
+pub const prepared_text_durable_runtime =
+    @import("prepared_text_durable_runtime.zig");
 pub const prepared_text_acknowledged_progress =
     @import("prepared_text_acknowledged_progress.zig");
 pub const prepared_text_acknowledged_restore =

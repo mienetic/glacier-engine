@@ -1,8 +1,9 @@
 # Acknowledged Prepared-Text Delivery
 
 Glacier's R1j/R1k-b2/R1k-b3 path is an experimental local recovery, delivery,
-and read-only inspection protocol for the bounded prepared-text runtime. It
-retains a canonical source
+and read-only inspection protocol for the bounded prepared-text runtime. Its
+filesystem composition is available through public experimental Zig entry
+points. The path retains a canonical source
 replay contract plus the exact package/tokenizer/raw UTF-8 input in generation
 one, requires an exact empty descriptor-relative sink before the source
 computes, and joins each committed target token to a canonical result
@@ -28,7 +29,7 @@ multi-tenant security boundary.
 
 ## Protocol layers
 
-The implementation keeps five responsibilities separate:
+The implementation keeps seven responsibilities separate:
 
 1. `prepared_text_result_sink.zig` projects one valid
    `CommitReceiptV1` into a canonical delivery input and a 424-byte
@@ -41,11 +42,19 @@ The implementation keeps five responsibilities separate:
 4. `prepared_text_acknowledged_restore.zig` pins a selected nonterminal
    generation to the exclusive lease's process-local consumer claim.
 5. `prepared_text_committed_output.zig` reconciles one caller-verified
-   checkpoint prefix with one decoded sink selection without I/O or authority;
+   checkpoint prefix with one decoded sink selection without I/O or authority.
+6. `prepared_text_committed_output_file.zig` opens, validates, and rereads the
+   selected checkpoint and sink before returning that reconciled view;
    `prepared_text_result_inspector.zig` supplies the read-only JSON command.
+7. `prepared_text_durable_runtime.zig` composes the existing checkpoint, sink,
+   archive, restore, and session modules into caller-owned generation-one
+   bootstrap, one-step source advancement, and one-step target advancement.
 
-`prepared_text_acknowledged_delivery.zig` is the compile-once public facade for
-those layers.
+`prepared_text_acknowledged_delivery.zig` remains the compile-once facade for
+its established delivery subset: the result sink, input archive, durable sink
+file, acknowledged progress, and restored activation. The committed-output
+reader and durable-runtime modules are exported independently from the public
+`glacier` root and are compiled by the package, inspector, and recovery gates.
 
 The source-side composition uses three additional reusable contracts:
 
@@ -198,6 +207,36 @@ acknowledgement token.
 The generic checkpoint-file lease can load a retained predecessor only by its
 content root and revalidates the complete set before returning borrowed bytes.
 
+## Public one-step filesystem runtime
+
+The public experimental `prepared_text_durable_runtime` module exposes three
+write-side operations:
+
+- `bootstrapFileV1` recomputes the package, tokenizer, raw-input, local-plan,
+  and bound-plan evidence from caller-owned inputs, then creates or exactly
+  recovers generation one;
+- `advanceSourceFileV1` verifies generation one and its empty sink, executes
+  exactly the first source token, and selects the recoverable generation-two
+  source exit; and
+- `advanceTargetFileV1` consumes one selected restart, applies or replays its
+  exact sink acknowledgement, and publishes one nonterminal successor or the
+  terminal selection.
+
+Each call performs one bounded transition. The caller supplies the loaded
+model, runtime storage or factory, routing policy, directory, storage bound,
+sink identity, output storage, and fail-stop callback. Successful calls release
+their filesystem lease before returning. Bootstrap leaves its caller-owned
+Scheduler open; successful source and target receipts close their live runtime
+ownership. The source-step call is idempotent for an already-selected exact
+generation two, and the target-step call returns an already-terminal
+disposition for an exact terminal selection.
+
+The public `prepared_text_committed_output_file.inspectDirectoryV1` operation
+is the read side. It borrows a directory and output buffer, performs no
+recovery or repair, and returns a verified view whose visible bytes borrow the
+caller's storage. See
+[Public Prepared-Text Durable Runtime](PREPARED_TEXT_DURABLE_RUNTIME.md).
+
 ## Read-only committed-output view
 
 R1k-b3 observes the selected checkpoint and result sink without taking either
@@ -258,7 +297,9 @@ It does not yet cover:
 - native Linux/FreeBSD recovery evidence;
 - a production model and tokenizer;
 - authentication, historical attestation, confidentiality, or privacy; or
-- ordinary `text-run`, unary serving, or streaming result rendering.
+- ordinary `text-run`, unary serving, or streaming result rendering;
+- a runtime-capacity `1..64` durable driver or user-facing package producer; or
+- non-POSIX native recovery evidence.
 
 ## Focused verification
 
@@ -295,14 +336,15 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
-The gate compiles one worker and reuses it for 49 real `SIGKILL` victims:
-seven generation-one bootstrap boundaries, 23 source-transition boundaries,
-and 19 target-transition boundaries. The source matrix covers recovery
-admission, all ten empty-sink publication phases, the first model step,
-handoff preparation, real source-exit commit, every generation-two checkpoint
-publication phase, and observation after generation two. The target matrix
-retains the model-step, sink, acknowledgement, and progress-checkpoint
-boundaries.
+The gate compiles one worker and reuses it for 49 real `SIGKILL` victims. Every
+victim reaches its boundary through the public `bootstrapFileV1`,
+`advanceSourceFileV1`, or `advanceTargetFileV1` entry point: seven
+generation-one bootstrap boundaries, 23 source-transition boundaries, and 19
+target-transition boundaries. The source matrix covers recovery admission, all
+ten empty-sink publication phases, the first model step, handoff preparation,
+real source-exit commit, every generation-two checkpoint publication phase,
+and observation after generation two. The target matrix retains the
+model-step, sink, acknowledgement, and progress-checkpoint boundaries.
 
 Each victim emits a gated ready frame and self-raises `SIGKILL`; the controller
 requires the exact signal exit and a distinct PID. An independent Python
