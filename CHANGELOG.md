@@ -8,6 +8,16 @@ before the first stable release.
 
 ### Changed
 
+- Portable-model conversion now rejects malformed Safetensors integer domains,
+  tensor byte geometry, overlap, holes, unsupported source dtypes, and
+  source/output aliases before payload publication. Conversion reserves the
+  complete layout, uses bounded positional reads, and reuses one aligned page
+  workspace instead of retaining every transformed payload. The compatibility
+  path now replaces through a private same-directory candidate. Explicit
+  header, metadata, and page-count limits bound untrusted admission. Strict
+  `.glacier` admission checks the fixed V1 header domain, exact layout, page
+  geometry, quantization headers, numerical raw decoding, every CRC, and the
+  full physical container identity.
 - POSIX durability paths now acquire one descriptor-relative, sync-capable
   directory authority and preflight synchronization before any namespace
   mutation. The authority owns that same handle through commit, so the caller
@@ -47,6 +57,16 @@ before the first stable release.
 
 ### Added
 
+- Added sealed POSIX publication for Safetensors-to-`.glacier` conversion. One
+  acquired parent-directory authority, directory-scoped lock, and private
+  bounded candidate protect the visible target; source, conversion profile,
+  page plan, publication plan, and exact artifact identities are returned in a
+  receipt. A native macOS/Linux controller sends real `SIGKILL` at all eight
+  publication phases, independently parses all three fixture pages, admits
+  only the exact predecessor or successor, and requires idempotent
+  fresh-process recovery. The worker is compile-checked for FreeBSD. This is
+  host process/filesystem evidence, not physical power-loss, remote-filesystem,
+  native Windows, production-model, or performance evidence.
 - Added recoverable POSIX publication for production `.glrt` preparation. One
   acquired parent-directory authority, directory-scoped lock, and bounded
   private candidate serialize filesystem aliases, validate synchronized bytes

@@ -18,7 +18,7 @@ fn pathInTmp(tmp: *testing.TmpDir, basename: []const u8) ![]u8 {
 /// on layer 11. Small payloads so we get one page each.
 fn writeSampleSafetensors(path: []const u8) !void {
     const json =
-        \\{"model.layers.5.self_attn.q_proj.weight":{"dtype":"F32","shape":[4,4],"data_offsets":[0,16]},
+        \\{"model.layers.5.self_attn.q_proj.weight":{"dtype":"F32","shape":[4],"data_offsets":[0,16]},
         \\"model.layers.11.mlp.down_proj.weight":{"dtype":"F32","shape":[8,4],"data_offsets":[16,144]},
         \\"__metadata__":{"format":"pt"}}
     ;
@@ -120,7 +120,7 @@ test "bulk page-index read rejects a truncated index" {
     );
 }
 
-test "convert rejects non-safetensors input" {
+test "convert rejects an oversized non-safetensors header declaration" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const bad_path = try pathInTmp(&tmp, "bad.bin");
@@ -138,7 +138,7 @@ test "convert rejects non-safetensors input" {
         out_path,
         .{},
     );
-    try testing.expectError(engine.converter.ConvertError.NotSafetensors, err);
+    try testing.expectError(engine.converter.ConvertError.ResourceLimit, err);
 }
 
 /// Build a safetensors file whose payload is a real F32 tensor with

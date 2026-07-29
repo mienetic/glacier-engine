@@ -117,6 +117,13 @@ jobs:
           -Doptimize=ReleaseSafe
           -j2
 
+      - name: Run durable model-conversion recovery
+        run: >-
+          zig build model-conversion-durable-recovery-test
+          -Dmetal=false
+          -Doptimize=ReleaseSafe
+          -j2
+
   cross:
     name: Cross-compile (${{ matrix.target }})
     runs-on: ubuntu-24.04

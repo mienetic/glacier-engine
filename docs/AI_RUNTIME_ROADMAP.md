@@ -1511,6 +1511,45 @@ remote or non-idempotent effects, hostile writers, physical power loss,
 GPU-resident recovery, Win32 durable files, production models, or retained
 native multi-OS execution.
 
+#### R1k-a — Sealed portable-model publication
+
+Status: **integrated experimental conversion and recovery slice**. The preferred
+Safetensors-to-`.glacier` path now:
+
+- parses nonnegative shapes and offsets, requires exact dtype byte geometry,
+  rejects overlap, holes, unsupported dtypes, and out-of-file tensor ranges;
+- computes canonical source, conversion-profile, page-plan, publication-plan,
+  and exact artifact identities;
+- reserves the complete layout, then reuses one aligned page workspace instead
+  of retaining every transformed payload in memory;
+- writes only to one private directory-scoped candidate, synchronizes it,
+  reopens the exact inode, and validates header/index layout, payload geometry,
+  every page CRC, and the full container SHA-256;
+- revalidates the pinned source and visible target before atomic replacement,
+  then commits the acquired parent directory; and
+- returns `already_current` for an exact target while corrupt targets, unsafe
+  reserved names, aliases, source drift, and lock contention fail closed.
+
+One worker is compiled for macOS, Linux, and FreeBSD and reused across eight
+publication boundaries. Native macOS/Linux controllers send real `SIGKILL`,
+independently parse the complete three-page container, admit only the exact
+predecessor or successor allowed by the boundary, run fresh recovery, and
+require a second retry to be idempotent with no candidate debris.
+
+This slice makes portable model preparation recoverable; it does not make the
+R1 text path complete. The retained conversion source is synthetic, raw-text
+tokenizer identity remains absent, and Safetensors header/JSON,
+page-descriptor/plan, and canonical-metadata planning allocations are not
+counted inside the reported transformation workspace. Native Windows recovery,
+physical power loss, remote filesystems, authenticated model provenance,
+production-model numerical evidence, and conversion performance claims remain
+open. See
+[Sealed Portable-Model Publication](SEALED_MODEL_CONVERSION.md).
+
+R1k-b is the next text-path slice: freeze a redistributable artifact and exact
+tokenizer wire identity, accept raw text, and join conversion, preparation,
+execution, publication, and recovery through one supported command sequence.
+
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with
 exact ownership and output evidence on the promoted native platform, including

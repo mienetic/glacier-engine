@@ -22,6 +22,17 @@ that is not already named by its test suite.
 **Done when:** the valid fixture still passes and the mutation fails for the
 intended reason.
 
+### Extend portable-model mutation coverage
+
+Add one independently constructed Safetensors or `.glacier` fixture that
+violates a single offset, shape, precision, quantization-header, reserved-byte,
+CRC, or identity rule in
+[Sealed Portable-Model Publication](SEALED_MODEL_CONVERSION.md).
+
+**Done when:** the valid three-page fixture passes both implementations, the
+mutation fails for the same named invariant in Zig and Python, and no model
+download is required.
+
 ### Improve platform diagnostics
 
 Add a read-only parser fixture for one Linux machine-envelope field. Do not turn
@@ -104,6 +115,18 @@ implement another OS adapter.
 
 **First slice:** propose the interface and migrate one call site with unchanged
 golden fixtures and a focused test.
+
+### Replicate sealed model-conversion recovery
+
+Run the fixed eight-phase conversion worker on native FreeBSD, or implement the
+equivalent Win32 lock/candidate/replace adapter and native termination
+controller. Preserve exact source/profile/plan/artifact identities and the
+independent all-page parser.
+
+**Done when:** every victim exits only through the platform's hard-termination
+primitive, each boundary admits only the declared predecessor or successor,
+fresh recovery converges, a second retry is `already_current`, and the report
+states filesystem, OS, architecture, and physical-power-loss nonclaims.
 
 ### Device capability and deterministic selection
 

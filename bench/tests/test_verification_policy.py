@@ -132,6 +132,14 @@ EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS = frozenset(
     }
 )
 
+EXPECTED_MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS = frozenset(
+    {
+        "bench/model_conversion_durable_worker.zig",
+        "bench/model_conversion_durable_recovery.py",
+        "bench/tests/test_model_conversion_durable_recovery.py",
+    }
+)
+
 EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
     {
         "src/core/native_metal_supervisor_recovery_death_report.zig",
@@ -449,6 +457,10 @@ class VerificationPolicyTests(unittest.TestCase):
             EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS,
             policy.RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS,
         )
+        self.assertEqual(
+            EXPECTED_MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS,
+            policy.MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS,
+        )
         for changed_path in sorted(EXPECTED_CORE_CONTRACT_PATHS):
             with self.subTest(changed_path=changed_path):
                 self.assert_target_steps(
@@ -518,6 +530,27 @@ class VerificationPolicyTests(unittest.TestCase):
                 )
         for changed_path in sorted(
             EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_target_steps(
+                    [changed_path],
+                    tuple(
+                        (
+                            target,
+                            ("profile-durable-compile",),
+                        )
+                        for target in policy.POSIX_TARGETS
+                    ),
+                )
+                expected_flags = {"native-full", "python-full"}
+                if changed_path.endswith(".py"):
+                    expected_flags.add("python-changed")
+                self.assertEqual(
+                    frozenset(expected_flags),
+                    plan.flags,
+                )
+        for changed_path in sorted(
+            EXPECTED_MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS
         ):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_target_steps(
@@ -1265,6 +1298,62 @@ class VerificationPolicyTests(unittest.TestCase):
             '"runtime-image-durable-recovery-test requires a native macOS "',
             source,
         )
+        self.assertEqual(
+            1,
+            source.count('"model-conversion-durable-recovery-test"'),
+        )
+        self.assertEqual(
+            1,
+            source.count(
+                '"bench/model_conversion_durable_worker.zig"'
+            ),
+        )
+        self.assertEqual(
+            1,
+            source.count(
+                '"bench.tests.test_model_conversion_durable_recovery"'
+            ),
+        )
+        self.assertEqual(
+            1,
+            source.count(
+                '"bench.model_conversion_durable_recovery"'
+            ),
+        )
+        self.assertIn(
+            "const model_conversion_durable_recovery_target_available =\n"
+            "        target.result.os.tag == .macos or\n"
+            "        target.result.os.tag == .linux or\n"
+            "        target.result.os.tag == .freebsd;",
+            source,
+        )
+        self.assertIn(
+            "run_model_conversion_durable_recovery_campaign"
+            ".addArtifactArg(\n"
+            "            model_conversion_durable_recovery_worker_exe.?,\n"
+            "        );",
+            source,
+        )
+        self.assertIn(
+            "test_step.dependOn(\n"
+            "        model_conversion_durable_recovery_test_step,\n"
+            "    );",
+            source,
+        )
+        self.assertIn(
+            "if (model_conversion_durable_recovery_worker_exe) |worker|\n"
+            "        test_compile_step.dependOn(&worker.step);",
+            source,
+        )
+        self.assertIn(
+            "if (model_conversion_durable_recovery_worker_exe) |worker|\n"
+            "        profile_durable_compile_step.dependOn(&worker.step);",
+            source,
+        )
+        self.assertIn(
+            '"model-conversion-durable-recovery-test requires a native "',
+            source,
+        )
         self.assertIn(
             "test_compile_step.dependOn(profile_core_compile_step)",
             source,
@@ -1466,6 +1555,30 @@ class VerificationPolicyTests(unittest.TestCase):
                     "&" + artifact + ".step",
                     complete_profile_source,
                 )
+
+    def test_ci_runs_model_conversion_recovery_on_linux_and_macos(self):
+        source = (
+            REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "run: zig build test contract-interop-test "
+            "-Dmetal=false -Doptimize=ReleaseSafe -j2",
+            source,
+        )
+        metal_compile_at = source.index(
+            "zig build native-metal-suite-compile"
+        )
+        model_recovery_at = source.index(
+            "zig build model-conversion-durable-recovery-test"
+        )
+        self.assertLess(metal_compile_at, model_recovery_at)
+        self.assertIn(
+            "zig build model-conversion-durable-recovery-test\n"
+            "          -Dmetal=false\n"
+            "          -Doptimize=ReleaseSafe\n"
+            "          -j2",
+            source,
+        )
 
     def test_paths_are_deduplicated_and_byte_sorted(self):
         plan = policy.classify_paths(["docs/z.md", "docs/a\nname.md", "docs/z.md"])

@@ -468,7 +468,22 @@ For an INT4 fixture:
 ```
 
 The synthetic fixture exercises parsing and conversion. It is not a useful
-language model and does not establish generation quality.
+language model and does not establish generation quality. On supported POSIX
+hosts, `glacier convert` writes through a synchronized private candidate,
+strictly reopens and validates it, atomically replaces the target, and prints
+the source, profile, publication-plan, and artifact identities. It fails
+explicitly on platforms without that publisher; it does not silently select a
+direct-write fallback.
+
+Run the real process-death recovery campaign with:
+
+```sh
+zig build model-conversion-durable-recovery-test \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+```
+
+See [Sealed Portable-Model Publication](SEALED_MODEL_CONVERSION.md) for its
+bounded-workspace contract and recovery nonclaims.
 
 ## 9. Prepare a native runtime image
 

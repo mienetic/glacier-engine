@@ -4978,6 +4978,117 @@ pub fn build(b: *std.Build) void {
     if (runtime_image_durable_recovery_worker_exe) |worker|
         test_compile_step.dependOn(&worker.step);
 
+    // Portable model conversion uses the same pinned-directory publication
+    // boundary as runtime-image preparation while retaining the source,
+    // conversion-profile, conversion-plan, and exact output identities. Build
+    // the worker for every supported POSIX target; native macOS/Linux hosts
+    // additionally run the Python protocol model and real SIGKILL campaign.
+    const model_conversion_durable_recovery_target_available =
+        target.result.os.tag == .macos or
+        target.result.os.tag == .linux or
+        target.result.os.tag == .freebsd;
+    const model_conversion_durable_recovery_worker_exe: ?*std.Build.Step.Compile = blk: {
+        if (!model_conversion_durable_recovery_target_available)
+            break :blk null;
+        const worker = b.addExecutable(.{
+            .name = "glacier-model-conversion-durable-recovery-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/model_conversion_durable_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+        worker.root_module.addImport("engine", engine_mod);
+        worker.linkLibC();
+        if (int4_neon) |lib| worker.linkLibrary(lib);
+        break :blk worker;
+    };
+    const model_conversion_durable_recovery_test_step = b.step(
+        "model-conversion-durable-recovery-test",
+        "Run durable model-conversion process-death recovery",
+    );
+    const model_conversion_durable_recovery_native_available =
+        (target.result.os.tag == .macos or
+            target.result.os.tag == .linux) and
+        target.result.cpu.arch == builtin.cpu.arch and
+        target.result.os.tag == builtin.os.tag and
+        target.result.abi == builtin.abi;
+    if (model_conversion_durable_recovery_native_available) {
+        const run_model_conversion_durable_recovery_model =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "unittest",
+                "bench.tests.test_model_conversion_durable_recovery",
+            });
+        run_model_conversion_durable_recovery_model.setCwd(
+            b.path("."),
+        );
+        run_model_conversion_durable_recovery_model
+            .setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_model_conversion_durable_recovery_model
+            .setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+
+        const run_model_conversion_durable_recovery_campaign =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "bench.model_conversion_durable_recovery",
+                "--worker",
+            });
+        run_model_conversion_durable_recovery_campaign.addArtifactArg(
+            model_conversion_durable_recovery_worker_exe.?,
+        );
+        run_model_conversion_durable_recovery_campaign.addArg(
+            "--directory",
+        );
+        _ = run_model_conversion_durable_recovery_campaign
+            .addOutputDirectoryArg(
+            "model-conversion-durable-recovery",
+        );
+        run_model_conversion_durable_recovery_campaign.setCwd(
+            b.path("."),
+        );
+        run_model_conversion_durable_recovery_campaign
+            .setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_model_conversion_durable_recovery_campaign
+            .setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+        run_model_conversion_durable_recovery_campaign.step.dependOn(
+            &run_model_conversion_durable_recovery_model.step,
+        );
+        model_conversion_durable_recovery_test_step.dependOn(
+            &run_model_conversion_durable_recovery_campaign.step,
+        );
+    } else {
+        const model_conversion_durable_recovery_failure = b.addFail(
+            "model-conversion-durable-recovery-test requires a native " ++
+                "macOS or Linux target",
+        );
+        model_conversion_durable_recovery_test_step.dependOn(
+            &model_conversion_durable_recovery_failure.step,
+        );
+    }
+    test_step.dependOn(
+        model_conversion_durable_recovery_test_step,
+    );
+    if (model_conversion_durable_recovery_worker_exe) |worker|
+        test_compile_step.dependOn(&worker.step);
+
     // Complete checkpoint sets are immutable archives selected by one fixed
     // root switch. A worker dies after every archive and selector durability
     // phase; fresh recovery accepts only the previous or successor set, then
@@ -6565,6 +6676,8 @@ pub fn build(b: *std.Build) void {
     if (prepared_text_recovery_worker_exe) |worker|
         profile_durable_compile_step.dependOn(&worker.step);
     if (runtime_image_durable_recovery_worker_exe) |worker|
+        profile_durable_compile_step.dependOn(&worker.step);
+    if (model_conversion_durable_recovery_worker_exe) |worker|
         profile_durable_compile_step.dependOn(&worker.step);
     profile_durable_compile_step.dependOn(
         &continuation_checkpoint_file_demo_exe.step,

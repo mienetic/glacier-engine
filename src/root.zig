@@ -230,6 +230,8 @@ pub const metal_library_path: [*:0]const u8 = blk: {
 pub const model = @import("model/format.zig");
 pub const safetensors = @import("model/safetensors.zig");
 pub const converter = @import("model/converter.zig");
+pub const converter_durable =
+    @import("model/converter_durable.zig");
 pub const qio = @import("model/qio.zig");
 pub const forward = @import("forward.zig");
 pub const loader = @import("loader.zig");

@@ -40,11 +40,11 @@ surface.
 
 | Target | Compile evidence | Native CPU evidence | Recovery evidence | Accelerator evidence | Current classification |
 | --- | --- | --- | --- | --- | --- |
-| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox campaign, the 49-death R1j prepared-text source/target campaign, the W7b-b2 production-publisher/reference-recovery campaign-store gate across 27 real writer deaths, 54 controlled errno cases, and one clean control, and exact predecessor/successor recovery for prepared `.glrt` publication; physical storage and power-loss evidence remain absent | Portable Zig fake/state tests and an independent Python oracle model deterministic device contracts without a GPU; the native gates use a real `MTLDevice` and real `MTLBuffer` resources, submit and verify one fixed 37x64 INT4 readiness branch, retain zero-command reject/cancel branches, and exercise two disjoint native commands with deliberate out-of-order settlement after both complete, but no device support range is declared | Development host, not a broad platform certification |
-| Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; hosted Ubuntu also compiles the complete GNU host frontier before runtime | Hosted Ubuntu runs the ReleaseSafe runtime and language-interop gates; no CPU performance, packaging, machine range, or retained observation artifact is claimed | Hosted Ubuntu exercises POSIX restart paths, exact predecessor/successor recovery for prepared `.glrt` publication, and the 81-case controlled store-fault matrix through acquired descriptor-relative directory authority that preflights before namespace mutation and owns one sync-capable handle through commit; the ephemeral runner and its real `fsync`/process-death calls are not retained filesystem, physical-fault, or power-loss evidence | No retained Linux accelerator backend | Hosted native correctness/recovery CI plus cross-build evidence; not native-supported |
+| macOS / AArch64 | Native build path exists; Metal is optional and macOS-only | Primary development-host tests exist, but no version/device support range is declared here | Retained host process-death fixtures include the 49-death ActionOutbox campaign, the 49-death R1j prepared-text source/target campaign, the W7b-b2 production-publisher/reference-recovery campaign-store gate across 27 real writer deaths, 54 controlled errno cases, and one clean control, exact predecessor/successor recovery for prepared `.glrt` publication, and eight-phase sealed `.glacier` conversion with independent all-page validation; physical storage and power-loss evidence remain absent | Portable Zig fake/state tests and an independent Python oracle model deterministic device contracts without a GPU; the native gates use a real `MTLDevice` and real `MTLBuffer` resources, submit and verify one fixed 37x64 INT4 readiness branch, retain zero-command reject/cancel branches, and exercise two disjoint native commands with deliberate out-of-order settlement after both complete, but no device support range is declared | Development host, not a broad platform certification |
+| Linux / x86_64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; hosted Ubuntu also compiles the complete GNU host frontier before runtime | Hosted Ubuntu runs the ReleaseSafe runtime and language-interop gates; no CPU performance, packaging, machine range, or retained observation artifact is claimed | Hosted Ubuntu exercises POSIX restart paths, exact predecessor/successor recovery for prepared `.glrt` publication, eight-phase sealed `.glacier` conversion with independent all-page validation, and the 81-case controlled store-fault matrix through acquired descriptor-relative directory authority that preflights before namespace mutation and owns one sync-capable handle through commit; the ephemeral runner and its real `fsync`/process-death calls are not retained filesystem, physical-fault, or power-loss evidence | No retained Linux accelerator backend | Hosted native correctness/recovery CI plus cross-build evidence; not native-supported |
 | Linux / AArch64 | Full musl artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; the core GNU source probe also passes | Bounded `MemAvailable` adapter is architecture-neutral; native smoke is not retained | The strict initial-recovery primitive and full R1j gate are supported, but no native Linux filesystem campaign is retained | No retained Linux accelerator backend | Cross-build and observer-implementation candidate; not native-supported |
 | Windows / x86_64 GNU | Full artifact and `test-compile` cross-build gates pass in `ReleaseSafe`; read-only model mapping and process fixture seams compile | Not established by cross-compilation | No native Windows durable-file adapter or recovery campaign | No Windows accelerator backend | Cross-build candidate; not native-supported |
-| FreeBSD / x86_64 | Full artifact, `test-compile`, generated-media conformance, and the R1j worker cross-build gates pass in `ReleaseSafe` | Not established by cross-compilation | Strict initial recovery fails closed until an atomic no-replace primitive is implemented; no retained native FreeBSD filesystem campaign | No retained FreeBSD accelerator backend | Cross-build candidate; not native-supported |
+| FreeBSD / x86_64 | Full artifact, `test-compile`, generated-media conformance, R1j, and sealed model-conversion worker cross-build gates pass in `ReleaseSafe` | Not established by cross-compilation | Strict initial recovery fails closed until an atomic no-replace primitive is implemented; no retained native FreeBSD filesystem campaign | No retained FreeBSD accelerator backend | Cross-build candidate; not native-supported |
 | Android / AArch64 | Core source-compilation probe passed | No device or emulator execution evidence | No Android lifecycle/storage recovery campaign | No Android accelerator backend | Research target; not supported |
 | iOS / AArch64 | Core source-compilation probe passed, including strict initial-recovery API availability | No device execution or application-lifecycle evidence | No full process or iOS protection-class/background recovery campaign | No iOS backend has been verified; the macOS Metal bridge is not iOS evidence | Research target; not supported |
 | WASI / wasm32 | Core source-compilation currently fails | Not established | Durable local recovery is outside the current contract | None | Unsupported; requires a reduced edge profile |
@@ -447,6 +447,8 @@ not a physical power-loss guarantee.
 Current and candidate implementations:
 
 - acquired POSIX authority and durable-file adapters for macOS and Linux;
+- compile-checked FreeBSD use of the sealed model-conversion publisher, without
+  native recovery evidence;
 - Win32 adapter using Windows handles, sharing modes, mapping objects, flush
   operations, and replacement semantics;
 - Android adapter over application-scoped file descriptors and documented
@@ -461,11 +463,12 @@ of equivalent persistence behavior.
 
 ### Virtual-memory adapter
 
-Model loading now uses the first bounded read-only region interface instead of
-calling `mmap` from model conversion and runtime-image code. The current
-interface covers map/unmap and alignment through POSIX mappings or a Windows
-read-only section view. Prefetch/advice, optional page-residency observations,
-buffered fallback, and native Windows validation remain.
+Portable-model conversion now uses bounded positional file reads without a
+whole-source mapping. Runtime-image loading uses the first bounded read-only
+region interface instead of calling `mmap` directly. The current interface
+covers map/unmap and alignment through POSIX mappings or a Windows read-only
+section view. Prefetch/advice, optional page-residency observations, buffered
+fallback, and native Windows validation remain.
 
 Implementations may use POSIX mappings, Windows file-mapping objects, or
 bounded buffered reads. Mapping is an optimization, not a required semantic

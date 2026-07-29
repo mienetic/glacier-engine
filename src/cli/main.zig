@@ -181,7 +181,7 @@ fn runConvert(
         try w.print("quantizing to INT4 (group_size={d}, overrides={d})\n", .{ group_size, override_count });
     }
     try w.print("converting {s} -> {s}\n", .{ in_path, out_path });
-    const result = engine.converter.convertSafetensors(
+    const receipt = engine.converter_durable.convertSafetensorsDurableV1(
         allocator,
         in_path,
         out_path,
@@ -191,17 +191,47 @@ fn runConvert(
             .quant_group_size = group_size,
             .quant_group_overrides = group_overrides[0..override_count],
         },
+        null,
     ) catch |err| {
         try w.print("convert failed: {s}\n", .{@errorName(err)});
         return err;
     };
+    const result = receipt.conversion;
+    const source_sha256 = std.fmt.bytesToHex(
+        receipt.source_identity.source_sha256,
+        .lower,
+    );
+    const artifact_sha256 = std.fmt.bytesToHex(
+        receipt.artifact_identity.container_sha256,
+        .lower,
+    );
+    const profile_sha256 = std.fmt.bytesToHex(
+        result.conversion_profile_sha256,
+        .lower,
+    );
+    const plan_sha256 = std.fmt.bytesToHex(
+        receipt.publication_plan_sha256,
+        .lower,
+    );
 
     try w.print(
-        "ok: {d} pages, {d} bytes ({d:.2} MiB)\n",
+        "ok: {s}, {d} pages, {d} bytes ({d:.2} MiB), workspace_peak={d} bytes\n" ++
+            "  source_sha256={s}\n" ++
+            "  artifact_sha256={s}\n" ++
+            "  conversion_profile_sha256={s}\n" ++
+            "  publication_plan_sha256={s}\n" ++
+            "  stale_candidate_removed={}\n",
         .{
+            @tagName(receipt.disposition),
             result.num_pages,
             result.output_bytes,
             @as(f64, @floatFromInt(result.output_bytes)) / (1024.0 * 1024.0),
+            result.conversion_workspace_bytes_peak,
+            source_sha256,
+            artifact_sha256,
+            profile_sha256,
+            plan_sha256,
+            receipt.stale_candidate_removed,
         },
     );
 }
