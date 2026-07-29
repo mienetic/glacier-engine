@@ -269,11 +269,6 @@ MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS = {
     "bench/tests/test_model_conversion_durable_recovery.py",
 }
 
-TEXT_RUNTIME_GOLDEN_PATH_PATHS = {
-    "bench/prepared_text_raw_input.py",
-    "bench/tests/test_prepared_text_raw_input.py",
-}
-
 PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = {
     "src/bounded_file_input.zig",
     "src/cli/model_package.zig",
@@ -283,7 +278,9 @@ PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = {
     "src/prepared_text_session.zig",
     "src/prepared_text_variable_terminal.zig",
     "bench/prepared_text_package.py",
+    "bench/prepared_text_raw_input.py",
     "bench/tests/test_prepared_text_package.py",
+    "bench/tests/test_prepared_text_raw_input.py",
     "bench/text_runtime_golden_path.py",
 }
 
@@ -325,6 +322,7 @@ class PathDecision:
     flags: FrozenSet[str]
     targets: Tuple[str, ...]
     target_steps: Tuple[str, ...] = FULL_TARGET_STEPS
+    host_quick: bool = False
 
 
 @dataclass(frozen=True)
@@ -343,6 +341,10 @@ class VerificationPlan:
 
     def requires(self, flag: str) -> bool:
         return flag in self.flags
+
+
+def _requires_generic_host_zig(decision: PathDecision) -> bool:
+    return decision.host_quick
 
 
 def _validated_path(path: str) -> str:
@@ -536,6 +538,7 @@ def _decision_for_path(path: str) -> PathDecision:
             "non-canonical code path; conservatively validate every target",
             _compiled_flags(suffix),
             RETAINED_TARGETS,
+            host_quick=suffix not in {".metal", ".rs"},
         )
 
     policy_flags = POLICY_CONTROL_PATHS.get(lower)
@@ -577,7 +580,7 @@ def _decision_for_path(path: str) -> PathDecision:
         )
 
     if _is_github_control(path):
-        flags = {"python-full"}
+        flags = {"python-full", "verification-policy-focused"}
         if suffix == ".py":
             flags.add("python-changed")
         if suffix == ".sh":
@@ -637,6 +640,7 @@ def _decision_for_path(path: str) -> PathDecision:
             "runtime interop fixture changed; replay native consumers",
             frozenset({"python-full", "rust-native"}),
             (),
+            host_quick=True,
         )
 
     if lower in BENCH_RUNTIME_DATA_PATHS:
@@ -671,6 +675,7 @@ def _decision_for_path(path: str) -> PathDecision:
                 "profile-cpu-compile",
                 "profile-host-tool-compile",
             ),
+            host_quick=True,
         )
 
     if path in METAL_PORTABLE_SOURCE_PATHS:
@@ -680,6 +685,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix) | frozenset({"metal-native"}),
             RETAINED_TARGETS,
             ("profile-device-compile",),
+            host_quick=True,
         )
 
     if path in METAL_NATIVE_SOURCE_PATHS:
@@ -700,6 +706,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             ("profile-core-compile",),
+            host_quick=True,
         )
 
     if path in PREPARED_TEXT_DIRECT_TERMINAL_RECOVERY_DEPENDENCY_PATHS:
@@ -745,6 +752,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             COMPLETE_COMPILE_TARGET_STEPS,
+            host_quick=True,
         )
 
     if path in DURABLE_RUNTIME_PROFILE_PATHS:
@@ -754,6 +762,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             ("profile-durable-compile",),
+            host_quick=True,
         )
 
     if path in PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS:
@@ -853,6 +862,7 @@ def _decision_for_path(path: str) -> PathDecision:
             frozenset(recovery_flags),
             POSIX_TARGETS,
             ("profile-durable-compile",),
+            host_quick=suffix == ".zig",
         )
 
     if path in MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS:
@@ -865,20 +875,7 @@ def _decision_for_path(path: str) -> PathDecision:
             frozenset(recovery_flags),
             POSIX_TARGETS,
             ("profile-durable-compile",),
-        )
-
-    if lower in TEXT_RUNTIME_GOLDEN_PATH_PATHS:
-        return PathDecision(
-            path,
-            "raw-text identity model or composed native golden path changed",
-            frozenset(
-                {
-                    "native-full",
-                    "python-changed",
-                    "python-full",
-                }
-            ),
-            (),
+            host_quick=suffix == ".zig",
         )
 
     if (
@@ -892,6 +889,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             COMPLETE_COMPILE_TARGET_STEPS,
+            host_quick=True,
         )
 
     if (path.startswith("src/backends/cpu/") or path.startswith("src/model/")) and Path(
@@ -903,6 +901,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             COMPLETE_COMPILE_TARGET_STEPS,
+            host_quick=True,
         )
 
     if path.startswith("src/cli/") and Path(path).suffix == ".zig":
@@ -912,6 +911,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             ("profile-host-tool-compile",),
+            host_quick=True,
         )
 
     if suffix == ".py":
@@ -988,6 +988,7 @@ def _decision_for_path(path: str) -> PathDecision:
             "unclassified Metal code path; run native Metal and fail closed",
             _compiled_flags(suffix) | frozenset({"metal-native"}),
             RETAINED_TARGETS,
+            host_quick=suffix not in {".metal", ".rs"},
         )
 
     special_flags = set()
@@ -1003,6 +1004,9 @@ def _decision_for_path(path: str) -> PathDecision:
             "platform-specific runtime or backend code changed",
             frozenset(special_flags),
             platform_targets,
+            host_quick=bool(platform_targets)
+            and suffix in SHARED_CODE_SUFFIXES
+            and suffix not in {".metal", ".rs"},
         )
 
     if lower in BUILD_CONTROL_PATHS:
@@ -1014,6 +1018,7 @@ def _decision_for_path(path: str) -> PathDecision:
             "build or package control changed; validate every retained target",
             frozenset(build_flags),
             RETAINED_TARGETS,
+            host_quick=True,
         )
 
     if suffix in SHARED_CODE_SUFFIXES:
@@ -1022,6 +1027,7 @@ def _decision_for_path(path: str) -> PathDecision:
             "shared compiled code changed; validate every retained target",
             _compiled_flags(suffix),
             RETAINED_TARGETS,
+            host_quick=suffix not in {".metal", ".rs"},
         )
 
     if first_component in CODE_ROOTS:
@@ -1030,6 +1036,7 @@ def _decision_for_path(path: str) -> PathDecision:
             "unknown code-tree input changed; conservatively validate every target",
             frozenset({"native-full", "python-full"}),
             RETAINED_TARGETS,
+            host_quick=True,
         )
 
     return PathDecision(
@@ -1037,6 +1044,7 @@ def _decision_for_path(path: str) -> PathDecision:
         "unknown repository input; conservatively validate every target",
         frozenset({"native-full", "python-full"}),
         RETAINED_TARGETS,
+        host_quick=True,
     )
 
 
@@ -1121,6 +1129,8 @@ def classify_paths(paths: Iterable[str]) -> VerificationPlan:
 
 def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
     names = ["quick"]
+    if _requires_generic_host_zig(decision):
+        names.append("host/quick-dag")
     for flag, label in (
         ("python-changed", "python/changed-syntax"),
         ("python-full", "python/full-suite"),
@@ -1165,6 +1175,8 @@ def print_report(plan: VerificationPlan) -> None:
         print("    gates: " + ", ".join(_gate_names(decision)))
 
     selected_gates = ["quick"]
+    if any(_requires_generic_host_zig(decision) for decision in plan.decisions):
+        selected_gates.append("host/quick-dag")
     for flag, label in (
         ("python-changed", "python/changed-syntax"),
         ("python-full", "python/full-suite"),
@@ -1203,6 +1215,8 @@ def print_report(plan: VerificationPlan) -> None:
 
 def write_flags(plan: VerificationPlan, output: Union[os.PathLike, str]) -> None:
     flags = ["quick"]
+    if any(_requires_generic_host_zig(decision) for decision in plan.decisions):
+        flags.append("host-quick")
     flags.extend(sorted(plan.flags))
     Path(output).write_text("".join(flag + "\n" for flag in flags), encoding="utf-8")
 

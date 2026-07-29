@@ -273,6 +273,15 @@ durable-EOS no-mutation rejection, package mutation, changed-license rejection,
 and embedded-receipt/prepared-image substitution rejection without compiling
 the broad runtime and foreign-target suites.
 
+The gate runs the exact production `bin/glacier` staged under the selected
+install prefix. CLI children start from an empty working directory with
+isolated home/config/cache locations and a minimal environment; the complete
+`bin/` namespace must remain byte-identical. Only the native test depends on
+the install child step. Its retained cross-target compile companion still
+depends directly on the existing CLI artifact, so this check does not add
+another Zig compile root or stage binaries during compile-only portability
+work.
+
 The deeper `prepared-text-recovery-test` separately uses a synthetic
 one-layer, group-16 fixture whose 896-byte bundle satisfies the same
 `ordinary-package-v1` manifest, tokenizer, tensor-inventory, and prepared-image

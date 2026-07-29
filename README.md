@@ -846,9 +846,12 @@ tools/zig-with-ephemeral-cache.sh build native-metal-suite-test \
 
 For affected-path verification, `tools/verify.sh` first runs the compile-only
 `native-metal-suite-compile` frontier. That root covers every executable and
-test consumed by the serialized suite, the host/device compile profiles, the
-cacheable Metal shader library, and fault-symbol isolation. It completes every
-suite artifact and static check before the first suite device process starts.
+test consumed by the serialized suite, the cacheable Metal shader library, and
+fault-symbol isolation through one explicit consumer inventory. It does not
+pull the wider host-tool or device-profile umbrellas into this frontier;
+eleven unrelated artifacts therefore stay deferred. Every retained suite
+artifact and static check still completes before the first suite device
+process starts.
 Only after it passes does the verifier enter the separate `-j1` hardware phase
 using the same build graph, temporary caches, Metal output directory, and
 install prefix. Shared artifacts are therefore compiled once instead of being
@@ -1109,15 +1112,18 @@ branch work, use the path-aware fast tier:
 tools/verify.sh affected-fast --base origin/main
 ```
 
-It avoids a Zig build for documentation-only changes, selects focused
-prepared-text and verification-policy gates when relevant, and reports broad
-host, Python, and foreign-target work as explicitly deferred. Package
-producer, package-aware `text-run`, bounded-input, and package-oracle changes
-reuse the existing `text-runtime-golden-path-test` DAG; full and deep suites
-remain integration/release gates. Variable-terminal changes use that same
-host DAG, and prepared-session lifecycle changes select only the CPU, durable,
-and host-tool portability profiles when the complete affected tier is
-requested. In a clean environment, install the
+It avoids a generic Zig build for documentation, workflow-control,
+verification-policy, shell-only, and ordinary Python-only plans. Focused
+prepared-text gates remain selected when relevant, and broad host, Python, and
+foreign-target work is reported as explicitly deferred. Package producer,
+package-aware `text-run`, bounded-input, and package/raw-input-oracle changes
+reuse the existing `text-runtime-golden-path-test` DAG. If a change set needs
+both that focused route and the generic package/contract roots, all roots share
+one Zig invocation. Full and deep suites remain integration/release gates.
+Variable-terminal changes use that same host DAG, and prepared-session
+lifecycle changes select only the CPU, durable, and host-tool portability
+profiles when the complete affected tier is requested. In a clean environment,
+install the
 hash-locked binary dependency before selecting the full profile:
 
 ```sh
@@ -1452,7 +1458,12 @@ The same focused `text-runtime-golden-path-test` compile root also checks the
 direct count-one route plus acknowledged counts `2`, `4`, and `64`: capacities
 `1`, `3`, and `63`, a count-four fresh-process continuation, independent full
 checkpoint/sink lineage decoding, equality with ordinary output, and an
-immutable terminal retry.
+immutable terminal retry. The gate executes the production CLI staged under
+the selected install prefix, not the compiler-cache executable. Its children
+run from an empty directory with isolated home/config/cache locations and a
+minimal environment; the installed binary and its `bin/` namespace must remain
+byte-identical. This is an installed-shape, same-host synthetic fixture, not
+native multi-OS or production-model evidence.
 The public experimental package producer now covers one Safetensors/INT4/
 `utf8-byte-v1`/CPU profile. The checked package CLI covers fixed durable counts
 `1..64` and an additive process-local bounded early-EOS profile. Durable early

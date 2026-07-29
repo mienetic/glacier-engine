@@ -186,13 +186,6 @@ EXPECTED_MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS = frozenset(
     }
 )
 
-EXPECTED_TEXT_RUNTIME_GOLDEN_PATH_PATHS = frozenset(
-    {
-        "bench/prepared_text_raw_input.py",
-        "bench/tests/test_prepared_text_raw_input.py",
-    }
-)
-
 EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = frozenset(
     {
         "src/bounded_file_input.zig",
@@ -203,7 +196,9 @@ EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = frozenset(
         "src/prepared_text_session.zig",
         "src/prepared_text_variable_terminal.zig",
         "bench/prepared_text_package.py",
+        "bench/prepared_text_raw_input.py",
         "bench/tests/test_prepared_text_package.py",
+        "bench/tests/test_prepared_text_raw_input.py",
         "bench/text_runtime_golden_path.py",
     }
 )
@@ -264,21 +259,34 @@ class VerificationPolicyTests(unittest.TestCase):
 
     def test_documentation_only_selects_quick_gates(self):
         plan = self.assert_targets(
-            ["README.md", "docs/CONTRIBUTING.md", ".github/ISSUE_TEMPLATE/bug.yml"],
+            [
+                "README.md",
+                "docs/CONTRIBUTING.md",
+                "docs/example.zig",
+                ".github/ISSUE_TEMPLATE/bug.yml",
+            ],
             (),
         )
         self.assertEqual(plan.flags, frozenset())
+        self.assertTrue(
+            all(not decision.host_quick for decision in plan.decisions)
+        )
 
     def test_github_execution_controls_defer_unrelated_target_compiles(self):
         for changed_path in (
             ".github/workflows/ci.yml",
             ".github/actions/setup/action.yml",
+            ".github/actions/setup/helper.zig",
             ".github/dependabot.yml",
         ):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
                 self.assertFalse(plan.requires("native-full"))
                 self.assertTrue(plan.requires("python-full"))
+                self.assertTrue(
+                    plan.requires("verification-policy-focused")
+                )
+                self.assertFalse(plan.decisions[0].host_quick)
 
     def test_python_only_does_not_select_zig_or_foreign_targets(self):
         plan = self.assert_targets(
@@ -481,7 +489,13 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertEqual(plan.flags, frozenset({"python-full"}))
 
     def test_shared_code_and_build_control_select_every_target(self):
-        for changed_path in ("src/runtime.zig", "include/glacier.h", "build.zig"):
+        for changed_path in (
+            "src/runtime.zig",
+            "include/glacier.h",
+            "build.zig",
+            "cargo.lock",
+            "cmakelists.txt",
+        ):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], policy.RETAINED_TARGETS)
                 self.assertTrue(plan.requires("native-full"))
@@ -499,6 +513,7 @@ class VerificationPolicyTests(unittest.TestCase):
                     ),
                     plan.target_plans,
                 )
+                self.assertTrue(plan.decisions[0].host_quick)
 
     def test_audited_paths_select_focused_target_profiles(self):
         self.assertEqual(
@@ -544,10 +559,6 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertEqual(
             EXPECTED_MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS,
             policy.MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS,
-        )
-        self.assertEqual(
-            EXPECTED_TEXT_RUNTIME_GOLDEN_PATH_PATHS,
-            policy.TEXT_RUNTIME_GOLDEN_PATH_PATHS,
         )
         self.assertEqual(
             EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS,
@@ -753,20 +764,6 @@ class VerificationPolicyTests(unittest.TestCase):
                     "native/prepared-text-package-text-run",
                     policy._gate_names(plan.decisions[0]),
                 )
-        for changed_path in sorted(EXPECTED_TEXT_RUNTIME_GOLDEN_PATH_PATHS):
-            with self.subTest(changed_path=changed_path):
-                plan = self.assert_targets([changed_path], ())
-                self.assertEqual(
-                    frozenset(
-                        {
-                            "native-full",
-                            "python-changed",
-                            "python-full",
-                        }
-                    ),
-                    plan.flags,
-                )
-                self.assertEqual((), plan.target_plans)
         for changed_path in sorted(
             EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS
         ):
@@ -1009,10 +1006,12 @@ class VerificationPolicyTests(unittest.TestCase):
                     frozenset({"python-full", "rust-native"}),
                     plan.flags,
                 )
+                self.assertTrue(plan.decisions[0].host_quick)
         for changed_path in sorted(EXPECTED_BENCH_RUNTIME_DATA_PATHS):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
                 self.assertEqual(frozenset({"python-full"}), plan.flags)
+                self.assertFalse(plan.decisions[0].host_quick)
 
     def test_prepared_text_result_sink_python_paths_stay_python_only(self):
         for changed_path in (
@@ -1141,6 +1140,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 )
                 self.assertTrue(plan.requires("native-full"))
                 self.assertTrue(plan.requires("python-full"))
+                self.assertTrue(plan.decisions[0].host_quick)
 
     def test_swift_probe_uses_focused_darwin_typecheck_gate(self):
         plan = self.assert_targets(["bench/lane4_process_info.swift"], ())
@@ -1288,6 +1288,9 @@ class VerificationPolicyTests(unittest.TestCase):
                         for target_plan in plan.target_plans
                     )
                 )
+                self.assertTrue(
+                    policy._requires_generic_host_zig(plan.decisions[0])
+                )
         for changed_path in sorted(EXPECTED_METAL_NATIVE_SOURCE_PATHS):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
@@ -1297,6 +1300,9 @@ class VerificationPolicyTests(unittest.TestCase):
                 self.assertEqual(
                     plan.flags,
                     frozenset(expected_flags),
+                )
+                self.assertFalse(
+                    policy._requires_generic_host_zig(plan.decisions[0])
                 )
 
         for changed_path in (
@@ -1333,6 +1339,7 @@ class VerificationPolicyTests(unittest.TestCase):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_targets([changed_path], ())
                 self.assertEqual(plan.flags, frozenset({"darwin-native"}))
+                self.assertFalse(plan.decisions[0].host_quick)
 
     def test_python_shell_and_fixtures_override_platform_name(self):
         cases = {
@@ -1359,12 +1366,14 @@ class VerificationPolicyTests(unittest.TestCase):
             policy.RETAINED_TARGETS,
         )
         self.assertTrue(plan.requires("native-full"))
+        self.assertTrue(plan.decisions[0].host_quick)
 
         root_plan = self.assert_targets(
             ["new-runtime-input"],
             policy.RETAINED_TARGETS,
         )
         self.assertTrue(root_plan.requires("native-full"))
+        self.assertTrue(root_plan.decisions[0].host_quick)
 
     def test_verifier_controls_select_every_target(self):
         self.assertEqual(
@@ -1521,7 +1530,21 @@ class VerificationPolicyTests(unittest.TestCase):
             source.count('"bench.text_runtime_golden_path"'),
         )
         self.assertIn(
-            "run_text_runtime_golden_path.addArtifactArg(exe);",
+            'b.getInstallPath(.bin, "glacier"),',
+            source,
+        )
+        self.assertIn(
+            "run_text_runtime_golden_path.step.dependOn(cli_install_step);",
+            source,
+        )
+        self.assertNotIn(
+            "native_metal_suite_compile_step.dependOn(\n"
+            "            profile_device_compile_step,",
+            source,
+        )
+        self.assertNotIn(
+            "native_metal_suite_compile_step.dependOn(\n"
+            "            profile_host_tool_compile_step,",
             source,
         )
         self.assertIn(
@@ -1560,7 +1583,18 @@ class VerificationPolicyTests(unittest.TestCase):
             "test_step.dependOn(native_workload_store_fault_test_step)",
             source,
         )
-        self.assertEqual(1, source.count("b.installArtifact("))
+        self.assertEqual(
+            1,
+            source.count(
+                "b.getInstallStep().dependOn(&install_exe.step);"
+            ),
+        )
+        self.assertEqual(
+            1,
+            source.count(
+                "b.getInstallStep().dependOn(&install_stripped.step);"
+            ),
+        )
         self.assertNotIn(
             "run_cmd.step.dependOn(b.getInstallStep())",
             source,
@@ -2076,7 +2110,9 @@ class VerificationPolicyTests(unittest.TestCase):
             policy.write_flags(plan, flags)
             policy.write_targets(plan.targets, targets)
             policy.write_target_steps(plan.target_plans, target_steps)
-            self.assertNotIn("target:", flags.read_text(encoding="utf-8"))
+            serialized_flags = flags.read_text(encoding="utf-8")
+            self.assertNotIn("target:", serialized_flags)
+            self.assertIn("host-quick\n", serialized_flags)
             self.assertEqual(
                 targets.read_text(encoding="ascii").splitlines(),
                 list(policy.WINDOWS_TARGETS),
@@ -2359,6 +2395,15 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
         (repository / "bench" / "tests" / "test_local_verify.py").write_text(
             "import unittest\n"
             "class LocalVerifyTests(unittest.TestCase):\n"
+            "    def test_fixture(self):\n"
+            "        self.assertTrue(True)\n",
+            encoding="ascii",
+        )
+        (
+            repository / "bench" / "tests" / "test_verification_policy.py"
+        ).write_text(
+            "import unittest\n"
+            "class VerificationPolicyTests(unittest.TestCase):\n"
             "    def test_fixture(self):\n"
             "        self.assertTrue(True)\n",
             encoding="ascii",
@@ -2766,7 +2811,10 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             repository, merge_base, environment = self.make_repository(root)
             docs = repository / "docs"
             docs.mkdir()
-            (docs / "guide.md").write_text("# Guide\n", encoding="ascii")
+            (docs / "example.zig").write_text(
+                "// Documentation fixture\n",
+                encoding="ascii",
+            )
 
             result = self.run_affected_fast(
                 repository,
@@ -2780,13 +2828,13 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout + result.stderr,
             )
             self.assertIn(
-                "SKIP  interop/c-cpp-python: affected-fast "
-                "documentation-only plan; no host build needed",
+                "SKIP  interop/c-cpp-python: affected plan selected no "
+                "generic host Zig DAG",
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  package/modules: affected-fast documentation-only "
-                "plan; no host build needed",
+                "SKIP  package/modules: affected plan selected no generic "
+                "host Zig DAG",
                 result.stdout,
             )
             calls = (
@@ -2803,6 +2851,109 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 calls,
             )
 
+    def test_affected_fast_darwin_only_avoids_unrelated_host_build(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            darwin = repository / "src" / "platform" / "darwin"
+            darwin.mkdir(parents=True)
+            (darwin / "files.zig").write_text("", encoding="ascii")
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            self.assertFalse(
+                any(line.startswith("build ") for line in calls),
+                calls,
+            )
+
+    def test_affected_fast_interop_fixture_replays_generic_host_dag(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            fixtures = repository / "examples" / "interop" / "fixtures"
+            fixtures.mkdir(parents=True)
+            (fixtures / "artifact_manifest_v1.hex").write_text(
+                "00\n",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            self.assertEqual(
+                1,
+                sum(
+                    line.startswith(
+                        "build contract-interop-test package-module-test "
+                    )
+                    for line in calls
+                ),
+                calls,
+            )
+
+    def test_affected_fast_conservative_input_keeps_generic_host_dag(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            (repository / "src" / "runtime.codegen").write_text(
+                "",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            self.assertEqual(
+                1,
+                sum(
+                    line.startswith(
+                        "build contract-interop-test package-module-test "
+                    )
+                    for line in calls
+                ),
+                calls,
+            )
+
     def test_affected_fast_runs_verification_policy_suite_once(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -2812,7 +2963,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "import unittest\n"
                 "class VerificationPolicyTests(unittest.TestCase):\n"
                 "    def test_fixture(self):\n"
-                "        self.assertTrue(True)\n",
+                "        self.assertEqual(1, 1)\n",
                 encoding="ascii",
             )
 
@@ -2842,7 +2993,71 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 .splitlines()
             )
             self.assertFalse(
-                any(" -Dtarget=" in line for line in calls),
+                any(
+                    line.startswith("build ") or " -Dtarget=" in line
+                    for line in calls
+                ),
+                calls,
+            )
+
+    def test_affected_fast_github_control_runs_policy_without_zig_build(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            workflows = repository / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "ci.yml").write_text("name: CI\n", encoding="ascii")
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn("PASS  python/verification-policy:", result.stdout)
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            self.assertFalse(
+                any(line.startswith("build ") for line in calls),
+                calls,
+            )
+
+    def test_affected_fast_python_only_avoids_generic_zig_build(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            (repository / "bench" / "standalone_verifier.py").write_text(
+                "",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn("PASS  python/changed-syntax:", result.stdout)
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            self.assertFalse(
+                any(line.startswith("build ") for line in calls),
                 calls,
             )
 
@@ -2960,6 +3175,13 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "",
                 encoding="ascii",
             )
+            (repository / "bench" / "prepared_text_raw_input.py").write_text(
+                "",
+                encoding="ascii",
+            )
+            (
+                repository / "bench" / "tests" / "test_prepared_text_raw_input.py"
+            ).write_text("", encoding="ascii")
             (repository / "bench" / "text_runtime_golden_path.py").write_text(
                 "",
                 encoding="ascii",
@@ -3012,6 +3234,53 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 ),
                 calls,
             )
+
+    def test_affected_fast_mixed_host_roots_share_one_zig_invocation(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            cli = repository / "src" / "cli"
+            cli.mkdir()
+            (cli / "text_run.zig").write_text("", encoding="ascii")
+            server = repository / "src" / "server"
+            server.mkdir()
+            (server / "unary_text.zig").write_text("", encoding="ascii")
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  native/prepared-text-package-text-run: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  package/modules: covered by the shared host Zig DAG",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(1, len(build_calls), calls)
+            self.assertTrue(
+                build_calls[0].startswith(
+                    "build contract-interop-test package-module-test "
+                    "text-runtime-golden-path-test "
+                ),
+                build_calls,
+            )
+            self.assertNotIn("-Dtarget=", build_calls[0])
 
     def test_affected_fast_direct_terminal_smoke_runs_only_smoke_target(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -3299,6 +3568,11 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                     line.startswith("build native-workload-store-fault-test ")
                     for line in calls
                 ),
+                calls,
+            )
+            self.assertEqual(
+                1,
+                sum(line.startswith("build ") for line in calls),
                 calls,
             )
             self.assertFalse(

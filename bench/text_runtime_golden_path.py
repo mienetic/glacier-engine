@@ -8,12 +8,15 @@ import hashlib
 import json
 import os
 import re
+import stat
 import struct
 import subprocess
 import tempfile
 import zlib
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Iterator, Mapping, Sequence
 
 from bench import model_contract as contract
 from bench import prepared_text_direct_terminal_recovery as direct_oracle
@@ -128,6 +131,14 @@ VARIABLE_TERMINAL_REPORT_KEYS = frozenset(
     }
 )
 TIMEOUT_SECONDS = 30
+COMMAND_CWD: ContextVar[Path | None] = ContextVar(
+    "glacier_golden_command_cwd",
+    default=None,
+)
+COMMAND_ENV: ContextVar[Mapping[str, str] | None] = ContextVar(
+    "glacier_golden_command_env",
+    default=None,
+)
 
 
 class GoldenPathError(RuntimeError):
@@ -153,6 +164,8 @@ def _run(
         capture_output=True,
         text=True,
         timeout=TIMEOUT_SECONDS,
+        cwd=COMMAND_CWD.get(),
+        env=COMMAND_ENV.get(),
     )
     if expect_success != (result.returncode == 0):
         raise GoldenPathError(
@@ -169,6 +182,176 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: source.read(64 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _installed_tree_manifest(
+    root: Path,
+) -> tuple[tuple[str, str, int, int, str], ...]:
+    if root.is_symlink() or not root.is_dir():
+        raise GoldenPathError("installed prefix is not a stable directory")
+    manifest = []
+    for path in sorted(
+        root.rglob("*"),
+        key=lambda value: os.fsencode(value.relative_to(root).as_posix()),
+    ):
+        relative = path.relative_to(root).as_posix()
+        metadata = path.lstat()
+        mode = stat.S_IMODE(metadata.st_mode)
+        if stat.S_ISREG(metadata.st_mode):
+            manifest.append(
+                (relative, "file", mode, metadata.st_size, _file_sha256(path))
+            )
+        elif stat.S_ISDIR(metadata.st_mode):
+            manifest.append((relative, "directory", mode, 0, ""))
+        elif stat.S_ISLNK(metadata.st_mode):
+            target = os.readlink(path)
+            manifest.append(
+                (
+                    relative,
+                    "symlink",
+                    mode,
+                    len(os.fsencode(target)),
+                    os.fsdecode(target),
+                )
+            )
+        else:
+            raise GoldenPathError(
+                f"unsafe installed-prefix entry: {relative!r}"
+            )
+    return tuple(manifest)
+
+
+def _tree_entries(root: Path) -> tuple[str, ...]:
+    return tuple(
+        path.relative_to(root).as_posix()
+        for path in sorted(
+            root.rglob("*"),
+            key=lambda value: os.fsencode(
+                value.relative_to(root).as_posix()
+            ),
+        )
+    )
+
+
+@contextmanager
+def _isolated_command_state(
+    working_directory: Path,
+    environment: Mapping[str, str],
+) -> Iterator[None]:
+    cwd_token = COMMAND_CWD.set(working_directory)
+    environment_token = COMMAND_ENV.set(dict(environment))
+    try:
+        yield
+    finally:
+        COMMAND_ENV.reset(environment_token)
+        COMMAND_CWD.reset(cwd_token)
+
+
+def _installed_clean_room_golden_path(
+    executable: Path,
+    license_path: Path,
+) -> dict[str, object]:
+    if executable.is_symlink():
+        raise GoldenPathError("installed CLI must not be a symlink")
+    executable = executable.resolve(strict=True)
+    license_path = license_path.resolve(strict=True)
+    if (
+        executable.name != "glacier"
+        or executable.parent.name != "bin"
+        or not executable.is_file()
+        or not os.access(executable, os.X_OK)
+    ):
+        raise GoldenPathError(
+            "golden path requires an executable installed as bin/glacier"
+        )
+
+    install_namespace = executable.parent
+    install_manifest_before = _installed_tree_manifest(install_namespace)
+    executable_sha256 = _file_sha256(executable)
+
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="glacier-r1kb-installed-"
+        ) as directory:
+            clean_root = Path(directory)
+            working_directory = clean_root / "cwd"
+            home_directory = clean_root / "home"
+            temporary_directory = clean_root / "tmp"
+            config_directory = clean_root / "config"
+            cache_directory = clean_root / "cache"
+            for path in (
+                working_directory,
+                home_directory,
+                temporary_directory,
+                config_directory,
+                cache_directory,
+            ):
+                path.mkdir(mode=0o700)
+
+            child_environment = {
+                "HOME": str(home_directory),
+                "LANG": "C",
+                "LC_ALL": "C",
+                "PATH": os.defpath,
+                "TMPDIR": str(temporary_directory),
+                "XDG_CACHE_HOME": str(cache_directory),
+                "XDG_CONFIG_HOME": str(config_directory),
+            }
+            with _isolated_command_state(
+                working_directory,
+                child_environment,
+            ):
+                report = run_golden_path(
+                    executable,
+                    license_path,
+                    temporary_parent=temporary_directory,
+                )
+
+            ambient_entries = {
+                "cwd": _tree_entries(working_directory),
+                "home": _tree_entries(home_directory),
+                "config": _tree_entries(config_directory),
+                "cache": _tree_entries(cache_directory),
+            }
+            if any(ambient_entries.values()):
+                raise GoldenPathError(
+                    "installed CLI wrote undeclared ambient state: "
+                    + repr(ambient_entries)
+                )
+    finally:
+        try:
+            if _file_sha256(executable) != executable_sha256:
+                raise GoldenPathError(
+                    "installed CLI changed during the golden path"
+                )
+            if (
+                _installed_tree_manifest(install_namespace)
+                != install_manifest_before
+            ):
+                raise GoldenPathError(
+                    "installed CLI namespace changed during the golden path"
+                )
+        except OSError as error:
+            raise GoldenPathError(
+                "installed CLI namespace became unreadable"
+            ) from error
+
+    result = dict(report)
+    result.update(
+        {
+            "installed_cli_verified": True,
+            "installed_cli_sha256": executable_sha256,
+            "installed_cli_namespace_unchanged": True,
+            "installed_cli_namespace_entries": len(
+                install_manifest_before
+            ),
+            "clean_working_directory_verified": True,
+            "minimal_child_environment_verified": True,
+            "ambient_user_state_unchanged": True,
+            "repository_working_directory_required": False,
+        }
+    )
+    return result
 
 
 def _model_profile_sha256() -> bytes:
@@ -1927,7 +2110,12 @@ def _verify_report(
         raise GoldenPathError("terminal evidence root mismatch")
 
 
-def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
+def run_golden_path(
+    executable: Path,
+    license_path: Path,
+    *,
+    temporary_parent: Path | None = None,
+) -> dict[str, object]:
     executable = executable.resolve(strict=True)
     license_path = license_path.resolve(strict=True)
     license_bytes = license_path.read_bytes()
@@ -1936,7 +2124,10 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
     if hashlib.sha256(license_bytes).hexdigest() != EXPECTED_LICENSE_SHA256:
         raise GoldenPathError("retained fixture license identity drift")
 
-    with tempfile.TemporaryDirectory(prefix="glacier-r1kb-") as directory:
+    with tempfile.TemporaryDirectory(
+        prefix="glacier-r1kb-",
+        dir=temporary_parent,
+    ) as directory:
         root = Path(directory)
         source = root / "model.safetensors"
         container = root / "model.glacier"
@@ -4017,7 +4208,10 @@ def main() -> int:
     arguments = parser.parse_args()
     print(
         json.dumps(
-            run_golden_path(arguments.executable, arguments.license),
+            _installed_clean_room_golden_path(
+                arguments.executable,
+                arguments.license,
+            ),
             sort_keys=True,
             separators=(",", ":"),
         )

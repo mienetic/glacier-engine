@@ -1771,8 +1771,13 @@ prepared relationship in standard-library Python, checks portable/package
 `already_current` dispositions plus deterministic prepared recreation, and
 rejects package mutation, changed licenses, and embedded-receipt/prepared-image
 substitution. Affected changes to this slice reuse the existing
-`text-runtime-golden-path-test` DAG; broad and deep suites remain integration,
-shared-ABI, cross-platform, and release gates.
+`text-runtime-golden-path-test` DAG. That test executes the production
+`bin/glacier` staged under its isolated prefix from an empty working directory
+with bounded ambient state, and requires the installed binary and its `bin/`
+namespace to remain byte-identical. Its compile-only companion continues to
+use the same CLI artifact without staging it on retained cross-target builds.
+Broad and deep suites remain integration, shared-ABI, cross-platform, and
+release gates.
 
 This does not establish production readiness or general model-family support.
 R1k-b5 adds checked durable output and fresh-process continuation for fixed
@@ -1817,13 +1822,15 @@ come from that challenge. A changed count or other bound input therefore
 rejects before writer mutation.
 
 The existing `text-runtime-golden-path-test` compiles the same `glacier`
-executable once. Its direct count-one evidence remains intact. For acknowledged
-`N=4`, process A bootstraps and retries generation one, a changed count rejects
-without mutation, process B continues to terminal, and process C proves an
-immutable `already_terminal` retry. One-shot `N=2` and `N=64` cover minimum
-and maximum sink capacities `1` and `63`. Independent Python decoding walks
-the complete checkpoint/input/sink lineage, reconstructs committed-output
-roots, and requires every token sequence to equal ordinary execution.
+executable once, stages its production install shape, and uses that exact
+binary for every child process. Its direct count-one evidence remains intact.
+For acknowledged `N=4`, process A bootstraps and retries generation one, a
+changed count rejects without mutation, process B continues to terminal, and
+process C proves an immutable `already_terminal` retry. One-shot `N=2` and
+`N=64` cover minimum and maximum sink capacities `1` and `63`. Independent
+Python decoding walks the complete checkpoint/input/sink lineage, reconstructs
+committed-output roots, and requires every token sequence to equal ordinary
+execution.
 
 `checked_committed_output=true` denotes structural and lineage reconciliation,
 not independent model-quality evidence. The command enters the idempotent
@@ -1894,8 +1901,9 @@ and admission now include checked durable fixed output `1..64`, with focused
 profile. Serving, production artifacts, remote delivery, broader
 tokenizers/models, GPU package execution, and multi-OS requirements remain
 open. The combined 49-boundary worker now carries an admitted ordinary-profile
-bundle, while installed clean-host execution and a package-aware command
-process-death campaign remain open.
+bundle, while a separate same-host fixture executes the installed CLI from
+isolated ambient state. A truly clean-host/native multi-OS run and an
+installed package-aware command process-death campaign remain open.
 
 ### R2 — Stateless tensor families
 

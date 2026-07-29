@@ -329,6 +329,9 @@ run_zig_build() {
 
 run_prepared_text_focused_build() {
     set --
+    if [ "$generic_host_zig_requested" -eq 1 ]; then
+        set -- "$@" contract-interop-test package-module-test
+    fi
     if [ "$prepared_text_package_text_run_requested" -eq 1 ]; then
         set -- "$@" text-runtime-golden-path-test
     fi
@@ -385,12 +388,6 @@ run_zig_target_build() {
 plan_has() {
     [ -f "$affected_flags_file" ] &&
         grep -Fqx "$1" "$affected_flags_file"
-}
-
-plan_has_nonquick_flags() {
-    [ -f "$affected_flags_file" ] &&
-        grep -Fvx "quick" "$affected_flags_file" |
-        grep -q .
 }
 
 run_target_gates() {
@@ -684,7 +681,7 @@ elif [ "$profile" = "matrix" ]; then
     fi
 fi
 
-documentation_only_fast=0
+generic_host_zig_requested=1
 prepared_text_focused_requested=0
 prepared_text_delivery_requested=0
 prepared_text_direct_terminal_smoke_requested=0
@@ -716,11 +713,23 @@ if [ "$affected_plan_ready" -eq 1 ] &&
     prepared_text_inspector_requested=1
     prepared_text_focused_requested=1
 fi
-if [ "$profile" = "affected-fast" ] &&
-    [ "$affected_plan_ready" -eq 1 ] &&
-    [ ! -s "$selected_targets_file" ] &&
-    ! plan_has_nonquick_flags; then
-    documentation_only_fast=1
+if [ "$affected_profile" -eq 1 ] &&
+    [ "$affected_plan_ready" -eq 1 ]; then
+    generic_host_zig_requested=0
+    if plan_has "host-quick"; then
+        generic_host_zig_requested=1
+    fi
+fi
+
+prepared_text_native_host_available=0
+if [ "$prepared_text_focused_requested" -eq 1 ]; then
+    case "$host_name" in
+        Darwin | Linux) prepared_text_native_host_available=1 ;;
+    esac
+fi
+host_zig_requested=$generic_host_zig_requested
+if [ "$prepared_text_native_host_available" -eq 1 ]; then
+    host_zig_requested=1
 fi
 
 run_native_full=0
@@ -758,40 +767,32 @@ host_quick_status=not-run
 prepared_text_focused_in_quick=0
 if [ "$run_native_full" -eq 1 ]; then
     :
-elif [ "$documentation_only_fast" -eq 1 ]; then
+elif [ "$host_zig_requested" -eq 0 ]; then
     record_skip "interop/c-cpp-python" \
-        "affected-fast documentation-only plan; no host build needed"
+        "affected plan selected no generic host Zig DAG"
     record_skip "package/modules" \
-        "affected-fast documentation-only plan; no host build needed"
+        "affected plan selected no generic host Zig DAG"
 elif [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
-    if [ "$prepared_text_focused_requested" -eq 1 ]; then
-        case "$host_name" in
-            Darwin | Linux)
-                prepared_text_focused_in_quick=1
-                run_gate "host/prepared-text-focused-dag" \
-                    run_prepared_text_focused_build
-                ;;
-            *)
-                run_gate "host/quick-dag" \
-                    run_zig_build contract-interop-test package-module-test
-                ;;
-        esac
+    if [ "$prepared_text_native_host_available" -eq 1 ]; then
+        prepared_text_focused_in_quick=1
+        run_gate "host/prepared-text-focused-dag" \
+            run_prepared_text_focused_build
     else
         run_gate "host/quick-dag" \
             run_zig_build contract-interop-test package-module-test
     fi
     host_quick_status=$last_gate_status
     if [ "$host_quick_status" -eq 0 ]; then
-        if [ "$prepared_text_focused_in_quick" -eq 1 ]; then
-            record_skip "interop/c-cpp-python" \
-                "prepared-text focused DAG does not select generic interop"
-            record_skip "package/modules" \
-                "prepared-text focused DAG does not select generic package modules"
-        else
+        if [ "$generic_host_zig_requested" -eq 1 ]; then
             record_pass "interop/c-cpp-python" \
                 "covered by the shared host Zig DAG"
             record_pass "package/modules" \
                 "covered by the shared host Zig DAG"
+        elif [ "$prepared_text_focused_in_quick" -eq 1 ]; then
+            record_skip "interop/c-cpp-python" \
+                "prepared-text focused DAG does not select generic interop"
+            record_skip "package/modules" \
+                "prepared-text focused DAG does not select generic package modules"
         fi
     else
         record_skip "interop/c-cpp-python" \

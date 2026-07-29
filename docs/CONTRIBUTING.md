@@ -100,9 +100,9 @@ changed path.
 | Change | Required checks |
 | --- | --- |
 | Documentation or metadata only | Quick profile, links, spelling/manual review |
-| GitHub workflow, action, or dependency automation | Static workflow/policy coverage and Python discovery; unrelated native and retained-target compilation remains deferred to complete tiers |
-| Verification policy, verifier wrapper, or policy regression test | `affected-fast` runs changed-file syntax plus `bench.tests.test_local_verify` and `bench.tests.test_verification_policy` once; broad native/target coverage remains deferred to complete tiers |
-| Python verifier, harness, or retained result without a focused gate below | Changed-file Python syntax and full Python unittest discovery; no foreign Zig target |
+| GitHub workflow, action, or dependency automation | `affected-fast` runs the repository verification-policy regression suite without a generic Zig build; file-specific review, Python discovery, and unrelated native/retained-target compilation remain deferred to complete tiers |
+| Verification policy, verifier wrapper, or policy regression test | `affected-fast` runs changed-file syntax plus `bench.tests.test_local_verify` and `bench.tests.test_verification_policy` once without a generic Zig build; broad native/target coverage remains deferred to complete tiers |
+| Python verifier, harness, or retained result without a focused gate below | `affected-fast` runs changed-file Python syntax without a generic Zig build; complete tiers add full Python unittest discovery; no foreign Zig target |
 | Portable workload report/campaign codec, verifier, or focused test | Changed-file Python syntax where applicable plus the portable workload report test, native compile, and four-target cross-compile gate; no hard native campaign unless another changed path selects one |
 | W7b-b2 store-fault campaign (`bench/native_workload_store_fault_campaign.py` and `bench/tests/test_native_workload_store_fault_campaign.py`) | Changed-file Python syntax plus the hard native POSIX store-fault gate on Darwin, Linux, or FreeBSD; no foreign Zig target |
 | Production campaign-store publisher (`bench/native_metal_soak_report.py` and `bench/tests/test_native_metal_soak_report.py`) | Changed-file Python syntax, full Python discovery, the hard native POSIX store-fault gate, and the serialized native Darwin Metal suite; no foreign Zig target |
@@ -123,7 +123,7 @@ changed path.
 | CPU backend or model implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
 | Shared durable core/runtime implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
 | Audited durable recovery demo or worker | Native ReleaseSafe, Python discovery, and the durable profile on every retained target |
-| Ordinary model package producer, strict tensor-profile admission module, package-aware `text-run`, process-local variable-terminal module, bounded-input helper, or focused package oracle | `affected-fast` reuses the existing `text-runtime-golden-path-test` host DAG once; the complete affected tier adds the selected retained host-tool compile profiles |
+| Ordinary model package producer, strict tensor-profile admission module, package-aware `text-run`, process-local variable-terminal module, bounded-input helper, or focused package/raw-input oracle | `affected-fast` reuses the existing installed-CLI `text-runtime-golden-path-test` host DAG once; the complete affected tier adds the selected retained host-tool compile profiles |
 | Prepared-text session lifecycle | `affected-fast` reuses the same text-runtime golden DAG; the complete affected tier adds only the CPU, durable, and host-tool compile profiles instead of the complete consumer closure |
 | Prepared-text committed-output inspector or oracle | `affected-fast` runs the inspector and package-module roots in one host DAG; the complete affected tier adds broad host and selected portability coverage |
 | Prepared-text durable writer, runtime, or process-death campaign | `affected-fast` runs the recovery and package-module roots in one host DAG; when inspector paths change in the same worktree, all selected roots share that invocation |
@@ -249,6 +249,13 @@ the hosted `affected` profile with the intended `base_ref`. Hosted `full` and
 the macOS frontier. Strict native mode turns any unavailable selected native
 gate into `FAIL`.
 
+Host routing is explicit rather than inferred from a foreign-target plan.
+Plans limited to documentation, workflow control, policy, shell, or ordinary
+Python work therefore do not start the generic contract/package Zig DAG.
+When one change set selects both a generic compiled path and a focused
+prepared-text path, the verifier places all required host roots in one
+`zig build` invocation so compile reduction cannot hide either side.
+
 Prepared-text routing keeps the default loop bounded. Changes limited to the
 direct-terminal controller or its Python tests select only the four-boundary
 smoke. Direct-terminal Zig implementation changes select the deterministic
@@ -259,6 +266,13 @@ the combined recovery target, which already includes the smoke, so the
 verifier omits the standalone smoke target. All selected prepared-text targets
 are passed to one `zig build` invocation; the smoke and combined recovery
 target reuse the same worker executable.
+
+The text-runtime golden test depends on the exact CLI install child step and
+executes `bin/glacier` from the selected prefix. Its compile-only companion
+still depends directly on the CLI artifact, so retained cross-target compile
+profiles do not stage another binary. The installed-shape run uses an empty
+working directory and isolated ambient state without introducing another Zig
+compile root.
 
 Hosted affected and exhaustive jobs reuse the pinned Zig setup action's cache,
 configured with 1 GiB and 2 GiB action limits respectively.
@@ -310,16 +324,18 @@ runtime failures without recompiling each compatible root in an independent
 cold process.
 
 Metal-only changes first complete `native-metal-suite-compile`. That frontier
-includes the device and host-tool profiles, every distinct native suite
-executable and test, the cacheable shader library, and the isolated fault-symbol
-check. Its shader cache identity tracks the selected Xcode tools, SDK settings,
-and Metal standard-library contents rather than trusting a stale persistent
-toolchain result. `tools/verify.sh` then runs `native-metal-suite-test` as a
-separate `-j1` hardware phase with the same temporary cache, Metal output
-directory, prefix, and build graph. The compile frontier completes every suite
-artifact and static check before the first suite device process starts, and
-shared artifacts are not rebuilt through independent cold invocations. The
-aggregate runs diagnostic readiness,
+uses an explicit inventory of every distinct native suite executable and test,
+the cacheable shader library, and the isolated fault-symbol check. It does not
+depend on the wider device or host-tool profile umbrellas, which keeps eleven
+unrelated compile artifacts out of the macOS frontier. Its shader cache
+identity tracks the selected Xcode tools, SDK settings, and Metal
+standard-library contents rather than trusting a stale persistent toolchain
+result. `tools/verify.sh` then runs `native-metal-suite-test` as a separate
+`-j1` hardware phase with the same temporary cache, Metal output directory,
+prefix, and build graph. The compile frontier completes every suite artifact
+and static check before the first suite device process starts, and shared
+artifacts are not rebuilt through independent cold invocations. The aggregate
+runs diagnostic readiness,
 real-resource
 allocation ownership, one production-native 20-dispatch workload report,
 controlled disruption, the W7b-b3 paired-thread cancellation-storm profile,

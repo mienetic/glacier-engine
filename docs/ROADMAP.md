@@ -149,6 +149,13 @@ Next slices:
   missing tensors, dtype changes, and equal-count shape substitutions fail
   closed. The existing compile-once golden DAG covers these cases without a
   new executable target.
+- [x] Run the complete package/text golden path through the staged production
+  `bin/glacier` artifact from an empty working directory. Child processes use
+  isolated home/config/cache locations and a minimal environment; the
+  installed binary and its `bin/` namespace must remain byte-identical. The
+  test-only route depends on the exact install child step, while its cross-target
+  compile-only companion still depends directly on the existing CLI artifact,
+  so this installed-shape evidence adds no Zig compile root.
 - [ ] Retain a clean-host fixture campaign covering success, malformed input,
   unsupported model/tokenizer, capacity rejection, cancellation, source death,
   target death, and exact resume.
@@ -157,14 +164,17 @@ The existing 49-boundary development campaign now retains and independently
 revalidates one supported ordinary-profile V2 bundle through recovery. The
 uninterrupted baseline and source bootstrap also admit the persisted bundle
 against the loaded prepared image before execution. This strengthens the
-fixture semantics but does not complete the clean-host item: the campaign
-still uses synthetic weights and the retained worker, and it does not cover an
-installed command, service capacity rejection, external cancellation, or the
-producer's captured-source tensor preflight.
+fixture semantics but does not complete the clean-host item. A separate
+same-host golden path now covers the installed command plus producer
+preflight, ordinary execution, durable continuation/retry, and its retained
+malformed/unsupported-input cases. The combined evidence still uses synthetic
+weights and does not cover service capacity rejection, external cancellation,
+installed-command source/target death, native multi-OS execution, or physical
+power loss.
 
 Development verification for the producer, package-aware command,
 variable-terminal lifecycle, bounded input helper, and independent package
-oracle reuses the existing focused
+and raw-input oracles reuses the existing focused
 `text-runtime-golden-path-test` DAG through `affected-fast`. Broad host and
 foreign-target suites are deferred to shared-ABI, integration, and release
 boundaries; the focused route does not replace those promotion gates.
@@ -384,6 +394,14 @@ retained tests and independent review.
   as the default manual promotion profile with an explicit base revision.
   Reserve broad `full`, retained-target `matrix`, and native Metal work for
   deliberate promotion or tagged-release boundaries.
+- [x] Make iterative host routing explicit per affected path class.
+  Documentation, workflow/policy, shell, ordinary Python, and Darwin-only
+  plans avoid the generic Zig DAG; interop fixtures, build controls, generic
+  portable compiled code, and conservative inputs retain it, while audited
+  focused classes keep their named DAGs. Mixed generic and focused roots share
+  one invocation. The native Metal compile frontier now follows only its
+  explicit suite-consumer inventory, leaving eleven unrelated artifacts to
+  their deliberate profile gates.
 - [x] Read-only provider evidence outer-envelope inspector with deterministic
   JSON, independent oracle coverage, explicit self-asserted nested fields, and
   no payload, credential, composition, or authority claim.

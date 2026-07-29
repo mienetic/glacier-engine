@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import copy
+import os
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from bench import prepared_text_raw_input as raw_input
 from bench import text_runtime_golden_path as golden
@@ -40,6 +44,77 @@ class PreparedTextRawInputTests(unittest.TestCase):
                 {"boundary_sha256": "00" * 32},
                 "boundary_sha256",
             )
+
+    def test_isolated_command_state_is_scoped_to_child_process(self) -> None:
+        previous_directory = Path.cwd()
+        previous_environment = os.environ.copy()
+        with tempfile.TemporaryDirectory() as directory:
+            working_directory = Path(directory)
+            isolated_environment = {
+                "HOME": str(working_directory),
+                "LC_ALL": "C",
+            }
+            with golden._isolated_command_state(
+                working_directory,
+                isolated_environment,
+            ):
+                result = golden._run(
+                    (
+                        sys.executable,
+                        "-c",
+                        (
+                            "import os; "
+                            "print(os.getcwd()); "
+                            "print(os.environ['HOME']); "
+                            "print(os.environ.get('PATH', '<missing>'))"
+                        ),
+                    )
+                )
+                lines = result.stdout.splitlines()
+                self.assertEqual(
+                    working_directory.resolve(),
+                    Path(lines[0]).resolve(),
+                )
+                self.assertEqual(isolated_environment["HOME"], lines[1])
+                self.assertEqual("<missing>", lines[2])
+                self.assertEqual(previous_directory, Path.cwd())
+                self.assertEqual(previous_environment, dict(os.environ))
+        self.assertEqual(previous_directory, Path.cwd())
+        self.assertEqual(previous_environment, dict(os.environ))
+
+    def test_installed_tree_manifest_binds_bytes_and_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary_directory = root / "bin"
+            binary_directory.mkdir()
+            executable = binary_directory / "glacier"
+            executable.write_bytes(b"first")
+            executable.chmod(0o700)
+            first = golden._installed_tree_manifest(root)
+            executable.write_bytes(b"second")
+            executable.chmod(0o500)
+            second = golden._installed_tree_manifest(root)
+        self.assertNotEqual(first, second)
+        self.assertEqual("bin/glacier", first[-1][0])
+        self.assertEqual("file", first[-1][1])
+        self.assertEqual(0o700, first[-1][2])
+
+    def test_clean_room_requires_installed_cli_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / "glacier"
+            executable.write_bytes(b"not an installed executable")
+            executable.chmod(0o700)
+            license_path = root / "LICENSE"
+            license_path.write_bytes(b"fixture")
+            with self.assertRaisesRegex(
+                golden.GoldenPathError,
+                "bin/glacier",
+            ):
+                golden._installed_clean_room_golden_path(
+                    executable,
+                    license_path,
+                )
 
     def test_utf8_golden_matches_frozen_roots(self) -> None:
         text = "Glacier สวัสดี"

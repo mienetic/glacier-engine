@@ -9,11 +9,14 @@ before the first stable release.
 ### Changed
 
 - Contributor verification now has an `affected-fast` tier. Documentation-only
-  changes perform no Zig build, prepared-text reader and writer changes select
-  their focused native DAGs, and verifier changes run the policy regression
-  suite without expanding to broad host or foreign-target compilation.
+  changes and plans limited to workflow control, verification policy, shell, or
+  ordinary Python checks perform no generic Zig build. Workflow and verifier
+  changes run the policy regression suite without expanding to broad host or
+  foreign-target compilation. Prepared-text reader and writer changes select
+  their focused native DAGs, while mixed generic/focused changes compose all
+  required roots in one Zig invocation.
   Ordinary package-producer, package-aware `text-run`, bounded-input, and
-  package-oracle changes reuse the existing focused
+  package/raw-input-oracle changes reuse the existing focused
   `text-runtime-golden-path-test` DAG.
   Prepared-text session changes now select only the CPU, durable, and host-tool
   compile profiles, while the process-local variable-terminal module selects
@@ -33,6 +36,14 @@ before the first stable release.
   configured 1 GiB and 2 GiB action limits, respectively. Local verification
   still ignores inherited Zig cache paths and removes its private temporary
   cache after every run.
+- The raw-text golden path now stages and executes the production `bin/glacier`
+  install artifact. Every CLI child starts from an empty working directory
+  with bounded temporary home/config/cache paths and a minimal environment;
+  the verifier requires the installed binary and its `bin/` namespace to
+  remain byte-identical. This adds no Zig compile root. The macOS Metal
+  compile frontier now uses its explicit suite-consumer inventory directly
+  instead of wider device and host-tool umbrellas, removing eleven unrelated
+  compile artifacts without removing a serialized-suite consumer.
 - The retained prepared-text recovery fixture now carries a canonical
   896-byte `ordinary-package-v1` V2 admission bundle instead of an
   execution-unsupported transport placeholder. The uninterrupted baselines

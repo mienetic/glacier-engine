@@ -348,17 +348,20 @@ pub fn build(b: *std.Build) void {
     // artifact-footprint optimization, not a substitute for the separate
     // same-strip code-growth gate; `-Dstrip-production-cli=false` retains the
     // profiling-friendly executable.
-    if (strip_production_cli and target.result.os.tag == .macos and
-        builtin.os.tag == .macos)
-    {
+    const cli_install_step: *std.Build.Step = if (strip_production_cli and
+        target.result.os.tag == .macos and builtin.os.tag == .macos)
+    blk: {
         const strip = b.addSystemCommand(&.{ "xcrun", "strip", "-x", "-o" });
         const stripped = strip.addOutputFileArg("glacier");
         strip.addArtifactArg(exe);
         const install_stripped = b.addInstallBinFile(stripped, "glacier");
         b.getInstallStep().dependOn(&install_stripped.step);
-    } else {
-        b.installArtifact(exe);
-    }
+        break :blk &install_stripped.step;
+    } else blk: {
+        const install_exe = b.addInstallArtifact(exe, .{});
+        b.getInstallStep().dependOn(&install_exe.step);
+        break :blk &install_exe.step;
+    };
 
     // --- Unit tests ----------------------------------------------------------
     const core_tests = b.addTest(.{
@@ -1325,7 +1328,9 @@ pub fn build(b: *std.Build) void {
                 "-m",
                 "bench.text_runtime_golden_path",
             });
-        run_text_runtime_golden_path.addArtifactArg(exe);
+        run_text_runtime_golden_path.addArg(
+            b.getInstallPath(.bin, "glacier"),
+        );
         run_text_runtime_golden_path.addArgs(&.{
             "--license",
             "LICENSE",
@@ -1342,6 +1347,7 @@ pub fn build(b: *std.Build) void {
         run_text_runtime_golden_path.step.dependOn(
             &run_text_runtime_binding_model.step,
         );
+        run_text_runtime_golden_path.step.dependOn(cli_install_step);
         text_runtime_golden_path_test_step.dependOn(
             &run_text_runtime_golden_path.step,
         );
@@ -3667,10 +3673,11 @@ pub fn build(b: *std.Build) void {
         check_metal_fault_symbols.expectExitCode(0);
 
         // Compile every distinct artifact consumed by the serialized suite
-        // before any native process or GPU command runs. Repeated references
-        // below are intentional: named focused compile roots stay complete,
-        // while this explicit inventory prevents a new suite consumer from
-        // being hidden behind a runtime step.
+        // before any native process or GPU command runs. This explicit
+        // inventory is authoritative for the suite frontier: depending on a
+        // wider profile here would also compile unrelated host tools and
+        // benchmarks. Repeated references below keep the named focused roots
+        // complete while making new suite consumers visible in this list.
         for ([_]*std.Build.Step.Compile{
             metal_tests,
             native_metal_inflight_process_kill_ready_tests,
@@ -7000,15 +7007,6 @@ pub fn build(b: *std.Build) void {
     profile_host_tool_compile_step.dependOn(
         &generated_media_evidence_inspector_exe.step,
     );
-    if (native_metal_build_available) {
-        native_metal_suite_compile_step.dependOn(
-            profile_device_compile_step,
-        );
-        native_metal_suite_compile_step.dependOn(
-            profile_host_tool_compile_step,
-        );
-    }
-
     // Keep the compatibility umbrella authoritative while allowing affected
     // verification to name only the smaller roots above.
     test_compile_step.dependOn(profile_core_compile_step);
