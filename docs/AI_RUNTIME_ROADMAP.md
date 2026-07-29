@@ -1537,8 +1537,8 @@ predecessor or successor allowed by the boundary, run fresh recovery, and
 require a second retry to be idempotent with no candidate debris.
 
 This slice makes portable model preparation recoverable; it does not make the
-R1 text path complete. The retained conversion source is synthetic, raw-text
-tokenizer identity remains absent, and Safetensors header/JSON,
+R1 text path complete. The retained conversion source is synthetic, R1k-a
+itself carries no raw-text tokenizer identity, and Safetensors header/JSON,
 page-descriptor/plan, and canonical-metadata planning allocations are not
 counted inside the reported transformation workspace. Native Windows recovery,
 physical power loss, remote filesystems, authenticated model provenance,
@@ -1546,17 +1546,58 @@ production-model numerical evidence, and conversion performance claims remain
 open. See
 [Sealed Portable-Model Publication](SEALED_MODEL_CONVERSION.md).
 
-R1k-b is the next text-path slice: freeze a redistributable artifact and exact
-tokenizer wire identity, accept raw text, and join conversion, preparation,
-execution, publication, and recovery through one supported command sequence.
+#### R1k-b1 — Verified raw-text runtime path
+
+Status: **R1k-b1 identity and ingress integrated; durable composition open**.
+
+R1k-b1 freezes one download-free redistributable fixture identity and adds a
+strict canonical UTF-8 byte-tokenizer manifest plus prompt-receipt wire. The
+profile performs no normalization, special-token insertion, or modulo fallback:
+each valid UTF-8 byte maps to the same `u32` token and vocabularies below 256
+reject. A fixed raw-input binding joins exact text, token, prepared-prompt,
+local-plan, Common artifact/execution/residency, request, and license-byte
+roots.
+
+The supported experimental `glacier text-run` command accepts raw text only for
+the exact retained `32/32/1/256` prepared-fixture provenance and repository
+license profile, derives tokenizer inputs instead of accepting caller
+assertions, executes `SessionV3`, seals terminal result evidence, and closes
+Scheduler/Bank ownership to zero. A standard-library Python verifier
+independently decodes the exported tokenizer, raw-input, Common artifact,
+execution, residency, and result wires and reconstructs their plan/output/state
+relationships. Its retained golden path runs fixture generation → sealed
+conversion → recoverable preparation → raw-text execution, freezes the source
+and portable artifact identities plus prepared provenance, requires
+same-platform prepared/execution determinism, rejects every tokenizer-wire byte
+mutation, malformed input, changed license, and a foreign valid fixture, and
+proves a changed prompt produces a distinct request identity. It does not
+independently reconstruct the boundary snapshot or replay the internal
+publication proposal/acknowledgement transcript; those roots remain opaque
+bound leaves. See
+[Verified Raw-Text Runtime Path](PREPARED_TEXT_RAW_INPUT.md).
+
+R1k-b1 does not compose raw-text identity into the durable result sink or the
+fresh-process source/target recovery path. Its output publication sink is
+transactional but process-local; the command reports
+`durable_result_sink=false` and `fresh_process_recovery=false`. The retained
+fixture is synthetic, the tokenizer is an integration profile rather than a
+token-efficiency feature, Common artifact identity remains request-specific,
+and the slice does not establish production-model quality, GPU execution,
+performance, remote delivery, native multi-OS execution, hostile-writer
+security, or physical power-loss persistence.
+
+R1k-b2 is next: introduce a stable package manifest, carry the exact
+tokenizer/raw-input binding through durable publication and generation-one
+source replay, and retain fresh-process convergence without reintroducing
+caller-asserted tokenizer roots.
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with
 exact ownership and output evidence on the promoted native platform, including
 recoverable source-exit and replay-safe external publication. The retained
 synthetic fresh-process proof now includes replay-safe local sink progress, but
-does not complete its production artifact, raw-text/tokenizer, remote-delivery,
-GPU, or multi-OS requirements.
+does not complete its stable production package, durable raw-text recovery,
+remote-delivery, GPU, or multi-OS requirements.
 
 ### R2 — Stateless tensor families
 

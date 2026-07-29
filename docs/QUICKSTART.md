@@ -497,7 +497,39 @@ execution-layout-bound runtime image:
 
 Read [Native runtime image](RUNTIME_IMAGE.md) before changing its ABI.
 
-## 10. Make a first contribution
+## 10. Try verified raw-text ingress
+
+Before choosing a task, you can exercise the complete download-free raw-text
+ingress path:
+
+```sh
+./zig-out/bin/glacier gen-fixture /tmp/glacier-text.safetensors \
+  --dim 32 --hidden 32 --layers 1 --vocab 256
+./zig-out/bin/glacier convert --int4 --group-size 16 \
+  /tmp/glacier-text.safetensors /tmp/glacier-text.glacier
+./zig-out/bin/glacier prepare \
+  /tmp/glacier-text.glacier /tmp/glacier-text.glrt
+printf '%s' 'Ice' > /tmp/glacier-prompt.txt
+./zig-out/bin/glacier text-run /tmp/glacier-text.glrt \
+  --text-file /tmp/glacier-prompt.txt --license LICENSE --n 3
+```
+
+This synthetic fixture proves identity and runtime composition, not language
+quality. R1k-b1 accepts only this exact fixture provenance and repository
+license profile. Output is rendered as token IDs. Publication during
+`text-run` is transactional but process-local; the JSON report states that
+durable result storage and fresh-process recovery are false. Deterministic
+prompt hashes are correlatable evidence, not anonymization. See
+[Verified Raw-Text Runtime Path](PREPARED_TEXT_RAW_INPUT.md).
+
+Run its independent retained gate with:
+
+```sh
+zig build text-runtime-golden-path-test \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+```
+
+## 11. Make a first contribution
 
 Pick one item from [Contributor projects](PROJECTS.md). Add or update a rejection
 test before changing the contract, run the smallest relevant suite, and open a

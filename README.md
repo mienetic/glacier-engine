@@ -343,6 +343,19 @@ formats, and independent verifiers.
   macOS/Linux real-`SIGKILL` campaign proves exact predecessor-or-successor
   convergence across all eight publication phases. See
   [Sealed Portable-Model Publication](docs/SEALED_MODEL_CONVERSION.md).
+- **Verified raw-text ingress.** The experimental `glacier text-run` command
+  restricts admission to one retained fixture/license profile, then binds exact
+  UTF-8 bytes, a strict no-fallback byte-tokenizer manifest, canonical token
+  IDs, prepared image, and Common execution/residency plans before `SessionV3`
+  admission. Its deterministic JSON exports canonical wires for independent
+  Python reconstruction of the declared identity and Common-plan plus terminal
+  result/state relationships, and retirement returns logical ownership to
+  zero. The boundary-snapshot root and publication transcript remain opaque
+  bound leaves, the current sink is transactional but process-local, and the
+  independent gate does not independently reconstruct the boundary snapshot or
+  replay the publication transcript; durable result recovery remains roadmap
+  work. See
+  [Verified Raw-Text Runtime Path](docs/PREPARED_TEXT_RAW_INPUT.md).
 - **Identity-fenced file publication.** A descriptor-relative POSIX adapter
   adds exclusive locking, no-follow lookup, single-link/private-mode checks,
   acquired directory authority, file and directory sync,
@@ -1136,7 +1149,7 @@ hardware-independent surface without those native backend dependencies.
 
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
-| AI runtime | CPU execution, an optional macOS Metal kernel path, sealed POSIX publication for portable `.glacier` conversion, recoverable POSIX publication for prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial pre-tokenized text request profiles, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture, same-process exact-current-boundary rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, an experimental fresh-process source-exit handoff with canonical generation-one replay, acknowledged one-token target progress through an idempotent durable local POSIX sink and generation-five terminal result, a canonical exact-integer dense-tensor reranker, and portable exact Q30 L2 dense embeddings, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic ten-profile retained-reference compatibility inspector | Extend ownership/accounting and repeated-handoff coverage, verify raw-text tokenizer identity, compose normalized embeddings into retrieval, add production fixtures, native multi-OS validation, and broader production device execution |
+| AI runtime | CPU execution, an optional macOS Metal kernel path, sealed POSIX publication for portable `.glacier` conversion, recoverable POSIX publication for prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial text request profiles, exact canonical UTF-8 byte-tokenizer and raw-input binding wires, a retained-fixture-only experimental raw-text command, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture, same-process exact-current-boundary rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, an experimental fresh-process source-exit handoff with canonical generation-one replay, acknowledged one-token target progress through an idempotent durable local POSIX sink and generation-five terminal result, a canonical exact-integer dense-tensor reranker, and portable exact Q30 L2 dense embeddings, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic ten-profile retained-reference compatibility inspector | Carry raw-input identity through the durable result/recovery path, add a stable package manifest, extend ownership/accounting and repeated-handoff coverage, compose normalized embeddings into retrieval, add production fixtures, native multi-OS validation, and broader production device execution |
 | Language interop | Installed experimental C header plus shared/static contract libraries; source and staged-install C consumers; C++ linkage check; standard-library Python `ctypes`; dependency-free Rust `extern "C"` gate; fixed profile enumeration and support-mask queries | Retained symbol/layout gates, native multi-OS consumers, stability policy, packages, then model/session execution bindings |
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, a generic dense-tensor reranker with canonical ranked items, a generic normalized dense-tensor embedding fixture, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, one process-local typed tool transaction, a durable POSIX external-action handoff store, and a same-process generation-fenced fake dispatch/status authority for retained reference profiles | Generic classification, retrieval composition, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, OS-isolated real-credential adapters, live tools and agent loops, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor evidence, receipt-funded restored activation with a global publication sequence base, recoverable generation-one source enrollment, experimental durable source exit, exclusive fresh-process activation, and generation-two-through-five acknowledged local POSIX target progress with semantic oracle comparison; plus capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Native Linux recovery, Win32 durable files, remote delivery adapters, device-resident continuation, repeated/cancelled handoff evidence, and durable lifecycle metadata |
@@ -1249,9 +1262,11 @@ generation-one bootstrap, 23 source-transition, and 19 target-transition
 independent decoder admits only the exact state declared at each boundary and
 then requires convergence to the uninterrupted four-token oracle.
 
-The combined path still accepts pre-tokenized input only, does not cover every
-V1-valid request shape, and does not execute or attest a raw-text tokenizer,
-provide stable package/license byte identity, support early EOS or
+The durable recovery path still accepts pre-tokenized input only and does not
+cover every V1-valid request shape. The separate R1k-b1 command now attests one
+strict raw-text tokenizer and the retained fixture license bytes through process-local
+terminal execution, but does not yet carry those roots into durable recovery or
+provide a stable package identity. The combined work does not support early EOS or
 fewer-than-admitted outputs, provide concurrent Session mutation, replay a
 source prefix after an external effect, execute the handoff on GPU, or
 establish production native performance. The durable adapter for this path is
@@ -1328,6 +1343,7 @@ valuable as new features.
 - [Model format](docs/FORMAT_SPEC.md)
 - [Native runtime image](docs/RUNTIME_IMAGE.md)
 - [Durable runtime-image publication](docs/RUNTIME_IMAGE_DURABLE_PUBLICATION.md)
+- [Verified raw-text runtime path](docs/PREPARED_TEXT_RAW_INPUT.md)
 - [Prepared text session](docs/PREPARED_TEXT_SESSION.md)
 - [Prepared text checkpoint](docs/PREPARED_TEXT_CHECKPOINT.md)
 - [Prepared text successor evidence](docs/PREPARED_TEXT_SUCCESSOR.md)

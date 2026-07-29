@@ -262,6 +262,8 @@ pub const generate = @import("generate.zig");
 pub const prepared_text_checkpoint =
     @import("prepared_text_checkpoint.zig");
 pub const prepared_text_session = @import("prepared_text_session.zig");
+pub const prepared_text_raw_input =
+    @import("prepared_text_raw_input.zig");
 pub const prepared_text_source_lease =
     @import("prepared_text_source_lease.zig");
 pub const prepared_text_successor =

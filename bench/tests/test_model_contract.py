@@ -595,6 +595,36 @@ class ModelContractTests(unittest.TestCase):
             ),
         )
 
+        adapter_plan = {
+            "family": contract.AUTOREGRESSIVE,
+            "operation": contract.GENERATE_SEQUENCE,
+            "input_kind": contract.TOKEN_ID_INPUT,
+            "output_kind": contract.TOKEN_IDS,
+            "numerical_policy": 4,
+        }
+        adapter_sha256 = contract.prepared_terminal_adapter_root_v1(
+            adapter_plan,
+            bytes(range(32)),
+            bytes(range(32, 64)),
+            bytes(range(64, 96)),
+        )
+        self.assertEqual(
+            "29f668e7f0b3cdcfc44fe88d81f40836"
+            "0a4f9578dbdadeac944dad11d37cbc75",
+            adapter_sha256.hex(),
+        )
+        changed_adapter_plan = dict(adapter_plan)
+        changed_adapter_plan["numerical_policy"] = 3
+        self.assertNotEqual(
+            adapter_sha256,
+            contract.prepared_terminal_adapter_root_v1(
+                changed_adapter_plan,
+                bytes(range(32)),
+                bytes(range(32, 64)),
+                bytes(range(64, 96)),
+            ),
+        )
+
         self.assertEqual(
             b"\x01\x00\x00\x00RTLG",
             struct.pack(

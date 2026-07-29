@@ -1184,6 +1184,84 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&contract_c_consumer.step);
     test_compile_step.dependOn(&contract_c_shared_consumer.step);
     test_compile_step.dependOn(&contract_cpp_consumer.step);
+
+    // R1k-b1 keeps the raw-text ingress proof download-free and independently
+    // reproducible. The Python model rebuilds every tokenizer and binding root
+    // without importing the Zig implementation, while the controller exercises
+    // the CLI command shape from source fixture through execution.
+    const text_runtime_golden_path_compile_step = b.step(
+        "text-runtime-golden-path-compile",
+        "Compile the CLI used by the raw-text golden path",
+    );
+    text_runtime_golden_path_compile_step.dependOn(&exe.step);
+    test_compile_step.dependOn(text_runtime_golden_path_compile_step);
+
+    const text_runtime_golden_path_test_step = b.step(
+        "text-runtime-golden-path-test",
+        "Run the raw-text identity and contract-wire golden path",
+    );
+    const text_runtime_golden_path_native_available =
+        (target.result.os.tag == .macos or
+            target.result.os.tag == .linux or
+            target.result.os.tag == .freebsd) and
+        target.result.cpu.arch == builtin.cpu.arch and
+        target.result.os.tag == builtin.os.tag and
+        target.result.abi == builtin.abi;
+    if (text_runtime_golden_path_native_available) {
+        const run_text_runtime_binding_model =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "unittest",
+                "bench.tests.test_prepared_text_raw_input",
+            });
+        run_text_runtime_binding_model.setCwd(b.path("."));
+        run_text_runtime_binding_model.setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_text_runtime_binding_model.setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+
+        const run_text_runtime_golden_path =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "bench.text_runtime_golden_path",
+            });
+        run_text_runtime_golden_path.addArtifactArg(exe);
+        run_text_runtime_golden_path.addArgs(&.{
+            "--license",
+            "LICENSE",
+        });
+        run_text_runtime_golden_path.setCwd(b.path("."));
+        run_text_runtime_golden_path.setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_text_runtime_golden_path.setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+        run_text_runtime_golden_path.step.dependOn(
+            &run_text_runtime_binding_model.step,
+        );
+        text_runtime_golden_path_test_step.dependOn(
+            &run_text_runtime_golden_path.step,
+        );
+    } else {
+        const text_runtime_golden_path_failure = b.addFail(
+            "text-runtime-golden-path-test requires a native macOS, Linux, " ++
+                "or FreeBSD target",
+        );
+        text_runtime_golden_path_test_step.dependOn(
+            &text_runtime_golden_path_failure.step,
+        );
+    }
+    test_step.dependOn(text_runtime_golden_path_test_step);
+
     const host_runtime_compile_step = b.step(
         "host-runtime-compile",
         "Compile the complete host test and contract runtime closure",

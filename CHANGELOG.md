@@ -57,6 +57,23 @@ before the first stable release.
 
 ### Added
 
+- Added the R1k-b1 verified raw-text runtime path. Fixed 192-byte tokenizer
+  manifests, 256-byte prompt receipts, and 480-byte raw-input plan bindings
+  join strict UTF-8 bytes to exact token, prepared prompt, local/Common plan,
+  residency, artifact, request, and license identities. The fixture-only
+  experimental `glacier text-run` command requires exact retained provenance
+  and license profiles, executes the bound prepared CPU session, emits
+  canonical wires for independent reconstruction, seals one terminal result,
+  and returns logical ownership to zero. A download-free Python-controlled
+  golden path freezes portable identities, checks same-platform prepared and
+  fresh-invocation determinism, rejects mutation, malformed input, changed
+  license, and foreign fixture profiles, and reconstructs the declared Common
+  and terminal result/state relationships. Its boundary-snapshot root and
+  publication transcript are opaque bound leaves: the boundary snapshot is not
+  independently reconstructed and the transcript is not independently
+  replayed. Its sink is process-local; durable result recovery, stable package
+  identity, production quality, GPU execution, and native multi-OS evidence
+  remain open.
 - Added sealed POSIX publication for Safetensors-to-`.glacier` conversion. One
   acquired parent-directory authority, directory-scoped lock, and private
   bounded candidate protect the visible target; source, conversion profile,

@@ -8,6 +8,7 @@
 const std = @import("std");
 const engine = @import("engine");
 const cli_telemetry = @import("cli_telemetry");
+const cli_text_run = @import("text_run.zig");
 const core = engine.core;
 
 const Pager = core.Pager;
@@ -55,6 +56,9 @@ pub fn main() !void {
     }
     if (args.len > 1 and std.mem.eql(u8, args[1], "generate")) {
         return runGenerate(allocator, args, &bw.interface, &process_timer);
+    }
+    if (args.len > 1 and std.mem.eql(u8, args[1], "text-run")) {
+        return cli_text_run.run(allocator, args, &bw.interface);
     }
     if (args.len > 1 and std.mem.eql(u8, args[1], "dump-weights")) {
         return runDumpWeights(allocator, args, &bw.interface);

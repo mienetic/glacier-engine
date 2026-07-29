@@ -140,6 +140,14 @@ EXPECTED_MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS = frozenset(
     }
 )
 
+EXPECTED_TEXT_RUNTIME_GOLDEN_PATH_PATHS = frozenset(
+    {
+        "bench/prepared_text_raw_input.py",
+        "bench/tests/test_prepared_text_raw_input.py",
+        "bench/text_runtime_golden_path.py",
+    }
+)
+
 EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
     {
         "src/core/native_metal_supervisor_recovery_death_report.zig",
@@ -461,6 +469,10 @@ class VerificationPolicyTests(unittest.TestCase):
             EXPECTED_MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS,
             policy.MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS,
         )
+        self.assertEqual(
+            EXPECTED_TEXT_RUNTIME_GOLDEN_PATH_PATHS,
+            policy.TEXT_RUNTIME_GOLDEN_PATH_PATHS,
+        )
         for changed_path in sorted(EXPECTED_CORE_CONTRACT_PATHS):
             with self.subTest(changed_path=changed_path):
                 self.assert_target_steps(
@@ -528,6 +540,22 @@ class VerificationPolicyTests(unittest.TestCase):
                     frozenset(expected_flags),
                     plan.flags,
                 )
+        for changed_path in sorted(
+            EXPECTED_TEXT_RUNTIME_GOLDEN_PATH_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    frozenset(
+                        {
+                            "native-full",
+                            "python-changed",
+                            "python-full",
+                        }
+                    ),
+                    plan.flags,
+                )
+                self.assertEqual((), plan.target_plans)
         for changed_path in sorted(
             EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS
         ):
@@ -1131,6 +1159,62 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertEqual(
             1,
             source.count('"host-runtime-compile"'),
+        )
+        self.assertEqual(
+            1,
+            source.count('"text-runtime-golden-path-compile"'),
+        )
+        self.assertEqual(
+            1,
+            source.count('"text-runtime-golden-path-test"'),
+        )
+        self.assertIn(
+            "text_runtime_golden_path_compile_step.dependOn(&exe.step);",
+            source,
+        )
+        self.assertIn(
+            "test_compile_step.dependOn("
+            "text_runtime_golden_path_compile_step);",
+            source,
+        )
+        self.assertIn(
+            "const text_runtime_golden_path_native_available =\n"
+            "        (target.result.os.tag == .macos or\n"
+            "            target.result.os.tag == .linux or\n"
+            "            target.result.os.tag == .freebsd) and\n"
+            "        target.result.cpu.arch == builtin.cpu.arch and\n"
+            "        target.result.os.tag == builtin.os.tag and\n"
+            "        target.result.abi == builtin.abi;",
+            source,
+        )
+        self.assertIn(
+            '"text-runtime-golden-path-test requires a native macOS, Linux, "'
+            ' ++\n                "or FreeBSD target"',
+            source,
+        )
+        self.assertEqual(
+            1,
+            source.count(
+                '"bench.tests.test_prepared_text_raw_input"'
+            ),
+        )
+        self.assertEqual(
+            1,
+            source.count('"bench.text_runtime_golden_path"'),
+        )
+        self.assertIn(
+            "run_text_runtime_golden_path.addArtifactArg(exe);",
+            source,
+        )
+        self.assertIn(
+            "run_text_runtime_golden_path.step.dependOn(\n"
+            "            &run_text_runtime_binding_model.step,\n"
+            "        );",
+            source,
+        )
+        self.assertIn(
+            "test_step.dependOn(text_runtime_golden_path_test_step);",
+            source,
         )
         self.assertIn('"install-benchmarks"', source)
         self.assertIn('"native-metal-correctness-test"', source)

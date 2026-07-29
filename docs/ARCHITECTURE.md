@@ -415,6 +415,17 @@ package identity. Token-domain, token-domain-configuration, and
 artifact-license roots are opaque caller assertions; the bridge binds but does
 not inspect or attest their bytes.
 
+R1k-b1 adds a narrower supported constructor for one raw-text profile. The
+`utf8-byte-v1` manifest rejects vocabularies below 256, validates strict UTF-8,
+applies no normalization or special-token insertion, and maps each byte to the
+same `u32` token. `glacier text-run` first requires the retained fixture
+provenance, geometry, and repository license digest; a fixed raw-input wire
+then joins the tokenizer receipt to the prepared prompt, local plan, Common
+artifact/execution/residency records, request epoch, and license root before
+`SessionV3` admission. This removes caller-asserted tokenizer and license roots
+for that fixture command only; existing direct R1c constructors retain their
+experimental caller-supplied inputs.
+
 The bridge currently accepts only profiles whose local activation claim covers
 the Common Execution Plan's exact `u32` prompt-input bytes. A
 long-prompt/minimal-model profile can remain valid for `SessionV1` yet fail
@@ -554,13 +565,15 @@ covers seven bootstrap, 23 source-transition, and 19 target-transition real
 `SIGKILL` boundaries; independent recovery admits only the declared
 absent/predecessor/successor roots and converges to the terminal oracle.
 
-The combined lifecycle still does not add early EOS,
-fewer-than-admitted outputs, a raw-text tokenizer, stable package or license
-byte attestation, replay after a source-side external effect, arbitrary remote
-exactly-once effects, hostile-writer or physical power-loss guarantees,
-GPU-resident continuation, Windows durable files, production-model evidence,
-strict cross-platform numerical equivalence, or native multi-OS
-performance/recovery evidence.
+The durable recovery lifecycle still receives pre-tokenized input. The
+separate R1k-b1 process-local path attests one raw-text tokenizer and exact
+license bytes, but does not persist that binding into the checkpoint, result
+sink, or fresh-process recovery chain. The combined work still does not add
+early EOS, fewer-than-admitted outputs, a stable package identity, replay after
+a source-side external effect, arbitrary remote exactly-once effects,
+hostile-writer or physical power-loss guarantees, GPU-resident continuation,
+Windows durable files, production-model evidence, strict cross-platform
+numerical equivalence, or native multi-OS performance/recovery evidence.
 The `deinit` safety path may abandon terminal evidence while closing and
 releasing the adopted lifecycle; it does not count as a successful result seal.
 
@@ -1343,6 +1356,9 @@ targets remain gated until their named native adapters and evidence pass.
   the live-authority boundary.
 - [Prepared text session](PREPARED_TEXT_SESSION.md): exact prepared-image
   execution, publication, boundary, and terminal-result lifecycle.
+- [Verified raw-text runtime path](PREPARED_TEXT_RAW_INPUT.md): strict
+  tokenizer identity, raw-input/Common-plan binding, and the bounded
+  process-local command sequence.
 - [Prepared text checkpoint](PREPARED_TEXT_CHECKPOINT.md): canonical
   non-terminal output/RNG/contiguous-KV state, detached materialization, and
   same-process exact-boundary rebind under retained authority.

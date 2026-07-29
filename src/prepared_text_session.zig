@@ -229,6 +229,14 @@ fn promptSha256(prompt: []const u32) [32]u8 {
     return digest;
 }
 
+/// Canonical prepared-text prompt root used by the local plan. Raw-text
+/// adapters expose this helper so independently tokenized input can prove that
+/// its exact u32 stream, rather than only a caller assertion, entered the
+/// common-plan bridge.
+pub fn promptTokensSha256V1(prompt: []const u32) [32]u8 {
+    return promptSha256(prompt);
+}
+
 fn planSha256(plan: PlanV1) [32]u8 {
     var hash = std.crypto.hash.sha2.Sha256.init(.{});
     hash.update(plan_domain);
@@ -248,6 +256,25 @@ fn planSha256(plan: PlanV1) [32]u8 {
     var digest: [32]u8 = undefined;
     hash.final(&digest);
     return digest;
+}
+
+/// Structural and canonical validation for a retained local prepared-text plan.
+/// This check does not prove that the caller still holds the model or prompt
+/// bytes; consumers that possess them must reconstruct the complete plan.
+pub fn planValidV1(value: PlanV1) bool {
+    return value.abi_version == plan_abi and
+        value.prompt_tokens != 0 and
+        value.max_new_tokens != 0 and
+        value.image_identity.container_bytes != 0 and
+        !isZeroDigest(value.prompt_sha256) and
+        !isZeroDigest(value.image_identity.source_fingerprint) and
+        !isZeroDigest(value.image_identity.abi_fingerprint) and
+        !isZeroDigest(value.image_identity.container_sha256) and
+        std.mem.eql(
+            u8,
+            &value.plan_sha256,
+            &planSha256(value),
+        );
 }
 
 fn artifactMetadataSha256(
@@ -472,19 +499,7 @@ pub fn boundarySnapshotValidForBoundPlanV2(
     if (!boundarySnapshotValidV2(snapshot))
         return false;
     validateBoundPlanV1(bound_plan) catch return false;
-    if (local_plan.abi_version != plan_abi or
-        local_plan.prompt_tokens == 0 or
-        local_plan.max_new_tokens == 0 or
-        local_plan.image_identity.container_bytes == 0 or
-        isZeroDigest(local_plan.prompt_sha256) or
-        isZeroDigest(local_plan.image_identity.source_fingerprint) or
-        isZeroDigest(local_plan.image_identity.abi_fingerprint) or
-        isZeroDigest(local_plan.image_identity.container_sha256) or
-        !std.mem.eql(
-            u8,
-            &local_plan.plan_sha256,
-            &planSha256(local_plan),
-        ))
+    if (!planValidV1(local_plan))
         return false;
     return std.mem.eql(
         u8,

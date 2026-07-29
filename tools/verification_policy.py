@@ -226,6 +226,12 @@ MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS = {
     "bench/tests/test_model_conversion_durable_recovery.py",
 }
 
+TEXT_RUNTIME_GOLDEN_PATH_PATHS = {
+    "bench/prepared_text_raw_input.py",
+    "bench/tests/test_prepared_text_raw_input.py",
+    "bench/text_runtime_golden_path.py",
+}
+
 WORKLOAD_REPORT_PORTABLE_PATHS = {
     "src/core/native_metal_supervisor_recovery_death_report.zig",
     "src/core/native_workload_campaign_manifest.zig",
@@ -678,6 +684,20 @@ def _decision_for_path(path: str) -> PathDecision:
             frozenset(recovery_flags),
             POSIX_TARGETS,
             ("profile-durable-compile",),
+        )
+
+    if lower in TEXT_RUNTIME_GOLDEN_PATH_PATHS:
+        return PathDecision(
+            path,
+            "raw-text identity model or composed native golden path changed",
+            frozenset(
+                {
+                    "native-full",
+                    "python-changed",
+                    "python-full",
+                }
+            ),
+            (),
         )
 
     if (

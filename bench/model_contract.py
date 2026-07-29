@@ -21,6 +21,8 @@ EXECUTION_PLAN_ABI = 0x474D504C00000001
 RESULT_ENVELOPE_ABI = 0x474D525300000001
 EXECUTION_RESIDENCY_BINDING_ABI = 0x474D524200000001
 PREPARED_TERMINAL_RESULT_EVIDENCE_ABI = 0x474C545200000001
+PREPARED_TEXT_SESSION_V3_ABI = 0x474C545300000003
+PREPARED_TEXT_ARTIFACT_PROFILE_ABI = 0x474C544100000001
 ARTIFACT_MANIFEST_BYTES = 320
 EXECUTION_PLAN_BYTES = 768
 RESULT_ENVELOPE_BYTES = 768
@@ -42,6 +44,9 @@ PUBLICATION_COMMIT_DOMAIN = b"glacier-model-publication-commit-v1\x00"
 PREPARED_TERMINAL_OUTPUT_DOMAIN = b"glacier-prepared-text-terminal-output-v1\x00"
 PREPARED_TERMINAL_SOURCE_MAPPING_DOMAIN = (
     b"glacier-prepared-text-terminal-source-mapping-v1\x00"
+)
+PREPARED_TERMINAL_ADAPTER_DOMAIN = (
+    b"glacier-prepared-text-terminal-adapter-v1\x00"
 )
 PREPARED_TERMINAL_RESULT_EVIDENCE_DOMAIN = (
     b"glacier-prepared-text-terminal-result-evidence-v1\x00"
@@ -231,6 +236,40 @@ def prepared_terminal_source_mapping_root_v1(
         + _u64(output_token_count)
     )
     return hashlib.sha256(PREPARED_TERMINAL_SOURCE_MAPPING_DOMAIN + body).digest()
+
+
+def prepared_terminal_adapter_root_v1(
+    plan: Record,
+    artifact_metadata_sha256: bytes,
+    prepared_source_fingerprint: bytes,
+    prepared_abi_fingerprint: bytes,
+) -> bytes:
+    """Hash the retained serial prepared-text adapter identity."""
+
+    try:
+        scalars = (
+            plan["family"],
+            plan["operation"],
+            plan["input_kind"],
+            plan["output_kind"],
+            plan["numerical_policy"],
+        )
+    except (KeyError, TypeError):
+        raise ModelContractError("invalid prepared terminal adapter") from None
+    body = b"".join(
+        _u64(value)
+        for value in (
+            PREPARED_TEXT_SESSION_V3_ABI,
+            PREPARED_TEXT_ARTIFACT_PROFILE_ABI,
+            *scalars,
+        )
+    )
+    body += (
+        _digest(artifact_metadata_sha256)
+        + _digest(prepared_source_fingerprint)
+        + _digest(prepared_abi_fingerprint)
+    )
+    return hashlib.sha256(PREPARED_TERMINAL_ADAPTER_DOMAIN + body).digest()
 
 
 def prepared_terminal_result_evidence_root_v1(
