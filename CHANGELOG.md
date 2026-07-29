@@ -12,6 +12,9 @@ before the first stable release.
   changes perform no Zig build, prepared-text reader and writer changes select
   their focused native DAGs, and verifier changes run the policy regression
   suite without expanding to broad host or foreign-target compilation.
+  Ordinary package-producer, package-aware `text-run`, bounded-input, and
+  package-oracle changes reuse the existing focused
+  `text-runtime-golden-path-test` DAG.
   Prepared-text delivery implementation changes compile and test one shared
   facade artifact. Direct-terminal controller changes select only their bounded
   four-boundary smoke, while shared recovery-worker or recovery-harness changes
@@ -73,6 +76,40 @@ before the first stable release.
 
 ### Added
 
+- Added the experimental ordinary-model package production and process-local
+  admission slice. `glacier package-model` consumes a typed same-process
+  durable conversion receipt and publishes a validated portable `.glacier`
+  container, separate-layout CPU `.glrt` image, and fixed 896-byte `.glpkg`
+  admission bundle for one Safetensors/INT4/`utf8-byte-v1` profile. The bundle
+  is the portable/request-independent 640-byte manifest followed by the
+  256-byte receipt that pins the exact GLRT hash, size, ABI, source, and
+  configuration relationship. Another representation requires another bundle
+  but may retain the same manifest package root. The report exposes
+  `package_bytes=896`, `package_manifest_bytes=640`,
+  `prepared_representation_bytes=256`,
+  `prepared_representation_embedded=true`, and
+  `prepared_representation_separate=false`.
+  On retry, portable conversion and an exact `.glpkg` may report
+  `already_current`, while `.glrt` is deterministically recreated and
+  revalidated; no whole-command inode or timestamp stability is claimed.
+  Differing observed bundles reject when publishers cooperate with the
+  directory-scoped lock; non-cooperating hostile namespace writers are not
+  covered by the no-overwrite claim. Aliased paths reject. The producer and
+  `text-run --package` derive and validate the complete configuration,
+  tokenizer, license, portable, and prepared-image relationship, including
+  comparison of the embedded receipt with the actual GLRT identity.
+  File-backed prompt, license, and package inputs use bounded stable
+  regular-file reads on supported POSIX hosts. An independent Python oracle
+  decodes the package and prepared relationship and rejects package mutation,
+  changed licenses, and embedded-receipt/image substitution. The path performs
+  no network access and renders token IDs to a process-local sink. It does not
+  read ambient
+  `<output>.json` configuration sidecars; a future explicit bounded/no-follow
+  `--config` input remains roadmap work. It adds no signed
+  publisher-authenticity, production-readiness, checked durable-output,
+  fresh-process ordinary-model, broad tokenizer/model-format, or GPU package
+  claim. See
+  [Ordinary Model Package](docs/MODEL_PACKAGE.md).
 - Added the sink-free fixed-output-count-one prepared-text path. A distinct
   terminal-source recovery contract retains exact package/input/plan/runtime
   identity without target or sink facts; one source step seals the terminal
@@ -97,11 +134,12 @@ before the first stable release.
   writer authority. The existing seven bootstrap, 23 source-transition, and
   19 target-transition process-death boundaries now call these public APIs.
   This foundation remains a caller-orchestrated Zig surface over the bounded
-  POSIX fixture: ordinary `text-run` and serving integration, a user-facing
-  package producer, non-POSIX native evidence, physical power-loss persistence,
-  production-model coverage, and performance claims remain open. One concrete
-  durable store now accepts acknowledgement capacities `0..63`; fixed output
-  count one uses the separate sink-free direct-terminal path.
+  POSIX fixture. The separate ordinary-model producer and process-local
+  package-aware `text-run` admission now exist, while checked durable
+  command/serving output, non-POSIX native evidence, physical power-loss
+  persistence, production-model coverage, and performance claims remain open.
+  One concrete durable store now accepts acknowledgement capacities `0..63`;
+  fixed output count one uses the separate sink-free direct-terminal path.
 - Added the R1k-b3 read-only committed-output inspection slice. The focused
   library and `glacier-prepared-text-result-inspector` command reconcile an
   acknowledged prepared-text checkpoint with its selected immutable
@@ -117,11 +155,11 @@ before the first stable release.
 - Added the R1k-b2 stable package and recoverable raw-input identity slice. A
   fixed 640-byte request-independent package manifest binds portable
   provenance, resolved model geometry, tokenizer behavior, and the license
-  byte count plus SHA-256 identity, while a separate 256-byte record binds one
+  byte count plus SHA-256 identity, while a 256-byte record binds one
   architecture-specific prepared representation without changing the package
-  root. A variable
-  canonical input archive retains both records, the tokenizer manifest and
-  prompt receipt, the raw-input/Common-plan binding, and exact UTF-8 bytes.
+  root. A variable canonical input archive retains both as distinct records,
+  together with the tokenizer manifest and prompt receipt, the
+  raw-input/Common-plan binding, and exact UTF-8 bytes.
   Additive source-live, six-object restart, and eight-object acknowledged
   progress shapes carry those byte-identical inputs through fresh-process
   recovery; legacy pre-tokenized shapes remain decodable. A fresh worker
@@ -144,9 +182,9 @@ before the first stable release.
   and terminal result/state relationships. Its boundary-snapshot root and
   publication transcript are opaque bound leaves: the boundary snapshot is not
   independently reconstructed and the transcript is not independently
-  replayed. Its sink is process-local; durable result recovery, stable package
-  identity, production quality, GPU execution, and native multi-OS evidence
-  remain open.
+  replayed. Its sink remains process-local. The later ordinary-package slice
+  adds package production and admission, but checked durable output,
+  production quality, GPU execution, and native multi-OS evidence remain open.
 - Added sealed POSIX publication for Safetensors-to-`.glacier` conversion. One
   acquired parent-directory authority, directory-scoped lock, and private
   bounded candidate protect the visible target; source, conversion profile,

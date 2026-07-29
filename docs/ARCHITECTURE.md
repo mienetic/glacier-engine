@@ -416,19 +416,29 @@ weight digest remains the exact `.glrt` container digest. R1k-b2 therefore
 keeps a separate request-independent 640-byte package manifest over portable
 provenance, resolved geometry, tokenizer behavior, and the license byte count
 plus SHA-256 identity, plus a 256-byte prepared-representation identity for the
-exact `.glrt` container.
+exact `.glrt` container. The durable raw-input archive retains these as
+distinct records. R1k-b4 concatenates the same record types into one fixed
+896-byte `.glpkg` admission bundle: the manifest package root remains portable
+and request independent, while the embedded receipt pins one exact GLRT
+container hash, size, ABI/source, and configuration relationship. Another
+representation requires another bundle but may keep the same package root.
 Direct Common-contract constructors still treat token-domain,
 token-domain-configuration, and artifact-license roots as caller assertions.
 
 R1k-b1 adds a narrower supported constructor for one raw-text profile. The
 `utf8-byte-v1` manifest rejects vocabularies below 256, validates strict UTF-8,
 applies no normalization or special-token insertion, and maps each byte to the
-same `u32` token. `glacier text-run` first requires the retained fixture
-provenance, geometry, and repository license digest; a fixed raw-input wire
-then joins the tokenizer receipt to the prepared prompt, local plan, Common
-artifact/execution/residency records, request epoch, and license root before
-`SessionV3` admission. This removes caller-asserted tokenizer and license roots
-for that fixture command. R1k-b2 also retains the package, prepared
+same `u32` token. Without `--package`, `glacier text-run` requires the retained
+fixture provenance, geometry, and repository license digest. With
+`--package`, the ordinary-model path instead derives and validates the full
+package/configuration/tokenizer/license/prepared-image relationship for the
+currently supported Safetensors/INT4/CPU profile, comparing the bundle's
+embedded representation receipt with the actual GLRT identity. A fixed
+raw-input wire then joins the tokenizer receipt to the prepared prompt, local
+plan, Common artifact/execution/residency records, request epoch, and license
+root before `SessionV3` admission. This removes caller-asserted tokenizer and
+license roots for both supported command profiles. R1k-b2 also retains the
+package, prepared
 representation, tokenizer wires, binding, and exact UTF-8 bytes as one
 canonical durable input archive; fresh recovery processes re-tokenize before
 admission. Existing direct R1c constructors retain their experimental
@@ -615,8 +625,10 @@ the public composition directly. A separate four-boundary direct-terminal
 smoke covers post-step, post-retirement, selector-rename, and
 post-generation-two deaths, followed by fresh recovery and a zero-step audit.
 One concrete store accepts runtime acknowledgement capacities `0..63`.
-The package producer, ordinary command/serving integration, exhaustive
-storage/power-loss evidence, and non-POSIX native evidence remain open.
+The separate ordinary-model producer and process-local package admission now
+exist. Checked durable command/serving output, exhaustive storage/power-loss
+evidence, broader tokenizer/model/GPU package profiles, and non-POSIX native
+evidence remain open.
 
 The bound-plan and residency bridge is currently an experimental Zig/direct
 API. It has no fixed `BoundPlanV1` wire, projected C verifier, or retained
@@ -1401,6 +1413,9 @@ targets remain gated until their named native adapters and evidence pass.
   tokenizer identity, request-independent package/prepared-representation
   records, raw-input/Common-plan binding, the bounded process-local command,
   and the composed CPU/POSIX recovery fixture.
+- [Ordinary model package](MODEL_PACKAGE.md): user-supplied Safetensors
+  package production, exact prepared-image admission, and the current
+  process-local boundary.
 - [Prepared text checkpoint](PREPARED_TEXT_CHECKPOINT.md): canonical
   non-terminal output/RNG/contiguous-KV state, detached materialization, and
   same-process exact-boundary rebind under retained authority.

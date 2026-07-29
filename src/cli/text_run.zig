@@ -8,9 +8,12 @@
 
 const std = @import("std");
 const engine = @import("engine");
+const bounded_input = engine.bounded_file_input;
 
-const maximum_license_bytes: u64 = 64 * 1024;
-const tokenizer_input_limit: u64 = 4096;
+const maximum_license_bytes =
+    engine.model_package_producer.maximum_license_bytes;
+const tokenizer_input_limit =
+    engine.model_package_producer.tokenizer_max_input_bytes;
 const maximum_new_tokens: usize = 64;
 const request_epoch: u64 = 0x5231_4b42_0000_0001;
 const bank_epoch: u64 = 0x5231_4b42_0000_0002;
@@ -90,6 +93,7 @@ pub fn run(
     var raw_text: ?[]const u8 = null;
     var raw_text_path: ?[]const u8 = null;
     var license_path: ?[]const u8 = null;
+    var package_path: ?[]const u8 = null;
     var new_tokens: usize = 4;
     var index: usize = 3;
     while (index < args.len) : (index += 1) {
@@ -111,6 +115,11 @@ pub fn run(
             index += 1;
             if (index >= args.len) return error.InvalidUsage;
             license_path = args[index];
+        } else if (std.mem.eql(u8, argument, "--package")) {
+            if (package_path != null) return error.InvalidUsage;
+            index += 1;
+            if (index >= args.len) return error.InvalidUsage;
+            package_path = args[index];
         } else if (std.mem.eql(u8, argument, "--n")) {
             index += 1;
             if (index >= args.len) return error.InvalidUsage;
@@ -130,7 +139,7 @@ pub fn run(
             try usage(writer);
             return error.InvalidUsage;
         };
-        const bytes = try readBoundedStableFile(
+        const bytes = try bounded_input.readAllocV1(
             allocator,
             path,
             tokenizer_input_limit,
@@ -138,7 +147,7 @@ pub fn run(
         owned_text = bytes;
         break :blk bytes;
     };
-    const retained_license_path = license_path orelse {
+    const selected_license_path = license_path orelse {
         try usage(writer);
         return error.InvalidUsage;
     };
@@ -150,54 +159,111 @@ pub fn run(
     if (!std.unicode.utf8ValidateSlice(text))
         return error.InvalidUtf8;
 
-    const license_bytes = try readBoundedStableFile(
+    const license_bytes = try bounded_input.readAllocV1(
         allocator,
-        retained_license_path,
+        selected_license_path,
         maximum_license_bytes,
     );
     defer allocator.free(license_bytes);
     if (license_bytes.len == 0) return error.InvalidLicense;
     const artifact_license_sha256 =
         engine.core.model_contract.sha256(license_bytes);
-    if (!std.mem.eql(
-        u8,
-        &artifact_license_sha256,
-        &retained_fixture_license_sha256,
-    ))
+
+    var package_storage: ?[]u8 = null;
+    defer if (package_storage) |bytes| allocator.free(bytes);
+    const admitted_bundle = if (package_path) |path| blk: {
+        const bytes = try bounded_input.readAllocV1(
+            allocator,
+            path,
+            engine.model_package_manifest.admission_bundle_bytes,
+        );
+        package_storage = bytes;
+        if (bytes.len !=
+            engine.model_package_manifest.admission_bundle_bytes)
+            return error.InvalidPackageLength;
+        const admission = try engine.model_package_manifest
+            .decodeAdmissionBundleV1(bytes);
+        const package = admission.package;
+        _ = try engine.model_package_producer
+            .validateSupportedPackageV1(package);
+        const license_byte_count = std.math.cast(
+            u64,
+            license_bytes.len,
+        ) orelse return error.InvalidLicense;
+        if (package.license_bytes != license_byte_count or
+            !std.mem.eql(
+                u8,
+                &package.license_sha256,
+                &artifact_license_sha256,
+            ))
+            return error.PackageLicenseMismatch;
+        break :blk admission;
+    } else null;
+    if (admitted_bundle == null and
+        !std.mem.eql(
+            u8,
+            &artifact_license_sha256,
+            &retained_fixture_license_sha256,
+        ))
         return error.UnsupportedFixtureLicense;
 
-    var model = try engine.loader.loadPreparedWithOptions(
+    const model_file = try bounded_input.openRegularV1(model_path);
+    var model = try engine.loader.loadPreparedOwnedFileWithOptionsV1(
         allocator,
-        model_path,
-        .{ .mlp_layout = .separate_required },
+        model_file,
+        .{
+            .expected_source_fingerprint = if (admitted_bundle) |admission|
+                admission.package.model_content_sha256
+            else
+                retained_fixture_source_fingerprint,
+            .mlp_layout = .separate_required,
+        },
     );
     defer model.deinit();
-    const image_identity = (model.prepared_image orelse
-        return error.PreparedImageRequired).identityV1();
-    if (!std.mem.eql(
-        u8,
-        &image_identity.source_fingerprint,
-        &retained_fixture_source_fingerprint,
-    ) or
-        model.config.dim != 32 or
-        model.config.hidden_dim != 32 or
-        model.config.num_layers != 1 or
-        model.config.vocab_size != 256 or
-        model.config.num_heads != 1 or
-        model.config.head_dim != 32 or
-        model.config.num_kv_heads != 1 or
-        model.config.rms_eps != @as(f32, 1e-6) or
-        model.config.rope_theta != @as(f32, 10000.0) or
-        model.config.tie_word_embeddings)
-        return error.UnsupportedFixtureImage;
-    const vocab_size = std.math.cast(
-        u32,
-        model.config.vocab_size,
-    ) orelse return error.UnsupportedVocabulary;
-    const manifest = try engine.tokenizer.makeUtf8ByteManifestV1(
-        vocab_size,
-        tokenizer_input_limit,
-    );
+    const image_identity = try model.preparedImageIdentityV1();
+    var admitted_representation: ?engine.model_package_manifest.PreparedRepresentationV1 = null;
+    const manifest = if (admitted_bundle) |admission| blk: {
+        const package = admission.package;
+        admitted_representation = try engine
+            .model_package_producer
+            .preparedRepresentationForModelV1(
+            package,
+            &model,
+        );
+        if (!std.meta.eql(
+            admitted_representation.?,
+            admission.representation,
+        ))
+            return error.PackageRepresentationMismatch;
+        break :blk try engine.model_package_producer
+            .validateSupportedPackageV1(package);
+    } else blk: {
+        if (!std.mem.eql(
+            u8,
+            &image_identity.source_fingerprint,
+            &retained_fixture_source_fingerprint,
+        ) or
+            model.config.dim != 32 or
+            model.config.hidden_dim != 32 or
+            model.config.num_layers != 1 or
+            model.config.vocab_size != 256 or
+            model.config.num_heads != 1 or
+            model.config.head_dim != 32 or
+            model.config.num_kv_heads != 1 or
+            model.config.rms_eps != @as(f32, 1e-6) or
+            model.config.rope_theta != @as(f32, 10000.0) or
+            model.config.tie_word_embeddings)
+            return error.UnsupportedFixtureImage;
+        const vocab_size = std.math.cast(
+            u32,
+            model.config.vocab_size,
+        ) orelse return error.UnsupportedVocabulary;
+        break :blk try engine.tokenizer
+            .makeUtf8ByteManifestV1(
+            vocab_size,
+            tokenizer_input_limit,
+        );
+    };
     var tokenized = try engine.tokenizer.tokenizeUtf8BytesV1(
         allocator,
         manifest,
@@ -478,10 +544,11 @@ pub fn run(
     );
     const prompt_source =
         if (raw_text_path != null) "file" else "argv";
+    const package_admission = admitted_bundle != null;
     try writer.print(
         "{{\"schema\":\"glacier.prepared-text-raw-run/v1\"," ++
             "\"profile\":\"utf8-byte-v1\"," ++
-            "\"model_profile\":\"retained-r1kb1-fixture-v1\"," ++
+            "\"model_profile\":\"{s}\"," ++
             "\"prompt_source\":\"{s}\"," ++
             "\"output_rendering\":\"token-ids\"," ++
             "\"prepared_image\":true,\"common_plan\":true," ++
@@ -489,13 +556,48 @@ pub fn run(
             "\"durable_result_sink\":false," ++
             "\"fresh_process_recovery\":false," ++
             "\"production_model\":false," ++
-            "\"retained_fixture_profile_verified\":true," ++
+            "\"package_admission\":{s}," ++
+            "\"user_supplied_model\":{s}," ++
+            "\"retained_fixture_profile_verified\":{s}," ++
             "\"prompt_hashes_are_anonymized\":false," ++
             "\"replay_safe\":false," ++
             "\"boundary_snapshot_independently_verified\":false," ++
             "\"publication_transcript_replayed\":false,",
-        .{prompt_source},
+        .{
+            if (package_admission)
+                "ordinary-package-v1"
+            else
+                "retained-r1kb1-fixture-v1",
+            prompt_source,
+            if (package_admission) "true" else "false",
+            if (package_admission) "true" else "false",
+            if (package_admission) "false" else "true",
+        },
     );
+    if (admitted_bundle) |admission| {
+        const package = admission.package;
+        const package_hex = std.fmt.bytesToHex(
+            package.package_sha256,
+            .lower,
+        );
+        const representation_hex = std.fmt.bytesToHex(
+            admitted_representation.?.representation_sha256,
+            .lower,
+        );
+        try writer.print(
+            "\"package_sha256\":\"{s}\"," ++
+                "\"representation_sha256\":\"{s}\",",
+            .{
+                &package_hex,
+                &representation_hex,
+            },
+        );
+    } else {
+        try writer.writeAll(
+            "\"package_sha256\":null," ++
+                "\"representation_sha256\":null,",
+        );
+    }
     try writer.print(
         "\"prompt_bytes\":{d},\"prompt_tokens\":{d}," ++
             "\"output_tokens\":[",
@@ -617,38 +719,9 @@ pub fn run(
 
 fn usage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
-        "usage: glacier text-run <retained-fixture.glrt> " ++
+        "usage: glacier text-run <model.glrt> " ++
             "(--text <utf8>|--text-file <path>) " ++
-            "--license <license-file> [--n 1..64]\n",
+            "--license <license-file> [--package <model.glpkg>] " ++
+            "[--n 1..64]\n",
     );
-}
-
-fn readBoundedStableFile(
-    allocator: std.mem.Allocator,
-    path: []const u8,
-    maximum_bytes: u64,
-) ![]u8 {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    const before = try file.stat();
-    if (before.size > maximum_bytes)
-        return error.FileTooLarge;
-    const bytes = try allocator.alloc(u8, @intCast(before.size));
-    errdefer allocator.free(bytes);
-    var offset: usize = 0;
-    while (offset < bytes.len) {
-        const read_count = try file.pread(
-            bytes[offset..],
-            @intCast(offset),
-        );
-        if (read_count == 0) return error.UnexpectedEndOfFile;
-        offset += read_count;
-    }
-    const after = try file.stat();
-    if (before.inode != after.inode or
-        before.size != after.size or
-        before.mtime != after.mtime or
-        before.ctime != after.ctime)
-        return error.LicenseChanged;
-    return bytes;
 }

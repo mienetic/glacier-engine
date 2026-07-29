@@ -1307,6 +1307,7 @@ pub fn build(b: *std.Build) void {
                 "-m",
                 "unittest",
                 "bench.tests.test_prepared_text_raw_input",
+                "bench.tests.test_prepared_text_package",
             });
         run_text_runtime_binding_model.setCwd(b.path("."));
         run_text_runtime_binding_model.setEnvironmentVariable(

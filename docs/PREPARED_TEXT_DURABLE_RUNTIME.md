@@ -4,7 +4,9 @@ Status: **integrated experimental Zig composition surface**.
 
 This document describes the current public filesystem foundation for the
 retained prepared-text recovery path. It does not describe a durable
-`glacier text-run` command: ordinary CLI and serving integration remain open.
+`glacier text-run` command: ordinary package production and process-local
+admission now exist, while checked durable CLI and serving integration remain
+open.
 
 ## Public modules
 
@@ -190,8 +192,8 @@ compilation.
 This foundation does not yet provide:
 
 - an exhaustive direct-terminal I/O-fault, storage-fault, or power-loss matrix;
-- a public user-facing producer for the request-independent package manifest;
-- durable `text-run`, unary serving, or streaming serving integration;
+- checked durable output or fresh-process continuation for package-aware
+  `text-run`, unary serving, or streaming serving integration;
 - a stable public ABI or cross-language session binding;
 - variable-length or early-EOS durable output;
 - GPU-resident continuation, remote delivery, or distributed exactly-once

@@ -297,8 +297,9 @@ It does not yet cover:
 - native Linux/FreeBSD recovery evidence;
 - a production model and tokenizer;
 - authentication, historical attestation, confidentiality, or privacy; or
-- ordinary `text-run`, unary serving, or streaming result rendering;
-- a user-facing ordinary-model package producer; or
+- checked durable `text-run`, unary serving, or streaming result rendering for
+  the separate ordinary-model package producer and process-local admission
+  path; or
 - non-POSIX native recovery evidence.
 
 ## Focused verification

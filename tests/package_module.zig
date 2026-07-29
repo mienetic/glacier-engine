@@ -70,6 +70,12 @@ test "package exports runtime and core modules independently of host tools" {
         @hasDecl(glacier, "model_package_manifest"),
     );
     try std.testing.expect(
+        @hasDecl(glacier, "model_package_producer"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "bounded_file_input"),
+    );
+    try std.testing.expect(
         @hasDecl(glacier, "prepared_text_input_archive"),
     );
     try std.testing.expect(

@@ -26,12 +26,21 @@ pub const Version = enum(u16) {
 
 /// Current writer version. Readers also accept the explicit read-only v1 ABI.
 pub const VERSION: u16 = @intFromEnum(Version.v2);
+pub const format_abi_v1: u64 = 0x474c_5254_0000_0001;
+pub const format_abi_v2: u64 = 0x474c_5254_0000_0002;
 pub const HEADER_SIZE: usize = 512;
 pub const V1_RECORD_SIZE: usize = 128;
 pub const RECORD_SIZE: usize = 160;
 pub const DATA_ALIGNMENT: u16 = 64;
 /// Layer index reserved for embedding, final_norm, and lm_head records.
 pub const GLOBAL_LAYER: u32 = std.math.maxInt(u32);
+
+pub fn formatAbiForVersion(version: Version) u64 {
+    return switch (version) {
+        .v1 => format_abi_v1,
+        .v2 => format_abi_v2,
+    };
+}
 
 /// AArch64 prepared images contain the rows4/K16 + FP16 scale representation
 /// consumed by the native packed kernels. Preserve this value for GLRT v1

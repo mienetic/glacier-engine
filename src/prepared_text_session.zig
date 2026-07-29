@@ -873,7 +873,9 @@ pub fn makePlanV1(
         return Error.InvalidConfiguration;
     const image = model.prepared_image orelse
         return Error.PreparedImageRequired;
-    const image_identity = image.identityV1();
+    const image_identity =
+        model.prepared_image_identity_cache orelse
+        image.identityV1();
     if (isZeroDigest(image_identity.source_fingerprint) or
         !std.mem.eql(
             u8,

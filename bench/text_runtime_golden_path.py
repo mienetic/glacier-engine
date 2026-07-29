@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
-from pathlib import Path
+import os
 import re
+import struct
 import subprocess
 import tempfile
+import zlib
+from pathlib import Path
 from typing import Mapping, Sequence
 
 from bench import model_contract as contract
+from bench import prepared_text_package as package_oracle
 from bench import prepared_text_raw_input as raw_input
 
 
@@ -86,21 +91,24 @@ def _run_text(
     license_path: Path,
     text: str,
     prompt_path: Path,
+    *,
+    package_path: Path | None = None,
 ) -> dict[str, object]:
     prompt_path.write_bytes(text.encode("utf-8", "strict"))
-    result = _run(
-        (
-            str(executable),
-            "text-run",
-            str(image),
-            "--text-file",
-            str(prompt_path),
-            "--license",
-            str(license_path),
-            "--n",
-            str(NEW_TOKENS),
-        )
-    )
+    command = [
+        str(executable),
+        "text-run",
+        str(image),
+        "--text-file",
+        str(prompt_path),
+        "--license",
+        str(license_path),
+        "--n",
+        str(NEW_TOKENS),
+    ]
+    if package_path is not None:
+        command.extend(("--package", str(package_path)))
+    result = _run(command)
     try:
         report = json.loads(result.stdout)
     except json.JSONDecodeError as error:
@@ -147,12 +155,236 @@ def _report_int(report: Mapping[str, object], name: str) -> int:
     return value
 
 
+def _verify_package_artifacts(
+    *,
+    source: Path,
+    portable: Path,
+    prepared: Path,
+    package_path: Path,
+    license_bytes: bytes,
+    report: Mapping[str, object],
+) -> tuple[dict[str, object], str]:
+    bundle_wire = package_path.read_bytes()
+    bundle_facts = package_oracle.decode_admission_bundle(bundle_wire)
+    package_facts = bundle_facts["package"]
+    representation_facts = bundle_facts["representation"]
+    source_bytes = source.read_bytes()
+    portable_bytes = portable.read_bytes()
+    prepared_bytes = prepared.read_bytes()
+    if len(portable_bytes) < 256 or portable_bytes[:4] != b"GLAC":
+        raise GoldenPathError("invalid portable package artifact")
+    (
+        portable_version,
+        header_size,
+        metadata_offset,
+        metadata_bytes,
+        page_count,
+    ) = struct.unpack_from("<HHQQQ", portable_bytes, 4)
+    if (
+        portable_version != 1
+        or header_size != 256
+        or metadata_offset + metadata_bytes > len(portable_bytes)
+    ):
+        raise GoldenPathError("invalid portable package header")
+    try:
+        metadata = json.loads(
+            portable_bytes[metadata_offset : metadata_offset + metadata_bytes]
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise GoldenPathError("invalid portable conversion metadata") from error
+    if not isinstance(metadata, dict):
+        raise GoldenPathError("invalid portable conversion metadata")
+
+    portable_sha256 = hashlib.sha256(portable_bytes).digest()
+    source_sha256 = hashlib.sha256(source_bytes).digest()
+    config = package_facts["config"]
+    expected_model_content = package_oracle.model_content_sha256(
+        portable_sha256,
+        config,
+    )
+    _, tokenizer_wire, _ = raw_input.tokenize(
+        "Ice",
+        vocab_size=config["vocab"],
+        max_input_bytes=4096,
+    )
+    tokenizer_facts = raw_input.decode_manifest(tokenizer_wire)
+    if (
+        package_facts["family"] != 1
+        or package_facts["source_format"] != 1
+        or package_facts["portable_format_abi"] != 0x474C_4143_0000_0001
+        or package_facts["conversion_profile_abi"] != 0x474C_4350_0000_0001
+        or package_facts["conversion_plan_abi"] != 0x474C_434E_0000_0001
+        or package_facts["tokenizer_manifest_abi"] != raw_input.MANIFEST_ABI
+        or package_facts["tokenizer_manifest_bytes"] != raw_input.MANIFEST_BYTES
+        or package_facts["source_bytes"] != len(source_bytes)
+        or package_facts["portable_bytes"] != len(portable_bytes)
+        or package_facts["portable_page_count"] != page_count
+        or package_facts["license_bytes"] != len(license_bytes)
+        or package_facts["source_sha256"] != source_sha256
+        or package_facts["portable_artifact_sha256"] != portable_sha256
+        or package_facts["model_content_sha256"] != expected_model_content
+        or package_facts["tokenizer_config_sha256"] != tokenizer_facts["config_sha256"]
+        or package_facts["tokenizer_domain_sha256"] != tokenizer_facts["domain_sha256"]
+        or package_facts["tokenizer_behavior_sha256"]
+        != tokenizer_facts["behavior_sha256"]
+        or package_facts["license_sha256"] != hashlib.sha256(license_bytes).digest()
+        or metadata.get("source_bytes") != len(source_bytes)
+        or metadata.get("source_sha256") != source_sha256.hex()
+        or metadata.get("num_pages") != page_count
+        or metadata.get("conversion_profile_sha256")
+        != package_facts["conversion_profile_sha256"].hex()
+        or metadata.get("conversion_plan_sha256")
+        != package_facts["conversion_plan_sha256"].hex()
+    ):
+        raise GoldenPathError("package/portable relation mismatch")
+
+    if (
+        len(prepared_bytes) < 512
+        or prepared_bytes[:4] != b"GLRT"
+        or struct.unpack_from("<H", prepared_bytes, 4)[0] != 2
+        or struct.unpack_from("<Q", prepared_bytes, 40)[0] != len(prepared_bytes)
+        or prepared_bytes[48:80] != expected_model_content
+        or struct.unpack_from("<7I", prepared_bytes, 112)
+        != tuple(config[name] for name in package_oracle.CONFIG_U32_FIELDS)
+        or prepared_bytes[140] != int(config["tie_embeddings"])
+        or any(prepared_bytes[141:144])
+        or struct.unpack_from("<I", prepared_bytes, 144)[0] != config["rms_eps_bits"]
+        or struct.unpack_from("<I", prepared_bytes, 148)[0] != config["rope_theta_bits"]
+    ):
+        raise GoldenPathError("package/prepared relation mismatch")
+    prepared_sha256 = hashlib.sha256(prepared_bytes).digest()
+    representation_wire = package_oracle.encode_prepared_representation(
+        {
+            "format_abi": 0x474C_5254_0000_0002,
+            "format_version": 2,
+            "container_bytes": len(prepared_bytes),
+            "package_sha256": package_facts["package_sha256"],
+            "resolved_config_sha256": package_facts["resolved_config_sha256"],
+            "source_fingerprint": expected_model_content,
+            "abi_fingerprint": prepared_bytes[80:112],
+            "container_sha256": prepared_sha256,
+        }
+    )
+    if (
+        bundle_wire[: package_oracle.MANIFEST_BYTES]
+        != package_oracle.encode_manifest(
+            {
+                "family": package_facts["family"],
+                "source_format": package_facts["source_format"],
+                "config": package_facts["config"],
+                **{
+                    name: package_facts[name]
+                    for name in package_oracle.MANIFEST_U64_FIELDS
+                },
+                **{
+                    name: package_facts[name]
+                    for name in package_oracle.MANIFEST_DIGEST_FIELDS
+                },
+            }
+        )
+        or bundle_wire[package_oracle.MANIFEST_BYTES :] != representation_wire
+        or representation_facts["container_bytes"] != len(prepared_bytes)
+        or representation_facts["container_sha256"] != prepared_sha256
+        or representation_facts["abi_fingerprint"] != prepared_bytes[80:112]
+    ):
+        raise GoldenPathError("package/prepared representation mismatch")
+    representation_sha256 = representation_facts["representation_sha256"].hex()
+
+    expected_report = {
+        "schema": "glacier.model-package-producer/v1",
+        "family": "autoregressive",
+        "source_format": "safetensors",
+        "tokenizer_profile": "utf8-byte-v1",
+        "prepared_layout": "separate",
+        "source_bytes": len(source_bytes),
+        "portable_bytes": len(portable_bytes),
+        "portable_page_count": page_count,
+        "prepared_bytes": len(prepared_bytes),
+        "package_bytes": package_oracle.ADMISSION_BUNDLE_BYTES,
+        "package_manifest_bytes": package_oracle.MANIFEST_BYTES,
+        "prepared_representation_bytes": (package_oracle.PREPARED_REPRESENTATION_BYTES),
+        "license_bytes": len(license_bytes),
+        "tokenizer_max_input_bytes": 4096,
+        "config": {
+            **{name: config[name] for name in package_oracle.CONFIG_U32_FIELDS},
+            "rms_eps_bits": config["rms_eps_bits"],
+            "rope_theta_bits": config["rope_theta_bits"],
+            "tie_embeddings": config["tie_embeddings"],
+        },
+        "source_sha256": source_sha256.hex(),
+        "portable_artifact_sha256": portable_sha256.hex(),
+        "conversion_profile_sha256": package_facts["conversion_profile_sha256"].hex(),
+        "conversion_plan_sha256": package_facts["conversion_plan_sha256"].hex(),
+        "model_content_sha256": expected_model_content.hex(),
+        "package_sha256": package_facts["package_sha256"].hex(),
+        "representation_sha256": representation_sha256,
+        "prepared_artifact_sha256": prepared_sha256.hex(),
+        "prepared_abi_fingerprint": prepared_bytes[80:112].hex(),
+        "tokenizer_domain_sha256": tokenizer_facts["domain_sha256"].hex(),
+        "tokenizer_behavior_sha256": tokenizer_facts["behavior_sha256"].hex(),
+        "tokenizer_config_sha256": tokenizer_facts["config_sha256"].hex(),
+        "license_sha256": hashlib.sha256(license_bytes).hexdigest(),
+        "request_independent": True,
+        "prepared_representation_separate": False,
+        "prepared_representation_embedded": True,
+        "network_required": False,
+        "publisher_authenticity_proven": False,
+        "production_model_verified": False,
+    }
+    for name, expected in expected_report.items():
+        if report.get(name) != expected:
+            raise GoldenPathError(f"package report field {name!r} mismatch")
+    return package_facts, representation_sha256
+
+
+def _reroot_package(
+    package_facts: Mapping[str, object],
+    representation_facts: Mapping[str, object],
+    digest_name: str,
+) -> bytes:
+    value: dict[str, object] = {
+        "family": package_facts["family"],
+        "source_format": package_facts["source_format"],
+        "config": package_facts["config"],
+    }
+    for name in package_oracle.MANIFEST_U64_FIELDS:
+        value[name] = package_facts[name]
+    for name in package_oracle.MANIFEST_DIGEST_FIELDS:
+        value[name] = package_facts[name]
+    replacement = hashlib.sha256(
+        b"glacier-golden-path-reroot-v1\x00" + digest_name.encode("ascii")
+    ).digest()
+    if replacement == value[digest_name]:
+        raise GoldenPathError("reroot digest unexpectedly unchanged")
+    value[digest_name] = replacement
+    manifest = package_oracle.encode_manifest(value)
+    rerooted_package = package_oracle.decode_manifest(manifest)
+    representation = package_oracle.encode_prepared_representation(
+        {
+            "format_abi": representation_facts["format_abi"],
+            "format_version": representation_facts["format_version"],
+            "container_bytes": representation_facts["container_bytes"],
+            "package_sha256": rerooted_package["package_sha256"],
+            "resolved_config_sha256": rerooted_package["resolved_config_sha256"],
+            "source_fingerprint": rerooted_package["model_content_sha256"],
+            "abi_fingerprint": representation_facts["abi_fingerprint"],
+            "container_sha256": representation_facts["container_sha256"],
+        }
+    )
+    return package_oracle.encode_admission_bundle(
+        manifest,
+        representation,
+    )
+
+
 def _verify_report(
     report: Mapping[str, object],
     *,
     text: str,
     license_bytes: bytes,
     image: Path,
+    package_facts: Mapping[str, object] | None = None,
+    representation_sha256: str | None = None,
 ) -> None:
     tokens, manifest, prompt = raw_input.tokenize(
         text,
@@ -164,7 +396,11 @@ def _verify_report(
     expected = {
         "schema": "glacier.prepared-text-raw-run/v1",
         "profile": "utf8-byte-v1",
-        "model_profile": "retained-r1kb1-fixture-v1",
+        "model_profile": (
+            "ordinary-package-v1"
+            if package_facts is not None
+            else "retained-r1kb1-fixture-v1"
+        ),
         "prompt_source": "file",
         "output_rendering": "token-ids",
         "prepared_image": True,
@@ -173,7 +409,9 @@ def _verify_report(
         "durable_result_sink": False,
         "fresh_process_recovery": False,
         "production_model": False,
-        "retained_fixture_profile_verified": True,
+        "package_admission": package_facts is not None,
+        "user_supplied_model": package_facts is not None,
+        "retained_fixture_profile_verified": package_facts is None,
         "prompt_hashes_are_anonymized": False,
         "replay_safe": False,
         "boundary_snapshot_independently_verified": False,
@@ -183,9 +421,7 @@ def _verify_report(
         "tokenizer_vocab_size": 256,
         "tokenizer_max_input_bytes": 4096,
         "tokenizer_domain_sha256": raw_input.tokenizer_domain_sha256().hex(),
-        "tokenizer_behavior_sha256": (
-            raw_input.tokenizer_behavior_sha256().hex()
-        ),
+        "tokenizer_behavior_sha256": (raw_input.tokenizer_behavior_sha256().hex()),
         "tokenizer_config_sha256": manifest_facts["config_sha256"].hex(),
         "prompt_receipt_sha256": prompt_facts["receipt_sha256"].hex(),
         "raw_text_sha256": prompt_facts["raw_text_sha256"].hex(),
@@ -193,17 +429,20 @@ def _verify_report(
         "prepared_prompt_sha256": raw_input.prepared_prompt_sha256(tokens).hex(),
         "prepared_image_sha256": _file_sha256(image),
         "prepared_source_fingerprint": (
-            EXPECTED_PREPARED_SOURCE_FINGERPRINT
+            package_facts["model_content_sha256"].hex()
+            if package_facts is not None
+            else EXPECTED_PREPARED_SOURCE_FINGERPRINT
         ),
+        "package_sha256": (
+            package_facts["package_sha256"].hex() if package_facts is not None else None
+        ),
+        "representation_sha256": representation_sha256,
         "artifact_license_sha256": hashlib.sha256(license_bytes).hexdigest(),
         "final_bank_host_bytes": 0,
         "runtime_self_verified": True,
     }
     for name, value in expected.items():
-        if (
-            type(report.get(name)) is not type(value)
-            or report.get(name) != value
-        ):
+        if type(report.get(name)) is not type(value) or report.get(name) != value:
             raise GoldenPathError(
                 f"report field {name!r}: {report.get(name)!r} != {value!r}"
             )
@@ -212,8 +451,7 @@ def _verify_report(
         not isinstance(output_tokens, list)
         or len(output_tokens) != NEW_TOKENS
         or any(
-            type(token) is not int or not 0 <= token < 256
-            for token in output_tokens
+            type(token) is not int or not 0 <= token < 256 for token in output_tokens
         )
     ):
         raise GoldenPathError("invalid output token list")
@@ -240,11 +478,9 @@ def _verify_report(
         raw_input.BINDING_BYTES,
     )
     binding = raw_input.decode_binding(binding_wire)
-    if (
-        binding_wire != raw_input.binding_wire_from_report(report)
-        or binding["binding_sha256"]
-        != _report_digest(report, "raw_input_binding_sha256")
-    ):
+    if binding_wire != raw_input.binding_wire_from_report(report) or binding[
+        "binding_sha256"
+    ] != _report_digest(report, "raw_input_binding_sha256"):
         raise GoldenPathError("raw-input binding mismatch")
 
     artifact = contract.decode_artifact(
@@ -293,9 +529,7 @@ def _verify_report(
     image_sha256 = bytes.fromhex(_file_sha256(image))
     license_sha256 = hashlib.sha256(license_bytes).digest()
     prepared_image_bytes = _report_int(report, "prepared_image_bytes")
-    local_max_new_tokens = _report_int(
-        report, "local_plan_max_new_tokens"
-    )
+    local_max_new_tokens = _report_int(report, "local_plan_max_new_tokens")
     if (
         artifact["weights_sha256"] != image_sha256
         or artifact["weight_bytes"] != image.stat().st_size
@@ -305,18 +539,11 @@ def _verify_report(
         or local_max_new_tokens != plan["output_dimensions"]
         or local_max_new_tokens != result["output_dimensions"]
         or len(output_tokens) != local_max_new_tokens
-        or plan["maximum_absolute_output"]
-        != manifest_facts["vocab_size"] - 1
-        or any(
-            token > plan["maximum_absolute_output"]
-            for token in output_tokens
-        )
-        or plan["processor_state_sha256"]
-        != raw_input.tokenizer_domain_sha256()
-        or plan["processor_bundle_sha256"]
-        != manifest_facts["config_sha256"]
-        or plan["media_object_sha256"]
-        != raw_input.prepared_prompt_sha256(tokens)
+        or plan["maximum_absolute_output"] != manifest_facts["vocab_size"] - 1
+        or any(token > plan["maximum_absolute_output"] for token in output_tokens)
+        or plan["processor_state_sha256"] != raw_input.tokenizer_domain_sha256()
+        or plan["processor_bundle_sha256"] != manifest_facts["config_sha256"]
+        or plan["media_object_sha256"] != raw_input.prepared_prompt_sha256(tokens)
         or plan["challenge_sha256"] != prompt_facts["receipt_sha256"]
         or plan["request_epoch"] != report.get("request_epoch")
     ):
@@ -326,12 +553,8 @@ def _verify_report(
     if not isinstance(claim, dict) or claim != residency["request_claim"]:
         raise GoldenPathError("local claim mismatch")
     local_plan_root = raw_input.local_plan_sha256(
-        source_fingerprint=_report_digest(
-            report, "prepared_source_fingerprint"
-        ),
-        abi_fingerprint=_report_digest(
-            report, "prepared_abi_fingerprint"
-        ),
+        source_fingerprint=_report_digest(report, "prepared_source_fingerprint"),
+        abi_fingerprint=_report_digest(report, "prepared_abi_fingerprint"),
         container_bytes=prepared_image_bytes,
         container_sha256=image_sha256,
         prompt_tokens=len(tokens),
@@ -361,9 +584,8 @@ def _verify_report(
         manifest_facts["config_sha256"],
         output_tokens,
     )
-    if (
-        output_root != result["output_sha256"]
-        or output_root != _report_digest(report, "output_sha256")
+    if output_root != result["output_sha256"] or output_root != _report_digest(
+        report, "output_sha256"
     ):
         raise GoldenPathError("terminal output root mismatch")
     source_mapping_root = contract.prepared_terminal_source_mapping_root_v1(
@@ -385,17 +607,10 @@ def _verify_report(
         raise GoldenPathError("terminal adapter mismatch")
 
     publication_after = {
-        "request_epoch": _report_int(
-            report,
-            "publication_state_after_request_epoch"
-        ),
-        "next_sequence": _report_int(
-            report,
-            "publication_state_after_next_sequence"
-        ),
+        "request_epoch": _report_int(report, "publication_state_after_request_epoch"),
+        "next_sequence": _report_int(report, "publication_state_after_next_sequence"),
         "visible_results": _report_int(
-            report,
-            "publication_state_after_visible_results"
+            report, "publication_state_after_visible_results"
         ),
         "artifact_sha256": artifact["artifact_sha256"],
         "previous_result_sha256": _report_digest(
@@ -409,13 +624,10 @@ def _verify_report(
         or publication_after["request_epoch"] != result["request_epoch"]
         or publication_after["next_sequence"] != publication_sequence + 1
         or publication_after["visible_results"] != publication_sequence + 1
-        or publication_after["previous_result_sha256"]
-        != result["result_sha256"]
+        or publication_after["previous_result_sha256"] != result["result_sha256"]
     ):
         raise GoldenPathError("terminal publication successor mismatch")
-    publication_after_root = contract.publication_state_root(
-        publication_after
-    )
+    publication_after_root = contract.publication_state_root(publication_after)
     if publication_after_root != _report_digest(
         report,
         "publication_state_after_sha256",
@@ -479,10 +691,8 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
         if "ok: published" not in conversion.stdout:
             raise GoldenPathError("first conversion did not publish")
         if (
-            _field(conversion.stdout, "source_sha256")
-            != EXPECTED_SOURCE_SHA256
-            or _field(conversion.stdout, "artifact_sha256")
-            != EXPECTED_GLACIER_SHA256
+            _field(conversion.stdout, "source_sha256") != EXPECTED_SOURCE_SHA256
+            or _field(conversion.stdout, "artifact_sha256") != EXPECTED_GLACIER_SHA256
             or _file_sha256(container) != EXPECTED_GLACIER_SHA256
         ):
             raise GoldenPathError("portable artifact identity drift")
@@ -527,9 +737,7 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             prompt_path,
         )
         if first != second:
-            raise GoldenPathError(
-                "identical fresh invocation was not deterministic"
-            )
+            raise GoldenPathError("identical fresh invocation was not deterministic")
 
         changed_prompt = _run_text(
             executable,
@@ -584,27 +792,124 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             expect_success=False,
         )
 
+        ordinary_source = root / "ordinary.safetensors"
         foreign_container = root / "foreign.glacier"
         foreign_image = root / "foreign.glrt"
+        foreign_package = root / "foreign.glpkg"
         _run(
             (
                 str(executable),
-                "convert",
-                "--int4",
-                "--group-size",
+                "gen-fixture",
+                str(ordinary_source),
+                "--dim",
                 "32",
-                str(source),
-                str(foreign_container),
+                "--hidden",
+                "64",
+                "--layers",
+                "1",
+                "--vocab",
+                "256",
             )
         )
-        _run(
+        package_result = _run(
             (
                 str(executable),
-                "prepare",
+                "package-model",
+                str(ordinary_source),
                 str(foreign_container),
                 str(foreign_image),
+                str(foreign_package),
+                "--license",
+                str(license_path),
+                "--group-size",
+                "16",
             )
         )
+        try:
+            package_report = json.loads(package_result.stdout)
+        except json.JSONDecodeError as error:
+            raise GoldenPathError(
+                "package-model did not emit one JSON value"
+            ) from error
+        if not isinstance(package_report, dict):
+            raise GoldenPathError("package-model report is not an object")
+        package_facts, representation_sha256 = _verify_package_artifacts(
+            source=ordinary_source,
+            portable=foreign_container,
+            prepared=foreign_image,
+            package_path=foreign_package,
+            license_bytes=license_bytes,
+            report=package_report,
+        )
+        if (
+            package_report.get("conversion_disposition") != "published"
+            or package_report.get("package_disposition") != "published"
+        ):
+            raise GoldenPathError("first package publication was not new")
+
+        ordinary_report = _run_text(
+            executable,
+            foreign_image,
+            license_path,
+            PROMPT,
+            prompt_path,
+            package_path=foreign_package,
+        )
+        _verify_report(
+            ordinary_report,
+            text=PROMPT,
+            license_bytes=license_bytes,
+            image=foreign_image,
+            package_facts=package_facts,
+            representation_sha256=representation_sha256,
+        )
+
+        first_package_wire = foreign_package.read_bytes()
+        first_bundle_facts = package_oracle.decode_admission_bundle(first_package_wire)
+        representation_facts = first_bundle_facts["representation"]
+        retry_result = _run(
+            (
+                str(executable),
+                "package-model",
+                str(ordinary_source),
+                str(foreign_container),
+                str(foreign_image),
+                str(foreign_package),
+                "--license",
+                str(license_path),
+                "--group-size",
+                "16",
+            )
+        )
+        try:
+            retry_report = json.loads(retry_result.stdout)
+        except json.JSONDecodeError as error:
+            raise GoldenPathError(
+                "package-model retry did not emit one JSON value"
+            ) from error
+        if isinstance(retry_report, dict):
+            retry_facts, retry_representation_sha256 = _verify_package_artifacts(
+                source=ordinary_source,
+                portable=foreign_container,
+                prepared=foreign_image,
+                package_path=foreign_package,
+                license_bytes=license_bytes,
+                report=retry_report,
+            )
+        else:
+            retry_facts = {}
+            retry_representation_sha256 = ""
+        if (
+            not isinstance(retry_report, dict)
+            or retry_report.get("conversion_disposition") != "already_current"
+            or retry_report.get("package_disposition") != "already_current"
+            or foreign_package.read_bytes() != first_package_wire
+            or retry_facts.get("package_sha256") != package_facts["package_sha256"]
+            or retry_representation_sha256 != representation_sha256
+        ):
+            raise GoldenPathError("package retry was not idempotent")
+
+        # A user-model image still requires its exact package admission.
         _run(
             (
                 str(executable),
@@ -619,6 +924,356 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             ),
             expect_success=False,
         )
+
+        # Neither a valid package nor a valid image can be substituted alone.
+        _run(
+            (
+                str(executable),
+                "text-run",
+                str(image),
+                "--text-file",
+                str(prompt_path),
+                "--license",
+                str(license_path),
+                "--package",
+                str(foreign_package),
+                "--n",
+                str(NEW_TOKENS),
+            ),
+            expect_success=False,
+        )
+        _run(
+            (
+                str(executable),
+                "text-run",
+                str(foreign_image),
+                "--text-file",
+                str(prompt_path),
+                "--license",
+                str(changed_license_path),
+                "--package",
+                str(foreign_package),
+                "--n",
+                str(NEW_TOKENS),
+            ),
+            expect_success=False,
+        )
+
+        same_package_modified_image = root / "same-package-modified.glrt"
+        modified_image_wire = bytearray(foreign_image.read_bytes())
+        modified_image_wire.extend(bytes(64))
+        struct.pack_into("<Q", modified_image_wire, 40, len(modified_image_wire))
+        struct.pack_into("<I", modified_image_wire, 156, 0)
+        struct.pack_into(
+            "<I",
+            modified_image_wire,
+            156,
+            zlib.crc32(modified_image_wire[:512]),
+        )
+        modified_image_sha256 = hashlib.sha256(modified_image_wire).digest()
+        if (
+            modified_image_wire[48:112] != foreign_image.read_bytes()[48:112]
+            or modified_image_sha256 == representation_facts["container_sha256"]
+        ):
+            raise GoldenPathError(
+                "same-package image mutation did not preserve provenance"
+            )
+        same_package_modified_image.write_bytes(modified_image_wire)
+        _run(
+            (
+                str(executable),
+                "text-run",
+                str(same_package_modified_image),
+                "--text-file",
+                str(prompt_path),
+                "--license",
+                str(license_path),
+                "--package",
+                str(foreign_package),
+                "--n",
+                str(NEW_TOKENS),
+            ),
+            expect_success=False,
+        )
+        modified_representation_wire = package_oracle.encode_prepared_representation(
+            {
+                "format_abi": representation_facts["format_abi"],
+                "format_version": representation_facts["format_version"],
+                "container_bytes": len(modified_image_wire),
+                "package_sha256": package_facts["package_sha256"],
+                "resolved_config_sha256": package_facts["resolved_config_sha256"],
+                "source_fingerprint": package_facts["model_content_sha256"],
+                "abi_fingerprint": representation_facts["abi_fingerprint"],
+                "container_sha256": modified_image_sha256,
+            }
+        )
+        modified_bundle_path = root / "same-package-modified.glpkg"
+        modified_bundle_path.write_bytes(
+            package_oracle.encode_admission_bundle(
+                first_package_wire[: package_oracle.MANIFEST_BYTES],
+                modified_representation_wire,
+            )
+        )
+        modified_representation_facts = package_oracle.decode_prepared_representation(
+            modified_representation_wire
+        )
+        modified_report = _run_text(
+            executable,
+            same_package_modified_image,
+            license_path,
+            PROMPT,
+            prompt_path,
+            package_path=modified_bundle_path,
+        )
+        _verify_report(
+            modified_report,
+            text=PROMPT,
+            license_bytes=license_bytes,
+            image=same_package_modified_image,
+            package_facts=package_facts,
+            representation_sha256=modified_representation_facts[
+                "representation_sha256"
+            ].hex(),
+        )
+
+        mutated_package = root / "mutated.glpkg"
+        mutated_wire = bytearray(first_package_wire)
+        mutated_wire[208] ^= 1
+        mutated_package.write_bytes(mutated_wire)
+        _run(
+            (
+                str(executable),
+                "text-run",
+                str(foreign_image),
+                "--text-file",
+                str(prompt_path),
+                "--license",
+                str(license_path),
+                "--package",
+                str(mutated_package),
+                "--n",
+                str(NEW_TOKENS),
+            ),
+            expect_success=False,
+        )
+
+        rerooted_tokenizer_package = root / "rerooted-tokenizer.glpkg"
+        rerooted_tokenizer_package.write_bytes(
+            _reroot_package(
+                package_facts,
+                representation_facts,
+                "tokenizer_config_sha256",
+            )
+        )
+        _run(
+            (
+                str(executable),
+                "text-run",
+                str(foreign_image),
+                "--text-file",
+                str(prompt_path),
+                "--license",
+                str(license_path),
+                "--package",
+                str(rerooted_tokenizer_package),
+                "--n",
+                str(NEW_TOKENS),
+            ),
+            expect_success=False,
+        )
+
+        rerooted_model_package = root / "rerooted-model-content.glpkg"
+        rerooted_model_package.write_bytes(
+            _reroot_package(
+                package_facts,
+                representation_facts,
+                "model_content_sha256",
+            )
+        )
+        _run(
+            (
+                str(executable),
+                "text-run",
+                str(foreign_image),
+                "--text-file",
+                str(prompt_path),
+                "--license",
+                str(license_path),
+                "--package",
+                str(rerooted_model_package),
+                "--n",
+                str(NEW_TOKENS),
+            ),
+            expect_success=False,
+        )
+
+        symlink_image = root / "foreign-link.glrt"
+        symlink_image.symlink_to(foreign_image)
+        _run(
+            (
+                str(executable),
+                "text-run",
+                str(symlink_image),
+                "--text-file",
+                str(prompt_path),
+                "--license",
+                str(license_path),
+                "--package",
+                str(foreign_package),
+                "--n",
+                str(NEW_TOKENS),
+            ),
+            expect_success=False,
+        )
+        fifo_image = root / "foreign-fifo.glrt"
+        os.mkfifo(fifo_image)
+        _run(
+            (
+                str(executable),
+                "text-run",
+                str(fifo_image),
+                "--text-file",
+                str(prompt_path),
+                "--license",
+                str(license_path),
+                "--package",
+                str(foreign_package),
+                "--n",
+                str(NEW_TOKENS),
+            ),
+            expect_success=False,
+        )
+        directory_image = root / "foreign-directory.glrt"
+        directory_image.mkdir()
+        _run(
+            (
+                str(executable),
+                "text-run",
+                str(directory_image),
+                "--text-file",
+                str(prompt_path),
+                "--license",
+                str(license_path),
+                "--package",
+                str(foreign_package),
+                "--n",
+                str(NEW_TOKENS),
+            ),
+            expect_success=False,
+        )
+
+        conflicting_package = root / "preexisting-package.glpkg"
+        conflicting_package_bytes = b"preexisting unrelated package\n"
+        conflicting_package.write_bytes(conflicting_package_bytes)
+        _run(
+            (
+                str(executable),
+                "package-model",
+                str(ordinary_source),
+                str(root / "preexisting-package.glacier"),
+                str(root / "preexisting-package.glrt"),
+                str(conflicting_package),
+                "--license",
+                str(license_path),
+                "--group-size",
+                "16",
+            ),
+            expect_success=False,
+        )
+        if conflicting_package.read_bytes() != conflicting_package_bytes:
+            raise GoldenPathError("different pre-existing package was overwritten")
+
+        dangling_target = root / "missing-package-target"
+        dangling_package = root / "dangling-package.glpkg"
+        dangling_package.symlink_to(dangling_target)
+        _run(
+            (
+                str(executable),
+                "package-model",
+                str(ordinary_source),
+                str(root / "dangling-package.glacier"),
+                str(root / "dangling-package.glrt"),
+                str(dangling_package),
+                "--license",
+                str(license_path),
+                "--group-size",
+                "16",
+            ),
+            expect_success=False,
+        )
+        if (
+            not dangling_package.is_symlink()
+            or dangling_package.readlink() != dangling_target
+            or dangling_target.exists()
+        ):
+            raise GoldenPathError("dangling package symlink was clobbered")
+
+        publication_lock = root / ".glacier-model-package-publication.lock-v1"
+        lock_descriptor = os.open(publication_lock, os.O_RDWR)
+        contended_command = (
+            str(executable),
+            "package-model",
+            str(ordinary_source),
+            str(root / "contended.glacier"),
+            str(root / "contended.glrt"),
+            str(foreign_package),
+            "--license",
+            str(license_path),
+            "--group-size",
+            "16",
+        )
+        try:
+            fcntl.flock(
+                lock_descriptor,
+                fcntl.LOCK_EX | fcntl.LOCK_NB,
+            )
+            _run(contended_command, expect_success=False)
+            if foreign_package.read_bytes() != first_package_wire:
+                raise GoldenPathError("contended publication changed the package")
+        finally:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+            os.close(lock_descriptor)
+        contended_result = _run(contended_command)
+        try:
+            contended_report = json.loads(contended_result.stdout)
+        except json.JSONDecodeError as error:
+            raise GoldenPathError(
+                "publication retry did not emit one JSON value"
+            ) from error
+        if (
+            not isinstance(contended_report, dict)
+            or contended_report.get("package_disposition") != "already_current"
+            or foreign_package.read_bytes() != first_package_wire
+        ):
+            raise GoldenPathError("publication did not converge after contention")
+
+        symlink_license = root / "license-link"
+        symlink_license.symlink_to(license_path)
+        rejected_container = root / "symlink-license.glacier"
+        rejected_image = root / "symlink-license.glrt"
+        rejected_package = root / "symlink-license.glpkg"
+        _run(
+            (
+                str(executable),
+                "package-model",
+                str(ordinary_source),
+                str(rejected_container),
+                str(rejected_image),
+                str(rejected_package),
+                "--license",
+                str(symlink_license),
+            ),
+            expect_success=False,
+        )
+        if any(
+            path.exists()
+            for path in (
+                rejected_container,
+                rejected_image,
+                rejected_package,
+            )
+        ):
+            raise GoldenPathError("rejected symlink license mutated package outputs")
 
         oversized_prompt = root / "oversized-prompt.txt"
         oversized_prompt.write_bytes(b"x" * 4097)
@@ -658,9 +1313,7 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             "source_sha256": EXPECTED_SOURCE_SHA256,
             "portable_artifact_sha256": EXPECTED_GLACIER_SHA256,
             "prepared_artifact_sha256": prepared_artifact_sha256,
-            "prepared_source_fingerprint": (
-                EXPECTED_PREPARED_SOURCE_FINGERPRINT
-            ),
+            "prepared_source_fingerprint": (EXPECTED_PREPARED_SOURCE_FINGERPRINT),
             "prepared_artifact_platform_bound": True,
             "prompt_bytes": len(PROMPT.encode("utf-8")),
             "output_tokens": NEW_TOKENS,
@@ -669,6 +1322,26 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             "prompt_changes_identity": True,
             "license_substitution_rejected": True,
             "foreign_fixture_profile_rejected": True,
+            "ordinary_package_produced": True,
+            "ordinary_package_admitted": True,
+            "ordinary_package_independently_decoded": True,
+            "prepared_representation_independently_verified": True,
+            "package_manifest_retry_idempotent": True,
+            "cross_package_image_substitution_rejected": True,
+            "same_package_modified_image_rejected": True,
+            "same_package_alternate_bundle_admitted": True,
+            "package_license_substitution_rejected": True,
+            "package_mutation_rejected": True,
+            "rerooted_tokenizer_package_rejected": True,
+            "rerooted_model_content_package_rejected": True,
+            "symlink_model_input_rejected": True,
+            "fifo_model_input_rejected": True,
+            "directory_model_input_rejected": True,
+            "different_preexisting_package_preserved": True,
+            "dangling_package_symlink_preserved": True,
+            "competing_package_publication_rejected": True,
+            "package_publication_retry_converged": True,
+            "symlink_license_rejected_before_publication": True,
             "oversized_input_rejected": True,
             "invalid_utf8_rejected": True,
             "network_required": False,

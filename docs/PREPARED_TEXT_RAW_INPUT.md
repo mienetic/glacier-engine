@@ -45,13 +45,16 @@ printf '%s' 'Ice' > /tmp/glacier-prompt.txt
   --text-file /tmp/glacier-prompt.txt --license LICENSE --n 3
 ```
 
-R1k-b1 deliberately accepts only this retained `32/32/1/256` fixture profile:
-the prepared source fingerprint, complete geometry, tokenizer profile, and
-repository `LICENSE` digest must match. Another valid `.glrt` image or changed
-license file rejects. This fixture restriction prevents an arbitrary
-subword-tokenized model from being mislabeled as byte-token compatible while a
-stable package manifest and broader tokenizer admission remain separate from
-the standalone command.
+Without `--package`, the R1k-b1 compatibility path deliberately accepts only
+this retained `32/32/1/256` fixture profile: the prepared source fingerprint,
+complete geometry, tokenizer profile, and repository `LICENSE` digest must
+match. The later ordinary-model path accepts `--package model.glpkg` and
+decodes its fixed 896-byte manifest-plus-representation bundle, then derives
+and validates the package/configuration/tokenizer/license/prepared-image
+relationship against the embedded exact GLRT receipt for one supported
+Safetensors/INT4/CPU profile.
+Both paths prevent an arbitrary subword-tokenized model from being mislabeled
+as byte-token compatible. See [Ordinary Model Package](MODEL_PACKAGE.md).
 
 `text-run` requires valid nonempty UTF-8 input and `1..64` requested output
 tokens. The current command profile limits input to 4,096 bytes. It emits one
@@ -62,10 +65,11 @@ arguments and shell history. `--text` remains available for non-sensitive
 fixture experiments, but its value is visible to normal process inspection.
 
 The `--license` value is evidence input: the command hashes the exact stable
-file bytes, requires the retained fixture license digest, and binds that digest
-into the Common Model Contract plan. This proves which bytes were supplied; it
-does not interpret the license or decide whether a different model may legally
-be used.
+file bytes and binds that digest into the Common Model Contract plan. The
+unpackaged compatibility path requires the retained fixture digest; package
+admission requires the byte count and digest recorded by that package. This
+proves which bytes were supplied; it does not interpret the license or decide
+whether a model may legally be used.
 
 ## Canonical tokenizer profile
 
@@ -281,10 +285,12 @@ is still an experimental wire rather than a stable public distribution ABI.
 than a fixed cross-language wire.
 
 The separate recovery fixture now carries this exact tokenizer/raw-input
-identity into the durable local sink and fresh-process source/target chain. The
-standalone `text-run` command remains process-local, and committed-token text
-rendering plus a unified user command remain open. The retained fixture is
-synthetic CPU execution on the descriptor-relative POSIX durability adapter.
-GPU/device-resident recovery, production model quality, performance, remote
-delivery, hostile writers, native multi-OS durability, and physical power-loss
-persistence are not claimed.
+identity into the durable local sink and fresh-process source/target chain.
+`text-run --package` now admits one ordinary user-model profile, but the
+standalone command remains process-local. Connecting it to checked committed
+output and fresh-process continuation without duplicating the recovery
+protocol remains open. The retained durable fixture is synthetic CPU execution
+on the descriptor-relative POSIX adapter. GPU/device-resident recovery,
+production model quality, performance, remote delivery, hostile writers,
+native multi-OS durability, and physical power-loss persistence are not
+claimed.

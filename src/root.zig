@@ -230,6 +230,10 @@ pub const metal_library_path: [*:0]const u8 = blk: {
 pub const model = @import("model/format.zig");
 pub const model_package_manifest =
     @import("model/package_manifest.zig");
+pub const model_package_producer =
+    @import("model/package_producer.zig");
+pub const bounded_file_input =
+    @import("bounded_file_input.zig");
 pub const safetensors = @import("model/safetensors.zig");
 pub const converter = @import("model/converter.zig");
 pub const converter_durable =

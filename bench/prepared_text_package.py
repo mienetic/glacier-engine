@@ -25,9 +25,8 @@ PREPARED_REPRESENTATION_ABI = 0x474C_5052_0000_0001
 MANIFEST_BYTES = 640
 MANIFEST_BODY_BYTES = MANIFEST_BYTES - DIGEST_BYTES
 PREPARED_REPRESENTATION_BYTES = 256
-PREPARED_REPRESENTATION_BODY_BYTES = (
-    PREPARED_REPRESENTATION_BYTES - DIGEST_BYTES
-)
+PREPARED_REPRESENTATION_BODY_BYTES = PREPARED_REPRESENTATION_BYTES - DIGEST_BYTES
+ADMISSION_BUNDLE_BYTES = MANIFEST_BYTES + PREPARED_REPRESENTATION_BYTES
 MANIFEST_MAGIC = b"GLPKG01\x00"
 PREPARED_REPRESENTATION_MAGIC = b"GLPREP1\x00"
 ALLOWED_FLAGS = 0
@@ -38,12 +37,8 @@ ARCHIVE_HEADER_BYTES = 128
 ARCHIVE_FOOTER_BYTES = DIGEST_BYTES
 PACKAGE_OFFSET = ARCHIVE_HEADER_BYTES
 REPRESENTATION_OFFSET = PACKAGE_OFFSET + MANIFEST_BYTES
-TOKENIZER_MANIFEST_OFFSET = (
-    REPRESENTATION_OFFSET + PREPARED_REPRESENTATION_BYTES
-)
-TOKENIZER_PROMPT_OFFSET = (
-    TOKENIZER_MANIFEST_OFFSET + raw_input.MANIFEST_BYTES
-)
+TOKENIZER_MANIFEST_OFFSET = REPRESENTATION_OFFSET + PREPARED_REPRESENTATION_BYTES
+TOKENIZER_PROMPT_OFFSET = TOKENIZER_MANIFEST_OFFSET + raw_input.MANIFEST_BYTES
 RAW_BINDING_OFFSET = TOKENIZER_PROMPT_OFFSET + raw_input.PROMPT_BYTES
 RAW_TEXT_OFFSET = RAW_BINDING_OFFSET + raw_input.BINDING_BYTES
 ARCHIVE_FIXED_PAYLOAD_BYTES = RAW_TEXT_OFFSET - ARCHIVE_HEADER_BYTES
@@ -51,14 +46,11 @@ ARCHIVE_MINIMUM_BYTES = RAW_TEXT_OFFSET + ARCHIVE_FOOTER_BYTES
 
 MANIFEST_DOMAIN = b"glacier-model-package-manifest-v1\x00"
 CONFIG_DOMAIN = b"glacier-model-package-config-v1\x00"
-PREPARED_REPRESENTATION_DOMAIN = (
-    b"glacier-model-prepared-representation-v1\x00"
-)
+PREPARED_REPRESENTATION_DOMAIN = b"glacier-model-prepared-representation-v1\x00"
+MODEL_CONTENT_DOMAIN = b"glacier-prepared-provenance-v1\x00"
 ARCHIVE_DOMAIN = b"glacier-prepared-text-input-archive-v1\x00"
 RAW_TEXT_DOMAIN = b"glacier-utf8-byte-tokenizer-raw-text-v1\x00"
-TOKEN_STREAM_DOMAIN = (
-    b"glacier-utf8-byte-tokenizer-token-stream-v1\x00"
-)
+TOKEN_STREAM_DOMAIN = b"glacier-utf8-byte-tokenizer-token-stream-v1\x00"
 PREPARED_PROMPT_DOMAIN = b"glacier-prepared-text-prompt-v1\x00"
 
 FAMILY_IDS = frozenset(range(1, 19))
@@ -193,6 +185,23 @@ def resolved_config_sha256(config: Mapping[str, object]) -> bytes:
     )
 
 
+def model_content_sha256(
+    portable_artifact_sha256: bytes,
+    config: Mapping[str, object],
+) -> bytes:
+    """Recompute the portable/config provenance stored by GLRT images."""
+
+    value = _checked_config(config)
+    return _sha(
+        MODEL_CONTENT_DOMAIN,
+        _digest(portable_artifact_sha256),
+        *(_u64(value[name]) for name in CONFIG_U32_FIELDS),
+        _u32(value["rms_eps_bits"]),
+        _u32(value["rope_theta_bits"]),
+        bytes((int(value["tie_embeddings"]),)),
+    )
+
+
 def package_sha256(body: bytes) -> bytes:
     if not isinstance(body, bytes) or len(body) != MANIFEST_BODY_BYTES:
         raise PreparedTextPackageError("invalid package body")
@@ -200,10 +209,7 @@ def package_sha256(body: bytes) -> bytes:
 
 
 def prepared_representation_sha256(body: bytes) -> bytes:
-    if (
-        not isinstance(body, bytes)
-        or len(body) != PREPARED_REPRESENTATION_BODY_BYTES
-    ):
+    if not isinstance(body, bytes) or len(body) != PREPARED_REPRESENTATION_BODY_BYTES:
         raise PreparedTextPackageError("invalid representation body")
     return _sha(PREPARED_REPRESENTATION_DOMAIN, body)
 
@@ -232,9 +238,7 @@ def encode_manifest(value: Mapping[str, object]) -> bytes:
         try:
             scalar = value[name]
         except KeyError as error:
-            raise PreparedTextPackageError(
-                f"missing {name}"
-            ) from error
+            raise PreparedTextPackageError(f"missing {name}") from error
         _u64(scalar)
         if scalar == 0:
             raise PreparedTextPackageError(f"zero {name}")
@@ -244,9 +248,7 @@ def encode_manifest(value: Mapping[str, object]) -> bytes:
         try:
             digests[name] = _digest(value[name])
         except KeyError as error:
-            raise PreparedTextPackageError(
-                f"missing {name}"
-            ) from error
+            raise PreparedTextPackageError(f"missing {name}") from error
 
     body = bytearray(MANIFEST_BODY_BYTES)
     body[0:8] = MANIFEST_MAGIC
@@ -344,16 +346,12 @@ def decode_manifest(encoded: bytes) -> dict[str, object]:
         "license_sha256",
     )
     digests = {
-        name: encoded[
-            176 + index * DIGEST_BYTES : 208 + index * DIGEST_BYTES
-        ]
+        name: encoded[176 + index * DIGEST_BYTES : 208 + index * DIGEST_BYTES]
         for index, name in enumerate(digest_names)
     }
-    if (
-        any(digest == ZERO_DIGEST for digest in digests.values())
-        or digests["resolved_config_sha256"]
-        != resolved_config_sha256(config)
-    ):
+    if any(digest == ZERO_DIGEST for digest in digests.values()) or digests[
+        "resolved_config_sha256"
+    ] != resolved_config_sha256(config):
         raise PreparedTextPackageError("invalid package identity")
     return {
         "abi_version": MANIFEST_ABI,
@@ -376,9 +374,7 @@ def encode_prepared_representation(
         try:
             scalar = value[name]
         except KeyError as error:
-            raise PreparedTextPackageError(
-                f"missing {name}"
-            ) from error
+            raise PreparedTextPackageError(f"missing {name}") from error
         _u64(scalar)
         if scalar == 0:
             raise PreparedTextPackageError(f"zero {name}")
@@ -388,9 +384,7 @@ def encode_prepared_representation(
         try:
             digests[name] = _digest(value[name])
         except KeyError as error:
-            raise PreparedTextPackageError(
-                f"missing {name}"
-            ) from error
+            raise PreparedTextPackageError(f"missing {name}") from error
     body = bytearray(PREPARED_REPRESENTATION_BODY_BYTES)
     body[0:8] = PREPARED_REPRESENTATION_MAGIC
     struct.pack_into(
@@ -421,16 +415,12 @@ def decode_prepared_representation(
         not isinstance(encoded, bytes)
         or len(encoded) != PREPARED_REPRESENTATION_BYTES
         or encoded[0:8] != PREPARED_REPRESENTATION_MAGIC
-        or struct.unpack_from("<Q", encoded, 8)[0]
-        != PREPARED_REPRESENTATION_ABI
-        or struct.unpack_from("<Q", encoded, 16)[0]
-        != PREPARED_REPRESENTATION_BYTES
+        or struct.unpack_from("<Q", encoded, 8)[0] != PREPARED_REPRESENTATION_ABI
+        or struct.unpack_from("<Q", encoded, 16)[0] != PREPARED_REPRESENTATION_BYTES
         or struct.unpack_from("<Q", encoded, 24)[0] != ALLOWED_FLAGS
         or any(encoded[56:64])
         or encoded[PREPARED_REPRESENTATION_BODY_BYTES:]
-        != prepared_representation_sha256(
-            encoded[:PREPARED_REPRESENTATION_BODY_BYTES]
-        )
+        != prepared_representation_sha256(encoded[:PREPARED_REPRESENTATION_BODY_BYTES])
     ):
         raise PreparedTextPackageError("invalid representation wire")
     format_abi, format_version, container_bytes = struct.unpack_from(
@@ -439,9 +429,7 @@ def decode_prepared_representation(
     if format_abi == 0 or format_version == 0 or container_bytes == 0:
         raise PreparedTextPackageError("zero representation scalar")
     digests = {
-        name: encoded[
-            64 + index * DIGEST_BYTES : 96 + index * DIGEST_BYTES
-        ]
+        name: encoded[64 + index * DIGEST_BYTES : 96 + index * DIGEST_BYTES]
         for index, name in enumerate(REPRESENTATION_DIGEST_FIELDS)
     }
     if any(digest == ZERO_DIGEST for digest in digests.values()):
@@ -452,9 +440,7 @@ def decode_prepared_representation(
         "format_version": format_version,
         "container_bytes": container_bytes,
         **digests,
-        "representation_sha256": encoded[
-            PREPARED_REPRESENTATION_BODY_BYTES:
-        ],
+        "representation_sha256": encoded[PREPARED_REPRESENTATION_BODY_BYTES:],
     }
 
 
@@ -465,14 +451,46 @@ def validate_prepared_representation(
     """Require one representation to name the exact stable package."""
 
     if (
-        representation.get("package_sha256")
-        != package.get("package_sha256")
+        representation.get("package_sha256") != package.get("package_sha256")
         or representation.get("resolved_config_sha256")
         != package.get("resolved_config_sha256")
         or representation.get("source_fingerprint")
         != package.get("model_content_sha256")
     ):
         raise PreparedTextPackageError("foreign representation")
+
+
+def encode_admission_bundle(
+    manifest: bytes,
+    representation: bytes,
+) -> bytes:
+    """Join and authenticate one manifest with its admitted representation."""
+
+    package_facts = decode_manifest(manifest)
+    representation_facts = decode_prepared_representation(representation)
+    validate_prepared_representation(
+        package_facts,
+        representation_facts,
+    )
+    return manifest + representation
+
+
+def decode_admission_bundle(encoded: bytes) -> dict[str, object]:
+    """Decode both authenticated records in one fixed admission bundle."""
+
+    if not isinstance(encoded, bytes) or len(encoded) != ADMISSION_BUNDLE_BYTES:
+        raise PreparedTextPackageError("invalid admission bundle length")
+    package_facts = decode_manifest(encoded[:MANIFEST_BYTES])
+    representation_facts = decode_prepared_representation(encoded[MANIFEST_BYTES:])
+    validate_prepared_representation(
+        package_facts,
+        representation_facts,
+    )
+    return {
+        "encoded": encoded,
+        "package": package_facts,
+        "representation": representation_facts,
+    }
 
 
 def raw_text_sha256(raw_text: bytes) -> bytes:
@@ -551,9 +569,7 @@ def archive_wire(
     )
     body[PACKAGE_OFFSET:REPRESENTATION_OFFSET] = package
     body[REPRESENTATION_OFFSET:TOKENIZER_MANIFEST_OFFSET] = representation
-    body[TOKENIZER_MANIFEST_OFFSET:TOKENIZER_PROMPT_OFFSET] = (
-        tokenizer_manifest
-    )
+    body[TOKENIZER_MANIFEST_OFFSET:TOKENIZER_PROMPT_OFFSET] = tokenizer_manifest
     body[TOKENIZER_PROMPT_OFFSET:RAW_BINDING_OFFSET] = tokenizer_prompt
     body[RAW_BINDING_OFFSET:RAW_TEXT_OFFSET] = binding
     body[RAW_TEXT_OFFSET:] = raw_text
@@ -563,10 +579,7 @@ def archive_wire(
 def decode_archive(encoded: bytes) -> dict[str, object]:
     """Authenticate an archive and reconstruct its byte-tokenized prompt."""
 
-    if (
-        not isinstance(encoded, bytes)
-        or len(encoded) < ARCHIVE_MINIMUM_BYTES + 1
-    ):
+    if not isinstance(encoded, bytes) or len(encoded) < ARCHIVE_MINIMUM_BYTES + 1:
         raise PreparedTextPackageError("invalid archive length")
     body = encoded[:-ARCHIVE_FOOTER_BYTES]
     if (
@@ -575,19 +588,13 @@ def decode_archive(encoded: bytes) -> dict[str, object]:
         or struct.unpack_from("<Q", encoded, 8)[0] != ARCHIVE_ABI
         or struct.unpack_from("<Q", encoded, 16)[0] != len(encoded)
         or struct.unpack_from("<Q", encoded, 24)[0] != ALLOWED_FLAGS
-        or struct.unpack_from("<Q", encoded, 32)[0]
-        != ARCHIVE_HEADER_BYTES
-        or struct.unpack_from("<Q", encoded, 40)[0]
-        != ARCHIVE_FIXED_PAYLOAD_BYTES
+        or struct.unpack_from("<Q", encoded, 32)[0] != ARCHIVE_HEADER_BYTES
+        or struct.unpack_from("<Q", encoded, 40)[0] != ARCHIVE_FIXED_PAYLOAD_BYTES
         or struct.unpack_from("<Q", encoded, 56)[0] != MANIFEST_BYTES
-        or struct.unpack_from("<Q", encoded, 64)[0]
-        != PREPARED_REPRESENTATION_BYTES
-        or struct.unpack_from("<Q", encoded, 72)[0]
-        != raw_input.MANIFEST_BYTES
-        or struct.unpack_from("<Q", encoded, 80)[0]
-        != raw_input.PROMPT_BYTES
-        or struct.unpack_from("<Q", encoded, 88)[0]
-        != raw_input.BINDING_BYTES
+        or struct.unpack_from("<Q", encoded, 64)[0] != PREPARED_REPRESENTATION_BYTES
+        or struct.unpack_from("<Q", encoded, 72)[0] != raw_input.MANIFEST_BYTES
+        or struct.unpack_from("<Q", encoded, 80)[0] != raw_input.PROMPT_BYTES
+        or struct.unpack_from("<Q", encoded, 88)[0] != raw_input.BINDING_BYTES
         or any(encoded[96:ARCHIVE_HEADER_BYTES])
     ):
         raise PreparedTextPackageError("invalid archive wire")
@@ -599,32 +606,22 @@ def decode_archive(encoded: bytes) -> dict[str, object]:
     ):
         raise PreparedTextPackageError("invalid archive bounds")
 
-    package = decode_manifest(
-        encoded[PACKAGE_OFFSET:REPRESENTATION_OFFSET]
-    )
+    package = decode_manifest(encoded[PACKAGE_OFFSET:REPRESENTATION_OFFSET])
     representation = decode_prepared_representation(
         encoded[REPRESENTATION_OFFSET:TOKENIZER_MANIFEST_OFFSET]
     )
     validate_prepared_representation(package, representation)
     try:
         tokenizer_manifest = raw_input.decode_manifest(
-            encoded[
-                TOKENIZER_MANIFEST_OFFSET:TOKENIZER_PROMPT_OFFSET
-            ]
+            encoded[TOKENIZER_MANIFEST_OFFSET:TOKENIZER_PROMPT_OFFSET]
         )
         tokenizer_prompt = raw_input.decode_prompt(
             encoded[TOKENIZER_PROMPT_OFFSET:RAW_BINDING_OFFSET]
         )
-        binding = raw_input.decode_binding(
-            encoded[RAW_BINDING_OFFSET:RAW_TEXT_OFFSET]
-        )
+        binding = raw_input.decode_binding(encoded[RAW_BINDING_OFFSET:RAW_TEXT_OFFSET])
     except raw_input.RawInputError as error:
-        raise PreparedTextPackageError(
-            "invalid raw-input component"
-        ) from error
-    raw_text = encoded[
-        RAW_TEXT_OFFSET : RAW_TEXT_OFFSET + raw_text_bytes
-    ]
+        raise PreparedTextPackageError("invalid raw-input component") from error
+    raw_text = encoded[RAW_TEXT_OFFSET : RAW_TEXT_OFFSET + raw_text_bytes]
     try:
         raw_text.decode("utf-8", "strict")
     except UnicodeDecodeError as error:
@@ -639,8 +636,7 @@ def decode_archive(encoded: bytes) -> dict[str, object]:
         or tokenizer_prompt["token_count"] != raw_text_bytes
         or binding["prompt_bytes"] != raw_text_bytes
         or binding["prompt_tokens"] != raw_text_bytes
-        or package["config"]["vocab"]
-        != tokenizer_manifest["vocab_size"]
+        or package["config"]["vocab"] != tokenizer_manifest["vocab_size"]
         or package["tokenizer_manifest_abi"] != raw_input.MANIFEST_ABI
         or package["tokenizer_manifest_bytes"] != raw_input.MANIFEST_BYTES
         or tokenizer_prompt["raw_text_sha256"] != raw_root
@@ -649,23 +645,16 @@ def decode_archive(encoded: bytes) -> dict[str, object]:
         != tokenizer_manifest["domain_sha256"]
         or tokenizer_prompt["tokenizer_config_sha256"]
         != tokenizer_manifest["config_sha256"]
-        or binding["tokenizer_domain_sha256"]
-        != tokenizer_manifest["domain_sha256"]
-        or binding["tokenizer_config_sha256"]
-        != tokenizer_manifest["config_sha256"]
-        or binding["prompt_receipt_sha256"]
-        != tokenizer_prompt["receipt_sha256"]
+        or binding["tokenizer_domain_sha256"] != tokenizer_manifest["domain_sha256"]
+        or binding["tokenizer_config_sha256"] != tokenizer_manifest["config_sha256"]
+        or binding["prompt_receipt_sha256"] != tokenizer_prompt["receipt_sha256"]
         or binding["raw_text_sha256"] != raw_root
         or binding["token_ids_sha256"] != token_root
         or binding["prepared_prompt_sha256"] != prompt_root
-        or package["tokenizer_config_sha256"]
-        != tokenizer_manifest["config_sha256"]
-        or package["tokenizer_domain_sha256"]
-        != tokenizer_manifest["domain_sha256"]
-        or package["tokenizer_behavior_sha256"]
-        != tokenizer_manifest["behavior_sha256"]
-        or package["license_sha256"]
-        != binding["artifact_license_sha256"]
+        or package["tokenizer_config_sha256"] != tokenizer_manifest["config_sha256"]
+        or package["tokenizer_domain_sha256"] != tokenizer_manifest["domain_sha256"]
+        or package["tokenizer_behavior_sha256"] != tokenizer_manifest["behavior_sha256"]
+        or package["license_sha256"] != binding["artifact_license_sha256"]
     ):
         raise PreparedTextPackageError("archive context substitution")
     return {

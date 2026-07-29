@@ -7,9 +7,11 @@
 //! package root can be used across requests and operating-system/architecture-
 //! specific preparations.
 //!
-//! `PreparedRepresentationV1` is the separate contextual bridge to one exact
-//! validated `.glrt` representation. A package can therefore have multiple
-//! native representations without changing its portable identity.
+//! `PreparedRepresentationV1` is the contextual bridge to one exact validated
+//! `.glrt` representation. `AdmissionBundleV1` concatenates the stable
+//! manifest and one representation receipt for fail-closed runtime admission;
+//! another native representation can use another bundle without changing the
+//! portable package root.
 
 const std = @import("std");
 const core = @import("core");
@@ -27,6 +29,8 @@ pub const manifest_body_bytes: usize = manifest_bytes - 32;
 pub const prepared_representation_bytes: usize = 256;
 pub const prepared_representation_body_bytes: usize =
     prepared_representation_bytes - 32;
+pub const admission_bundle_bytes: usize =
+    manifest_bytes + prepared_representation_bytes;
 pub const allowed_flags: u64 = 0;
 
 pub const manifest_magic =
@@ -40,6 +44,8 @@ const config_domain =
     "glacier-model-package-config-v1\x00";
 const prepared_representation_domain =
     "glacier-model-prepared-representation-v1\x00";
+const model_content_domain =
+    "glacier-prepared-provenance-v1\x00";
 
 pub const Error = error{
     InvalidLength,
@@ -132,6 +138,11 @@ pub const PreparedRepresentationV1 = struct {
     abi_fingerprint: Digest,
     container_sha256: Digest,
     representation_sha256: Digest,
+};
+
+pub const AdmissionBundleV1 = struct {
+    package: ManifestV1,
+    representation: PreparedRepresentationV1,
 };
 
 pub fn makeV1(input: InputV1) Error!ManifestV1 {
@@ -288,6 +299,40 @@ pub fn resolvedConfigRootV1(config: ConfigV1) Digest {
     return digest;
 }
 
+/// Bind one portable artifact to the resolved geometry used by preparation.
+///
+/// The resulting platform-independent root is stored as the prepared image's
+/// source fingerprint. Keeping the algorithm here lets preparation, package
+/// production, and request admission share one exact identity rule.
+pub fn modelContentRootV1(
+    portable_artifact_sha256: Digest,
+    config: ConfigV1,
+) Error!Digest {
+    try validateConfigV1(config);
+    if (isZero(portable_artifact_sha256))
+        return Error.InvalidManifest;
+
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(model_content_domain);
+    hash.update(&portable_artifact_sha256);
+    hashU64(&hash, config.dim);
+    hashU64(&hash, config.hidden_dim);
+    hashU64(&hash, config.layers);
+    hashU64(&hash, config.vocab);
+    hashU64(&hash, config.heads);
+    hashU64(&hash, config.head_dim);
+    hashU64(&hash, config.kv_heads);
+    hashU32(&hash, @bitCast(config.rms_eps));
+    hashU32(&hash, @bitCast(config.rope_theta));
+    const tie_embeddings = [_]u8{
+        @intFromBool(config.tie_embeddings),
+    };
+    hash.update(&tie_embeddings);
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
 pub fn makePreparedRepresentationV1(
     package: ManifestV1,
     format_abi: u64,
@@ -415,6 +460,58 @@ pub fn decodePreparedRepresentationV1(
         ))
         return Error.InvalidPreparedRepresentation;
     return value;
+}
+
+/// Encode the portable package identity and one exact prepared representation
+/// as the fixed `.glpkg` runtime-admission artifact.
+pub fn encodeAdmissionBundleV1(
+    package: ManifestV1,
+    representation: PreparedRepresentationV1,
+    destination: []u8,
+) Error![]u8 {
+    if (destination.len != admission_bundle_bytes)
+        return Error.InvalidLength;
+    try validatePreparedRepresentationV1(
+        package,
+        representation,
+    );
+    var local: [admission_bundle_bytes]u8 = undefined;
+    _ = try encodeV1(
+        package,
+        local[0..manifest_bytes],
+    );
+    _ = try encodePreparedRepresentationV1(
+        representation,
+        local[manifest_bytes..],
+    );
+    if (slicesOverlap(destination, &local))
+        return Error.UnsafeDestination;
+    @memcpy(destination, &local);
+    return destination;
+}
+
+/// Decode and authenticate both fixed components, then require the
+/// representation receipt to name the exact package root and configuration.
+pub fn decodeAdmissionBundleV1(
+    encoded: []const u8,
+) Error!AdmissionBundleV1 {
+    if (encoded.len != admission_bundle_bytes)
+        return Error.InvalidLength;
+    const package = try decodeV1(
+        encoded[0..manifest_bytes],
+    );
+    const representation =
+        try decodePreparedRepresentationV1(
+            encoded[manifest_bytes..],
+        );
+    try validatePreparedRepresentationV1(
+        package,
+        representation,
+    );
+    return .{
+        .package = package,
+        .representation = representation,
+    };
 }
 
 fn validateConfigV1(config: ConfigV1) Error!void {
@@ -811,6 +908,67 @@ test "prepared representation is package and byte exact" {
     try std.testing.expectError(
         Error.InvalidPreparedRepresentation,
         validatePreparedRepresentationV1(foreign, decoded),
+    );
+}
+
+test "admission bundle pins one exact prepared representation" {
+    const package = try testManifestV1();
+    const representation = try makePreparedRepresentationV1(
+        package,
+        0x474c_5254_0000_0002,
+        2,
+        .{
+            .source_fingerprint = package.model_content_sha256,
+            .abi_fingerprint = filledDigest(0xa1),
+            .container_bytes = 901,
+            .container_sha256 = filledDigest(0xa2),
+        },
+    );
+    var wire: [admission_bundle_bytes]u8 = undefined;
+    _ = try encodeAdmissionBundleV1(
+        package,
+        representation,
+        &wire,
+    );
+    const decoded = try decodeAdmissionBundleV1(&wire);
+    try std.testing.expectEqualDeep(package, decoded.package);
+    try std.testing.expectEqualDeep(
+        representation,
+        decoded.representation,
+    );
+
+    var substituted = representation;
+    substituted.container_sha256 = filledDigest(0xb2);
+    var body: [prepared_representation_body_bytes]u8 =
+        undefined;
+    writePreparedRepresentationBodyV1(substituted, &body);
+    substituted.representation_sha256 =
+        preparedRepresentationRootV1(&body);
+    var substituted_wire: [admission_bundle_bytes]u8 =
+        undefined;
+    _ = try encodeAdmissionBundleV1(
+        package,
+        substituted,
+        &substituted_wire,
+    );
+    try std.testing.expect(!std.mem.eql(
+        u8,
+        &wire,
+        &substituted_wire,
+    ));
+
+    var foreign = package;
+    foreign.source_sha256 = filledDigest(0xfe);
+    var foreign_body: [manifest_body_bytes]u8 = undefined;
+    writeManifestBodyV1(foreign, &foreign_body);
+    foreign.package_sha256 = manifestRootV1(&foreign_body);
+    try std.testing.expectError(
+        Error.InvalidPreparedRepresentation,
+        encodeAdmissionBundleV1(
+            foreign,
+            representation,
+            wire[0..admission_bundle_bytes],
+        ),
     );
 }
 

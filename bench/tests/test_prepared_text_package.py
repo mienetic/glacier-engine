@@ -68,36 +68,30 @@ def fixture(text: str = "Glacier สวัสดี") -> dict[str, object]:
         "format_version": 2,
         "container_bytes": 901,
         "package_sha256": decoded_package["package_sha256"],
-        "resolved_config_sha256": decoded_package[
-            "resolved_config_sha256"
-        ],
+        "resolved_config_sha256": decoded_package["resolved_config_sha256"],
         "source_fingerprint": decoded_package["model_content_sha256"],
         "abi_fingerprint": digest(0xA1),
         "container_sha256": digest(0xA2),
     }
-    representation_wire = package.encode_prepared_representation(
-        representation_input
+    representation_wire = package.encode_prepared_representation(representation_input)
+    admission_bundle = package.encode_admission_bundle(
+        package_wire,
+        representation_wire,
     )
     prompt = raw_input.decode_prompt(tokenizer_prompt)
     binding_report = {
         "tokenizer_domain_sha256": raw_input.tokenizer_domain_sha256().hex(),
-        "tokenizer_config_sha256": decoded_package[
-            "tokenizer_config_sha256"
-        ].hex(),
+        "tokenizer_config_sha256": decoded_package["tokenizer_config_sha256"].hex(),
         "prompt_receipt_sha256": prompt["receipt_sha256"].hex(),
         "raw_text_sha256": package.raw_text_sha256(raw_text).hex(),
         "token_ids_sha256": package.token_ids_sha256(raw_text).hex(),
-        "prepared_prompt_sha256": package.prepared_prompt_sha256(
-            raw_text
-        ).hex(),
+        "prepared_prompt_sha256": package.prepared_prompt_sha256(raw_text).hex(),
         "local_plan_sha256": digest(0xB1).hex(),
         "bound_plan_sha256": digest(0xB2).hex(),
         "artifact_sha256": digest(0xB3).hex(),
         "execution_plan_sha256": digest(0xB4).hex(),
         "residency_binding_sha256": digest(0xB5).hex(),
-        "artifact_license_sha256": decoded_package[
-            "license_sha256"
-        ].hex(),
+        "artifact_license_sha256": decoded_package["license_sha256"].hex(),
         "request_epoch": 7,
         "prompt_tokens": len(tokens),
         "prompt_bytes": len(raw_text),
@@ -119,6 +113,7 @@ def fixture(text: str = "Glacier สวัสดี") -> dict[str, object]:
         "package_wire": package_wire,
         "representation_input": representation_input,
         "representation_wire": representation_wire,
+        "admission_bundle": admission_bundle,
         "tokenizer_manifest": tokenizer_manifest,
         "tokenizer_prompt": tokenizer_prompt,
         "binding_report": binding_report,
@@ -128,6 +123,83 @@ def fixture(text: str = "Glacier สวัสดี") -> dict[str, object]:
 
 
 class PreparedTextPackageTests(unittest.TestCase):
+    def test_admission_bundle_roundtrip_authenticates_both_records(
+        self,
+    ) -> None:
+        value = fixture("Ice")
+        decoded = package.decode_admission_bundle(value["admission_bundle"])
+        self.assertEqual(896, package.ADMISSION_BUNDLE_BYTES)
+        self.assertEqual(
+            package.ADMISSION_BUNDLE_BYTES,
+            len(value["admission_bundle"]),
+        )
+        self.assertEqual(
+            value["package_wire"],
+            value["admission_bundle"][: package.MANIFEST_BYTES],
+        )
+        self.assertEqual(
+            value["representation_wire"],
+            value["admission_bundle"][package.MANIFEST_BYTES :],
+        )
+        self.assertEqual(
+            decoded["package"]["package_sha256"],
+            decoded["representation"]["package_sha256"],
+        )
+        self.assertEqual(
+            decoded["package"]["model_content_sha256"],
+            decoded["representation"]["source_fingerprint"],
+        )
+
+    def test_admission_bundle_rejects_every_byte_mutation(self) -> None:
+        wire = fixture("Ice")["admission_bundle"]
+        for index in range(len(wire)):
+            mutated = bytearray(wire)
+            mutated[index] ^= 1
+            with self.subTest(byte=index):
+                with self.assertRaises(package.PreparedTextPackageError):
+                    package.decode_admission_bundle(bytes(mutated))
+
+    def test_admission_bundle_rejects_foreign_relationship(self) -> None:
+        value = fixture("Ice")
+        changed = copy.deepcopy(value["package_input"])
+        changed["source_sha256"] = digest(0xD1)
+        foreign_manifest = package.encode_manifest(changed)
+        mismatched = foreign_manifest + value["representation_wire"]
+
+        with self.assertRaises(package.PreparedTextPackageError):
+            package.encode_admission_bundle(
+                foreign_manifest,
+                value["representation_wire"],
+            )
+        with self.assertRaises(package.PreparedTextPackageError):
+            package.decode_admission_bundle(mismatched)
+
+    def test_model_content_root_binds_portable_artifact_and_config(
+        self,
+    ) -> None:
+        value = fixture("Ice")["package_input"]
+        root = package.model_content_sha256(
+            value["portable_artifact_sha256"],
+            value["config"],
+        )
+        self.assertEqual(
+            "9836d18147e0bb120249360edd1a07705597b0f52ffd4b1afe230a99332b265f",
+            root.hex(),
+        )
+
+        changed_artifact = package.model_content_sha256(
+            digest(0x23),
+            value["config"],
+        )
+        changed_config = copy.deepcopy(value["config"])
+        changed_config["hidden_dim"] = 256
+        changed_geometry = package.model_content_sha256(
+            value["portable_artifact_sha256"],
+            changed_config,
+        )
+        self.assertNotEqual(root, changed_artifact)
+        self.assertNotEqual(root, changed_geometry)
+
     def test_package_archive_golden_and_fresh_retokenization(self) -> None:
         value = fixture()
         decoded = package.decode_archive(value["archive_wire"])
@@ -180,9 +252,7 @@ class PreparedTextPackageTests(unittest.TestCase):
                 mutated = bytearray(wire)
                 mutated[index] ^= 1
                 with self.subTest(component=name, byte=index):
-                    with self.assertRaises(
-                        package.PreparedTextPackageError
-                    ):
+                    with self.assertRaises(package.PreparedTextPackageError):
                         decoder(bytes(mutated))
 
     def test_archive_rejects_every_byte_mutation(self) -> None:
@@ -191,9 +261,7 @@ class PreparedTextPackageTests(unittest.TestCase):
             mutated = bytearray(wire)
             mutated[index] ^= 1
             with self.subTest(byte=index):
-                with self.assertRaises(
-                    package.PreparedTextPackageError
-                ):
+                with self.assertRaises(package.PreparedTextPackageError):
                     package.decode_archive(bytes(mutated))
 
     def test_archive_rejects_re_rooted_context_substitution(self) -> None:
@@ -234,9 +302,7 @@ class PreparedTextPackageTests(unittest.TestCase):
         changed["container_sha256"] = digest(0xD1)
         changed["abi_fingerprint"] = digest(0xD2)
         second_wire = package.encode_prepared_representation(changed)
-        first = package.decode_prepared_representation(
-            value["representation_wire"]
-        )
+        first = package.decode_prepared_representation(value["representation_wire"])
         second = package.decode_prepared_representation(second_wire)
         self.assertEqual(
             first["package_sha256"],
@@ -249,12 +315,8 @@ class PreparedTextPackageTests(unittest.TestCase):
 
         second_request = fixture("Snow")
         self.assertEqual(
-            package.decode_manifest(value["package_wire"])[
-                "package_sha256"
-            ],
-            package.decode_manifest(second_request["package_wire"])[
-                "package_sha256"
-            ],
+            package.decode_manifest(value["package_wire"])["package_sha256"],
+            package.decode_manifest(second_request["package_wire"])["package_sha256"],
         )
 
     def test_package_scalar_and_geometry_rules_are_strict(self) -> None:
@@ -267,9 +329,7 @@ class PreparedTextPackageTests(unittest.TestCase):
             changed = copy.deepcopy(value["package_input"])
             changed[field] = invalid
             with self.subTest(field=field):
-                with self.assertRaises(
-                    package.PreparedTextPackageError
-                ):
+                with self.assertRaises(package.PreparedTextPackageError):
                     package.encode_manifest(changed)
         for field, invalid in (
             ("dim", 65),
@@ -281,9 +341,7 @@ class PreparedTextPackageTests(unittest.TestCase):
             changed = copy.deepcopy(value["package_input"])
             changed["config"][field] = invalid
             with self.subTest(config_field=field):
-                with self.assertRaises(
-                    package.PreparedTextPackageError
-                ):
+                with self.assertRaises(package.PreparedTextPackageError):
                     package.encode_manifest(changed)
 
     def test_archive_rejects_invalid_utf8_after_full_reroot(self) -> None:

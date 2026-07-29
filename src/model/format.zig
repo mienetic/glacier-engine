@@ -22,6 +22,7 @@ const qio = @import("qio.zig");
 
 pub const MAGIC: [4]u8 = .{ 'G', 'L', 'A', 'C' };
 pub const VERSION: u16 = 1;
+pub const format_abi: u64 = 0x474c_4143_0000_0001;
 pub const HEADER_SIZE: u16 = 256;
 /// Unpacked (FP16-equivalent) weight bytes per page. log2 = 18.
 pub const PAGE_SIZE_BYTES: u64 = 1 << 18;

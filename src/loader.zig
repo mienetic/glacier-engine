@@ -137,6 +137,21 @@ pub const LoadedModel = struct {
     /// A prepared-runtime image is memory mapped and all of its tensor slices
     /// borrow this mapping. Normal `.glacier` loads leave this null.
     prepared_image: ?runtime_image.MappedImage = null,
+    /// Lazily retained full-container identity. Admission paths that need the
+    /// identity more than once pay for one linear hash of the mapped image.
+    prepared_image_identity_cache: ?runtime_image.ImageIdentityV1 = null,
+
+    pub fn preparedImageIdentityV1(
+        self: *LoadedModel,
+    ) LoaderError!runtime_image.ImageIdentityV1 {
+        if (self.prepared_image_identity_cache) |identity|
+            return identity;
+        const image = self.prepared_image orelse
+            return LoaderError.PreparedImage;
+        const identity = image.identityV1();
+        self.prepared_image_identity_cache = identity;
+        return identity;
+    }
 
     pub fn deinit(self: *LoadedModel) void {
         self.allocator.free(self.layers);
@@ -187,7 +202,23 @@ pub fn loadPreparedWithOptions(
     path: []const u8,
     options: PreparedLoadOptions,
 ) LoaderError!LoadedModel {
-    var image = runtime_image.MappedImage.openWithOptions(path, .{
+    const file = std.fs.cwd().openFile(path, .{}) catch |err|
+        return mapPreparedError(err);
+    return loadPreparedOwnedFileWithOptionsV1(
+        allocator,
+        file,
+        options,
+    );
+}
+
+/// Load and map an already-open prepared image. Ownership of `file` transfers
+/// to this function on both success and failure.
+pub fn loadPreparedOwnedFileWithOptionsV1(
+    allocator: std.mem.Allocator,
+    file: std.fs.File,
+    options: PreparedLoadOptions,
+) LoaderError!LoadedModel {
+    var image = runtime_image.MappedImage.openOwnedFileWithOptionsV1(file, .{
         .verify_payload_crc = options.verify_payload_crc,
         .verify_payload_digest = options.verify_payload_digest,
         .expected_source_fingerprint = options.expected_source_fingerprint,

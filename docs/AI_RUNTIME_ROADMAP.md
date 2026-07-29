@@ -1599,6 +1599,10 @@ representation record binds one exact `.glrt` container, source/ABI
 fingerprints, and the package/config roots, so another platform preparation
 does not silently redefine the portable package.
 
+These remain distinct records inside the durable raw-input archive. R1k-b4
+later embeds the same 640-byte manifest and one 256-byte representation receipt
+in a fixed 896-byte `.glpkg` admission bundle.
+
 A variable canonical input archive joins those two records to the tokenizer
 manifest, prompt receipt, raw-input/Common-plan binding, and exact original
 UTF-8 bytes. The additive recovery shapes retain the archive at extension
@@ -1656,6 +1660,85 @@ persistence, remote exactly-once delivery, GPU execution, Win32 durability,
 native multi-OS evidence, production-model quality, or a stable public ABI.
 See [Prepared-Text Result Inspector](PREPARED_TEXT_RESULT_INSPECTOR.md).
 
+#### R1k-b4 — Ordinary model package production and admission
+
+Status: **integrated experimental CPU/process-local vertical slice**.
+
+`glacier package-model` now accepts one supported Safetensors source, three
+distinct output paths, and an exact license file:
+
+```sh
+glacier package-model \
+  source.safetensors out.glacier out.glrt out.glpkg \
+  --license LICENSE --group-size 64
+```
+
+The producer consumes the typed durable-conversion receipt directly in the
+same process, reopens and validates the complete portable container, derives
+resolved model and strict `utf8-byte-v1` tokenizer identities, prepares and
+reopens the separate-layout GLRT V2 CPU image, and derives its representation
+from the actual image. It revalidates the portable path and license bytes
+before publishing `.glpkg` last. The file is exactly 896 bytes: the
+request-independent 640-byte manifest introduced in R1k-b2 followed by the
+256-byte prepared-representation receipt for that exact GLRT. The manifest's
+package root remains portable and request independent, while the embedded
+receipt pins the prepared container hash and size, format ABI/version, source
+fingerprint, and configuration relationship. Another representation needs
+another bundle but may retain the same package root. Prepared bytes and request
+state remain outside the bundle.
+
+The producer report exposes `package_bytes=896`,
+`package_manifest_bytes=640`, `prepared_representation_bytes=256`,
+`prepared_representation_embedded=true`, and
+`prepared_representation_separate=false`. On retry, portable conversion and an
+exact `.glpkg` may report `already_current`, while the prepared `.glrt` is
+deterministically recreated and revalidated. This does not promise stable
+inodes or timestamps for every artifact across the whole retry. A different
+observed bundle rejects instead of being overwritten when publishers cooperate
+with the directory-scoped lock. Non-cooperating hostile namespace writes are
+outside that no-overwrite claim.
+
+The manifest binds the complete source/conversion/portable/configuration/
+tokenizer/license relationship. File-backed prompt, license, and package
+inputs use bounded stable regular-file reads on the current POSIX path:
+symlinks and non-regular files reject, allocation is size bounded, and
+descriptor metadata is checked after positional reads. The command performs no
+network access. SHA-256 identities establish integrity and content
+relationships, not publisher authenticity, authorship, license rights, model
+quality, or signed provenance.
+
+The current command derives configuration from the converted model and does
+not read ambient `<output>.json` sidecars. A future explicit `--config` input
+must use bounded, no-follow, stable regular-file admission before its values
+can participate in the package root.
+
+`text-run --package` admits a user-supplied prepared image only after deriving
+and matching its full configuration, source fingerprint, GLRT format/version,
+separate layout, package root, tokenizer profile, and supplied license bytes.
+It compares the embedded receipt with the actual GLRT container identity,
+including its exact hash and size. Another valid representation of the same
+portable package root therefore needs its own matching bundle.
+
+It retains the R1k-b1 execution boundary: output is token IDs in deterministic
+JSON, publication is process-local, and the report remains explicit that it
+has no durable result sink or fresh-process recovery.
+
+The focused golden path independently decodes and reconstructs the package and
+prepared relationship in standard-library Python, checks portable/package
+`already_current` dispositions plus deterministic prepared recreation, and
+rejects package mutation, changed licenses, and embedded-receipt/prepared-image
+substitution. Affected changes to this slice reuse the existing
+`text-runtime-golden-path-test` DAG; broad and deep suites remain integration,
+shared-ABI, cross-platform, and release gates.
+
+This does not establish production readiness or general model-family support.
+Checked durable output for package-aware execution, fresh-process ordinary
+model continuation, broader tokenizer/model/source/numerical profiles, GPU
+package production, native non-POSIX evidence, authenticated distribution,
+an explicit bounded/no-follow `--config` input, and production-model
+quality/performance evidence remain open. See
+[Ordinary Model Package](MODEL_PACKAGE.md).
+
 #### Public durable-runtime composition foundation
 
 Status: **integrated experimental Zig surface**.
@@ -1693,9 +1776,10 @@ direct-terminal smoke now injects real process death after the one model step,
 after runtime retirement, after selector rename, and after generation-two
 publication. An independent decoder requires exact generation-one or
 generation-two visibility, fresh convergence, and a zero-step audit. Exhaustive
-storage-fault and power-loss matrices, the ordinary-model package producer,
+storage-fault and power-loss matrices, package-aware checked durable
 `text-run` and serving integration, non-POSIX native evidence, broader
-tokenizer/model coverage, and stable language bindings remain open. See
+tokenizer/model/GPU package coverage, and stable language bindings remain open.
+See
 [Public Prepared-Text Durable Runtime](PREPARED_TEXT_DURABLE_RUNTIME.md).
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
@@ -1704,9 +1788,11 @@ exact ownership and output evidence on the promoted native platform, including
 recoverable source-exit and replay-safe external publication. The retained
 synthetic fresh-process proof now includes replay-safe local sink progress, but
 the direct-terminal proof remains a bounded four-boundary POSIX smoke rather
-than an exhaustive storage or power-loss campaign. A package producer, ordinary
-command/serving rendering, remote delivery, GPU, and multi-OS requirements also
-remain open.
+than an exhaustive storage or power-loss campaign. Ordinary-package production
+and process-local admission now exist for one narrow CPU profile. Checked
+durable command/serving rendering, fresh-process ordinary-model continuation,
+remote delivery, broader tokenizers/models, GPU package execution, and
+multi-OS requirements remain open.
 
 ### R2 — Stateless tensor families
 

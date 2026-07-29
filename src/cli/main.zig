@@ -8,6 +8,7 @@
 const std = @import("std");
 const engine = @import("engine");
 const cli_telemetry = @import("cli_telemetry");
+const cli_model_package = @import("model_package.zig");
 const cli_text_run = @import("text_run.zig");
 const core = engine.core;
 
@@ -44,6 +45,13 @@ pub fn main() !void {
     }
     if (args.len > 1 and std.mem.eql(u8, args[1], "prepare")) {
         return runPrepare(allocator, args, &bw.interface);
+    }
+    if (args.len > 1 and std.mem.eql(u8, args[1], "package-model")) {
+        return cli_model_package.run(
+            allocator,
+            args,
+            &bw.interface,
+        );
     }
     if (args.len > 1 and std.mem.eql(u8, args[1], "metal-test")) {
         return runMetalTest(allocator, &bw.interface);
@@ -287,24 +295,15 @@ fn hashIntLe(
 fn preparedProvenanceFingerprint(
     source_sha256: [32]u8,
     config: engine.loader.ModelConfig,
-) [32]u8 {
-    var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    hash.update("glacier-prepared-provenance-v1\x00");
-    hash.update(&source_sha256);
-    hashIntLe(&hash, u64, @intCast(config.dim));
-    hashIntLe(&hash, u64, @intCast(config.hidden_dim));
-    hashIntLe(&hash, u64, @intCast(config.num_layers));
-    hashIntLe(&hash, u64, @intCast(config.vocab_size));
-    hashIntLe(&hash, u64, @intCast(config.num_heads));
-    hashIntLe(&hash, u64, @intCast(config.head_dim));
-    hashIntLe(&hash, u64, @intCast(config.num_kv_heads));
-    hashIntLe(&hash, u32, @bitCast(config.rms_eps));
-    hashIntLe(&hash, u32, @bitCast(config.rope_theta));
-    hashIntLe(&hash, u8, @intFromBool(config.tie_word_embeddings));
-
-    var digest: [32]u8 = undefined;
-    hash.final(&digest);
-    return digest;
+) ![32]u8 {
+    const package_config =
+        try engine.model_package_producer.configFromLoadedModelV1(
+            config,
+        );
+    return engine.model_package_manifest.modelContentRootV1(
+        source_sha256,
+        package_config,
+    );
 }
 
 fn sourceChanged(before: std.fs.File.Stat, after: std.fs.File.Stat) bool {
@@ -464,7 +463,10 @@ fn runPrepare(
         try w.print("prepare: source changed while hashing/materializing; no image was written\n", .{});
         return error.SourceChangedDuringPrepare;
     }
-    const provenance = preparedProvenanceFingerprint(source_sha256, model.config);
+    const provenance = try preparedProvenanceFingerprint(
+        source_sha256,
+        model.config,
+    );
 
     var write_timer = std.time.Timer.start() catch unreachable;
     const write_stats = try engine.loader.writePreparedWithOptionsAndStats(
