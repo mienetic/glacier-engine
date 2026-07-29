@@ -126,7 +126,115 @@ def fixture(text: str = "Glacier สวัสดี") -> dict[str, object]:
     }
 
 
+def supported_manifest_input(
+    group_size: int = 16,
+) -> dict[str, object]:
+    _, tokenizer_manifest, _ = raw_input.tokenize(
+        "Ice",
+        vocab_size=512,
+        max_input_bytes=4096,
+    )
+    value = manifest_input(tokenizer_manifest)
+    tensor_count, tensor_root = (
+        package.ordinary_tensor_inventory_sha256(
+            value["config"]
+        )
+    )
+    value["tensor_profile_abi"] = package.TENSOR_PROFILE_ABI
+    value["tensor_count"] = tensor_count
+    value["tensor_inventory_sha256"] = tensor_root
+    value["conversion_profile_sha256"] = (
+        package.conversion_profile_sha256(group_size)
+    )
+    value["model_content_sha256"] = (
+        package.profiled_model_content_sha256(value)
+    )
+    return value
+
+
 class PreparedTextPackageTests(unittest.TestCase):
+    def test_supported_ordinary_profile_is_independently_admitted(
+        self,
+    ) -> None:
+        value = supported_manifest_input()
+        decoded = package.decode_manifest(
+            package.encode_manifest(value)
+        )
+        self.assertEqual(
+            16,
+            package.validate_supported_ordinary_package(
+                decoded
+            ),
+        )
+        self.assertEqual(21, decoded["tensor_count"])
+
+        group_32 = copy.deepcopy(value)
+        group_32["conversion_profile_sha256"] = (
+            package.conversion_profile_sha256(32)
+        )
+        group_32["model_content_sha256"] = (
+            package.profiled_model_content_sha256(group_32)
+        )
+        self.assertEqual(
+            32,
+            package.validate_supported_ordinary_package(
+                package.decode_manifest(
+                    package.encode_manifest(group_32)
+                )
+            ),
+        )
+
+        mutations: list[tuple[str, dict[str, object]]] = []
+        wrong_inventory = copy.deepcopy(decoded)
+        wrong_inventory["tensor_inventory_sha256"] = digest(
+            0x71
+        )
+        wrong_inventory["model_content_sha256"] = (
+            package.profiled_model_content_sha256(
+                wrong_inventory
+            )
+        )
+        mutations.append(("inventory", wrong_inventory))
+
+        wrong_conversion = copy.deepcopy(decoded)
+        wrong_conversion["conversion_profile_sha256"] = digest(
+            0x72
+        )
+        wrong_conversion["model_content_sha256"] = (
+            package.profiled_model_content_sha256(
+                wrong_conversion
+            )
+        )
+        mutations.append(("conversion", wrong_conversion))
+
+        tied = copy.deepcopy(decoded)
+        tied["config"]["tie_embeddings"] = True
+        tied["model_content_sha256"] = (
+            package.profiled_model_content_sha256(tied)
+        )
+        mutations.append(("tied", tied))
+
+        wrong_profile = copy.deepcopy(decoded)
+        wrong_profile["model_profile_id"] = 2
+        wrong_profile["model_profile_sha256"] = (
+            package.model_profile_sha256(2)
+        )
+        wrong_profile["model_content_sha256"] = (
+            package.profiled_model_content_sha256(
+                wrong_profile
+            )
+        )
+        mutations.append(("profile", wrong_profile))
+
+        for label, changed in mutations:
+            with self.subTest(label=label):
+                with self.assertRaises(
+                    package.PreparedTextPackageError
+                ):
+                    package.validate_supported_ordinary_package(
+                        changed
+                    )
+
     def test_admission_bundle_roundtrip_authenticates_both_records(
         self,
     ) -> None:

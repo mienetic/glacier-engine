@@ -34,6 +34,19 @@ MANIFEST_ALLOWED_FLAGS = MANIFEST_FLAG_MODEL_PROFILE
 ALLOWED_FLAGS = 0
 MODEL_PROFILE_ABI = 0x474C_4D50_0000_0001
 ORDINARY_PACKAGE_PROFILE_ID = 1
+TENSOR_PROFILE_ABI = 0x474C_5450_0000_0001
+PORTABLE_FORMAT_ABI = 0x474C_4143_0000_0001
+CONVERSION_PROFILE_ABI = 0x474C_4350_0000_0001
+CONVERSION_PLAN_ABI = 0x474C_434E_0000_0001
+TENSOR_INVENTORY_DOMAIN = (
+    b"glacier/ordinary-package/tensor-inventory/v1\x00"
+)
+CONVERSION_PROFILE_DOMAIN = (
+    b"glacier-model-conversion-profile-v1\x00"
+)
+CONVERSION_ARCHITECTURE = b"glacier-ordinary-package-v1"
+QUANTIZED_TENSOR_KINDS = (0, 1, 2, 3, 4, 5, 6, 7, 9, 255)
+SUPPORTED_CONVERSION_GROUP_SIZES = (1, 2, 4, 8, 16, 32, 64, 128)
 
 ARCHIVE_ABI = 0x4750_5449_0000_0001
 ARCHIVE_MAGIC = b"GPTINP1\x00"
@@ -226,6 +239,180 @@ def model_profile_sha256(profile_id: object) -> bytes:
         MODEL_PROFILE_DOMAIN,
         _u64(MODEL_PROFILE_ABI),
         _u64(profile_id),
+    )
+
+
+def conversion_profile_sha256(group_size: int) -> bytes:
+    """Recompute one supported ordinary-package conversion profile."""
+
+    if (
+        type(group_size) is not int
+        or group_size not in SUPPORTED_CONVERSION_GROUP_SIZES
+    ):
+        raise PreparedTextPackageError(
+            "unsupported conversion group size"
+        )
+    body = bytearray()
+    body.extend(CONVERSION_PROFILE_DOMAIN)
+    body.extend(
+        struct.pack(
+            "<7Q",
+            CONVERSION_PROFILE_ABI,
+            1,
+            256,
+            64,
+            0x514F_4954,
+            16,
+            1 << 18,
+        )
+    )
+    body.extend(_u64(len(CONVERSION_ARCHITECTURE)))
+    body.extend(CONVERSION_ARCHITECTURE)
+    body.extend(b"\x01")
+    body.extend(_u64(len(QUANTIZED_TENSOR_KINDS)))
+    for kind in QUANTIZED_TENSOR_KINDS:
+        body.extend(struct.pack("<II", kind, group_size))
+    return hashlib.sha256(body).digest()
+
+
+def ordinary_tensor_inventory_sha256(
+    config: Mapping[str, object],
+) -> tuple[int, bytes]:
+    """Recompute the exact F32/MHA/untied ordinary tensor inventory."""
+
+    value = _checked_config(config)
+    if (
+        value["vocab"] < 256
+        or value["layers"] > 512
+        or value["kv_heads"] != value["heads"]
+        or value["tie_embeddings"]
+    ):
+        raise PreparedTextPackageError(
+            "unsupported ordinary tensor config"
+        )
+    dim = int(value["dim"])
+    hidden_dim = int(value["hidden_dim"])
+    vocab = int(value["vocab"])
+    tensors: list[tuple[int, int, tuple[int, ...]]] = [
+        (U32_MAX, 1, (vocab, dim)),
+        (U32_MAX, 2, (dim,)),
+        (U32_MAX, 3, (vocab, dim)),
+    ]
+    for layer in range(int(value["layers"])):
+        tensors.extend(
+            (
+                (layer, 4, (dim,)),
+                (layer, 5, (dim, dim)),
+                (layer, 6, (dim, dim)),
+                (layer, 7, (dim, dim)),
+                (layer, 8, (dim, dim)),
+                (layer, 9, (dim,)),
+                (layer, 10, (hidden_dim, dim)),
+                (layer, 11, (hidden_dim, dim)),
+                (layer, 12, (dim, hidden_dim)),
+            )
+        )
+
+    digest = hashlib.sha256()
+    digest.update(TENSOR_INVENTORY_DOMAIN)
+    digest.update(
+        struct.pack(
+            "<QQ7I",
+            TENSOR_PROFILE_ABI,
+            len(tensors),
+            *(int(value[name]) for name in CONFIG_U32_FIELDS),
+        )
+    )
+    for layer, role, shape in tensors:
+        digest.update(
+            struct.pack("<IBBB", layer, role, 1, len(shape))
+        )
+        for extent in shape:
+            digest.update(_u64(extent))
+    return len(tensors), digest.digest()
+
+
+def validate_supported_ordinary_package(
+    package: Mapping[str, object],
+) -> int:
+    """Validate the currently executable ordinary profile.
+
+    Returns the admitted INT4 group size. Structural decoding stays generic;
+    callers opt into this stricter execution-profile check explicitly.
+    """
+
+    try:
+        config = package["config"]
+        observed_profile = _digest(
+            package["conversion_profile_sha256"]
+        )
+    except (KeyError, TypeError) as error:
+        raise PreparedTextPackageError(
+            "invalid ordinary package"
+        ) from error
+    expected_scalars = {
+        "family": 1,
+        "source_format": 1,
+        "portable_format_abi": PORTABLE_FORMAT_ABI,
+        "conversion_profile_abi": CONVERSION_PROFILE_ABI,
+        "conversion_plan_abi": CONVERSION_PLAN_ABI,
+        "tokenizer_manifest_abi": raw_input.MANIFEST_ABI,
+        "tokenizer_manifest_bytes": raw_input.MANIFEST_BYTES,
+        "model_profile_abi": MODEL_PROFILE_ABI,
+        "model_profile_id": ORDINARY_PACKAGE_PROFILE_ID,
+        "tensor_profile_abi": TENSOR_PROFILE_ABI,
+    }
+    if any(
+        package.get(name) != expected
+        for name, expected in expected_scalars.items()
+    ):
+        raise PreparedTextPackageError(
+            "unsupported ordinary package scalar"
+        )
+    if not isinstance(config, Mapping):
+        raise PreparedTextPackageError(
+            "invalid ordinary package config"
+        )
+    tensor_count, tensor_root = (
+        ordinary_tensor_inventory_sha256(config)
+    )
+    if (
+        package.get("tensor_count") != tensor_count
+        or package.get("tensor_inventory_sha256") != tensor_root
+        or package.get("model_profile_sha256")
+        != model_profile_sha256(ORDINARY_PACKAGE_PROFILE_ID)
+        or package.get("model_content_sha256")
+        != profiled_model_content_sha256(package)
+    ):
+        raise PreparedTextPackageError(
+            "unsupported ordinary package identity"
+        )
+
+    tokenizer = raw_input.decode_manifest(
+        raw_input.manifest_wire(
+            int(config["vocab"]),
+            4096,
+        )
+    )
+    if (
+        package.get("tokenizer_config_sha256")
+        != tokenizer["config_sha256"]
+        or package.get("tokenizer_domain_sha256")
+        != tokenizer["domain_sha256"]
+        or package.get("tokenizer_behavior_sha256")
+        != tokenizer["behavior_sha256"]
+    ):
+        raise PreparedTextPackageError(
+            "unsupported ordinary tokenizer"
+        )
+
+    for group_size in SUPPORTED_CONVERSION_GROUP_SIZES:
+        if observed_profile == conversion_profile_sha256(
+            group_size
+        ):
+            return group_size
+    raise PreparedTextPackageError(
+        "unsupported ordinary conversion profile"
     )
 
 

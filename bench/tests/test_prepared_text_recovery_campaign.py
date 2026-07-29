@@ -1710,6 +1710,52 @@ class SourceReplayContractTests(unittest.TestCase):
                 label="test generation",
             )
 
+    def test_ordinary_durable_input_requires_exact_admitted_identity(
+        self,
+    ) -> None:
+        package_sha256 = self.digest("ordinary-package")
+        representation_sha256 = self.digest(
+            "ordinary-representation"
+        )
+        observed = campaign.DurableInputFacts(
+            encoded=b"ordinary-durable-input",
+            archive_sha256=self.digest("ordinary-archive"),
+            package_sha256=package_sha256,
+            representation_sha256=representation_sha256,
+            raw_text_sha256=self.digest("ordinary-raw-text"),
+            raw_text=b"ordinary prompt",
+            prompt_tokens=(7, 11),
+            ordinary_manifest_semantics_verified=True,
+            model_profile_id=(
+                prepared_package.ORDINARY_PACKAGE_PROFILE_ID
+            ),
+            tensor_profile_abi=prepared_package.TENSOR_PROFILE_ABI,
+            tensor_count=12,
+            tensor_inventory_sha256=self.digest(
+                "ordinary-tensor-inventory"
+            ),
+            conversion_group_size=16,
+        )
+        self.assertIs(
+            campaign._require_ordinary_durable_input(
+                observed,
+                package_sha256=package_sha256,
+                representation_sha256=representation_sha256,
+                conversion_group_size=16,
+            ),
+            observed,
+        )
+        with self.assertRaisesRegex(
+            campaign.CampaignError,
+            "ordinary admission bundle",
+        ):
+            campaign._require_ordinary_durable_input(
+                observed,
+                package_sha256=self.digest("other-package"),
+                representation_sha256=representation_sha256,
+                conversion_group_size=16,
+            )
+
     def test_bad_contract_footer_is_rejected(self) -> None:
         encoded = bytearray(self.contract())
         encoded[-1] ^= 1

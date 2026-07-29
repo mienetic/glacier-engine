@@ -375,6 +375,12 @@ class DurableInputFacts:
     tokenizer_domain_sha256: bytes = ZERO_DIGEST
     tokenizer_behavior_sha256: bytes = ZERO_DIGEST
     tokenizer_config_sha256: bytes = ZERO_DIGEST
+    ordinary_manifest_semantics_verified: bool = False
+    model_profile_id: int = 0
+    tensor_profile_abi: int = 0
+    tensor_count: int = 0
+    tensor_inventory_sha256: bytes = ZERO_DIGEST
+    conversion_group_size: int = 0
 
 
 @dataclass(frozen=True)
@@ -2941,6 +2947,27 @@ def _decode_durable_input_archive(
         Mapping[str, object],
         decoded["representation"],
     )
+    model_profile_id = _required_int(
+        package,
+        "model_profile_id",
+        minimum=1,
+    )
+    ordinary_manifest_semantics_verified = False
+    conversion_group_size = 0
+    if (
+        model_profile_id
+        == prepared_package.ORDINARY_PACKAGE_PROFILE_ID
+    ):
+        try:
+            conversion_group_size = (
+                prepared_package
+                .validate_supported_ordinary_package(package)
+            )
+        except prepared_package.PreparedTextPackageError as error:
+            raise CampaignError(
+                "invalid ordinary package profile"
+            ) from error
+        ordinary_manifest_semantics_verified = True
     tokenizer_manifest = cast(
         Mapping[str, object],
         decoded["tokenizer_manifest"],
@@ -2988,6 +3015,25 @@ def _decode_durable_input_archive(
             bytes,
             tokenizer_manifest["config_sha256"],
         ),
+        ordinary_manifest_semantics_verified=(
+            ordinary_manifest_semantics_verified
+        ),
+        model_profile_id=model_profile_id,
+        tensor_profile_abi=_required_int(
+            package,
+            "tensor_profile_abi",
+            minimum=1,
+        ),
+        tensor_count=_required_int(
+            package,
+            "tensor_count",
+            minimum=1,
+        ),
+        tensor_inventory_sha256=cast(
+            bytes,
+            package["tensor_inventory_sha256"],
+        ),
+        conversion_group_size=conversion_group_size,
     )
 
 
@@ -3012,9 +3058,46 @@ def _require_same_durable_input(
             and actual.tokenizer_domain_sha256 == expected.tokenizer_domain_sha256
             and actual.tokenizer_behavior_sha256 == expected.tokenizer_behavior_sha256
             and actual.tokenizer_config_sha256 == expected.tokenizer_config_sha256
+            and actual.ordinary_manifest_semantics_verified
+            == expected.ordinary_manifest_semantics_verified
+            and actual.model_profile_id
+            == expected.model_profile_id
+            and actual.tensor_profile_abi
+            == expected.tensor_profile_abi
+            and actual.tensor_count == expected.tensor_count
+            and actual.tensor_inventory_sha256
+            == expected.tensor_inventory_sha256
+            and actual.conversion_group_size
+            == expected.conversion_group_size
         ),
         f"{label} durable input changed",
     )
+
+
+def _require_ordinary_durable_input(
+    observed: DurableInputFacts | None,
+    *,
+    package_sha256: bytes,
+    representation_sha256: bytes,
+    conversion_group_size: int,
+) -> DurableInputFacts:
+    _require(
+        observed is not None
+        and observed.ordinary_manifest_semantics_verified
+        and observed.model_profile_id
+        == prepared_package.ORDINARY_PACKAGE_PROFILE_ID
+        and observed.tensor_profile_abi
+        == prepared_package.TENSOR_PROFILE_ABI
+        and observed.tensor_count == 12
+        and observed.tensor_inventory_sha256 != ZERO_DIGEST
+        and observed.conversion_group_size
+        == conversion_group_size
+        and observed.package_sha256 == package_sha256
+        and observed.representation_sha256
+        == representation_sha256,
+        "durable input did not retain the ordinary admission bundle",
+    )
+    return cast(DurableInputFacts, observed)
 
 
 def _decode_source_generation_one_evidence(
@@ -4003,6 +4086,46 @@ def run_campaign(
         len(baseline_tokens) == TERMINAL_OUTPUT_COUNT,
         "baseline did not produce the four-token terminal output",
     )
+    baseline_bundle_wire = _read_regular_file(
+        baseline_directory / "prepared-text-fixture.glpkg",
+        maximum_bytes=prepared_package.ADMISSION_BUNDLE_BYTES,
+    )
+    _require(
+        len(baseline_bundle_wire)
+        == prepared_package.ADMISSION_BUNDLE_BYTES,
+        "baseline admission bundle has the wrong size",
+    )
+    try:
+        baseline_bundle = (
+            prepared_package.decode_admission_bundle(
+                baseline_bundle_wire
+            )
+        )
+        baseline_package = cast(
+            Mapping[str, object],
+            baseline_bundle["package"],
+        )
+        baseline_representation = cast(
+            Mapping[str, object],
+            baseline_bundle["representation"],
+        )
+        baseline_conversion_group_size = (
+            prepared_package.validate_supported_ordinary_package(
+                baseline_package
+            )
+        )
+    except prepared_package.PreparedTextPackageError as error:
+        raise CampaignError(
+            "baseline ordinary admission bundle is invalid"
+        ) from error
+    baseline_package_sha256 = cast(
+        bytes,
+        baseline_package["package_sha256"],
+    )
+    baseline_representation_sha256 = cast(
+        bytes,
+        baseline_representation["representation_sha256"],
+    )
 
     case_summaries: list[dict[str, object]] = []
     cases_directory = directory / "cases"
@@ -4234,6 +4357,12 @@ def run_campaign(
         source_checkpoint = source_wire.checkpoint
         if source_checkpoint is None:
             raise CampaignError("source recovery lacks generation two")
+        source_durable_input = _require_ordinary_durable_input(
+            source_wire.durable_input,
+            package_sha256=baseline_package_sha256,
+            representation_sha256=baseline_representation_sha256,
+            conversion_group_size=baseline_conversion_group_size,
+        )
         last_generation = source_checkpoint.generation
         last_sequence = source_checkpoint.next_sequence
         recovery_count = 0
@@ -4367,6 +4496,21 @@ def run_campaign(
                     if final_wire.durable_input is not None
                     else "0" * 64
                 ),
+                "ordinary_manifest_semantics_verified": (
+                    source_durable_input.ordinary_manifest_semantics_verified
+                ),
+                "persisted_glrt_representation_verified": True,
+                "model_profile_id": source_durable_input.model_profile_id,
+                "tensor_profile_abi": (
+                    source_durable_input.tensor_profile_abi
+                ),
+                "tensor_count": source_durable_input.tensor_count,
+                "tensor_inventory_sha256": (
+                    source_durable_input.tensor_inventory_sha256.hex()
+                ),
+                "conversion_group_size": (
+                    source_durable_input.conversion_group_size
+                ),
                 "package_manifest_verified": True,
                 "durable_raw_input_verified": True,
                 "fresh_process_retokenization_verified": True,
@@ -4459,6 +4603,35 @@ def run_campaign(
         "inspector_sha256": inspector_sha256,
         "baseline_output_tokens": list(baseline_tokens),
         "baseline_terminal_semantic_sha256": baseline_semantic,
+        "admission_bundle_bytes": (
+            prepared_package.ADMISSION_BUNDLE_BYTES
+        ),
+        "ordinary_manifest_semantics_verified": True,
+        "persisted_glrt_representation_verified": True,
+        "model_profile_id": _required_int(
+            baseline_package,
+            "model_profile_id",
+            minimum=1,
+        ),
+        "tensor_profile_abi": _required_int(
+            baseline_package,
+            "tensor_profile_abi",
+            minimum=1,
+        ),
+        "tensor_count": _required_int(
+            baseline_package,
+            "tensor_count",
+            minimum=1,
+        ),
+        "tensor_inventory_sha256": cast(
+            bytes,
+            baseline_package["tensor_inventory_sha256"],
+        ).hex(),
+        "conversion_group_size": baseline_conversion_group_size,
+        "package_sha256": baseline_package_sha256.hex(),
+        "representation_sha256": (
+            baseline_representation_sha256.hex()
+        ),
         "bootstrap_checkpoint_absent_count": (
             len(selected_bootstrap) - bootstrap_checkpoint_selected_count
         ),

@@ -358,6 +358,15 @@ representation, and input-archive bytes, reconstructs the same roots and
 re-tokenization relationship, rejects every component/archive byte mutation,
 and rejects coherently re-rooted substitutions.
 
+In the separate prepared-text recovery gate, the archive now carries one
+canonical supported `ordinary-package-v1` V2 bundle instead of a
+transport-only placeholder. The retained worker validates its package,
+tokenizer, and actual prepared-image relationship before execution, while the
+controller independently revalidates its model, conversion, tensor,
+tokenizer, package, and representation semantics through recovery. The
+download-free weights remain synthetic, and this path does not rerun the
+producer's captured-source tensor preflight.
+
 ## Verification gate
 
 Run the complete retained gate with:

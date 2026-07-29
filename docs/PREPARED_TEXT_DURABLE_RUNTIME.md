@@ -213,6 +213,14 @@ writer entry points for all 49 real-process-death boundaries:
 - 23 source-transition boundaries call `advanceSourceFileV1`; and
 - 19 target-transition boundaries call `advanceTargetFileV1`.
 
+The acknowledged fixture now contains a canonical supported ordinary-profile
+bundle rather than only structurally valid transport data. The uninterrupted
+baseline and source bootstrap validate its package, tokenizer, and actual
+prepared-image relationship before execution. The independent controller
+recomputes the archived conversion, tensor, model-content, package, tokenizer,
+and representation roots after recovery; the boundary count and
+predecessor/successor rules are unchanged.
+
 The independent controller still admits only each boundary's declared absent,
 exact-predecessor, or exact-successor filesystem roots and then requires fresh
 convergence to the retained four-token terminal oracle. Public extraction did
@@ -248,6 +256,8 @@ compilation.
 
 This foundation does not yet provide:
 
+- an installed clean-host or package-aware production-command process-death
+  campaign;
 - an exhaustive direct-terminal I/O-fault, storage-fault, or power-loss matrix;
 - unary or streaming serving integration over the durable command;
 - a stable public ABI or cross-language session binding;

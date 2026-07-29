@@ -153,6 +153,15 @@ Next slices:
   unsupported model/tokenizer, capacity rejection, cancellation, source death,
   target death, and exact resume.
 
+The existing 49-boundary development campaign now retains and independently
+revalidates one supported ordinary-profile V2 bundle through recovery. The
+uninterrupted baseline and source bootstrap also admit the persisted bundle
+against the loaded prepared image before execution. This strengthens the
+fixture semantics but does not complete the clean-host item: the campaign
+still uses synthetic weights and the retained worker, and it does not cover an
+installed command, service capacity rejection, external cancellation, or the
+producer's captured-source tensor preflight.
+
 Development verification for the producer, package-aware command,
 variable-terminal lifecycle, bounded input helper, and independent package
 oracle reuses the existing focused

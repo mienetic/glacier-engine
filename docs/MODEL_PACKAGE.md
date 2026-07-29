@@ -273,6 +273,15 @@ durable-EOS no-mutation rejection, package mutation, changed-license rejection,
 and embedded-receipt/prepared-image substitution rejection without compiling
 the broad runtime and foreign-target suites.
 
+The deeper `prepared-text-recovery-test` separately uses a synthetic
+one-layer, group-16 fixture whose 896-byte bundle satisfies the same
+`ordinary-package-v1` manifest, tokenizer, tensor-inventory, and prepared-image
+admission. Its baseline and source workers validate the persisted bundle
+against the loaded GLRT, and the independent controller revalidates the
+archived semantic roots through all 49 source/target death boundaries. This
+complements the producer golden path; it does not prove that `package-model` or
+its captured-source descriptor preflight ran at each recovery boundary.
+
 The complete `affected` tier additionally compiles the selected retained
 host-tool portability profiles. Run `tools/verify.sh full` or the deeper
 platform matrices at integration, release, shared-ABI, or cross-platform

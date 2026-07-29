@@ -33,6 +33,17 @@ before the first stable release.
   configured 1 GiB and 2 GiB action limits, respectively. Local verification
   still ignores inherited Zig cache paths and removes its private temporary
   cache after every run.
+- The retained prepared-text recovery fixture now carries a canonical
+  896-byte `ordinary-package-v1` V2 admission bundle instead of an
+  execution-unsupported transport placeholder. The uninterrupted baselines
+  and every source bootstrap canonicalize and admit the persisted bundle
+  against the loaded GLRT and tokenizer before execution. The independent
+  campaign recomputes the group-16 conversion profile, 12-entry tensor
+  inventory, profiled model content, tokenizer, package, and representation
+  relationships through all 49 source/target process-death cases. This is a
+  low-compile admission bridge over synthetic weights; it does not rerun the
+  package producer's captured-source preflight or establish clean-host,
+  production-model, native multi-OS, or physical power-loss evidence.
 - Portable-model conversion now rejects malformed Safetensors integer domains,
   tensor byte geometry, overlap, holes, unsupported source dtypes, and
   source/output aliases before payload publication. Conversion reserves the

@@ -1631,6 +1631,19 @@ and rejects coherently re-rooted context substitution. It runs in the
 compile-once prepared-text recovery gate with the existing source/target death
 matrix.
 
+The retained worker now instantiates that archive with a canonical supported
+`ordinary-package-v1` V2 bundle for one download-free, one-layer, group-16,
+12-tensor fixture. The uninterrupted baseline and every source bootstrap
+canonicalize the persisted 896-byte bundle, admit its package and tokenizer,
+and derive its embedded representation from the loaded GLRT before execution.
+The controller independently recomputes the conversion profile, tensor
+inventory, profiled model content, tokenizer, package, and representation
+relationships from the archived bytes in all 49 recovery cases.
+
+This is an admission bridge, not a second producer proof. It does not rerun
+`package-model`, captured-source tensor preflight, bounded config/license
+ingress, or durable conversion publication at each death boundary.
+
 R1k-b2 does not make the standalone `text-run` command durable, provide
 committed-token text rendering, or establish a stable public ABI. The retained
 model is synthetic, execution is CPU-only, and durable storage uses the
@@ -1880,7 +1893,9 @@ and admission now include checked durable fixed output `1..64`, with focused
 `N=2`, fresh-process `N=4`, and `N=64` evidence for one narrow CPU/POSIX
 profile. Serving, production artifacts, remote delivery, broader
 tokenizers/models, GPU package execution, and multi-OS requirements remain
-open.
+open. The combined 49-boundary worker now carries an admitted ordinary-profile
+bundle, while installed clean-host execution and a package-aware command
+process-death campaign remain open.
 
 ### R2 — Stateless tensor families
 

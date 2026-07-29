@@ -1423,8 +1423,13 @@ implementation.
 The compatibility durable recovery APIs still accept pre-tokenized input and
 do not cover every V1-valid request shape. The additive R1k-b2 path now carries
 one strict raw-text tokenizer, the retained fixture license, a stable package
-identity, and exact UTF-8 bytes through fresh-process recovery. The standalone
-`text-run` command now also admits a user-supplied model when `--package`
+identity, and exact UTF-8 bytes through fresh-process recovery. The retained
+49-boundary worker now carries a canonical admitted ordinary-profile bundle;
+its independent decoder revalidates the archived conversion, tensor,
+tokenizer, package, and prepared-representation identities in every case. This
+is synthetic admission/recovery evidence, not a rerun of the package
+producer's captured-source preflight. The standalone `text-run` command now
+also admits a user-supplied model when `--package`
 validates the exact package/config/tokenizer/license/prepared-image
 relationship. Without durable options, counts `1..64` use the process-local
 token-ID sink. With durable options, the command selects the sink-free

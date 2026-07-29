@@ -9,6 +9,7 @@ const bank_api = engine.resource_bank;
 const lane = engine.lane_weave_qos;
 const publication = engine.lane_publication_txn;
 const package_manifest = engine.model_package_manifest;
+const package_producer = engine.model_package_producer;
 const prepared = engine.prepared_text_session;
 const checkpoint = engine.prepared_text_checkpoint;
 const input_archive = engine.prepared_text_input_archive;
@@ -80,6 +81,10 @@ const model_package_name = "prepared-text-fixture.glpkg";
 const terminal_semantic_name = "prepared-text-terminal-semantic.bin";
 const portable_format_abi_v1: u64 = 0x474c_4143_0000_0001;
 const prepared_format_abi_v2: u64 = 0x474c_5254_0000_0002;
+const tensor_profile_abi_v1: u64 = 0x474c_5450_0000_0001;
+const tensor_inventory_domain_v1 =
+    "glacier/ordinary-package/tensor-inventory/v1\x00";
+const fixture_tensor_count_v1: u64 = num_layers * 9 + 3;
 
 const scheduling: prepared.SchedulingV1 = .{
     .tenant_key = 0x501,
@@ -854,6 +859,15 @@ fn runBaselineV1(
     var model =
         try engine.loader.loadPrepared(allocator, image_path);
     defer model.deinit();
+    {
+        var directory =
+            try std.fs.openDirAbsolute(absolute_directory, .{});
+        defer directory.close();
+        _ = try readSupportedAdmissionBundleV2(
+            directory,
+            &model,
+        );
+    }
 
     var runtime: SourceRuntime = .{};
     try runtime.init();
@@ -985,6 +999,15 @@ fn runDirectBaselineV1(
     var model =
         try engine.loader.loadPrepared(allocator, image_path);
     defer model.deinit();
+    {
+        var directory =
+            try std.fs.openDirAbsolute(absolute_directory, .{});
+        defer directory.close();
+        _ = try readSupportedAdmissionBundleV2(
+            directory,
+            &model,
+        );
+    }
 
     var runtime: SourceRuntime = .{};
     try runtime.init();
@@ -1124,11 +1147,12 @@ fn runSourceBootstrapV1(
         if (!runtime_closed)
             _ = runtime.scheduler.close() catch {};
     }
-    const package = try readPackageManifestV1(directory);
-    const representation = try preparedRepresentationV1(
-        package,
+    const admission = try readSupportedAdmissionBundleV2(
+        directory,
         &model,
     );
+    const package = admission.package;
+    const representation = admission.representation;
     const tokenizer_manifest =
         try fixtureTokenizerManifestV1();
     var tokenized = try tokenizer.tokenizeUtf8BytesV1(
@@ -1267,11 +1291,12 @@ fn runDirectBootstrapV1(
         if (!runtime_closed)
             _ = runtime.scheduler.close() catch {};
     }
-    const package = try readPackageManifestV1(directory);
-    const representation = try preparedRepresentationV1(
-        package,
+    const admission = try readSupportedAdmissionBundleV2(
+        directory,
         &model,
     );
+    const package = admission.package;
+    const representation = admission.representation;
     const tokenizer_manifest =
         try fixtureTokenizerManifestV1();
     const bound_input =
@@ -2690,36 +2715,48 @@ fn readExactFileV1(
         return error.OversizedFixtureFile;
 }
 
-fn readPackageManifestV1(
+fn readSupportedAdmissionBundleV2(
     directory: std.fs.Dir,
-) !package_manifest.ManifestV1 {
-    var encoded: [package_manifest.manifest_bytes]u8 =
+    model: *const engine.loader.LoadedModel,
+) !package_manifest.AdmissionBundleV2 {
+    var encoded: [package_manifest.admission_bundle_bytes]u8 =
         undefined;
     try readExactFileV1(
         directory,
         model_package_name,
         &encoded,
     );
-    return package_manifest.decodeV1(&encoded);
-}
-
-fn preparedRepresentationV1(
-    package: package_manifest.ManifestV1,
-    model: *const engine.loader.LoadedModel,
-) !package_manifest.PreparedRepresentationV1 {
-    const expected_config = try packageConfigV1(model.config);
-    if (!std.meta.eql(package.config, expected_config))
-        return error.PackageModelConfigDrift;
-    const image = if (model.prepared_image) |*value|
-        value
-    else
-        return error.MissingPreparedImage;
-    return package_manifest.makePreparedRepresentationV1(
-        package,
-        prepared_format_abi_v2,
-        @intCast(engine.runtime_image.VERSION),
-        image.identityV1(),
+    const admission =
+        try package_manifest.decodeAdmissionBundleV2(&encoded);
+    var canonical: [package_manifest.admission_bundle_bytes]u8 =
+        undefined;
+    _ = try package_manifest.encodeAdmissionBundleV2(
+        admission.package,
+        admission.representation,
+        &canonical,
     );
+    if (!std.mem.eql(u8, &encoded, &canonical))
+        return error.NonCanonicalAdmissionBundle;
+
+    const admitted_tokenizer =
+        try package_producer.validateSupportedPackageV1(
+            admission.package,
+        );
+    const expected_tokenizer =
+        try fixtureTokenizerManifestV1();
+    if (!std.meta.eql(admitted_tokenizer, expected_tokenizer))
+        return error.PackageTokenizerDrift;
+    const expected_representation =
+        try package_producer.preparedRepresentationForModelV1(
+            admission.package,
+            model,
+        );
+    if (!std.meta.eql(
+        admission.representation,
+        expected_representation,
+    ))
+        return error.PackagePreparedRepresentationDrift;
+    return admission;
 }
 
 fn packageConfigV1(
@@ -2808,9 +2845,9 @@ fn writePreparedFixtureV1(
             source_path,
             container_path,
             .{
+                .architecture = package_producer.conversion_architecture_v1,
                 .quantize_int4 = true,
                 .quant_group_size = 16,
-                .page_size_bytes = 1 << 16,
             },
         );
     var reader = try engine.model.FileReader.open(
@@ -2818,22 +2855,74 @@ fn writePreparedFixtureV1(
         container_path,
     );
     defer reader.close();
+    var stream_buffer: [
+        engine.model.STREAM_BUFFER_SIZE
+    ]u8 = undefined;
+    try reader.validateAllPageCrcsWithBufferV1(
+        &stream_buffer,
+    );
+    const portable_identity =
+        try reader.containerIdentityWithBufferV1(
+            &stream_buffer,
+        );
+    if (portable_identity.container_bytes !=
+        conversion.output_bytes or
+        reader.header.num_pages != conversion.num_pages or
+        !std.mem.eql(
+            u8,
+            &portable_identity.container_sha256,
+            &conversion.output_sha256,
+        ))
+        return error.PortableIdentityDrift;
     var compact = try engine.loader.loadWithOptions(
         allocator,
         &reader,
-        .{},
+        .{
+            .dim = dim,
+            .hidden_dim = hidden,
+            .num_layers = num_layers,
+            .vocab_size = vocab,
+            .num_heads = 1,
+            .head_dim = dim,
+            .rms_eps = 1e-6,
+            .rope_theta = 10_000,
+            .num_kv_heads = 1,
+            .tie_word_embeddings = false,
+        },
         .{ .compact_int4 = true },
     );
     defer compact.deinit();
-    try engine.loader.writePrepared(
+    const package_config = try packageConfigV1(
+        compact.config,
+    );
+    const tensor_inventory_sha256 =
+        fixtureTensorInventorySha256V1(package_config);
+    const model_content_sha256 =
+        try package_manifest.profiledModelContentRootV1(.{
+            .family = .autoregressive,
+            .source_format = .safetensors,
+            .portable_format_abi = portable_format_abi_v1,
+            .conversion_profile_abi = engine.converter.conversion_profile_abi,
+            .conversion_plan_abi = engine.converter.conversion_plan_abi,
+            .model_profile_id = .ordinary_package_v1,
+            .tensor_profile_abi = tensor_profile_abi_v1,
+            .tensor_count = fixture_tensor_count_v1,
+            .config = package_config,
+            .portable_artifact_sha256 = portable_identity.container_sha256,
+            .conversion_profile_sha256 = conversion.conversion_profile_sha256,
+            .conversion_plan_sha256 = conversion.conversion_plan_sha256,
+            .tensor_inventory_sha256 = tensor_inventory_sha256,
+        });
+    _ = try engine.loader.writePreparedWithOptionsAndStats(
         allocator,
         &compact,
         image_path,
-        compact.source_fingerprint,
+        model_content_sha256,
+        .{ .mlp_layout = .separate },
     );
     const tokenizer_manifest =
         try fixtureTokenizerManifestV1();
-    const package = try package_manifest.makeV1(.{
+    const package = try package_manifest.makeV2(.{
         .family = .autoregressive,
         .source_format = .safetensors,
         .portable_format_abi = portable_format_abi_v1,
@@ -2842,28 +2931,49 @@ fn writePreparedFixtureV1(
         .tokenizer_manifest_abi = tokenizer.utf8_byte_manifest_abi,
         .tokenizer_manifest_bytes = tokenizer.utf8_byte_manifest_bytes,
         .source_bytes = conversion.source_bytes,
-        .portable_bytes = conversion.output_bytes,
+        .portable_bytes = portable_identity.container_bytes,
         .portable_page_count = conversion.num_pages,
         .license_bytes = artifact_license.len,
-        .model_profile_id = @enumFromInt(255),
-        .tensor_profile_abi = 1,
-        .tensor_count = 1,
-        .tensor_inventory_sha256 = [_]u8{0x25} ** 32,
-        .config = try packageConfigV1(compact.config),
+        .model_profile_id = .ordinary_package_v1,
+        .tensor_profile_abi = tensor_profile_abi_v1,
+        .tensor_count = fixture_tensor_count_v1,
+        .tensor_inventory_sha256 = tensor_inventory_sha256,
+        .config = package_config,
         .source_sha256 = conversion.source_sha256,
-        .portable_artifact_sha256 = conversion.output_sha256,
+        .portable_artifact_sha256 = portable_identity.container_sha256,
         .conversion_profile_sha256 = conversion.conversion_profile_sha256,
         .conversion_plan_sha256 = conversion.conversion_plan_sha256,
-        .model_content_sha256 = compact.source_fingerprint,
+        .model_content_sha256 = model_content_sha256,
         .tokenizer_config_sha256 = tokenizer_manifest.config_sha256,
         .tokenizer_domain_sha256 = tokenizer_manifest.domain_sha256,
         .tokenizer_behavior_sha256 = tokenizer_manifest.behavior_sha256,
         .license_sha256 = model_contract.sha256(artifact_license),
     });
-    var encoded_package: [package_manifest.manifest_bytes]u8 =
-        undefined;
-    _ = try package_manifest.encodeV1(
+    _ = try package_producer.validateSupportedPackageV1(
         package,
+    );
+    var prepared_model =
+        try engine.loader.loadPreparedWithOptions(
+            allocator,
+            image_path,
+            .{
+                .expected_source_fingerprint = model_content_sha256,
+                .mlp_layout = .separate_required,
+            },
+        );
+    defer prepared_model.deinit();
+    const representation =
+        try package_producer.preparedRepresentationForModelV1(
+            package,
+            &prepared_model,
+        );
+    var encoded_package: [
+        package_manifest.admission_bundle_bytes
+    ]u8 =
+        undefined;
+    _ = try package_manifest.encodeAdmissionBundleV2(
+        package,
+        representation,
         &encoded_package,
     );
     var directory =
@@ -2874,6 +2984,130 @@ fn writePreparedFixtureV1(
         model_package_name,
         &encoded_package,
     );
+}
+
+fn fixtureTensorInventorySha256V1(
+    config: package_manifest.ConfigV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(tensor_inventory_domain_v1);
+    hashU64V1(&hash, tensor_profile_abi_v1);
+    hashU64V1(&hash, fixture_tensor_count_v1);
+    hashU32V1(&hash, config.dim);
+    hashU32V1(&hash, config.hidden_dim);
+    hashU32V1(&hash, config.layers);
+    hashU32V1(&hash, config.vocab);
+    hashU32V1(&hash, config.heads);
+    hashU32V1(&hash, config.head_dim);
+    hashU32V1(&hash, config.kv_heads);
+
+    hashTensorInventoryEntryV1(
+        &hash,
+        std.math.maxInt(u32),
+        1,
+        &.{ config.vocab, config.dim },
+    );
+    hashTensorInventoryEntryV1(
+        &hash,
+        std.math.maxInt(u32),
+        2,
+        &.{config.dim},
+    );
+    hashTensorInventoryEntryV1(
+        &hash,
+        std.math.maxInt(u32),
+        3,
+        &.{ config.vocab, config.dim },
+    );
+    var layer: u32 = 0;
+    while (layer < config.layers) : (layer += 1) {
+        hashTensorInventoryEntryV1(
+            &hash,
+            layer,
+            4,
+            &.{config.dim},
+        );
+        hashTensorInventoryEntryV1(
+            &hash,
+            layer,
+            5,
+            &.{ config.dim, config.dim },
+        );
+        hashTensorInventoryEntryV1(
+            &hash,
+            layer,
+            6,
+            &.{ config.dim, config.dim },
+        );
+        hashTensorInventoryEntryV1(
+            &hash,
+            layer,
+            7,
+            &.{ config.dim, config.dim },
+        );
+        hashTensorInventoryEntryV1(
+            &hash,
+            layer,
+            8,
+            &.{ config.dim, config.dim },
+        );
+        hashTensorInventoryEntryV1(
+            &hash,
+            layer,
+            9,
+            &.{config.dim},
+        );
+        hashTensorInventoryEntryV1(
+            &hash,
+            layer,
+            10,
+            &.{ config.hidden_dim, config.dim },
+        );
+        hashTensorInventoryEntryV1(
+            &hash,
+            layer,
+            11,
+            &.{ config.hidden_dim, config.dim },
+        );
+        hashTensorInventoryEntryV1(
+            &hash,
+            layer,
+            12,
+            &.{ config.dim, config.hidden_dim },
+        );
+    }
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+fn hashTensorInventoryEntryV1(
+    hash: *std.crypto.hash.sha2.Sha256,
+    layer: u32,
+    role: u8,
+    shape: []const u64,
+) void {
+    hashU32V1(hash, layer);
+    hash.update(&.{ role, 1, @intCast(shape.len) });
+    for (shape) |extent| hashU64V1(hash, extent);
+}
+
+fn hashU32V1(
+    hash: *std.crypto.hash.sha2.Sha256,
+    value: u32,
+) void {
+    var encoded: [4]u8 = undefined;
+    std.mem.writeInt(u32, &encoded, value, .little);
+    hash.update(&encoded);
+}
+
+fn hashU64V1(
+    hash: *std.crypto.hash.sha2.Sha256,
+    value: u64,
+) void {
+    var encoded: [8]u8 = undefined;
+    std.mem.writeInt(u64, &encoded, value, .little);
+    hash.update(&encoded);
 }
 
 fn writeTinyModelSafetensorsV1(
