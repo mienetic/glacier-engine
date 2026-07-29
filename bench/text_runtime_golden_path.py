@@ -159,6 +159,37 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _assert_package_config_rejected(
+    executable: Path,
+    source: Path,
+    license_path: Path,
+    root: Path,
+    label: str,
+    config_arguments: Sequence[str],
+) -> None:
+    portable = root / f"{label}.glacier"
+    prepared = root / f"{label}.glrt"
+    package = root / f"{label}.glpkg"
+    _run(
+        (
+            str(executable),
+            "package-model",
+            str(source),
+            str(portable),
+            str(prepared),
+            str(package),
+            "--license",
+            str(license_path),
+            *config_arguments,
+        ),
+        expect_success=False,
+    )
+    if any(path.exists() for path in (portable, prepared, package)):
+        raise GoldenPathError(
+            f"rejected config case {label!r} mutated package outputs"
+        )
+
+
 def _field(output: str, name: str) -> str:
     match = re.search(rf"(?m)^  {re.escape(name)}=([0-9a-f]{{64}})$", output)
     if match is None:
@@ -1164,6 +1195,7 @@ def _verify_package_artifacts(
     package_path: Path,
     license_bytes: bytes,
     report: Mapping[str, object],
+    config_input: bytes | None = None,
 ) -> tuple[dict[str, object], str]:
     bundle_wire = package_path.read_bytes()
     bundle_facts = package_oracle.decode_admission_bundle(bundle_wire)
@@ -1306,6 +1338,17 @@ def _verify_package_artifacts(
         "prepared_representation_bytes": (package_oracle.PREPARED_REPRESENTATION_BYTES),
         "license_bytes": len(license_bytes),
         "tokenizer_max_input_bytes": 4096,
+        "config_source": (
+            "explicit" if config_input is not None else "derived"
+        ),
+        "config_input_bytes": (
+            len(config_input) if config_input is not None else None
+        ),
+        "config_input_sha256": (
+            hashlib.sha256(config_input).hexdigest()
+            if config_input is not None
+            else None
+        ),
         "config": {
             **{name: config[name] for name in package_oracle.CONFIG_U32_FIELDS},
             "rms_eps_bits": config["rms_eps_bits"],
@@ -1316,6 +1359,9 @@ def _verify_package_artifacts(
         "portable_artifact_sha256": portable_sha256.hex(),
         "conversion_profile_sha256": package_facts["conversion_profile_sha256"].hex(),
         "conversion_plan_sha256": package_facts["conversion_plan_sha256"].hex(),
+        "resolved_config_sha256": package_facts[
+            "resolved_config_sha256"
+        ].hex(),
         "model_content_sha256": expected_model_content.hex(),
         "package_sha256": package_facts["package_sha256"].hex(),
         "representation_sha256": representation_sha256,
@@ -1798,6 +1844,16 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
         foreign_container = root / "foreign.glacier"
         foreign_image = root / "foreign.glrt"
         foreign_package = root / "foreign.glpkg"
+        ordinary_config = root / "ordinary-config.json"
+        ordinary_config_bytes = (
+            b'{"model_type":"fixture","hidden_size":32,'
+            b'"intermediate_size":64,"num_hidden_layers":1,'
+            b'"vocab_size":256,"num_attention_heads":4,'
+            b'"num_key_value_heads":4,'
+            b'"rms_norm_eps":0.00001,"rope_theta":500000,'
+            b'"tie_word_embeddings":false}\n'
+        )
+        ordinary_config.write_bytes(ordinary_config_bytes)
         _run(
             (
                 str(executable),
@@ -1823,6 +1879,8 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 str(foreign_package),
                 "--license",
                 str(license_path),
+                "--config",
+                str(ordinary_config),
                 "--group-size",
                 "16",
             )
@@ -1842,7 +1900,39 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             package_path=foreign_package,
             license_bytes=license_bytes,
             report=package_report,
+            config_input=ordinary_config_bytes,
         )
+        expected_explicit_config = {
+            "dim": 32,
+            "hidden_dim": 64,
+            "layers": 1,
+            "vocab": 256,
+            "heads": 4,
+            "head_dim": 8,
+            "kv_heads": 4,
+            "rms_eps": struct.unpack(
+                "<f",
+                struct.pack("<f", 0.00001),
+            )[0],
+            "rms_eps_bits": struct.unpack(
+                "<I",
+                struct.pack("<f", 0.00001),
+            )[0],
+            "rope_theta": 500000.0,
+            "rope_theta_bits": struct.unpack(
+                "<I",
+                struct.pack("<f", 500000.0),
+            )[0],
+            "tie_embeddings": False,
+        }
+        if package_facts["config"] != expected_explicit_config:
+            raise GoldenPathError(
+                "explicit config did not become the resolved package config: "
+                f"{package_facts['config']!r}"
+            )
+        initial_config_input_sha256 = hashlib.sha256(
+            ordinary_config_bytes
+        ).hexdigest()
         if (
             package_report.get("conversion_disposition") != "published"
             or package_report.get("package_disposition") != "published"
@@ -2042,6 +2132,11 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
         different_container = root / "different-package.glacier"
         different_image = root / "different-package.glrt"
         different_package = root / "different-package.glpkg"
+        ambient_config = Path(f"{different_package}.json")
+        ambient_config_bytes = (
+            b'{"hidden_size":"must-not-be-discovered"}\n'
+        )
+        ambient_config.write_bytes(ambient_config_bytes)
         different_result = _run(
             (
                 str(executable),
@@ -2074,6 +2169,8 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 report=different_package_report,
             )
         )
+        if ambient_config.read_bytes() != ambient_config_bytes:
+            raise GoldenPathError("ambient config sidecar was mutated")
         different_report = _run_text(
             executable,
             different_image,
@@ -2710,6 +2807,13 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                         "acknowledged terminal retry changed state"
                     )
 
+        equivalent_config_bytes = (
+            b'{"dim":32,"hidden_dim":64,"num_layers":1,'
+            b'"vocab_size":256,"num_heads":4,"head_dim":8,'
+            b'"num_kv_heads":4,"rms_eps":1e-5,'
+            b'"rope_theta":5e5,"tie_word_embeddings":false}\n'
+        )
+        ordinary_config.write_bytes(equivalent_config_bytes)
         retry_result = _run(
             (
                 str(executable),
@@ -2720,6 +2824,8 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 str(foreign_package),
                 "--license",
                 str(license_path),
+                "--config",
+                str(ordinary_config),
                 "--group-size",
                 "16",
             )
@@ -2738,6 +2844,7 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 package_path=foreign_package,
                 license_bytes=license_bytes,
                 report=retry_report,
+                config_input=equivalent_config_bytes,
             )
         else:
             retry_facts = {}
@@ -2749,6 +2856,8 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             or foreign_package.read_bytes() != first_package_wire
             or retry_facts.get("package_sha256") != package_facts["package_sha256"]
             or retry_representation_sha256 != representation_sha256
+            or retry_report.get("config_input_sha256")
+            == initial_config_input_sha256
         ):
             raise GoldenPathError("package retry was not idempotent")
 
@@ -3001,6 +3110,8 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             str(foreign_package),
             "--license",
             str(license_path),
+            "--config",
+            str(ordinary_config),
             "--group-size",
             "16",
         )
@@ -3057,6 +3168,162 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
         ):
             raise GoldenPathError("rejected symlink license mutated package outputs")
 
+        invalid_config_inputs = {
+            "empty-config": b"{}\n",
+            "incomplete-config": b'{"num_attention_heads":4}\n',
+            "malformed-config": b'{"hidden_size":32\n',
+            "wrong-type-config": b'{"hidden_size":"32"}\n',
+            "duplicate-config": b'{"hidden_size":32,"hidden_size":32}\n',
+            "conflicting-config": (
+                b'{"dim":32,"hidden_size":64}\n'
+            ),
+            "invalid-geometry-config": (
+                b'{"hidden_size":32,"intermediate_size":64,'
+                b'"num_hidden_layers":1,"vocab_size":256,'
+                b'"num_attention_heads":3,"num_key_value_heads":1,'
+                b'"rms_norm_eps":1e-5,"rope_theta":5e5,'
+                b'"tie_word_embeddings":false}\n'
+            ),
+        }
+        for label, invalid_config_bytes in invalid_config_inputs.items():
+            invalid_config_path = root / f"{label}.json"
+            invalid_config_path.write_bytes(invalid_config_bytes)
+            _assert_package_config_rejected(
+                executable,
+                ordinary_source,
+                license_path,
+                root,
+                label,
+                ("--config", str(invalid_config_path)),
+            )
+
+        tensor_mismatch_config = root / "tensor-mismatch-config.json"
+        tensor_mismatch_config.write_bytes(
+            b'{"dim":32,"hidden_dim":96,"num_layers":1,'
+            b'"vocab_size":256,"num_heads":4,"head_dim":8,'
+            b'"num_kv_heads":4,"rms_eps":1e-5,'
+            b'"rope_theta":5e5,"tie_word_embeddings":false}\n'
+        )
+        tensor_mismatch_portable = root / "tensor-mismatch.glacier"
+        tensor_mismatch_prepared = root / "tensor-mismatch.glrt"
+        tensor_mismatch_package = root / "tensor-mismatch.glpkg"
+        _run(
+            (
+                str(executable),
+                "package-model",
+                str(ordinary_source),
+                str(tensor_mismatch_portable),
+                str(tensor_mismatch_prepared),
+                str(tensor_mismatch_package),
+                "--license",
+                str(license_path),
+                "--config",
+                str(tensor_mismatch_config),
+            ),
+            expect_success=False,
+        )
+        if (
+            tensor_mismatch_prepared.exists()
+            or tensor_mismatch_package.exists()
+        ):
+            raise GoldenPathError(
+                "tensor/config mismatch reached package publication"
+            )
+
+        oversized_config = root / "oversized-config.json"
+        oversized_config.write_bytes(
+            b'{"hidden_size":32,"padding":"'
+            + b"x" * (1024 * 1024)
+            + b'"}'
+        )
+        _assert_package_config_rejected(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "oversized-config",
+            ("--config", str(oversized_config)),
+        )
+
+        symlink_config = root / "config-link.json"
+        symlink_config.symlink_to(ordinary_config)
+        _assert_package_config_rejected(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "symlink-config",
+            ("--config", str(symlink_config)),
+        )
+        directory_config = root / "config-directory"
+        directory_config.mkdir()
+        _assert_package_config_rejected(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "directory-config",
+            ("--config", str(directory_config)),
+        )
+        fifo_config = root / "config-fifo"
+        os.mkfifo(fifo_config)
+        _assert_package_config_rejected(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "fifo-config",
+            ("--config", str(fifo_config)),
+        )
+        _assert_package_config_rejected(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "missing-config-value",
+            ("--config",),
+        )
+        _assert_package_config_rejected(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "duplicate-config-option",
+            (
+                "--config",
+                str(ordinary_config),
+                "--config",
+                str(ordinary_config),
+            ),
+        )
+
+        aliased_config = root / "aliased-config.glacier"
+        aliased_config_bytes = ordinary_config.read_bytes()
+        aliased_config.write_bytes(aliased_config_bytes)
+        aliased_prepared = root / "aliased-config.glrt"
+        aliased_package = root / "aliased-config.glpkg"
+        _run(
+            (
+                str(executable),
+                "package-model",
+                str(ordinary_source),
+                str(aliased_config),
+                str(aliased_prepared),
+                str(aliased_package),
+                "--license",
+                str(license_path),
+                "--config",
+                str(aliased_config),
+            ),
+            expect_success=False,
+        )
+        if (
+            aliased_config.read_bytes() != aliased_config_bytes
+            or aliased_prepared.exists()
+            or aliased_package.exists()
+        ):
+            raise GoldenPathError("config/output alias mutated package outputs")
+
         oversized_prompt = root / "oversized-prompt.txt"
         oversized_prompt.write_bytes(b"x" * 4097)
         _run(
@@ -3107,6 +3374,12 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             "ordinary_package_produced": True,
             "ordinary_package_admitted": True,
             "ordinary_package_independently_decoded": True,
+            "explicit_bounded_config_verified": True,
+            "canonical_config_retry_verified": True,
+            "derived_config_default_verified": True,
+            "ambient_config_ignored": True,
+            "invalid_config_admission_rejected_before_conversion": True,
+            "config_tensor_mismatch_rejected_before_package_publication": True,
             "variable_eos_hit_verified": True,
             "variable_eos_miss_verified": True,
             "variable_eos_at_limit_verified": True,

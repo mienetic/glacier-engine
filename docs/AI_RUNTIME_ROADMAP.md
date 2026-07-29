@@ -1681,7 +1681,7 @@ distinct output paths, and an exact license file:
 ```sh
 glacier package-model \
   source.safetensors out.glacier out.glrt out.glpkg \
-  --license LICENSE --group-size 64
+  --license LICENSE --config config.json --group-size 64
 ```
 
 The producer consumes the typed durable-conversion receipt directly in the
@@ -1718,10 +1718,15 @@ network access. SHA-256 identities establish integrity and content
 relationships, not publisher authenticity, authorship, license rights, model
 quality, or signed provenance.
 
-The current command derives configuration from the converted model and does
-not read ambient `<output>.json` sidecars. A future explicit `--config` input
-must use bounded, no-follow, stable regular-file admission before its values
-can participate in the package root.
+The optional explicit `--config` input uses bounded, no-follow, stable
+regular-file admission with a 1 MiB limit, strict recognized-field parsing,
+a complete logical configuration contract, and exact byte revalidation before
+package publication. Its raw size and hash are invocation provenance;
+canonical resolved values participate in the existing configuration,
+model-content, package, and representation roots. Tensor incompatibility
+cannot publish the prepared image or package, though independent portable
+conversion may already have completed. Omission derives configuration and
+never reads ambient `<output>.json` sidecars.
 
 `text-run --package` admits a user-supplied prepared image only after deriving
 and matching its full configuration, source fingerprint, GLRT format/version,
@@ -1746,9 +1751,9 @@ This does not establish production readiness or general model-family support.
 R1k-b5 adds checked durable output and fresh-process continuation for fixed
 output counts `1..64`; serving integration, broader
 tokenizer/model/source/numerical profiles, GPU package production, native
-non-POSIX evidence, authenticated distribution, an explicit bounded/no-follow
-`--config` input, and production-model quality/performance evidence remain
-open. See
+non-POSIX evidence, authenticated distribution, explicit capability gating
+for the narrow experimental profile, and production-model
+quality/performance evidence remain open. See
 [Ordinary Model Package](MODEL_PACKAGE.md).
 
 #### R1k-b5 — Package-aware checked durable text command

@@ -10,6 +10,7 @@
 const std = @import("std");
 const core = @import("core");
 const bounded_input = @import("../bounded_file_input.zig");
+const config = @import("../config.zig");
 const tokenizer = @import("../tokenizer.zig");
 const converter = @import("converter.zig");
 const converter_durable = @import("converter_durable.zig");
@@ -21,6 +22,7 @@ const runtime_image = @import("runtime_image.zig");
 const durable_directory = core.durable_directory_authority;
 
 pub const maximum_license_bytes: u64 = 64 * 1024;
+pub const maximum_config_bytes: u64 = 1024 * 1024;
 pub const tokenizer_max_input_bytes: u64 = 4096;
 const publication_lock_name =
     ".glacier-model-package-publication.lock-v1";
@@ -28,6 +30,7 @@ const publication_lock_name =
 pub const Error = error{
     UnsupportedPackageProfile,
     InvalidModelConfig,
+    InvalidConfigInput,
     InvalidLicense,
     ArtifactIdentityMismatch,
     PreparedIdentityMismatch,
@@ -43,10 +46,21 @@ pub const PackageDispositionV1 = enum {
 };
 
 pub const OptionsV1 = struct {
+    config_path: ?[]const u8 = null,
     conversion: converter.ConvertOptions = .{
         .quantize_int4 = true,
         .quant_group_size = 64,
     },
+};
+
+pub const ConfigSourceV1 = enum {
+    derived,
+    explicit,
+};
+
+pub const ConfigInputIdentityV1 = struct {
+    bytes: u64,
+    sha256: package_manifest.Digest,
 };
 
 pub const ReceiptV1 = struct {
@@ -61,6 +75,8 @@ pub const ReceiptV1 = struct {
     tokenizer_manifest: tokenizer.Utf8ByteManifestV1,
     prepared_identity: runtime_image.ImageIdentityV1,
     prepare_stats: runtime_image.WriteStats,
+    config_source: ConfigSourceV1,
+    config_input_identity: ?ConfigInputIdentityV1,
 };
 
 pub fn configFromLoadedModelV1(
@@ -202,6 +218,7 @@ pub fn produceSafetensorsV1(
         allocator,
         source_path,
         license_path,
+        options.config_path,
         portable_path,
         prepared_path,
         package_path,
@@ -220,6 +237,31 @@ pub fn produceSafetensorsV1(
         license_bytes.len,
     ) orelse return Error.InvalidLicense;
     const license_sha256 = sha256(license_bytes);
+
+    var config_bytes: ?[]u8 = null;
+    defer if (config_bytes) |bytes| allocator.free(bytes);
+    var config_override: config.ModelConfigOverride = .{};
+    if (options.config_path) |config_path| {
+        const admitted = try bounded_input.readAllocV1(
+            allocator,
+            config_path,
+            maximum_config_bytes,
+        );
+        config_bytes = admitted;
+        config_override = try parseConfigOverrideV1(
+            allocator,
+            admitted,
+        );
+    }
+    const config_input_identity: ?ConfigInputIdentityV1 =
+        if (config_bytes) |bytes|
+            .{
+                .bytes = std.math.cast(u64, bytes.len) orelse
+                    return Error.InvalidConfigInput,
+                .sha256 = sha256(bytes),
+            }
+        else
+            null;
 
     const conversion = try converter_durable
         .convertSafetensorsDurableV1(
@@ -260,7 +302,7 @@ pub fn produceSafetensorsV1(
     var model = try loader.loadWithOptions(
         allocator,
         &portable,
-        .{},
+        config_override,
         .{
             .compact_int4 = true,
             .int8_mlp_cache = false,
@@ -342,6 +384,20 @@ pub fn produceSafetensorsV1(
     defer allocator.free(license_after);
     if (!std.mem.eql(u8, license_bytes, license_after))
         return bounded_input.Error.InputChanged;
+    if (options.config_path) |config_path| {
+        const config_after = try bounded_input.readAllocV1(
+            allocator,
+            config_path,
+            maximum_config_bytes,
+        );
+        defer allocator.free(config_after);
+        if (!std.mem.eql(
+            u8,
+            config_bytes orelse return Error.InvalidConfigInput,
+            config_after,
+        ))
+            return bounded_input.Error.InputChanged;
+    }
 
     var package_wire: [package_manifest.admission_bundle_bytes]u8 =
         undefined;
@@ -367,6 +423,11 @@ pub fn produceSafetensorsV1(
         .tokenizer_manifest = tokenizer_manifest,
         .prepared_identity = prepared_identity,
         .prepare_stats = prepare_stats,
+        .config_source = if (options.config_path == null)
+            .derived
+        else
+            .explicit,
+        .config_input_identity = config_input_identity,
     };
 }
 
@@ -667,6 +728,7 @@ fn rejectOutputAliasesV1(
     allocator: std.mem.Allocator,
     source_path: []const u8,
     license_path: []const u8,
+    config_path: ?[]const u8,
     portable_path: []const u8,
     prepared_path: []const u8,
     package_path: []const u8,
@@ -685,11 +747,217 @@ fn rejectOutputAliasesV1(
             if (try pathsAliasV1(allocator, output, input))
                 return Error.OutputAlias;
         }
+        if (config_path) |input| {
+            if (try pathsAliasV1(allocator, output, input))
+                return Error.OutputAlias;
+        }
         for (outputs[0..output_index]) |other| {
             if (try pathsAliasV1(allocator, output, other))
                 return Error.OutputAlias;
         }
     }
+}
+
+fn parseConfigOverrideV1(
+    allocator: std.mem.Allocator,
+    bytes: []const u8,
+) !config.ModelConfigOverride {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const parsed = std.json.parseFromSliceLeaky(
+        std.json.Value,
+        arena.allocator(),
+        bytes,
+        .{ .duplicate_field_behavior = .@"error" },
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return Error.InvalidConfigInput,
+    };
+    if (parsed != .object)
+        return Error.InvalidConfigInput;
+
+    const object = parsed.object;
+    var recognized_fields: usize = 0;
+    var result: config.ModelConfigOverride = .{};
+    result.dim = try optionalAliasedPositiveUsizeV1(
+        object,
+        "dim",
+        "hidden_size",
+        &recognized_fields,
+    );
+    result.hidden_dim = try optionalAliasedPositiveUsizeV1(
+        object,
+        "hidden_dim",
+        "intermediate_size",
+        &recognized_fields,
+    );
+    result.num_layers = try optionalAliasedPositiveUsizeV1(
+        object,
+        "num_layers",
+        "num_hidden_layers",
+        &recognized_fields,
+    );
+    result.vocab_size = try optionalPositiveUsizeV1(
+        object,
+        "vocab_size",
+        &recognized_fields,
+    );
+    result.num_heads = try optionalAliasedPositiveUsizeV1(
+        object,
+        "num_heads",
+        "num_attention_heads",
+        &recognized_fields,
+    );
+    result.head_dim = try optionalPositiveUsizeV1(
+        object,
+        "head_dim",
+        &recognized_fields,
+    );
+    result.num_kv_heads = try optionalAliasedPositiveUsizeV1(
+        object,
+        "num_kv_heads",
+        "num_key_value_heads",
+        &recognized_fields,
+    );
+    result.rms_eps = try optionalAliasedPositiveF32V1(
+        object,
+        "rms_eps",
+        "rms_norm_eps",
+        &recognized_fields,
+    );
+    result.rope_theta = try optionalPositiveF32V1(
+        object,
+        "rope_theta",
+        &recognized_fields,
+    );
+    result.tie_word_embeddings = try optionalBoolV1(
+        object,
+        "tie_word_embeddings",
+        &recognized_fields,
+    );
+    if (recognized_fields == 0)
+        return Error.InvalidConfigInput;
+    if (result.dim == null or
+        result.hidden_dim == null or
+        result.num_layers == null or
+        result.vocab_size == null or
+        result.num_heads == null or
+        result.num_kv_heads == null or
+        result.rms_eps == null or
+        result.rope_theta == null or
+        result.tie_word_embeddings == null)
+        return Error.InvalidConfigInput;
+
+    const dim = result.dim.?;
+    const heads = result.num_heads.?;
+    if (result.head_dim == null) {
+        if (dim % heads != 0)
+            return Error.InvalidConfigInput;
+        result.head_dim = dim / heads;
+    } else {
+        const represented = std.math.mul(
+            usize,
+            heads,
+            result.head_dim.?,
+        ) catch return Error.InvalidConfigInput;
+        if (represented != dim)
+            return Error.InvalidConfigInput;
+    }
+    const kv_heads = result.num_kv_heads.?;
+    if (kv_heads > heads or heads % kv_heads != 0)
+        return Error.InvalidConfigInput;
+    return result;
+}
+
+fn optionalAliasedPositiveUsizeV1(
+    object: std.json.ObjectMap,
+    canonical_name: []const u8,
+    alias_name: []const u8,
+    recognized_fields: *usize,
+) Error!?usize {
+    const canonical = try optionalPositiveUsizeV1(
+        object,
+        canonical_name,
+        recognized_fields,
+    );
+    const alias = try optionalPositiveUsizeV1(
+        object,
+        alias_name,
+        recognized_fields,
+    );
+    if (canonical != null and alias != null and
+        canonical.? != alias.?)
+        return Error.InvalidConfigInput;
+    return canonical orelse alias;
+}
+
+fn optionalPositiveUsizeV1(
+    object: std.json.ObjectMap,
+    name: []const u8,
+    recognized_fields: *usize,
+) Error!?usize {
+    const value = object.get(name) orelse return null;
+    recognized_fields.* += 1;
+    if (value != .integer or value.integer <= 0 or
+        value.integer > @as(i64, std.math.maxInt(u32)))
+        return Error.InvalidConfigInput;
+    return std.math.cast(usize, value.integer) orelse
+        Error.InvalidConfigInput;
+}
+
+fn optionalAliasedPositiveF32V1(
+    object: std.json.ObjectMap,
+    canonical_name: []const u8,
+    alias_name: []const u8,
+    recognized_fields: *usize,
+) Error!?f32 {
+    const canonical = try optionalPositiveF32V1(
+        object,
+        canonical_name,
+        recognized_fields,
+    );
+    const alias = try optionalPositiveF32V1(
+        object,
+        alias_name,
+        recognized_fields,
+    );
+    if (canonical != null and alias != null and
+        canonical.? != alias.?)
+        return Error.InvalidConfigInput;
+    return canonical orelse alias;
+}
+
+fn optionalPositiveF32V1(
+    object: std.json.ObjectMap,
+    name: []const u8,
+    recognized_fields: *usize,
+) Error!?f32 {
+    const value = object.get(name) orelse return null;
+    recognized_fields.* += 1;
+    const wide: f64 = switch (value) {
+        .integer => |integer| @floatFromInt(integer),
+        .float => |float| float,
+        else => return Error.InvalidConfigInput,
+    };
+    if (!std.math.isFinite(wide) or wide <= 0 or
+        wide > std.math.floatMax(f32))
+        return Error.InvalidConfigInput;
+    const narrowed: f32 = @floatCast(wide);
+    if (!std.math.isFinite(narrowed) or narrowed <= 0)
+        return Error.InvalidConfigInput;
+    return narrowed;
+}
+
+fn optionalBoolV1(
+    object: std.json.ObjectMap,
+    name: []const u8,
+    recognized_fields: *usize,
+) Error!?bool {
+    const value = object.get(name) orelse return null;
+    recognized_fields.* += 1;
+    if (value != .bool)
+        return Error.InvalidConfigInput;
+    return value.bool;
 }
 
 fn pathsAliasV1(

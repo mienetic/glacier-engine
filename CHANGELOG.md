@@ -82,6 +82,21 @@ before the first stable release.
 
 ### Added
 
+- Added optional explicit configuration admission to `package-model`.
+  `--config FILE` accepts a bounded 1 MiB stable regular file, rejects
+  symlinks and non-regular inputs on the supported POSIX path, strictly parses
+  recognized canonical/ecosystem fields, and byte-revalidates the input before
+  publishing the package. Explicit mode requires a complete logical
+  configuration; only `head_dim` may be derived exactly from `dim` and heads.
+  Duplicate keys, wrong recognized types, conflicting aliases, incompleteness,
+  and inconsistent supplied head geometry fail instead of falling back
+  silently. Omission retains derived configuration and never discovers ambient
+  output sidecars. Reports distinguish raw explicit-input provenance from the
+  canonical `resolved_config_sha256`; formatting- or alias-equivalent inputs
+  therefore converge on one artifact identity. The existing compile-once
+  golden path independently verifies explicit and derived modes,
+  equivalent-config retry, ambient isolation, tensor-mismatch rejection, and
+  bounded admission rejection without adding a build target.
 - Added opt-in process-local variable-length prepared-text completion.
   `glacier text-run ... --n N --eos-token ID` treats `N` as an admitted upper
   bound: an EOS hit publishes `1..N-1` tokens, releases the unused quanta, and
@@ -157,9 +172,9 @@ before the first stable release.
   no network access. Without durable options, counts `1..64` render token IDs
   to a process-local sink. With durable options, count one uses the direct
   route and counts `2..64` use the acknowledged route above. It does not
-  read ambient
-  `<output>.json` configuration sidecars; a future explicit bounded/no-follow
-  `--config` input remains roadmap work. It adds no signed
+  read ambient `<output>.json` configuration sidecars. An optional explicit
+  bounded/no-follow `--config` input is now admitted and revalidated while its
+  canonical resolved values use the existing root cascade. It adds no signed
   publisher-authenticity, production-readiness, broad
   tokenizer/model-format, or GPU package claim. See
   [Ordinary Model Package](docs/MODEL_PACKAGE.md).

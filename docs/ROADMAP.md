@@ -128,9 +128,19 @@ Next slices:
   verifies the live final commit before close. The same golden DAG independently
   recomputes both new roots. Durable EOS rejects before state mutation until
   its recovery and retry contracts are defined.
-- [ ] Add an explicit bounded/no-follow `package-model --config` input. The
-  current command derives configuration from the converted model and does not
-  discover ambient `<output>.json` sidecars.
+- [x] Add an explicit bounded/no-follow `package-model --config` input.
+  The optional file is admitted as a stable regular file with a 1 MiB bound,
+  requires a complete logical configuration, rejects duplicate, conflicting,
+  wrongly typed, incomplete, and internally inconsistent values before
+  conversion, and is byte-revalidated before package publication. Tensor
+  incompatibility rejects before prepared/package publication; the independent
+  durable portable conversion may already be current. The report separates
+  raw input provenance from the canonical resolved configuration root, so
+  formatting-equivalent inputs converge. Omission retains derived
+  configuration and never discovers ambient `<output>.json` sidecars. The
+  existing compile-once golden DAG independently verifies explicit, derived,
+  canonical-retry, ambient-isolation, tensor-mismatch, and admission-rejection
+  cases.
 - [ ] Remove unsupported placeholder behavior from the selected path or keep it
   behind an explicit experimental capability that cannot be selected silently.
 - [ ] Retain a clean-host fixture campaign covering success, malformed input,

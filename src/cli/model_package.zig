@@ -17,6 +17,7 @@ pub fn run(
     const prepared_path = args[4];
     const package_path = args[5];
     var license_path: ?[]const u8 = null;
+    var config_path: ?[]const u8 = null;
     var group_size: u32 = 64;
     var index: usize = 6;
     while (index < args.len) : (index += 1) {
@@ -28,6 +29,13 @@ pub fn run(
             if (index >= args.len)
                 return error.InvalidUsage;
             license_path = args[index];
+        } else if (std.mem.eql(u8, argument, "--config")) {
+            if (config_path != null)
+                return error.InvalidUsage;
+            index += 1;
+            if (index >= args.len)
+                return error.InvalidUsage;
+            config_path = args[index];
         } else if (std.mem.eql(u8, argument, "--group-size")) {
             index += 1;
             if (index >= args.len)
@@ -55,6 +63,7 @@ pub fn run(
         package_path,
         license,
         .{
+            .config_path = config_path,
             .conversion = .{
                 .quantize_int4 = true,
                 .quant_group_size = group_size,
@@ -113,6 +122,10 @@ pub fn run(
         receipt.package.license_sha256,
         .lower,
     );
+    const resolved_config_hex = std.fmt.bytesToHex(
+        receipt.package.resolved_config_sha256,
+        .lower,
+    );
     const config = receipt.package.config;
     try writer.print(
         "{{\"schema\":\"glacier.model-package-producer/v1\"," ++
@@ -130,7 +143,8 @@ pub fn run(
             "\"package_manifest_bytes\":{d}," ++
             "\"prepared_representation_bytes\":{d}," ++
             "\"license_bytes\":{d}," ++
-            "\"tokenizer_max_input_bytes\":{d},",
+            "\"tokenizer_max_input_bytes\":{d}," ++
+            "\"config_source\":\"{s}\",",
         .{
             switch (receipt.conversion_disposition) {
                 .published => "published",
@@ -149,8 +163,31 @@ pub fn run(
             engine.model_package_manifest.prepared_representation_bytes,
             receipt.package.license_bytes,
             receipt.tokenizer_manifest.max_input_bytes,
+            switch (receipt.config_source) {
+                .derived => "derived",
+                .explicit => "explicit",
+            },
         },
     );
+    if (receipt.config_input_identity) |identity| {
+        const config_input_hex = std.fmt.bytesToHex(
+            identity.sha256,
+            .lower,
+        );
+        try writer.print(
+            "\"config_input_bytes\":{d}," ++
+                "\"config_input_sha256\":\"{s}\",",
+            .{
+                identity.bytes,
+                &config_input_hex,
+            },
+        );
+    } else {
+        try writer.writeAll(
+            "\"config_input_bytes\":null," ++
+                "\"config_input_sha256\":null,",
+        );
+    }
     try writer.print(
         "\"config\":{{\"dim\":{d},\"hidden_dim\":{d}," ++
             "\"layers\":{d},\"vocab\":{d},\"heads\":{d}," ++
@@ -161,6 +198,7 @@ pub fn run(
             "\"portable_artifact_sha256\":\"{s}\"," ++
             "\"conversion_profile_sha256\":\"{s}\"," ++
             "\"conversion_plan_sha256\":\"{s}\"," ++
+            "\"resolved_config_sha256\":\"{s}\"," ++
             "\"model_content_sha256\":\"{s}\"," ++
             "\"package_sha256\":\"{s}\"," ++
             "\"representation_sha256\":\"{s}\"," ++
@@ -191,6 +229,7 @@ pub fn run(
             &portable_hex,
             &profile_hex,
             &plan_hex,
+            &resolved_config_hex,
             &content_hex,
             &package_hex,
             &representation_hex,
@@ -208,6 +247,6 @@ fn usage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
         "usage: glacier package-model <source.safetensors> " ++
             "<out.glacier> <out.glrt> <out.glpkg> " ++
-            "--license <file> [--group-size N]\n",
+            "--license <file> [--config <file>] [--group-size N]\n",
     );
 }

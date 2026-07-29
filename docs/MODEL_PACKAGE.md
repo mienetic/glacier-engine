@@ -13,6 +13,7 @@ container, a prepared runtime image, and a fixed package manifest:
   out.glrt \
   out.glpkg \
   --license LICENSE \
+  --config config.json \
   --group-size 64
 ```
 
@@ -20,9 +21,23 @@ The current profile is deliberately narrow: autoregressive Safetensors,
 INT4 conversion, a separate-layout GLRT V2 image, and the exact
 `utf8-byte-v1` tokenizer. The tokenizer accepts at most 4,096 input bytes and
 requires a vocabulary large enough to represent every byte. `--group-size N`
-is optional and defaults to 64. Broader tokenizer behavior, source formats,
-model families, quantization modes, and GPU package production remain roadmap
-work.
+is optional and defaults to 64. `--config FILE` is also optional; omission
+keeps the derived configuration path and never discovers an ambient sidecar.
+Broader tokenizer behavior, source formats, model families, quantization modes,
+and GPU package production remain roadmap work.
+
+An explicit config is a complete JSON configuration object. It accepts the
+canonical/ecosystem pairs `dim`/`hidden_size`,
+`hidden_dim`/`intermediate_size`, `num_layers`/`num_hidden_layers`,
+`num_heads`/`num_attention_heads`, `num_kv_heads`/`num_key_value_heads`, and
+`rms_eps`/`rms_norm_eps`, plus `vocab_size`, `head_dim`, `rope_theta`, and
+`tie_word_embeddings`. Unrelated fields may remain in a source config.
+Duplicate keys, wrong recognized types, non-positive or out-of-range numbers,
+conflicting aliases, incomplete logical configuration, and inconsistent
+supplied head geometry reject. `head_dim` is the only optional logical field:
+exact `dim / num_heads` derives it. Converted-model derivation is used only
+when `--config` itself is omitted, so explicit and derived modes cannot
+silently mix.
 
 The command performs no network access. It does not download a model,
 tokenizer, license, or runtime component.
@@ -67,6 +82,10 @@ The producer report makes this framing explicit:
 | `prepared_representation_bytes` | `256` |
 | `prepared_representation_embedded` | `true` |
 | `prepared_representation_separate` | `false` |
+| `config_source` | `derived` or `explicit` |
+| `config_input_bytes` | raw explicit-input size, otherwise `null` |
+| `config_input_sha256` | raw explicit-input SHA-256, otherwise `null` |
+| `resolved_config_sha256` | canonical resolved configuration identity |
 
 The manifest and prepared-representation receipt use hashes for integrity and
 content identity. They are not signatures and do not prove publisher
@@ -78,15 +97,19 @@ distribution and policy layer.
 
 The producer consumes the typed durable conversion receipt directly in the
 same process. It does not accept conversion hashes through command-line flags
-or recover them from rendered output. It then:
+or recover them from rendered output. Before conversion it admits the license
+and optional explicit config through bounded stable regular-file reads and
+strictly parses the config. It then:
 
 1. reopens and fully validates the converted portable container;
-2. derives the complete configuration and tokenizer identities;
+2. resolves the explicit or derived configuration and tokenizer
+   identities;
 3. prepares and reopens the GLRT image;
 4. derives the prepared representation from the actual image, including its
    format version, ABI fingerprint, source fingerprint, configuration, layout,
    size, and container hash;
-5. revalidates the portable path and exact license bytes; and
+5. revalidates the portable path, exact license bytes, and exact explicit
+   config bytes; and
 6. publishes the 896-byte manifest-plus-representation bundle last.
 
 On a retry, the portable conversion and an exact existing `.glpkg` may report
@@ -102,18 +125,27 @@ claim. This is host-filesystem protocol evidence, not a hostile-directory,
 physical power-loss, or remote-filesystem guarantee, and the three outputs are
 not one cross-file atomic transaction.
 
-Output paths must not alias the source, license, or each other. File-backed
-license, package, and prompt inputs use bounded regular-file admission on
-supported POSIX hosts. Symlinks and non-regular files are rejected, reads are
-nonblocking and size bounded, and descriptor metadata is checked again after
-the positional read. This boundary reduces path substitution and accidental
-blocking; it is not a hostile-directory security claim.
+Output paths must not alias the source, license, explicit config, or each
+other. File-backed license, config, package, and prompt inputs use bounded
+regular-file admission on supported POSIX hosts. Config input is limited to
+1 MiB. Symlinks and non-regular files are rejected, reads are nonblocking and
+size bounded, and descriptor metadata is checked again after the positional
+read. This boundary reduces path substitution and accidental blocking; final
+component no-follow is not a hostile-parent-directory security claim.
 
-`package-model` currently derives configuration from the converted model and
-does not read an ambient `<output>.json` sidecar for any output. It has no
-`--config` option. A future explicit configuration input must use the same
-bounded, no-follow, stable regular-file boundary before it can affect package
-identity.
+The raw explicit-config size and hash are report provenance, not an additional
+artifact root. The existing canonical `resolved_config_sha256` participates in
+the model-content, package, and prepared-representation relationships.
+Formatting- or alias-equivalent JSON therefore converges on the same artifact
+identity while its raw report provenance may differ. With no flag, configuration
+is derived and even a malformed ambient `<output>.json` remains ignored.
+
+Syntax, type, completeness, range, alias, and internal head-geometry failures
+reject before conversion. Tensor compatibility is validated while constructing
+the prepared representation. A complete but tensor-incompatible config cannot
+publish the final `.glrt` or `.glpkg`; its independently valid durable portable
+conversion may already have published `.glacier`. The three output files are
+not one atomic transaction.
 
 ## Admission and execution
 
@@ -193,7 +225,9 @@ process-local variable-terminal lifecycle, bounded input helper, or independent
 package oracle select the existing focused
 `text-runtime-golden-path-test` DAG. That gate exercises production, portable
 and package `already_current` dispositions, deterministic prepared-image
-recreation, independent Python decoding, process-local admission, distinct
+recreation, explicit and derived config admission, canonical config retry,
+ambient-sidecar isolation, bounded-input rejection, independent Python
+decoding, process-local admission, distinct
 processes for durable bootstrap/resume/retry, direct checkpoint/output-wire
 decoding, acknowledged `N=2`, `N=4`, and `N=64` checkpoint/sink lineage
 decoding, output-count mismatch rejection without mutation, equality with
@@ -220,8 +254,7 @@ package admission or recovery lineage.
 Still open:
 
 - broader tokenizers, model families, source formats, and numerical profiles;
-- an explicit bounded/no-follow `--config` input instead of ambient sidecar
-  discovery;
+- explicit capability gating for the current narrow experimental model profile;
 - GPU/device package preparation and execution evidence;
 - native non-POSIX package production and durable recovery;
 - signed provenance and authenticated distribution;
