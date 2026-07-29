@@ -625,10 +625,18 @@ the public composition directly. A separate four-boundary direct-terminal
 smoke covers post-step, post-retirement, selector-rename, and
 post-generation-two deaths, followed by fresh recovery and a zero-step audit.
 One concrete store accepts runtime acknowledgement capacities `0..63`.
-The separate ordinary-model producer and process-local package admission now
-exist. Checked durable command/serving output, exhaustive storage/power-loss
-evidence, broader tokenizer/model/GPU package profiles, and non-POSIX native
-evidence remain open.
+The ordinary-model producer and package admission now compose the direct
+one-token route in `text-run`: request/package/representation/license/raw-text
+roots derive stable cross-process runtime identities, the selected lineage is
+matched read-only before writer authority, `--bootstrap-only` selects
+generation one, and a fresh invocation advances it. After ownership closes,
+the command renders the selector-rechecked view; this does not make the overall
+invocation a post-hoc read-only inspector. The focused golden path uses the
+same `glacier` compile root, independently decodes both selected generations,
+and compares the committed token with ordinary execution. Acknowledged
+multi-token command/serving output, exhaustive
+storage/power-loss evidence, broader tokenizer/model/GPU package profiles, and
+non-POSIX native evidence remain open.
 
 The bound-plan and residency bridge is currently an experimental Zig/direct
 API. It has no fixed `BoundPlanV1` wire, projected C verifier, or retained

@@ -76,8 +76,23 @@ before the first stable release.
 
 ### Added
 
-- Added the experimental ordinary-model package production and process-local
-  admission slice. `glacier package-model` consumes a typed same-process
+- Added a checked one-token durable command for an admitted ordinary package.
+  `glacier text-run --package ... --n 1 --durable-dir ... --request-id ...`
+  composes the existing sink-free direct-terminal writer and reader without
+  adding another checkpoint format or compile root. It matches selected
+  request lineage read-only before writer authority, supports deliberate
+  generation-one continuation in a fresh process, joins bootstrap and terminal
+  evidence, and returns `already_selected` without another model step on exact
+  terminal retry. The focused Python controller independently decodes both
+  generations, rejects changed prompt/request/license/package/representation
+  inputs while generation one is live, rejects out-of-range and incompatible
+  options, covers the one-shot route, and compares the durable token with
+  ordinary execution. The default report omits payload but exposes
+  non-confidential lineage metadata.
+  Acknowledged multi-token CLI/serving output, exhaustive storage and power
+  faults, GPU execution, and native non-POSIX evidence remain open.
+- Added the experimental ordinary-model package production and admission
+  slice. `glacier package-model` consumes a typed same-process
   durable conversion receipt and publishes a validated portable `.glacier`
   container, separate-layout CPU `.glrt` image, and fixed 896-byte `.glpkg`
   admission bundle for one Safetensors/INT4/`utf8-byte-v1` profile. The bundle
@@ -102,13 +117,13 @@ before the first stable release.
   regular-file reads on supported POSIX hosts. An independent Python oracle
   decodes the package and prepared relationship and rejects package mutation,
   changed licenses, and embedded-receipt/image substitution. The path performs
-  no network access and renders token IDs to a process-local sink. It does not
+  no network access. Counts `2..64` render token IDs to a process-local sink;
+  the one-token profile can use the direct durable route above. It does not
   read ambient
   `<output>.json` configuration sidecars; a future explicit bounded/no-follow
   `--config` input remains roadmap work. It adds no signed
-  publisher-authenticity, production-readiness, checked durable-output,
-  fresh-process ordinary-model, broad tokenizer/model-format, or GPU package
-  claim. See
+  publisher-authenticity, production-readiness, broad
+  tokenizer/model-format, or GPU package claim. See
   [Ordinary Model Package](docs/MODEL_PACKAGE.md).
 - Added the sink-free fixed-output-count-one prepared-text path. A distinct
   terminal-source recovery contract retains exact package/input/plan/runtime
@@ -134,9 +149,9 @@ before the first stable release.
   writer authority. The existing seven bootstrap, 23 source-transition, and
   19 target-transition process-death boundaries now call these public APIs.
   This foundation remains a caller-orchestrated Zig surface over the bounded
-  POSIX fixture. The separate ordinary-model producer and process-local
-  package-aware `text-run` admission now exist, while checked durable
-  command/serving output, non-POSIX native evidence, physical power-loss
+  POSIX fixture. The ordinary-model producer and checked one-token durable
+  command now compose its direct-terminal branch, while acknowledged
+  multi-token serving output, non-POSIX native evidence, physical power-loss
   persistence, production-model coverage, and performance claims remain open.
   One concrete durable store now accepts acknowledgement capacities `0..63`;
   fixed output count one uses the separate sink-free direct-terminal path.
@@ -145,9 +160,10 @@ before the first stable release.
   acknowledged prepared-text checkpoint with its selected immutable
   result-sink ledger in either aligned or sink-exactly-one-ahead state.
   Terminal inspection requires aligned state and at least one acknowledgement;
-  `utf8-byte-v1` tokens must fit one exact byte (`0...255`). JSON output is
-  metadata-only by default, with token IDs, hexadecimal bytes, escaped bytes,
-  and nullable strict UTF-8 text disclosed only by `--reveal-output`.
+  `utf8-byte-v1` tokens must fit one exact byte (`0...255`). JSON omits payload
+  by default, with token IDs, hexadecimal bytes, escaped bytes, and nullable
+  strict UTF-8 text disclosed only by `--reveal-output`; retained metadata is
+  not a confidentiality boundary.
   Inspection is cooperative and read-only: it creates no lease or authority
   and adds no hostile-writer defense, authentication, payload-privacy,
   physical power-loss, remote exactly-once, GPU, Win32, native multi-OS,
@@ -183,8 +199,9 @@ before the first stable release.
   publication transcript are opaque bound leaves: the boundary snapshot is not
   independently reconstructed and the transcript is not independently
   replayed. Its sink remains process-local. The later ordinary-package slice
-  adds package production and admission, but checked durable output,
-  production quality, GPU execution, and native multi-OS evidence remain open.
+  adds package production/admission, and the direct-terminal slice adds checked
+  one-token durability. Production quality, GPU execution, acknowledged
+  multi-token durability, and native multi-OS evidence remain open.
 - Added sealed POSIX publication for Safetensors-to-`.glacier` conversion. One
   acquired parent-directory authority, directory-scoped lock, and private
   bounded candidate protect the visible target; source, conversion profile,

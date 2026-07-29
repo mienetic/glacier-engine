@@ -990,8 +990,9 @@ campaign covers seven bootstrap, 23 source-transition, and 19 target-transition
 retains the stable package, prepared representation, canonical
 `utf8-byte-v1` manifest, and exact raw-input archive. A separate read-only
 inspector joins the selected checkpoint and sink only when aligned or when the
-nonterminal sink is exactly one acknowledgement ahead. It hides output by
-default and grants no writer or recovery authority. See
+nonterminal sink is exactly one acknowledgement ahead. It omits payload by
+default, exposes non-confidential metadata, and grants no writer or recovery
+authority. See
 [Prepared-Text Result Inspector](PREPARED_TEXT_RESULT_INSPECTOR.md).
 
 **Next slice:** move the same contract to a declared redistributable

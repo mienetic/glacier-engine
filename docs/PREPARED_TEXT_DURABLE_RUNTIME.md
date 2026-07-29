@@ -1,12 +1,13 @@
 # Public Prepared-Text Durable Runtime
 
-Status: **integrated experimental Zig composition surface**.
+Status: **integrated experimental Zig composition surface plus one
+package-aware direct-terminal CLI profile**.
 
 This document describes the current public filesystem foundation for the
-retained prepared-text recovery path. It does not describe a durable
-`glacier text-run` command: ordinary package production and process-local
-admission now exist, while checked durable CLI and serving integration remain
-open.
+retained prepared-text recovery path. `glacier text-run` now composes the
+sink-free one-token route with ordinary package admission, fresh-process
+continuation, and checked committed output. Acknowledged multi-token CLI and
+serving integration remain open.
 
 ## Public modules
 
@@ -147,6 +148,51 @@ archive, semantic, and one canonical little-endian token, then rereads the
 selector before returning. Its view reports terminal state and zero
 acknowledgements without opening a sink namespace.
 
+## Package-aware direct-terminal command
+
+`glacier text-run ... --package ... --n 1 --durable-dir ... --request-id ...`
+is a thin orchestrator over the direct writer and reader APIs above. It adds no
+checkpoint wire or recovery implementation.
+
+- any selected request epoch and challenge are matched read-only before writer
+  authority is entered;
+- an absent or generation-one selector is passed through
+  `bootstrapDirectTerminalFileV1`;
+- generation one is advanced through
+  `advanceDirectTerminalSourceFileV1`;
+- selected generation two is replayed through that same idempotent advance
+  operation; and
+- user-visible output is rendered only from
+  `prepared_text_direct_terminal_output.inspectDirectoryV1` after the writer
+  reports closed ownership.
+
+The request challenge binds the caller's lowercase 32-byte request identity,
+admitted package and representation roots, exact license root, and exact raw
+text root. Callers choose and externally retain a new ID per logical request,
+use one initially empty private directory for it, then reuse that ID and
+directory only for continuation or retry. There is no in-place reset command.
+An exact retry recreates the same Scheduler, Bank, checkpoint, and step-sink
+identities in a fresh process. A changed input derives a different challenge
+and rejects before the writer workflow.
+
+`--bootstrap-only` exposes generation one as an intentional process boundary;
+the normal command continues it. The focused golden path first proves an exact
+bootstrap retry and foreign-input rejection leave generation one byte-identical,
+then continues in a separate process, independently decodes both checkpoint
+generations, joins the committed token to ordinary execution, and requires an
+`already_selected` terminal retry to leave the directory byte-identical.
+
+`checked_committed_output=true` means the selected wire, predecessor, contract,
+archive, and receipt lineage reconciled. It is not an independent model-quality
+or general numerical oracle. Without `--reveal-output`, the token payload is
+omitted but its digest metadata remains observable and is not confidential.
+The CLI still enters the idempotent writer/lease workflow before using the
+read-only view; it is not a post-hoc read-only inspector.
+
+This CLI profile is fixed to one token and the descriptor-relative POSIX
+adapter. It does not expose the acknowledged result-sink/target chain used for
+counts `2..64`.
+
 ## Retained process-death evidence
 
 The existing compile-once prepared-text recovery campaign uses these public
@@ -192,8 +238,8 @@ compilation.
 This foundation does not yet provide:
 
 - an exhaustive direct-terminal I/O-fault, storage-fault, or power-loss matrix;
-- checked durable output or fresh-process continuation for package-aware
-  `text-run`, unary serving, or streaming serving integration;
+- acknowledged multi-token package-aware `text-run`, unary serving, or
+  streaming serving integration;
 - a stable public ABI or cross-language session binding;
 - variable-length or early-EOS durable output;
 - GPU-resident continuation, remote delivery, or distributed exactly-once

@@ -15,6 +15,14 @@ const maximum_license_bytes =
 const tokenizer_input_limit =
     engine.model_package_producer.tokenizer_max_input_bytes;
 const maximum_new_tokens: usize = 64;
+const default_durable_max_set_bytes: usize = 8 * 1024 * 1024;
+const maximum_durable_max_set_bytes: usize = 64 * 1024 * 1024;
+const durable_challenge_domain =
+    "glacier-prepared-text-durable-cli-challenge-v1\x00";
+const durable_runtime_identity_domain =
+    "glacier-prepared-text-durable-cli-runtime-v1\x00";
+const durable_scheduling_identity_domain =
+    "glacier-prepared-text-durable-cli-scheduling-v1\x00";
 const request_epoch: u64 = 0x5231_4b42_0000_0001;
 const bank_epoch: u64 = 0x5231_4b42_0000_0002;
 const scheduler_epoch: u64 = 0x5231_4b42_0000_0003;
@@ -30,6 +38,63 @@ const retained_fixture_license_sha256 = [32]u8{
     0xdd, 0xe3, 0x29, 0x3b, 0x4d, 0xcc, 0x0f, 0x8d,
     0x17, 0xe2, 0xa0, 0xfb, 0x76, 0xb7, 0xd2, 0xd8,
     0xff, 0x8a, 0x84, 0x1f, 0xd5, 0x6f, 0x58, 0x88,
+};
+
+const DurableSelectionV1 = enum {
+    absent,
+    source_live,
+    terminal,
+};
+
+const DurableSelectionFactsV1 = struct {
+    kind: DurableSelectionV1,
+    selector: ?engine.core.continuation_checkpoint_file.DecodedSelectorV1,
+};
+
+const DurableIdentityV1 = struct {
+    request_id_sha256: [32]u8,
+    challenge_sha256: [32]u8,
+    request_epoch: u64,
+    storage_epoch: u64,
+    source_runtime: engine.prepared_text_durable_runtime
+        .TerminalSourceRuntimeIdentityV1,
+    scheduling: engine.prepared_text_session.SchedulingV1,
+    step_sink: engine.prepared_text_durable_runtime.SourceStepSinkV1,
+};
+
+const DurableSourceRuntimeV1 = struct {
+    bank_slots: [2]engine.resource_bank.Slot = undefined,
+    lane_slots: [2]engine.lane_weave_qos.Slot = undefined,
+    projection_slots: [2]engine.lane_weave_qos.ProjectionSlot =
+        undefined,
+    bank: engine.resource_bank.Bank = undefined,
+    scheduler: engine.lane_weave_qos.Scheduler = undefined,
+
+    fn init(
+        self: *DurableSourceRuntimeV1,
+        identity: engine.prepared_text_durable_runtime
+            .TerminalSourceRuntimeIdentityV1,
+        challenge_sha256: [32]u8,
+    ) !void {
+        self.bank = try engine.resource_bank.Bank.init(
+            &self.bank_slots,
+            .{},
+            identity.bank_epoch,
+        );
+        self.scheduler = try engine.lane_weave_qos.Scheduler.init(
+            &self.bank,
+            .{
+                .slots = &self.lane_slots,
+                .projection = &self.projection_slots,
+            },
+            .{
+                .scheduler_epoch = identity.scheduler_epoch,
+                .coordinator_id = identity.coordinator_id,
+                .challenge = challenge_sha256,
+                .max_weight = 1,
+            },
+        );
+    }
 };
 
 const ReceiptSinkV1 = struct {
@@ -94,7 +159,14 @@ pub fn run(
     var raw_text_path: ?[]const u8 = null;
     var license_path: ?[]const u8 = null;
     var package_path: ?[]const u8 = null;
+    var durable_directory: ?[]const u8 = null;
+    var durable_request_id: ?[]const u8 = null;
+    var durable_bootstrap_only = false;
+    var reveal_output = false;
+    var durable_max_set_bytes = default_durable_max_set_bytes;
+    var durable_max_set_bytes_supplied = false;
     var new_tokens: usize = 4;
+    var new_tokens_supplied = false;
     var index: usize = 3;
     while (index < args.len) : (index += 1) {
         const argument = args[index];
@@ -121,9 +193,42 @@ pub fn run(
             if (index >= args.len) return error.InvalidUsage;
             package_path = args[index];
         } else if (std.mem.eql(u8, argument, "--n")) {
+            if (new_tokens_supplied) return error.InvalidUsage;
+            new_tokens_supplied = true;
             index += 1;
             if (index >= args.len) return error.InvalidUsage;
             new_tokens = std.fmt.parseInt(
+                usize,
+                args[index],
+                10,
+            ) catch return error.InvalidUsage;
+        } else if (std.mem.eql(u8, argument, "--durable-dir")) {
+            if (durable_directory != null)
+                return error.InvalidUsage;
+            index += 1;
+            if (index >= args.len) return error.InvalidUsage;
+            durable_directory = args[index];
+        } else if (std.mem.eql(u8, argument, "--request-id")) {
+            if (durable_request_id != null)
+                return error.InvalidUsage;
+            index += 1;
+            if (index >= args.len) return error.InvalidUsage;
+            durable_request_id = args[index];
+        } else if (std.mem.eql(u8, argument, "--bootstrap-only")) {
+            if (durable_bootstrap_only)
+                return error.InvalidUsage;
+            durable_bootstrap_only = true;
+        } else if (std.mem.eql(u8, argument, "--reveal-output")) {
+            if (reveal_output)
+                return error.InvalidUsage;
+            reveal_output = true;
+        } else if (std.mem.eql(u8, argument, "--max-set-bytes")) {
+            if (durable_max_set_bytes_supplied)
+                return error.InvalidUsage;
+            durable_max_set_bytes_supplied = true;
+            index += 1;
+            if (index >= args.len) return error.InvalidUsage;
+            durable_max_set_bytes = std.fmt.parseInt(
                 usize,
                 args[index],
                 10,
@@ -132,6 +237,22 @@ pub fn run(
             return error.InvalidUsage;
         }
     }
+    const durable_requested = durable_directory != null;
+    if (durable_requested) {
+        if (package_path == null or
+            durable_request_id == null or
+            new_tokens != 1 or
+            !std.fs.path.isAbsolute(durable_directory.?) or
+            (durable_bootstrap_only and reveal_output) or
+            durable_max_set_bytes == 0 or
+            durable_max_set_bytes >
+                maximum_durable_max_set_bytes)
+            return error.InvalidUsage;
+    } else if (durable_request_id != null or
+        durable_bootstrap_only or
+        reveal_output or
+        durable_max_set_bytes_supplied)
+        return error.InvalidUsage;
     var owned_text: ?[]u8 = null;
     defer if (owned_text) |bytes| allocator.free(bytes);
     const text = raw_text orelse blk: {
@@ -270,6 +391,29 @@ pub fn run(
         text,
     );
     defer tokenized.deinit();
+
+    if (durable_directory) |directory_path| {
+        const admission = admitted_bundle orelse
+            return error.PackageRequiredForDurableRun;
+        const representation = admitted_representation orelse
+            return error.PackageRequiredForDurableRun;
+        return runDurableDirectTerminalV1(
+            allocator,
+            writer,
+            &model,
+            admission.package,
+            representation,
+            text,
+            tokenized.receipt.raw_text_sha256,
+            manifest,
+            artifact_license_sha256,
+            durable_request_id.?,
+            directory_path,
+            durable_max_set_bytes,
+            durable_bootstrap_only,
+            reveal_output,
+        );
+    }
 
     var bank_slots: [2]engine.resource_bank.Slot = undefined;
     var lane_slots: [2]engine.lane_weave_qos.Slot = undefined;
@@ -717,11 +861,668 @@ pub fn run(
     );
 }
 
+fn runDurableDirectTerminalV1(
+    allocator: std.mem.Allocator,
+    writer: *std.Io.Writer,
+    model: *engine.loader.LoadedModel,
+    package: engine.model_package_manifest.ManifestV1,
+    representation: engine.model_package_manifest.PreparedRepresentationV1,
+    raw_text: []const u8,
+    raw_text_sha256: [32]u8,
+    tokenizer_manifest: engine.tokenizer.Utf8ByteManifestV1,
+    artifact_license_sha256: [32]u8,
+    request_id_hex: []const u8,
+    directory_path: []const u8,
+    max_set_bytes: usize,
+    bootstrap_only: bool,
+    reveal_output: bool,
+) !void {
+    if (comptime !engine.prepared_text_durable_runtime
+        .bootstrap_file_available_v1)
+        return error.UnsupportedPlatform;
+
+    const identity = try deriveDurableIdentityV1(
+        request_id_hex,
+        package.package_sha256,
+        representation.representation_sha256,
+        artifact_license_sha256,
+        raw_text_sha256,
+    );
+    var directory = try std.fs.openDirAbsolute(
+        directory_path,
+        .{
+            .access_sub_paths = true,
+            .iterate = false,
+            .no_follow = true,
+        },
+    );
+    defer directory.close();
+
+    const selection_before =
+        try classifyDurableSelectionV1(directory);
+    if (selection_before.selector) |selector| {
+        if (selector.request_epoch != identity.request_epoch or
+            !std.mem.eql(
+                u8,
+                &selector.challenge_sha256,
+                &identity.challenge_sha256,
+            ))
+            return error.DurableRequestMismatch;
+    }
+    if (bootstrap_only and selection_before.kind == .terminal)
+        return error.DurableRequestAlreadyTerminal;
+
+    var runtime: DurableSourceRuntimeV1 = .{};
+    try runtime.init(
+        identity.source_runtime,
+        identity.challenge_sha256,
+    );
+    var runtime_closed = false;
+    defer if (!runtime_closed) {
+        _ = runtime.scheduler.close() catch {};
+    };
+
+    const options: engine.prepared_text_session.OptionsV1 = .{
+        .max_new_tokens = 1,
+    };
+    const bound_plan_input =
+        try engine.prepared_text_raw_input.makeBoundPlanInputV1(
+            identity.request_epoch,
+            tokenizer_manifest,
+            artifact_license_sha256,
+        );
+    var bootstrap_receipt: ?engine.prepared_text_durable_runtime
+        .BootstrapDirectTerminalFileReceiptV1 = null;
+    if (selection_before.kind != .terminal) {
+        bootstrap_receipt =
+            try engine.prepared_text_durable_runtime
+                .bootstrapDirectTerminalFileV1(
+                allocator,
+                .{
+                    .model = model,
+                    .package = package,
+                    .representation = representation,
+                    .raw_text = raw_text,
+                    .tokenizer_manifest = tokenizer_manifest,
+                    .options = options,
+                    .scheduling = identity.scheduling,
+                    .bound_plan_input = bound_plan_input,
+                    .source_runtime = identity.source_runtime,
+                    .scheduler = &runtime.scheduler,
+                    .file = .{
+                        .directory = directory,
+                        .storage_epoch = identity.storage_epoch,
+                        .max_set_bytes = max_set_bytes,
+                    },
+                },
+            );
+    }
+
+    if (bootstrap_only) {
+        const receipt = bootstrap_receipt orelse
+            return error.InvalidDurableBootstrap;
+        try requireDurableRuntimeZeroV1(&runtime);
+        _ = try runtime.scheduler.close();
+        runtime_closed = true;
+        return emitDurableBootstrapV1(
+            writer,
+            package,
+            representation,
+            identity,
+            selection_before.kind,
+            receipt,
+            max_set_bytes,
+        );
+    }
+
+    var fail_stop_context: u8 = 0;
+    const advance =
+        try engine.prepared_text_durable_runtime
+            .advanceDirectTerminalSourceFileV1(
+            allocator,
+            .{
+                .model = model,
+                .runtime = .{
+                    .bank = &runtime.bank,
+                    .scheduler = &runtime.scheduler,
+                },
+                .step_sink = identity.step_sink,
+                .file = .{
+                    .directory = directory,
+                    .storage_epoch = identity.storage_epoch,
+                    .max_set_bytes = max_set_bytes,
+                },
+                .fail_stop = .{
+                    .context = &fail_stop_context,
+                    .invoke_fn = durableFailStopV1,
+                },
+            },
+        );
+    runtime_closed = true;
+    const view =
+        try engine.prepared_text_direct_terminal_output
+            .inspectDirectoryV1(
+            allocator,
+            directory,
+            .{ .max_set_bytes = max_set_bytes },
+        );
+    try verifyDurableTerminalV1(
+        package,
+        representation,
+        identity,
+        bootstrap_receipt,
+        advance,
+        view,
+    );
+    try emitDurableTerminalV1(
+        writer,
+        package,
+        representation,
+        identity,
+        selection_before.kind,
+        bootstrap_receipt,
+        advance,
+        view,
+        max_set_bytes,
+        reveal_output,
+    );
+}
+
+fn deriveDurableIdentityV1(
+    request_id_hex: []const u8,
+    package_sha256: [32]u8,
+    representation_sha256: [32]u8,
+    artifact_license_sha256: [32]u8,
+    raw_text_sha256: [32]u8,
+) !DurableIdentityV1 {
+    if (request_id_hex.len != 64)
+        return error.InvalidDurableRequestId;
+    for (request_id_hex) |character| {
+        if (!std.ascii.isDigit(character) and
+            !(character >= 'a' and character <= 'f'))
+            return error.InvalidDurableRequestId;
+    }
+    var request_id: [32]u8 = undefined;
+    _ = std.fmt.hexToBytes(
+        &request_id,
+        request_id_hex,
+    ) catch return error.InvalidDurableRequestId;
+
+    var challenge_hash = std.crypto.hash.sha2.Sha256.init(.{});
+    challenge_hash.update(durable_challenge_domain);
+    challenge_hash.update(&request_id);
+    challenge_hash.update(&package_sha256);
+    challenge_hash.update(&representation_sha256);
+    challenge_hash.update(&artifact_license_sha256);
+    challenge_hash.update(&raw_text_sha256);
+    var challenge_sha256: [32]u8 = undefined;
+    challenge_hash.final(&challenge_sha256);
+
+    const runtime_root = durableDerivedRootV1(
+        durable_runtime_identity_domain,
+        challenge_sha256,
+    );
+    const scheduling_root = durableDerivedRootV1(
+        durable_scheduling_identity_domain,
+        challenge_sha256,
+    );
+    return .{
+        .request_id_sha256 = engine.core.model_contract.sha256(&request_id),
+        .challenge_sha256 = challenge_sha256,
+        .request_epoch = durableU64V1(runtime_root, 0),
+        .storage_epoch = durableU64V1(runtime_root, 8),
+        .source_runtime = .{
+            .bank_epoch = durableU64V1(runtime_root, 16),
+            .scheduler_epoch = durableU64V1(runtime_root, 24),
+            .coordinator_id = durableU64V1(
+                scheduling_root,
+                0,
+            ),
+        },
+        .scheduling = .{
+            .tenant_key = durableU64V1(scheduling_root, 8),
+            .request_key = durableU64V1(
+                scheduling_root,
+                16,
+            ),
+            .request_generation = 1,
+            .resource_owner_key = durableU64V1(
+                scheduling_root,
+                24,
+            ),
+            .weight = 1,
+        },
+        .step_sink = .{
+            .sink_epoch = durableU64V1(challenge_sha256, 0),
+            .reservation_id = durableU64V1(challenge_sha256, 8),
+        },
+    };
+}
+
+fn durableDerivedRootV1(
+    domain: []const u8,
+    challenge_sha256: [32]u8,
+) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(domain);
+    hash.update(&challenge_sha256);
+    var output: [32]u8 = undefined;
+    hash.final(&output);
+    return output;
+}
+
+fn durableU64V1(
+    root: [32]u8,
+    offset: usize,
+) u64 {
+    const value = std.mem.readInt(
+        u64,
+        root[offset .. offset + 8][0..8],
+        .little,
+    );
+    return if (value == 0) 1 else value;
+}
+
+fn classifyDurableSelectionV1(
+    directory: std.fs.Dir,
+) !DurableSelectionFactsV1 {
+    var selector_storage: [engine.core.continuation_checkpoint_file.selector_bytes]u8 =
+        undefined;
+    const selector =
+        engine.core.continuation_checkpoint_file
+            .readActiveSelectorReadOnlyV1(
+            directory,
+            &selector_storage,
+        ) catch |err| {
+            if (err == error.FileNotFound) {
+                return .{
+                    .kind = .absent,
+                    .selector = null,
+                };
+            }
+            return err;
+        };
+    if (selector.generation ==
+        engine.prepared_text_source_lease
+            .source_live_set_generation)
+        return .{
+            .kind = .source_live,
+            .selector = selector,
+        };
+    if (selector.generation ==
+        engine.prepared_text_direct_terminal
+            .selected_generation)
+        return .{
+            .kind = .terminal,
+            .selector = selector,
+        };
+    return error.UnsupportedDurableSelection;
+}
+
+fn requireDurableRuntimeZeroV1(
+    runtime: *DurableSourceRuntimeV1,
+) !void {
+    const snapshot = try runtime.bank.snapshot();
+    if (!snapshot.used.isZero() or
+        snapshot.committed_receipts != 0)
+        return error.DurableRuntimeAuthorityLeak;
+}
+
+fn durableFailStopV1(_: *anyopaque) noreturn {
+    std.process.exit(74);
+}
+
+fn verifyDurableTerminalV1(
+    package: engine.model_package_manifest.ManifestV1,
+    representation: engine.model_package_manifest.PreparedRepresentationV1,
+    identity: DurableIdentityV1,
+    bootstrap_receipt: ?engine.prepared_text_durable_runtime
+        .BootstrapDirectTerminalFileReceiptV1,
+    receipt: engine.prepared_text_durable_runtime
+        .AdvanceDirectTerminalSourceFileReceiptV1,
+    view: engine.prepared_text_direct_terminal_output.ViewV1,
+) !void {
+    try engine.prepared_text_direct_terminal_output
+        .validateViewV1(view);
+    if (!receipt.ownership_closed or
+        receipt.input_generation !=
+            engine.prepared_text_source_lease
+                .source_live_set_generation or
+        receipt.input_sequence != view.publication_next_sequence or
+        receipt.output_generation != view.generation or
+        receipt.output_sequence !=
+            view.publication_next_sequence or
+        receipt.output_token != view.output_token or
+        !std.mem.eql(
+            u8,
+            &receipt.checkpoint_sha256,
+            &view.selected_set_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &receipt.checkpoint_selector_sha256,
+            &view.selected_selector_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &receipt.terminal_source_contract_sha256,
+            &view.terminal_source_contract_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &receipt.terminal_semantic_sha256,
+            &view.terminal_semantic_sha256,
+        ) or
+        view.request_epoch != identity.request_epoch or
+        !std.mem.eql(
+            u8,
+            &view.challenge_sha256,
+            &identity.challenge_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &view.package_sha256,
+            &package.package_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &view.representation_sha256,
+            &representation.representation_sha256,
+        ) or
+        (bootstrap_receipt == null and
+            receipt.disposition != .already_selected))
+        return error.InvalidDurableCommittedOutput;
+    if (bootstrap_receipt) |bootstrap| {
+        if (bootstrap.generation != receipt.input_generation or
+            bootstrap.request_epoch != view.request_epoch or
+            bootstrap.publication_next_sequence !=
+                receipt.input_sequence or
+            !std.mem.eql(
+                u8,
+                &bootstrap.checkpoint_sha256,
+                &view.predecessor_set_sha256,
+            ) or
+            !std.mem.eql(
+                u8,
+                &bootstrap.selector_sha256,
+                &view.predecessor_selector_sha256,
+            ) or
+            !std.mem.eql(
+                u8,
+                &bootstrap.terminal_source_contract_sha256,
+                &view.terminal_source_contract_sha256,
+            ) or
+            !std.mem.eql(
+                u8,
+                &bootstrap.input_archive_sha256,
+                &view.input_archive_sha256,
+            ))
+            return error.InvalidDurableCommittedOutput;
+    }
+}
+
+fn emitDurableBootstrapV1(
+    writer: *std.Io.Writer,
+    package: engine.model_package_manifest.ManifestV1,
+    representation: engine.model_package_manifest.PreparedRepresentationV1,
+    identity: DurableIdentityV1,
+    selection_before: DurableSelectionV1,
+    receipt: engine.prepared_text_durable_runtime
+        .BootstrapDirectTerminalFileReceiptV1,
+    max_set_bytes: usize,
+) !void {
+    const request_id_hex = std.fmt.bytesToHex(
+        identity.request_id_sha256,
+        .lower,
+    );
+    const package_hex = std.fmt.bytesToHex(
+        package.package_sha256,
+        .lower,
+    );
+    const representation_hex = std.fmt.bytesToHex(
+        representation.representation_sha256,
+        .lower,
+    );
+    const challenge_hex = std.fmt.bytesToHex(
+        identity.challenge_sha256,
+        .lower,
+    );
+    const checkpoint_hex = std.fmt.bytesToHex(
+        receipt.checkpoint_sha256,
+        .lower,
+    );
+    const selector_hex = std.fmt.bytesToHex(
+        receipt.selector_sha256,
+        .lower,
+    );
+    const contract_hex = std.fmt.bytesToHex(
+        receipt.terminal_source_contract_sha256,
+        .lower,
+    );
+    const input_hex = std.fmt.bytesToHex(
+        receipt.input_archive_sha256,
+        .lower,
+    );
+    try writer.print(
+        "{{\"schema\":\"glacier.prepared-text-durable-run/v1\"," ++
+            "\"operation\":\"bootstrap\"," ++
+            "\"profile\":\"ordinary-package-direct-terminal-v1\"," ++
+            "\"route\":\"direct-terminal\"," ++
+            "\"selection_before\":\"{s}\"," ++
+            "\"bootstrap_disposition\":\"{s}\"," ++
+            "\"durable_checkpoint\":true," ++
+            "\"fresh_process_boundary_ready\":true," ++
+            "\"checked_committed_output\":false," ++
+            "\"terminal\":false,\"ownership_closed\":true," ++
+            "\"request_epoch\":{d},\"generation\":{d}," ++
+            "\"publication_next_sequence\":{d}," ++
+            "\"max_set_bytes\":{d}," ++
+            "\"request_id_sha256\":\"{s}\"," ++
+            "\"package_sha256\":\"{s}\"," ++
+            "\"representation_sha256\":\"{s}\"," ++
+            "\"challenge_sha256\":\"{s}\"," ++
+            "\"checkpoint_set_sha256\":\"{s}\"," ++
+            "\"checkpoint_selector_sha256\":\"{s}\"," ++
+            "\"terminal_source_contract_sha256\":\"{s}\"," ++
+            "\"input_archive_sha256\":\"{s}\"}}\n",
+        .{
+            durableSelectionNameV1(selection_before),
+            @tagName(receipt.disposition),
+            receipt.request_epoch,
+            receipt.generation,
+            receipt.publication_next_sequence,
+            max_set_bytes,
+            &request_id_hex,
+            &package_hex,
+            &representation_hex,
+            &challenge_hex,
+            &checkpoint_hex,
+            &selector_hex,
+            &contract_hex,
+            &input_hex,
+        },
+    );
+}
+
+fn emitDurableTerminalV1(
+    writer: *std.Io.Writer,
+    package: engine.model_package_manifest.ManifestV1,
+    representation: engine.model_package_manifest.PreparedRepresentationV1,
+    identity: DurableIdentityV1,
+    selection_before: DurableSelectionV1,
+    bootstrap_receipt: ?engine.prepared_text_durable_runtime
+        .BootstrapDirectTerminalFileReceiptV1,
+    receipt: engine.prepared_text_durable_runtime
+        .AdvanceDirectTerminalSourceFileReceiptV1,
+    view: engine.prepared_text_direct_terminal_output.ViewV1,
+    max_set_bytes: usize,
+    reveal_output: bool,
+) !void {
+    const request_id_hex = std.fmt.bytesToHex(
+        identity.request_id_sha256,
+        .lower,
+    );
+    const package_hex = std.fmt.bytesToHex(
+        package.package_sha256,
+        .lower,
+    );
+    const representation_hex = std.fmt.bytesToHex(
+        representation.representation_sha256,
+        .lower,
+    );
+    const input_hex = std.fmt.bytesToHex(
+        view.input_archive_sha256,
+        .lower,
+    );
+    const contract_hex = std.fmt.bytesToHex(
+        view.terminal_source_contract_sha256,
+        .lower,
+    );
+    const semantic_hex = std.fmt.bytesToHex(
+        view.terminal_semantic_sha256,
+        .lower,
+    );
+    const output_hex = std.fmt.bytesToHex(
+        view.terminal_output_sha256,
+        .lower,
+    );
+    const state_hex = std.fmt.bytesToHex(
+        view.terminal_state_sha256,
+        .lower,
+    );
+    const selected_selector_hex = std.fmt.bytesToHex(
+        view.selected_selector_sha256,
+        .lower,
+    );
+    const selected_set_hex = std.fmt.bytesToHex(
+        view.selected_set_sha256,
+        .lower,
+    );
+    const predecessor_selector_hex = std.fmt.bytesToHex(
+        view.predecessor_selector_sha256,
+        .lower,
+    );
+    const predecessor_set_hex = std.fmt.bytesToHex(
+        view.predecessor_set_sha256,
+        .lower,
+    );
+    const challenge_hex = std.fmt.bytesToHex(
+        view.challenge_sha256,
+        .lower,
+    );
+    const view_hex = std.fmt.bytesToHex(
+        view.view_sha256,
+        .lower,
+    );
+    const preexisting_generation_continuation_performed =
+        if (bootstrap_receipt) |bootstrap|
+            bootstrap.disposition != .created and
+                receipt.disposition == .advanced
+        else
+            false;
+    try writer.print(
+        "{{\"schema\":\"glacier.prepared-text-durable-run/v1\"," ++
+            "\"operation\":\"advance\"," ++
+            "\"profile\":\"ordinary-package-direct-terminal-v1\"," ++
+            "\"route\":\"direct-terminal\"," ++
+            "\"selection_before\":\"{s}\"," ++
+            "\"disposition\":\"{s}\",\"bootstrap_disposition\":",
+        .{
+            durableSelectionNameV1(selection_before),
+            @tagName(receipt.disposition),
+        },
+    );
+    if (bootstrap_receipt) |bootstrap| {
+        try writer.print(
+            "\"{s}\"",
+            .{@tagName(bootstrap.disposition)},
+        );
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(
+        ",\"durable_checkpoint\":true," ++
+            "\"fresh_process_continuation_supported\":true," ++
+            "\"preexisting_generation_continuation_performed\":{s}," ++
+            "\"checked_committed_output\":true," ++
+            "\"terminal\":true,\"ownership_closed\":true," ++
+            "\"model_execution_performed\":{s}," ++
+            "\"output_disclosed\":{s}," ++
+            "\"output_encoding\":\"token-ids\"," ++
+            "\"request_epoch\":{d},\"generation\":{d}," ++
+            "\"publication_next_sequence\":{d}," ++
+            "\"acknowledgement_count\":0,\"token_count\":1," ++
+            "\"max_set_bytes\":{d}," ++
+            "\"request_id_sha256\":\"{s}\"," ++
+            "\"package_sha256\":\"{s}\"," ++
+            "\"representation_sha256\":\"{s}\"," ++
+            "\"input_archive_sha256\":\"{s}\"," ++
+            "\"terminal_source_contract_sha256\":\"{s}\"," ++
+            "\"terminal_semantic_sha256\":\"{s}\"," ++
+            "\"terminal_output_sha256\":\"{s}\"," ++
+            "\"terminal_state_sha256\":\"{s}\"," ++
+            "\"checkpoint_selector_sha256\":\"{s}\"," ++
+            "\"checkpoint_set_sha256\":\"{s}\"," ++
+            "\"predecessor_selector_sha256\":\"{s}\"," ++
+            "\"predecessor_set_sha256\":\"{s}\"," ++
+            "\"challenge_sha256\":\"{s}\"," ++
+            "\"view_sha256\":\"{s}\",\"output_tokens\":",
+        .{
+            booleanNameV1(
+                preexisting_generation_continuation_performed,
+            ),
+            booleanNameV1(receipt.disposition == .advanced),
+            booleanNameV1(reveal_output),
+            view.request_epoch,
+            view.generation,
+            view.publication_next_sequence,
+            max_set_bytes,
+            &request_id_hex,
+            &package_hex,
+            &representation_hex,
+            &input_hex,
+            &contract_hex,
+            &semantic_hex,
+            &output_hex,
+            &state_hex,
+            &selected_selector_hex,
+            &selected_set_hex,
+            &predecessor_selector_hex,
+            &predecessor_set_hex,
+            &challenge_hex,
+            &view_hex,
+        },
+    );
+    if (reveal_output) {
+        try writer.print("[{d}]}}\n", .{view.output_token});
+    } else {
+        try writer.writeAll("null}\n");
+    }
+}
+
+fn durableSelectionNameV1(
+    selection: DurableSelectionV1,
+) []const u8 {
+    return switch (selection) {
+        .absent => "absent",
+        .source_live => "source-live",
+        .terminal => "terminal",
+    };
+}
+
+fn booleanNameV1(value: bool) []const u8 {
+    return if (value) "true" else "false";
+}
+
 fn usage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
         "usage: glacier text-run <model.glrt> " ++
             "(--text <utf8>|--text-file <path>) " ++
             "--license <license-file> [--package <model.glpkg>] " ++
-            "[--n 1..64]\n",
+            "[--n 1..64] " ++
+            "[--durable-dir <absolute-existing-directory> " ++
+            "--request-id <64-lowercase-hex> --n 1 " ++
+            "[--bootstrap-only] [--reveal-output] " ++
+            "[--max-set-bytes 1..67108864]]\n",
     );
 }

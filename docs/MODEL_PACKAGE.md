@@ -1,6 +1,7 @@
 # Ordinary Model Package
 
-Status: **experimental CPU/process-local vertical slice**.
+Status: **experimental CPU vertical slice with process-local execution and a
+one-token POSIX durable route**.
 
 Glacier can turn one supported Safetensors model into a portable model
 container, a prepared runtime image, and a fixed package manifest:
@@ -114,7 +115,7 @@ does not read an ambient `<output>.json` sidecar for any output. It has no
 bounded, no-follow, stable regular-file boundary before it can affect package
 identity.
 
-## Process-local admission
+## Admission and execution
 
 Use the package with its prepared image:
 
@@ -135,12 +136,37 @@ ABI/version, source fingerprint, package/configuration roots, and separate
 layout. A different prepared representation, even for the same portable
 package root, needs its own matching bundle.
 
-The current output is token IDs in deterministic JSON. Publication is
-transactional but process-local; the report explicitly keeps
-`durable_result_sink=false` and `fresh_process_recovery=false`. Package
-admission therefore does not yet expose the checked durable output reader,
-resume a user model in a fresh process, render general tokenizer text, or
-provide a serving API.
+The normal `1..64` output route returns token IDs in deterministic JSON and
+publishes transactionally in process.
+
+The package-aware durable route currently supports exactly one output token:
+
+```sh
+mkdir -m 700 /tmp/glacier-package-run
+
+./zig-out/bin/glacier text-run out.glrt \
+  --text "Hello" \
+  --license LICENSE \
+  --package out.glpkg \
+  --n 1 \
+  --durable-dir /tmp/glacier-package-run \
+  --request-id 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+This route creates or recovers the existing sink-free generation-one
+checkpoint, advances or replays its generation-two terminal selection, closes
+runtime ownership, and renders the selector-rechecked view. It omits the token
+payload unless `--reveal-output` is explicit; exposed roots remain metadata,
+not a confidentiality boundary. Choose and externally retain a new
+`--request-id` per logical request, then reuse that exact ID only for
+continuation or retry. Use one initially empty private directory per request;
+once selected, it has no in-place reset or cleanup command. `--bootstrap-only`
+makes generation one an intentional process boundary; the same command without
+that flag can continue in a fresh process. Exact terminal retries return
+`already_selected`.
+
+The command does not yet expose the acknowledged source/target chain for
+counts `2..64`, render general tokenizer text, or provide a serving API.
 
 ## Verification workflow
 
@@ -154,10 +180,11 @@ Changes confined to the package producer, package-aware `text-run`, bounded
 input helper, or independent package oracle select the existing focused
 `text-runtime-golden-path-test` DAG. That gate exercises production, portable
 and package `already_current` dispositions, deterministic prepared-image
-recreation, independent Python decoding, process-local admission, package
-mutation, changed-license rejection, and embedded-receipt/prepared-image
-substitution rejection without compiling the broad runtime and foreign-target
-suites.
+recreation, independent Python decoding, process-local admission, distinct
+processes for durable bootstrap/resume/retry, direct checkpoint/output-wire
+decoding, package mutation, changed-license rejection, and
+embedded-receipt/prepared-image substitution rejection without compiling the
+broad runtime and foreign-target suites.
 
 Run `tools/verify.sh full` or the deeper platform matrices at integration,
 release, shared-ABI, or cross-platform boundaries. The focused route is a
@@ -166,11 +193,11 @@ gates.
 
 ## Roadmap boundary
 
-This slice establishes ordinary model package production and exact
-process-local admission for one narrow CPU profile. The next text-runtime
-milestone is to connect package-aware execution to the existing checked
-committed-output filesystem reader and fresh-process continuation without
-duplicating the recovery protocol.
+This slice establishes ordinary model package production, exact process-local
+admission, and checked durable one-token continuation for one narrow CPU
+profile. The next text-runtime milestone is to expose the existing acknowledged
+source/target chain for package-aware fixed output counts `2..64` without
+duplicating its recovery protocol.
 
 Still open:
 
@@ -180,6 +207,6 @@ Still open:
 - GPU/device package preparation and execution evidence;
 - native non-POSIX package production and durable recovery;
 - signed provenance and authenticated distribution;
-- checked durable rendering for ordinary models and serving integration;
+- acknowledged multi-token durable rendering and serving integration;
 - exhaustive storage-fault and physical power-loss campaigns; and
 - production-model quality, compatibility, performance, and stability claims.

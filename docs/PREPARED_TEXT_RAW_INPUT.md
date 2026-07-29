@@ -1,7 +1,7 @@
 # Verified Raw-Text Runtime Path
 
-Status: **integrated experimental R1k-b1 ingress and R1k-b2 CPU/POSIX
-recovery slice**.
+Status: **integrated experimental R1k-b1 ingress, R1k-b2 CPU/POSIX
+recovery, and package-aware direct-terminal CLI slice**.
 
 This path gives one supported command sequence a verifiable join from exact
 raw UTF-8 bytes to the prepared-text runtime:
@@ -13,8 +13,10 @@ Safetensors fixture
   -> stable package + prepared-representation identities
   -> canonical UTF-8 byte tokenizer
   -> prepared-text and Common Model Contract plans
-  -> process-local SessionV3 command, or
-  -> durable source/target recovery with exact raw-input retention
+  -> one of:
+       process-local SessionV3 command
+       package-aware durable one-token command
+       durable source/target recovery with exact raw-input retention
   -> terminal result evidence and zero logical ownership
 ```
 
@@ -70,6 +72,109 @@ unpackaged compatibility path requires the retained fixture digest; package
 admission requires the byte count and digest recorded by that package. This
 proves which bytes were supplied; it does not interpret the license or decide
 whether a model may legally be used.
+
+## Durable one-token package run
+
+The first package-aware durable command profile supports exactly one output
+token. It reuses the public direct-terminal checkpoint writer and read-only
+view; it does not introduce a CLI-specific journal, selector, or recovery
+format.
+
+Create a private, existing state directory and run:
+
+```sh
+mkdir -m 700 /tmp/glacier-run-001
+
+./zig-out/bin/glacier text-run model.glrt \
+  --text-file prompt.txt \
+  --license LICENSE \
+  --package model.glpkg \
+  --n 1 \
+  --durable-dir /tmp/glacier-run-001 \
+  --request-id 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+`--durable-dir` must be absolute and is opened without following the final
+symlink. `--request-id` is a caller-chosen 32-byte lowercase hexadecimal
+identity, not a secret. Choose and retain a new ID outside the state directory
+for each logical request; reuse that exact ID only to continue or retry that
+request. Use one initially empty private directory per logical request. A
+selected directory is bound to that request and has no in-place reset or
+cleanup command. The command combines the ID with the admitted package, exact
+prepared representation, license, and raw-text roots to derive the request
+challenge and all process-stable runtime identities. Changing any
+challenge-bound request or artifact input therefore rejects before writer
+authority or selected-checkpoint mutation.
+
+By default the terminal report omits the token payload. Add `--reveal-output`
+to include one checked token ID with `output_encoding="token-ids"`. Digest and
+lineage metadata can still reveal or correlate low-entropy output; the default
+is not a confidentiality boundary. The default checkpoint-set allocation bound
+is 8 MiB. `--max-set-bytes` accepts a cap in the parser range
+`1..67108864`; a cap smaller than the encoded set still fails closed.
+
+The normal command creates or recovers generation one, advances it to the
+sink-free terminal generation two, closes runtime ownership, and renders only
+the selector-rechecked verified view. Repeating the exact command returns
+`already_selected` without another model step. `--bootstrap-only` stops after
+generation one so an orchestrator can deliberately hand execution to a fresh
+process:
+
+```sh
+mkdir -m 700 /tmp/glacier-run-002
+
+./zig-out/bin/glacier text-run model.glrt \
+  --text-file prompt.txt --license LICENSE --package model.glpkg --n 1 \
+  --durable-dir /tmp/glacier-run-002 \
+  --request-id 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --bootstrap-only
+
+# Run the same command again without --bootstrap-only in a fresh process.
+```
+
+`--bootstrap-only` cannot be combined with `--reveal-output`. Repeating the
+bootstrap command for the same generation-one request returns
+`bootstrap_disposition="already_selected"` without changing the directory.
+
+The JSON schema `glacier.prepared-text-durable-run/v1` is discriminated by
+`operation`; fields not listed for that operation are absent:
+
+| Operation | Required fields |
+| --- | --- |
+| `bootstrap` | `profile`, `route`, `selection_before`, `bootstrap_disposition`, `durable_checkpoint`, `fresh_process_boundary_ready`, `checked_committed_output`, `terminal`, `ownership_closed`, `request_epoch`, `generation`, `publication_next_sequence`, `max_set_bytes`, the four request/artifact identity roots, and the selected set/selector, source-contract, and input-archive roots |
+| `advance` | `profile`, `route`, `selection_before`, `disposition`, nullable `bootstrap_disposition`, `durable_checkpoint`, `fresh_process_continuation_supported`, `preexisting_generation_continuation_performed`, `checked_committed_output`, `terminal`, `ownership_closed`, `model_execution_performed`, all counters, all request/artifact/input/terminal/checkpoint/predecessor/view roots, and the three output-disclosure fields |
+
+For `advance`, `preexisting_generation_continuation_performed` is true only
+when bootstrap recovered or selected an existing generation one and this
+invocation advanced it. `fresh_process_continuation_supported` is a capability,
+not proof of the prior publisher's process identity.
+`model_execution_performed` records whether the model step ran;
+`ownership_closed` separately records closed runtime ownership on return.
+`checked_committed_output` means structural receipt, selected-wire,
+predecessor, contract, archive, and view reconciliation—not a model-quality
+oracle. `output_encoding` is `token-ids`, and `output_tokens` is `null` unless
+explicitly revealed.
+
+Both operations include `request_id_sha256`, `package_sha256`,
+`representation_sha256`, and `challenge_sha256`. Bootstrap additionally names
+`checkpoint_set_sha256`, `checkpoint_selector_sha256`,
+`terminal_source_contract_sha256`, and `input_archive_sha256`.
+The advance counters are `request_epoch`, `generation`,
+`publication_next_sequence`, `acknowledgement_count`, `token_count`, and
+`max_set_bytes`. Its identity/input roots are `request_id_sha256`,
+`package_sha256`, `representation_sha256`, `challenge_sha256`,
+`input_archive_sha256`, and `terminal_source_contract_sha256`. Its terminal and
+filesystem roots are `terminal_semantic_sha256`, `terminal_output_sha256`,
+`terminal_state_sha256`, `checkpoint_selector_sha256`,
+`checkpoint_set_sha256`, `predecessor_selector_sha256`,
+`predecessor_set_sha256`, and `view_sha256`. The disclosure fields are
+`output_disclosed`, `output_encoding`, and `output_tokens`.
+
+The state directory contains only the existing checkpoint lock, active
+selector, and content-addressed predecessor/successor sets. This direct route
+has no result-sink ledger. Fixed output counts `2..64` still use the
+acknowledged source/target runtime API and are not yet exposed by the
+package-aware CLI.
 
 ## Canonical tokenizer profile
 
@@ -252,7 +357,19 @@ The gate:
    source-mapping, publication-state, and terminal-evidence relationships while
    treating the boundary-snapshot and transcript roots as opaque bound leaves;
    and
-8. rejects oversized and malformed UTF-8 input before model execution.
+8. stages an ordinary package-aware direct-terminal request, proves an exact
+   bootstrap retry is byte-identical, rejects changed prompt, request, license,
+   valid package-root, and valid alternate-representation inputs while
+   generation one is live, and then continues it in a fresh process;
+9. independently decodes the selected generation-one and generation-two
+   checkpoint wires, including the embedded predecessor and checked output
+   view root;
+10. proves a terminal retry returns `already_selected` without changing the
+    directory and separately covers the empty-directory one-shot route;
+11. requires the durable token to equal the first token from ordinary execution
+    of the same admitted package and prompt; and
+12. rejects incompatible durable options, unsafe directory selection,
+    oversized input, and malformed UTF-8 before model execution.
 
 The gate neither reconstructs the boundary snapshot nor independently replays
 the internal publication proposal/acknowledgement transcript; the report states
@@ -273,10 +390,11 @@ This is cross-compilation evidence, not native Windows execution evidence.
 ## Scope and next boundary
 
 The retained fixture is synthetic and download-free. Its output tokens do not
-claim language quality. The current execution and publication sink are
-process-local CPU paths: `transactional_publication=true`, while
-`durable_result_sink=false` and `fresh_process_recovery=false` are explicit in
-the command report.
+claim language quality. Ordinary multi-token execution remains a process-local
+CPU path. The package-aware one-token route is a local POSIX durable checkpoint
+path with checked committed output and fresh-process continuation; it is
+intentionally sink-free, so `durable_result_sink=false` is not a durability
+failure for that route.
 
 The Common artifact manifest remains a request-profile identity and changes
 with prompt context. R1k-b2 supplies a separate stable package identity, but it
@@ -284,13 +402,13 @@ is still an experimental wire rather than a stable public distribution ABI.
 `BoundPlanV1` likewise remains an experimental Zig/direct structure rather
 than a fixed cross-language wire.
 
-The separate recovery fixture now carries this exact tokenizer/raw-input
-identity into the durable local sink and fresh-process source/target chain.
-`text-run --package` now admits one ordinary user-model profile, but the
-standalone command remains process-local. Connecting it to checked committed
-output and fresh-process continuation without duplicating the recovery
-protocol remains open. The retained durable fixture is synthetic CPU execution
-on the descriptor-relative POSIX adapter. GPU/device-resident recovery,
-production model quality, performance, remote delivery, hostile writers,
-native multi-OS durability, and physical power-loss persistence are not
-claimed.
+The package-aware direct-terminal command now carries the exact
+tokenizer/raw-input identity through generation one and renders the checked
+generation-two view after runtime ownership closes. Extending the same CLI to
+the acknowledged source/target chain for output counts `2..64` remains open.
+The overall invocation still enters the idempotent writer/lease workflow before
+calling the read-only view; it is not a post-hoc read-only inspector.
+The retained durable path is CPU execution on the descriptor-relative POSIX
+adapter. GPU/device-resident recovery, production model quality, performance,
+remote delivery, hostile writers, native multi-OS durability, and physical
+power-loss persistence are not claimed.

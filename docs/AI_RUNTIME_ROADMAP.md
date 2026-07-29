@@ -1732,12 +1732,66 @@ substitution. Affected changes to this slice reuse the existing
 shared-ABI, cross-platform, and release gates.
 
 This does not establish production readiness or general model-family support.
-Checked durable output for package-aware execution, fresh-process ordinary
-model continuation, broader tokenizer/model/source/numerical profiles, GPU
-package production, native non-POSIX evidence, authenticated distribution,
-an explicit bounded/no-follow `--config` input, and production-model
-quality/performance evidence remain open. See
+R1k-b5 adds checked durable output and fresh-process continuation for the
+one-token direct route; acknowledged multi-token execution, broader
+tokenizer/model/source/numerical profiles, GPU package production, native
+non-POSIX evidence, authenticated distribution, an explicit bounded/no-follow
+`--config` input, and production-model quality/performance evidence remain
+open. See
 [Ordinary Model Package](MODEL_PACKAGE.md).
+
+#### R1k-b5 — Package-aware direct-terminal durable command
+
+Status: **integrated experimental CPU/POSIX one-token vertical slice**.
+
+`text-run` now accepts `--durable-dir`, a caller-chosen 32-byte lowercase
+hexadecimal `--request-id`, and exactly `--n 1` for an admitted ordinary
+package. The CLI composes the existing sink-free operations:
+
+1. read the active selector and match its request epoch and challenge before
+   writer authority;
+2. create or exactly recover generation one with
+   `bootstrapDirectTerminalFileV1`;
+3. advance or replay generation two with
+   `advanceDirectTerminalSourceFileV1`; and
+4. render only the selector-rechecked
+   `prepared_text_direct_terminal_output.inspectDirectoryV1` view after
+   runtime ownership closes.
+
+No CLI-specific checkpoint, selector, lock, decoder, or result journal was
+added. `--bootstrap-only` leaves the exact generation-one selection so a fresh
+process can continue it. Repeating a completed request returns
+`already_selected` without another model step. The default report omits the
+token payload; its digest metadata is not a confidentiality boundary.
+
+The domain-separated request challenge binds the request ID, admitted package
+root, exact prepared-representation root, license root, and raw-text root.
+Callers retain a new ID for each logical request and reuse it only for
+continuation or retry. Stable request, storage, Bank, Scheduler, coordinator,
+scheduling, and step-sink identities are derived from that challenge. A
+changed prompt, license, package, representation, or request ID therefore
+cannot acquire the selected lease before execution or durable mutation.
+
+The existing `text-runtime-golden-path-test` compiles the same `glacier`
+executable once. Its Python controller bootstraps in process A, resumes and
+executes in process B, independently decodes both selected filesystem
+generations and the direct committed-output view, then retries in process C
+and requires the directory manifest to remain unchanged. Before process B, an
+exact bootstrap retry plus changed prompt, request, license, valid package-root,
+and valid alternate-representation attempts must leave generation one
+byte-identical. The gate also covers one-shot execution, rejects out-of-range
+and incompatible options, and requires numerical equality with the first token
+from ordinary execution of the same package and prompt.
+
+`checked_committed_output=true` denotes structural and lineage reconciliation,
+not independent model-quality evidence. The command enters the idempotent
+writer workflow before calling the read-only view; it is not a post-hoc
+read-only inspector.
+
+This slice is deliberately not the acknowledged `2..64` route. It has no
+target runtime or result-sink acknowledgement, does not cover early EOS, and
+does not add exhaustive storage-fault, power-loss, GPU-resident, remote,
+hostile-writer, Win32, or native multi-OS evidence.
 
 #### Public durable-runtime composition foundation
 
@@ -1777,8 +1831,9 @@ after runtime retirement, after selector rename, and after generation-two
 publication. An independent decoder requires exact generation-one or
 generation-two visibility, fresh convergence, and a zero-step audit. Exhaustive
 storage-fault and power-loss matrices, package-aware checked durable
-`text-run` and serving integration, non-POSIX native evidence, broader
-tokenizer/model/GPU package coverage, and stable language bindings remain open.
+multi-token `text-run` and serving integration, non-POSIX native evidence,
+broader tokenizer/model/GPU package coverage, and stable language bindings
+remain open.
 See
 [Public Prepared-Text Durable Runtime](PREPARED_TEXT_DURABLE_RUNTIME.md).
 
@@ -1789,10 +1844,11 @@ recoverable source-exit and replay-safe external publication. The retained
 synthetic fresh-process proof now includes replay-safe local sink progress, but
 the direct-terminal proof remains a bounded four-boundary POSIX smoke rather
 than an exhaustive storage or power-loss campaign. Ordinary-package production
-and process-local admission now exist for one narrow CPU profile. Checked
-durable command/serving rendering, fresh-process ordinary-model continuation,
-remote delivery, broader tokenizers/models, GPU package execution, and
-multi-OS requirements remain open.
+and admission now include a checked one-token durable command with deliberate
+fresh-process generation-one continuation for one narrow CPU profile.
+Acknowledged multi-token command/serving rendering, remote delivery, broader
+tokenizers/models, GPU package execution, and multi-OS requirements remain
+open.
 
 ### R2 — Stateless tensor families
 

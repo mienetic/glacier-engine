@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from bench import model_contract as contract
+from bench import prepared_text_direct_terminal_recovery as direct_oracle
 from bench import prepared_text_package as package_oracle
 from bench import prepared_text_raw_input as raw_input
 
@@ -34,6 +35,8 @@ EXPECTED_LICENSE_SHA256 = (
 )
 PROMPT = "Ice"
 NEW_TOKENS = 3
+DURABLE_REQUEST_ID = "18c4d5a16c7f7a5df70c6c7d4e6f6dd1" * 2
+DURABLE_MAX_SET_BYTES = 8 * 1024 * 1024
 TIMEOUT_SECONDS = 30
 
 
@@ -116,6 +119,236 @@ def _run_text(
     if not isinstance(report, dict):
         raise GoldenPathError("text-run report is not an object")
     return report
+
+
+def _run_durable_text(
+    executable: Path,
+    image: Path,
+    package_path: Path,
+    license_path: Path,
+    prompt_path: Path,
+    durable_directory: Path,
+    *,
+    request_id: str = DURABLE_REQUEST_ID,
+    new_tokens: int = 1,
+    max_set_bytes: int = DURABLE_MAX_SET_BYTES,
+    bootstrap_only: bool = False,
+    reveal_output: bool = False,
+    expect_success: bool = True,
+    expected_error: str | None = None,
+) -> dict[str, object] | None:
+    command = [
+        str(executable),
+        "text-run",
+        str(image),
+        "--text-file",
+        str(prompt_path),
+        "--license",
+        str(license_path),
+        "--package",
+        str(package_path),
+        "--n",
+        str(new_tokens),
+        "--durable-dir",
+        str(durable_directory),
+        "--request-id",
+        request_id,
+        "--max-set-bytes",
+        str(max_set_bytes),
+    ]
+    if bootstrap_only:
+        command.append("--bootstrap-only")
+    if reveal_output:
+        command.append("--reveal-output")
+    result = _run(command, expect_success=expect_success)
+    if not expect_success:
+        if expected_error is not None and expected_error not in result.stderr:
+            raise GoldenPathError(
+                f"durable rejection omitted {expected_error}: "
+                f"{result.stderr!r}"
+            )
+        return None
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise GoldenPathError(
+            "durable text-run did not emit one JSON value"
+        ) from error
+    if not isinstance(report, dict):
+        raise GoldenPathError("durable text-run report is not an object")
+    return report
+
+
+def _durable_directory_manifest(
+    directory: Path,
+) -> tuple[tuple[str, int, int, str], ...]:
+    manifest = []
+    for entry in sorted(directory.iterdir(), key=lambda value: value.name):
+        if entry.is_symlink() or not entry.is_file():
+            raise GoldenPathError(
+                f"unsafe durable state entry: {entry.name}"
+            )
+        metadata = entry.stat(follow_symlinks=False)
+        manifest.append(
+            (
+                entry.name,
+                metadata.st_mode & 0o7777,
+                metadata.st_size,
+                hashlib.sha256(entry.read_bytes()).hexdigest(),
+            )
+        )
+    return tuple(manifest)
+
+
+def _active_checkpoint(directory: Path) -> direct_oracle.recovery.CheckpointWireFacts:
+    checkpoint = direct_oracle.recovery._decode_checkpoint_wire(directory)
+    if checkpoint is None:
+        raise GoldenPathError("durable checkpoint is absent")
+    return checkpoint
+
+
+def _direct_terminal_facts(
+    directory: Path,
+) -> direct_oracle.DirectTerminalWireFacts:
+    facts = direct_oracle._decode_generation_two(
+        _active_checkpoint(directory)
+    )
+    predecessor_name = (
+        "checkpoint-"
+        + facts.generation_one.checkpoint.checkpoint_sha256
+        + ".set"
+    )
+    predecessor_path = directory / predecessor_name
+    if (
+        not predecessor_path.is_file()
+        or predecessor_path.is_symlink()
+        or predecessor_path.read_bytes()
+        != facts.selected.objects[1].payload
+    ):
+        raise GoldenPathError(
+            "durable predecessor archive differs from embedded lineage"
+        )
+    return facts
+
+
+def _verify_durable_bootstrap_report(
+    report: Mapping[str, object],
+    facts: direct_oracle.DirectGenerationOneFacts,
+    *,
+    package_sha256: bytes,
+    representation_sha256: str,
+    selection_before: str,
+    bootstrap_disposition: str,
+) -> None:
+    expected: dict[str, object] = {
+        "schema": "glacier.prepared-text-durable-run/v1",
+        "operation": "bootstrap",
+        "profile": "ordinary-package-direct-terminal-v1",
+        "route": "direct-terminal",
+        "selection_before": selection_before,
+        "bootstrap_disposition": bootstrap_disposition,
+        "durable_checkpoint": True,
+        "fresh_process_boundary_ready": True,
+        "checked_committed_output": False,
+        "terminal": False,
+        "ownership_closed": True,
+        "request_epoch": facts.contract.request_epoch,
+        "generation": 1,
+        "publication_next_sequence": 1,
+        "max_set_bytes": DURABLE_MAX_SET_BYTES,
+        "request_id_sha256": hashlib.sha256(
+            bytes.fromhex(DURABLE_REQUEST_ID)
+        ).hexdigest(),
+        "package_sha256": package_sha256.hex(),
+        "representation_sha256": representation_sha256,
+        "challenge_sha256": facts.contract.challenge_sha256.hex(),
+        "checkpoint_set_sha256": facts.checkpoint.checkpoint_sha256,
+        "checkpoint_selector_sha256": facts.checkpoint.selector_sha256,
+        "terminal_source_contract_sha256": (
+            facts.contract.contract_sha256.hex()
+        ),
+        "input_archive_sha256": facts.input.archive_sha256.hex(),
+    }
+    if (
+        facts.input.package_sha256 != package_sha256
+        or facts.input.representation_sha256.hex()
+        != representation_sha256
+        or dict(report) != expected
+    ):
+        raise GoldenPathError(
+            "durable bootstrap report or archived lineage mismatch"
+        )
+
+
+def _verify_durable_terminal_report(
+    report: Mapping[str, object],
+    facts: direct_oracle.DirectTerminalWireFacts,
+    *,
+    package_sha256: bytes,
+    representation_sha256: str,
+    selection_before: str,
+    disposition: str,
+    bootstrap_disposition: str | None,
+    output_disclosed: bool,
+) -> None:
+    view = facts.view
+    expected_scalars: dict[str, object] = {
+        "schema": "glacier.prepared-text-durable-run/v1",
+        "operation": "advance",
+        "profile": "ordinary-package-direct-terminal-v1",
+        "route": "direct-terminal",
+        "selection_before": selection_before,
+        "disposition": disposition,
+        "bootstrap_disposition": bootstrap_disposition,
+        "durable_checkpoint": True,
+        "fresh_process_continuation_supported": True,
+        "preexisting_generation_continuation_performed": (
+            bootstrap_disposition in {"recovered", "already_selected"}
+            and disposition == "advanced"
+        ),
+        "checked_committed_output": True,
+        "terminal": True,
+        "ownership_closed": True,
+        "model_execution_performed": disposition == "advanced",
+        "output_disclosed": output_disclosed,
+        "output_encoding": "token-ids",
+        "request_epoch": facts.generation_one.contract.request_epoch,
+        "generation": 2,
+        "publication_next_sequence": 1,
+        "acknowledgement_count": 0,
+        "token_count": 1,
+        "max_set_bytes": DURABLE_MAX_SET_BYTES,
+        "request_id_sha256": hashlib.sha256(
+            bytes.fromhex(DURABLE_REQUEST_ID)
+        ).hexdigest(),
+        "package_sha256": package_sha256.hex(),
+        "representation_sha256": representation_sha256,
+        "input_archive_sha256": view.input_archive_sha256.hex(),
+        "terminal_source_contract_sha256": (
+            view.terminal_source_contract_sha256.hex()
+        ),
+        "terminal_semantic_sha256": view.terminal_semantic_sha256.hex(),
+        "terminal_output_sha256": view.terminal_output_sha256.hex(),
+        "terminal_state_sha256": view.terminal_state_sha256.hex(),
+        "checkpoint_selector_sha256": view.selected_selector_sha256.hex(),
+        "checkpoint_set_sha256": view.selected_set_sha256.hex(),
+        "predecessor_selector_sha256": (
+            view.predecessor_selector_sha256.hex()
+        ),
+        "predecessor_set_sha256": view.predecessor_set_sha256.hex(),
+        "challenge_sha256": view.challenge_sha256.hex(),
+        "view_sha256": view.view_sha256.hex(),
+        "output_tokens": [view.output_token] if output_disclosed else None,
+    }
+    if dict(report) != expected_scalars:
+        differing = sorted(
+            name
+            for name in set(report) | set(expected_scalars)
+            if report.get(name) != expected_scalars.get(name)
+        )
+        raise GoldenPathError(
+            "durable terminal report mismatch: " + ", ".join(differing)
+        )
 
 
 def _report_digest(report: Mapping[str, object], name: str) -> bytes:
@@ -847,6 +1080,65 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
         ):
             raise GoldenPathError("first package publication was not new")
 
+        first_package_wire = foreign_package.read_bytes()
+        first_bundle_facts = package_oracle.decode_admission_bundle(
+            first_package_wire
+        )
+        representation_facts = first_bundle_facts["representation"]
+        same_package_modified_image = root / "same-package-modified.glrt"
+        modified_image_wire = bytearray(foreign_image.read_bytes())
+        modified_image_wire.extend(bytes(64))
+        struct.pack_into("<Q", modified_image_wire, 40, len(modified_image_wire))
+        struct.pack_into("<I", modified_image_wire, 156, 0)
+        struct.pack_into(
+            "<I",
+            modified_image_wire,
+            156,
+            zlib.crc32(modified_image_wire[:512]),
+        )
+        modified_image_sha256 = hashlib.sha256(modified_image_wire).digest()
+        if (
+            modified_image_wire[48:112] != foreign_image.read_bytes()[48:112]
+            or modified_image_sha256
+            == representation_facts["container_sha256"]
+        ):
+            raise GoldenPathError(
+                "same-package image mutation did not preserve provenance"
+            )
+        same_package_modified_image.write_bytes(modified_image_wire)
+        modified_representation_wire = (
+            package_oracle.encode_prepared_representation(
+                {
+                    "format_abi": representation_facts["format_abi"],
+                    "format_version": representation_facts["format_version"],
+                    "container_bytes": len(modified_image_wire),
+                    "package_sha256": package_facts["package_sha256"],
+                    "resolved_config_sha256": package_facts[
+                        "resolved_config_sha256"
+                    ],
+                    "source_fingerprint": package_facts[
+                        "model_content_sha256"
+                    ],
+                    "abi_fingerprint": representation_facts[
+                        "abi_fingerprint"
+                    ],
+                    "container_sha256": modified_image_sha256,
+                }
+            )
+        )
+        modified_bundle_path = root / "same-package-modified.glpkg"
+        modified_bundle_path.write_bytes(
+            package_oracle.encode_admission_bundle(
+                first_package_wire[: package_oracle.MANIFEST_BYTES],
+                modified_representation_wire,
+            )
+        )
+        modified_representation_facts = (
+            package_oracle.decode_prepared_representation(
+                modified_representation_wire
+            )
+        )
+
         ordinary_report = _run_text(
             executable,
             foreign_image,
@@ -863,10 +1155,339 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             package_facts=package_facts,
             representation_sha256=representation_sha256,
         )
+        modified_report = _run_text(
+            executable,
+            same_package_modified_image,
+            license_path,
+            PROMPT,
+            prompt_path,
+            package_path=modified_bundle_path,
+        )
+        _verify_report(
+            modified_report,
+            text=PROMPT,
+            license_bytes=license_bytes,
+            image=same_package_modified_image,
+            package_facts=package_facts,
+            representation_sha256=modified_representation_facts[
+                "representation_sha256"
+            ].hex(),
+        )
 
-        first_package_wire = foreign_package.read_bytes()
-        first_bundle_facts = package_oracle.decode_admission_bundle(first_package_wire)
-        representation_facts = first_bundle_facts["representation"]
+        different_container = root / "different-package.glacier"
+        different_image = root / "different-package.glrt"
+        different_package = root / "different-package.glpkg"
+        different_result = _run(
+            (
+                str(executable),
+                "package-model",
+                str(source),
+                str(different_container),
+                str(different_image),
+                str(different_package),
+                "--license",
+                str(license_path),
+                "--group-size",
+                "16",
+            )
+        )
+        try:
+            different_package_report = json.loads(different_result.stdout)
+        except json.JSONDecodeError as error:
+            raise GoldenPathError(
+                "different package did not emit one JSON value"
+            ) from error
+        if not isinstance(different_package_report, dict):
+            raise GoldenPathError("different package report is not an object")
+        different_package_facts, different_representation_sha256 = (
+            _verify_package_artifacts(
+                source=source,
+                portable=different_container,
+                prepared=different_image,
+                package_path=different_package,
+                license_bytes=license_bytes,
+                report=different_package_report,
+            )
+        )
+        different_report = _run_text(
+            executable,
+            different_image,
+            license_path,
+            PROMPT,
+            prompt_path,
+            package_path=different_package,
+        )
+        _verify_report(
+            different_report,
+            text=PROMPT,
+            license_bytes=license_bytes,
+            image=different_image,
+            package_facts=different_package_facts,
+            representation_sha256=different_representation_sha256,
+        )
+        if (
+            different_package_facts["package_sha256"]
+            == package_facts["package_sha256"]
+        ):
+            raise GoldenPathError("different package root unexpectedly matched")
+
+        # The durable direct-terminal slice deliberately stages generation
+        # one in one process and resumes it in another. Both the writer receipt
+        # and the final user-visible result are then checked against an
+        # independent decoder of the selected filesystem wires.
+        durable_directory = root / "durable-direct-terminal"
+        durable_directory.mkdir(mode=0o700)
+        prompt_path.write_bytes(PROMPT.encode("utf-8"))
+        bootstrap_report = _run_durable_text(
+            executable,
+            foreign_image,
+            foreign_package,
+            license_path,
+            prompt_path,
+            durable_directory,
+            bootstrap_only=True,
+        )
+        if bootstrap_report is None:
+            raise GoldenPathError("durable bootstrap report is absent")
+        generation_one = direct_oracle._decode_generation_one(
+            _active_checkpoint(durable_directory)
+        )
+        _verify_durable_bootstrap_report(
+            bootstrap_report,
+            generation_one,
+            package_sha256=package_facts["package_sha256"],
+            representation_sha256=representation_sha256,
+            selection_before="absent",
+            bootstrap_disposition="created",
+        )
+        source_manifest = _durable_directory_manifest(durable_directory)
+        bootstrap_retry_report = _run_durable_text(
+            executable,
+            foreign_image,
+            foreign_package,
+            license_path,
+            prompt_path,
+            durable_directory,
+            bootstrap_only=True,
+        )
+        if bootstrap_retry_report is None:
+            raise GoldenPathError("durable bootstrap retry report is absent")
+        bootstrap_retry_facts = direct_oracle._decode_generation_one(
+            _active_checkpoint(durable_directory)
+        )
+        _verify_durable_bootstrap_report(
+            bootstrap_retry_report,
+            bootstrap_retry_facts,
+            package_sha256=package_facts["package_sha256"],
+            representation_sha256=representation_sha256,
+            selection_before="source-live",
+            bootstrap_disposition="already_selected",
+        )
+        if (
+            bootstrap_retry_facts != generation_one
+            or _durable_directory_manifest(durable_directory)
+            != source_manifest
+        ):
+            raise GoldenPathError(
+                "durable bootstrap retry changed generation one"
+            )
+
+        prompt_path.write_bytes((PROMPT + "!").encode("utf-8"))
+        _run_durable_text(
+            executable,
+            foreign_image,
+            foreign_package,
+            license_path,
+            prompt_path,
+            durable_directory,
+            expect_success=False,
+            expected_error="DurableRequestMismatch",
+        )
+        prompt_path.write_bytes(PROMPT.encode("utf-8"))
+        _run_durable_text(
+            executable,
+            foreign_image,
+            foreign_package,
+            license_path,
+            prompt_path,
+            durable_directory,
+            request_id="ab" * 32,
+            expect_success=False,
+            expected_error="DurableRequestMismatch",
+        )
+        _run_durable_text(
+            executable,
+            foreign_image,
+            foreign_package,
+            changed_license_path,
+            prompt_path,
+            durable_directory,
+            expect_success=False,
+        )
+        _run_durable_text(
+            executable,
+            different_image,
+            different_package,
+            license_path,
+            prompt_path,
+            durable_directory,
+            expect_success=False,
+            expected_error="DurableRequestMismatch",
+        )
+        _run_durable_text(
+            executable,
+            same_package_modified_image,
+            modified_bundle_path,
+            license_path,
+            prompt_path,
+            durable_directory,
+            expect_success=False,
+            expected_error="DurableRequestMismatch",
+        )
+        for invalid_options in (
+            {"new_tokens": 2},
+            {"request_id": DURABLE_REQUEST_ID.upper()},
+            {"max_set_bytes": 0},
+            {"max_set_bytes": 64 * 1024 * 1024 + 1},
+            {"bootstrap_only": True, "reveal_output": True},
+        ):
+            _run_durable_text(
+                executable,
+                foreign_image,
+                foreign_package,
+                license_path,
+                prompt_path,
+                durable_directory,
+                expect_success=False,
+                **invalid_options,
+            )
+        durable_directory_link = root / "durable-direct-terminal-link"
+        durable_directory_link.symlink_to(
+            durable_directory,
+            target_is_directory=True,
+        )
+        _run_durable_text(
+            executable,
+            foreign_image,
+            foreign_package,
+            license_path,
+            prompt_path,
+            durable_directory_link,
+            expect_success=False,
+        )
+        if _durable_directory_manifest(durable_directory) != source_manifest:
+            raise GoldenPathError(
+                "foreign durable resume changed generation one"
+            )
+
+        terminal_report = _run_durable_text(
+            executable,
+            foreign_image,
+            foreign_package,
+            license_path,
+            prompt_path,
+            durable_directory,
+        )
+        if terminal_report is None:
+            raise GoldenPathError("durable terminal report is absent")
+        terminal_facts = _direct_terminal_facts(durable_directory)
+        _verify_durable_terminal_report(
+            terminal_report,
+            terminal_facts,
+            package_sha256=package_facts["package_sha256"],
+            representation_sha256=representation_sha256,
+            selection_before="source-live",
+            disposition="advanced",
+            bootstrap_disposition="already_selected",
+            output_disclosed=False,
+        )
+        ordinary_output_tokens = ordinary_report.get("output_tokens")
+        if (
+            not isinstance(ordinary_output_tokens, list)
+            or not ordinary_output_tokens
+            or terminal_facts.view.output_token != ordinary_output_tokens[0]
+        ):
+            raise GoldenPathError(
+                "durable output differs from ordinary execution"
+            )
+        terminal_manifest = _durable_directory_manifest(
+            durable_directory
+        )
+        expected_terminal_names = {
+            direct_oracle.CHECKPOINT_LOCK_NAME,
+            direct_oracle.recovery.CHECKPOINT_ACTIVE_SELECTOR_NAME,
+            (
+                "checkpoint-"
+                + terminal_facts.generation_one.checkpoint.checkpoint_sha256
+                + ".set"
+            ),
+            "checkpoint-" + terminal_facts.selected.checkpoint_sha256 + ".set",
+        }
+        if {entry[0] for entry in terminal_manifest} != expected_terminal_names:
+            raise GoldenPathError(
+                "direct durable state contains an unexpected namespace"
+            )
+
+        retry_report = _run_durable_text(
+            executable,
+            foreign_image,
+            foreign_package,
+            license_path,
+            prompt_path,
+            durable_directory,
+            reveal_output=True,
+        )
+        if retry_report is None:
+            raise GoldenPathError("durable terminal retry report is absent")
+        retry_facts = _direct_terminal_facts(durable_directory)
+        _verify_durable_terminal_report(
+            retry_report,
+            retry_facts,
+            package_sha256=package_facts["package_sha256"],
+            representation_sha256=representation_sha256,
+            selection_before="terminal",
+            disposition="already_selected",
+            bootstrap_disposition=None,
+            output_disclosed=True,
+        )
+        if (
+            retry_facts != terminal_facts
+            or _durable_directory_manifest(durable_directory)
+            != terminal_manifest
+        ):
+            raise GoldenPathError(
+                "fresh terminal retry changed durable state"
+            )
+
+        one_shot_directory = root / "durable-direct-terminal-one-shot"
+        one_shot_directory.mkdir(mode=0o700)
+        one_shot_report = _run_durable_text(
+            executable,
+            foreign_image,
+            foreign_package,
+            license_path,
+            prompt_path,
+            one_shot_directory,
+            reveal_output=True,
+        )
+        if one_shot_report is None:
+            raise GoldenPathError("durable one-shot report is absent")
+        one_shot_facts = _direct_terminal_facts(one_shot_directory)
+        _verify_durable_terminal_report(
+            one_shot_report,
+            one_shot_facts,
+            package_sha256=package_facts["package_sha256"],
+            representation_sha256=representation_sha256,
+            selection_before="absent",
+            disposition="advanced",
+            bootstrap_disposition="created",
+            output_disclosed=True,
+        )
+        if one_shot_facts != terminal_facts:
+            raise GoldenPathError(
+                "one-shot and continued durable terminal facts differ"
+            )
+
         retry_result = _run(
             (
                 str(executable),
@@ -959,26 +1580,6 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             expect_success=False,
         )
 
-        same_package_modified_image = root / "same-package-modified.glrt"
-        modified_image_wire = bytearray(foreign_image.read_bytes())
-        modified_image_wire.extend(bytes(64))
-        struct.pack_into("<Q", modified_image_wire, 40, len(modified_image_wire))
-        struct.pack_into("<I", modified_image_wire, 156, 0)
-        struct.pack_into(
-            "<I",
-            modified_image_wire,
-            156,
-            zlib.crc32(modified_image_wire[:512]),
-        )
-        modified_image_sha256 = hashlib.sha256(modified_image_wire).digest()
-        if (
-            modified_image_wire[48:112] != foreign_image.read_bytes()[48:112]
-            or modified_image_sha256 == representation_facts["container_sha256"]
-        ):
-            raise GoldenPathError(
-                "same-package image mutation did not preserve provenance"
-            )
-        same_package_modified_image.write_bytes(modified_image_wire)
         _run(
             (
                 str(executable),
@@ -995,47 +1596,6 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             ),
             expect_success=False,
         )
-        modified_representation_wire = package_oracle.encode_prepared_representation(
-            {
-                "format_abi": representation_facts["format_abi"],
-                "format_version": representation_facts["format_version"],
-                "container_bytes": len(modified_image_wire),
-                "package_sha256": package_facts["package_sha256"],
-                "resolved_config_sha256": package_facts["resolved_config_sha256"],
-                "source_fingerprint": package_facts["model_content_sha256"],
-                "abi_fingerprint": representation_facts["abi_fingerprint"],
-                "container_sha256": modified_image_sha256,
-            }
-        )
-        modified_bundle_path = root / "same-package-modified.glpkg"
-        modified_bundle_path.write_bytes(
-            package_oracle.encode_admission_bundle(
-                first_package_wire[: package_oracle.MANIFEST_BYTES],
-                modified_representation_wire,
-            )
-        )
-        modified_representation_facts = package_oracle.decode_prepared_representation(
-            modified_representation_wire
-        )
-        modified_report = _run_text(
-            executable,
-            same_package_modified_image,
-            license_path,
-            PROMPT,
-            prompt_path,
-            package_path=modified_bundle_path,
-        )
-        _verify_report(
-            modified_report,
-            text=PROMPT,
-            license_bytes=license_bytes,
-            image=same_package_modified_image,
-            package_facts=package_facts,
-            representation_sha256=modified_representation_facts[
-                "representation_sha256"
-            ].hex(),
-        )
-
         mutated_package = root / "mutated.glpkg"
         mutated_wire = bytearray(first_package_wire)
         mutated_wire[208] ^= 1
@@ -1347,7 +1907,17 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             "network_required": False,
             "production_model": False,
             "durable_result_sink": False,
-            "fresh_process_recovery": False,
+            "durable_direct_terminal": True,
+            "durable_output_count": 1,
+            "fresh_process_continuation": True,
+            "checked_committed_output": True,
+            "durable_output_matches_ordinary": True,
+            "durable_one_shot_verified": True,
+            "durable_retry_idempotent": True,
+            "durable_invalid_options_rejected": True,
+            "durable_foreign_input_rejected": True,
+            "durable_package_root_substitution_rejected": True,
+            "durable_state_namespace_verified": True,
             "tokenizer_wires_independently_verified": True,
             "raw_input_binding_independently_verified": True,
             "common_contract_wires_independently_verified": True,
