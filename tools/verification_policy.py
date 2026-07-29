@@ -272,6 +272,15 @@ MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS = {
 TEXT_RUNTIME_GOLDEN_PATH_PATHS = {
     "bench/prepared_text_raw_input.py",
     "bench/tests/test_prepared_text_raw_input.py",
+}
+
+PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = {
+    "src/bounded_file_input.zig",
+    "src/cli/model_package.zig",
+    "src/cli/text_run.zig",
+    "src/model/package_producer.zig",
+    "bench/prepared_text_package.py",
+    "bench/tests/test_prepared_text_package.py",
     "bench/text_runtime_golden_path.py",
 }
 
@@ -787,6 +796,22 @@ def _decision_for_path(path: str) -> PathDecision:
             (),
         )
 
+    if lower in PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS:
+        package_text_flags = {"prepared-text-package-text-run-focused"}
+        if suffix == ".py":
+            package_text_flags.add("python-changed")
+        package_text_targets = RETAINED_TARGETS if suffix == ".zig" else ()
+        package_text_steps = (
+            ("profile-host-tool-compile",) if suffix == ".zig" else FULL_TARGET_STEPS
+        )
+        return PathDecision(
+            path,
+            "ordinary model package producer, admission, or focused oracle changed",
+            frozenset(package_text_flags),
+            package_text_targets,
+            package_text_steps,
+        )
+
     if path in PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS:
         recovery_flags = (
             {"python-full"} if suffix == ".py" else set(_compiled_flags(suffix))
@@ -1100,6 +1125,10 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
             "native/prepared-text-direct-terminal-smoke",
         ),
         ("prepared-text-inspector-focused", "native/prepared-text-inspector"),
+        (
+            "prepared-text-package-text-run-focused",
+            "native/prepared-text-package-text-run",
+        ),
         ("prepared-text-recovery-focused", "native/prepared-text-recovery"),
         ("verification-policy-focused", "python/verification-policy"),
         ("workload-report-portable", "portable/workload-report"),
@@ -1140,6 +1169,10 @@ def print_report(plan: VerificationPlan) -> None:
             "native/prepared-text-direct-terminal-smoke",
         ),
         ("prepared-text-inspector-focused", "native/prepared-text-inspector"),
+        (
+            "prepared-text-package-text-run-focused",
+            "native/prepared-text-package-text-run",
+        ),
         ("prepared-text-recovery-focused", "native/prepared-text-recovery"),
         ("verification-policy-focused", "python/verification-policy"),
         ("workload-report-portable", "portable/workload-report"),

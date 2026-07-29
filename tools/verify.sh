@@ -329,6 +329,9 @@ run_zig_build() {
 
 run_prepared_text_focused_build() {
     set --
+    if [ "$prepared_text_package_text_run_requested" -eq 1 ]; then
+        set -- "$@" text-runtime-golden-path-test
+    fi
     if [ "$prepared_text_delivery_requested" -eq 1 ]; then
         set -- "$@" prepared-text-acknowledged-delivery-test
     fi
@@ -686,7 +689,13 @@ prepared_text_focused_requested=0
 prepared_text_delivery_requested=0
 prepared_text_direct_terminal_smoke_requested=0
 prepared_text_inspector_requested=0
+prepared_text_package_text_run_requested=0
 prepared_text_recovery_requested=0
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "prepared-text-package-text-run-focused"; then
+    prepared_text_package_text_run_requested=1
+    prepared_text_focused_requested=1
+fi
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "prepared-text-delivery-focused"; then
     prepared_text_delivery_requested=1
@@ -816,6 +825,10 @@ if [ "$prepared_text_focused_requested" -eq 1 ] &&
             record_pass "native/prepared-text-inspector" \
                 "covered by the focused host Zig DAG"
         fi
+        if [ "$prepared_text_package_text_run_requested" -eq 1 ]; then
+            record_pass "native/prepared-text-package-text-run" \
+                "covered by the focused host Zig DAG"
+        fi
         if [ "$prepared_text_recovery_requested" -eq 1 ]; then
             record_pass "native/prepared-text-recovery" \
                 "covered by the focused host Zig DAG"
@@ -831,6 +844,10 @@ if [ "$prepared_text_focused_requested" -eq 1 ] &&
         fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_skip "native/prepared-text-inspector" \
+                "focused host Zig DAG failed"
+        fi
+        if [ "$prepared_text_package_text_run_requested" -eq 1 ]; then
+            record_skip "native/prepared-text-package-text-run" \
                 "focused host Zig DAG failed"
         fi
         if [ "$prepared_text_recovery_requested" -eq 1 ]; then
@@ -854,6 +871,10 @@ elif [ "$prepared_text_focused_requested" -eq 1 ] &&
             record_native_unavailable "native/prepared-text-inspector" \
                 "requires native macOS or Linux execution"
         fi
+        if [ "$prepared_text_package_text_run_requested" -eq 1 ]; then
+            record_native_unavailable "native/prepared-text-package-text-run" \
+                "requires native macOS or Linux execution"
+        fi
         if [ "$prepared_text_recovery_requested" -eq 1 ]; then
             record_native_unavailable "native/prepared-text-recovery" \
                 "requires native macOS or Linux execution"
@@ -870,6 +891,10 @@ elif [ "$prepared_text_focused_requested" -eq 1 ] &&
         fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_native_unavailable "native/prepared-text-inspector" \
+                "requires working zig and python3 executables"
+        fi
+        if [ "$prepared_text_package_text_run_requested" -eq 1 ]; then
+            record_native_unavailable "native/prepared-text-package-text-run" \
                 "requires working zig and python3 executables"
         fi
         if [ "$prepared_text_recovery_requested" -eq 1 ]; then
@@ -1029,6 +1054,10 @@ if [ "$profile" = "affected" ] &&
             record_pass "native/prepared-text-inspector" \
                 "covered by the shared host runtime DAG"
         fi
+        if [ "$prepared_text_package_text_run_requested" -eq 1 ]; then
+            record_pass "native/prepared-text-package-text-run" \
+                "covered by the shared host runtime DAG"
+        fi
         if [ "$prepared_text_recovery_requested" -eq 1 ]; then
             record_pass "native/prepared-text-recovery" \
                 "covered by the shared host runtime DAG"
@@ -1044,6 +1073,10 @@ if [ "$profile" = "affected" ] &&
         fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_skip "native/prepared-text-inspector" \
+                "covering host compile or runtime DAG did not pass"
+        fi
+        if [ "$prepared_text_package_text_run_requested" -eq 1 ]; then
+            record_skip "native/prepared-text-package-text-run" \
                 "covering host compile or runtime DAG did not pass"
         fi
         if [ "$prepared_text_recovery_requested" -eq 1 ]; then

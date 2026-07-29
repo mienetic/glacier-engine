@@ -190,6 +190,17 @@ EXPECTED_TEXT_RUNTIME_GOLDEN_PATH_PATHS = frozenset(
     {
         "bench/prepared_text_raw_input.py",
         "bench/tests/test_prepared_text_raw_input.py",
+    }
+)
+
+EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = frozenset(
+    {
+        "src/bounded_file_input.zig",
+        "src/cli/model_package.zig",
+        "src/cli/text_run.zig",
+        "src/model/package_producer.zig",
+        "bench/prepared_text_package.py",
+        "bench/tests/test_prepared_text_package.py",
         "bench/text_runtime_golden_path.py",
     }
 )
@@ -535,6 +546,10 @@ class VerificationPolicyTests(unittest.TestCase):
             EXPECTED_TEXT_RUNTIME_GOLDEN_PATH_PATHS,
             policy.TEXT_RUNTIME_GOLDEN_PATH_PATHS,
         )
+        self.assertEqual(
+            EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS,
+            policy.PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS,
+        )
         for changed_path in sorted(EXPECTED_CORE_CONTRACT_PATHS):
             with self.subTest(changed_path=changed_path):
                 self.assert_target_steps(
@@ -662,6 +677,8 @@ class VerificationPolicyTests(unittest.TestCase):
                 )
                 self.assertFalse(plan.requires("prepared-text-recovery-focused"))
         for changed_path in sorted(EXPECTED_PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS):
+            if changed_path in EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS:
+                continue
             with self.subTest(changed_path=changed_path):
                 expected_targets = (
                     () if changed_path.endswith(".py") else policy.POSIX_TARGETS
@@ -690,6 +707,36 @@ class VerificationPolicyTests(unittest.TestCase):
                 self.assertFalse(plan.requires("prepared-text-delivery-focused"))
                 self.assertFalse(
                     plan.requires("prepared-text-direct-terminal-smoke-focused")
+                )
+        for changed_path in sorted(
+            EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                expected_targets = (
+                    policy.RETAINED_TARGETS if changed_path.endswith(".zig") else ()
+                )
+                expected_steps = (
+                    ("profile-host-tool-compile",)
+                    if changed_path.endswith(".zig")
+                    else policy.FULL_TARGET_STEPS
+                )
+                plan = self.assert_target_steps(
+                    [changed_path],
+                    tuple((target, expected_steps) for target in expected_targets),
+                )
+                expected_flags = {
+                    "prepared-text-package-text-run-focused",
+                }
+                if changed_path.endswith(".py"):
+                    expected_flags.add("python-changed")
+                self.assertEqual(frozenset(expected_flags), plan.flags)
+                self.assertFalse(plan.requires("native-full"))
+                self.assertFalse(plan.requires("python-full"))
+                self.assertFalse(plan.requires("prepared-text-recovery-focused"))
+                self.assertFalse(plan.requires("prepared-text-delivery-focused"))
+                self.assertIn(
+                    "native/prepared-text-package-text-run",
+                    policy._gate_names(plan.decisions[0]),
                 )
         for changed_path in sorted(EXPECTED_TEXT_RUNTIME_GOLDEN_PATH_PATHS):
             with self.subTest(changed_path=changed_path):
@@ -1413,6 +1460,10 @@ class VerificationPolicyTests(unittest.TestCase):
             source.count('"bench.tests.test_prepared_text_raw_input"'),
         )
         self.assertEqual(
+            2,
+            source.count('"bench.tests.test_prepared_text_package"'),
+        )
+        self.assertEqual(
             1,
             source.count('"bench.text_runtime_golden_path"'),
         )
@@ -1531,7 +1582,7 @@ class VerificationPolicyTests(unittest.TestCase):
             source.count('"bench/prepared_text_recovery_worker.zig"'),
         )
         self.assertEqual(
-            1,
+            2,
             source.count('"bench.tests.test_prepared_text_package"'),
         )
         self.assertEqual(
@@ -2831,6 +2882,73 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 any(
                     line.startswith("build host-runtime-compile ")
                     or line.startswith("build test contract-interop-test ")
+                    or "package-module-test" in line
+                    or " -Dtarget=" in line
+                    for line in calls
+                ),
+                calls,
+            )
+
+    def test_affected_fast_package_text_paths_share_one_focused_build(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            model = repository / "src" / "model"
+            model.mkdir()
+            (model / "package_producer.zig").write_text("", encoding="ascii")
+            cli = repository / "src" / "cli"
+            cli.mkdir()
+            (cli / "text_run.zig").write_text("", encoding="ascii")
+            (repository / "bench" / "prepared_text_package.py").write_text(
+                "",
+                encoding="ascii",
+            )
+            (repository / "bench" / "text_runtime_golden_path.py").write_text(
+                "",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  native/prepared-text-package-text-run: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "native/prepared-text-recovery",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "native/releasesafe-suite: covered",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            focused_calls = [
+                line
+                for line in calls
+                if line.startswith("build text-runtime-golden-path-test ")
+            ]
+            self.assertEqual(1, len(focused_calls), calls)
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(focused_calls, build_calls, calls)
+            self.assertFalse(
+                any(
+                    "prepared-text-recovery-test" in line
+                    or "host-runtime-compile" in line
                     or "package-module-test" in line
                     or " -Dtarget=" in line
                     for line in calls
