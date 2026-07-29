@@ -234,6 +234,8 @@ pub const qio = @import("model/qio.zig");
 pub const forward = @import("forward.zig");
 pub const loader = @import("loader.zig");
 pub const runtime_image = @import("model/runtime_image.zig");
+pub const runtime_image_durable =
+    @import("model/runtime_image_durable.zig");
 pub const perplexity = @import("perplexity.zig");
 pub const fixture_gen = @import("fixture_gen.zig");
 pub const kv_cache = @import("kv_cache.zig");

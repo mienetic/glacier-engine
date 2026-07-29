@@ -4872,6 +4872,112 @@ pub fn build(b: *std.Build) void {
     if (prepared_text_recovery_worker_exe) |worker|
         test_compile_step.dependOn(&worker.step);
 
+    // Production `.glrt` preparation uses a single acquired parent-directory
+    // authority, a directory-scoped lock, and one bounded candidate. Compile
+    // the worker once for each supported POSIX target; on native macOS/Linux,
+    // a Python controller reuses it across eight primary SIGKILL boundaries
+    // plus one stale-candidate setup death and independently parses the GLRT
+    // bytes before and after fresh-process recovery.
+    const runtime_image_durable_recovery_target_available =
+        target.result.os.tag == .macos or
+        target.result.os.tag == .linux or
+        target.result.os.tag == .freebsd;
+    const runtime_image_durable_recovery_worker_exe: ?*std.Build.Step.Compile = blk: {
+        if (!runtime_image_durable_recovery_target_available)
+            break :blk null;
+        const worker = b.addExecutable(.{
+            .name = "glacier-runtime-image-durable-recovery-worker",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(
+                    "bench/runtime_image_durable_worker.zig",
+                ),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize_thread,
+            }),
+        });
+        worker.root_module.addImport("engine", engine_mod);
+        worker.linkLibC();
+        if (int4_neon) |lib| worker.linkLibrary(lib);
+        break :blk worker;
+    };
+    const runtime_image_durable_recovery_test_step = b.step(
+        "runtime-image-durable-recovery-test",
+        "Run durable GLRT publication process-death recovery",
+    );
+    const runtime_image_durable_recovery_native_available =
+        (target.result.os.tag == .macos or
+            target.result.os.tag == .linux) and
+        target.result.cpu.arch == builtin.cpu.arch and
+        target.result.os.tag == builtin.os.tag and
+        target.result.abi == builtin.abi;
+    if (runtime_image_durable_recovery_native_available) {
+        const run_runtime_image_durable_recovery_model =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "unittest",
+                "bench.tests.test_runtime_image_durable_recovery",
+            });
+        run_runtime_image_durable_recovery_model.setCwd(b.path("."));
+        run_runtime_image_durable_recovery_model.setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_runtime_image_durable_recovery_model.setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+
+        const run_runtime_image_durable_recovery_campaign =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "bench.runtime_image_durable_recovery",
+                "--worker",
+            });
+        run_runtime_image_durable_recovery_campaign.addArtifactArg(
+            runtime_image_durable_recovery_worker_exe.?,
+        );
+        run_runtime_image_durable_recovery_campaign.addArg(
+            "--directory",
+        );
+        _ = run_runtime_image_durable_recovery_campaign
+            .addOutputDirectoryArg(
+            "runtime-image-durable-recovery",
+        );
+        run_runtime_image_durable_recovery_campaign.setCwd(
+            b.path("."),
+        );
+        run_runtime_image_durable_recovery_campaign
+            .setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_runtime_image_durable_recovery_campaign
+            .setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+        run_runtime_image_durable_recovery_campaign.step.dependOn(
+            &run_runtime_image_durable_recovery_model.step,
+        );
+        runtime_image_durable_recovery_test_step.dependOn(
+            &run_runtime_image_durable_recovery_campaign.step,
+        );
+    } else {
+        const runtime_image_durable_recovery_failure = b.addFail(
+            "runtime-image-durable-recovery-test requires a native macOS " ++
+                "or Linux target",
+        );
+        runtime_image_durable_recovery_test_step.dependOn(
+            &runtime_image_durable_recovery_failure.step,
+        );
+    }
+    test_step.dependOn(runtime_image_durable_recovery_test_step);
+    if (runtime_image_durable_recovery_worker_exe) |worker|
+        test_compile_step.dependOn(&worker.step);
+
     // Complete checkpoint sets are immutable archives selected by one fixed
     // root switch. A worker dies after every archive and selector durability
     // phase; fresh recovery accepts only the previous or successor set, then
@@ -6457,6 +6563,8 @@ pub fn build(b: *std.Build) void {
         prepared_text_acknowledged_delivery_compile_step,
     );
     if (prepared_text_recovery_worker_exe) |worker|
+        profile_durable_compile_step.dependOn(&worker.step);
+    if (runtime_image_durable_recovery_worker_exe) |worker|
         profile_durable_compile_step.dependOn(&worker.step);
     profile_durable_compile_step.dependOn(
         &continuation_checkpoint_file_demo_exe.step,

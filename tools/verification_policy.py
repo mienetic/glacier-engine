@@ -214,6 +214,12 @@ PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS = {
     "bench/tests/test_prepared_text_recovery_campaign.py",
 }
 
+RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS = {
+    "bench/runtime_image_durable_worker.zig",
+    "bench/runtime_image_durable_recovery.py",
+    "bench/tests/test_runtime_image_durable_recovery.py",
+}
+
 WORKLOAD_REPORT_PORTABLE_PATHS = {
     "src/core/native_metal_supervisor_recovery_death_report.zig",
     "src/core/native_workload_campaign_manifest.zig",
@@ -639,6 +645,18 @@ def _decision_for_path(path: str) -> PathDecision:
         return PathDecision(
             path,
             "prepared-text real process-death campaign changed",
+            frozenset(recovery_flags),
+            POSIX_TARGETS,
+            ("profile-durable-compile",),
+        )
+
+    if path in RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS:
+        recovery_flags = set(_compiled_flags(suffix))
+        if suffix == ".py":
+            recovery_flags.add("python-changed")
+        return PathDecision(
+            path,
+            "runtime-image durable publication process-death campaign changed",
             frozenset(recovery_flags),
             POSIX_TARGETS,
             ("profile-durable-compile",),

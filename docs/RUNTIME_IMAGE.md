@@ -179,17 +179,28 @@ source identity before and after materialization and rejects source/output alias
 
 This is a consistency identity, not a signature or publisher authentication.
 
-## Atomic publication
+## Publication
 
-The v2 writer plans and validates all identities, stream extents, and file offsets
-before requesting generated payload bytes. It writes into a same-directory
-temporary, validates and hashes records one at a time, flushes final data,
-position-writes the index and header, optionally syncs the temporary, then
-renames it into place.
+The v2 codec plans and validates all identities, stream extents, and file
+offsets before requesting generated payload bytes. It validates and hashes
+records one at a time, flushes final data, then position-writes the index and
+header.
 
-Failure leaves the prior destination unchanged. The current writer does not
-explicitly sync the parent directory, so it provides atomic namespace
-replacement rather than a complete power-loss durability guarantee.
+The compatibility `writeAtomic*` APIs wrap that codec in a same-directory
+temporary and rename. Their optional file sync does not commit the parent
+directory, so they provide file-atomic replacement without a durable
+publication claim.
+
+Production `glacier prepare` writes through the dedicated POSIX durable
+publisher. It acquires and preflights the exact parent directory, uses one
+identity-fenced candidate under a directory-scoped lock, synchronizes and
+validates the candidate, replaces the target, and commits the directory. The
+directory scope serializes case- or Unicode-normalized filesystem aliases.
+Fresh recovery accepts only an exact predecessor or successor. See
+[Durable runtime-image publication](RUNTIME_IMAGE_DURABLE_PUBLICATION.md) for
+the protocol, API, platform, and process-death evidence boundaries.
+
+Neither path claims complete physical power-loss durability.
 
 Generated workspace statistics count record materialization buffers only. They
 are not process RSS or device-residency evidence.

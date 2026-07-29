@@ -47,6 +47,16 @@ before the first stable release.
 
 ### Added
 
+- Added recoverable POSIX publication for production `.glrt` preparation. One
+  acquired parent-directory authority, directory-scoped lock, and bounded
+  private candidate serialize filesystem aliases, validate synchronized bytes
+  before replacement, commit the directory, and fail closed on unsafe or
+  corrupt entries. A separate worker/controller gate sends real `SIGKILL` at
+  eight publication boundaries plus one stale-candidate setup boundary,
+  independently verifies exact predecessor/successor GLRT bytes, and requires
+  idempotent fresh-process convergence. This is host-filesystem/process-death
+  evidence, not physical power-loss persistence or an adversarial-directory
+  security claim.
 - Added a hosted GitHub Actions verification matrix with a compile-first
   Ubuntu ReleaseSafe runtime/interop/controlled-fault gate, a hash-locked
   Python regression environment, a compile-only macOS Metal frontier, and

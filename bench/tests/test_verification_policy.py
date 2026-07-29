@@ -124,6 +124,14 @@ EXPECTED_PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS = frozenset(
     }
 )
 
+EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS = frozenset(
+    {
+        "bench/runtime_image_durable_worker.zig",
+        "bench/runtime_image_durable_recovery.py",
+        "bench/tests/test_runtime_image_durable_recovery.py",
+    }
+)
+
 EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
     {
         "src/core/native_metal_supervisor_recovery_death_report.zig",
@@ -437,6 +445,10 @@ class VerificationPolicyTests(unittest.TestCase):
             EXPECTED_PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS,
             policy.PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS,
         )
+        self.assertEqual(
+            EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS,
+            policy.RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS,
+        )
         for changed_path in sorted(EXPECTED_CORE_CONTRACT_PATHS):
             with self.subTest(changed_path=changed_path):
                 self.assert_target_steps(
@@ -486,6 +498,27 @@ class VerificationPolicyTests(unittest.TestCase):
                     ),
                 )
         for changed_path in sorted(EXPECTED_PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_target_steps(
+                    [changed_path],
+                    tuple(
+                        (
+                            target,
+                            ("profile-durable-compile",),
+                        )
+                        for target in policy.POSIX_TARGETS
+                    ),
+                )
+                expected_flags = {"native-full", "python-full"}
+                if changed_path.endswith(".py"):
+                    expected_flags.add("python-changed")
+                self.assertEqual(
+                    frozenset(expected_flags),
+                    plan.flags,
+                )
+        for changed_path in sorted(
+            EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS
+        ):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_target_steps(
                     [changed_path],
@@ -1191,6 +1224,45 @@ class VerificationPolicyTests(unittest.TestCase):
         )
         self.assertIn(
             '"prepared-text-recovery-test requires a native macOS or Linux "',
+            source,
+        )
+        self.assertEqual(
+            1,
+            source.count('"runtime-image-durable-recovery-test"'),
+        )
+        self.assertEqual(
+            1,
+            source.count('"bench/runtime_image_durable_worker.zig"'),
+        )
+        self.assertIn(
+            "const runtime_image_durable_recovery_target_available =\n"
+            "        target.result.os.tag == .macos or\n"
+            "        target.result.os.tag == .linux or\n"
+            "        target.result.os.tag == .freebsd;",
+            source,
+        )
+        self.assertIn(
+            "run_runtime_image_durable_recovery_campaign.addArtifactArg(\n"
+            "            runtime_image_durable_recovery_worker_exe.?,\n"
+            "        );",
+            source,
+        )
+        self.assertIn(
+            "test_step.dependOn(runtime_image_durable_recovery_test_step);",
+            source,
+        )
+        self.assertIn(
+            "if (runtime_image_durable_recovery_worker_exe) |worker|\n"
+            "        test_compile_step.dependOn(&worker.step);",
+            source,
+        )
+        self.assertIn(
+            "if (runtime_image_durable_recovery_worker_exe) |worker|\n"
+            "        profile_durable_compile_step.dependOn(&worker.step);",
+            source,
+        )
+        self.assertIn(
+            '"runtime-image-durable-recovery-test requires a native macOS "',
             source,
         )
         self.assertIn(

@@ -616,6 +616,8 @@ pub const WriteOptions = struct {
     config: ConfigSnapshot,
     source_fingerprint: [32]u8,
     abi_fingerprint: [32]u8 = ABI_FINGERPRINT,
+    /// Synchronize encoded file contents. Atomic compatibility writers do not
+    /// commit the parent directory; durable adapters require this to stay true.
     sync: bool = true,
 };
 
@@ -805,6 +807,19 @@ pub const MappedImage = struct {
         options: OpenOptions,
     ) !MappedImage {
         const file = try dir.openFile(path, .{});
+        return openOwnedFileWithOptionsV1(file, options);
+    }
+
+    /// Validate and map one already-open file, taking ownership of its handle
+    /// on both success and failure.
+    ///
+    /// Durable publication keeps the namespace entry pinned with a no-follow
+    /// descriptor, syncs it, and then hands that exact descriptor here. This
+    /// avoids reopening a path between file sync and image validation.
+    pub fn openOwnedFileWithOptionsV1(
+        file: std.fs.File,
+        options: OpenOptions,
+    ) !MappedImage {
         errdefer file.close();
         const stat = try file.stat();
         if (stat.size < HEADER_SIZE) return error.TruncatedHeader;
@@ -1067,6 +1082,11 @@ pub fn writeAtomicAt(
 /// being written, and released before the next provider call. Once every
 /// digest is known, the finalized index and header are positioned-writes into
 /// the temporary, followed by the existing sync+rename publication sequence.
+///
+/// This compatibility API provides file-atomic replacement only. `sync=true`
+/// synchronizes the temporary file before rename; it does not acquire, preflight,
+/// or commit the parent directory and therefore makes no durable-publication
+/// claim. Production preparation uses `runtime_image_durable`.
 pub fn writeAtomicWithProvider(
     allocator: std.mem.Allocator,
     path: []const u8,
@@ -1092,8 +1112,75 @@ pub fn writeAtomicWithProviderAt(
     input_records: []const WriteRecord,
     provider: ?WriteRecordProvider,
 ) !WriteStats {
+    try validateWriteInputsV1(options, input_records);
+    var write_buffer: [64 * 1024]u8 = undefined;
+    var atomic = try dir.atomicFile(path, .{ .write_buffer = &write_buffer });
+    defer atomic.deinit();
+    const stats = try writeUnpublishedWithProviderV1(
+        allocator,
+        &atomic.file_writer,
+        options,
+        input_records,
+        provider,
+    );
+    if (options.sync) try atomic.file_writer.file.sync();
+    try atomic.renameIntoPlace();
+    return stats;
+}
+
+/// Reject malformed writer inputs without opening or mutating a file.
+///
+/// This is the namespace-mutation preflight shared by atomic and durable
+/// adapters. Exact offsets, bounds, provider output, CRCs, and payload digests
+/// remain checked again while encoding the unpublished file.
+pub fn validateWriteInputsV1(
+    options: WriteOptions,
+    input_records: []const WriteRecord,
+) !void {
     try options.config.validate();
     if (input_records.len == 0) return error.NoRecords;
+    for (input_records, 0..) |input, index| {
+        for (input_records[0..index]) |previous| {
+            if (writeRecordIdentityEql(input, previous))
+                return error.DuplicateRecord;
+        }
+    }
+}
+
+/// Encode one complete GLRT v2 image into an unpublished caller-owned file.
+///
+/// The caller must have created a private, empty candidate and must retain
+/// exclusive ownership of its namespace entry. This function flushes buffered
+/// bytes and backpatches the canonical header/index, but deliberately performs
+/// no file sync, rename, directory sync, or publication. Durable adapters use
+/// this boundary so the codec cannot accidentally publish before they validate
+/// the reopened candidate and commit its containing directory.
+pub fn writeUnpublishedFileWithProviderV1(
+    allocator: std.mem.Allocator,
+    file: std.fs.File,
+    options: WriteOptions,
+    input_records: []const WriteRecord,
+    provider: ?WriteRecordProvider,
+) !WriteStats {
+    var write_buffer: [64 * 1024]u8 = undefined;
+    var file_writer = file.writer(&write_buffer);
+    return writeUnpublishedWithProviderV1(
+        allocator,
+        &file_writer,
+        options,
+        input_records,
+        provider,
+    );
+}
+
+fn writeUnpublishedWithProviderV1(
+    allocator: std.mem.Allocator,
+    file_writer: *std.fs.File.Writer,
+    options: WriteOptions,
+    input_records: []const WriteRecord,
+    provider: ?WriteRecordProvider,
+) !WriteStats {
+    try validateWriteInputsV1(options, input_records);
 
     const planned = try allocator.alloc(Record, input_records.len);
     defer allocator.free(planned);
@@ -1107,9 +1194,6 @@ pub fn writeAtomicWithProviderAt(
     const data_offset = cursor;
 
     for (input_records, 0..) |input, index| {
-        for (input_records[0..index]) |previous| {
-            if (writeRecordIdentityEql(input, previous)) return error.DuplicateRecord;
-        }
         var record: Record = .{
             .key = input.key,
             .role = input.role,
@@ -1143,10 +1227,7 @@ pub fn writeAtomicWithProviderAt(
         );
     }
 
-    var write_buffer: [64 * 1024]u8 = undefined;
-    var atomic = try dir.atomicFile(path, .{ .write_buffer = &write_buffer });
-    defer atomic.deinit();
-    const writer = &atomic.file_writer.interface;
+    const writer = &file_writer.interface;
     var written: u64 = 0;
     // Header, index and their alignment gap are backpatched only after every
     // generated payload has supplied its CRC and descriptor-bound digest.
@@ -1205,7 +1286,9 @@ pub fn writeAtomicWithProviderAt(
         if (active.finish) |finish| try finish(active.context);
     }
     try padWriterTo(writer, &written, file_size);
-    try atomic.flush();
+    file_writer.interface.flush() catch |err| switch (err) {
+        error.WriteFailed => return file_writer.err.?,
+    };
 
     const index_bytes = try allocator.alloc(u8, index_len);
     defer allocator.free(index_bytes);
@@ -1229,10 +1312,8 @@ pub fn writeAtomicWithProviderAt(
     header.header_crc32 = std.hash.Crc32.hash(&encoded_header);
     encoded_header = header.encode();
 
-    try atomic.file_writer.file.pwriteAll(index_bytes, HEADER_SIZE);
-    try atomic.file_writer.file.pwriteAll(&encoded_header, 0);
-    if (options.sync) try atomic.file_writer.file.sync();
-    try atomic.renameIntoPlace();
+    try file_writer.file.pwriteAll(index_bytes, HEADER_SIZE);
+    try file_writer.file.pwriteAll(&encoded_header, 0);
     return stats;
 }
 
@@ -1465,6 +1546,34 @@ fn repairSingleV2IndexAndHeaderCrc(dir: std.fs.Dir, path: []const u8) !void {
     @memset(header_bytes[HEADER_CRC_OFFSET..][0..4], 0);
     putInt(u32, header_bytes[HEADER_CRC_OFFSET..][0..4], std.hash.Crc32.hash(&header_bytes));
     if (try file.pwrite(&header_bytes, 0) != HEADER_SIZE) return error.ShortWrite;
+}
+
+test "atomic writer validates inputs before creating a temporary" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try testing.expectError(
+        error.NoRecords,
+        writeAtomicWithProviderAt(
+            testing.allocator,
+            tmp.dir,
+            "model.glrt",
+            .{
+                .config = testConfig(),
+                .source_fingerprint = fingerprint("invalid-empty-plan"),
+                .sync = false,
+            },
+            &.{},
+            null,
+        ),
+    );
+    var scan = try tmp.dir.openDir(".", .{
+        .iterate = true,
+        .no_follow = true,
+    });
+    defer scan.close();
+    var iterator = scan.iterate();
+    try testing.expect((try iterator.next()) == null);
 }
 
 test "atomic runtime image round-trip exposes mapped typed views" {

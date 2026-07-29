@@ -12,6 +12,8 @@ const builtin = @import("builtin");
 const core = @import("core");
 const fmt = @import("model/format.zig");
 const runtime_image = @import("model/runtime_image.zig");
+const runtime_image_durable =
+    @import("model/runtime_image_durable.zig");
 const forward = @import("forward.zig");
 const int4_weights = @import("int4_weights.zig");
 
@@ -529,21 +531,23 @@ pub fn writePreparedWithOptionsAndStats(
         .pair_bytes = pair_bytes,
         .pair_scales = pair_scales,
     };
-    const stats = runtime_image.writeAtomicWithProvider(
-        allocator,
-        out_path,
-        .{
-            .config = snapshot,
-            .source_fingerprint = source_fingerprint,
-        },
-        records.items,
-        .{
-            .context = &provider_context,
-            .materialize = PreparedPairProviderContext.materialize,
-            .finish = PreparedPairProviderContext.finish,
-        },
-    ) catch |err| return mapPreparedError(err);
-    return stats;
+    const publication =
+        runtime_image_durable.writeDurableWithProviderV1(
+            allocator,
+            out_path,
+            .{
+                .config = snapshot,
+                .source_fingerprint = source_fingerprint,
+            },
+            records.items,
+            .{
+                .context = &provider_context,
+                .materialize = PreparedPairProviderContext.materialize,
+                .finish = PreparedPairProviderContext.finish,
+            },
+            null,
+        ) catch |err| return mapPreparedError(err);
+    return publication.stats;
 }
 
 fn classifyPreparedMlpWriteSource(
