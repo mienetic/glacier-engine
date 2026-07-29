@@ -2575,8 +2575,15 @@ test "read-only checkpoint APIs select one stable private snapshot" {
         defer archive_file.close();
         try std.posix.fchmod(archive_file.handle, 0o400);
     }
-    try temporary.dir.chmod(0o500);
-    defer temporary.dir.chmod(0o700) catch unreachable;
+    // `std.testing.tmpDir` may hold an O_PATH descriptor on Linux. Reopen the
+    // directory for iteration so fchmod has a real directory-file descriptor.
+    var permission_directory = try temporary.dir.openDir(".", .{
+        .iterate = true,
+        .no_follow = true,
+    });
+    defer permission_directory.close();
+    try permission_directory.chmod(0o500);
+    defer permission_directory.chmod(0o700) catch {};
 
     var selector_storage: [selector_bytes]u8 = undefined;
     const decoded_selector = try readActiveSelectorReadOnlyV1(

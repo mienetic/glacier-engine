@@ -2617,8 +2617,15 @@ test "read-only selected snapshot works without a lease or writable storage" {
     defer ledger_file.close();
     defer ledger_file.chmod(0o600) catch {};
     try ledger_file.chmod(0o400);
-    defer temporary.dir.chmod(0o700) catch {};
-    try temporary.dir.chmod(0o500);
+    // `std.testing.tmpDir` may hold an O_PATH descriptor on Linux. Reopen the
+    // directory for iteration so fchmod has a real directory-file descriptor.
+    var permission_directory = try temporary.dir.openDir(".", .{
+        .iterate = true,
+        .no_follow = true,
+    });
+    defer permission_directory.close();
+    try permission_directory.chmod(0o500);
+    defer permission_directory.chmod(0o700) catch {};
 
     var selector_storage: [selector_bytes]u8 = undefined;
     var ledger_storage: [2048]u8 = undefined;
