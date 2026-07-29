@@ -61,6 +61,64 @@ pub const bootstrap_file_available_v1 =
 const initial_publication_next_sequence: u64 = 1;
 const initial_sink_sequence: u64 = 1;
 const zero_digest: Digest = [_]u8{0} ** 32;
+const DurableSinkV1 =
+    result_sink_file.RuntimeResultSinkFileV1;
+
+/// Address-stable caller storage retained by one runtime-capacity durable
+/// result sink. No internal pointer is installed until `fileStorage` is
+/// called on the owner's final stack location.
+const RuntimeSinkStorageOwnerV1 = struct {
+    allocator: std.mem.Allocator,
+    semantic_state: result_sink.RuntimeResultSinkStateV1 =
+        undefined,
+    acknowledgements: []result_sink.ResultAcknowledgementV1,
+    ledger: []u8,
+    lock: [
+        result_sink_file.runtime_result_sink_lock_bytes_v1
+    ]u8 = undefined,
+
+    fn init(
+        allocator: std.mem.Allocator,
+        capacity: usize,
+    ) !RuntimeSinkStorageOwnerV1 {
+        if (capacity >
+            result_sink_file.runtime_result_sink_max_capacity_v1)
+            return result_sink.Error.CapacityExceeded;
+        const acknowledgements = try allocator.alloc(
+            result_sink.ResultAcknowledgementV1,
+            capacity,
+        );
+        errdefer allocator.free(acknowledgements);
+        const ledger = try allocator.alloc(
+            u8,
+            try result_sink_file.ledgerBytesForCountV1(
+                capacity,
+            ),
+        );
+        return .{
+            .allocator = allocator,
+            .acknowledgements = acknowledgements,
+            .ledger = ledger,
+        };
+    }
+
+    fn deinit(self: *RuntimeSinkStorageOwnerV1) void {
+        self.allocator.free(self.ledger);
+        self.allocator.free(self.acknowledgements);
+        self.* = undefined;
+    }
+
+    fn fileStorage(
+        self: *RuntimeSinkStorageOwnerV1,
+    ) result_sink_file.RuntimeResultSinkFileStorageV1 {
+        return .{
+            .semantic_state = &self.semantic_state,
+            .lock = &self.lock,
+            .acknowledgements = self.acknowledgements,
+            .ledger = self.ledger,
+        };
+    }
+};
 
 pub const Error = error{
     AuthorityCapacityTooSmall,
@@ -678,20 +736,18 @@ pub fn bootstrapFileV1(
 /// Advance an exact generation-one source selection to its recoverable
 /// generation-two source-exit selection.
 ///
-/// `sink_capacity` is part of the concrete durable result-sink type and must
-/// equal both `input.sink.capacity` and the capacity retained by the recovery
-/// contract. The call is idempotent: an already-selected exact generation two
-/// is verified and returned without executing the model again. After the
-/// scheduler identity is read successfully, this is a consuming call: the
-/// supplied source scheduler is closed before either success or ordinary
-/// failure returns.
+/// `sink_capacity` selects caller-owned durable result-sink storage at runtime
+/// and must equal both `input.sink.capacity` and the capacity retained by the
+/// recovery contract. The call is idempotent: an already-selected exact
+/// generation two is verified and returned without executing the model again.
+/// After the scheduler identity is read successfully, this is a consuming
+/// call: the supplied source scheduler is closed before either success or
+/// ordinary failure returns.
 pub fn advanceSourceFileV1(
-    comptime sink_capacity: usize,
+    sink_capacity: usize,
     allocator: std.mem.Allocator,
     input: AdvanceSourceFileInputV1,
 ) !AdvanceSourceFileReceiptV1 {
-    const DurableSinkV1 =
-        result_sink_file.ResultSinkFileV1(sink_capacity);
     if (input.sink.capacity != sink_capacity or
         input.step_sink.sink_epoch == 0 or
         input.step_sink.reservation_id == 0)
@@ -867,7 +923,11 @@ pub fn advanceSourceFileV1(
         },
     );
 
-    var sink_lock_storage: [1]u8 = undefined;
+    var sink_storage = try RuntimeSinkStorageOwnerV1.init(
+        allocator,
+        sink_capacity,
+    );
+    defer sink_storage.deinit();
     const sink_initialization =
         try DurableSinkV1.createOrRecoverEmpty(
             input.file.directory,
@@ -877,7 +937,7 @@ pub fn advanceSourceFileV1(
             contract.sink.initial_sequence,
             contract.sink.implementation_sha256,
             contract.sink.instance_sha256,
-            &sink_lock_storage,
+            sink_storage.fileStorage(),
             input.observers.sink,
         );
     var sink_store = sink_initialization.store;
@@ -1116,16 +1176,15 @@ pub fn advanceSourceFileV1(
 
 /// Consume one selected restart and publish its acknowledged successor.
 ///
-/// The result-sink capacity is part of the concrete store type. The maximum
-/// visible output count is `sink_initial_sequence + sink_capacity`; caller
-/// output storage must cover that complete terminal prefix.
+/// The result-sink capacity selects caller-owned store storage at runtime. The
+/// maximum visible output count is
+/// `sink_initial_sequence + sink_capacity`; caller output storage must cover
+/// that complete terminal prefix.
 pub fn advanceTargetFileV1(
-    comptime sink_capacity: usize,
+    sink_capacity: usize,
     allocator: std.mem.Allocator,
     input: AdvanceTargetFileInputV1,
 ) !AdvanceTargetFileReceiptV1 {
-    const DurableSinkV1 =
-        result_sink_file.ResultSinkFileV1(sink_capacity);
     const maximum_output = try maximumOutputCountV1(
         sink_capacity,
         input.sink_initial_sequence,
@@ -1207,19 +1266,14 @@ pub fn advanceTargetFileV1(
         retained_storage,
     );
 
-    const ledger_bytes =
-        try result_sink_file.ledgerBytesForCountV1(
-            sink_capacity,
-        );
-    const preactivation_ledger_storage =
-        try allocator.alloc(u8, ledger_bytes);
-    defer allocator.free(
-        preactivation_ledger_storage,
+    var sink_storage = try RuntimeSinkStorageOwnerV1.init(
+        allocator,
+        sink_capacity,
     );
+    defer sink_storage.deinit();
     var activation_grant: restore.SelectedRestartGrantV1 = .{};
     var selected: SelectedTargetRestartV1 = undefined;
     var source_sink_contract: ?source_recovery.DecodedV1 = null;
-    var preactivation_sink_lock_storage: [1]u8 = undefined;
     var preactivation_sink: ?DurableSinkV1 = null;
     defer if (preactivation_sink) |*store|
         store.close();
@@ -1264,8 +1318,7 @@ pub fn advanceTargetFileV1(
                     contract.sink
                         .implementation_sha256,
                     contract.sink.instance_sha256,
-                    &preactivation_sink_lock_storage,
-                    preactivation_ledger_storage,
+                    sink_storage.fileStorage(),
                     null,
                 );
             try validateRecoverableTargetSinkV1(
@@ -1499,10 +1552,6 @@ pub fn advanceTargetFileV1(
     if (activation_grant.phase != .consumed)
         return Error.InvalidTargetActivation;
 
-    const sink_ledger_storage =
-        try allocator.alloc(u8, ledger_bytes);
-    defer allocator.free(sink_ledger_storage);
-    var sink_lock_storage: [1]u8 = undefined;
     var sink_store: DurableSinkV1 = undefined;
     if (preactivation_sink) |store| {
         sink_store = store;
@@ -1531,8 +1580,7 @@ pub fn advanceTargetFileV1(
                 contract.sink.instance_sha256
             else
                 input.sink.instance_sha256,
-            &sink_lock_storage,
-            sink_ledger_storage,
+            sink_storage.fileStorage(),
             null,
         );
     }
@@ -1613,54 +1661,21 @@ pub fn advanceTargetFileV1(
         terminal_semantic = semantic;
     }
 
-    var preview_sink = sink_store.sink;
-    const preview_result =
-        try preview_sink.apply(delivery);
-    if (preview_result.disposition == .applied) {
-        const preview_ledger_storage =
-            try allocator.alloc(u8, ledger_bytes);
-        defer allocator.free(
-            preview_ledger_storage,
-        );
-        const preview_ledger =
-            try result_sink_file.encodeLedgerV1(
-                preview_sink.request_sha256,
-                preview_sink.request_epoch,
-                preview_sink.initial_sequence,
-                preview_sink
-                    .sink_implementation_sha256,
-                preview_sink.sink_instance_sha256,
-                preview_sink.acknowledgementSlice(),
-                preview_ledger_storage,
-            );
-        const preview_selector =
-            try result_sink_file
-                .prepareSuccessorSelectorV1(
-                sink_store.selector,
-                preview_ledger,
-            );
-        if (input.observers.plan) |observer| {
-            observer.observe(.{ .sink = .{
-                .acknowledgement_count = preview_sink.applied_count,
-                .ledger_sha256 = preview_ledger.ledger_sha256,
-                .selector_sha256 = preview_selector.selector_sha256,
-            } });
-        }
-    } else if (input.observers.plan) |observer| {
+    const prepared_sink_apply =
+        try sink_store.prepareApply(delivery);
+    if (input.observers.plan) |observer| {
         observer.observe(.{ .sink = .{
-            .acknowledgement_count = sink_store.selector
-                .acknowledgement_count,
-            .ledger_sha256 = sink_store.selector.ledger_sha256,
-            .selector_sha256 = sink_store.selector.selector_sha256,
+            .acknowledgement_count = prepared_sink_apply.acknowledgement_count,
+            .ledger_sha256 = prepared_sink_apply.ledger_sha256,
+            .selector_sha256 = prepared_sink_apply.selector_sha256,
         } });
     }
 
     var sink_commit_started = true;
     errdefer if (sink_commit_started)
         input.fail_stop.invoke();
-    const sink_apply = try sink_store.apply(
-        delivery,
-        sink_ledger_storage,
+    const sink_apply = try sink_store.applyPrepared(
+        prepared_sink_apply,
     );
     const sink_disposition: TargetSinkDispositionV1 =
         switch (sink_apply.disposition) {
@@ -1957,7 +1972,7 @@ const SelectedTargetRestartV1 = struct {
 };
 
 fn maximumOutputCountV1(
-    comptime sink_capacity: usize,
+    sink_capacity: usize,
     initial_sequence: u64,
 ) !usize {
     const capacity_u64 = std.math.cast(
@@ -1976,14 +1991,14 @@ fn maximumOutputCountV1(
 }
 
 fn selectedTerminalReceiptV1(
-    comptime sink_capacity: usize,
+    sink_capacity: usize,
     allocator: std.mem.Allocator,
     input: AdvanceTargetFileInputV1,
     lease: *checkpoint_file.LeaseV1,
     maximum_output: usize,
 ) !AdvanceTargetFileReceiptV1 {
-    const DurableSinkV1 =
-        result_sink_file.ResultSinkFileV1(sink_capacity);
+    if (sink_capacity == 0)
+        return Error.InvalidTargetSink;
     var selector_wire: [checkpoint_file.selector_bytes]u8 = undefined;
     const selected_selector =
         try checkpoint_file.readActiveSelectorReadOnlyV1(
@@ -2041,14 +2056,11 @@ fn selectedTerminalReceiptV1(
     if (input.terminal_verifier) |verifier|
         try verifier.verify(decoded.semantic);
 
-    const ledger_storage = try allocator.alloc(
-        u8,
-        try result_sink_file.ledgerBytesForCountV1(
-            sink_capacity,
-        ),
+    var sink_storage = try RuntimeSinkStorageOwnerV1.init(
+        allocator,
+        sink_capacity,
     );
-    defer allocator.free(ledger_storage);
-    var sink_lock_storage: [1]u8 = undefined;
+    defer sink_storage.deinit();
     var sink_store = try DurableSinkV1.open(
         input.file.directory,
         input.sink.storage_epoch,
@@ -2057,8 +2069,7 @@ fn selectedTerminalReceiptV1(
         input.sink_initial_sequence,
         input.sink.implementation_sha256,
         input.sink.instance_sha256,
-        &sink_lock_storage,
-        ledger_storage,
+        sink_storage.fileStorage(),
         null,
     );
     defer sink_store.close();
@@ -2130,9 +2141,8 @@ fn selectedTerminalReceiptV1(
 }
 
 fn validateRecoverableTargetSinkV1(
-    comptime sink_capacity: usize,
-    store: *const result_sink_file
-        .ResultSinkFileV1(sink_capacity),
+    sink_capacity: usize,
+    store: *const DurableSinkV1,
     input: AdvanceTargetFileInputV1,
     contract: source_recovery.DecodedV1,
     selected_sequence: u64,
@@ -2181,8 +2191,8 @@ fn validateRecoverableTargetSinkV1(
     ) or !digestEqual(
         store.selector.sink_instance_sha256,
         contract.sink.instance_sha256,
-    ) or store.sink.applied_count != 1 or
-        store.sink.next_sequence != expected_next or
+    ) or store.sink.appliedCount() != 1 or
+        store.sink.nextSequence() != expected_next or
         acknowledgements.len != 1)
         return Error.InvalidTargetSink;
 
@@ -2424,15 +2434,13 @@ fn selectedSourceRecoveryContextV1(
 }
 
 fn selectedSourceExitReceiptV1(
-    comptime sink_capacity: usize,
+    sink_capacity: usize,
     allocator: std.mem.Allocator,
     input: AdvanceSourceFileInputV1,
     lease: *checkpoint_file.LeaseV1,
     retained_storage: []u8,
     scheduler_identity: lane.IdentityV1,
 ) !AdvanceSourceFileReceiptV1 {
-    const DurableSinkV1 =
-        result_sink_file.ResultSinkFileV1(sink_capacity);
     const active = try lease.activeSet();
     const selected = try durable.decodeSourceExitedSetV1(
         lease.stream(),
@@ -2458,14 +2466,11 @@ fn selectedSourceExitReceiptV1(
     ))
         return Error.InvalidSourceRecoveryContract;
 
-    const ledger_storage = try allocator.alloc(
-        u8,
-        try result_sink_file.ledgerBytesForCountV1(
-            sink_capacity,
-        ),
+    var sink_storage = try RuntimeSinkStorageOwnerV1.init(
+        allocator,
+        sink_capacity,
     );
-    defer allocator.free(ledger_storage);
-    var sink_lock_storage: [1]u8 = undefined;
+    defer sink_storage.deinit();
     var sink_store = try DurableSinkV1.open(
         input.file.directory,
         contract.sink.storage_epoch,
@@ -2474,8 +2479,7 @@ fn selectedSourceExitReceiptV1(
         contract.sink.initial_sequence,
         contract.sink.implementation_sha256,
         contract.sink.instance_sha256,
-        &sink_lock_storage,
-        ledger_storage,
+        sink_storage.fileStorage(),
         null,
     );
     defer sink_store.close();
@@ -2517,7 +2521,7 @@ fn selectedSourceExitReceiptV1(
 }
 
 fn sinkConfigMatchesContractV1(
-    comptime sink_capacity: usize,
+    sink_capacity: usize,
     expected: SinkConfigV1,
     contract: source_recovery.DecodedV1,
 ) bool {
@@ -2535,7 +2539,7 @@ fn sinkConfigMatchesContractV1(
 }
 
 fn validateEmptySinkSelectionV1(
-    comptime sink_capacity: usize,
+    sink_capacity: usize,
     selector: result_sink_file.DecodedSelectorV1,
     expected: SinkConfigV1,
     contract: source_recovery.DecodedV1,
@@ -2741,6 +2745,33 @@ test "recoverable set sizing includes all canonical objects" {
         recoverableSetBytesV1(
             std.math.maxInt(usize),
             archive_bytes,
+        ),
+    );
+}
+
+test "runtime sink capacity entrypoints are concrete" {
+    const source_entry = &advanceSourceFileV1;
+    var source_input: AdvanceSourceFileInputV1 = undefined;
+    source_input.sink.capacity = 1;
+    try std.testing.expectError(
+        Error.InvalidAdvancePlan,
+        source_entry(
+            0,
+            std.testing.allocator,
+            source_input,
+        ),
+    );
+
+    const target_entry = &advanceTargetFileV1;
+    var target_input: AdvanceTargetFileInputV1 = undefined;
+    target_input.sink.capacity = 1;
+    target_input.sink_initial_sequence = 1;
+    try std.testing.expectError(
+        Error.InvalidTargetPlan,
+        target_entry(
+            0,
+            std.testing.allocator,
+            target_input,
         ),
     );
 }
