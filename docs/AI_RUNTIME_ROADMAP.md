@@ -1624,12 +1624,44 @@ GPU-resident continuation, Win32 durability, native Linux/FreeBSD recovery
 evidence, native multi-OS execution, remote delivery, hostile writers, and
 physical power-loss persistence remain open.
 
+#### R1k-b3 — Read-only committed-output inspection
+
+Status: **integrated experimental metadata-first inspection slice**.
+
+R1k-b3 adds a pure committed-output reconciler and a read-only CLI over one
+selected recovery checkpoint and one selected result-sink ledger. It accepts
+only two states: checkpoint and sink heads aligned, or a nonterminal sink
+exactly one acknowledgement ahead whose final acknowledgement extends the
+checkpoint heads. Terminal state must be aligned and must have a nonempty
+acknowledgement prefix. Behind, gapped, substituted, foreign-identity, broken
+chain, mismatched-token, and token-above-255 states reject.
+
+The inspector opens only active selectors and their hash-named immutable
+objects, validates each complete pair, and rereads both selectors without
+taking a writer lease. A final selector reread that observes a cooperative
+concurrent change returns `SelectionChanged`; an initial-read identity or
+storage failure remains typed separately. The command performs no create, lock,
+recovery, repair, rename, truncate, or write operation and grants no authority.
+
+Default JSON is metadata-only and includes sequence state, counts, epochs, and
+content roots. `--reveal-output` explicitly adds exact token IDs, lowercase
+byte hex, canonical escaped bytes, and strict UTF-8 text only when valid;
+invalid UTF-8 yields `null` rather than replacement text. The retained
+`utf8-byte-v1` profile maps each admitted `0..255` token to the same byte.
+
+This completes the roadmap's separate read-only durable-result inspection
+slice, not ordinary `text-run` or serving output. It does not establish
+hostile-writer resistance, authentication, privacy, physical power-loss
+persistence, remote exactly-once delivery, GPU execution, Win32 durability,
+native multi-OS evidence, production-model quality, or a stable public ABI.
+See [Prepared-Text Result Inspector](PREPARED_TEXT_RESULT_INSPECTOR.md).
+
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
 completes plan → execute → publish → checkpoint → fresh-process resume with
 exact ownership and output evidence on the promoted native platform, including
 recoverable source-exit and replay-safe external publication. The retained
 synthetic fresh-process proof now includes replay-safe local sink progress, but
-does not complete its production package, committed-text inspection,
+does not complete its production package, ordinary command/serving rendering,
 remote-delivery, GPU, or multi-OS requirements.
 
 ### R2 — Stateless tensor families

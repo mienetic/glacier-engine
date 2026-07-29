@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import struct
 import sys
@@ -623,6 +624,322 @@ class WireFrameCouplingTests(unittest.TestCase):
             "identity or source-empty lineage mismatch",
         ):
             campaign._require_one_ahead_sink_parent(decoded, contract)
+
+
+class CommittedOutputInspectorTests(unittest.TestCase):
+    output_tokens = (65, 66, 67, 68)
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.directory = Path(self.temporary.name)
+        self.inspector = self.directory / "mock-inspector"
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    @staticmethod
+    def digest(label: str) -> bytes:
+        return hashlib.sha256(label.encode("ascii")).digest()
+
+    def wire(
+        self,
+        *,
+        sink_one_ahead: bool = False,
+    ) -> campaign.WireFacts:
+        tokens = self.output_tokens
+        plan = self.digest("inspector-plan")
+        checkpoint_next = len(tokens) - int(sink_one_ahead)
+        source_contract = type(
+            "SourceContractStub",
+            (),
+            {"plan_sha256": plan},
+        )()
+        return campaign.WireFacts(
+            sink=campaign.SinkWireFacts(
+                generation=len(tokens),
+                count=len(tokens) - 1,
+                initial_sequence=1,
+                next_sequence=len(tokens),
+                request_epoch=73,
+                request_sha256=plan.hex(),
+                sink_implementation_sha256=self.digest(
+                    "inspector-sink-implementation"
+                ).hex(),
+                sink_instance_sha256=self.digest("inspector-sink-instance").hex(),
+                previous_selector_sha256=self.digest(
+                    "inspector-previous-sink-selector"
+                ).hex(),
+                ledger_sha256=self.digest("inspector-ledger").hex(),
+                selector_sha256=self.digest("inspector-sink-selector").hex(),
+                acknowledgement_tokens=tokens[1:],
+                head_acknowledgement_sha256=self.digest(
+                    "inspector-head-acknowledgement"
+                ).hex(),
+                result_sink_prefix_sha256=self.digest(
+                    "inspector-result-sink-prefix"
+                ).hex(),
+            ),
+            checkpoint=campaign.CheckpointWireFacts(
+                generation=5 if not sink_one_ahead else 4,
+                request_epoch=73,
+                next_sequence=checkpoint_next,
+                parent_checkpoint_sha256=self.digest(
+                    "inspector-parent-checkpoint"
+                ).hex(),
+                checkpoint_sha256=self.digest("inspector-checkpoint").hex(),
+                challenge_sha256=self.digest("inspector-challenge").hex(),
+                previous_selector_sha256=self.digest(
+                    "inspector-previous-checkpoint-selector"
+                ).hex(),
+                selector_sha256=self.digest("inspector-checkpoint-selector").hex(),
+                objects=(),
+                terminal_tokens=None if sink_one_ahead else tokens,
+                checkpoint_state_sha256=self.digest("inspector-checkpoint-state").hex(),
+            ),
+            source_contract=source_contract,
+            durable_input=campaign.DurableInputFacts(
+                encoded=b"durable-input",
+                archive_sha256=self.digest("inspector-input-archive"),
+                package_sha256=self.digest("inspector-package"),
+                representation_sha256=self.digest("inspector-representation"),
+                raw_text_sha256=self.digest("inspector-raw-text"),
+                raw_text=b"prompt",
+                prompt_tokens=tuple(b"prompt"),
+                tokenizer_domain_sha256=self.digest("inspector-tokenizer-domain"),
+                tokenizer_behavior_sha256=self.digest("inspector-tokenizer-behavior"),
+                tokenizer_config_sha256=self.digest("inspector-tokenizer-config"),
+            ),
+        )
+
+    def document(
+        self,
+        wire: campaign.WireFacts,
+        *,
+        reveal_output: bool,
+    ) -> dict[str, object]:
+        sink = wire.sink
+        checkpoint = wire.checkpoint
+        assert sink is not None
+        assert checkpoint is not None
+        tokens = self.output_tokens
+        document: dict[str, object] = {
+            "schema": campaign.COMMITTED_OUTPUT_SCHEMA,
+            "milestone": campaign.COMMITTED_OUTPUT_MILESTONE,
+            "wire_bytes_verified": True,
+            "read_only": True,
+            "authority": False,
+            "output_disclosed": reveal_output,
+            "output_encoding": campaign.COMMITTED_OUTPUT_ENCODING,
+            "sequence_state": (
+                "aligned"
+                if sink.next_sequence == checkpoint.next_sequence
+                else "sink-exactly-one-ahead"
+            ),
+            "terminal": checkpoint.terminal_tokens is not None,
+            "checkpoint_pending": (sink.next_sequence != checkpoint.next_sequence),
+            "checkpoint_generation": checkpoint.generation,
+            "checkpoint_next_sequence": checkpoint.next_sequence,
+            "sink_initial_sequence": sink.initial_sequence,
+            "visible_next_sequence": sink.next_sequence,
+            "output_token_count": len(tokens),
+            "acknowledgement_count": sink.count,
+            "request_epoch": checkpoint.request_epoch,
+            "output_utf8_valid": True,
+            "roots": campaign._expected_committed_output_roots(
+                wire,
+                tokens,
+            ),
+        }
+        if reveal_output:
+            visible = bytes(tokens)
+            document["output"] = {
+                "token_ids": list(tokens),
+                "bytes_hex": visible.hex(),
+                "escaped_bytes": visible.decode("ascii"),
+                "utf8_text": visible.decode("utf-8"),
+            }
+        return document
+
+    @staticmethod
+    def encoded(document: dict[str, object]) -> bytes:
+        return (
+            json.dumps(
+                document,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            + b"\n"
+        )
+
+    def install_inspector(
+        self,
+        hidden_stdout: bytes,
+        *,
+        reveal_stdout: bytes | None = None,
+        stderr: bytes = b"",
+        return_code: int = 0,
+        mutate_file: Path | None = None,
+    ) -> None:
+        reveal = hidden_stdout if reveal_stdout is None else reveal_stdout
+        self.inspector.write_text(
+            textwrap.dedent(
+                f"""\
+                #!/usr/bin/env python3
+                import os
+                import sys
+
+                hidden = {hidden_stdout!r}
+                revealed = {reveal!r}
+                mutate_file = {None if mutate_file is None else str(mutate_file)!r}
+                if mutate_file is not None:
+                    with open(mutate_file, "r+b", buffering=0) as durable:
+                        durable.write(b"mutated!")
+                payload = revealed if "--reveal-output" in sys.argv else hidden
+                os.write(sys.stdout.fileno(), payload)
+                os.write(sys.stderr.fileno(), {stderr!r})
+                raise SystemExit({return_code})
+                """
+            ),
+            encoding="utf-8",
+        )
+        self.inspector.chmod(0o700)
+
+    def run_inspector(
+        self,
+        wire: campaign.WireFacts,
+        *,
+        reveal_output: bool,
+    ) -> dict[str, object]:
+        return campaign.run_committed_output_inspector(
+            self.inspector,
+            self.directory,
+            wire,
+            reveal_output=reveal_output,
+            expected_output_tokens=self.output_tokens,
+            timeout_seconds=3,
+        )
+
+    def test_bounded_runner_accepts_hidden_reveal_and_one_ahead(self) -> None:
+        terminal = self.wire()
+        hidden = self.document(terminal, reveal_output=False)
+        revealed = self.document(terminal, reveal_output=True)
+        self.install_inspector(
+            self.encoded(hidden),
+            reveal_stdout=self.encoded(revealed),
+        )
+        self.assertNotIn(
+            "output",
+            self.run_inspector(terminal, reveal_output=False),
+        )
+        self.assertEqual(
+            self.run_inspector(terminal, reveal_output=True)["output"],
+            revealed["output"],
+        )
+
+        one_ahead = self.wire(sink_one_ahead=True)
+        ahead_document = self.document(one_ahead, reveal_output=False)
+        self.install_inspector(self.encoded(ahead_document))
+        inspected = self.run_inspector(one_ahead, reveal_output=False)
+        self.assertEqual(
+            inspected["sequence_state"],
+            "sink-exactly-one-ahead",
+        )
+        self.assertTrue(inspected["checkpoint_pending"])
+
+    def test_runner_rejects_partial_and_malformed_stdout(self) -> None:
+        wire = self.wire()
+        for stdout, message in (
+            (b'{"schema":', "without a JSON frame"),
+            (b"not-json\n", "invalid inspector JSON frame"),
+        ):
+            with self.subTest(message=message):
+                self.install_inspector(stdout)
+                with self.assertRaisesRegex(campaign.CampaignError, message):
+                    self.run_inspector(wire, reveal_output=False)
+
+    def test_runner_rejects_stderr_and_nonzero_exit(self) -> None:
+        wire = self.wire()
+        hidden = self.encoded(self.document(wire, reveal_output=False))
+        self.install_inspector(hidden, stderr=b"unexpected diagnostic\n")
+        with self.assertRaisesRegex(campaign.CampaignError, "emitted stderr"):
+            self.run_inspector(wire, reveal_output=False)
+
+        self.install_inspector(hidden, return_code=7)
+        with self.assertRaisesRegex(campaign.CampaignError, "did not exit zero"):
+            self.run_inspector(wire, reveal_output=False)
+
+    def test_runner_enforces_hidden_and_reveal_policy(self) -> None:
+        wire = self.wire()
+        hidden = self.document(wire, reveal_output=False)
+        hidden["output_disclosed"] = True
+        revealed = self.document(wire, reveal_output=True)
+        revealed["output_disclosed"] = False
+        self.install_inspector(
+            self.encoded(hidden),
+            reveal_stdout=self.encoded(revealed),
+        )
+        for reveal_output in (False, True):
+            with self.subTest(reveal_output=reveal_output):
+                with self.assertRaisesRegex(
+                    campaign.CampaignError,
+                    "disclosure policy changed",
+                ):
+                    self.run_inspector(
+                        wire,
+                        reveal_output=reveal_output,
+                    )
+
+    def test_runner_rejects_root_mismatch(self) -> None:
+        wire = self.wire()
+        hidden = self.document(wire, reveal_output=False)
+        roots = dict(hidden["roots"])
+        roots["checkpoint_selector_sha256"] = "ff" * 32
+        hidden["roots"] = roots
+        self.install_inspector(self.encoded(hidden))
+        with self.assertRaisesRegex(
+            campaign.CampaignError,
+            "checkpoint_selector_sha256 mismatch",
+        ):
+            self.run_inspector(wire, reveal_output=False)
+
+    def test_runner_requires_executable_regular_inspector(self) -> None:
+        wire = self.wire()
+        hidden = self.encoded(self.document(wire, reveal_output=False))
+        self.install_inspector(hidden)
+        self.inspector.chmod(0o600)
+        with self.assertRaisesRegex(campaign.CampaignError, "not executable"):
+            self.run_inspector(wire, reveal_output=False)
+
+    def test_runner_rejects_directory_mutation_despite_valid_report(self) -> None:
+        wire = self.wire()
+        hidden = self.encoded(self.document(wire, reveal_output=False))
+        durable = self.directory / "durable.bin"
+        durable.write_bytes(b"durable!")
+        metadata_before = durable.lstat()
+        self.install_inspector(
+            hidden,
+            mutate_file=durable,
+        )
+
+        with self.assertRaisesRegex(
+            campaign.CampaignError,
+            "modified inspected directory",
+        ):
+            self.run_inspector(wire, reveal_output=False)
+        self.assertEqual(durable.read_bytes(), b"mutated!")
+        metadata_after = durable.lstat()
+        self.assertEqual(
+            (
+                metadata_after.st_mode,
+                metadata_after.st_nlink,
+                metadata_after.st_size,
+            ),
+            (
+                metadata_before.st_mode,
+                metadata_before.st_nlink,
+                metadata_before.st_size,
+            ),
+        )
 
 
 class OptionalWireSelectionTests(unittest.TestCase):

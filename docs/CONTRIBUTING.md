@@ -69,6 +69,12 @@ label assumptions and questions clearly.
 - Avoid silent fallback. Unsupported modes should return a named error.
 - Preserve generation and epoch fencing when adding reusable handles.
 - Keep network credentials and prompt text out of deterministic core fixtures.
+- Keep read-only inspectors metadata-first. Treat roots, counts, epochs, and
+  generations as correlatable metadata; require an explicit flag before
+  rendering prompt, result, or other payload bytes.
+- When byte-domain output may be invalid UTF-8, preserve exact bytes and expose
+  text only after strict validation. Do not use replacement characters as
+  evidence of the original output.
 - Write comments that explain invariants and authority, not line-by-line syntax.
 - Use relative Markdown links and explain project-specific terms in the
   [glossary](GLOSSARY.md).
@@ -137,6 +143,10 @@ zig build test -Doptimize=Debug -Dmetal=false
 zig build test -Doptimize=ReleaseSafe -Dmetal=false
 zig build test -Doptimize=ReleaseFast -Dmetal=false
 python3 -m unittest discover -s bench/tests
+
+tools/zig-with-ephemeral-cache.sh build \
+  prepared-text-result-inspector-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
 
 zig build test -Doptimize=ReleaseSafe -Dmetal=false -Dsanitize-thread=true
 

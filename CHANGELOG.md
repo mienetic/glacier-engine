@@ -57,6 +57,18 @@ before the first stable release.
 
 ### Added
 
+- Added the R1k-b3 read-only committed-output inspection slice. The focused
+  library and `glacier-prepared-text-result-inspector` command reconcile an
+  acknowledged prepared-text checkpoint with its selected immutable
+  result-sink ledger in either aligned or sink-exactly-one-ahead state.
+  Terminal inspection requires aligned state and at least one acknowledgement;
+  `utf8-byte-v1` tokens must fit one exact byte (`0...255`). JSON output is
+  metadata-only by default, with token IDs, hexadecimal bytes, escaped bytes,
+  and nullable strict UTF-8 text disclosed only by `--reveal-output`.
+  Inspection is cooperative and read-only: it creates no lease or authority
+  and adds no hostile-writer defense, authentication, payload-privacy,
+  physical power-loss, remote exactly-once, GPU, Win32, native multi-OS,
+  production-model, ordinary serving, or performance claim.
 - Added the R1k-b2 stable package and recoverable raw-input identity slice. A
   fixed 640-byte request-independent package manifest binds portable
   provenance, resolved model geometry, tokenizer behavior, and the license

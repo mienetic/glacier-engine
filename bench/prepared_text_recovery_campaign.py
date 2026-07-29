@@ -29,6 +29,9 @@ from bench import prepared_text_package as prepared_package
 CRASH_READY_SCHEMA = "glacier.prepared-text-recovery/crash-ready-v1"
 RESULT_SCHEMA = "glacier.prepared-text-recovery/result-v1"
 CAMPAIGN_SCHEMA = "glacier.prepared-text-recovery/campaign-v1"
+COMMITTED_OUTPUT_SCHEMA = "glacier.prepared-text-committed-output/v1"
+COMMITTED_OUTPUT_MILESTONE = "R1k-b3"
+COMMITTED_OUTPUT_ENCODING = "utf8-byte-v1"
 
 BOOTSTRAP_CHECKPOINT_PHASES = (
     "bootstrap_checkpoint_archive_write",
@@ -127,6 +130,12 @@ CHECKPOINT_SUCCESSOR_VISIBLE_POINTS = frozenset(
 )
 
 MAX_JSON_FRAME_BYTES = 16 * 1024
+MAX_INSPECTOR_JSON_BYTES = 512 * 1024
+MAX_INSPECTOR_MANIFEST_ENTRIES = 512
+MAX_INSPECTOR_MANIFEST_DEPTH = 16
+MAX_INSPECTOR_MANIFEST_PATH_BYTES = 16 * 1024
+MAX_INSPECTOR_MANIFEST_TOTAL_PATH_BYTES = 256 * 1024
+MAX_INSPECTOR_MANIFEST_TOTAL_BYTES = 512 * 1024 * 1024
 MAX_STDERR_BYTES = 16 * 1024
 MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 MAX_FIXTURE_BYTES = 64 * 1024 * 1024
@@ -161,6 +170,12 @@ ACK_BODY_BYTES = 392
 ACK_DOMAIN = b"glacier-prepared-text-result-acknowledgement-v1\x00"
 DELIVERY_KEY_DOMAIN = b"glacier-prepared-text-result-delivery-key-v1\x00"
 SINK_PREFIX_DOMAIN = b"glacier-prepared-text-result-sink-prefix-v1\x00"
+
+# Independent committed-output view constants.
+COMMITTED_OUTPUT_VIEW_ABI = 0x4750_434F_0000_0001
+COMMITTED_OUTPUT_TOKEN_DOMAIN = b"glacier-prepared-text-committed-output-token-v1\x00"
+COMMITTED_OUTPUT_BYTES_DOMAIN = b"glacier-prepared-text-committed-output-bytes-v1\x00"
+COMMITTED_OUTPUT_VIEW_DOMAIN = b"glacier-prepared-text-committed-output-view-v1\x00"
 
 # Independent continuation-checkpoint wire constants.
 CHECKPOINT_ACTIVE_SELECTOR_NAME = ".glacier-checkpoint-active-v1"
@@ -262,6 +277,17 @@ class CampaignError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class _DirectoryManifestEntry:
+    path: tuple[bytes, ...]
+    entry_type: int
+    mode: int
+    nlink: int
+    size: int
+    content_sha256: bytes | None
+    link_target_sha256: bytes | None
+
+
+@dataclass(frozen=True)
 class SinkWireFacts:
     generation: int
     count: int
@@ -275,6 +301,8 @@ class SinkWireFacts:
     ledger_sha256: str
     selector_sha256: str
     acknowledgement_tokens: tuple[int, ...]
+    head_acknowledgement_sha256: str = "0" * 64
+    result_sink_prefix_sha256: str = "0" * 64
 
 
 @dataclass(frozen=True)
@@ -298,6 +326,7 @@ class CheckpointWireFacts:
     selector_sha256: str
     objects: tuple[CheckpointObject, ...]
     terminal_tokens: tuple[int, ...] | None
+    checkpoint_state_sha256: str = "0" * 64
 
 
 @dataclass(frozen=True)
@@ -343,6 +372,9 @@ class DurableInputFacts:
     raw_text_sha256: bytes
     raw_text: bytes
     prompt_tokens: tuple[int, ...]
+    tokenizer_domain_sha256: bytes = ZERO_DIGEST
+    tokenizer_behavior_sha256: bytes = ZERO_DIGEST
+    tokenizer_config_sha256: bytes = ZERO_DIGEST
 
 
 @dataclass(frozen=True)
@@ -463,6 +495,39 @@ def _decode_canonical_json(line: bytes) -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
+def _decode_inspector_json(line: bytes) -> dict[str, object]:
+    _require(
+        0 < len(line) <= MAX_INSPECTOR_JSON_BYTES,
+        "invalid inspector JSON frame size",
+    )
+    _require(b"\r" not in line, "inspector JSON frame contains carriage return")
+    try:
+        text = line.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise CampaignError("inspector JSON frame is not UTF-8") from error
+    try:
+        value = json.loads(
+            text,
+            object_pairs_hook=_pairs_without_duplicates,
+            parse_constant=_reject_json_constant,
+        )
+    except (json.JSONDecodeError, TypeError, ValueError) as error:
+        if isinstance(error, CampaignError):
+            raise
+        raise CampaignError("invalid inspector JSON frame") from error
+    _require(type(value) is dict, "inspector JSON frame is not an object")
+    canonical = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    _require(
+        text == canonical,
+        "inspector JSON frame is not canonical compact JSON",
+    )
+    return cast(dict[str, object], value)
+
+
 def _cleanup_process(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is None:
         try:
@@ -483,9 +548,13 @@ def _capture_one_frame(
     *,
     timeout_seconds: float,
     validate_frame: Callable[[dict[str, object]], None],
+    decode_frame: Callable[[bytes], dict[str, object]] = _decode_canonical_json,
+    maximum_frame_bytes: int = MAX_JSON_FRAME_BYTES,
+    process_label: str = "worker",
 ) -> tuple[dict[str, object], int]:
-    _require(bool(command), "empty worker command")
-    _require(timeout_seconds > 0, "worker timeout must be positive")
+    _require(bool(command), f"empty {process_label} command")
+    _require(timeout_seconds > 0, f"{process_label} timeout must be positive")
+    _require(maximum_frame_bytes > 0, f"invalid {process_label} frame bound")
     try:
         process = subprocess.Popen(
             tuple(command),
@@ -495,7 +564,7 @@ def _capture_one_frame(
             bufsize=0,
         )
     except OSError as error:
-        raise CampaignError(f"cannot start worker: {command[0]}") from error
+        raise CampaignError(f"cannot start {process_label}: {command[0]}") from error
     assert process.stdout is not None
     assert process.stderr is not None
 
@@ -510,10 +579,10 @@ def _capture_one_frame(
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise CampaignError("worker timed out")
+                raise CampaignError(f"{process_label} timed out")
             events = selector.select(remaining)
             if not events:
-                raise CampaignError("worker timed out")
+                raise CampaignError(f"{process_label} timed out")
             for key, _ in events:
                 chunk = os.read(key.fd, 4096)
                 if not chunk:
@@ -523,38 +592,43 @@ def _capture_one_frame(
                     stderr.extend(chunk)
                     _require(
                         len(stderr) <= MAX_STDERR_BYTES,
-                        "worker stderr exceeds bound",
+                        f"{process_label} stderr exceeds bound",
                     )
                     continue
                 if frame is not None:
-                    raise CampaignError("worker emitted trailing stdout")
+                    raise CampaignError(f"{process_label} emitted trailing stdout")
                 stdout_before_frame.extend(chunk)
                 _require(
-                    len(stdout_before_frame) <= MAX_JSON_FRAME_BYTES + 1,
-                    "worker JSON frame exceeds bound",
+                    len(stdout_before_frame) <= maximum_frame_bytes + 1,
+                    f"{process_label} JSON frame exceeds bound",
                 )
                 newline = stdout_before_frame.find(b"\n")
                 if newline < 0:
                     continue
                 _require(
                     newline == len(stdout_before_frame) - 1,
-                    "worker emitted more than one stdout frame",
+                    f"{process_label} emitted more than one stdout frame",
                 )
-                frame = _decode_canonical_json(bytes(stdout_before_frame[:newline]))
+                frame = decode_frame(bytes(stdout_before_frame[:newline]))
                 validate_frame(frame)
                 stdout_before_frame.clear()
 
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise CampaignError("worker timed out before exit")
+            raise CampaignError(f"{process_label} timed out before exit")
         try:
             return_code = process.wait(timeout=remaining)
         except subprocess.TimeoutExpired as error:
-            raise CampaignError("worker did not exit after its frame") from error
+            raise CampaignError(
+                f"{process_label} did not exit after its frame"
+            ) from error
         if frame is None:
-            raise CampaignError("worker exited without a JSON frame")
-        _require(not stdout_before_frame, "worker stdout ended mid-frame")
-        _require(not stderr, "worker emitted stderr")
+            raise CampaignError(f"{process_label} exited without a JSON frame")
+        _require(
+            not stdout_before_frame,
+            f"{process_label} stdout ended mid-frame",
+        )
+        _require(not stderr, f"{process_label} emitted stderr")
         return frame, return_code
     except BaseException:
         _cleanup_process(process)
@@ -944,6 +1018,695 @@ def _read_regular_file(
     return encoded
 
 
+_INSPECTOR_KEYS = (
+    "schema",
+    "milestone",
+    "wire_bytes_verified",
+    "read_only",
+    "authority",
+    "output_disclosed",
+    "output_encoding",
+    "sequence_state",
+    "terminal",
+    "checkpoint_pending",
+    "checkpoint_generation",
+    "checkpoint_next_sequence",
+    "sink_initial_sequence",
+    "visible_next_sequence",
+    "output_token_count",
+    "acknowledgement_count",
+    "request_epoch",
+    "output_utf8_valid",
+    "roots",
+)
+_INSPECTOR_ROOT_KEYS = (
+    "package_sha256",
+    "representation_sha256",
+    "input_archive_sha256",
+    "tokenizer_domain_sha256",
+    "tokenizer_behavior_sha256",
+    "tokenizer_config_sha256",
+    "local_plan_sha256",
+    "request_sha256",
+    "checkpoint_selector_sha256",
+    "checkpoint_set_sha256",
+    "checkpoint_state_sha256",
+    "sink_selector_sha256",
+    "sink_ledger_sha256",
+    "sink_implementation_sha256",
+    "sink_instance_sha256",
+    "head_acknowledgement_sha256",
+    "result_sink_prefix_sha256",
+    "visible_tokens_sha256",
+    "visible_bytes_sha256",
+    "view_sha256",
+)
+_INSPECTOR_OUTPUT_KEYS = (
+    "token_ids",
+    "bytes_hex",
+    "escaped_bytes",
+    "utf8_text",
+)
+
+
+def _require_executable_regular(path: Path, label: str) -> None:
+    try:
+        metadata = os.stat(path, follow_symlinks=False)
+    except OSError as error:
+        raise CampaignError(f"cannot inspect {label}: {path}") from error
+    _require(stat.S_ISREG(metadata.st_mode), f"{label} is not a regular file")
+    _require(metadata.st_nlink == 1, f"{label} has multiple links")
+    _require(
+        0 < metadata.st_size <= MAX_FIXTURE_BYTES,
+        f"{label} size is invalid",
+    )
+    _require(os.access(path, os.X_OK), f"{label} is not executable")
+
+
+def _manifest_metadata_signature(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_size,
+    )
+
+
+def _inspector_directory_manifest(
+    directory: Path,
+) -> tuple[_DirectoryManifestEntry, ...]:
+    """Snapshot one bounded directory tree without following symbolic links."""
+
+    _require(
+        hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW"),
+        "directory manifest requires no-follow directory opens",
+    )
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        directory_flags |= os.O_CLOEXEC
+        file_flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NONBLOCK"):
+        directory_flags |= os.O_NONBLOCK
+        file_flags |= os.O_NONBLOCK
+
+    entries: list[_DirectoryManifestEntry] = []
+    total_regular_bytes = 0
+    total_path_bytes = 0
+
+    def reserve_path(path: tuple[bytes, ...]) -> None:
+        nonlocal total_path_bytes
+        _require(
+            len(entries) < MAX_INSPECTOR_MANIFEST_ENTRIES,
+            "inspector directory manifest has too many entries",
+        )
+        path_bytes = sum(len(component) for component in path) + max(
+            0,
+            len(path) - 1,
+        )
+        _require(
+            path_bytes <= MAX_INSPECTOR_MANIFEST_PATH_BYTES,
+            "inspector directory manifest path is too long",
+        )
+        total_path_bytes += path_bytes
+        _require(
+            total_path_bytes <= MAX_INSPECTOR_MANIFEST_TOTAL_PATH_BYTES,
+            "inspector directory manifest paths exceed bound",
+        )
+
+    def require_stable(
+        expected: os.stat_result,
+        actual: os.stat_result,
+    ) -> None:
+        _require(
+            _manifest_metadata_signature(actual)
+            == _manifest_metadata_signature(expected),
+            "inspector directory changed while manifesting",
+        )
+
+    def regular_digest(
+        parent_descriptor: int,
+        name: str,
+        expected: os.stat_result,
+    ) -> bytes:
+        nonlocal total_regular_bytes
+        _require(
+            0 <= expected.st_size <= MAX_FIXTURE_BYTES,
+            "inspector directory regular file exceeds bound",
+        )
+        total_regular_bytes += expected.st_size
+        _require(
+            total_regular_bytes <= MAX_INSPECTOR_MANIFEST_TOTAL_BYTES,
+            "inspector directory contents exceed manifest bound",
+        )
+        descriptor = os.open(
+            name,
+            file_flags,
+            dir_fd=parent_descriptor,
+        )
+        try:
+            opened = os.fstat(descriptor)
+            _require(
+                stat.S_ISREG(opened.st_mode),
+                "inspector directory regular entry changed type",
+            )
+            require_stable(expected, opened)
+            digest = hashlib.sha256()
+            remaining = opened.st_size
+            while remaining:
+                chunk = os.read(descriptor, min(remaining, 64 * 1024))
+                _require(
+                    bool(chunk),
+                    "inspector directory regular file was truncated",
+                )
+                digest.update(chunk)
+                remaining -= len(chunk)
+            _require(
+                not os.read(descriptor, 1),
+                "inspector directory regular file grew",
+            )
+            require_stable(opened, os.fstat(descriptor))
+            return digest.digest()
+        finally:
+            os.close(descriptor)
+
+    def walk(
+        descriptor: int,
+        prefix: tuple[bytes, ...],
+        depth: int,
+    ) -> None:
+        _require(
+            depth <= MAX_INSPECTOR_MANIFEST_DEPTH,
+            "inspector directory manifest exceeds depth bound",
+        )
+        names: list[str] = []
+        with os.scandir(descriptor) as scanner:
+            for scanned in scanner:
+                _require(
+                    len(entries) + len(names) < MAX_INSPECTOR_MANIFEST_ENTRIES,
+                    "inspector directory manifest has too many entries",
+                )
+                names.append(scanned.name)
+        names.sort(key=os.fsencode)
+
+        for name in names:
+            encoded_name = os.fsencode(name)
+            path = prefix + (encoded_name,)
+            reserve_path(path)
+            metadata = os.stat(
+                name,
+                dir_fd=descriptor,
+                follow_symlinks=False,
+            )
+            entry_type = stat.S_IFMT(metadata.st_mode)
+            content_sha256: bytes | None = None
+            link_target_sha256: bytes | None = None
+            if stat.S_ISREG(metadata.st_mode):
+                content_sha256 = regular_digest(
+                    descriptor,
+                    name,
+                    metadata,
+                )
+            elif stat.S_ISDIR(metadata.st_mode):
+                child_descriptor = os.open(
+                    name,
+                    directory_flags,
+                    dir_fd=descriptor,
+                )
+                try:
+                    opened = os.fstat(child_descriptor)
+                    _require(
+                        stat.S_ISDIR(opened.st_mode),
+                        "inspector directory entry changed type",
+                    )
+                    require_stable(metadata, opened)
+                    metadata = opened
+                    entries.append(
+                        _DirectoryManifestEntry(
+                            path=path,
+                            entry_type=entry_type,
+                            mode=metadata.st_mode,
+                            nlink=metadata.st_nlink,
+                            size=metadata.st_size,
+                            content_sha256=None,
+                            link_target_sha256=None,
+                        )
+                    )
+                    walk(child_descriptor, path, depth + 1)
+                    require_stable(opened, os.fstat(child_descriptor))
+                finally:
+                    os.close(child_descriptor)
+                continue
+            elif stat.S_ISLNK(metadata.st_mode):
+                target = os.fsencode(
+                    os.readlink(
+                        name,
+                        dir_fd=descriptor,
+                    )
+                )
+                _require(
+                    len(target) <= MAX_INSPECTOR_MANIFEST_PATH_BYTES,
+                    "inspector directory symbolic link target exceeds bound",
+                )
+                link_target_sha256 = hashlib.sha256(target).digest()
+                require_stable(
+                    metadata,
+                    os.stat(
+                        name,
+                        dir_fd=descriptor,
+                        follow_symlinks=False,
+                    ),
+                )
+            else:
+                require_stable(
+                    metadata,
+                    os.stat(
+                        name,
+                        dir_fd=descriptor,
+                        follow_symlinks=False,
+                    ),
+                )
+            entries.append(
+                _DirectoryManifestEntry(
+                    path=path,
+                    entry_type=entry_type,
+                    mode=metadata.st_mode,
+                    nlink=metadata.st_nlink,
+                    size=metadata.st_size,
+                    content_sha256=content_sha256,
+                    link_target_sha256=link_target_sha256,
+                )
+            )
+
+    try:
+        root_descriptor = os.open(
+            os.fsencode(directory),
+            directory_flags,
+        )
+    except OSError as error:
+        raise CampaignError(
+            "cannot open committed-output inspector directory"
+        ) from error
+    try:
+        try:
+            root_metadata = os.fstat(root_descriptor)
+            _require(
+                stat.S_ISDIR(root_metadata.st_mode),
+                "committed-output inspector path is not a directory",
+            )
+            reserve_path(())
+            entries.append(
+                _DirectoryManifestEntry(
+                    path=(),
+                    entry_type=stat.S_IFMT(root_metadata.st_mode),
+                    mode=root_metadata.st_mode,
+                    nlink=root_metadata.st_nlink,
+                    size=root_metadata.st_size,
+                    content_sha256=None,
+                    link_target_sha256=None,
+                )
+            )
+            walk(root_descriptor, (), 0)
+            require_stable(root_metadata, os.fstat(root_descriptor))
+        except OSError as error:
+            raise CampaignError(
+                "cannot manifest committed-output inspector directory"
+            ) from error
+    finally:
+        os.close(root_descriptor)
+    return tuple(entries)
+
+
+def _checkpoint_state_root_from_wire(checkpoint: CheckpointWireFacts) -> str:
+    if checkpoint.checkpoint_state_sha256 != "0" * 64:
+        _require(
+            _is_digest_hex(
+                checkpoint.checkpoint_state_sha256,
+                allow_zero=False,
+            ),
+            "invalid checkpoint state root in wire facts",
+        )
+        return checkpoint.checkpoint_state_sha256
+
+    if checkpoint.terminal_tokens is not None:
+        _require(
+            len(checkpoint.objects) >= 3,
+            "terminal wire facts lack semantic state",
+        )
+        payload = checkpoint.objects[2].payload
+        _require(
+            len(payload) >= 496,
+            "terminal semantic state is truncated",
+        )
+        state = payload[464:496]
+    elif checkpoint.generation == 2:
+        _require(
+            len(checkpoint.objects) >= 2,
+            "source-exited wire facts lack restart evidence",
+        )
+        nested = _decode_checkpoint_set(checkpoint.objects[1].payload)
+        _require(
+            bool(nested.objects),
+            "source-exited restart evidence lacks checkpoint state",
+        )
+        payload = nested.objects[0].payload
+        _require(
+            len(payload) >= 288,
+            "source-exited checkpoint state is truncated",
+        )
+        state = payload[256:288]
+    else:
+        _require(
+            len(checkpoint.objects) >= 2,
+            "nonterminal wire facts lack checkpoint state",
+        )
+        payload = checkpoint.objects[1].payload
+        _require(
+            len(payload) >= 288,
+            "nonterminal checkpoint state is truncated",
+        )
+        state = payload[256:288]
+    _require(state != ZERO_DIGEST, "checkpoint state root is zero")
+    return state.hex()
+
+
+def _escaped_visible_bytes(encoded: bytes) -> str:
+    pieces: list[str] = []
+    for byte in encoded:
+        if byte == ord("\\"):
+            pieces.append("\\\\")
+        elif 0x20 <= byte <= 0x7E:
+            pieces.append(chr(byte))
+        else:
+            pieces.append(f"\\x{byte:02x}")
+    return "".join(pieces)
+
+
+def _expected_committed_output_roots(
+    wire: WireFacts,
+    expected_output_tokens: Sequence[int],
+) -> dict[str, str]:
+    sink = wire.sink
+    checkpoint = wire.checkpoint
+    source_contract = wire.source_contract
+    durable_input = wire.durable_input
+    _require(
+        sink is not None
+        and checkpoint is not None
+        and source_contract is not None
+        and durable_input is not None,
+        "committed-output inspection lacks complete wire facts",
+    )
+    if (
+        sink is None
+        or checkpoint is None
+        or source_contract is None
+        or durable_input is None
+    ):
+        raise CampaignError("committed-output inspection lacks wire facts")
+
+    tokens = tuple(expected_output_tokens)
+    _require(
+        len(tokens) == sink.next_sequence
+        and all(type(token) is int and 0 <= token <= 0xFF for token in tokens),
+        "invalid expected committed-output tokens",
+    )
+    visible = bytes(tokens)
+    visible_tokens_sha256 = hashlib.sha256(
+        COMMITTED_OUTPUT_TOKEN_DOMAIN
+        + struct.pack("<Q", len(tokens))
+        + b"".join(struct.pack("<I", token) for token in tokens)
+    ).digest()
+    visible_bytes_sha256 = hashlib.sha256(
+        COMMITTED_OUTPUT_BYTES_DOMAIN + struct.pack("<Q", len(visible)) + visible
+    ).digest()
+    sequence_value = 1 if sink.next_sequence == checkpoint.next_sequence else 2
+    terminal = checkpoint.terminal_tokens is not None
+    view_sha256 = hashlib.sha256(
+        COMMITTED_OUTPUT_VIEW_DOMAIN
+        + struct.pack(
+            "<QQQQQQQQQQ",
+            COMMITTED_OUTPUT_VIEW_ABI,
+            sequence_value,
+            int(terminal),
+            checkpoint.generation,
+            checkpoint.request_epoch,
+            sink.initial_sequence,
+            checkpoint.next_sequence,
+            sink.next_sequence,
+            sink.count,
+            len(tokens),
+        )
+        + durable_input.package_sha256
+        + durable_input.representation_sha256
+        + durable_input.archive_sha256
+        + durable_input.tokenizer_domain_sha256
+        + durable_input.tokenizer_behavior_sha256
+        + durable_input.tokenizer_config_sha256
+        + source_contract.plan_sha256
+        + bytes.fromhex(sink.request_sha256)
+        + bytes.fromhex(checkpoint.selector_sha256)
+        + bytes.fromhex(checkpoint.checkpoint_sha256)
+        + bytes.fromhex(_checkpoint_state_root_from_wire(checkpoint))
+        + bytes.fromhex(sink.selector_sha256)
+        + bytes.fromhex(sink.ledger_sha256)
+        + bytes.fromhex(sink.sink_implementation_sha256)
+        + bytes.fromhex(sink.sink_instance_sha256)
+        + bytes.fromhex(sink.head_acknowledgement_sha256)
+        + bytes.fromhex(sink.result_sink_prefix_sha256)
+        + visible_tokens_sha256
+        + visible_bytes_sha256
+    ).hexdigest()
+    return {
+        "package_sha256": durable_input.package_sha256.hex(),
+        "representation_sha256": durable_input.representation_sha256.hex(),
+        "input_archive_sha256": durable_input.archive_sha256.hex(),
+        "tokenizer_domain_sha256": (durable_input.tokenizer_domain_sha256.hex()),
+        "tokenizer_behavior_sha256": (durable_input.tokenizer_behavior_sha256.hex()),
+        "tokenizer_config_sha256": (durable_input.tokenizer_config_sha256.hex()),
+        "local_plan_sha256": source_contract.plan_sha256.hex(),
+        "request_sha256": sink.request_sha256,
+        "checkpoint_selector_sha256": checkpoint.selector_sha256,
+        "checkpoint_set_sha256": checkpoint.checkpoint_sha256,
+        "checkpoint_state_sha256": (_checkpoint_state_root_from_wire(checkpoint)),
+        "sink_selector_sha256": sink.selector_sha256,
+        "sink_ledger_sha256": sink.ledger_sha256,
+        "sink_implementation_sha256": sink.sink_implementation_sha256,
+        "sink_instance_sha256": sink.sink_instance_sha256,
+        "head_acknowledgement_sha256": (sink.head_acknowledgement_sha256),
+        "result_sink_prefix_sha256": sink.result_sink_prefix_sha256,
+        "visible_tokens_sha256": visible_tokens_sha256.hex(),
+        "visible_bytes_sha256": visible_bytes_sha256.hex(),
+        "view_sha256": view_sha256,
+    }
+
+
+def _validate_committed_output_document(
+    document: dict[str, object],
+    *,
+    wire: WireFacts,
+    reveal_output: bool,
+    expected_output_tokens: Sequence[int],
+) -> None:
+    expected_keys = _INSPECTOR_KEYS + ("output",) if reveal_output else _INSPECTOR_KEYS
+    _require(
+        tuple(document) == expected_keys,
+        "committed-output inspector document shape changed",
+    )
+    _require(
+        document["schema"] == COMMITTED_OUTPUT_SCHEMA,
+        "wrong committed-output inspector schema",
+    )
+    _require(
+        document["milestone"] == COMMITTED_OUTPUT_MILESTONE,
+        "wrong committed-output inspector milestone",
+    )
+    _require(
+        _required_bool(document, "wire_bytes_verified")
+        and _required_bool(document, "read_only")
+        and not _required_bool(document, "authority"),
+        "committed-output inspector policy changed",
+    )
+    _require(
+        _required_bool(document, "output_disclosed") == reveal_output,
+        "committed-output disclosure policy changed",
+    )
+    _require(
+        document["output_encoding"] == COMMITTED_OUTPUT_ENCODING,
+        "committed-output encoding changed",
+    )
+
+    sink = wire.sink
+    checkpoint = wire.checkpoint
+    _require(
+        sink is not None and checkpoint is not None,
+        "committed-output inspection lacks selected wire facts",
+    )
+    if sink is None or checkpoint is None:
+        raise CampaignError("committed-output inspection lacks selected facts")
+    _require(
+        checkpoint.next_sequence <= sink.next_sequence <= checkpoint.next_sequence + 1,
+        "committed-output wire is not aligned or exactly one ahead",
+    )
+    expected_state = (
+        "aligned"
+        if sink.next_sequence == checkpoint.next_sequence
+        else "sink-exactly-one-ahead"
+    )
+    checkpoint_pending = expected_state == "sink-exactly-one-ahead"
+    terminal = checkpoint.terminal_tokens is not None
+    _require(
+        not terminal or (expected_state == "aligned" and not checkpoint_pending),
+        "terminal committed output is pending",
+    )
+    _require(
+        document["sequence_state"] == expected_state,
+        "committed-output sequence state mismatch",
+    )
+    _require(
+        _required_bool(document, "terminal") == terminal
+        and _required_bool(document, "checkpoint_pending") == checkpoint_pending,
+        "committed-output terminal policy mismatch",
+    )
+    tokens = tuple(expected_output_tokens)
+    _require(
+        len(tokens) == sink.next_sequence
+        and all(type(token) is int and 0 <= token <= 0xFF for token in tokens),
+        "invalid expected committed-output tokens",
+    )
+    if terminal:
+        _require(
+            checkpoint.terminal_tokens == tokens,
+            "terminal wire tokens differ from expected committed output",
+        )
+    _require(
+        _required_int(document, "checkpoint_generation") == checkpoint.generation
+        and _required_int(document, "checkpoint_next_sequence")
+        == checkpoint.next_sequence
+        and _required_int(document, "sink_initial_sequence") == sink.initial_sequence
+        and _required_int(document, "visible_next_sequence") == sink.next_sequence
+        and _required_int(document, "output_token_count") == len(tokens)
+        and _required_int(document, "acknowledgement_count") == sink.count
+        and _required_int(document, "request_epoch")
+        == checkpoint.request_epoch
+        == sink.request_epoch,
+        "committed-output metadata mismatch",
+    )
+
+    visible = bytes(tokens)
+    try:
+        utf8_text: str | None = visible.decode("utf-8", "strict")
+    except UnicodeDecodeError:
+        utf8_text = None
+    utf8_valid = utf8_text is not None
+    _require(
+        _required_bool(document, "output_utf8_valid") == utf8_valid,
+        "committed-output UTF-8 policy mismatch",
+    )
+
+    roots_value = document["roots"]
+    _require(type(roots_value) is dict, "invalid committed-output roots")
+    roots = cast(dict[str, object], roots_value)
+    _require(
+        tuple(roots) == _INSPECTOR_ROOT_KEYS,
+        "committed-output root shape changed",
+    )
+    expected_roots = _expected_committed_output_roots(wire, tokens)
+    for name in _INSPECTOR_ROOT_KEYS:
+        actual = _required_digest_hex(
+            roots,
+            name,
+            allow_zero=name
+            in (
+                "head_acknowledgement_sha256",
+                "result_sink_prefix_sha256",
+            ),
+        )
+        _require(
+            actual == expected_roots[name],
+            f"committed-output {name} mismatch",
+        )
+
+    if not reveal_output:
+        _require(
+            "output" not in document,
+            "hidden committed output disclosed payload",
+        )
+        return
+    output_value = document["output"]
+    _require(type(output_value) is dict, "invalid committed-output payload")
+    output = cast(dict[str, object], output_value)
+    _require(
+        tuple(output) == _INSPECTOR_OUTPUT_KEYS,
+        "committed-output payload shape changed",
+    )
+    token_ids = output["token_ids"]
+    _require(
+        type(token_ids) is list
+        and all(type(token) is int for token in token_ids)
+        and tuple(cast(list[int], token_ids)) == tokens,
+        "revealed committed-output token IDs mismatch",
+    )
+    _require(
+        output["bytes_hex"] == visible.hex(),
+        "revealed committed-output hex mismatch",
+    )
+    _require(
+        output["escaped_bytes"] == _escaped_visible_bytes(visible),
+        "revealed committed-output escaped bytes mismatch",
+    )
+    _require(
+        output["utf8_text"] == utf8_text,
+        "revealed committed-output UTF-8 text mismatch",
+    )
+
+
+def run_committed_output_inspector(
+    inspector: Path,
+    directory: Path,
+    wire: WireFacts,
+    *,
+    reveal_output: bool,
+    expected_output_tokens: Sequence[int],
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+) -> dict[str, object]:
+    """Run one bounded read-only inspection and bind it to decoded wire facts."""
+
+    inspector_path = inspector.absolute()
+    directory_path = directory.absolute()
+    _require_executable_regular(inspector_path, "committed-output inspector")
+    command = [str(inspector_path), "--directory", str(directory_path)]
+    if reveal_output:
+        command.append("--reveal-output")
+    manifest_before = _inspector_directory_manifest(directory_path)
+    try:
+        document, return_code = _capture_one_frame(
+            command,
+            timeout_seconds=timeout_seconds,
+            validate_frame=lambda frame: _validate_committed_output_document(
+                frame,
+                wire=wire,
+                reveal_output=reveal_output,
+                expected_output_tokens=expected_output_tokens,
+            ),
+            decode_frame=_decode_inspector_json,
+            maximum_frame_bytes=MAX_INSPECTOR_JSON_BYTES,
+            process_label="committed-output inspector",
+        )
+    finally:
+        manifest_after = _inspector_directory_manifest(directory_path)
+        _require(
+            manifest_after == manifest_before,
+            "committed-output inspector modified inspected directory",
+        )
+    _require(
+        return_code == 0,
+        "committed-output inspector did not exit zero",
+    )
+    return document
+
+
 def _decode_sink_wire(directory: Path) -> SinkWireFacts | None:
     selector = _read_regular_file_or_none(
         directory / SINK_ACTIVE_SELECTOR_NAME,
@@ -1077,6 +1840,8 @@ def _decode_sink_wire(directory: Path) -> SinkWireFacts | None:
         ledger_sha256=ledger_sha256.hex(),
         selector_sha256=selector_sha256.hex(),
         acknowledgement_tokens=tuple(tokens),
+        head_acknowledgement_sha256=previous_ack.hex(),
+        result_sink_prefix_sha256=previous_prefix.hex(),
     )
 
 
@@ -2168,6 +2933,10 @@ def _decode_durable_input_archive(
         Mapping[str, object],
         decoded["representation"],
     )
+    tokenizer_manifest = cast(
+        Mapping[str, object],
+        decoded["tokenizer_manifest"],
+    )
     prompt_tokens = cast(tuple[int, ...], decoded["tokens"])
     raw_text = cast(bytes, decoded["raw_text"])
     _require(
@@ -2199,6 +2968,18 @@ def _decode_durable_input_archive(
         raw_text_sha256=cast(bytes, binding["raw_text_sha256"]),
         raw_text=raw_text,
         prompt_tokens=prompt_tokens,
+        tokenizer_domain_sha256=cast(
+            bytes,
+            tokenizer_manifest["domain_sha256"],
+        ),
+        tokenizer_behavior_sha256=cast(
+            bytes,
+            tokenizer_manifest["behavior_sha256"],
+        ),
+        tokenizer_config_sha256=cast(
+            bytes,
+            tokenizer_manifest["config_sha256"],
+        ),
     )
 
 
@@ -2220,6 +3001,9 @@ def _require_same_durable_input(
             and actual.raw_text_sha256 == expected.raw_text_sha256
             and actual.raw_text == expected.raw_text
             and actual.prompt_tokens == expected.prompt_tokens
+            and actual.tokenizer_domain_sha256 == expected.tokenizer_domain_sha256
+            and actual.tokenizer_behavior_sha256 == expected.tokenizer_behavior_sha256
+            and actual.tokenizer_config_sha256 == expected.tokenizer_config_sha256
         ),
         f"{label} durable input changed",
     )
@@ -3166,6 +3950,7 @@ def run_campaign(
     worker: Path,
     directory: Path,
     *,
+    inspector: Path,
     crash_points: Sequence[str] = CRASH_POINTS,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     max_recovery_processes: int = DEFAULT_MAX_RECOVERY_PROCESSES,
@@ -3181,11 +3966,17 @@ def run_campaign(
     )
     _require(max_recovery_processes > 0, "invalid recovery process bound")
     _require(os.access(worker, os.X_OK), "worker is not executable")
+    _require_executable_regular(inspector, "committed-output inspector")
     worker_image = _read_regular_file(
         worker,
         maximum_bytes=MAX_FIXTURE_BYTES,
     )
     worker_sha256 = hashlib.sha256(worker_image).hexdigest()
+    inspector_image = _read_regular_file(
+        inspector,
+        maximum_bytes=MAX_FIXTURE_BYTES,
+    )
+    inspector_sha256 = hashlib.sha256(inspector_image).hexdigest()
     _prepare_campaign_root(directory)
     seen_pids: set[int] = set()
 
@@ -3418,6 +4209,14 @@ def run_campaign(
                 == ((3, 2) if expected_checkpoint_successor else (2, 1)),
                 "target crash visibility matrix changed",
             )
+            run_committed_output_inspector(
+                inspector,
+                case_directory,
+                post_crash_wire,
+                reveal_output=False,
+                expected_output_tokens=baseline_tokens[: post_sink.next_sequence],
+                timeout_seconds=timeout_seconds,
+            )
             sink_visibility = "successor" if expected_sink_successor else "previous"
             checkpoint_visibility = (
                 "successor" if expected_checkpoint_successor else "previous"
@@ -3513,6 +4312,14 @@ def run_campaign(
                 audit.get("terminal_semantic_sha256") == baseline_semantic,
                 "recovered terminal semantic differs from baseline",
             )
+        run_committed_output_inspector(
+            inspector,
+            case_directory,
+            final_wire,
+            reveal_output=True,
+            expected_output_tokens=baseline_tokens,
+            timeout_seconds=timeout_seconds,
+        )
 
         case_summaries.append(
             {
@@ -3612,6 +4419,14 @@ def run_campaign(
         hashlib.sha256(worker_after).hexdigest() == worker_sha256,
         "worker image changed during compile-once campaign",
     )
+    inspector_after = _read_regular_file(
+        inspector,
+        maximum_bytes=MAX_FIXTURE_BYTES,
+    )
+    _require(
+        hashlib.sha256(inspector_after).hexdigest() == inspector_sha256,
+        "committed-output inspector image changed during campaign",
+    )
     bootstrap_checkpoint_selected_count = sum(
         point in BOOTSTRAP_CHECKPOINT_SELECTED_POINTS for point in selected_bootstrap
     )
@@ -3633,6 +4448,7 @@ def run_campaign(
         "crash_point_count": len(selected_crash_points),
         "crash_points": list(selected_crash_points),
         "worker_sha256": worker_sha256,
+        "inspector_sha256": inspector_sha256,
         "baseline_output_tokens": list(baseline_tokens),
         "baseline_terminal_semantic_sha256": baseline_semantic,
         "bootstrap_checkpoint_absent_count": (
@@ -3669,6 +4485,7 @@ def _parse_arguments(arguments: Sequence[str]) -> argparse.Namespace:
         description="Run prepared-text acknowledged recovery death campaign",
     )
     parser.add_argument("--worker", required=True, type=Path)
+    parser.add_argument("--inspector", required=True, type=Path)
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument(
         "--crash-point",
@@ -3699,6 +4516,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         report = run_campaign(
             parsed.worker.resolve(),
             parsed.directory.resolve(),
+            inspector=parsed.inspector.resolve(),
             crash_points=crash_points,
             timeout_seconds=parsed.timeout_seconds,
             max_recovery_processes=parsed.max_recovery_processes,

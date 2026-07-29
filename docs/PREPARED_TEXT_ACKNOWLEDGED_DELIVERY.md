@@ -1,7 +1,8 @@
 # Acknowledged Prepared-Text Delivery
 
-Glacier's R1j/R1k-b2 path is an experimental local recovery and delivery
-protocol for the bounded prepared-text runtime. It retains a canonical source
+Glacier's R1j/R1k-b2/R1k-b3 path is an experimental local recovery, delivery,
+and read-only inspection protocol for the bounded prepared-text runtime. It
+retains a canonical source
 replay contract plus the exact package/tokenizer/raw UTF-8 input in generation
 one, requires an exact empty descriptor-relative sink before the source
 computes, and joins each committed target token to a canonical result
@@ -27,7 +28,7 @@ multi-tenant security boundary.
 
 ## Protocol layers
 
-The implementation keeps four responsibilities separate:
+The implementation keeps five responsibilities separate:
 
 1. `prepared_text_result_sink.zig` projects one valid
    `CommitReceiptV1` into a canonical delivery input and a 424-byte
@@ -39,6 +40,9 @@ The implementation keeps four responsibilities separate:
    evidence.
 4. `prepared_text_acknowledged_restore.zig` pins a selected nonterminal
    generation to the exclusive lease's process-local consumer claim.
+5. `prepared_text_committed_output.zig` reconciles one caller-verified
+   checkpoint prefix with one decoded sink selection without I/O or authority;
+   `prepared_text_result_inspector.zig` supplies the read-only JSON command.
 
 `prepared_text_acknowledged_delivery.zig` is the compile-once public facade for
 those layers.
@@ -194,6 +198,33 @@ acknowledgement token.
 The generic checkpoint-file lease can load a retained predecessor only by its
 content root and revalidates the complete set before returning borrowed bytes.
 
+## Read-only committed-output view
+
+R1k-b3 observes the selected checkpoint and result sink without taking either
+writer lease. Each reader opens the active selector and its hash-named immutable
+object read-only, verifies the complete pair, and rereads the selector. The
+inspector then rereads both selectors again after reconciliation; a detectable
+cooperative publication race at a final selector reread returns
+`SelectionChanged`, while an initial-read identity or storage failure keeps its
+underlying typed error.
+
+Only two sequence relationships are accepted:
+
+- `aligned`: checkpoint and sink next sequences and acknowledgement heads
+  match; and
+- `sink-exactly-one-ahead`: a nonterminal sink has one additional
+  acknowledgement whose predecessor heads equal the checkpoint heads.
+
+Terminal state must be aligned and have a nonempty acknowledgement prefix.
+Every overlapping acknowledgement token must match the checkpoint output, and
+every visible token must fit the retained `utf8-byte-v1` byte domain `0..255`.
+
+The default report is metadata-only. `--reveal-output` explicitly adds token
+IDs, byte hex, escaped bytes, and strict UTF-8 text only when valid. This
+operation performs no lock, create, write, recovery, repair, or publication and
+grants no authority. See
+[Prepared-Text Result Inspector](PREPARED_TEXT_RESULT_INSPECTOR.md).
+
 ## Claim boundary
 
 The current claim is limited to:
@@ -210,7 +241,9 @@ The current claim is limited to:
   durable acknowledgement or external effect exists;
 - exactly one durable local sink application for each target-side global
   sequence; and
-- canonical terminal token output equal to the uninterrupted fixture oracle.
+- canonical terminal token output equal to the uninterrupted fixture oracle;
+  plus a read-only, metadata-first view for aligned or exactly-one-ahead
+  cooperative selected state.
 
 It does not yet cover:
 
@@ -222,8 +255,10 @@ It does not yet cover:
 - physical storage or system power loss;
 - hostile or non-cooperative local writers;
 - Win32 durable-file behavior;
-- native Linux/FreeBSD recovery evidence; or
-- a production model and tokenizer.
+- native Linux/FreeBSD recovery evidence;
+- a production model and tokenizer;
+- authentication, historical attestation, confidentiality, or privacy; or
+- ordinary `text-run`, unary serving, or streaming result rendering.
 
 ## Focused verification
 
@@ -241,6 +276,14 @@ Run the independent Python sink verifier:
 python3 -m unittest \
   bench.tests.test_prepared_text_package \
   bench.tests.test_prepared_text_result_sink
+```
+
+Run the focused R1k-b3 inspector and independent committed-output oracle:
+
+```bash
+tools/zig-with-ephemeral-cache.sh build \
+  prepared-text-result-inspector-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
 The full process-death campaign is exposed through its own build gate and
@@ -277,8 +320,8 @@ The report is evidence only for the declared fixture and crash model.
 
 Useful independent slices include:
 
-- add a read-only inspector that renders identities and counts without token
-  payloads;
+- add campaign-time monotonic-view assertions around the read-only inspector
+  without granting it recovery authority;
 - reproduce the POSIX campaign on a native Linux filesystem and retain its
   machine/filesystem envelope;
 - add malformed nested-progress fixtures to the independent decoder;

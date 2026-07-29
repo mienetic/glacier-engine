@@ -280,6 +280,8 @@ pub const prepared_text_result_sink =
     @import("prepared_text_result_sink.zig");
 pub const prepared_text_result_sink_file =
     @import("prepared_text_result_sink_file.zig");
+pub const prepared_text_committed_output =
+    @import("prepared_text_committed_output.zig");
 pub const prepared_text_acknowledged_progress =
     @import("prepared_text_acknowledged_progress.zig");
 pub const prepared_text_acknowledged_restore =

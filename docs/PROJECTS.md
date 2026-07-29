@@ -4,6 +4,11 @@ Every item here is intentionally smaller than its parent architecture track. If
 an item still feels large, open a **Claim a contributor slice** issue and ask a
 maintainer to split it with you.
 
+Ready-to-claim work is listed under the repository's
+[contribution label](https://github.com/mienetic/glacier-engine/issues?q=is%3Aissue%20state%3Aopen%20label%3Acontribution);
+environment-specific tasks use `help wanted`, and the smallest onboarding
+slices also use `good first issue`.
+
 ## Good first issues
 
 ### Document one failure path
@@ -981,9 +986,19 @@ generation two retains the byte-identical contract. The combined compile-once
 campaign covers seven bootstrap, 23 source-transition, and 19 target-transition
 `SIGKILL` boundaries, then independently converges to the four-token oracle.
 
+**Completed R1k-b2/R1k-b3 inspection foundation:** the recovery lineage now
+retains the stable package, prepared representation, canonical
+`utf8-byte-v1` manifest, and exact raw-input archive. A separate read-only
+inspector joins the selected checkpoint and sink only when aligned or when the
+nonterminal sink is exactly one acknowledgement ahead. It hides output by
+default and grants no writer or recovery authority. See
+[Prepared-Text Result Inspector](PREPARED_TEXT_RESULT_INSPECTOR.md).
+
 **Next slice:** move the same contract to a declared redistributable
 model/tokenizer fixture and retained native POSIX hosts, then add deterministic
 cancellation and bounded repeated-handoff evidence around the replay boundary.
+Inspector extensions may add campaign-time monotonic-view checks, but must keep
+payload disclosure explicit and must not turn observation into authority.
 
 ### Paged-KV ownership restore fixture
 

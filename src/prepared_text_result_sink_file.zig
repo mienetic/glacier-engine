@@ -75,6 +75,7 @@ pub const Error = result_sink.Error || sweep_file.Error || error{
     InvalidStorage,
     MultipleLinks,
     PublicationMismatch,
+    SelectionChanged,
     StorageContentChanged,
     StorageIdentityChanged,
     StorageIo,
@@ -159,6 +160,13 @@ pub const DecodedSelectorV1 = struct {
     previous_selector_sha256: Digest,
     ledger_sha256: Digest,
     selector_sha256: Digest,
+};
+
+/// One validated selector/immutable-ledger pair. `ledger.encoded` borrows the
+/// caller-provided ledger storage until that storage is reused.
+pub const SelectedSnapshotV1 = struct {
+    selector: DecodedSelectorV1,
+    ledger: DecodedLedgerV1,
 };
 
 pub const StoreStateV1 = enum(u8) {
@@ -509,6 +517,93 @@ pub fn selectorRootV1(body: []const u8) Digest {
     hash.update(selector_domain);
     hash.update(body);
     return finish(&hash);
+}
+
+/// Purely validates that one decoded active selector names and describes the
+/// exact decoded immutable ledger supplied with it.
+pub fn validateSelectedPairV1(
+    selector: DecodedSelectorV1,
+    ledger: DecodedLedgerV1,
+) error{PublicationMismatch}!void {
+    if (selector.acknowledgement_count !=
+        ledger.acknowledgement_count or
+        selector.initial_sequence != ledger.initial_sequence or
+        selector.next_sequence != ledger.next_sequence or
+        selector.request_epoch != ledger.request_epoch or
+        selector.ledger_bytes != ledger.encoded.len or
+        !digestEqual(selector.request_sha256, ledger.request_sha256) or
+        !digestEqual(
+            selector.sink_implementation_sha256,
+            ledger.sink_implementation_sha256,
+        ) or !digestEqual(
+        selector.sink_instance_sha256,
+        ledger.sink_instance_sha256,
+    ) or !digestEqual(selector.ledger_sha256, ledger.ledger_sha256))
+        return Error.PublicationMismatch;
+}
+
+/// Reads and validates the active selector without taking the writer lease.
+/// The selected path is opened read-only without following a final symlink,
+/// and must remain the same exact private single-link regular file throughout
+/// the read.
+pub fn readActiveSelectorReadOnlyV1(
+    directory: std.fs.Dir,
+    storage: *[selector_bytes]u8,
+) !DecodedSelectorV1 {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1
+        .posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
+    const encoded = try readStableExactReadOnlyFileV1(
+        directory,
+        active_selector_name,
+        storage,
+        selector_bytes,
+    );
+    return decodeSelectorV1(encoded);
+}
+
+/// Reads one allocation-free, read-only snapshot of the selected immutable
+/// acknowledgement ledger. Only the active selector and its hash-derived
+/// ledger name are consulted; locks, candidates, and unrelated artifacts are
+/// neither opened nor recovered.
+///
+/// The selector is re-opened after ledger validation. A different or no
+/// longer valid final selector is reported as `SelectionChanged`, so callers
+/// can retry without accepting a mixed publication. The two storage regions
+/// must not overlap.
+pub fn readSelectedSnapshotReadOnlyV1(
+    directory: std.fs.Dir,
+    selector_storage: *[selector_bytes]u8,
+    ledger_storage: []u8,
+    maximum_acknowledgements: usize,
+) !SelectedSnapshotV1 {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1
+        .posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
+    return readSelectedSnapshotObservedV1(
+        directory,
+        selector_storage,
+        ledger_storage,
+        maximum_acknowledgements,
+        null,
+    );
+}
+
+/// Compatibility alias for `readSelectedSnapshotReadOnlyV1`.
+pub fn readSelectedSnapshotV1(
+    directory: std.fs.Dir,
+    selector_storage: *[selector_bytes]u8,
+    ledger_storage: []u8,
+    maximum_acknowledgements: usize,
+) !SelectedSnapshotV1 {
+    return readSelectedSnapshotReadOnlyV1(
+        directory,
+        selector_storage,
+        ledger_storage,
+        maximum_acknowledgements,
+    );
 }
 
 pub fn ResultSinkFileV1(comptime capacity: usize) type {
@@ -1313,6 +1408,68 @@ pub fn ResultSinkFileV1(comptime capacity: usize) type {
     };
 }
 
+const SnapshotReadObserverV1 = struct {
+    context: *anyopaque,
+    before_selector_recheck_fn: *const fn (
+        context: *anyopaque,
+    ) Error!void,
+
+    fn beforeSelectorRecheck(
+        self: SnapshotReadObserverV1,
+    ) Error!void {
+        try self.before_selector_recheck_fn(self.context);
+    }
+};
+
+fn readSelectedSnapshotObservedV1(
+    directory: std.fs.Dir,
+    selector_storage: *[selector_bytes]u8,
+    ledger_storage: []u8,
+    maximum_acknowledgements: usize,
+    observer: ?SnapshotReadObserverV1,
+) !SelectedSnapshotV1 {
+    if (slicesOverlapV1(selector_storage, ledger_storage))
+        return Error.InvalidStorage;
+    const selector = try readActiveSelectorReadOnlyV1(
+        directory,
+        selector_storage,
+    );
+    if (selector.acknowledgement_count >
+        maximum_acknowledgements)
+        return Error.CapacityExceeded;
+    if (ledger_storage.len < selector.ledger_bytes)
+        return Error.BufferTooSmall;
+
+    var ledger_name_storage: [max_generated_name_bytes]u8 =
+        undefined;
+    const ledger_name = try ledgerNameV1(
+        selector.ledger_sha256,
+        &ledger_name_storage,
+    );
+    const ledger_wire = try readStableExactReadOnlyFileV1(
+        directory,
+        ledger_name,
+        ledger_storage,
+        selector.ledger_bytes,
+    );
+    const ledger = try decodeLedgerV1(ledger_wire);
+    try validateSelectedPairV1(selector, ledger);
+
+    if (observer) |active| try active.beforeSelectorRecheck();
+    var recheck_storage: [selector_bytes]u8 = undefined;
+    _ = readActiveSelectorReadOnlyV1(
+        directory,
+        &recheck_storage,
+    ) catch return Error.SelectionChanged;
+    if (!std.mem.eql(
+        u8,
+        selector_storage,
+        &recheck_storage,
+    ))
+        return Error.SelectionChanged;
+    return .{ .selector = selector, .ledger = ledger };
+}
+
 const LoadedActiveV1 = struct {
     ledger: DecodedLedgerV1,
     selector: DecodedSelectorV1,
@@ -1345,29 +1502,8 @@ fn loadActiveV1(
         maximum_ledger_bytes,
     );
     const ledger = try decodeLedgerV1(ledger_wire);
-    try validateLedgerSelectorPairV1(ledger, selector);
+    try validateSelectedPairV1(selector, ledger);
     return .{ .ledger = ledger, .selector = selector };
-}
-
-fn validateLedgerSelectorPairV1(
-    ledger: DecodedLedgerV1,
-    selector: DecodedSelectorV1,
-) Error!void {
-    if (selector.acknowledgement_count !=
-        ledger.acknowledgement_count or
-        selector.initial_sequence != ledger.initial_sequence or
-        selector.next_sequence != ledger.next_sequence or
-        selector.request_epoch != ledger.request_epoch or
-        selector.ledger_bytes != ledger.encoded.len or
-        !digestEqual(selector.request_sha256, ledger.request_sha256) or
-        !digestEqual(
-            selector.sink_implementation_sha256,
-            ledger.sink_implementation_sha256,
-        ) or !digestEqual(
-        selector.sink_instance_sha256,
-        ledger.sink_instance_sha256,
-    ) or !digestEqual(selector.ledger_sha256, ledger.ledger_sha256))
-        return Error.PublicationMismatch;
 }
 
 fn validateExpectedIdentityV1(
@@ -1776,6 +1912,80 @@ fn openSafeFileV1(
         if (kind == .create) 0o600 else 0,
     );
     return .{ .handle = fd };
+}
+
+fn openSafeReadOnlyFileV1(
+    directory: std.fs.Dir,
+    name: []const u8,
+) !std.fs.File {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1
+        .posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
+    if (!@hasField(std.posix.O, "CLOEXEC") or
+        !@hasField(std.posix.O, "NOFOLLOW") or
+        !@hasField(std.posix.O, "NONBLOCK"))
+        return Error.UnsupportedPlatform;
+    var flags: std.posix.O = .{ .ACCMODE = .RDONLY };
+    flags.CLOEXEC = true;
+    flags.NOFOLLOW = true;
+    flags.NONBLOCK = true;
+    if (@hasField(std.posix.O, "NOCTTY")) flags.NOCTTY = true;
+    const fd = try std.posix.openat(
+        directory.fd,
+        name,
+        flags,
+        0,
+    );
+    return .{ .handle = fd };
+}
+
+fn readStableExactReadOnlyFileV1(
+    directory: std.fs.Dir,
+    name: []const u8,
+    storage: []u8,
+    expected_bytes: usize,
+) ![]const u8 {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1
+        .posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
+    if (storage.len < expected_bytes)
+        return Error.BufferTooSmall;
+    const file = try openSafeReadOnlyFileV1(directory, name);
+    defer file.close();
+    const before = try inspectFileV1(file, directory, name);
+    if (before.size != expected_bytes)
+        return Error.StorageContentChanged;
+    const encoded = storage[0..expected_bytes];
+    if (try file.preadAll(encoded, 0) != encoded.len)
+        return Error.StorageIo;
+    const after = try inspectFileV1(file, directory, name);
+    if (!std.meta.eql(before, after))
+        return Error.StorageIdentityChanged;
+    return encoded;
+}
+
+fn slicesOverlapV1(
+    left: []const u8,
+    right: []const u8,
+) bool {
+    if (left.len == 0 or right.len == 0)
+        return false;
+    const left_start = @intFromPtr(left.ptr);
+    const right_start = @intFromPtr(right.ptr);
+    const left_end = std.math.add(
+        usize,
+        left_start,
+        left.len,
+    ) catch return true;
+    const right_end = std.math.add(
+        usize,
+        right_start,
+        right.len,
+    ) catch return true;
+    return left_start < right_end and
+        right_start < left_end;
 }
 
 fn createFreshSafeFileV1(
@@ -2268,6 +2478,81 @@ const PublishForeignFinalObserver = struct {
     }
 };
 
+const TestSelectedPublicationV1 = struct {
+    selector: PreparedSelectorV1,
+    acknowledgement: result_sink.ResultAcknowledgementV1,
+};
+
+fn writeTestSelectedPublicationV1(
+    directory: std.fs.Dir,
+    ledger_storage: []u8,
+) !TestSelectedPublicationV1 {
+    const request = testDigest("snapshot request");
+    var semantic = try result_sink.ResultSinkV1(1).init(
+        request,
+        811,
+        31,
+        testDigest("snapshot implementation"),
+        testDigest("snapshot instance"),
+    );
+    const applied = try semantic.apply(
+        testInput(request, 811, 31, 121),
+    );
+    const ledger = try encodeLedgerV1(
+        semantic.request_sha256,
+        semantic.request_epoch,
+        semantic.initial_sequence,
+        semantic.sink_implementation_sha256,
+        semantic.sink_instance_sha256,
+        semantic.acknowledgementSlice(),
+        ledger_storage,
+    );
+    const decoded = try decodeLedgerV1(ledger.bytes);
+    const selector = try encodeSelectorV1(
+        2,
+        testDigest("snapshot previous selector"),
+        decoded,
+    );
+    var ledger_name_storage: [max_generated_name_bytes]u8 =
+        undefined;
+    const ledger_name = try ledgerNameV1(
+        ledger.ledger_sha256,
+        &ledger_name_storage,
+    );
+    try writeNewExactFileV1(
+        directory,
+        ledger_name,
+        ledger.bytes,
+    );
+    try writeNewExactFileV1(
+        directory,
+        active_selector_name,
+        &selector.bytes,
+    );
+    return .{
+        .selector = selector,
+        .acknowledgement = applied.acknowledgement,
+    };
+}
+
+const ReplaceActiveSelectorSnapshotObserver = struct {
+    directory: std.fs.Dir,
+    replacement_name: []const u8,
+    replaced: bool = false,
+
+    fn beforeSelectorRecheck(
+        context: *anyopaque,
+    ) Error!void {
+        const self: *ReplaceActiveSelectorSnapshotObserver =
+            @ptrCast(@alignCast(context));
+        self.directory.rename(
+            self.replacement_name,
+            active_selector_name,
+        ) catch return Error.StorageIo;
+        self.replaced = true;
+    }
+};
+
 test "initial recovery no-replace platform table is exact" {
     try std.testing.expect(initialRecoveryOsAvailableV1(.linux));
     try std.testing.expect(initialRecoveryOsAvailableV1(.macos));
@@ -2278,6 +2563,371 @@ test "initial recovery no-replace platform table is exact" {
     try std.testing.expect(
         !initialRecoveryOsAvailableV1(.windows),
     );
+}
+
+test "read-only selected snapshot works without a lease or writable storage" {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1
+        .posix_durable_file_adapter)
+        return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    var publication_storage: [2048]u8 = undefined;
+    const publication = try writeTestSelectedPublicationV1(
+        temporary.dir,
+        &publication_storage,
+    );
+    const selected = try decodeSelectorV1(
+        &publication.selector.bytes,
+    );
+    var ledger_name_storage: [max_generated_name_bytes]u8 =
+        undefined;
+    const ledger_name = try ledgerNameV1(
+        selected.ledger_sha256,
+        &ledger_name_storage,
+    );
+    try writeNewExactFileV1(
+        temporary.dir,
+        ".prepared-text-result-ledger-unselected.tmp",
+        "ignored ledger candidate",
+    );
+    try writeNewExactFileV1(
+        temporary.dir,
+        ".prepared-text-result-selector-unselected.tmp",
+        "ignored selector candidate",
+    );
+    try writeNewExactFileV1(
+        temporary.dir,
+        "prepared-text-result-ledger-unselected.bin",
+        "ignored immutable orphan",
+    );
+
+    const selector_file = try temporary.dir.openFile(
+        active_selector_name,
+        .{},
+    );
+    defer selector_file.close();
+    defer selector_file.chmod(0o600) catch {};
+    try selector_file.chmod(0o400);
+    const ledger_file = try temporary.dir.openFile(
+        ledger_name,
+        .{},
+    );
+    defer ledger_file.close();
+    defer ledger_file.chmod(0o600) catch {};
+    try ledger_file.chmod(0o400);
+    defer temporary.dir.chmod(0o700) catch {};
+    try temporary.dir.chmod(0o500);
+
+    var selector_storage: [selector_bytes]u8 = undefined;
+    var ledger_storage: [2048]u8 = undefined;
+    const snapshot = try readSelectedSnapshotReadOnlyV1(
+        temporary.dir,
+        &selector_storage,
+        &ledger_storage,
+        1,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &publication.selector.bytes,
+        &selector_storage,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        snapshot.ledger.acknowledgement_count,
+    );
+    try std.testing.expectEqual(
+        publication.acknowledgement,
+        try snapshot.ledger.acknowledgement(0),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &selected.selector_sha256,
+        &snapshot.selector.selector_sha256,
+    );
+    try validateSelectedPairV1(
+        snapshot.selector,
+        snapshot.ledger,
+    );
+    var mismatched_selector = snapshot.selector;
+    mismatched_selector.ledger_bytes += 1;
+    try std.testing.expectError(
+        Error.PublicationMismatch,
+        validateSelectedPairV1(
+            mismatched_selector,
+            snapshot.ledger,
+        ),
+    );
+
+    var lightweight_storage: [selector_bytes]u8 = undefined;
+    const lightweight = try readActiveSelectorReadOnlyV1(
+        temporary.dir,
+        &lightweight_storage,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &selected.selector_sha256,
+        &lightweight.selector_sha256,
+    );
+    try std.testing.expectError(
+        error.FileNotFound,
+        temporary.dir.access(lock_name, .{}),
+    );
+}
+
+test "selected snapshot enforces caller bounds and disjoint storage" {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1
+        .posix_durable_file_adapter)
+        return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var publication_storage: [2048]u8 = undefined;
+    _ = try writeTestSelectedPublicationV1(
+        temporary.dir,
+        &publication_storage,
+    );
+
+    var selector_storage: [selector_bytes]u8 = undefined;
+    var ledger_storage: [2048]u8 = undefined;
+    try std.testing.expectError(
+        Error.CapacityExceeded,
+        readSelectedSnapshotReadOnlyV1(
+            temporary.dir,
+            &selector_storage,
+            &ledger_storage,
+            0,
+        ),
+    );
+    var small_ledger_storage: [
+        ledger_header_bytes + ledger_footer_bytes
+    ]u8 = undefined;
+    try std.testing.expectError(
+        Error.BufferTooSmall,
+        readSelectedSnapshotReadOnlyV1(
+            temporary.dir,
+            &selector_storage,
+            &small_ledger_storage,
+            1,
+        ),
+    );
+
+    var overlapping_storage: [2048]u8 = undefined;
+    const overlapping_selector: *[selector_bytes]u8 =
+        @ptrCast(&overlapping_storage);
+    try std.testing.expectError(
+        Error.InvalidStorage,
+        readSelectedSnapshotV1(
+            temporary.dir,
+            overlapping_selector,
+            overlapping_storage[selector_bytes - 1 ..],
+            1,
+        ),
+    );
+}
+
+test "read-only snapshot rejects unsafe selected file surfaces" {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1
+        .posix_durable_file_adapter)
+        return error.SkipZigTest;
+
+    {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        try temporary.dir.makeDir(active_selector_name);
+        var selector_storage: [selector_bytes]u8 = undefined;
+        try std.testing.expectError(
+            Error.InvalidStorage,
+            readActiveSelectorReadOnlyV1(
+                temporary.dir,
+                &selector_storage,
+            ),
+        );
+    }
+
+    {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var publication_storage: [2048]u8 = undefined;
+        const publication = try writeTestSelectedPublicationV1(
+            temporary.dir,
+            &publication_storage,
+        );
+        const selected = try decodeSelectorV1(
+            &publication.selector.bytes,
+        );
+        var ledger_name_storage: [
+            max_generated_name_bytes
+        ]u8 = undefined;
+        const ledger_name = try ledgerNameV1(
+            selected.ledger_sha256,
+            &ledger_name_storage,
+        );
+        try std.posix.linkat(
+            temporary.dir.fd,
+            ledger_name,
+            temporary.dir.fd,
+            "selected-ledger-hardlink",
+            0,
+        );
+        var selector_storage: [selector_bytes]u8 = undefined;
+        var ledger_storage: [2048]u8 = undefined;
+        try std.testing.expectError(
+            Error.MultipleLinks,
+            readSelectedSnapshotReadOnlyV1(
+                temporary.dir,
+                &selector_storage,
+                &ledger_storage,
+                1,
+            ),
+        );
+    }
+
+    {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var publication_storage: [2048]u8 = undefined;
+        const publication = try writeTestSelectedPublicationV1(
+            temporary.dir,
+            &publication_storage,
+        );
+        const selected = try decodeSelectorV1(
+            &publication.selector.bytes,
+        );
+        var ledger_name_storage: [
+            max_generated_name_bytes
+        ]u8 = undefined;
+        const ledger_name = try ledgerNameV1(
+            selected.ledger_sha256,
+            &ledger_name_storage,
+        );
+        const ledger_file = try temporary.dir.openFile(
+            ledger_name,
+            .{},
+        );
+        defer ledger_file.close();
+        try ledger_file.chmod(0o644);
+        var selector_storage: [selector_bytes]u8 = undefined;
+        var ledger_storage: [2048]u8 = undefined;
+        try std.testing.expectError(
+            Error.UnsafePermissions,
+            readSelectedSnapshotReadOnlyV1(
+                temporary.dir,
+                &selector_storage,
+                &ledger_storage,
+                1,
+            ),
+        );
+    }
+
+    {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var publication_storage: [2048]u8 = undefined;
+        _ = try writeTestSelectedPublicationV1(
+            temporary.dir,
+            &publication_storage,
+        );
+        try temporary.dir.rename(
+            active_selector_name,
+            "selector-symlink-target",
+        );
+        try temporary.dir.symLink(
+            "selector-symlink-target",
+            active_selector_name,
+            .{},
+        );
+        var selector_storage: [selector_bytes]u8 = undefined;
+        try std.testing.expectError(
+            error.SymLinkLoop,
+            readActiveSelectorReadOnlyV1(
+                temporary.dir,
+                &selector_storage,
+            ),
+        );
+    }
+
+    {
+        var temporary = std.testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var publication_storage: [2048]u8 = undefined;
+        _ = try writeTestSelectedPublicationV1(
+            temporary.dir,
+            &publication_storage,
+        );
+        const selector_file = try temporary.dir.openFile(
+            active_selector_name,
+            .{ .mode = .read_write },
+        );
+        defer selector_file.close();
+        try selector_file.setEndPos(selector_bytes - 1);
+        var selector_storage: [selector_bytes]u8 = undefined;
+        try std.testing.expectError(
+            Error.StorageContentChanged,
+            readActiveSelectorReadOnlyV1(
+                temporary.dir,
+                &selector_storage,
+            ),
+        );
+    }
+}
+
+test "selected snapshot reports selector replacement as selection changed" {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1
+        .posix_durable_file_adapter)
+        return error.SkipZigTest;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var publication_storage: [2048]u8 = undefined;
+    _ = try writeTestSelectedPublicationV1(
+        temporary.dir,
+        &publication_storage,
+    );
+
+    var replacement_ledger_storage: [
+        ledger_header_bytes + ledger_footer_bytes
+    ]u8 = undefined;
+    const replacement_ledger = try encodeLedgerV1(
+        testDigest("replacement snapshot request"),
+        812,
+        41,
+        testDigest("replacement snapshot implementation"),
+        testDigest("replacement snapshot instance"),
+        &.{},
+        &replacement_ledger_storage,
+    );
+    const replacement_selector =
+        try prepareInitialSelectorV1(replacement_ledger);
+    const replacement_name = "replacement-active-selector";
+    try writeNewExactFileV1(
+        temporary.dir,
+        replacement_name,
+        &replacement_selector.bytes,
+    );
+    var observer: ReplaceActiveSelectorSnapshotObserver = .{
+        .directory = temporary.dir,
+        .replacement_name = replacement_name,
+    };
+    var selector_storage: [selector_bytes]u8 = undefined;
+    var ledger_storage: [2048]u8 = undefined;
+    try std.testing.expectError(
+        Error.SelectionChanged,
+        readSelectedSnapshotObservedV1(
+            temporary.dir,
+            &selector_storage,
+            &ledger_storage,
+            1,
+            .{
+                .context = &observer,
+                .before_selector_recheck_fn = ReplaceActiveSelectorSnapshotObserver
+                    .beforeSelectorRecheck,
+            },
+        ),
+    );
+    try std.testing.expect(observer.replaced);
 }
 
 test "recoverable empty initialization creates and accepts exact selection" {

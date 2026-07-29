@@ -568,7 +568,7 @@ pub fn decodeNonterminalV1(
     };
 }
 
-const DecodedProducerContextV1 = struct {
+pub const DecodedProducerContextV1 = struct {
     manifest: restart_manifest.DecodedV1,
     artifacts: successor.ArtifactsV1,
     checkpoint: checkpoint.DecodedV1,
@@ -579,7 +579,9 @@ const DecodedProducerContextV1 = struct {
 /// Recover the plan and ownership that produced the immediate predecessor.
 /// Generation two is the durable source-exit archive; every later generation
 /// is an acknowledged nonterminal set whose manifest remains at object five.
-fn decodeProducerContextV1(
+/// This decoder performs no allocation, I/O, or mutation. Returned decoded
+/// views may borrow bytes owned by `predecessor`.
+pub fn decodeProducerContextV1(
     predecessor: DecodedSelectionV1,
 ) Error!DecodedProducerContextV1 {
     if (predecessor.selector.generation ==
@@ -2121,6 +2123,13 @@ test "acknowledged nonterminal progress is canonical and self-contained" {
         u8,
         &fixture.predecessor_selector,
         embedded.bytes,
+    );
+    const later_producer =
+        try decodeProducerContextV1(decoded.selected);
+    try std.testing.expectEqualSlices(
+        u8,
+        &decoded.manifest.manifest_sha256,
+        &later_producer.manifest.manifest_sha256,
     );
 }
 

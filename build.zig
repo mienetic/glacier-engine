@@ -575,6 +575,95 @@ pub fn build(b: *std.Build) void {
         &provider_evidence_inspector_tests.step,
     );
 
+    // Read-only committed-output inspector. The focused gate combines its Zig
+    // parser/renderer tests with the independent standard-library-only Python
+    // reconciliation model; compile-only consumers never execute the oracle.
+    const prepared_text_result_inspector_exe = b.addExecutable(.{
+        .name = "glacier-prepared-text-result-inspector",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/cli/prepared_text_result_inspector.zig",
+            ),
+            .target = target,
+            .optimize = cli_control_optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    prepared_text_result_inspector_exe.root_module.addImport(
+        "engine",
+        engine_mod,
+    );
+    prepared_text_result_inspector_exe.linkLibC();
+    if (int4_neon) |lib|
+        prepared_text_result_inspector_exe.linkLibrary(lib);
+    const run_prepared_text_result_inspector =
+        b.addRunArtifact(prepared_text_result_inspector_exe);
+    if (b.args) |args|
+        run_prepared_text_result_inspector.addArgs(args);
+    const prepared_text_result_inspector_run_step = b.step(
+        "prepared-text-result-inspector",
+        "Inspect one read-only prepared-text committed-output view",
+    );
+    prepared_text_result_inspector_run_step.dependOn(
+        &run_prepared_text_result_inspector.step,
+    );
+
+    const prepared_text_result_inspector_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "src/cli/prepared_text_result_inspector.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    prepared_text_result_inspector_tests.root_module.addImport(
+        "engine",
+        engine_mod,
+    );
+    prepared_text_result_inspector_tests.linkLibC();
+    if (int4_neon) |lib|
+        prepared_text_result_inspector_tests.linkLibrary(lib);
+    const run_prepared_text_result_inspector_tests =
+        b.addRunArtifact(prepared_text_result_inspector_tests);
+    const run_prepared_text_committed_output_oracle =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_prepared_text_committed_output",
+        });
+    run_prepared_text_committed_output_oracle.setCwd(b.path("."));
+    run_prepared_text_committed_output_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_prepared_text_committed_output_oracle.setEnvironmentVariable(
+        "PYTHONPATH",
+        ".",
+    );
+    const prepared_text_result_inspector_test_step = b.step(
+        "prepared-text-result-inspector-test",
+        "Run focused committed-output inspector tests and Python oracle",
+    );
+    prepared_text_result_inspector_test_step.dependOn(
+        &run_prepared_text_result_inspector_tests.step,
+    );
+    prepared_text_result_inspector_test_step.dependOn(
+        &run_prepared_text_committed_output_oracle.step,
+    );
+    const prepared_text_result_inspector_compile_step = b.step(
+        "prepared-text-result-inspector-compile",
+        "Compile the committed-output inspector without running it",
+    );
+    prepared_text_result_inspector_compile_step.dependOn(
+        &prepared_text_result_inspector_exe.step,
+    );
+    prepared_text_result_inspector_compile_step.dependOn(
+        &prepared_text_result_inspector_tests.step,
+    );
+
     // Verify the experimental C boundary in three independent ways: the Zig
     // implementation tests its fail-closed status behavior, a C11 consumer
     // compiles against the installed-shape header and static library, and a
@@ -1141,6 +1230,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_package_module_tests.step);
     test_step.dependOn(&run_runtime_support_inspector_tests.step);
     test_step.dependOn(provider_evidence_inspector_test_step);
+    test_step.dependOn(prepared_text_result_inspector_test_step);
     test_step.dependOn(&run_media_external_format_tests.step);
     test_step.dependOn(&run_progressive_int4_tests.step);
     test_step.dependOn(&run_integration_tests.step);
@@ -1167,6 +1257,9 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&runtime_support_inspector_tests.step);
     test_compile_step.dependOn(
         provider_evidence_inspector_compile_step,
+    );
+    test_compile_step.dependOn(
+        prepared_text_result_inspector_compile_step,
     );
     test_compile_step.dependOn(&media_external_format_tests.step);
     test_compile_step.dependOn(&progressive_int4_tests.step);
@@ -4909,6 +5002,57 @@ pub fn build(b: *std.Build) void {
             ".",
         );
 
+        // Keep the inspector's focused gate bounded while still exercising
+        // real generation-two, exactly-one-ahead, and terminal filesystem
+        // selections through the same compile-once worker used by the full
+        // recovery campaign.
+        const run_prepared_text_result_inspector_integration =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "bench.prepared_text_recovery_campaign",
+                "--worker",
+            });
+        run_prepared_text_result_inspector_integration.addArtifactArg(
+            prepared_text_recovery_worker_exe.?,
+        );
+        run_prepared_text_result_inspector_integration.addArg(
+            "--inspector",
+        );
+        run_prepared_text_result_inspector_integration.addArtifactArg(
+            prepared_text_result_inspector_exe,
+        );
+        run_prepared_text_result_inspector_integration.addArg(
+            "--directory",
+        );
+        _ = run_prepared_text_result_inspector_integration
+            .addOutputDirectoryArg(
+            "prepared-text-result-inspector-recovery",
+        );
+        run_prepared_text_result_inspector_integration.addArgs(&.{
+            "--crash-point",
+            "after_sink_before_selector",
+        });
+        run_prepared_text_result_inspector_integration.setCwd(
+            b.path("."),
+        );
+        run_prepared_text_result_inspector_integration
+            .setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_prepared_text_result_inspector_integration
+            .setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+        run_prepared_text_result_inspector_integration.step.dependOn(
+            &run_prepared_text_recovery_model.step,
+        );
+        prepared_text_result_inspector_test_step.dependOn(
+            &run_prepared_text_result_inspector_integration.step,
+        );
+
         const run_prepared_text_recovery_campaign =
             b.addSystemCommand(&.{
                 "python3",
@@ -4918,6 +5062,10 @@ pub fn build(b: *std.Build) void {
             });
         run_prepared_text_recovery_campaign.addArtifactArg(
             prepared_text_recovery_worker_exe.?,
+        );
+        run_prepared_text_recovery_campaign.addArg("--inspector");
+        run_prepared_text_recovery_campaign.addArtifactArg(
+            prepared_text_result_inspector_exe,
         );
         run_prepared_text_recovery_campaign.addArg("--directory");
         _ = run_prepared_text_recovery_campaign.addOutputDirectoryArg(
@@ -4933,7 +5081,7 @@ pub fn build(b: *std.Build) void {
             ".",
         );
         run_prepared_text_recovery_campaign.step.dependOn(
-            &run_prepared_text_recovery_model.step,
+            &run_prepared_text_result_inspector_integration.step,
         );
         prepared_text_recovery_test_step.dependOn(
             &run_prepared_text_recovery_campaign.step,
@@ -6793,6 +6941,9 @@ pub fn build(b: *std.Build) void {
     );
     profile_host_tool_compile_step.dependOn(
         provider_evidence_inspector_compile_step,
+    );
+    profile_host_tool_compile_step.dependOn(
+        prepared_text_result_inspector_compile_step,
     );
     profile_host_tool_compile_step.dependOn(
         native_observation_compile_step,

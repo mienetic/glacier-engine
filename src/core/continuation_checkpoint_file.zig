@@ -67,6 +67,7 @@ pub const Error = sweep_file.Error || error{
     ConsumerClaimInFlight,
     StaleConsumerClaim,
     PublicationMismatch,
+    SelectionChanged,
     UnsafeDestination,
 };
 
@@ -131,6 +132,17 @@ pub const DecodedSetV1 = struct {
 /// `bytes` and every object slice in `set` borrow caller-owned `storage`.
 pub const LoadedRetainedSetV1 = struct {
     bytes: []const u8,
+    set: DecodedSetV1,
+};
+
+/// One stable active selector and its content-addressed immutable archive.
+/// Both byte slices, including every object slice in `set`, borrow the
+/// caller-owned selector and set storage supplied to
+/// `readSelectedSnapshotReadOnlyV1`.
+pub const ReadOnlySelectedSnapshotV1 = struct {
+    selector_bytes: []const u8,
+    set_bytes: []const u8,
+    selector: DecodedSelectorV1,
     set: DecodedSetV1,
 };
 
@@ -787,6 +799,15 @@ const ExactFileStateV1 = enum {
     mismatched,
 };
 
+const ReadOnlySelectionObserverV1 = struct {
+    context: *anyopaque,
+    after_pair_fn: *const fn (context: *anyopaque) Error!void,
+
+    fn afterPair(self: ReadOnlySelectionObserverV1) Error!void {
+        try self.after_pair_fn(self.context);
+    }
+};
+
 pub fn encodeSetV1(
     metadata: MetadataV1,
     objects: []const ObjectInputV1,
@@ -1025,18 +1046,89 @@ pub fn decodeSelectorV1(
         .challenge_sha256 = encoded[128..160].*,
         .selector_sha256 = selector_sha256,
     };
-    if (decoded.generation == 0 or decoded.request_epoch == 0 or
-        decoded.publication_next_sequence == 0 or
-        decoded.checkpoint_bytes <
-            set_payload_offset + set_footer_bytes or
-        isZero(decoded.checkpoint_sha256) or
-        isZero(decoded.challenge_sha256) or
-        (decoded.generation == 1 and
-            !isZero(decoded.previous_selector_sha256)) or
-        (decoded.generation > 1 and
-            isZero(decoded.previous_selector_sha256)))
-        return Error.InvalidSelector;
+    try validateDecodedSelectorFieldsV1(decoded);
     return decoded;
+}
+
+/// Read and decode the active selector without acquiring a lease or opening
+/// any file for write. The named entry and pinned descriptor must remain the
+/// same private, single-link regular file for the complete read.
+pub fn readActiveSelectorReadOnlyV1(
+    directory: std.fs.Dir,
+    storage: *[selector_bytes]u8,
+) !DecodedSelectorV1 {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
+    const encoded = try readExactReadOnlyFileV1(
+        directory,
+        active_selector_name,
+        storage,
+        selector_bytes,
+    );
+    return decodeSelectorV1(encoded);
+}
+
+/// Load the immutable set selected by an already-decoded selector without
+/// consulting the active selector. This is suitable for retained predecessor
+/// selectors: the selector supplies the only accepted content-addressed name,
+/// and the full decoded selector/set pair is checked before return.
+pub fn loadRetainedSetReadOnlyV1(
+    directory: std.fs.Dir,
+    selector: DecodedSelectorV1,
+    storage: []u8,
+    max_set_bytes: usize,
+) !LoadedRetainedSetV1 {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
+    try validateDecodedSelectorFieldsV1(selector);
+    if (max_set_bytes < set_payload_offset + set_footer_bytes or
+        storage.len < max_set_bytes)
+        return Error.BufferTooSmall;
+    const checkpoint_bytes = std.math.cast(
+        usize,
+        selector.checkpoint_bytes,
+    ) orelse return Error.CapacityExceeded;
+    if (checkpoint_bytes > max_set_bytes)
+        return Error.BufferTooSmall;
+
+    var archive_name_storage: [max_generated_name_bytes]u8 = undefined;
+    const archive_name = archiveNameV1(
+        selector.checkpoint_sha256,
+        &archive_name_storage,
+    ) catch return Error.InvalidSelector;
+    const bytes = try readExactReadOnlyFileV1(
+        directory,
+        archive_name,
+        storage,
+        max_set_bytes,
+    );
+    const set = try decodeSetV1(bytes);
+    try validateDecodedPairV1(bytes, set, selector);
+    return .{ .bytes = bytes, .set = set };
+}
+
+/// Resolve one active selector/archive snapshot without taking the checkpoint
+/// lease. This API never creates, locks, repairs, renames, truncates, or writes
+/// storage. The active selector is reopened and reread at the end; any final
+/// read failure or byte change is reported as `SelectionChanged`.
+pub fn readSelectedSnapshotReadOnlyV1(
+    directory: std.fs.Dir,
+    selector_storage: *[selector_bytes]u8,
+    set_storage: []u8,
+    max_set_bytes: usize,
+) !ReadOnlySelectedSnapshotV1 {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
+    return readSelectedSnapshotObservedReadOnlyV1(
+        directory,
+        selector_storage,
+        set_storage,
+        max_set_bytes,
+        null,
+    );
 }
 
 pub fn publishV1(
@@ -1292,11 +1384,21 @@ fn validatePreparedPairV1(
         u8,
         &prepared_selector.selector_sha256,
         &selector.selector_sha256,
-    ) or selector.generation != set.metadata.generation or
+    ))
+        return Error.CheckpointMismatch;
+    try validateDecodedPairV1(prepared_set.bytes, set, selector);
+}
+
+fn validateDecodedPairV1(
+    set_bytes: []const u8,
+    set: DecodedSetV1,
+    selector: DecodedSelectorV1,
+) Error!void {
+    if (selector.generation != set.metadata.generation or
         selector.request_epoch != set.metadata.request_epoch or
         selector.publication_next_sequence !=
             set.metadata.publication_next_sequence or
-        selector.checkpoint_bytes != prepared_set.bytes.len or
+        selector.checkpoint_bytes != set_bytes.len or
         !std.mem.eql(
             u8,
             &selector.checkpoint_sha256,
@@ -1358,6 +1460,22 @@ fn validatePublicationForLeaseV1(
     return selector;
 }
 
+fn validateDecodedSelectorFieldsV1(
+    selector: DecodedSelectorV1,
+) Error!void {
+    if (selector.generation == 0 or selector.request_epoch == 0 or
+        selector.publication_next_sequence == 0 or
+        selector.checkpoint_bytes <
+            set_payload_offset + set_footer_bytes or
+        isZero(selector.checkpoint_sha256) or
+        isZero(selector.challenge_sha256) or
+        (selector.generation == 1 and
+            !isZero(selector.previous_selector_sha256)) or
+        (selector.generation > 1 and
+            isZero(selector.previous_selector_sha256)))
+        return Error.InvalidSelector;
+}
+
 fn validateMetadataV1(metadata: MetadataV1) Error!void {
     if (metadata.generation == 0 or metadata.request_epoch == 0 or
         metadata.publication_next_sequence == 0 or
@@ -1399,6 +1517,61 @@ fn objectLessThan(
     const right = @intFromEnum(right_kind);
     return left < right or
         (left == right and left_ordinal < right_ordinal);
+}
+
+fn readSelectedSnapshotObservedReadOnlyV1(
+    directory: std.fs.Dir,
+    selector_storage: *[selector_bytes]u8,
+    set_storage: []u8,
+    max_set_bytes: usize,
+    observer: ?ReadOnlySelectionObserverV1,
+) !ReadOnlySelectedSnapshotV1 {
+    if (max_set_bytes < set_payload_offset + set_footer_bytes or
+        set_storage.len < max_set_bytes)
+        return Error.BufferTooSmall;
+    if (slicesOverlap(selector_storage, set_storage[0..max_set_bytes]))
+        return Error.UnsafeDestination;
+
+    const selector = try readActiveSelectorReadOnlyV1(
+        directory,
+        selector_storage,
+    );
+    const retained = loadRetainedSetReadOnlyV1(
+        directory,
+        selector,
+        set_storage,
+        max_set_bytes,
+    ) catch |load_error| {
+        requireActiveSelectorUnchangedV1(
+            directory,
+            selector_storage,
+        ) catch return Error.SelectionChanged;
+        return load_error;
+    };
+    if (observer) |value| try value.afterPair();
+    try requireActiveSelectorUnchangedV1(
+        directory,
+        selector_storage,
+    );
+    return .{
+        .selector_bytes = selector_storage,
+        .set_bytes = retained.bytes,
+        .selector = selector,
+        .set = retained.set,
+    };
+}
+
+fn requireActiveSelectorUnchangedV1(
+    directory: std.fs.Dir,
+    expected: *const [selector_bytes]u8,
+) Error!void {
+    var final_storage: [selector_bytes]u8 = undefined;
+    _ = readActiveSelectorReadOnlyV1(
+        directory,
+        &final_storage,
+    ) catch return Error.SelectionChanged;
+    if (!std.mem.eql(u8, expected, &final_storage))
+        return Error.SelectionChanged;
 }
 
 fn loadActiveV1(
@@ -1845,6 +2018,48 @@ fn readExactFileV1(
     return encoded;
 }
 
+fn readExactReadOnlyFileV1(
+    directory: std.fs.Dir,
+    name: []const u8,
+    storage: []u8,
+    max_bytes: usize,
+) ![]const u8 {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
+    const file = try openSafeReadOnlyFileV1(directory, name);
+    defer file.close();
+    const before = try inspectFileV1(file, directory, name);
+    if (before.size > max_bytes or before.size > storage.len)
+        return Error.BufferTooSmall;
+    const encoded = storage[0..before.size];
+    if (try file.preadAll(encoded, 0) != encoded.len)
+        return Error.StorageIo;
+    const after = try inspectFileV1(file, directory, name);
+    if (!std.meta.eql(before, after))
+        return Error.StorageIdentityChanged;
+    return encoded;
+}
+
+fn openSafeReadOnlyFileV1(
+    directory: std.fs.Dir,
+    name: []const u8,
+) !std.fs.File {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
+    if (!@hasField(std.posix.O, "CLOEXEC") or
+        !@hasField(std.posix.O, "NOFOLLOW"))
+        return Error.UnsupportedPlatform;
+    var flags: std.posix.O = .{ .ACCMODE = .RDONLY };
+    flags.CLOEXEC = true;
+    flags.NOFOLLOW = true;
+    if (@hasField(std.posix.O, "NOCTTY")) flags.NOCTTY = true;
+    if (@hasField(std.posix.O, "NONBLOCK")) flags.NONBLOCK = true;
+    const fd = try std.posix.openat(directory.fd, name, flags, 0);
+    return .{ .handle = fd };
+}
+
 fn openSafeFileV1(
     directory: std.fs.Dir,
     name: []const u8,
@@ -1878,6 +2093,9 @@ fn inspectFileV1(
     directory: std.fs.Dir,
     name: []const u8,
 ) !FileViewV1 {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return Error.UnsupportedPlatform;
     const file_stat = try std.posix.fstat(file.handle);
     const entry_stat = try std.posix.fstatat(
         directory.fd,
@@ -2269,6 +2487,335 @@ fn initialTestPairV1(
         .set = set,
         .selector = try prepareInitialSelectorV1(set),
     };
+}
+
+fn installReadOnlyTestPairV1(
+    directory: std.fs.Dir,
+    pair: InitialTestPairV1,
+) !void {
+    var archive_name_storage: [max_generated_name_bytes]u8 = undefined;
+    const archive_name = try archiveNameV1(
+        pair.set.checkpoint_sha256,
+        &archive_name_storage,
+    );
+    try writeNewFileV1(directory, archive_name, pair.set.bytes);
+    try writeNewFileV1(
+        directory,
+        active_selector_name,
+        &pair.selector.bytes,
+    );
+}
+
+const ReadOnlySelectionReplacementObserverV1 = struct {
+    directory: *std.fs.Dir,
+    replacement_name: []const u8,
+    replaced: bool = false,
+
+    fn afterPair(raw: *anyopaque) Error!void {
+        const self: *ReadOnlySelectionReplacementObserverV1 =
+            @ptrCast(@alignCast(raw));
+        self.directory.rename(
+            self.replacement_name,
+            active_selector_name,
+        ) catch return Error.StorageIo;
+        self.replaced = true;
+    }
+};
+
+test "read-only checkpoint APIs select one stable private snapshot" {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
+    const testing = std.testing;
+    var temporary = testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const challenge = [_]u8{0xa1} ** 32;
+    var encoded_storage: [1024]u8 = undefined;
+    const pair = try initialTestPairV1(
+        &encoded_storage,
+        challenge,
+        1001,
+        "read-only-selected",
+    );
+    try installReadOnlyTestPairV1(
+        temporary.dir,
+        pair,
+    );
+    var archive_name_storage: [max_generated_name_bytes]u8 = undefined;
+    const archive_name = try archiveNameV1(
+        pair.set.checkpoint_sha256,
+        &archive_name_storage,
+    );
+    try writeNewFileV1(
+        temporary.dir,
+        ".glacier-checkpoint-orphan.candidate",
+        "ignored selector candidate",
+    );
+    try writeNewFileV1(
+        temporary.dir,
+        "checkpoint-orphan.set",
+        "ignored immutable orphan",
+    );
+
+    {
+        const active_file = try openSafeFileV1(
+            temporary.dir,
+            active_selector_name,
+            .existing,
+        );
+        defer active_file.close();
+        try std.posix.fchmod(active_file.handle, 0o400);
+    }
+    {
+        const archive_file = try openSafeFileV1(
+            temporary.dir,
+            archive_name,
+            .existing,
+        );
+        defer archive_file.close();
+        try std.posix.fchmod(archive_file.handle, 0o400);
+    }
+    try temporary.dir.chmod(0o500);
+    defer temporary.dir.chmod(0o700) catch unreachable;
+
+    var selector_storage: [selector_bytes]u8 = undefined;
+    const decoded_selector = try readActiveSelectorReadOnlyV1(
+        temporary.dir,
+        &selector_storage,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &pair.selector.selector_sha256,
+        &decoded_selector.selector_sha256,
+    );
+
+    var set_storage: [1024]u8 = undefined;
+    const selected = try readSelectedSnapshotReadOnlyV1(
+        temporary.dir,
+        &selector_storage,
+        &set_storage,
+        set_storage.len,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &pair.selector.bytes,
+        selected.selector_bytes,
+    );
+    try testing.expectEqualSlices(
+        u8,
+        pair.set.bytes,
+        selected.set_bytes,
+    );
+    try testing.expectEqualStrings(
+        "read-only-selected",
+        (try selected.set.object(.extension, 0)).bytes,
+    );
+
+    var retained_storage: [1024]u8 = undefined;
+    const retained = try loadRetainedSetReadOnlyV1(
+        temporary.dir,
+        decoded_selector,
+        &retained_storage,
+        retained_storage.len,
+    );
+    try testing.expectEqualSlices(u8, pair.set.bytes, retained.bytes);
+    try testing.expectError(
+        error.FileNotFound,
+        temporary.dir.openFile(lock_name, .{}),
+    );
+}
+
+test "read-only checkpoint set loading is bounded and selector bound" {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
+    const testing = std.testing;
+    var temporary = testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const challenge = [_]u8{0xa2} ** 32;
+    var encoded_storage: [1024]u8 = undefined;
+    const pair = try initialTestPairV1(
+        &encoded_storage,
+        challenge,
+        1002,
+        "bounded-read-only",
+    );
+    try installReadOnlyTestPairV1(temporary.dir, pair);
+
+    var selector_storage: [selector_bytes]u8 = undefined;
+    const selector = try readActiveSelectorReadOnlyV1(
+        temporary.dir,
+        &selector_storage,
+    );
+    var set_storage: [1024]u8 = undefined;
+    try testing.expectError(
+        Error.BufferTooSmall,
+        loadRetainedSetReadOnlyV1(
+            temporary.dir,
+            selector,
+            &set_storage,
+            pair.set.bytes.len - 1,
+        ),
+    );
+    try testing.expectError(
+        Error.BufferTooSmall,
+        readSelectedSnapshotReadOnlyV1(
+            temporary.dir,
+            &selector_storage,
+            &set_storage,
+            pair.set.bytes.len - 1,
+        ),
+    );
+    var mismatched_selector = selector;
+    mismatched_selector.request_epoch += 1;
+    try testing.expectError(
+        Error.CheckpointMismatch,
+        loadRetainedSetReadOnlyV1(
+            temporary.dir,
+            mismatched_selector,
+            &set_storage,
+            set_storage.len,
+        ),
+    );
+}
+
+test "read-only checkpoint selection rejects unsafe entry types and links" {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
+    const testing = std.testing;
+    const challenge = [_]u8{0xa3} ** 32;
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        const victim = try temporary.dir.createFile("selector-victim", .{
+            .read = true,
+            .exclusive = true,
+            .mode = 0o600,
+        });
+        victim.close();
+        try temporary.dir.symLink(
+            "selector-victim",
+            active_selector_name,
+            .{},
+        );
+        var selector_storage: [selector_bytes]u8 = undefined;
+        try testing.expectError(
+            error.SymLinkLoop,
+            readActiveSelectorReadOnlyV1(
+                temporary.dir,
+                &selector_storage,
+            ),
+        );
+    }
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        var encoded_storage: [1024]u8 = undefined;
+        const pair = try initialTestPairV1(
+            &encoded_storage,
+            challenge,
+            1003,
+            "hard-linked-set",
+        );
+        try installReadOnlyTestPairV1(
+            temporary.dir,
+            pair,
+        );
+        var archive_name_storage: [max_generated_name_bytes]u8 = undefined;
+        const archive_name = try archiveNameV1(
+            pair.set.checkpoint_sha256,
+            &archive_name_storage,
+        );
+        try std.posix.linkat(
+            temporary.dir.fd,
+            archive_name,
+            temporary.dir.fd,
+            "set-hard-link",
+            0,
+        );
+        var selector_storage: [selector_bytes]u8 = undefined;
+        var set_storage: [1024]u8 = undefined;
+        try testing.expectError(
+            Error.MultipleLinks,
+            readSelectedSnapshotReadOnlyV1(
+                temporary.dir,
+                &selector_storage,
+                &set_storage,
+                set_storage.len,
+            ),
+        );
+    }
+
+    {
+        var temporary = testing.tmpDir(.{});
+        defer temporary.cleanup();
+        try temporary.dir.makeDir(active_selector_name);
+        var selector_storage: [selector_bytes]u8 = undefined;
+        try testing.expectError(
+            Error.InvalidStorage,
+            readActiveSelectorReadOnlyV1(
+                temporary.dir,
+                &selector_storage,
+            ),
+        );
+    }
+}
+
+test "read-only checkpoint selection reports final selector drift" {
+    if (comptime !platform_capabilities
+        .current_adapter_availability_v1.posix_durable_file_adapter)
+        return error.SkipZigTest;
+    const testing = std.testing;
+    var temporary = testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const challenge = [_]u8{0xa4} ** 32;
+    var selected_set_storage: [1024]u8 = undefined;
+    const selected_pair = try initialTestPairV1(
+        &selected_set_storage,
+        challenge,
+        1004,
+        "selected-before-drift",
+    );
+    try installReadOnlyTestPairV1(
+        temporary.dir,
+        selected_pair,
+    );
+    var replacement_set_storage: [1024]u8 = undefined;
+    const replacement_pair = try initialTestPairV1(
+        &replacement_set_storage,
+        challenge,
+        1005,
+        "replacement-after-drift",
+    );
+    const replacement_name = "active-selector-replacement";
+    try writeNewFileV1(
+        temporary.dir,
+        replacement_name,
+        &replacement_pair.selector.bytes,
+    );
+    var replacement_observer: ReadOnlySelectionReplacementObserverV1 = .{
+        .directory = &temporary.dir,
+        .replacement_name = replacement_name,
+    };
+    var selector_storage: [selector_bytes]u8 = undefined;
+    var set_storage: [1024]u8 = undefined;
+    try testing.expectError(
+        Error.SelectionChanged,
+        readSelectedSnapshotObservedReadOnlyV1(
+            temporary.dir,
+            &selector_storage,
+            &set_storage,
+            set_storage.len,
+            .{
+                .context = &replacement_observer,
+                .after_pair_fn = ReadOnlySelectionReplacementObserverV1.afterPair,
+            },
+        ),
+    );
+    try testing.expect(replacement_observer.replaced);
 }
 
 const InitialFaultObserverV1 = struct {

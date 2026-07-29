@@ -529,7 +529,38 @@ zig build text-runtime-golden-path-test \
   -Doptimize=ReleaseSafe -Dmetal=false -j2
 ```
 
-## 11. Make a first contribution
+## 11. Inspect a durable prepared-text result
+
+Run the focused R1k-b3 reconciler, renderer, and independent Python oracle:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  prepared-text-result-inspector-test \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2
+```
+
+If you have a directory produced by the prepared-text recovery fixture, inspect
+its selected checkpoint and result sink without acquiring either writer lease:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  prepared-text-result-inspector \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2 -- \
+  --directory PATH
+```
+
+The default JSON contains identities, counts, sequence state, and roots but no
+token or byte payload. Add `--reveal-output` only when disclosure is intended.
+That mode emits exact token IDs, lowercase byte hex, escaped bytes, and a strict
+UTF-8 string or `null`. It never substitutes invalid bytes with replacement
+text.
+
+The inspector accepts only an aligned checkpoint/sink view or a nonterminal
+sink exactly one acknowledgement ahead. It performs no recovery or write and
+does not make the process-local `text-run` command durable. See
+[Prepared-Text Result Inspector](PREPARED_TEXT_RESULT_INSPECTOR.md).
+
+## 12. Make a first contribution
 
 Pick one item from [Contributor projects](PROJECTS.md). Add or update a rejection
 test before changing the contract, run the smallest relevant suite, and open a

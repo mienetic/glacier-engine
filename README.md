@@ -290,6 +290,12 @@ formats, and independent verifiers.
   an exclusive POSIX lease and one-shot activation grant fence the restored
   target, while a receipt-independent terminal semantic compares it with a
   separately retired uninterrupted oracle.
+- **Read-only committed-output inspection.** The experimental R1k-b3 inspector
+  joins one selected prepared-text checkpoint to its selected durable sink
+  without taking either writer lease. It accepts only aligned state or a
+  nonterminal sink exactly one acknowledgement ahead. Output stays hidden by
+  default; an explicit disclosure flag renders exact token IDs, byte hex,
+  escaped bytes, and strict UTF-8 text only when valid.
 - **Tenant-scoped object resolution.** A least-authority grant admits only exact
   capsule objects under bounded scan, object, total-byte, and resolution limits.
 - **Canonical continuation bundles.** Semantic roots remain kind-specific while
@@ -1121,6 +1127,22 @@ composition, authenticity, provider execution, usage, cost, and authority are
 not established. See
 [Provider Evidence Inspector](docs/PROVIDER_EVIDENCE_INSPECTOR.md).
 
+Inspect one selected prepared-text checkpoint/result-sink view without taking a
+writer lease or disclosing output:
+
+```sh
+tools/zig-with-ephemeral-cache.sh build \
+  prepared-text-result-inspector \
+  -Doptimize=ReleaseSafe -Dmetal=false -j2 -- \
+  --directory path/to/prepared-text-state
+```
+
+Add `--reveal-output` only when exact token IDs and bytes may be disclosed.
+Strict UTF-8 text is emitted only when the visible bytes validate; otherwise
+the text field is `null`. This diagnostic command is separate from ordinary
+`text-run` and future serving output. See
+[Prepared-Text Result Inspector](docs/PREPARED_TEXT_RESULT_INSPECTOR.md).
+
 The C ABI is a narrow verifier and support-query surface, not a stable
 inference SDK. See
 [Language interop](docs/LANGUAGE_INTEROP.md) for C, Python, and dependency-free
@@ -1163,7 +1185,7 @@ hardware-independent surface without those native backend dependencies.
 
 | Area | Available today | Next public milestone |
 | --- | --- | --- |
-| AI runtime | CPU execution, an optional macOS Metal kernel path, sealed POSIX publication for portable `.glacier` conversion, recoverable POSIX publication for prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial text request profiles, a request-independent package manifest with a separate prepared-representation identity, exact canonical UTF-8 byte-tokenizer and raw-input binding wires, a retained-fixture-only experimental raw-text command, durable retention and fresh-process re-tokenization of the exact raw-input archive, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture, same-process exact-current-boundary rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, an experimental fresh-process source-exit handoff with canonical generation-one replay, acknowledged one-token target progress through an idempotent durable local POSIX sink and generation-five terminal result, a canonical exact-integer dense-tensor reranker, and portable exact Q30 L2 dense embeddings, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic ten-profile retained-reference compatibility inspector | Add committed-token text rendering, extend ownership/accounting and repeated-handoff coverage, compose normalized embeddings into retrieval, add production fixtures, native multi-OS validation, and broader production device execution |
+| AI runtime | CPU execution, an optional macOS Metal kernel path, sealed POSIX publication for portable `.glacier` conversion, recoverable POSIX publication for prepared `.glrt` images, typed family/operation contracts, a Common Model Contract bridge for eligible serial text request profiles, a request-independent package manifest with a separate prepared-representation identity, exact canonical UTF-8 byte-tokenizer and raw-input binding wires, a retained-fixture-only experimental raw-text command, durable retention and fresh-process re-tokenization of the exact raw-input archive, exact total-versus-request logical claim projection for shared read-only artifact residency, V2 boundary evidence, a single-seal fixed-length terminal `ResultEnvelopeV1`, canonical non-terminal prepared-state capture, same-process exact-current-boundary rebind, canonical successor evidence, receipt-funded restored activation at sequence `N`, an experimental fresh-process source-exit handoff with canonical generation-one replay, acknowledged one-token target progress through an idempotent durable local POSIX sink and generation-five terminal result, metadata-first R1k-b3 read-only committed-output inspection, a canonical exact-integer dense-tensor reranker, and portable exact Q30 L2 dense embeddings, plus exact admission/scheduling/publication, continuation, provider and media planes, an experimental allocation-free C verifier, and a deterministic ten-profile retained-reference compatibility inspector | Integrate checked durable output into ordinary `text-run` and future serving surfaces, extend ownership/accounting and repeated-handoff coverage, compose normalized embeddings into retrieval, add production fixtures, native multi-OS validation, and broader production device execution |
 | Language interop | Installed experimental C header plus shared/static contract libraries; source and staged-install C consumers; C++ linkage check; standard-library Python `ctypes`; dependency-free Rust `extern "C"` gate; fixed profile enumeration and support-mask queries | Retained symbol/layout gates, native multi-OS consumers, stability policy, packages, then model/session execution bindings |
 | Model families | Text-generation prototype, cache-bound vision/audio/temporal-video embedding fixtures, a generic dense-tensor reranker with canonical ranked items, a generic normalized dense-tensor embedding fixture, stateful transcript and VFR video restart, exact word/speaker annotations, typed video segments, canonical merge timelines, exact audio/video result links, shared stateless/stateful lifecycles, exact latent continuation, atomic generated-image publication, restartable generated-audio publication, acknowledged generated-video manifests, atomic cross-modality generated-output checkpoints, exact encoded-payload archive composition, bounded multi-output image/audio/video registry continuity, canonical typed producer admission, exact deterministic producer-transition replay, one process-local typed tool transaction, a durable POSIX external-action handoff store, and a same-process generation-fenced fake dispatch/status authority for retained reference profiles | Generic classification, retrieval composition, richer language/punctuation and ambiguous-speaker policy, production generative-media adapters, multimodal fusion, OS-isolated real-credential adapters, live tools and agent loops, time-series, graph/scientific, routed and adapter families |
 | State | Token transactions, canonical prepared-text state images with detached materialization, same-process retained-authority rebind, pointer-free successor evidence, receipt-funded restored activation with a global publication sequence base, recoverable generation-one source enrollment, experimental durable source exit, exclusive fresh-process activation, and generation-two-through-five acknowledged local POSIX target progress with semantic oracle comparison; plus capsule, resolver, bundle, tenant store, durable payload recovery, ownership/KV remap, fixed runtime state, model-free two-process resume, and a seven-phase atomic checkpoint root switch | Native Linux recovery, Win32 durable files, remote delivery adapters, device-resident continuation, repeated/cancelled handoff evidence, and durable lifecycle metadata |
@@ -1284,7 +1306,12 @@ The compatibility durable recovery APIs still accept pre-tokenized input and
 do not cover every V1-valid request shape. The additive R1k-b2 path now carries
 one strict raw-text tokenizer, the retained fixture license, a stable package
 identity, and exact UTF-8 bytes through fresh-process recovery. The standalone
-`text-run` command remains process-local. The combined work does not support early EOS or
+`text-run` command remains process-local. R1k-b3 separately adds a read-only
+join over the selected checkpoint and durable sink. It accepts only aligned
+state or a nonterminal sink exactly one acknowledgement ahead, hides output by
+default, and requires `--reveal-output` for exact token and byte disclosure.
+It does not make `text-run` durable or provide ordinary serving output.
+The combined work does not support early EOS or
 fewer-than-admitted outputs, provide concurrent Session mutation, replay a
 source prefix after an external effect, execute the handoff on GPU, or
 establish production native performance. The durable adapter for this path is
@@ -1310,6 +1337,11 @@ You do not need AI kernel experience to contribute. Useful work includes Zig,
 Python, device backends, Linux/Windows/mobile portability, property tests, fault
 injection, documentation, format tooling, visualizers, examples, and
 reproducibility.
+
+Browse the current
+[good first issues](https://github.com/mienetic/glacier-engine/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22),
+[help-wanted work](https://github.com/mienetic/glacier-engine/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22),
+or [all bounded contributor slices](https://github.com/mienetic/glacier-engine/issues?q=is%3Aissue%20state%3Aopen%20label%3Acontribution).
 
 Good starting points:
 
@@ -1368,6 +1400,7 @@ valuable as new features.
 - [Prepared text restore admission](docs/PREPARED_TEXT_RESTORE_ADMISSION.md)
 - [Durable prepared-text handoff](docs/PREPARED_TEXT_DURABLE_HANDOFF.md)
 - [Acknowledged prepared-text delivery](docs/PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md)
+- [Prepared-text result inspector](docs/PREPARED_TEXT_RESULT_INSPECTOR.md)
 - [Hierarchical media buffer ownership](docs/MEDIA_RUNTIME_LEASE.md)
 - [Bounded media stream runtime](docs/MEDIA_STREAM_RUNTIME.md)
 - [Media stream continuation](docs/MEDIA_STREAM_CONTINUATION.md)

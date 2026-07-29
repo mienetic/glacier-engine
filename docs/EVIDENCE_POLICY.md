@@ -75,6 +75,11 @@ Keep these distinct:
   identity, candidate write/sync, atomic rename, directory sync, and
   fresh-process reconciliation without implied lifecycle durability, power-cut
   survival, secure erasure, or live ownership restoration;
+- **committed-output inspection:** stable selected checkpoint and sink roots,
+  request/sink identity, aligned or exactly-one-ahead sequence state,
+  acknowledgement heads, visible token/byte roots, and strict UTF-8 validity
+  without implied writer authority, recovery authority, hostile-writer
+  resistance, remote exactly-once delivery, or historical attestation;
 - **transport:** chunks, terminal usage, retry, and cancellation events;
 - **durability:** bytes written, synced, committed, repaired, and replayed;
 - **physical:** RSS, device residency, frequency, thermal, and energy sensors;
@@ -83,6 +88,22 @@ Keep these distinct:
 A digest proves identity and chain integrity under its verifier. It does not prove
 that an upstream observation was truthful or that a physical resource was
 isolated.
+
+## Payload disclosure
+
+Read-only and metadata-only are different claims. An inspector that writes
+nothing may still expose correlatable request roots, artifact identities,
+epochs, generations, counts, timing, or payload-derived digests.
+
+- Default diagnostic output should omit prompt, response, media, credential,
+  license, and model payload bytes.
+- Payload disclosure must be explicit and must name the exact representation.
+- Byte-domain output must remain lossless; text may be emitted only after strict
+  validation, never by replacing invalid bytes.
+- A metadata-minimizing view is not anonymity, redaction, confidentiality, or a
+  complete privacy policy.
+- Read-only verification does not authenticate the publisher and does not grant
+  execution, publication, repair, or recovery authority.
 
 ## Promotion rules
 
