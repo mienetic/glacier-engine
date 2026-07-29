@@ -43,6 +43,10 @@ const session = @import("prepared_text_session.zig");
 const source_lease = @import("prepared_text_source_lease.zig");
 const source_recovery =
     @import("prepared_text_source_recovery.zig");
+const terminal_source_recovery =
+    @import("prepared_text_terminal_source_recovery.zig");
+const direct_terminal =
+    @import("prepared_text_direct_terminal.zig");
 const successor = @import("prepared_text_successor.zig");
 const terminal =
     @import("prepared_text_terminal_equivalence.zig");
@@ -54,6 +58,8 @@ pub const InitialDispositionV1 =
     checkpoint_file.InitialDispositionV1;
 pub const SourceRuntimeIdentityV1 =
     source_recovery.SourceRuntimeIdentityV1;
+pub const TerminalSourceRuntimeIdentityV1 =
+    terminal_source_recovery.SourceRuntimeIdentityV1;
 pub const TargetOwnershipV1 = successor.TargetOwnershipV1;
 pub const bootstrap_file_available_v1 =
     checkpoint_file.initial_recovery_available_v1;
@@ -122,6 +128,9 @@ const RuntimeSinkStorageOwnerV1 = struct {
 
 pub const Error = error{
     AuthorityCapacityTooSmall,
+    InvalidDirectTerminalContract,
+    InvalidDirectTerminalGeneration,
+    InvalidDirectTerminalSelection,
     InvalidAdvancePlan,
     InvalidInitialSelection,
     InvalidSourceRecoveryContract,
@@ -155,6 +164,37 @@ pub const SinkConfigV1 = struct {
     implementation_sha256: Digest,
     instance_sha256: Digest,
 };
+
+pub const FixedOutputRouteV1 = enum(u8) {
+    direct_terminal,
+    acknowledged,
+};
+
+pub const FixedOutputPlanV1 = struct {
+    route: FixedOutputRouteV1,
+    sink_capacity: usize,
+};
+
+/// Route fixed output counts without creating one generic runtime type per
+/// count. N=1 is sink-free; N=2..64 share the concrete acknowledged store.
+pub fn fixedOutputPlanV1(
+    output_count: usize,
+) !FixedOutputPlanV1 {
+    const maximum_output_count =
+        result_sink_file.runtime_result_sink_max_capacity_v1 + 1;
+    if (output_count == 0 or
+        output_count > maximum_output_count)
+        return Error.InvalidAdvancePlan;
+    if (output_count == 1)
+        return .{
+            .route = .direct_terminal,
+            .sink_capacity = 0,
+        };
+    return .{
+        .route = .acknowledged,
+        .sink_capacity = output_count - 1,
+    };
+}
 
 /// Immutable roots known before generation-one storage mutation begins.
 ///
@@ -232,6 +272,63 @@ pub const BootstrapFileReceiptV1 = struct {
     checkpoint_sha256: Digest,
     selector_sha256: Digest,
     source_recovery_contract_sha256: Digest,
+    input_archive_sha256: Digest,
+};
+
+pub const DirectTerminalBootstrapPlanV1 = struct {
+    generation: u64,
+    request_epoch: u64,
+    publication_next_sequence: u64,
+    checkpoint_sha256: Digest,
+    selector_sha256: Digest,
+    terminal_source_contract_sha256: Digest,
+    input_archive_sha256: Digest,
+};
+
+pub const DirectTerminalBootstrapPlanObserverV1 = struct {
+    context: *anyopaque,
+    observe_fn: *const fn (
+        context: *anyopaque,
+        plan: DirectTerminalBootstrapPlanV1,
+    ) void,
+
+    pub fn observe(
+        self: DirectTerminalBootstrapPlanObserverV1,
+        plan: DirectTerminalBootstrapPlanV1,
+    ) void {
+        self.observe_fn(self.context, plan);
+    }
+};
+
+/// Sink-free generation-one bootstrap for an exactly one-token request.
+///
+/// This is a separate additive contract rather than a permissive mode of
+/// `BootstrapFileInputV1`: no target or result-sink authority exists for a
+/// request that becomes terminal in its first source step.
+pub const BootstrapDirectTerminalFileInputV1 = struct {
+    model: *const loader.LoadedModel,
+    package: package_manifest.ManifestV1,
+    representation: package_manifest.PreparedRepresentationV1,
+    raw_text: []const u8,
+    tokenizer_manifest: tokenizer.Utf8ByteManifestV1,
+    options: session.OptionsV1,
+    scheduling: session.SchedulingV1,
+    bound_plan_input: session.BoundPlanInputV1,
+    source_runtime: TerminalSourceRuntimeIdentityV1,
+    scheduler: *lane.Scheduler,
+    file: FileStorageV1,
+    plan_observer: ?DirectTerminalBootstrapPlanObserverV1 = null,
+    observer: ?ObserverV1 = null,
+};
+
+pub const BootstrapDirectTerminalFileReceiptV1 = struct {
+    disposition: InitialDispositionV1,
+    generation: u64,
+    request_epoch: u64,
+    publication_next_sequence: u64,
+    checkpoint_sha256: Digest,
+    selector_sha256: Digest,
+    terminal_source_contract_sha256: Digest,
     input_archive_sha256: Digest,
 };
 
@@ -353,6 +450,9 @@ pub const AdvancePlanObserverV1 = struct {
 /// Once the source exit is committed, returning an ordinary error could
 /// expose a half-transitioned process-local authority. Every subsequent
 /// failure, including an injected observer failure, is routed here.
+/// The direct-terminal path applies the same rule after its terminal lane is
+/// retired and before the already-prepared generation-two selector is made
+/// visible.
 pub const FailStopV1 = struct {
     context: *anyopaque,
     invoke_fn: *const fn (context: *anyopaque) noreturn,
@@ -397,6 +497,92 @@ pub const AdvanceSourceFileReceiptV1 = struct {
     checkpoint_sha256: Digest,
     checkpoint_selector_sha256: Digest,
     source_recovery_contract_sha256: Digest,
+    ownership_closed: bool,
+};
+
+pub const DirectTerminalPhaseV1 = enum(u8) {
+    after_recovery_admission,
+    after_step,
+    after_terminal_prepare,
+    after_retire,
+    after_generation_two,
+};
+
+pub const DirectTerminalProgressV1 = struct {
+    phase: DirectTerminalPhaseV1,
+    input_generation: u64,
+    input_sequence: u64,
+    checkpoint_selector_sha256: Digest,
+};
+
+pub const DirectTerminalProgressObserverV1 = struct {
+    context: *anyopaque,
+    after_phase_fn: *const fn (
+        context: *anyopaque,
+        progress: DirectTerminalProgressV1,
+    ) anyerror!void,
+
+    pub fn after(
+        self: DirectTerminalProgressObserverV1,
+        progress: DirectTerminalProgressV1,
+    ) !void {
+        try self.after_phase_fn(self.context, progress);
+    }
+};
+
+pub const DirectTerminalPlanV1 = union(enum) {
+    recovered: struct {
+        input_generation: u64,
+        input_sequence: u64,
+        checkpoint_selector_sha256: Digest,
+    },
+    successor: AdvanceSuccessorPlanV1,
+};
+
+pub const DirectTerminalPlanObserverV1 = struct {
+    context: *anyopaque,
+    observe_fn: *const fn (
+        context: *anyopaque,
+        plan: DirectTerminalPlanV1,
+    ) void,
+
+    pub fn observe(
+        self: DirectTerminalPlanObserverV1,
+        plan: DirectTerminalPlanV1,
+    ) void {
+        self.observe_fn(self.context, plan);
+    }
+};
+
+pub const DirectTerminalObserversV1 = struct {
+    plan: ?DirectTerminalPlanObserverV1 = null,
+    progress: ?DirectTerminalProgressObserverV1 = null,
+    checkpoint: ?checkpoint_file.ObserverV1 = null,
+};
+
+/// One source step that selects a terminal result without creating a target,
+/// result-sink file, restart checkpoint, or acknowledgement.
+pub const AdvanceDirectTerminalSourceFileInputV1 = struct {
+    model: *loader.LoadedModel,
+    runtime: SourceRuntimeV1,
+    step_sink: SourceStepSinkV1,
+    file: FileStorageV1,
+    terminal_verifier: ?TerminalSemanticVerifierV1 = null,
+    observers: DirectTerminalObserversV1 = .{},
+    fail_stop: FailStopV1,
+};
+
+pub const AdvanceDirectTerminalSourceFileReceiptV1 = struct {
+    disposition: AdvanceDispositionV1,
+    input_generation: u64,
+    input_sequence: u64,
+    output_generation: u64,
+    output_sequence: u64,
+    output_token: u32,
+    checkpoint_sha256: Digest,
+    checkpoint_selector_sha256: Digest,
+    terminal_source_contract_sha256: Digest,
+    terminal_semantic_sha256: Digest,
     ownership_closed: bool,
 };
 
@@ -729,6 +915,165 @@ pub fn bootstrapFileV1(
         .checkpoint_sha256 = lease.selector.checkpoint_sha256,
         .selector_sha256 = lease.selector.selector_sha256,
         .source_recovery_contract_sha256 = bootstrap_plan.source_recovery_contract_sha256,
+        .input_archive_sha256 = bootstrap_plan.input_archive_sha256,
+    };
+}
+
+/// Create or recover the distinct generation-one authority used by an exact
+/// one-token request. The selected archive intentionally carries no target or
+/// result-sink identity.
+pub fn bootstrapDirectTerminalFileV1(
+    allocator: std.mem.Allocator,
+    input: BootstrapDirectTerminalFileInputV1,
+) !BootstrapDirectTerminalFileReceiptV1 {
+    if (comptime !bootstrap_file_available_v1)
+        return checkpoint_file.Error.UnsupportedPlatform;
+    const scheduler_identity =
+        try input.scheduler.identityV1();
+    if (!terminalRuntimeIdentityMatchesV1(
+        input.source_runtime,
+        scheduler_identity,
+    ))
+        return Error.InvalidSourceRuntime;
+
+    var tokenized = try tokenizer.tokenizeUtf8BytesV1(
+        allocator,
+        input.tokenizer_manifest,
+        input.raw_text,
+    );
+    defer tokenized.deinit();
+
+    const local_plan = try session.makePlanV1(
+        input.model.*,
+        tokenized.tokens,
+        input.options,
+    );
+    const bound_plan = try session.makeBoundPlanV1(
+        input.model.*,
+        tokenized.tokens,
+        input.options,
+        local_plan,
+        input.scheduling,
+        input.scheduler,
+        input.bound_plan_input,
+    );
+    const recovery_input: terminal_source_recovery.InputV1 = .{
+        .prompt = tokenized.tokens,
+        .options = input.options,
+        .scheduling = input.scheduling,
+        .bound_plan_input = input.bound_plan_input,
+        .plan = local_plan,
+        .bound_plan = bound_plan,
+        .source_runtime = input.source_runtime,
+        .request_epoch = input.bound_plan_input.request_epoch,
+        .publication_next_sequence = initial_publication_next_sequence,
+        .challenge_sha256 = scheduler_identity.challenge_sha256,
+    };
+
+    const contract_storage = try allocator.alloc(
+        u8,
+        try terminal_source_recovery.encodedBytesV1(
+            tokenized.tokens.len,
+        ),
+    );
+    defer allocator.free(contract_storage);
+    const encoded_contract =
+        try terminal_source_recovery.encodeV1(
+            recovery_input,
+            contract_storage,
+        );
+    const decoded_contract =
+        try terminal_source_recovery.decodeV1(
+            encoded_contract.bytes,
+        );
+    try terminal_source_recovery.verifyContextV1(
+        decoded_contract,
+        recovery_input,
+    );
+
+    const archive_storage = try allocator.alloc(
+        u8,
+        try input_archive.encodedBytesV1(input.raw_text.len),
+    );
+    defer allocator.free(archive_storage);
+    const encoded_archive = try input_archive.encodeV1(
+        .{
+            .package = input.package,
+            .representation = input.representation,
+            .raw_text = input.raw_text,
+            .tokenized = &tokenized,
+            .local_plan = local_plan,
+            .bound_plan = bound_plan,
+        },
+        archive_storage,
+    );
+
+    const live_bytes = try recoverableSetBytesV1(
+        encoded_contract.bytes.len,
+        encoded_archive.bytes.len,
+    );
+    if (input.file.max_set_bytes < live_bytes)
+        return Error.AuthorityCapacityTooSmall;
+    const live_storage = try allocator.alloc(u8, live_bytes);
+    defer allocator.free(live_storage);
+    const live_set =
+        try source_lease.encodeRawTerminalSourceLiveSetV1(
+            encoded_contract,
+            encoded_archive,
+            live_storage,
+        );
+    const initial_selector =
+        try checkpoint_file.prepareInitialSelectorV1(live_set);
+    const expected_selector =
+        try checkpoint_file.decodeSelectorV1(
+            &initial_selector.bytes,
+        );
+    const bootstrap_plan: DirectTerminalBootstrapPlanV1 = .{
+        .generation = expected_selector.generation,
+        .request_epoch = expected_selector.request_epoch,
+        .publication_next_sequence = expected_selector.publication_next_sequence,
+        .checkpoint_sha256 = expected_selector.checkpoint_sha256,
+        .selector_sha256 = expected_selector.selector_sha256,
+        .terminal_source_contract_sha256 = encoded_contract.contract_sha256,
+        .input_archive_sha256 = encoded_archive.archive_sha256,
+    };
+    if (input.plan_observer) |observer|
+        observer.observe(bootstrap_plan);
+
+    const active_storage = try allocator.alloc(
+        u8,
+        input.file.max_set_bytes,
+    );
+    defer allocator.free(active_storage);
+    var lock_storage: [1]u8 = undefined;
+    const initialization =
+        try checkpoint_file.LeaseV1
+            .createOrRecoverInitialObservedV1(
+            input.file.directory,
+            input.file.storage_epoch,
+            scheduler_identity.challenge_sha256,
+            live_set,
+            initial_selector,
+            input.file.max_set_bytes,
+            &lock_storage,
+            active_storage,
+            input.observer,
+        );
+    var lease = initialization.lease;
+    defer lease.close();
+
+    if (!std.mem.eql(u8, lease.stream(), live_set.bytes) or
+        !std.meta.eql(lease.selector, expected_selector))
+        return Error.InvalidInitialSelection;
+
+    return .{
+        .disposition = initialization.disposition,
+        .generation = lease.selector.generation,
+        .request_epoch = lease.selector.request_epoch,
+        .publication_next_sequence = lease.selector.publication_next_sequence,
+        .checkpoint_sha256 = lease.selector.checkpoint_sha256,
+        .selector_sha256 = lease.selector.selector_sha256,
+        .terminal_source_contract_sha256 = bootstrap_plan.terminal_source_contract_sha256,
         .input_archive_sha256 = bootstrap_plan.input_archive_sha256,
     };
 }
@@ -1170,6 +1515,333 @@ pub fn advanceSourceFileV1(
         .checkpoint_sha256 = checkpoint_selector.checkpoint_sha256,
         .checkpoint_selector_sha256 = checkpoint_selector.selector_sha256,
         .source_recovery_contract_sha256 = contract_sha256,
+        .ownership_closed = true,
+    };
+}
+
+/// Execute the selected one-token source or replay its already-selected
+/// terminal successor. This path never creates target, restart, sink, or ACK
+/// authority.
+pub fn advanceDirectTerminalSourceFileV1(
+    allocator: std.mem.Allocator,
+    input: AdvanceDirectTerminalSourceFileInputV1,
+) !AdvanceDirectTerminalSourceFileReceiptV1 {
+    const scheduler_identity =
+        try input.runtime.scheduler.identityV1();
+    var runtime_closed = false;
+    defer {
+        if (!runtime_closed)
+            _ = input.runtime.scheduler.close() catch {};
+    }
+
+    const active_storage = try allocator.alloc(
+        u8,
+        input.file.max_set_bytes,
+    );
+    defer allocator.free(active_storage);
+    const snapshot_storage = try allocator.alloc(
+        u8,
+        input.file.max_set_bytes,
+    );
+    defer allocator.free(snapshot_storage);
+    var checkpoint_lock_storage: [1]u8 = undefined;
+    var lease = try checkpoint_file.LeaseV1.open(
+        input.file.directory,
+        input.file.storage_epoch,
+        scheduler_identity.challenge_sha256,
+        input.file.max_set_bytes,
+        &checkpoint_lock_storage,
+        active_storage,
+    );
+    defer lease.close();
+
+    const active_set = try lease.activeSet();
+    if (active_set.metadata.generation ==
+        direct_terminal.selected_generation)
+    {
+        var selected_selector_storage: [checkpoint_file.selector_bytes]u8 = undefined;
+        const snapshot =
+            try checkpoint_file.readSelectedSnapshotReadOnlyV1(
+                input.file.directory,
+                &selected_selector_storage,
+                snapshot_storage,
+                input.file.max_set_bytes,
+            );
+        if (!digestEqual(
+            snapshot.selector.selector_sha256,
+            lease.selector.selector_sha256,
+        ) or !digestEqual(
+            snapshot.set.checkpoint_sha256,
+            active_set.checkpoint_sha256,
+        ) or !std.mem.eql(
+            u8,
+            snapshot.set_bytes,
+            lease.stream(),
+        ))
+            return Error.InvalidDirectTerminalSelection;
+        const selected_terminal = direct_terminal.decodeV1(
+            snapshot.set_bytes,
+            snapshot.selector_bytes,
+        ) catch return Error.InvalidDirectTerminalSelection;
+        var recovered = try recoverTerminalSourceV1(
+            allocator,
+            input.model,
+            input.runtime.scheduler,
+            scheduler_identity,
+            .{
+                .contract = selected_terminal.contract,
+                .input_archive = selected_terminal.input,
+            },
+        );
+        defer recovered.deinit();
+        if (input.terminal_verifier) |verifier|
+            try verifier.verify(selected_terminal.semantic);
+
+        try requireRuntimeZeroV1(input.runtime);
+        _ = try input.runtime.scheduler.close();
+        runtime_closed = true;
+        return .{
+            .disposition = .already_selected,
+            .input_generation = selected_terminal.predecessor_selector.generation,
+            .input_sequence = selected_terminal.contract
+                .publication_next_sequence,
+            .output_generation = selected_terminal.selected_selector.generation,
+            .output_sequence = selected_terminal.selected_selector
+                .publication_next_sequence,
+            .output_token = selected_terminal.outputToken(),
+            .checkpoint_sha256 = selected_terminal.selected_set.checkpoint_sha256,
+            .checkpoint_selector_sha256 = selected_terminal.selected_selector
+                .selector_sha256,
+            .terminal_source_contract_sha256 = selected_terminal.contract.contract_sha256,
+            .terminal_semantic_sha256 = selected_terminal.semantic.semantic_sha256,
+            .ownership_closed = true,
+        };
+    }
+    if (active_set.metadata.generation !=
+        source_lease.source_live_set_generation)
+        return Error.InvalidDirectTerminalGeneration;
+    if (input.step_sink.sink_epoch == 0 or
+        input.step_sink.reservation_id == 0)
+        return Error.InvalidAdvancePlan;
+
+    const source_context =
+        try selectedTerminalSourceRecoveryContextV1(&lease);
+    var recovered = try recoverTerminalSourceV1(
+        allocator,
+        input.model,
+        input.runtime.scheduler,
+        scheduler_identity,
+        source_context,
+    );
+    defer recovered.deinit();
+    const contract = source_context.contract;
+    const input_generation =
+        source_lease.source_live_set_generation;
+    const input_sequence = contract.publication_next_sequence;
+    const predecessor_selector_sha256 =
+        lease.selector.selector_sha256;
+
+    var live_grant: source_lease.SourceLiveGrantV1 = .{};
+    try source_lease.initSourceLiveGrantV1(
+        &live_grant,
+        &lease,
+    );
+    defer if (live_grant.lease != null and
+        (live_grant.phase == .ready or
+            live_grant.phase == .bound))
+    {
+        source_lease.releaseSourceLiveGrantV1(
+            &live_grant,
+        ) catch {};
+    };
+    if (live_grant.source_contract_abi !=
+        terminal_source_recovery.contract_abi)
+        return Error.InvalidDirectTerminalContract;
+
+    if (input.observers.plan) |observer| {
+        observer.observe(.{ .recovered = .{
+            .input_generation = input_generation,
+            .input_sequence = input_sequence,
+            .checkpoint_selector_sha256 = predecessor_selector_sha256,
+        } });
+    }
+    try observeDirectTerminalProgressV1(
+        input.observers.progress,
+        .{
+            .phase = .after_recovery_admission,
+            .input_generation = input_generation,
+            .input_sequence = input_sequence,
+            .checkpoint_selector_sha256 = predecessor_selector_sha256,
+        },
+    );
+
+    var source_session: session.SessionV3 = .{};
+    defer source_session.deinit();
+    switch (try source_session.start(
+        allocator,
+        input.model,
+        recovered.tokenized.tokens,
+        contract.options,
+        recovered.local_plan,
+        contract.bound_plan_input,
+        recovered.bound_plan,
+        contract.scheduling,
+        input.runtime.scheduler,
+        input.runtime.bank,
+    )) {
+        .started => {},
+        .rejected => return Error.SourceAdmissionRejected,
+    }
+    var step_sink: OneTokenReceiptSinkV1 = .{
+        .sink_epoch = input.step_sink.sink_epoch,
+        .reservation_id = input.step_sink.reservation_id,
+    };
+    _ = try source_session.step(
+        try input.runtime.scheduler.prepareService(),
+        step_sink.interface(),
+    );
+    if (step_sink.prepare_calls != 1 or
+        step_sink.commit_calls != 1 or
+        step_sink.abort_calls != 0 or
+        !source_session.isFinished() or
+        source_session.outputTokens().len != 1 or
+        source_session.outputTokens().len != input_sequence)
+        return Error.InvalidSourceSequence;
+    const output_token = source_session.outputTokens()[0];
+    try observeDirectTerminalProgressV1(
+        input.observers.progress,
+        .{
+            .phase = .after_step,
+            .input_generation = input_generation,
+            .input_sequence = input_sequence,
+            .checkpoint_selector_sha256 = predecessor_selector_sha256,
+        },
+    );
+
+    _ = try source_session.sealTerminalResult();
+    const boundary = try source_session.snapshotVerified();
+    const semantic = try terminal.makeV1(
+        boundary,
+        source_session.inner.bound_plan,
+        recovered.local_plan,
+        source_session.outputTokens(),
+        lane_contiguous.logicalKvPrefixSha256(
+            &source_session.inner.inner.resources.cache,
+            source_session.inner.inner.resources.cache.len,
+        ),
+    );
+    if (input.terminal_verifier) |verifier|
+        try verifier.verify(semantic);
+    try observeDirectTerminalProgressV1(
+        input.observers.progress,
+        .{
+            .phase = .after_terminal_prepare,
+            .input_generation = input_generation,
+            .input_sequence = input_sequence,
+            .checkpoint_selector_sha256 = predecessor_selector_sha256,
+        },
+    );
+
+    const predecessor_set: checkpoint_file.PreparedSetV1 = .{
+        .bytes = lease.stream(),
+        .checkpoint_sha256 = active_set.checkpoint_sha256,
+    };
+    const predecessor_selector =
+        try checkpoint_file.prepareInitialSelectorV1(
+            predecessor_set,
+        );
+    if (!digestEqual(
+        predecessor_selector.selector_sha256,
+        predecessor_selector_sha256,
+    ))
+        return Error.InvalidDirectTerminalSelection;
+    const selected_bytes = try direct_terminal.encodedBytesV1(
+        predecessor_set.bytes.len,
+    );
+    if (input.file.max_set_bytes < selected_bytes)
+        return Error.AuthorityCapacityTooSmall;
+    const selected_storage =
+        try allocator.alloc(u8, selected_bytes);
+    defer allocator.free(selected_storage);
+    const prepared_terminal = try direct_terminal.encodeV1(
+        predecessor_set.bytes,
+        &predecessor_selector.bytes,
+        semantic,
+        output_token,
+        selected_storage,
+    );
+    const checkpoint_publication =
+        try checkpoint_file.preparePublicationV1(
+            &lease,
+            prepared_terminal.set,
+        );
+    if (input.observers.plan) |observer| {
+        observer.observe(.{ .successor = .{
+            .checkpoint_sha256 = checkpoint_publication.set.checkpoint_sha256,
+            .selector_sha256 = checkpoint_publication.selector.selector_sha256,
+        } });
+    }
+
+    const retire_event = try source_session.retire();
+    if (!directTerminalRetireEventValidV1(retire_event))
+        input.fail_stop.invoke();
+    requireRuntimeZeroV1(input.runtime) catch
+        input.fail_stop.invoke();
+    _ = input.runtime.scheduler.close() catch
+        input.fail_stop.invoke();
+    runtime_closed = true;
+    observeDirectTerminalProgressV1(
+        input.observers.progress,
+        .{
+            .phase = .after_retire,
+            .input_generation = input_generation,
+            .input_sequence = input_sequence,
+            .checkpoint_selector_sha256 = predecessor_selector_sha256,
+        },
+    ) catch input.fail_stop.invoke();
+
+    const checkpoint_applied =
+        if (input.observers.checkpoint) |observer|
+            checkpoint_file.publishObservedV1(
+                &lease,
+                checkpoint_publication,
+                observer,
+            ) catch input.fail_stop.invoke()
+        else
+            checkpoint_file.recoverV1(
+                &lease,
+                checkpoint_publication,
+            ) catch input.fail_stop.invoke();
+    source_lease.completeDirectTerminalV1(
+        &live_grant,
+        .{
+            .checkpoint_sha256 = checkpoint_applied.checkpoint_sha256,
+            .selector_sha256 = checkpoint_applied.selector_sha256,
+        },
+    ) catch input.fail_stop.invoke();
+    if (live_grant.phase != .completed)
+        input.fail_stop.invoke();
+    observeDirectTerminalProgressV1(
+        input.observers.progress,
+        .{
+            .phase = .after_generation_two,
+            .input_generation = input_generation,
+            .input_sequence = input_sequence,
+            .checkpoint_selector_sha256 = lease.selector.selector_sha256,
+        },
+    ) catch input.fail_stop.invoke();
+
+    return .{
+        .disposition = .advanced,
+        .input_generation = input_generation,
+        .input_sequence = input_sequence,
+        .output_generation = lease.selector.generation,
+        .output_sequence = lease.selector.publication_next_sequence,
+        .output_token = output_token,
+        .checkpoint_sha256 = lease.selector.checkpoint_sha256,
+        .checkpoint_selector_sha256 = lease.selector.selector_sha256,
+        .terminal_source_contract_sha256 = contract.contract_sha256,
+        .terminal_semantic_sha256 = semantic.semantic_sha256,
         .ownership_closed = true,
     };
 }
@@ -2310,6 +2982,22 @@ const SelectedSourceRecoveryV1 = struct {
     input_archive: input_archive.DecodedV1,
 };
 
+const SelectedTerminalSourceRecoveryV1 = struct {
+    contract: terminal_source_recovery.DecodedV1,
+    input_archive: input_archive.DecodedV1,
+};
+
+const RecoveredTerminalSourceV1 = struct {
+    tokenized: tokenizer.Utf8ByteTokenizedPromptV1,
+    local_plan: session.PlanV1,
+    bound_plan: session.BoundPlanV1,
+
+    fn deinit(self: *RecoveredTerminalSourceV1) void {
+        self.tokenized.deinit();
+        self.* = undefined;
+    }
+};
+
 const SourceCheckpointContextV1 = struct {
     boundary: session.BoundarySnapshotV2,
     expected: checkpoint.ExpectedBindingsV1,
@@ -2430,6 +3118,142 @@ fn selectedSourceRecoveryContextV1(
     return .{
         .contract = contract,
         .input_archive = decoded_input,
+    };
+}
+
+fn selectedTerminalSourceRecoveryContextV1(
+    lease: *checkpoint_file.LeaseV1,
+) !SelectedTerminalSourceRecoveryV1 {
+    const selected = try lease.activeSet();
+    if (selected.object_count != 3 or
+        selected.metadata.generation !=
+            source_lease.source_live_set_generation or
+        selected.metadata.request_epoch == 0 or
+        selected.metadata.publication_next_sequence !=
+            initial_publication_next_sequence or
+        !std.mem.allEqual(
+            u8,
+            &selected.metadata.parent_checkpoint_sha256,
+            0,
+        ))
+        return Error.InvalidDirectTerminalContract;
+    const marker = selected.objects[0];
+    const contract_object = selected.objects[1];
+    const input_object = selected.objects[2];
+    if (marker.kind != .extension or
+        marker.ordinal !=
+            source_lease.source_live_object_ordinal or
+        marker.abi_version !=
+            source_lease.source_live_marker_abi or
+        !std.mem.eql(
+            u8,
+            marker.bytes,
+            source_lease.source_live_marker,
+        ) or contract_object.kind != .extension or
+        contract_object.ordinal !=
+            source_lease.source_recovery_object_ordinal or
+        contract_object.abi_version !=
+            terminal_source_recovery.contract_abi or
+        input_object.kind != .extension or
+        input_object.ordinal !=
+            source_lease.source_input_object_ordinal or
+        input_object.abi_version != input_archive.archive_abi)
+        return Error.InvalidDirectTerminalContract;
+    const contract =
+        try terminal_source_recovery.decodeV1(
+            contract_object.bytes,
+        );
+    const decoded_input =
+        try input_archive.decodeV1(input_object.bytes);
+    if (contract.request_epoch !=
+        selected.metadata.request_epoch or
+        contract.publication_next_sequence !=
+            selected.metadata.publication_next_sequence or
+        !digestEqual(
+            contract.challenge_sha256,
+            selected.metadata.challenge_sha256,
+        ) or !source_lease
+        .terminalRecoveryInputMatchesContractV1(
+        decoded_input,
+        contract,
+    ))
+        return Error.InvalidDirectTerminalContract;
+    return .{
+        .contract = contract,
+        .input_archive = decoded_input,
+    };
+}
+
+fn recoverTerminalSourceV1(
+    allocator: std.mem.Allocator,
+    model: *const loader.LoadedModel,
+    scheduler: *lane.Scheduler,
+    scheduler_identity: lane.IdentityV1,
+    selected: SelectedTerminalSourceRecoveryV1,
+) !RecoveredTerminalSourceV1 {
+    const contract = selected.contract;
+    if (!terminalRuntimeIdentityMatchesV1(
+        contract.source_runtime,
+        scheduler_identity,
+    ) or !digestEqual(
+        contract.challenge_sha256,
+        scheduler_identity.challenge_sha256,
+    ))
+        return Error.InvalidDirectTerminalContract;
+
+    var tokenized = try input_archive.retokenizeV1(
+        allocator,
+        selected.input_archive,
+    );
+    errdefer tokenized.deinit();
+    if (tokenized.tokens.len != contract.promptCount() or
+        contract.publication_next_sequence !=
+            initial_publication_next_sequence)
+        return Error.InvalidDirectTerminalContract;
+    for (tokenized.tokens, 0..) |token, index| {
+        if (token != try contract.promptToken(index))
+            return Error.InvalidDirectTerminalContract;
+    }
+
+    const local_plan = try session.makePlanV1(
+        model.*,
+        tokenized.tokens,
+        contract.options,
+    );
+    const bound_plan = try session.makeBoundPlanV1(
+        model.*,
+        tokenized.tokens,
+        contract.options,
+        local_plan,
+        contract.scheduling,
+        scheduler,
+        contract.bound_plan_input,
+    );
+    try terminal_source_recovery.verifyContextV1(
+        contract,
+        .{
+            .prompt = tokenized.tokens,
+            .options = contract.options,
+            .scheduling = contract.scheduling,
+            .bound_plan_input = contract.bound_plan_input,
+            .plan = local_plan,
+            .bound_plan = bound_plan,
+            .source_runtime = contract.source_runtime,
+            .request_epoch = contract.request_epoch,
+            .publication_next_sequence = contract.publication_next_sequence,
+            .challenge_sha256 = contract.challenge_sha256,
+        },
+    );
+    try input_archive.verifySourceContextV1(
+        selected.input_archive,
+        &tokenized,
+        local_plan,
+        bound_plan,
+    );
+    return .{
+        .tokenized = tokenized,
+        .local_plan = local_plan,
+        .bound_plan = bound_plan,
     };
 }
 
@@ -2599,6 +3423,13 @@ fn observeAdvanceProgressV1(
     if (observer) |value| try value.after(progress);
 }
 
+fn observeDirectTerminalProgressV1(
+    observer: ?DirectTerminalProgressObserverV1,
+    progress: DirectTerminalProgressV1,
+) !void {
+    if (observer) |value| try value.after(progress);
+}
+
 fn checkpointContextV1(
     source_session: *session.SessionV3,
     model: *const loader.LoadedModel,
@@ -2670,6 +3501,29 @@ fn runtimeIdentityMatchesV1(
         scheduler.scheduler_epoch and
         source.coordinator_id == scheduler.coordinator_id and
         source.bank_epoch == scheduler.bank_epoch;
+}
+
+fn terminalRuntimeIdentityMatchesV1(
+    source: TerminalSourceRuntimeIdentityV1,
+    scheduler: lane.IdentityV1,
+) bool {
+    return source.scheduler_epoch ==
+        scheduler.scheduler_epoch and
+        source.coordinator_id == scheduler.coordinator_id and
+        source.bank_epoch == scheduler.bank_epoch;
+}
+
+fn directTerminalRetireEventValidV1(
+    event: lane.EventV1,
+) bool {
+    return event.kind == .retire and
+        event.rejection_reason == .none and
+        event.remaining_before == 0 and
+        event.remaining_after == 0 and
+        event.active_before == 0 and
+        event.active_after == 0 and
+        event.finished_before == 1 and
+        event.finished_after == 0;
 }
 
 fn digestEqual(left: Digest, right: Digest) bool {
@@ -2773,5 +3627,35 @@ test "runtime sink capacity entrypoints are concrete" {
             std.testing.allocator,
             target_input,
         ),
+    );
+}
+
+test "fixed output routing isolates only N one" {
+    try std.testing.expectError(
+        Error.InvalidAdvancePlan,
+        fixedOutputPlanV1(0),
+    );
+    const direct = try fixedOutputPlanV1(1);
+    try std.testing.expectEqual(
+        FixedOutputRouteV1.direct_terminal,
+        direct.route,
+    );
+    try std.testing.expectEqual(@as(usize, 0), direct.sink_capacity);
+
+    var output_count: usize = 2;
+    while (output_count <= 64) : (output_count += 1) {
+        const plan = try fixedOutputPlanV1(output_count);
+        try std.testing.expectEqual(
+            FixedOutputRouteV1.acknowledged,
+            plan.route,
+        );
+        try std.testing.expectEqual(
+            output_count - 1,
+            plan.sink_capacity,
+        );
+    }
+    try std.testing.expectError(
+        Error.InvalidAdvancePlan,
+        fixedOutputPlanV1(65),
     );
 }

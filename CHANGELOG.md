@@ -12,6 +12,9 @@ before the first stable release.
   changes perform no Zig build, prepared-text reader and writer changes select
   their focused native DAGs, and verifier changes run the policy regression
   suite without expanding to broad host or foreign-target compilation.
+  Prepared-text delivery implementation changes compile and test one shared
+  facade artifact; the 49-boundary recovery campaign is selected only when its
+  harness changes or an exhaustive profile is requested.
   Pull requests and `main` pushes use this bounded tier and cancel superseded
   runs; exhaustive `full` or `matrix` CI is explicit, while `v*` tags retain
   the matrix and macOS frontier.
@@ -64,6 +67,14 @@ before the first stable release.
 
 ### Added
 
+- Added the sink-free fixed-output-count-one prepared-text path. A distinct
+  terminal-source recovery contract retains exact package/input/plan/runtime
+  identity without target or sink facts; one source step seals the terminal
+  semantic, retires Bank/Scheduler authority, and selects generation two at
+  the same publication sequence. Replay of an already-selected exact terminal
+  performs no second model step, and a dedicated read-only view validates the
+  embedded generation-one
+  selector/set and one canonical token without creating sink or ACK files.
 - Added public experimental filesystem composition for the retained
   prepared-text durability path.
   `prepared_text_durable_runtime.bootstrapFileV1`,

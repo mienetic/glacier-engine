@@ -8,28 +8,34 @@ retained prepared-text recovery path. It does not describe a durable
 
 ## Public modules
 
-The installed `glacier` module exports two additive surfaces:
+The installed `glacier` module exports additive writer, wire, and reader
+surfaces:
 
 - `prepared_text_durable_runtime` composes the existing package, tokenizer,
   session, checkpoint, source-recovery, result-sink, acknowledged-progress,
   and restore contracts into one bounded writer transition per call; and
 - `prepared_text_committed_output_file` reads and reconciles one selected
-  checkpoint/result-sink view without taking writer authority.
+  checkpoint/result-sink view without taking writer authority;
+- `prepared_text_terminal_source_recovery` and
+  `prepared_text_direct_terminal` define a distinct sink-free generation-one
+  contract and its exact generation-two terminal successor; and
+- `prepared_text_direct_terminal_output` reads that terminal successor without
+  opening or synthesizing a result sink.
 
 These are experimental Zig APIs, not a stable C ABI or release-stability
 promise.
 
 ## Writer operations
 
-`prepared_text_durable_runtime` exposes three entry points.
+`prepared_text_durable_runtime` exposes the original three acknowledged-path
+entry points plus two direct-terminal entry points.
 
 The source and target entry points select sink capacity at runtime. One
 concrete durable store accepts acknowledgement capacities `0..63`, so the
 production durable runtime does not monomorphize a separate store for each
-capacity. The current multi-transition protocol uses capacities `1..63`,
-corresponding to fixed output counts `2..64`. Capacity zero is retained for the
-additive direct-terminal fixed-output-count-one path, which is not implemented
-yet.
+capacity. `fixedOutputPlanV1` routes fixed output count one to the sink-free
+direct-terminal path and counts `2..64` to the acknowledged path with capacity
+`N - 1`.
 
 ### `bootstrapFileV1`
 
@@ -58,6 +64,28 @@ the caller's Scheduler. That remains true if a later ordinary typed error is
 returned, so the caller must not attempt to reuse that Scheduler after this
 point.
 
+### `bootstrapDirectTerminalFileV1`
+
+This operation creates or exactly recovers a distinct generation-one source
+contract for `max_new_tokens == 1`. It retains the exact package, prepared
+representation, tokenizer, raw input, local/bound plan, source runtime, request,
+and challenge identities, but contains no target or result-sink facts.
+
+### `advanceDirectTerminalSourceFileV1`
+
+This operation revalidates the terminal source contract and archived input,
+executes exactly one token, seals the terminal result, prepares the canonical
+generation-two terminal set, and retires the source lane before publishing the
+terminal selector. The generation and sequence edge is `1/1 -> 2/1`: generation
+advances while the already-terminal publication sequence remains one.
+
+No target is resolved, no restart checkpoint is captured, and no sink or
+acknowledgement file is created. If the source process stops after retirement
+but before selector publication, generation one remains authoritative and a
+fresh runtime may deterministically repeat the unpublished computation.
+Selected generation two replays without executing the model or requiring a
+step-sink identity.
+
 ### `advanceTargetFileV1`
 
 This operation consumes one selected restart. It initializes caller-owned
@@ -79,6 +107,10 @@ before the source exit is committed; later failures invoke the caller's
 non-returning fail-stop callback. On the target path, fail-stop protection is
 armed immediately before durable sink application and remains armed through
 checkpoint selection, runtime closure, and the final caller-output copy.
+The direct-terminal path completes all allocation, encoding, and publication
+preparation first, then retires the lane and verifies zero Bank/Scheduler
+authority. From that successful retirement through selector publication and
+source-claim completion, every failure is fail-stop.
 
 Successful source and target receipts state that runtime ownership is closed.
 The APIs do not retain the model, allocator, directory, Scheduler, Bank, or
@@ -106,6 +138,13 @@ The standalone inspector adds metadata-first JSON and explicit lossless output
 disclosure over this same filesystem API. See
 [Prepared-Text Result Inspector](PREPARED_TEXT_RESULT_INSPECTOR.md).
 
+`prepared_text_direct_terminal_output.inspectDirectoryV1` is the sink-free
+reader for the direct path. It validates the selected generation-two set, its
+embedded exact generation-one selector/set, terminal-source contract, input
+archive, semantic, and one canonical little-endian token, then rereads the
+selector before returning. Its view reports terminal state and zero
+acknowledgements without opening a sink namespace.
+
 ## Retained process-death evidence
 
 The existing compile-once prepared-text recovery campaign uses these public
@@ -120,21 +159,23 @@ exact-predecessor, or exact-successor filesystem roots and then requires fresh
 convergence to the retained four-token terminal oracle. Public extraction did
 not replace or weaken that evidence with a second implementation.
 
-Run the focused and full gates with:
+Run the focused gate with:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build \
-  package-module-test \
-  prepared-text-recovery-test \
-  prepared-text-result-inspector-test \
+  prepared-text-acknowledged-delivery-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
+
+Run the explicit exhaustive recovery campaign separately with
+`prepared-text-recovery-test`.
 
 ## Current nonclaims and open integration
 
 This foundation does not yet provide:
 
-- the direct-terminal fixed-output-count-one transition;
+- a retained real-process-death campaign dedicated to the direct-terminal
+  retirement/publication boundary;
 - a public user-facing producer for the request-independent package manifest;
 - durable `text-run`, unary serving, or streaming serving integration;
 - a stable public ABI or cross-language session binding;

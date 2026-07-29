@@ -1682,13 +1682,16 @@ APIs rather than a benchmark-only duplicate.
 The production writer now selects one concrete durable store at runtime.
 The store accepts acknowledgement capacities `0..63` without per-capacity
 durable-runtime monomorphization. The current source/target transition protocol
-uses capacities `1..63`, corresponding to fixed output counts `2..64`; the
-direct-terminal fixed-output-count-one path remains open.
+uses capacities `1..63`, corresponding to fixed output counts `2..64`.
+Fixed output count one now uses a separate sink-free terminal-source contract:
+one source step retires its runtime before selecting generation two at the same
+publication sequence, and a dedicated read-only view verifies the embedded
+generation-one lineage without a sink or acknowledgement.
 
-This is a low-level foundation, not the R1 user-path exit. The direct-terminal
-fixed-output-count-one path, ordinary-model package producer, `text-run` and
-serving integration, non-POSIX native evidence, broader tokenizer/model
-coverage, and stable language bindings remain open. See
+This is a low-level foundation, not the R1 user-path exit. A direct-terminal
+process-death campaign, ordinary-model package producer, `text-run` and serving
+integration, non-POSIX native evidence, broader tokenizer/model coverage, and
+stable language bindings remain open. See
 [Public Prepared-Text Durable Runtime](PREPARED_TEXT_DURABLE_RUNTIME.md).
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
@@ -1696,9 +1699,9 @@ completes plan → execute → publish → checkpoint → fresh-process resume w
 exact ownership and output evidence on the promoted native platform, including
 recoverable source-exit and replay-safe external publication. The retained
 synthetic fresh-process proof now includes replay-safe local sink progress, but
-does not complete its direct-terminal fixed-output-count-one path, package
-producer, ordinary command/serving rendering, remote-delivery, GPU, or
-multi-OS requirements.
+does not yet include direct-terminal process-death evidence, a package producer,
+ordinary command/serving rendering, remote delivery, GPU, or multi-OS
+requirements.
 
 ### R2 — Stateless tensor families
 

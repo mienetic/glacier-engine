@@ -296,6 +296,12 @@ pub const prepared_text_restart_manifest =
     @import("prepared_text_restart_manifest.zig");
 pub const prepared_text_source_recovery =
     @import("prepared_text_source_recovery.zig");
+pub const prepared_text_terminal_source_recovery =
+    @import("prepared_text_terminal_source_recovery.zig");
+pub const prepared_text_direct_terminal =
+    @import("prepared_text_direct_terminal.zig");
+pub const prepared_text_direct_terminal_output =
+    @import("prepared_text_direct_terminal_output.zig");
 pub const prepared_text_restore_admission =
     @import("prepared_text_restore_admission.zig");
 pub const prepared_text_terminal_equivalence =

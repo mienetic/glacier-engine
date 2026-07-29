@@ -265,21 +265,18 @@ run_zig_build() {
 }
 
 run_prepared_text_focused_build() {
-    if [ "$prepared_text_recovery_requested" -eq 1 ] &&
-        [ "$prepared_text_inspector_requested" -eq 1 ]; then
-        run_zig_build \
-            package-module-test \
-            prepared-text-recovery-test \
-            prepared-text-result-inspector-test
-    elif [ "$prepared_text_recovery_requested" -eq 1 ]; then
-        run_zig_build \
-            package-module-test \
-            prepared-text-recovery-test
-    else
-        run_zig_build \
-            package-module-test \
-            prepared-text-result-inspector-test
+    set --
+    if [ "$prepared_text_delivery_requested" -eq 1 ]; then
+        set -- "$@" prepared-text-acknowledged-delivery-test
     fi
+    if [ "$prepared_text_recovery_requested" -eq 1 ]; then
+        set -- "$@" prepared-text-recovery-test
+    fi
+    if [ "$prepared_text_inspector_requested" -eq 1 ]; then
+        set -- "$@" prepared-text-result-inspector-test
+    fi
+    [ "$#" -gt 0 ] || return 64
+    run_zig_build "$@"
 }
 
 run_zig_metal_build() {
@@ -619,8 +616,14 @@ fi
 
 documentation_only_fast=0
 prepared_text_focused_requested=0
+prepared_text_delivery_requested=0
 prepared_text_inspector_requested=0
 prepared_text_recovery_requested=0
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "prepared-text-delivery-focused"; then
+    prepared_text_delivery_requested=1
+    prepared_text_focused_requested=1
+fi
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "prepared-text-recovery-focused"; then
     prepared_text_recovery_requested=1
@@ -700,12 +703,14 @@ elif [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
         if [ "$prepared_text_focused_in_quick" -eq 1 ]; then
             record_skip "interop/c-cpp-python" \
                 "prepared-text focused DAG does not select generic interop"
+            record_skip "package/modules" \
+                "prepared-text focused DAG does not select generic package modules"
         else
             record_pass "interop/c-cpp-python" \
                 "covered by the shared host Zig DAG"
+            record_pass "package/modules" \
+                "covered by the shared host Zig DAG"
         fi
-        record_pass "package/modules" \
-            "covered by the shared host Zig DAG"
     else
         record_skip "interop/c-cpp-python" \
             "shared host Zig DAG failed"
@@ -726,6 +731,10 @@ fi
 if [ "$prepared_text_focused_requested" -eq 1 ] &&
     [ "$prepared_text_focused_in_quick" -eq 1 ]; then
     if [ "$host_quick_status" -eq 0 ]; then
+        if [ "$prepared_text_delivery_requested" -eq 1 ]; then
+            record_pass "native/prepared-text-delivery" \
+                "covered by the focused host Zig DAG"
+        fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_pass "native/prepared-text-inspector" \
                 "covered by the focused host Zig DAG"
@@ -735,6 +744,10 @@ if [ "$prepared_text_focused_requested" -eq 1 ] &&
                 "covered by the focused host Zig DAG"
         fi
     else
+        if [ "$prepared_text_delivery_requested" -eq 1 ]; then
+            record_skip "native/prepared-text-delivery" \
+                "focused host Zig DAG failed"
+        fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_skip "native/prepared-text-inspector" \
                 "focused host Zig DAG failed"
@@ -747,6 +760,10 @@ if [ "$prepared_text_focused_requested" -eq 1 ] &&
 elif [ "$prepared_text_focused_requested" -eq 1 ] &&
     [ "$run_native_full" -eq 0 ]; then
     if [ "$host_name" != "Darwin" ] && [ "$host_name" != "Linux" ]; then
+        if [ "$prepared_text_delivery_requested" -eq 1 ]; then
+            record_native_unavailable "native/prepared-text-delivery" \
+                "requires native macOS or Linux execution"
+        fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_native_unavailable "native/prepared-text-inspector" \
                 "requires native macOS or Linux execution"
@@ -756,6 +773,10 @@ elif [ "$prepared_text_focused_requested" -eq 1 ] &&
                 "requires native macOS or Linux execution"
         fi
     else
+        if [ "$prepared_text_delivery_requested" -eq 1 ]; then
+            record_native_unavailable "native/prepared-text-delivery" \
+                "requires working zig and python3 executables"
+        fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_native_unavailable "native/prepared-text-inspector" \
                 "requires working zig and python3 executables"
@@ -903,6 +924,10 @@ if [ "$profile" = "affected" ] &&
     [ "$prepared_text_focused_requested" -eq 1 ] &&
     [ "$prepared_text_focused_in_quick" -eq 0 ]; then
     if [ "$native_full_status" = "0" ]; then
+        if [ "$prepared_text_delivery_requested" -eq 1 ]; then
+            record_pass "native/prepared-text-delivery" \
+                "covered by the shared host runtime DAG"
+        fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_pass "native/prepared-text-inspector" \
                 "covered by the shared host runtime DAG"
@@ -912,6 +937,10 @@ if [ "$profile" = "affected" ] &&
                 "covered by the shared host runtime DAG"
         fi
     else
+        if [ "$prepared_text_delivery_requested" -eq 1 ]; then
+            record_skip "native/prepared-text-delivery" \
+                "covering host compile or runtime DAG did not pass"
+        fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_skip "native/prepared-text-inspector" \
                 "covering host compile or runtime DAG did not pass"

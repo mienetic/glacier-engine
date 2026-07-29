@@ -189,7 +189,6 @@ SHARED_RUNTIME_COMPLETE_PATHS = {
     "src/model/package_manifest.zig",
     "src/prepared_text_handoff_archive.zig",
     "src/prepared_text_input_archive.zig",
-    "src/prepared_text_source_lease.zig",
     "src/prepared_text_durable_handoff.zig",
     "src/continuation_live_restart.zig",
 }
@@ -212,13 +211,18 @@ DURABLE_RUNTIME_PROFILE_PATHS = {
 
 PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS = {
     "src/prepared_text_acknowledged_delivery.zig",
+    "src/prepared_text_acknowledged_progress.zig",
+    "src/prepared_text_acknowledged_restore.zig",
     "src/prepared_text_committed_output_file.zig",
+    "src/prepared_text_direct_terminal.zig",
+    "src/prepared_text_direct_terminal_output.zig",
     "src/prepared_text_durable_runtime.zig",
     "src/prepared_text_result_sink.zig",
     "src/prepared_text_result_sink_file.zig",
-    "src/prepared_text_acknowledged_progress.zig",
-    "src/prepared_text_acknowledged_restore.zig",
     "src/prepared_text_source_recovery.zig",
+    "src/prepared_text_source_lease.zig",
+    "src/prepared_text_terminal_equivalence.zig",
+    "src/prepared_text_terminal_source_recovery.zig",
 }
 
 PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS = {
@@ -660,6 +664,19 @@ def _decision_for_path(path: str) -> PathDecision:
             ("profile-core-compile",),
         )
 
+    if (
+        path in PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS
+        and path not in PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS
+    ):
+        return PathDecision(
+            path,
+            "prepared-text acknowledged or direct delivery changed",
+            _compiled_flags(suffix)
+            | frozenset({"prepared-text-delivery-focused"}),
+            RETAINED_TARGETS,
+            ("profile-durable-compile",),
+        )
+
     if path in SHARED_RUNTIME_COMPLETE_PATHS:
         return PathDecision(
             path,
@@ -685,6 +702,8 @@ def _decision_for_path(path: str) -> PathDecision:
             else set(_compiled_flags(suffix))
         )
         inspector_flags.add("prepared-text-inspector-focused")
+        if path in PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS:
+            inspector_flags.add("prepared-text-delivery-focused")
         if suffix == ".py":
             inspector_flags.add("python-changed")
         if suffix == ".py":
@@ -705,16 +724,6 @@ def _decision_for_path(path: str) -> PathDecision:
             frozenset(inspector_flags),
             inspector_targets,
             inspector_steps,
-        )
-
-    if path in PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS:
-        return PathDecision(
-            path,
-            "prepared-text acknowledged delivery or durable recovery changed",
-            _compiled_flags(suffix)
-            | frozenset({"prepared-text-recovery-focused"}),
-            RETAINED_TARGETS,
-            ("profile-durable-compile",),
         )
 
     if path in PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS:
@@ -1018,6 +1027,7 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
         ("darwin-aarch64-native", "native/darwin-aarch64"),
         ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
+        ("prepared-text-delivery-focused", "native/prepared-text-delivery"),
         ("prepared-text-inspector-focused", "native/prepared-text-inspector"),
         ("prepared-text-recovery-focused", "native/prepared-text-recovery"),
         ("verification-policy-focused", "python/verification-policy"),
@@ -1053,6 +1063,7 @@ def print_report(plan: VerificationPlan) -> None:
         ("darwin-aarch64-native", "native/darwin-aarch64"),
         ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
+        ("prepared-text-delivery-focused", "native/prepared-text-delivery"),
         ("prepared-text-inspector-focused", "native/prepared-text-inspector"),
         ("prepared-text-recovery-focused", "native/prepared-text-recovery"),
         ("verification-policy-focused", "python/verification-policy"),

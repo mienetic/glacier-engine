@@ -84,7 +84,6 @@ EXPECTED_SHARED_RUNTIME_COMPLETE_PATHS = frozenset(
         "src/model/package_manifest.zig",
         "src/prepared_text_handoff_archive.zig",
         "src/prepared_text_input_archive.zig",
-        "src/prepared_text_source_lease.zig",
         "src/prepared_text_durable_handoff.zig",
         "src/continuation_live_restart.zig",
     }
@@ -111,13 +110,18 @@ EXPECTED_DURABLE_RUNTIME_PROFILE_PATHS = frozenset(
 EXPECTED_PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS = frozenset(
     {
         "src/prepared_text_acknowledged_delivery.zig",
+        "src/prepared_text_acknowledged_progress.zig",
+        "src/prepared_text_acknowledged_restore.zig",
         "src/prepared_text_committed_output_file.zig",
+        "src/prepared_text_direct_terminal.zig",
+        "src/prepared_text_direct_terminal_output.zig",
         "src/prepared_text_durable_runtime.zig",
         "src/prepared_text_result_sink.zig",
         "src/prepared_text_result_sink_file.zig",
-        "src/prepared_text_acknowledged_progress.zig",
-        "src/prepared_text_acknowledged_restore.zig",
         "src/prepared_text_source_recovery.zig",
+        "src/prepared_text_source_lease.zig",
+        "src/prepared_text_terminal_equivalence.zig",
+        "src/prepared_text_terminal_source_recovery.zig",
     }
 )
 
@@ -532,32 +536,30 @@ class VerificationPolicyTests(unittest.TestCase):
                 )
         for changed_path in sorted(EXPECTED_PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS):
             with self.subTest(changed_path=changed_path):
-                if changed_path in EXPECTED_PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS:
-                    expected_steps = ("profile-durable-compile",)
-                    focused_flag = "prepared-text-inspector-focused"
-                else:
-                    expected_steps = ("profile-durable-compile",)
-                    focused_flag = "prepared-text-recovery-focused"
                 plan = self.assert_target_steps(
                     [changed_path],
                     tuple(
                         (
                             target,
-                            expected_steps,
+                            ("profile-durable-compile",),
                         )
                         for target in policy.RETAINED_TARGETS
                     ),
                 )
+                expected_flags = {
+                    "native-full",
+                    "prepared-text-delivery-focused",
+                    "python-full",
+                }
+                if changed_path in EXPECTED_PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS:
+                    expected_flags.add("prepared-text-inspector-focused")
                 self.assertEqual(
-                    frozenset(
-                        {
-                            "native-full",
-                            focused_flag,
-                            "python-full",
-                        }
-                    ),
+                    frozenset(expected_flags),
                     plan.flags,
                 )
+                gate_names = policy._gate_names(plan.decisions[0])
+                self.assertIn("native/prepared-text-delivery", gate_names)
+                self.assertNotIn("native/prepared-text-recovery", gate_names)
         for changed_path in sorted(EXPECTED_PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS):
             with self.subTest(changed_path=changed_path):
                 plan = self.assert_target_steps(
@@ -581,6 +583,7 @@ class VerificationPolicyTests(unittest.TestCase):
                     frozenset(expected_flags),
                     plan.flags,
                 )
+                self.assertFalse(plan.requires("prepared-text-delivery-focused"))
         for changed_path in sorted(
             EXPECTED_TEXT_RUNTIME_GOLDEN_PATH_PATHS
         ):
@@ -675,6 +678,15 @@ class VerificationPolicyTests(unittest.TestCase):
                     "prepared-text-inspector-focused",
                     "python-full",
                 }
+                if changed_path in EXPECTED_PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS:
+                    expected_flags.add("prepared-text-delivery-focused")
+                    self.assertTrue(
+                        plan.requires("prepared-text-delivery-focused")
+                    )
+                else:
+                    self.assertFalse(
+                        plan.requires("prepared-text-delivery-focused")
+                    )
                 if changed_path.endswith(".py"):
                     expected_flags.add("python-changed")
                     self.assertEqual((), plan.target_plans)
@@ -2609,6 +2621,9 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "",
                 encoding="ascii",
             )
+            (
+                repository / "bench" / "prepared_text_recovery_campaign.py"
+            ).write_text("", encoding="ascii")
 
             result = self.run_affected_fast(
                 repository,
@@ -2626,6 +2641,11 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout,
             )
             self.assertIn(
+                "PASS  native/prepared-text-delivery: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
+            self.assertIn(
                 "PASS  native/prepared-text-inspector: covered by the "
                 "focused host Zig DAG",
                 result.stdout,
@@ -2633,6 +2653,11 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertIn(
                 "PASS  native/prepared-text-recovery: covered by the "
                 "focused host Zig DAG",
+                result.stdout,
+            )
+            self.assertIn(
+                "SKIP  package/modules: prepared-text focused DAG does not "
+                "select generic package modules",
                 result.stdout,
             )
             calls = (
@@ -2644,7 +2669,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 line
                 for line in calls
                 if line.startswith(
-                    "build package-module-test "
+                    "build prepared-text-acknowledged-delivery-test "
                     "prepared-text-recovery-test "
                     "prepared-text-result-inspector-test "
                 )
@@ -2654,7 +2679,116 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 any(
                     line.startswith("build host-runtime-compile ")
                     or line.startswith("build test contract-interop-test ")
+                    or "package-module-test" in line
                     or " -Dtarget=" in line
+                    for line in calls
+                ),
+                calls,
+            )
+
+    def test_affected_fast_delivery_only_runs_only_delivery_target(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            (
+                repository / "src" / "prepared_text_direct_terminal.zig"
+            ).write_text("", encoding="ascii")
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  native/prepared-text-delivery: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "native/prepared-text-inspector",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "native/prepared-text-recovery",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            delivery_calls = [
+                line
+                for line in calls
+                if line.startswith(
+                    "build prepared-text-acknowledged-delivery-test "
+                )
+            ]
+            self.assertEqual(1, len(delivery_calls), calls)
+            self.assertFalse(
+                any(
+                    "prepared-text-result-inspector-test" in line
+                    or "prepared-text-recovery-test" in line
+                    or "package-module-test" in line
+                    for line in calls
+                ),
+                calls,
+            )
+
+    def test_affected_fast_recovery_campaign_only_runs_recovery_target(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            (
+                repository / "bench" / "prepared_text_recovery_campaign.py"
+            ).write_text("", encoding="ascii")
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  native/prepared-text-recovery: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "native/prepared-text-delivery",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "native/prepared-text-inspector",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            recovery_calls = [
+                line
+                for line in calls
+                if line.startswith("build prepared-text-recovery-test ")
+            ]
+            self.assertEqual(1, len(recovery_calls), calls)
+            self.assertFalse(
+                any(
+                    "prepared-text-acknowledged-delivery-test" in line
+                    or "prepared-text-result-inspector-test" in line
+                    or "package-module-test" in line
                     for line in calls
                 ),
                 calls,
@@ -2691,6 +2825,10 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "native/prepared-text-recovery",
                 result.stdout,
             )
+            self.assertNotIn(
+                "native/prepared-text-delivery",
+                result.stdout,
+            )
             calls = (
                 Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
                 .read_text(encoding="ascii")
@@ -2700,13 +2838,20 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 line
                 for line in calls
                 if line.startswith(
-                    "build package-module-test "
-                    "prepared-text-result-inspector-test "
+                    "build prepared-text-result-inspector-test "
                 )
             ]
             self.assertEqual(1, len(focused_calls), calls)
             self.assertFalse(
                 any("prepared-text-recovery-test" in line for line in calls),
+                calls,
+            )
+            self.assertFalse(
+                any(
+                    "prepared-text-acknowledged-delivery-test" in line
+                    or "package-module-test" in line
+                    for line in calls
+                ),
                 calls,
             )
 
