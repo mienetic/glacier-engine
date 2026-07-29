@@ -56,20 +56,16 @@ GITHUB_CONTROL_PATHS = {
 POLICY_CONTROL_PATHS = {
     "tools/verification_policy.py": frozenset(
         {
-            "native-full",
             "python-changed",
             "python-full",
             "verification-policy-focused",
-            "workload-store-fault-posix",
         }
     ),
     "tools/verify.sh": frozenset(
         {
-            "native-full",
             "python-full",
             "shell-changed",
             "verification-policy-focused",
-            "workload-store-fault-posix",
         }
     ),
     "tools/zig-with-ephemeral-cache.sh": frozenset({"python-full", "shell-changed"}),
@@ -81,6 +77,7 @@ POLICY_CONTROL_PATHS = {
 VERIFICATION_POLICY_FOCUSED_PATHS = {
     "tools/verification_policy.py",
     "tools/verify.sh",
+    "bench/tests/test_local_verify.py",
     "bench/tests/test_verification_policy.py",
 }
 
@@ -223,6 +220,25 @@ PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS = {
     "src/prepared_text_source_lease.zig",
     "src/prepared_text_terminal_equivalence.zig",
     "src/prepared_text_terminal_source_recovery.zig",
+}
+
+PREPARED_TEXT_DIRECT_TERMINAL_IMPLEMENTATION_PATHS = {
+    "src/prepared_text_direct_terminal.zig",
+    "src/prepared_text_direct_terminal_output.zig",
+    "src/prepared_text_durable_runtime.zig",
+    "src/prepared_text_source_lease.zig",
+    "src/prepared_text_terminal_equivalence.zig",
+    "src/prepared_text_terminal_source_recovery.zig",
+}
+
+PREPARED_TEXT_DIRECT_TERMINAL_RECOVERY_DEPENDENCY_PATHS = {
+    "src/core/continuation_checkpoint_file.zig",
+    "src/prepared_text_checkpoint.zig",
+}
+
+PREPARED_TEXT_DIRECT_TERMINAL_RECOVERY_SMOKE_PATHS = {
+    "bench/prepared_text_direct_terminal_recovery.py",
+    "bench/tests/test_prepared_text_direct_terminal_recovery.py",
 }
 
 PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS = {
@@ -513,13 +529,20 @@ def _decision_for_path(path: str) -> PathDecision:
     policy_flags = POLICY_CONTROL_PATHS.get(lower)
     if policy_flags is not None:
         policy_targets = (
-            () if lower == "tools/zig-with-ephemeral-cache.sh" else RETAINED_TARGETS
+            ()
+            if lower
+            in {
+                "tools/verification_policy.py",
+                "tools/verify.sh",
+                "tools/zig-with-ephemeral-cache.sh",
+            }
+            else RETAINED_TARGETS
         )
         return PathDecision(
             path,
             (
-                "ephemeral-cache wrapper changed; validate its shell and "
-                "Python integration without compiling foreign targets"
+                "verification control changed; validate shell and Python "
+                "integration without compiling unrelated targets"
                 if not policy_targets
                 else "verification control changed; validate every retained target"
             ),
@@ -542,16 +565,19 @@ def _decision_for_path(path: str) -> PathDecision:
         )
 
     if _is_github_control(path):
-        flags = set(_compiled_flags(suffix))
+        flags = {"python-full"}
         if suffix == ".py":
             flags.add("python-changed")
         if suffix == ".sh":
             flags.add("shell-changed")
         return PathDecision(
             path,
-            "GitHub workflow, action, or dependency automation changed",
+            (
+                "GitHub execution control changed; run static policy "
+                "coverage and defer exhaustive target execution"
+            ),
             frozenset(flags),
-            RETAINED_TARGETS,
+            (),
         )
 
     if lower == "examples/interop/rust_verify.rs":
@@ -664,15 +690,38 @@ def _decision_for_path(path: str) -> PathDecision:
             ("profile-core-compile",),
         )
 
+    if path in PREPARED_TEXT_DIRECT_TERMINAL_RECOVERY_DEPENDENCY_PATHS:
+        dependency_steps = (
+            COMPLETE_COMPILE_TARGET_STEPS
+            if path == "src/core/continuation_checkpoint_file.zig"
+            else ("profile-durable-compile",)
+        )
+        return PathDecision(
+            path,
+            "shared checkpoint dependency of direct-terminal recovery changed",
+            _compiled_flags(suffix)
+            | frozenset(
+                {
+                    "prepared-text-delivery-focused",
+                    "prepared-text-direct-terminal-smoke-focused",
+                }
+            ),
+            RETAINED_TARGETS,
+            dependency_steps,
+        )
+
     if (
         path in PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS
         and path not in PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS
     ):
+        delivery_flags = set(_compiled_flags(suffix))
+        delivery_flags.add("prepared-text-delivery-focused")
+        if path in PREPARED_TEXT_DIRECT_TERMINAL_IMPLEMENTATION_PATHS:
+            delivery_flags.add("prepared-text-direct-terminal-smoke-focused")
         return PathDecision(
             path,
             "prepared-text acknowledged or direct delivery changed",
-            _compiled_flags(suffix)
-            | frozenset({"prepared-text-delivery-focused"}),
+            frozenset(delivery_flags),
             RETAINED_TARGETS,
             ("profile-durable-compile",),
         )
@@ -697,9 +746,7 @@ def _decision_for_path(path: str) -> PathDecision:
 
     if path in PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS:
         inspector_flags = (
-            {"python-full"}
-            if suffix == ".py"
-            else set(_compiled_flags(suffix))
+            {"python-full"} if suffix == ".py" else set(_compiled_flags(suffix))
         )
         inspector_flags.add("prepared-text-inspector-focused")
         if path in PREPARED_TEXT_ACKNOWLEDGED_DELIVERY_PATHS:
@@ -726,17 +773,37 @@ def _decision_for_path(path: str) -> PathDecision:
             inspector_steps,
         )
 
+    if path in PREPARED_TEXT_DIRECT_TERMINAL_RECOVERY_SMOKE_PATHS:
+        return PathDecision(
+            path,
+            "prepared-text direct-terminal process-death smoke changed",
+            frozenset(
+                {
+                    "prepared-text-direct-terminal-smoke-focused",
+                    "python-changed",
+                    "python-full",
+                }
+            ),
+            (),
+        )
+
     if path in PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS:
-        recovery_flags = set(_compiled_flags(suffix))
+        recovery_flags = (
+            {"python-full"} if suffix == ".py" else set(_compiled_flags(suffix))
+        )
         recovery_flags.add("prepared-text-recovery-focused")
         if suffix == ".py":
             recovery_flags.add("python-changed")
+        recovery_targets = () if suffix == ".py" else POSIX_TARGETS
+        recovery_steps = (
+            FULL_TARGET_STEPS if suffix == ".py" else ("profile-durable-compile",)
+        )
         return PathDecision(
             path,
             "prepared-text real process-death campaign changed",
             frozenset(recovery_flags),
-            POSIX_TARGETS,
-            ("profile-durable-compile",),
+            recovery_targets,
+            recovery_steps,
         )
 
     if path in RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS:
@@ -904,7 +971,7 @@ def _decision_for_path(path: str) -> PathDecision:
     if lower in BUILD_CONTROL_PATHS:
         build_flags = {"native-full", "python-full"}
         if lower in {"build.zig", "build.zig.zon"}:
-            build_flags.update({"metal-native", "workload-store-fault-posix"})
+            build_flags.add("metal-native")
         return PathDecision(
             path,
             "build or package control changed; validate every retained target",
@@ -1028,6 +1095,10 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
         ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
         ("prepared-text-delivery-focused", "native/prepared-text-delivery"),
+        (
+            "prepared-text-direct-terminal-smoke-focused",
+            "native/prepared-text-direct-terminal-smoke",
+        ),
         ("prepared-text-inspector-focused", "native/prepared-text-inspector"),
         ("prepared-text-recovery-focused", "native/prepared-text-recovery"),
         ("verification-policy-focused", "python/verification-policy"),
@@ -1064,6 +1135,10 @@ def print_report(plan: VerificationPlan) -> None:
         ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
         ("prepared-text-delivery-focused", "native/prepared-text-delivery"),
+        (
+            "prepared-text-direct-terminal-smoke-focused",
+            "native/prepared-text-direct-terminal-smoke",
+        ),
         ("prepared-text-inspector-focused", "native/prepared-text-inspector"),
         ("prepared-text-recovery-focused", "native/prepared-text-recovery"),
         ("verification-policy-focused", "python/verification-policy"),

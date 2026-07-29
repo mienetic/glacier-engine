@@ -4976,6 +4976,10 @@ pub fn build(b: *std.Build) void {
         "prepared-text-recovery-test",
         "Run prepared-text source and target process-death recovery",
     );
+    const prepared_text_direct_terminal_recovery_smoke_test_step = b.step(
+        "prepared-text-direct-terminal-recovery-smoke-test",
+        "Run bounded direct-terminal process-death recovery",
+    );
     const prepared_text_recovery_native_available =
         (target.result.os.tag == .macos or
             target.result.os.tag == .linux) and
@@ -4991,6 +4995,7 @@ pub fn build(b: *std.Build) void {
                 "bench.tests.test_prepared_text_package",
                 "bench.tests.test_prepared_text_result_sink",
                 "bench.tests.test_prepared_text_recovery_campaign",
+                "bench.tests.test_prepared_text_direct_terminal_recovery",
             });
         run_prepared_text_recovery_model.setCwd(b.path("."));
         run_prepared_text_recovery_model.setEnvironmentVariable(
@@ -5053,6 +5058,43 @@ pub fn build(b: *std.Build) void {
             &run_prepared_text_result_inspector_integration.step,
         );
 
+        const run_prepared_text_direct_terminal_recovery_smoke =
+            b.addSystemCommand(&.{
+                "python3",
+                "-m",
+                "bench.prepared_text_direct_terminal_recovery",
+                "--worker",
+            });
+        run_prepared_text_direct_terminal_recovery_smoke.addArtifactArg(
+            prepared_text_recovery_worker_exe.?,
+        );
+        run_prepared_text_direct_terminal_recovery_smoke.addArg(
+            "--directory",
+        );
+        _ = run_prepared_text_direct_terminal_recovery_smoke
+            .addOutputDirectoryArg(
+            "prepared-text-direct-terminal-recovery-smoke",
+        );
+        run_prepared_text_direct_terminal_recovery_smoke.setCwd(
+            b.path("."),
+        );
+        run_prepared_text_direct_terminal_recovery_smoke
+            .setEnvironmentVariable(
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+        );
+        run_prepared_text_direct_terminal_recovery_smoke
+            .setEnvironmentVariable(
+            "PYTHONPATH",
+            ".",
+        );
+        run_prepared_text_direct_terminal_recovery_smoke.step.dependOn(
+            &run_prepared_text_recovery_model.step,
+        );
+        prepared_text_direct_terminal_recovery_smoke_test_step.dependOn(
+            &run_prepared_text_direct_terminal_recovery_smoke.step,
+        );
+
         const run_prepared_text_recovery_campaign =
             b.addSystemCommand(&.{
                 "python3",
@@ -5094,7 +5136,13 @@ pub fn build(b: *std.Build) void {
         prepared_text_recovery_test_step.dependOn(
             &prepared_text_recovery_failure.step,
         );
+        prepared_text_direct_terminal_recovery_smoke_test_step.dependOn(
+            &prepared_text_recovery_failure.step,
+        );
     }
+    prepared_text_recovery_test_step.dependOn(
+        prepared_text_direct_terminal_recovery_smoke_test_step,
+    );
     test_step.dependOn(prepared_text_recovery_test_step);
     if (prepared_text_recovery_worker_exe) |worker|
         test_compile_step.dependOn(&worker.step);

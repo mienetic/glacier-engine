@@ -551,6 +551,7 @@ def _capture_one_frame(
     decode_frame: Callable[[bytes], dict[str, object]] = _decode_canonical_json,
     maximum_frame_bytes: int = MAX_JSON_FRAME_BYTES,
     process_label: str = "worker",
+    require_frame_pid_match: bool = False,
 ) -> tuple[dict[str, object], int]:
     _require(bool(command), f"empty {process_label} command")
     _require(timeout_seconds > 0, f"{process_label} timeout must be positive")
@@ -610,6 +611,11 @@ def _capture_one_frame(
                     f"{process_label} emitted more than one stdout frame",
                 )
                 frame = decode_frame(bytes(stdout_before_frame[:newline]))
+                if require_frame_pid_match:
+                    _require(
+                        frame.get("pid") == process.pid,
+                        f"{process_label} frame PID does not match child process",
+                    )
                 validate_frame(frame)
                 stdout_before_frame.clear()
 
@@ -761,6 +767,7 @@ def run_crash_worker(
         command,
         timeout_seconds=timeout_seconds,
         validate_frame=validate,
+        require_frame_pid_match=True,
     )
     _require(
         return_code == -signal.SIGKILL,
@@ -885,6 +892,7 @@ def run_result_worker(
         command,
         timeout_seconds=timeout_seconds,
         validate_frame=validate,
+        require_frame_pid_match=True,
     )
     _require(return_code == 0, "normal worker exited unsuccessfully")
     return frame

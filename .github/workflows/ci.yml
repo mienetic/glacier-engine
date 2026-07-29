@@ -48,7 +48,9 @@ jobs:
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.15.2
-          use-cache: false
+          use-cache: true
+          cache-key: affected
+          cache-size-limit: 1024
 
       - name: Resolve affected base
         id: affected-base
@@ -88,6 +90,8 @@ jobs:
           printf 'base=%s\n' "$base" >>"$GITHUB_OUTPUT"
 
       - name: Run bounded affected gates
+        env:
+          GLACIER_VERIFY_REUSE_ZIG_CACHE: "1"
         run: >-
           tools/verify.sh affected-fast
           --base "${{ steps.affected-base.outputs.base }}"
@@ -114,7 +118,9 @@ jobs:
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.15.2
-          use-cache: false
+          use-cache: true
+          cache-key: exhaustive
+          cache-size-limit: 2048
 
       - name: Install Python test dependencies
         run: >-
@@ -125,6 +131,8 @@ jobs:
           -r bench/requirements-test.txt
 
       - name: Run requested verification profile
+        env:
+          GLACIER_VERIFY_REUSE_ZIG_CACHE: "1"
         run: tools/verify.sh "$VERIFY_PROFILE"
 
   macos-frontier:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -115,6 +116,7 @@ class LocalVerifyTests(unittest.TestCase):
         root: Path,
         profile: str = "quick",
         extra_env: dict[str, str] | None = None,
+        verify_path: Path = VERIFY,
     ) -> subprocess.CompletedProcess[str]:
         bin_dir, log_path = self.make_fake_toolchain(root)
         temporary_parent = root / "tmp"
@@ -122,6 +124,13 @@ class LocalVerifyTests(unittest.TestCase):
         outside_cwd = root / "outside"
         outside_cwd.mkdir()
         env = os.environ.copy()
+        for variable in (
+            "GITHUB_ACTIONS",
+            "GLACIER_VERIFY_REUSE_ZIG_CACHE",
+            "ZIG_LOCAL_CACHE_DIR",
+            "ZIG_GLOBAL_CACHE_DIR",
+        ):
+            env.pop(variable, None)
         env.update(
             {
                 "PATH": f"{bin_dir}:/usr/bin:/bin",
@@ -132,7 +141,7 @@ class LocalVerifyTests(unittest.TestCase):
         if extra_env:
             env.update(extra_env)
         return subprocess.run(
-            [str(VERIFY), profile],
+            [str(verify_path), profile],
             cwd=outside_cwd,
             env=env,
             check=False,
@@ -152,13 +161,11 @@ class LocalVerifyTests(unittest.TestCase):
             self.assertIn("PASS  policy/public-markdown:", result.stdout)
             self.assertIn("PASS  host/quick-dag:", result.stdout)
             self.assertIn(
-                "PASS  interop/c-cpp-python: covered by the shared "
-                "host Zig DAG",
+                "PASS  interop/c-cpp-python: covered by the shared host Zig DAG",
                 result.stdout,
             )
             self.assertIn(
-                "PASS  package/modules: covered by the shared host "
-                "Zig DAG",
+                "PASS  package/modules: covered by the shared host Zig DAG",
                 result.stdout,
             )
             self.assertIn(
@@ -166,17 +173,13 @@ class LocalVerifyTests(unittest.TestCase):
                 "run tools/verify.sh full",
                 result.stdout,
             )
-            self.assertIn(
-                "SKIP  portability/cross-target:", result.stdout
-            )
+            self.assertIn("SKIP  portability/cross-target:", result.stdout)
             self.assertIn("Summary: 7 PASS, 6 SKIP, 0 FAIL", result.stdout)
 
             log = (root / "tool.log").read_text(encoding="utf-8")
             self.assertIn("|dontwrite=1", log)
             build_lines = [
-                line
-                for line in log.splitlines()
-                if line.startswith("zig|args=build ")
+                line for line in log.splitlines() if line.startswith("zig|args=build ")
             ]
             self.assertEqual(1, len(build_lines), log)
             self.assertIn(
@@ -211,9 +214,7 @@ class LocalVerifyTests(unittest.TestCase):
                 ):
                     with self.subTest(cache_path=cache_path):
                         self.assertTrue(
-                            cache_path.resolve().is_relative_to(
-                                expected_parent
-                            )
+                            cache_path.resolve().is_relative_to(expected_parent)
                         )
 
             self.assertEqual(
@@ -221,6 +222,139 @@ class LocalVerifyTests(unittest.TestCase):
                 list((root / "tmp").glob("glacier-verify.*")),
                 result.stdout,
             )
+
+    def test_local_run_ignores_inherited_zig_cache_without_opt_in(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            caller_cache = root / "caller-cache"
+            result = self.run_verify(
+                root,
+                extra_env={
+                    "ZIG_LOCAL_CACHE_DIR": str(caller_cache),
+                    "ZIG_GLOBAL_CACHE_DIR": str(caller_cache),
+                },
+            )
+
+            self.assertEqual(0, result.returncode, result.stdout)
+            self.assertFalse(caller_cache.exists(), result.stdout)
+            self.assertEqual(
+                [],
+                list((root / "tmp").glob("glacier-verify.*")),
+                result.stdout,
+            )
+
+    def test_ci_opt_in_reuses_exact_setup_zig_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = root / "repository"
+            tools_dir = repository / "tools"
+            tools_dir.mkdir(parents=True)
+            copied_verify = tools_dir / "verify.sh"
+            shutil.copy2(VERIFY, copied_verify)
+            action_cache = (repository / ".zig-cache").resolve()
+
+            result = self.run_verify(
+                root,
+                extra_env={
+                    "GITHUB_ACTIONS": "true",
+                    "GLACIER_VERIFY_REUSE_ZIG_CACHE": "1",
+                    "ZIG_LOCAL_CACHE_DIR": str(action_cache),
+                    "ZIG_GLOBAL_CACHE_DIR": str(action_cache),
+                },
+                verify_path=copied_verify,
+            )
+
+            self.assertEqual(0, result.returncode, result.stdout)
+            self.assertTrue(
+                (action_cache / "fake-local-entry").is_file(),
+                result.stdout,
+            )
+            self.assertTrue(
+                (action_cache / "fake-global-entry").is_file(),
+                result.stdout,
+            )
+            log = (root / "tool.log").read_text(encoding="utf-8")
+            build_lines = [
+                line for line in log.splitlines() if line.startswith("zig|args=build ")
+            ]
+            self.assertEqual(1, len(build_lines), log)
+            self.assertIn(f"|local={action_cache}|", build_lines[0])
+            self.assertIn(f"|global={action_cache}|", build_lines[0])
+            self.assertEqual(
+                [],
+                list((root / "tmp").glob("glacier-verify.*")),
+                result.stdout,
+            )
+
+    def test_ci_cache_opt_in_fails_closed_outside_github_actions(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self.run_verify(
+                root,
+                extra_env={"GLACIER_VERIFY_REUSE_ZIG_CACHE": "1"},
+            )
+
+            self.assertEqual(64, result.returncode, result.stdout)
+            self.assertIn(
+                "reuse is restricted to GitHub Actions",
+                result.stdout,
+            )
+            self.assertFalse((root / "tool.log").exists())
+
+    def test_ci_cache_opt_in_rejects_unexpected_action_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self.run_verify(
+                root,
+                extra_env={
+                    "GITHUB_ACTIONS": "true",
+                    "GLACIER_VERIFY_REUSE_ZIG_CACHE": "1",
+                    "ZIG_LOCAL_CACHE_DIR": str(root / "local"),
+                    "ZIG_GLOBAL_CACHE_DIR": str(root / "global"),
+                },
+            )
+
+            self.assertEqual(64, result.returncode, result.stdout)
+            self.assertIn(
+                "action cache paths must both name",
+                result.stdout,
+            )
+            self.assertFalse((root / "tool.log").exists())
+
+    def test_ci_cache_opt_in_rejects_symlinked_action_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = root / "repository"
+            tools_dir = repository / "tools"
+            tools_dir.mkdir(parents=True)
+            copied_verify = tools_dir / "verify.sh"
+            shutil.copy2(VERIFY, copied_verify)
+            outside_cache = root / "outside-cache"
+            outside_cache.mkdir()
+            action_cache = repository.resolve() / ".zig-cache"
+            action_cache.symlink_to(outside_cache, target_is_directory=True)
+
+            result = self.run_verify(
+                root,
+                extra_env={
+                    "GITHUB_ACTIONS": "true",
+                    "GLACIER_VERIFY_REUSE_ZIG_CACHE": "1",
+                    "ZIG_LOCAL_CACHE_DIR": str(action_cache),
+                    "ZIG_GLOBAL_CACHE_DIR": str(action_cache),
+                },
+                verify_path=copied_verify,
+            )
+
+            self.assertEqual(64, result.returncode, result.stdout)
+            self.assertIn(
+                "action cache path must not be a symlink",
+                result.stdout,
+            )
+            self.assertFalse((root / "tool.log").exists())
 
     def test_failure_is_reported_continues_and_returns_nonzero(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -231,9 +365,7 @@ class LocalVerifyTests(unittest.TestCase):
             )
 
             self.assertEqual(1, result.returncode, result.stdout)
-            self.assertIn(
-                "FAIL  host/quick-dag: exit 7", result.stdout
-            )
+            self.assertIn("FAIL  host/quick-dag: exit 7", result.stdout)
             self.assertIn("injected contract failure", result.stdout)
             self.assertIn(
                 "SKIP  interop/c-cpp-python: shared host Zig DAG failed",
@@ -244,9 +376,7 @@ class LocalVerifyTests(unittest.TestCase):
                 result.stdout,
             )
             self.assertIn("Summary: 4 PASS, 8 SKIP, 1 FAIL", result.stdout)
-            self.assertEqual(
-                [], list((root / "tmp").glob("glacier-verify.*"))
-            )
+            self.assertEqual([], list((root / "tmp").glob("glacier-verify.*")))
 
     def test_quick_package_failure_is_attributed_to_the_shared_dag(
         self,
@@ -292,7 +422,13 @@ class LocalVerifyTests(unittest.TestCase):
             outside_cwd = root / "outside"
             outside_cwd.mkdir()
             environment = os.environ.copy()
-            environment.pop("GLACIER_VERIFY_REQUIRE_NATIVE", None)
+            for variable in (
+                "GLACIER_VERIFY_REQUIRE_NATIVE",
+                "GLACIER_VERIFY_REUSE_ZIG_CACHE",
+                "ZIG_LOCAL_CACHE_DIR",
+                "ZIG_GLOBAL_CACHE_DIR",
+            ):
+                environment.pop(variable, None)
             environment.update(
                 {
                     "PATH": f"{bin_dir}:/usr/bin:/bin",
@@ -322,13 +458,11 @@ class LocalVerifyTests(unittest.TestCase):
                 result.stdout,
             )
             self.assertIn(
-                "PASS  interop/c-cpp-python: covered by the shared "
-                "host runtime DAG",
+                "PASS  interop/c-cpp-python: covered by the shared host runtime DAG",
                 result.stdout,
             )
             self.assertIn(
-                "PASS  package/modules: covered by the shared "
-                "host runtime DAG",
+                "PASS  package/modules: covered by the shared host runtime DAG",
                 result.stdout,
             )
             self.assertIn("PASS  python/full-suite:", result.stdout)
@@ -337,27 +471,19 @@ class LocalVerifyTests(unittest.TestCase):
                 "Darwin, Linux, or FreeBSD POSIX execution",
                 result.stdout,
             )
-            self.assertIn(
-                "SKIP  interop/rust: unsupported host", result.stdout
-            )
+            self.assertIn("SKIP  interop/rust: unsupported host", result.stdout)
             self.assertIn("Summary: 10 PASS, 5 SKIP, 0 FAIL", result.stdout)
 
             log = (root / "tool.log").read_text(encoding="utf-8")
             host_build_lines = [
                 line
                 for line in log.splitlines()
-                if line.startswith(
-                    "zig|args=build host-runtime-compile "
-                )
-                or line.startswith(
-                    "zig|args=build test contract-interop-test "
-                )
+                if line.startswith("zig|args=build host-runtime-compile ")
+                or line.startswith("zig|args=build test contract-interop-test ")
             ]
             self.assertEqual(2, len(host_build_lines), log)
             self.assertTrue(
-                host_build_lines[0].startswith(
-                    "zig|args=build host-runtime-compile "
-                ),
+                host_build_lines[0].startswith("zig|args=build host-runtime-compile "),
                 host_build_lines,
             )
             self.assertTrue(
@@ -370,9 +496,7 @@ class LocalVerifyTests(unittest.TestCase):
                 r"--cache-dir ([^ ]+) --global-cache-dir ([^ ]+) "
                 r"--prefix ([^| ]+)"
             )
-            cache_matches = [
-                cache_pattern.search(line) for line in host_build_lines
-            ]
+            cache_matches = [cache_pattern.search(line) for line in host_build_lines]
             self.assertTrue(
                 all(match is not None for match in cache_matches),
                 host_build_lines,
@@ -410,18 +534,15 @@ class LocalVerifyTests(unittest.TestCase):
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  host/runtime-dag: host test compile frontier "
-                "failed",
+                "SKIP  host/runtime-dag: host test compile frontier failed",
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  native/releasesafe-suite: host test compile "
-                "frontier failed",
+                "SKIP  native/releasesafe-suite: host test compile frontier failed",
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  native/workload-store-fault: host test compile "
-                "frontier failed",
+                "SKIP  native/workload-store-fault: host test compile frontier failed",
                 result.stdout,
             )
             self.assertIn("PASS  python/full-suite:", result.stdout)
@@ -461,13 +582,11 @@ class LocalVerifyTests(unittest.TestCase):
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  native/releasesafe-suite: shared host runtime "
-                "DAG failed",
+                "SKIP  native/releasesafe-suite: shared host runtime DAG failed",
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  interop/c-cpp-python: shared host runtime DAG "
-                "failed",
+                "SKIP  interop/c-cpp-python: shared host runtime DAG failed",
                 result.stdout,
             )
             self.assertIn("PASS  python/full-suite:", result.stdout)
@@ -489,24 +608,20 @@ class LocalVerifyTests(unittest.TestCase):
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  host/runtime-dag: requires a working python3 "
-                "executable",
+                "SKIP  host/runtime-dag: requires a working python3 executable",
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  native/releasesafe-suite: requires a working "
-                "python3 executable",
+                "SKIP  native/releasesafe-suite: requires a working python3 executable",
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  interop/c-cpp-python: requires a working "
-                "python3 executable",
+                "SKIP  interop/c-cpp-python: requires a working python3 executable",
                 result.stdout,
             )
             self.assertIn("PASS  package/modules:", result.stdout)
             self.assertIn(
-                "SKIP  python/full-suite: requires a working python3 "
-                "executable",
+                "SKIP  python/full-suite: requires a working python3 executable",
                 result.stdout,
             )
             log = (root / "tool.log").read_text(encoding="utf-8")
@@ -532,18 +647,15 @@ class LocalVerifyTests(unittest.TestCase):
             self.assertEqual(1, result.returncode, result.stdout)
             self.assertIn("FAIL  toolchain/zig:", result.stdout)
             self.assertIn(
-                "SKIP  compile/host-test-frontier: requires a working "
-                "zig executable",
+                "SKIP  compile/host-test-frontier: requires a working zig executable",
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  host/runtime-dag: requires a working zig "
-                "executable",
+                "SKIP  host/runtime-dag: requires a working zig executable",
                 result.stdout,
             )
             self.assertIn(
-                "SKIP  native/releasesafe-suite: requires a working "
-                "zig executable",
+                "SKIP  native/releasesafe-suite: requires a working zig executable",
                 result.stdout,
             )
             log = (root / "tool.log").read_text(encoding="utf-8")
@@ -636,9 +748,7 @@ class LocalVerifyTests(unittest.TestCase):
             self.assertEqual(64, result.returncode, result.stdout)
             self.assertIn("cache paths are managed", result.stdout)
             self.assertFalse(log_path.exists())
-            self.assertEqual(
-                [], list(temporary_parent.glob("glacier-zig-cache.*"))
-            )
+            self.assertEqual([], list(temporary_parent.glob("glacier-zig-cache.*")))
 
 
 if __name__ == "__main__":

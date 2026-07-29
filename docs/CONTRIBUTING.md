@@ -99,8 +99,8 @@ changed path.
 | Change | Required checks |
 | --- | --- |
 | Documentation or metadata only | Quick profile, links, spelling/manual review |
-| GitHub workflow, action, or dependency automation | Quick gates, native ReleaseSafe, Python discovery, and every retained target |
-| Verification policy, verifier wrapper, or policy regression test | `affected-fast` runs changed-file syntax and `bench.tests.test_verification_policy` once; broad Python/native/target coverage remains deferred to complete tiers |
+| GitHub workflow, action, or dependency automation | Static workflow/policy coverage and Python discovery; unrelated native and retained-target compilation remains deferred to complete tiers |
+| Verification policy, verifier wrapper, or policy regression test | `affected-fast` runs changed-file syntax plus `bench.tests.test_local_verify` and `bench.tests.test_verification_policy` once; broad native/target coverage remains deferred to complete tiers |
 | Python verifier, harness, or retained result without a focused gate below | Changed-file Python syntax and full Python unittest discovery; no foreign Zig target |
 | Portable workload report/campaign codec, verifier, or focused test | Changed-file Python syntax where applicable plus the portable workload report test, native compile, and four-target cross-compile gate; no hard native campaign unless another changed path selects one |
 | W7b-b2 store-fault campaign (`bench/native_workload_store_fault_campaign.py` and `bench/tests/test_native_workload_store_fault_campaign.py`) | Changed-file Python syntax plus the hard native POSIX store-fault gate on Darwin, Linux, or FreeBSD; no foreign Zig target |
@@ -244,6 +244,25 @@ complete `affected` locally with `GLACIER_VERIFY_REQUIRE_NATIVE=1`, or dispatch
 the hosted `full`/`matrix` profiles; `v*` tags select `matrix` and the macOS
 frontier. Strict native mode turns any unavailable selected native gate into
 `FAIL`.
+
+Prepared-text routing keeps the default loop bounded. Changes limited to the
+direct-terminal controller or its Python tests select only the four-boundary
+smoke. Direct-terminal Zig implementation changes select the deterministic
+delivery gate and that smoke together; the shared checkpoint codec and
+selector publisher do the same because they own the tested rename boundary.
+Changes to the shared recovery worker or acknowledged recovery harness select
+the combined recovery target, which already includes the smoke, so the
+verifier omits the standalone smoke target. All selected prepared-text targets
+are passed to one `zig build` invocation; the smoke and combined recovery
+target reuse the same worker executable.
+
+Hosted affected and exhaustive jobs reuse the pinned Zig setup action's cache,
+configured with 1 GiB and 2 GiB action limits respectively.
+`tools/verify.sh` keeps local runs ephemeral by default even when the caller
+exports Zig cache variables. Its reuse opt-in is restricted to GitHub Actions
+and accepts only the action's exact physical workspace `.zig-cache` path;
+temporary logs, prefixes, module caches, and all non-Zig state are still
+removed after the run.
 
 The retained cross-target set is:
 

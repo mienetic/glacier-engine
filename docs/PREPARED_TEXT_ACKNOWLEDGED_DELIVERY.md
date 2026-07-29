@@ -298,7 +298,7 @@ It does not yet cover:
 - a production model and tokenizer;
 - authentication, historical attestation, confidentiality, or privacy; or
 - ordinary `text-run`, unary serving, or streaming result rendering;
-- a runtime-capacity `1..64` durable driver or user-facing package producer; or
+- a user-facing ordinary-model package producer; or
 - non-POSIX native recovery evidence.
 
 ## Focused verification
@@ -327,8 +327,7 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
-The full process-death campaign is exposed through its own build gate and
-reuses one compiled worker:
+The combined process-death gate reuses one compiled worker:
 
 ```bash
 tools/zig-with-ephemeral-cache.sh build \
@@ -336,8 +335,9 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
-The gate compiles one worker and reuses it for 49 real `SIGKILL` victims. Every
-victim reaches its boundary through the public `bootstrapFileV1`,
+The gate compiles one worker and reuses it for the 49-victim acknowledged
+subcampaign plus the separate four-victim direct-terminal smoke. Every
+acknowledged-path victim reaches its boundary through the public `bootstrapFileV1`,
 `advanceSourceFileV1`, or `advanceTargetFileV1` entry point: seven
 generation-one bootstrap boundaries, 23 source-transition boundaries, and 19
 target-transition boundaries. The source matrix covers recovery admission, all
@@ -345,6 +345,15 @@ ten empty-sink publication phases, the first model step, handoff preparation,
 real source-exit commit, every generation-two checkpoint publication phase,
 and observation after generation two. The target matrix retains the
 model-step, sink, acknowledgement, and progress-checkpoint boundaries.
+
+The direct-terminal smoke injects real `SIGKILL` after its one model step,
+after runtime retirement, after selector rename, and after generation-two
+publication. An independent decoder requires exact generation-one visibility
+and fresh `advanced` recovery for the first two, exact generation-two
+visibility and fresh `already_selected` recovery for the last two, then a
+fresh zero-step audit with exact predecessor lineage and no result-sink
+namespace. This is bounded host-process-death evidence, not an exhaustive
+storage-fault or power-loss campaign.
 
 Each victim emits a gated ready frame and self-raises `SIGKILL`; the controller
 requires the exact signal exit and a distinct PID. An independent Python

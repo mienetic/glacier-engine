@@ -159,7 +159,18 @@ exact-predecessor, or exact-successor filesystem roots and then requires fresh
 convergence to the retained four-token terminal oracle. Public extraction did
 not replace or weaken that evidence with a second implementation.
 
-Run the focused gate with:
+The sink-free direct-terminal path has a separate bounded smoke over four real
+`SIGKILL` boundaries: after its one model step, after runtime retirement, after
+the checkpoint selector rename, and after generation-two publication. The
+first two cases retain exact generation one and require a fresh process to
+advance it; the last two retain exact generation two and require fresh
+recovery to return `already_selected`. An independent Python decoder verifies
+the complete generation-one/generation-two lineage, terminal semantic, token,
+state, selector, set, and read-only view roots. Every case finishes with a
+fresh zero-step audit and an exact checkpoint-only namespace check. The
+selector-rename case is host-process-death evidence, not power-loss evidence.
+
+Run the deterministic delivery gate with:
 
 ```sh
 tools/zig-with-ephemeral-cache.sh build \
@@ -167,15 +178,18 @@ tools/zig-with-ephemeral-cache.sh build \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
-Run the explicit exhaustive recovery campaign separately with
-`prepared-text-recovery-test`.
+Run only the bounded direct-terminal process-death smoke with
+`prepared-text-direct-terminal-recovery-smoke-test`. Run
+`prepared-text-recovery-test` for the combined 49-boundary acknowledged
+campaign plus the four-boundary direct smoke. Both recovery targets reuse the
+same worker executable; the combined target does not introduce a second worker
+compilation.
 
 ## Current nonclaims and open integration
 
 This foundation does not yet provide:
 
-- a retained real-process-death campaign dedicated to the direct-terminal
-  retirement/publication boundary;
+- an exhaustive direct-terminal I/O-fault, storage-fault, or power-loss matrix;
 - a public user-facing producer for the request-independent package manifest;
 - durable `text-run`, unary serving, or streaming serving integration;
 - a stable public ABI or cross-language session binding;

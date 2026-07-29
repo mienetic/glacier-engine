@@ -1688,10 +1688,14 @@ one source step retires its runtime before selecting generation two at the same
 publication sequence, and a dedicated read-only view verifies the embedded
 generation-one lineage without a sink or acknowledgement.
 
-This is a low-level foundation, not the R1 user-path exit. A direct-terminal
-process-death campaign, ordinary-model package producer, `text-run` and serving
-integration, non-POSIX native evidence, broader tokenizer/model coverage, and
-stable language bindings remain open. See
+This is a low-level foundation, not the R1 user-path exit. A bounded
+direct-terminal smoke now injects real process death after the one model step,
+after runtime retirement, after selector rename, and after generation-two
+publication. An independent decoder requires exact generation-one or
+generation-two visibility, fresh convergence, and a zero-step audit. Exhaustive
+storage-fault and power-loss matrices, the ordinary-model package producer,
+`text-run` and serving integration, non-POSIX native evidence, broader
+tokenizer/model coverage, and stable language bindings remain open. See
 [Public Prepared-Text Durable Runtime](PREPARED_TEXT_DURABLE_RUNTIME.md).
 
 Overall R1 exit gate (**not yet met**): one declared artifact and numerical mode
@@ -1699,9 +1703,10 @@ completes plan → execute → publish → checkpoint → fresh-process resume w
 exact ownership and output evidence on the promoted native platform, including
 recoverable source-exit and replay-safe external publication. The retained
 synthetic fresh-process proof now includes replay-safe local sink progress, but
-does not yet include direct-terminal process-death evidence, a package producer,
-ordinary command/serving rendering, remote delivery, GPU, or multi-OS
-requirements.
+the direct-terminal proof remains a bounded four-boundary POSIX smoke rather
+than an exhaustive storage or power-loss campaign. A package producer, ordinary
+command/serving rendering, remote delivery, GPU, and multi-OS requirements also
+remain open.
 
 ### R2 — Stateless tensor families
 

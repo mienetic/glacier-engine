@@ -601,16 +601,22 @@ privacy, ordinary `text-run` rendering, or a serving API.
 The public composition layer preserves that separation. The writer-side
 `prepared_text_durable_runtime` exposes one bounded operation per call:
 generation-one bootstrap, source-live to source-exited advancement, or one
-acknowledged target advancement. The reader-side
+acknowledged target advancement. Its direct-terminal operations bootstrap or
+advance the fixed-output-count-one sink-free path. The reader-side
 `prepared_text_committed_output_file.inspectDirectoryV1` opens and reconciles
-the selected filesystem view without writer authority. Both retain
-caller-owned model, runtime, directory, capacity, routing, and output storage;
-successful calls retain no file lease, bootstrap leaves its caller-owned
-Scheduler open, and source/target receipts close live runtime ownership. The
-retained 7/23/19 process-death matrix now exercises these public entry points
-directly. It does not supply the still-open runtime-capacity `1..64` driver,
-package producer, ordinary command/serving integration, or non-POSIX native
-evidence.
+the selected acknowledged filesystem view without writer authority, while
+`prepared_text_direct_terminal_output.inspectDirectoryV1` validates the
+selected direct terminal generation and embedded predecessor. These surfaces
+retain caller-owned model, runtime, directory, capacity, routing, and output
+storage; successful calls retain no file lease, bootstrap leaves its
+caller-owned Scheduler open, and source/target receipts close live runtime
+ownership. The retained 7/23/19 acknowledged process-death matrix exercises
+the public composition directly. A separate four-boundary direct-terminal
+smoke covers post-step, post-retirement, selector-rename, and
+post-generation-two deaths, followed by fresh recovery and a zero-step audit.
+One concrete store accepts runtime acknowledgement capacities `0..63`.
+The package producer, ordinary command/serving integration, exhaustive
+storage/power-loss evidence, and non-POSIX native evidence remain open.
 
 The bound-plan and residency bridge is currently an experimental Zig/direct
 API. It has no fixed `BoundPlanV1` wire, projected C verifier, or retained

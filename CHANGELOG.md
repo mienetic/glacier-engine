@@ -13,11 +13,17 @@ before the first stable release.
   their focused native DAGs, and verifier changes run the policy regression
   suite without expanding to broad host or foreign-target compilation.
   Prepared-text delivery implementation changes compile and test one shared
-  facade artifact; the 49-boundary recovery campaign is selected only when its
-  harness changes or an exhaustive profile is requested.
+  facade artifact. Direct-terminal controller changes select only their bounded
+  four-boundary smoke, while shared recovery-worker or recovery-harness changes
+  select the combined recovery target. That target reuses one worker executable
+  for the 49-boundary acknowledged campaign and the direct smoke instead of
+  compiling a second worker.
   Pull requests and `main` pushes use this bounded tier and cancel superseded
   runs; exhaustive `full` or `matrix` CI is explicit, while `v*` tags retain
-  the matrix and macOS frontier.
+  the matrix and macOS frontier. Hosted affected and exhaustive jobs reuse the
+  pinned setup action's Zig cache across runs with configured 1 GiB and 2 GiB
+  action limits, respectively. Local verification still ignores inherited Zig
+  cache paths and removes its private temporary cache after every run.
 - Portable-model conversion now rejects malformed Safetensors integer domains,
   tensor byte geometry, overlap, holes, unsupported source dtypes, and
   source/output aliases before payload publication. Conversion reserves the
@@ -74,7 +80,12 @@ before the first stable release.
   the same publication sequence. Replay of an already-selected exact terminal
   performs no second model step, and a dedicated read-only view validates the
   embedded generation-one
-  selector/set and one canonical token without creating sink or ACK files.
+  selector/set and one canonical token without creating sink or ACK files. A
+  bounded four-boundary real-process-death smoke covers post-step,
+  post-retirement, selector-rename, and post-generation-two state. Independent
+  decoding requires exact previous-or-successor visibility, fresh convergence,
+  and a fresh zero-step audit; exhaustive storage faults and physical
+  power-loss persistence remain open.
 - Added public experimental filesystem composition for the retained
   prepared-text durability path.
   `prepared_text_durable_runtime.bootstrapFileV1`,
@@ -86,10 +97,11 @@ before the first stable release.
   writer authority. The existing seven bootstrap, 23 source-transition, and
   19 target-transition process-death boundaries now call these public APIs.
   This foundation remains a caller-orchestrated Zig surface over the bounded
-  POSIX fixture: ordinary `text-run` and serving integration, a runtime-capacity
-  `1..64` driver, a user-facing package producer, non-POSIX native evidence,
-  physical power-loss persistence, production-model coverage, and performance
-  claims remain open.
+  POSIX fixture: ordinary `text-run` and serving integration, a user-facing
+  package producer, non-POSIX native evidence, physical power-loss persistence,
+  production-model coverage, and performance claims remain open. One concrete
+  durable store now accepts acknowledgement capacities `0..63`; fixed output
+  count one uses the separate sink-free direct-terminal path.
 - Added the R1k-b3 read-only committed-output inspection slice. The focused
   library and `glacier-prepared-text-result-inspector` command reconcile an
   acknowledged prepared-text checkpoint with its selected immutable

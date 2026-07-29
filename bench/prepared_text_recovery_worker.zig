@@ -24,6 +24,8 @@ const result_sink = engine.prepared_text_result_sink;
 const result_sink_file = engine.prepared_text_result_sink_file;
 const source_recovery = engine.prepared_text_source_recovery;
 const durable_runtime = engine.prepared_text_durable_runtime;
+const direct_terminal_output =
+    engine.prepared_text_direct_terminal_output;
 const progress = engine.prepared_text_acknowledged_progress;
 const acknowledged_restore =
     engine.prepared_text_acknowledged_restore;
@@ -41,6 +43,9 @@ const artifact_license =
     "SPDX-License-Identifier: Apache-2.0\n" ++
     "Synthetic recovery fixture only.\n";
 const options: prepared.OptionsV1 = .{ .max_new_tokens = 4 };
+const direct_options: prepared.OptionsV1 = .{
+    .max_new_tokens = 1,
+};
 const sink_capacity: usize = options.max_new_tokens - 1;
 const max_authority_bytes: usize = 1024 * 1024;
 const max_result_ledger_bytes: usize =
@@ -136,6 +141,11 @@ const CrashPoint = enum(u8) {
     checkpoint_selector_sync,
     checkpoint_selector_rename,
     checkpoint_selector_directory_sync,
+
+    direct_after_step,
+    direct_after_retire,
+    direct_checkpoint_selector_rename,
+    direct_after_generation_two,
 };
 
 const SinkDisposition = enum {
@@ -447,6 +457,71 @@ const CrashController = struct {
         self.maybeCrash(point) catch
             return checkpoint_file.Error.PublicationMismatch;
     }
+
+    fn observeDirectTerminalPlan(
+        raw: *anyopaque,
+        plan: durable_runtime.DirectTerminalPlanV1,
+    ) void {
+        const self: *CrashController =
+            @ptrCast(@alignCast(raw));
+        switch (plan) {
+            .recovered => |recovered| {
+                self.input_generation =
+                    recovered.input_generation;
+                self.input_sequence =
+                    recovered.input_sequence;
+                self.checkpoint_selector_sha256 =
+                    recovered.checkpoint_selector_sha256;
+            },
+            .successor => |successor_plan| {
+                self.successor_checkpoint_selector_sha256 =
+                    successor_plan.selector_sha256;
+            },
+        }
+    }
+
+    fn afterDirectTerminalProgress(
+        raw: *anyopaque,
+        progress_value: durable_runtime.DirectTerminalProgressV1,
+    ) anyerror!void {
+        const self: *CrashController =
+            @ptrCast(@alignCast(raw));
+        self.input_generation =
+            progress_value.input_generation;
+        self.input_sequence =
+            progress_value.input_sequence;
+        self.checkpoint_selector_sha256 =
+            progress_value.checkpoint_selector_sha256;
+        const point: ?CrashPoint =
+            switch (progress_value.phase) {
+                .after_step => .direct_after_step,
+                .after_retire => .direct_after_retire,
+                .after_generation_two => .direct_after_generation_two,
+                .after_recovery_admission,
+                .after_terminal_prepare,
+                => null,
+            };
+        if (point) |selected|
+            try self.maybeCrash(selected);
+    }
+
+    fn afterDirectTerminalCheckpointPhase(
+        raw: *anyopaque,
+        phase: checkpoint_file.IoPhaseV1,
+    ) checkpoint_file.Error!void {
+        const self: *CrashController =
+            @ptrCast(@alignCast(raw));
+        if (phase == .selector_rename or
+            phase == .selector_directory_sync)
+        {
+            self.checkpoint_selector_sha256 =
+                self.successor_checkpoint_selector_sha256;
+        }
+        if (phase != .selector_rename) return;
+        self.maybeCrash(
+            .direct_checkpoint_selector_rename,
+        ) catch return checkpoint_file.Error.PublicationMismatch;
+    }
 };
 
 const ReceiptSink = struct {
@@ -650,6 +725,49 @@ pub fn main() !void {
     } else if (std.mem.eql(
         u8,
         arguments[1],
+        "direct-baseline",
+    )) {
+        if (arguments.len != 3) return error.InvalidArguments;
+        try runDirectBaselineV1(allocator, directory);
+    } else if (std.mem.eql(
+        u8,
+        arguments[1],
+        "direct-bootstrap",
+    )) {
+        if (arguments.len != 3) return error.InvalidArguments;
+        try runDirectBootstrapV1(allocator, directory);
+    } else if (std.mem.eql(
+        u8,
+        arguments[1],
+        "direct-terminal",
+    )) {
+        const crash_point = if (arguments.len == 4)
+            try parseDirectTerminalCrashPointV1(
+                arguments[3],
+            )
+        else
+            null;
+        try runDirectTerminalV1(
+            allocator,
+            directory,
+            crash_point,
+            false,
+        );
+    } else if (std.mem.eql(
+        u8,
+        arguments[1],
+        "direct-audit",
+    )) {
+        if (arguments.len != 3) return error.InvalidArguments;
+        try runDirectTerminalV1(
+            allocator,
+            directory,
+            null,
+            true,
+        );
+    } else if (std.mem.eql(
+        u8,
+        arguments[1],
         "source-bootstrap",
     )) {
         const crash_point = if (arguments.len == 4)
@@ -702,6 +820,17 @@ fn parseCrashPointV1(
             return @enumFromInt(field.value);
     }
     return error.InvalidCrashPoint;
+}
+
+fn parseDirectTerminalCrashPointV1(
+    encoded: []const u8,
+) !?CrashPoint {
+    const point =
+        (try parseCrashPointV1(encoded)) orelse
+        return error.InvalidCrashPoint;
+    if (!isDirectTerminalCrashPointV1(point))
+        return error.InvalidCrashPoint;
+    return point;
 }
 
 fn crashPointNameV1(point: CrashPoint) []const u8 {
@@ -829,6 +958,137 @@ fn runBaselineV1(
         .sink_disposition = .none,
         .sink_count = 0,
         .sink_next_sequence = 1,
+        .sink_ledger_sha256 = zero_digest,
+        .sink_selector_sha256 = zero_digest,
+        .checkpoint_selector_sha256 = zero_digest,
+        .terminal = true,
+        .ownership_zero = true,
+        .output_tokens = &output_copy,
+        .terminal_semantic_sha256 = semantic.semantic_sha256,
+    });
+}
+
+fn runDirectBaselineV1(
+    allocator: std.mem.Allocator,
+    absolute_directory: []const u8,
+) !void {
+    try writePreparedFixtureV1(
+        allocator,
+        absolute_directory,
+    );
+    const image_path = try modelPathV1(
+        allocator,
+        absolute_directory,
+        model_image_name,
+    );
+    defer allocator.free(image_path);
+    var model =
+        try engine.loader.loadPrepared(allocator, image_path);
+    defer model.deinit();
+
+    var runtime: SourceRuntime = .{};
+    try runtime.init();
+    var runtime_closed = false;
+    defer {
+        if (!runtime_closed)
+            _ = runtime.scheduler.close() catch {};
+    }
+    const tokenizer_manifest =
+        try fixtureTokenizerManifestV1();
+    var tokenized = try tokenizer.tokenizeUtf8BytesV1(
+        allocator,
+        tokenizer_manifest,
+        raw_prompt,
+    );
+    defer tokenized.deinit();
+    const local_plan =
+        try prepared.makePlanV1(
+            model,
+            tokenized.tokens,
+            direct_options,
+        );
+    const bound_input =
+        try fixtureBoundInputV1(tokenizer_manifest);
+    const bound_plan = try prepared.makeBoundPlanV1(
+        model,
+        tokenized.tokens,
+        direct_options,
+        local_plan,
+        scheduling,
+        &runtime.scheduler,
+        bound_input,
+    );
+    var session: prepared.SessionV3 = .{};
+    defer session.deinit();
+    try requireStartedV1(try session.start(
+        allocator,
+        &model,
+        tokenized.tokens,
+        direct_options,
+        local_plan,
+        bound_input,
+        bound_plan,
+        scheduling,
+        &runtime.scheduler,
+        &runtime.bank,
+    ));
+    var sink: ReceiptSink = .{};
+    sink.commit_calls = 0;
+    _ = try session.step(
+        try runtime.scheduler.prepareService(),
+        sink.interface(),
+    );
+    if (sink.commit_calls != 1 or
+        !session.isFinished())
+        return error.InvalidDirectBaselineSequence;
+
+    _ = try session.sealTerminalResult();
+    const boundary = try session.snapshotVerified();
+    const semantic = try terminal.makeV1(
+        boundary,
+        session.inner.bound_plan,
+        local_plan,
+        session.outputTokens(),
+        engine.lane_contiguous_publication
+            .logicalKvPrefixSha256(
+            &session.inner.inner.resources.cache,
+            session.inner.inner.resources.cache.len,
+        ),
+    );
+    var encoded_semantic: [terminal.semantic_bytes]u8 =
+        undefined;
+    _ = try terminal.encodeV1(
+        semantic,
+        &encoded_semantic,
+    );
+    var directory =
+        try std.fs.openDirAbsolute(absolute_directory, .{});
+    defer directory.close();
+    try writeSyncedFileV1(
+        directory,
+        terminal_semantic_name,
+        &encoded_semantic,
+    );
+    const output_tokens = session.outputTokens();
+    if (output_tokens.len != direct_options.max_new_tokens)
+        return error.InvalidDirectBaselineSequence;
+    const output_copy = [1]u32{output_tokens[0]};
+    _ = try session.retire();
+    try requireRuntimeZeroV1(
+        &runtime.bank,
+        &runtime.scheduler,
+    );
+    _ = try runtime.scheduler.close();
+    runtime_closed = true;
+    try emitResultV1(.{
+        .mode = "direct-baseline",
+        .input_generation = 1,
+        .input_sequence = 0,
+        .output_generation = 1,
+        .output_sequence = direct_options.max_new_tokens,
+        .sink_disposition = .none,
+        .sink_count = 0,
+        .sink_next_sequence = 0,
         .sink_ledger_sha256 = zero_digest,
         .sink_selector_sha256 = zero_digest,
         .checkpoint_selector_sha256 = zero_digest,
@@ -983,6 +1243,100 @@ fn runSourceBootstrapV1(
     });
 }
 
+fn runDirectBootstrapV1(
+    allocator: std.mem.Allocator,
+    absolute_directory: []const u8,
+) !void {
+    const image_path = try modelPathV1(
+        allocator,
+        absolute_directory,
+        model_image_name,
+    );
+    defer allocator.free(image_path);
+    var model =
+        try engine.loader.loadPrepared(allocator, image_path);
+    defer model.deinit();
+    var directory =
+        try std.fs.openDirAbsolute(absolute_directory, .{});
+    defer directory.close();
+
+    var runtime: SourceRuntime = .{};
+    try runtime.init();
+    var runtime_closed = false;
+    defer {
+        if (!runtime_closed)
+            _ = runtime.scheduler.close() catch {};
+    }
+    const package = try readPackageManifestV1(directory);
+    const representation = try preparedRepresentationV1(
+        package,
+        &model,
+    );
+    const tokenizer_manifest =
+        try fixtureTokenizerManifestV1();
+    const bound_input =
+        try fixtureBoundInputV1(tokenizer_manifest);
+    const runtime_identity: durable_runtime.TerminalSourceRuntimeIdentityV1 = .{
+        .scheduler_epoch = source_scheduler_epoch,
+        .coordinator_id = source_coordinator_id,
+        .bank_epoch = source_bank_epoch,
+    };
+    const bootstrap =
+        try durable_runtime.bootstrapDirectTerminalFileV1(
+            allocator,
+            .{
+                .model = &model,
+                .package = package,
+                .representation = representation,
+                .raw_text = raw_prompt,
+                .tokenizer_manifest = tokenizer_manifest,
+                .options = direct_options,
+                .scheduling = scheduling,
+                .bound_plan_input = bound_input,
+                .source_runtime = runtime_identity,
+                .scheduler = &runtime.scheduler,
+                .file = .{
+                    .directory = directory,
+                    .storage_epoch = storage_epoch,
+                    .max_set_bytes = max_authority_bytes,
+                },
+            },
+        );
+    if (bootstrap.generation != 1 or
+        bootstrap.request_epoch != request_epoch or
+        bootstrap.publication_next_sequence != 1 or
+        digestEqual(
+            bootstrap.selector_sha256,
+            zero_digest,
+        ))
+        return error.InvalidDirectBootstrap;
+
+    try requireRuntimeZeroV1(
+        &runtime.bank,
+        &runtime.scheduler,
+    );
+    _ = try runtime.scheduler.close();
+    runtime_closed = true;
+    const no_tokens = [_]u32{};
+    try emitResultV1(.{
+        .mode = "direct-bootstrap",
+        .input_generation = 0,
+        .input_sequence = 0,
+        .output_generation = bootstrap.generation,
+        .output_sequence = bootstrap.publication_next_sequence,
+        .sink_disposition = .none,
+        .sink_count = 0,
+        .sink_next_sequence = 0,
+        .sink_ledger_sha256 = zero_digest,
+        .sink_selector_sha256 = zero_digest,
+        .checkpoint_selector_sha256 = bootstrap.selector_sha256,
+        .terminal = false,
+        .ownership_zero = true,
+        .output_tokens = &no_tokens,
+        .terminal_semantic_sha256 = zero_digest,
+    });
+}
+
 fn runSourceTransitionV1(
     allocator: std.mem.Allocator,
     absolute_directory: []const u8,
@@ -1107,6 +1461,149 @@ fn runSourceTransitionV1(
         .ownership_zero = advanced.ownership_closed,
         .output_tokens = &source_output,
         .terminal_semantic_sha256 = zero_digest,
+    });
+}
+
+fn runDirectTerminalV1(
+    allocator: std.mem.Allocator,
+    absolute_directory: []const u8,
+    requested_crash: ?CrashPoint,
+    audit_only: bool,
+) !void {
+    if (audit_only and requested_crash != null)
+        return error.InvalidArguments;
+    if (requested_crash) |point| {
+        if (!isDirectTerminalCrashPointV1(point))
+            return error.InvalidCrashPoint;
+    }
+    const image_path = try modelPathV1(
+        allocator,
+        absolute_directory,
+        model_image_name,
+    );
+    defer allocator.free(image_path);
+    var model =
+        try engine.loader.loadPrepared(allocator, image_path);
+    defer model.deinit();
+    var directory =
+        try std.fs.openDirAbsolute(absolute_directory, .{});
+    defer directory.close();
+
+    var runtime: SourceRuntime = .{};
+    try runtime.init();
+    var runtime_closed = false;
+    defer {
+        if (!runtime_closed)
+            _ = runtime.scheduler.close() catch {};
+    }
+    var controller: CrashController = .{
+        .requested = requested_crash,
+        .input_generation = 0,
+        .input_sequence = 0,
+        .sink_count = 0,
+        .sink_ledger_sha256 = zero_digest,
+        .sink_selector_sha256 = zero_digest,
+        .checkpoint_selector_sha256 = zero_digest,
+    };
+    const step_sink: durable_runtime.SourceStepSinkV1 =
+        if (audit_only)
+            .{
+                .sink_epoch = 0,
+                .reservation_id = 0,
+            }
+        else
+            .{
+                .sink_epoch = source_step_sink_epoch,
+                .reservation_id = source_step_reservation_id,
+            };
+    const receipt =
+        try durable_runtime.advanceDirectTerminalSourceFileV1(
+            allocator,
+            .{
+                .model = &model,
+                .runtime = .{
+                    .bank = &runtime.bank,
+                    .scheduler = &runtime.scheduler,
+                },
+                .step_sink = step_sink,
+                .file = .{
+                    .directory = directory,
+                    .storage_epoch = storage_epoch,
+                    .max_set_bytes = max_authority_bytes,
+                },
+                .terminal_verifier = .{
+                    .context = &directory,
+                    .verify_fn = verifyFixtureTerminalSemanticV1,
+                },
+                .observers = .{
+                    .plan = if (requested_crash != null)
+                        .{
+                            .context = &controller,
+                            .observe_fn = CrashController
+                                .observeDirectTerminalPlan,
+                        }
+                    else
+                        null,
+                    .progress = if (requested_crash != null)
+                        .{
+                            .context = &controller,
+                            .after_phase_fn = CrashController
+                                .afterDirectTerminalProgress,
+                        }
+                    else
+                        null,
+                    .checkpoint = if (requested_crash ==
+                        .direct_checkpoint_selector_rename)
+                        .{
+                            .context = &controller,
+                            .after_phase_fn = CrashController
+                                .afterDirectTerminalCheckpointPhase,
+                        }
+                    else
+                        null,
+                },
+                .fail_stop = .{
+                    .context = &controller,
+                    .invoke_fn = failStopSourceTransitionAdapterV1,
+                },
+            },
+        );
+    runtime_closed = true;
+    if (!receipt.ownership_closed or
+        receipt.input_generation != 1 or
+        receipt.input_sequence != 1 or
+        receipt.output_generation != 2 or
+        receipt.output_sequence != 1 or
+        digestEqual(receipt.checkpoint_sha256, zero_digest) or
+        digestEqual(
+            receipt.checkpoint_selector_sha256,
+            zero_digest,
+        ) or
+        digestEqual(
+            receipt.terminal_source_contract_sha256,
+            zero_digest,
+        ) or
+        digestEqual(
+            receipt.terminal_semantic_sha256,
+            zero_digest,
+        ))
+        return error.InvalidDirectTerminalReceipt;
+    if (audit_only and
+        receipt.disposition != .already_selected)
+        return error.InvalidDirectAuditDisposition;
+
+    const view = try direct_terminal_output.inspectDirectoryV1(
+        allocator,
+        directory,
+        .{ .max_set_bytes = max_authority_bytes },
+    );
+    try emitDirectTerminalResultV1(.{
+        .mode = if (audit_only)
+            "direct-audit"
+        else
+            "direct-terminal",
+        .receipt = receipt,
+        .view = view,
     });
 }
 
@@ -1524,6 +2021,12 @@ const ResultFrameV1 = struct {
     terminal_semantic_sha256: Digest,
 };
 
+const DirectTerminalResultFrameV1 = struct {
+    mode: []const u8,
+    receipt: durable_runtime.AdvanceDirectTerminalSourceFileReceiptV1,
+    view: direct_terminal_output.ViewV1,
+};
+
 fn emitResultV1(frame: ResultFrameV1) !void {
     if (frame.output_tokens.len > options.max_new_tokens)
         return error.InvalidResultFrame;
@@ -1590,6 +2093,231 @@ fn emitResultV1(frame: ResultFrameV1) !void {
         try writer.writeByte('"');
     }
     try writer.writeAll("}\n");
+    try writer.flush();
+}
+
+fn emitDirectTerminalResultV1(
+    frame: DirectTerminalResultFrameV1,
+) !void {
+    if (!frame.receipt.ownership_closed or
+        !frame.view.terminal or
+        frame.view.acknowledgement_count != 0 or
+        frame.view.token_count != 1 or
+        frame.receipt.output_generation !=
+            frame.view.generation or
+        frame.receipt.output_sequence !=
+            frame.view.publication_next_sequence or
+        frame.receipt.output_token !=
+            frame.view.output_token or
+        !digestEqual(
+            frame.receipt.checkpoint_sha256,
+            frame.view.selected_set_sha256,
+        ) or
+        !digestEqual(
+            frame.receipt.checkpoint_selector_sha256,
+            frame.view.selected_selector_sha256,
+        ) or
+        !digestEqual(
+            frame.receipt
+                .terminal_source_contract_sha256,
+            frame.view.terminal_source_contract_sha256,
+        ) or
+        !digestEqual(
+            frame.receipt.terminal_semantic_sha256,
+            frame.view.terminal_semantic_sha256,
+        ))
+        return error.InvalidDirectTerminalResultFrame;
+
+    var stdout_buffer: [16 * 1024]u8 = undefined;
+    var stdout_writer =
+        std.fs.File.stdout().writer(&stdout_buffer);
+    const writer = &stdout_writer.interface;
+    try writer.print(
+        "{{\"schema\":" ++
+            "\"glacier.prepared-text-direct-terminal-recovery/result-v1\"," ++
+            "\"mode\":\"{s}\",\"pid\":{d}," ++
+            "\"disposition\":\"{s}\"," ++
+            "\"receipt_input_generation\":{d}," ++
+            "\"receipt_input_sequence\":{d}," ++
+            "\"receipt_output_generation\":{d}," ++
+            "\"receipt_output_sequence\":{d}," ++
+            "\"receipt_output_token\":{d}," ++
+            "\"receipt_checkpoint_sha256\":\"",
+        .{
+            frame.mode,
+            currentProcessId(),
+            @tagName(frame.receipt.disposition),
+            frame.receipt.input_generation,
+            frame.receipt.input_sequence,
+            frame.receipt.output_generation,
+            frame.receipt.output_sequence,
+            frame.receipt.output_token,
+        },
+    );
+    try writeDigestV1(
+        writer,
+        frame.receipt.checkpoint_sha256,
+    );
+    try writer.writeAll(
+        "\",\"receipt_checkpoint_selector_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.receipt.checkpoint_selector_sha256,
+    );
+    try writer.writeAll(
+        "\",\"receipt_terminal_source_contract_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.receipt.terminal_source_contract_sha256,
+    );
+    try writer.writeAll(
+        "\",\"receipt_terminal_semantic_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.receipt.terminal_semantic_sha256,
+    );
+    try writer.print(
+        "\",\"ownership_zero\":{s}," ++
+            "\"view_abi\":{d},\"terminal\":{s}," ++
+            "\"generation\":{d},\"request_epoch\":{d}," ++
+            "\"publication_next_sequence\":{d}," ++
+            "\"acknowledgement_count\":{d}," ++
+            "\"token_count\":{d},\"output_token\":{d}," ++
+            "\"package_sha256\":\"",
+        .{
+            booleanNameV1(frame.receipt.ownership_closed),
+            frame.view.abi_version,
+            booleanNameV1(frame.view.terminal),
+            frame.view.generation,
+            frame.view.request_epoch,
+            frame.view.publication_next_sequence,
+            frame.view.acknowledgement_count,
+            frame.view.token_count,
+            frame.view.output_token,
+        },
+    );
+    try writeDigestV1(writer, frame.view.package_sha256);
+    try writer.writeAll(
+        "\",\"representation_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.representation_sha256,
+    );
+    try writer.writeAll(
+        "\",\"input_archive_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.input_archive_sha256,
+    );
+    try writer.writeAll(
+        "\",\"tokenizer_domain_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.tokenizer_domain_sha256,
+    );
+    try writer.writeAll(
+        "\",\"tokenizer_behavior_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.tokenizer_behavior_sha256,
+    );
+    try writer.writeAll(
+        "\",\"tokenizer_config_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.tokenizer_config_sha256,
+    );
+    try writer.writeAll(
+        "\",\"local_plan_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.local_plan_sha256,
+    );
+    try writer.writeAll(
+        "\",\"bound_plan_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.bound_plan_sha256,
+    );
+    try writer.writeAll(
+        "\",\"terminal_source_contract_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.terminal_source_contract_sha256,
+    );
+    try writer.writeAll(
+        "\",\"terminal_semantic_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.terminal_semantic_sha256,
+    );
+    try writer.writeAll(
+        "\",\"terminal_output_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.terminal_output_sha256,
+    );
+    try writer.writeAll(
+        "\",\"terminal_state_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.terminal_state_sha256,
+    );
+    try writer.writeAll(
+        "\",\"selected_selector_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.selected_selector_sha256,
+    );
+    try writer.writeAll(
+        "\",\"selected_set_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.selected_set_sha256,
+    );
+    try writer.writeAll(
+        "\",\"predecessor_selector_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.predecessor_selector_sha256,
+    );
+    try writer.writeAll(
+        "\",\"predecessor_set_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.predecessor_set_sha256,
+    );
+    try writer.writeAll(
+        "\",\"challenge_sha256\":\"",
+    );
+    try writeDigestV1(
+        writer,
+        frame.view.challenge_sha256,
+    );
+    try writer.writeAll("\",\"view_sha256\":\"");
+    try writeDigestV1(
+        writer,
+        frame.view.view_sha256,
+    );
+    try writer.writeAll("\"}\n");
     try writer.flush();
 }
 
@@ -1902,6 +2630,19 @@ fn isCheckpointCrashPointV1(
         .checkpoint_selector_sync,
         .checkpoint_selector_rename,
         .checkpoint_selector_directory_sync,
+        => true,
+        else => false,
+    };
+}
+
+fn isDirectTerminalCrashPointV1(
+    point: CrashPoint,
+) bool {
+    return switch (point) {
+        .direct_after_step,
+        .direct_after_retire,
+        .direct_checkpoint_selector_rename,
+        .direct_after_generation_two,
         => true,
         else => false,
     };

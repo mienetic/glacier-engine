@@ -95,6 +95,17 @@ case "$require_native" in
         ;;
 esac
 
+reuse_zig_cache=${GLACIER_VERIFY_REUSE_ZIG_CACHE:-0}
+case "$reuse_zig_cache" in
+    0 | 1) ;;
+    *)
+        echo "FAIL  verifier/zig-cache: GLACIER_VERIFY_REUSE_ZIG_CACHE must be 0 or 1" >&2
+        exit 64
+        ;;
+esac
+inherited_zig_local_cache=${ZIG_LOCAL_CACHE_DIR:-}
+inherited_zig_global_cache=${ZIG_GLOBAL_CACHE_DIR:-}
+
 script_dir=$(
     CDPATH= cd "$(dirname "$0")" 2>/dev/null &&
         pwd -P
@@ -113,6 +124,53 @@ cd "$repository_root" || {
     echo "FAIL  verifier/root: cannot enter the repository root" >&2
     exit 1
 }
+
+reused_zig_cache=
+if [ "$reuse_zig_cache" -eq 1 ]; then
+    if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
+        echo "FAIL  verifier/zig-cache: reuse is restricted to GitHub Actions" >&2
+        exit 64
+    fi
+    case "$inherited_zig_local_cache:$inherited_zig_global_cache" in
+        /*:/*) ;;
+        *)
+            echo "FAIL  verifier/zig-cache: action cache paths must be absolute" >&2
+            exit 64
+            ;;
+    esac
+    # The pinned setup-zig action exports both caches at this workspace path.
+    expected_zig_cache="$repository_root/.zig-cache"
+    if [ "$inherited_zig_local_cache" != "$expected_zig_cache" ] ||
+        [ "$inherited_zig_global_cache" != "$expected_zig_cache" ]; then
+        echo "FAIL  verifier/zig-cache: action cache paths must both name $expected_zig_cache" >&2
+        exit 64
+    fi
+    if [ -L "$expected_zig_cache" ]; then
+        echo "FAIL  verifier/zig-cache: action cache path must not be a symlink" >&2
+        exit 64
+    fi
+    if [ -e "$expected_zig_cache" ] && [ ! -d "$expected_zig_cache" ]; then
+        echo "FAIL  verifier/zig-cache: action cache path must be a directory" >&2
+        exit 64
+    fi
+    if [ ! -d "$expected_zig_cache" ]; then
+        mkdir "$expected_zig_cache" || {
+            echo "FAIL  verifier/zig-cache: cannot create action cache directory" >&2
+            exit 1
+        }
+    fi
+    reused_zig_cache=$(
+        CDPATH= cd "$expected_zig_cache" 2>/dev/null &&
+            pwd -P
+    ) || {
+        echo "FAIL  verifier/zig-cache: cannot resolve action cache directory" >&2
+        exit 1
+    }
+    if [ "$reused_zig_cache" != "$expected_zig_cache" ]; then
+        echo "FAIL  verifier/zig-cache: action cache resolved outside the repository path" >&2
+        exit 64
+    fi
+fi
 
 cache_parent=${TMPDIR:-/tmp}
 case "$cache_parent" in
@@ -168,8 +226,13 @@ mkdir \
     exit 1
 }
 
-ZIG_LOCAL_CACHE_DIR="$verification_root/zig-local"
-ZIG_GLOBAL_CACHE_DIR="$verification_root/zig-global"
+if [ "$reuse_zig_cache" -eq 1 ]; then
+    ZIG_LOCAL_CACHE_DIR=$reused_zig_cache
+    ZIG_GLOBAL_CACHE_DIR=$reused_zig_cache
+else
+    ZIG_LOCAL_CACHE_DIR="$verification_root/zig-local"
+    ZIG_GLOBAL_CACHE_DIR="$verification_root/zig-global"
+fi
 CLANG_MODULE_CACHE_PATH="$verification_root/clang-module-cache"
 SWIFT_MODULECACHE_PATH="$verification_root/swift-module-cache"
 verification_prefix="$verification_root/prefix"
@@ -268,6 +331,10 @@ run_prepared_text_focused_build() {
     set --
     if [ "$prepared_text_delivery_requested" -eq 1 ]; then
         set -- "$@" prepared-text-acknowledged-delivery-test
+    fi
+    if [ "$prepared_text_direct_terminal_smoke_requested" -eq 1 ] &&
+        [ "$prepared_text_recovery_requested" -eq 0 ]; then
+        set -- "$@" prepared-text-direct-terminal-recovery-smoke-test
     fi
     if [ "$prepared_text_recovery_requested" -eq 1 ]; then
         set -- "$@" prepared-text-recovery-test
@@ -617,11 +684,17 @@ fi
 documentation_only_fast=0
 prepared_text_focused_requested=0
 prepared_text_delivery_requested=0
+prepared_text_direct_terminal_smoke_requested=0
 prepared_text_inspector_requested=0
 prepared_text_recovery_requested=0
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "prepared-text-delivery-focused"; then
     prepared_text_delivery_requested=1
+    prepared_text_focused_requested=1
+fi
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "prepared-text-direct-terminal-smoke-focused"; then
+    prepared_text_direct_terminal_smoke_requested=1
     prepared_text_focused_requested=1
 fi
 if [ "$affected_plan_ready" -eq 1 ] &&
@@ -735,6 +808,10 @@ if [ "$prepared_text_focused_requested" -eq 1 ] &&
             record_pass "native/prepared-text-delivery" \
                 "covered by the focused host Zig DAG"
         fi
+        if [ "$prepared_text_direct_terminal_smoke_requested" -eq 1 ]; then
+            record_pass "native/prepared-text-direct-terminal-smoke" \
+                "covered by the focused host Zig DAG"
+        fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_pass "native/prepared-text-inspector" \
                 "covered by the focused host Zig DAG"
@@ -746,6 +823,10 @@ if [ "$prepared_text_focused_requested" -eq 1 ] &&
     else
         if [ "$prepared_text_delivery_requested" -eq 1 ]; then
             record_skip "native/prepared-text-delivery" \
+                "focused host Zig DAG failed"
+        fi
+        if [ "$prepared_text_direct_terminal_smoke_requested" -eq 1 ]; then
+            record_skip "native/prepared-text-direct-terminal-smoke" \
                 "focused host Zig DAG failed"
         fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
@@ -764,6 +845,11 @@ elif [ "$prepared_text_focused_requested" -eq 1 ] &&
             record_native_unavailable "native/prepared-text-delivery" \
                 "requires native macOS or Linux execution"
         fi
+        if [ "$prepared_text_direct_terminal_smoke_requested" -eq 1 ]; then
+            record_native_unavailable \
+                "native/prepared-text-direct-terminal-smoke" \
+                "requires native macOS or Linux execution"
+        fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_native_unavailable "native/prepared-text-inspector" \
                 "requires native macOS or Linux execution"
@@ -775,6 +861,11 @@ elif [ "$prepared_text_focused_requested" -eq 1 ] &&
     else
         if [ "$prepared_text_delivery_requested" -eq 1 ]; then
             record_native_unavailable "native/prepared-text-delivery" \
+                "requires working zig and python3 executables"
+        fi
+        if [ "$prepared_text_direct_terminal_smoke_requested" -eq 1 ]; then
+            record_native_unavailable \
+                "native/prepared-text-direct-terminal-smoke" \
                 "requires working zig and python3 executables"
         fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
@@ -805,7 +896,9 @@ if [ "$profile" = "affected-fast" ] &&
     plan_has "verification-policy-focused"; then
     if [ "$has_python" -eq 1 ]; then
         run_gate "python/verification-policy" \
-            python3 -m unittest bench.tests.test_verification_policy
+            python3 -m unittest \
+            bench.tests.test_local_verify \
+            bench.tests.test_verification_policy
     else
         record_skip "python/verification-policy" \
             "requires a working python3 executable"
@@ -928,6 +1021,10 @@ if [ "$profile" = "affected" ] &&
             record_pass "native/prepared-text-delivery" \
                 "covered by the shared host runtime DAG"
         fi
+        if [ "$prepared_text_direct_terminal_smoke_requested" -eq 1 ]; then
+            record_pass "native/prepared-text-direct-terminal-smoke" \
+                "covered by the shared host runtime DAG"
+        fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
             record_pass "native/prepared-text-inspector" \
                 "covered by the shared host runtime DAG"
@@ -939,6 +1036,10 @@ if [ "$profile" = "affected" ] &&
     else
         if [ "$prepared_text_delivery_requested" -eq 1 ]; then
             record_skip "native/prepared-text-delivery" \
+                "covering host compile or runtime DAG did not pass"
+        fi
+        if [ "$prepared_text_direct_terminal_smoke_requested" -eq 1 ]; then
+            record_skip "native/prepared-text-direct-terminal-smoke" \
                 "covering host compile or runtime DAG did not pass"
         fi
         if [ "$prepared_text_inspector_requested" -eq 1 ]; then
