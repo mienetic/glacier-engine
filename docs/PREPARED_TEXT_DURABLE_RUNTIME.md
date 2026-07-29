@@ -23,6 +23,14 @@ promise.
 
 `prepared_text_durable_runtime` exposes three entry points.
 
+The source and target entry points select sink capacity at runtime. One
+concrete durable store accepts acknowledgement capacities `0..63`, so the
+production durable runtime does not monomorphize a separate store for each
+capacity. The current multi-transition protocol uses capacities `1..63`,
+corresponding to fixed output counts `2..64`. Capacity zero is retained for the
+additive direct-terminal fixed-output-count-one path, which is not implemented
+yet.
+
 ### `bootstrapFileV1`
 
 This operation creates or exactly recovers the canonical generation-one source
@@ -126,10 +134,8 @@ tools/zig-with-ephemeral-cache.sh build \
 
 This foundation does not yet provide:
 
-- a runtime-capacity driver for the existing CLI's dynamic `1..64` output
-  range; the current one-step writer takes a concrete compile-time sink
-  capacity;
-- a user-facing producer for the request-independent package manifest;
+- the direct-terminal fixed-output-count-one transition;
+- a public user-facing producer for the request-independent package manifest;
 - durable `text-run`, unary serving, or streaming serving integration;
 - a stable public ABI or cross-language session binding;
 - variable-length or early-EOS durable output;
