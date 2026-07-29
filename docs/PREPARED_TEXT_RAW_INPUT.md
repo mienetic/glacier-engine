@@ -56,7 +56,10 @@ match. The later ordinary-model path accepts `--package model.glpkg` and
 decodes its fixed 896-byte manifest-plus-representation bundle, then derives
 and validates the package/configuration/tokenizer/license/prepared-image
 relationship against the embedded exact GLRT receipt for one supported
-Safetensors/INT4/CPU profile.
+Safetensors/INT4/CPU profile. That package can only be produced through a
+required named experimental profile and complete explicit config; its
+same-descriptor source preflight admits an exact tensor name/dtype/rank/shape
+inventory before portable publication.
 Both paths prevent an arbitrary subword-tokenized model from being mislabeled
 as byte-token compatible. See [Ordinary Model Package](MODEL_PACKAGE.md).
 
@@ -322,8 +325,9 @@ identities without an application-specific privacy policy.
 R1k-b2 separates portable package identity from both requests and native
 preparation:
 
-- `package_manifest.ManifestV1` is exactly 640 bytes. It binds source and portable
+- `package_manifest.ManifestV2` is exactly 640 bytes. It binds source and portable
   artifact identities, conversion profile and plan, resolved model geometry,
+  the explicit model-profile ABI/ID/root, the tensor-profile ABI/count/root,
   tokenizer domain/configuration/behavior, and the license byte count plus
   SHA-256 identity. It excludes the license payload, prompt, request epoch,
   output limit, Scheduler identity, and `.glrt` bytes.

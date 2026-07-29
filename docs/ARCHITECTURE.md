@@ -1436,7 +1436,8 @@ targets remain gated until their named native adapters and evidence pass.
   records, raw-input/Common-plan binding, the bounded process-local command,
   and the composed CPU/POSIX recovery fixture.
 - [Ordinary model package](MODEL_PACKAGE.md): user-supplied Safetensors
-  package production, exact prepared-image admission, and the current
+  package production, explicit model/tensor-profile admission on the captured
+  source descriptor, exact prepared-image admission, and the current
   process-local boundary.
 - [Prepared text checkpoint](PREPARED_TEXT_CHECKPOINT.md): canonical
   non-terminal output/RNG/contiguous-KV state, detached materialization, and

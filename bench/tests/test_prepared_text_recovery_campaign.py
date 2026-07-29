@@ -1174,6 +1174,12 @@ class SourceReplayContractTests(unittest.TestCase):
                 "portable_bytes": 2048,
                 "portable_page_count": 1,
                 "license_bytes": 32,
+                "model_profile_id": 255,
+                "tensor_profile_abi": 1,
+                "tensor_count": 1,
+                "tensor_inventory_sha256": self.digest(
+                    "package-tensor-inventory"
+                ),
                 "config": {
                     "dim": 4,
                     "hidden_dim": 8,

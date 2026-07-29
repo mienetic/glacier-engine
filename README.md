@@ -382,7 +382,8 @@ formats, and independent verifiers.
   [Verified Raw-Text Runtime Path](docs/PREPARED_TEXT_RAW_INPUT.md).
 - **Stable package and recoverable raw-input identity.** A request-independent
   640-byte model package manifest binds portable provenance, resolved geometry,
-  tokenizer behavior, and the license byte count plus SHA-256 identity. A
+  explicit model/tensor-profile identities, tokenizer behavior, and the license
+  byte count plus SHA-256 identity. A
   256-byte prepared-representation record binds one platform-specific `.glrt`
   image without changing the package root. The durable raw-input archive
   carries the manifest and representation as distinct records, exact
@@ -399,9 +400,13 @@ formats, and independent verifiers.
   into an 896-byte `.glpkg`: a 640-byte request-independent manifest followed
   by the 256-byte receipt for that exact prepared container. `text-run
   --package` derives the actual GLRT identity and compares it with the embedded
-  receipt before admission. Optional `--config FILE` uses bounded stable
-  regular-file admission and a complete strict typed contract; omission derives
-  the config and never discovers ambient sidecars. Canonical resolved values,
+  receipt before admission. Required `--config FILE` uses bounded stable
+  regular-file admission and a complete strict typed contract. Required
+  `--experimental-profile ordinary-package-v1` selects the narrow capability
+  visibly; a same-descriptor preflight rejects unknown names, dtype/rank/shape
+  substitutions, missing layers, biases, and extra tensors before any portable
+  output mutation. The manifest binds both profile identity and the canonical
+  tensor inventory without changing its fixed size. Canonical resolved values,
   rather than JSON formatting, bind package identity. Another representation
   needs another bundle but can retain the same portable package root. The
   command performs no network access. Without durable options, counts `1..64`
@@ -1151,7 +1156,10 @@ local Safetensors source and admit that exact package into the CPU text path:
 ```sh
 ./zig-out/bin/glacier package-model \
   source.safetensors out.glacier out.glrt out.glpkg \
-  --license LICENSE --config config.json --group-size 64
+  --license LICENSE \
+  --config config.json \
+  --experimental-profile ordinary-package-v1 \
+  --group-size 64
 
 ./zig-out/bin/glacier text-run out.glrt \
   --text "Hello" --license LICENSE --package out.glpkg --n 4
@@ -1178,10 +1186,11 @@ omits the token payload, but exposed digest metadata is not confidential.
 Producer JSON reports `package_bytes=896`,
 `package_manifest_bytes=640`, `prepared_representation_bytes=256`,
 `prepared_representation_embedded=true`, and
-`prepared_representation_separate=false`. It also distinguishes derived from
-explicit config, reports raw explicit-input provenance, and exposes the
-canonical resolved-config root. `--config` is optional; without it, no ambient
-sidecar is read. See
+`prepared_representation_separate=false`. It reports the required explicit
+profile/config identities, exact admitted tensor inventory, raw config-input
+provenance, and canonical resolved-config root. `--config` and
+`--experimental-profile ordinary-package-v1` are required; no ambient sidecar
+is read. See
 [Ordinary Model Package](docs/MODEL_PACKAGE.md) for the exact binding,
 safe-input boundary, and current nonclaims.
 

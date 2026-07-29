@@ -1681,7 +1681,10 @@ distinct output paths, and an exact license file:
 ```sh
 glacier package-model \
   source.safetensors out.glacier out.glrt out.glpkg \
-  --license LICENSE --config config.json --group-size 64
+  --license LICENSE \
+  --config config.json \
+  --experimental-profile ordinary-package-v1 \
+  --group-size 64
 ```
 
 The producer consumes the typed durable-conversion receipt directly in the
@@ -1710,7 +1713,9 @@ with the directory-scoped lock. Non-cooperating hostile namespace writes are
 outside that no-overwrite claim.
 
 The manifest binds the complete source/conversion/portable/configuration/
-tokenizer/license relationship. File-backed prompt, license, and package
+tokenizer/license relationship plus the explicitly selected model-profile
+ABI/ID/root and exact tensor-profile ABI/count/inventory root. File-backed
+prompt, license, and package
 inputs use bounded stable regular-file reads on the current POSIX path:
 symlinks and non-regular files reject, allocation is size bounded, and
 descriptor metadata is checked after positional reads. The command performs no
@@ -1718,15 +1723,24 @@ network access. SHA-256 identities establish integrity and content
 relationships, not publisher authenticity, authorship, license rights, model
 quality, or signed provenance.
 
-The optional explicit `--config` input uses bounded, no-follow, stable
+The required explicit `--config` input uses bounded, no-follow, stable
 regular-file admission with a 1 MiB limit, strict recognized-field parsing,
 a complete logical configuration contract, and exact byte revalidation before
 package publication. Its raw size and hash are invocation provenance;
 canonical resolved values participate in the existing configuration,
-model-content, package, and representation roots. Tensor incompatibility
-cannot publish the prepared image or package, though independent portable
-conversion may already have completed. Omission derives configuration and
-never reads ambient `<output>.json` sidecars.
+model-content, package, and representation roots. Omission rejects and ambient
+`<output>.json` sidecars are never read.
+
+The required unique
+`--experimental-profile ordinary-package-v1` capability removes silent
+selection of inferred semantics. A preflight on the exact no-follow source
+descriptor captured by the durable converter checks canonical tensor names,
+F32 dtype, ranks, extents, contiguous layers, MHA geometry, untied embeddings,
+and the absence of biases or extras. It revalidates source identity before the
+output directory is borrowed or any lock, candidate, stale cleanup, or target
+mutation is permitted. Equal-element-count transposes and rank substitutions
+therefore reject before publication rather than surviving flattened-count
+checks.
 
 `text-run --package` admits a user-supplied prepared image only after deriving
 and matching its full configuration, source fingerprint, GLRT format/version,
@@ -1751,8 +1765,8 @@ This does not establish production readiness or general model-family support.
 R1k-b5 adds checked durable output and fresh-process continuation for fixed
 output counts `1..64`; serving integration, broader
 tokenizer/model/source/numerical profiles, GPU package production, native
-non-POSIX evidence, authenticated distribution, explicit capability gating
-for the narrow experimental profile, and production-model
+non-POSIX evidence, authenticated distribution, additional independently
+named model profiles, and production-model
 quality/performance evidence remain open. See
 [Ordinary Model Package](MODEL_PACKAGE.md).
 

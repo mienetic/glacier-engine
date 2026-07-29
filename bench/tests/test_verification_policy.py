@@ -198,6 +198,7 @@ EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = frozenset(
         "src/bounded_file_input.zig",
         "src/cli/model_package.zig",
         "src/cli/text_run.zig",
+        "src/model/dense_autoregressive_profile.zig",
         "src/model/package_producer.zig",
         "src/prepared_text_session.zig",
         "src/prepared_text_variable_terminal.zig",
@@ -2947,6 +2948,10 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             repository, merge_base, environment = self.make_repository(root)
             model = repository / "src" / "model"
             model.mkdir()
+            (model / "dense_autoregressive_profile.zig").write_text(
+                "",
+                encoding="ascii",
+            )
             (model / "package_producer.zig").write_text("", encoding="ascii")
             cli = repository / "src" / "cli"
             cli.mkdir()

@@ -278,6 +278,7 @@ PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = {
     "src/bounded_file_input.zig",
     "src/cli/model_package.zig",
     "src/cli/text_run.zig",
+    "src/model/dense_autoregressive_profile.zig",
     "src/model/package_producer.zig",
     "src/prepared_text_session.zig",
     "src/prepared_text_variable_terminal.zig",

@@ -14,6 +14,7 @@ const config = @import("../config.zig");
 const tokenizer = @import("../tokenizer.zig");
 const converter = @import("converter.zig");
 const converter_durable = @import("converter_durable.zig");
+const dense_profile = @import("dense_autoregressive_profile.zig");
 const format = @import("format.zig");
 const loader = @import("../loader.zig");
 const package_manifest = @import("package_manifest.zig");
@@ -24,6 +25,10 @@ const durable_directory = core.durable_directory_authority;
 pub const maximum_license_bytes: u64 = 64 * 1024;
 pub const maximum_config_bytes: u64 = 1024 * 1024;
 pub const tokenizer_max_input_bytes: u64 = 4096;
+pub const experimental_profile_name_v1 =
+    "ordinary-package-v1";
+pub const conversion_architecture_v1 =
+    dense_profile.conversion_architecture_v1;
 const publication_lock_name =
     ".glacier-model-package-publication.lock-v1";
 
@@ -46,15 +51,16 @@ pub const PackageDispositionV1 = enum {
 };
 
 pub const OptionsV1 = struct {
-    config_path: ?[]const u8 = null,
+    experimental_profile: package_manifest.ModelProfileV1,
+    config_path: []const u8,
     conversion: converter.ConvertOptions = .{
+        .architecture = conversion_architecture_v1,
         .quantize_int4 = true,
         .quant_group_size = 64,
     },
 };
 
 pub const ConfigSourceV1 = enum {
-    derived,
     explicit,
 };
 
@@ -70,13 +76,45 @@ pub const ReceiptV1 = struct {
     portable_identity: converter_durable.ArtifactIdentityV1,
     conversion_profile_sha256: package_manifest.Digest,
     conversion_plan_sha256: package_manifest.Digest,
-    package: package_manifest.ManifestV1,
+    package: package_manifest.ManifestV2,
     representation: package_manifest.PreparedRepresentationV1,
     tokenizer_manifest: tokenizer.Utf8ByteManifestV1,
     prepared_identity: runtime_image.ImageIdentityV1,
     prepare_stats: runtime_image.WriteStats,
     config_source: ConfigSourceV1,
-    config_input_identity: ?ConfigInputIdentityV1,
+    config_input_identity: ConfigInputIdentityV1,
+};
+
+const TensorPreflightContextV1 = struct {
+    config: package_manifest.ConfigV1,
+    receipt: ?dense_profile.InventoryReceiptV1 = null,
+
+    fn validate(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        source_file: *std.fs.File,
+        source_bytes: u64,
+    ) anyerror!void {
+        const self: *TensorPreflightContextV1 =
+            @ptrCast(@alignCast(context));
+        if (self.receipt != null)
+            return error.InvalidTensorPreflightState;
+        self.receipt = try dense_profile.validateCapturedSourceV1(
+            allocator,
+            source_file,
+            source_bytes,
+            self.config,
+        );
+    }
+
+    fn interface(
+        self: *TensorPreflightContextV1,
+    ) converter_durable.SourcePreflightV1 {
+        return .{
+            .context = self,
+            .validate_fn = validate,
+        };
+    }
 };
 
 pub fn configFromLoadedModelV1(
@@ -115,13 +153,59 @@ pub fn configFromLoadedModelV1(
     };
 }
 
+fn configFromExplicitOverrideV1(
+    value: config.ModelConfigOverride,
+) Error!package_manifest.ConfigV1 {
+    return .{
+        .dim = std.math.cast(u32, value.dim orelse
+            return Error.InvalidConfigInput) orelse
+            return Error.InvalidConfigInput,
+        .hidden_dim = std.math.cast(
+            u32,
+            value.hidden_dim orelse
+                return Error.InvalidConfigInput,
+        ) orelse return Error.InvalidConfigInput,
+        .layers = std.math.cast(
+            u32,
+            value.num_layers orelse
+                return Error.InvalidConfigInput,
+        ) orelse return Error.InvalidConfigInput,
+        .vocab = std.math.cast(
+            u32,
+            value.vocab_size orelse
+                return Error.InvalidConfigInput,
+        ) orelse return Error.InvalidConfigInput,
+        .heads = std.math.cast(
+            u32,
+            value.num_heads orelse
+                return Error.InvalidConfigInput,
+        ) orelse return Error.InvalidConfigInput,
+        .head_dim = std.math.cast(
+            u32,
+            value.head_dim orelse
+                return Error.InvalidConfigInput,
+        ) orelse return Error.InvalidConfigInput,
+        .kv_heads = std.math.cast(
+            u32,
+            value.num_kv_heads orelse
+                return Error.InvalidConfigInput,
+        ) orelse return Error.InvalidConfigInput,
+        .rms_eps = value.rms_eps orelse
+            return Error.InvalidConfigInput,
+        .rope_theta = value.rope_theta orelse
+            return Error.InvalidConfigInput,
+        .tie_embeddings = value.tie_word_embeddings orelse
+            return Error.InvalidConfigInput,
+    };
+}
+
 /// Admit the one package profile implemented by the current ordinary-model
 /// producer. The tokenizer payload is reconstructed rather than trusted from a
 /// sidecar and every stored root must match it.
 pub fn validateSupportedPackageV1(
-    package: package_manifest.ManifestV1,
+    package: package_manifest.ManifestV2,
 ) !tokenizer.Utf8ByteManifestV1 {
-    try package_manifest.validateV1(package);
+    try package_manifest.validateV2(package);
     if (package.family != .autoregressive or
         package.source_format != .safetensors or
         package.portable_format_abi != format.format_abi or
@@ -132,13 +216,55 @@ pub fn validateSupportedPackageV1(
         package.tokenizer_manifest_abi !=
             tokenizer.utf8_byte_manifest_abi or
         package.tokenizer_manifest_bytes !=
-            tokenizer.utf8_byte_manifest_bytes)
+            tokenizer.utf8_byte_manifest_bytes or
+        package.model_profile_abi !=
+            package_manifest.model_profile_abi or
+        package.model_profile_id != .ordinary_package_v1 or
+        package.tensor_profile_abi !=
+            dense_profile.tensor_profile_abi_v1)
         return Error.UnsupportedPackageProfile;
 
-    const expected_content = try package_manifest.modelContentRootV1(
-        package.portable_artifact_sha256,
-        package.config,
-    );
+    const expected_model_profile =
+        package_manifest.modelProfileRootV1(
+            .ordinary_package_v1,
+        );
+    if (!digestEqual(
+        package.model_profile_sha256,
+        expected_model_profile,
+    ) or
+        !supportedConversionProfileV1(
+            package.conversion_profile_sha256,
+        ))
+        return Error.UnsupportedPackageProfile;
+
+    const expected_inventory =
+        dense_profile.expectedInventoryV1(
+            package.config,
+        ) catch return Error.UnsupportedPackageProfile;
+    if (package.tensor_count !=
+        expected_inventory.tensor_count or
+        !digestEqual(
+            package.tensor_inventory_sha256,
+            expected_inventory.inventory_sha256,
+        ))
+        return Error.UnsupportedPackageProfile;
+
+    const expected_content =
+        try package_manifest.profiledModelContentRootV1(.{
+            .family = package.family,
+            .source_format = package.source_format,
+            .portable_format_abi = package.portable_format_abi,
+            .conversion_profile_abi = package.conversion_profile_abi,
+            .conversion_plan_abi = package.conversion_plan_abi,
+            .model_profile_id = package.model_profile_id,
+            .tensor_profile_abi = package.tensor_profile_abi,
+            .tensor_count = package.tensor_count,
+            .config = package.config,
+            .portable_artifact_sha256 = package.portable_artifact_sha256,
+            .conversion_profile_sha256 = package.conversion_profile_sha256,
+            .conversion_plan_sha256 = package.conversion_plan_sha256,
+            .tensor_inventory_sha256 = package.tensor_inventory_sha256,
+        });
     if (!digestEqual(
         expected_content,
         package.model_content_sha256,
@@ -165,11 +291,27 @@ pub fn validateSupportedPackageV1(
     return manifest;
 }
 
+fn supportedConversionProfileV1(
+    observed: package_manifest.Digest,
+) bool {
+    var group_size: u32 = 1;
+    while (group_size <= std.math.maxInt(u8)) : (group_size *= 2) {
+        const expected = converter.conversionProfileSha256V1(.{
+            .architecture = conversion_architecture_v1,
+            .quantize_int4 = true,
+            .quant_group_size = group_size,
+        }) catch return false;
+        if (digestEqual(observed, expected))
+            return true;
+    }
+    return false;
+}
+
 /// Derive, rather than accept, the representation identity for one loaded
 /// prepared model and require its complete geometry and execution layout to
 /// match the portable package.
 pub fn preparedRepresentationForModelV1(
-    package: package_manifest.ManifestV1,
+    package: package_manifest.ManifestV2,
     model: *const loader.LoadedModel,
 ) !package_manifest.PreparedRepresentationV1 {
     _ = try validateSupportedPackageV1(package);
@@ -177,7 +319,7 @@ pub fn preparedRepresentationForModelV1(
 }
 
 fn derivePreparedRepresentationV1(
-    package: package_manifest.ManifestV1,
+    package: package_manifest.ManifestV2,
     model: *const loader.LoadedModel,
 ) !package_manifest.PreparedRepresentationV1 {
     const actual_config = try configFromLoadedModelV1(model.config);
@@ -212,8 +354,7 @@ pub fn produceSafetensorsV1(
     license_path: []const u8,
     options: OptionsV1,
 ) !ReceiptV1 {
-    if (!options.conversion.quantize_int4)
-        return Error.UnsupportedPackageProfile;
+    try validateProducerOptionsV1(options);
     try rejectOutputAliasesV1(
         allocator,
         source_path,
@@ -238,39 +379,45 @@ pub fn produceSafetensorsV1(
     ) orelse return Error.InvalidLicense;
     const license_sha256 = sha256(license_bytes);
 
-    var config_bytes: ?[]u8 = null;
-    defer if (config_bytes) |bytes| allocator.free(bytes);
-    var config_override: config.ModelConfigOverride = .{};
-    if (options.config_path) |config_path| {
-        const admitted = try bounded_input.readAllocV1(
-            allocator,
-            config_path,
-            maximum_config_bytes,
-        );
-        config_bytes = admitted;
-        config_override = try parseConfigOverrideV1(
-            allocator,
-            admitted,
-        );
-    }
-    const config_input_identity: ?ConfigInputIdentityV1 =
-        if (config_bytes) |bytes|
-            .{
-                .bytes = std.math.cast(u64, bytes.len) orelse
-                    return Error.InvalidConfigInput,
-                .sha256 = sha256(bytes),
-            }
-        else
-            null;
+    const config_bytes = try bounded_input.readAllocV1(
+        allocator,
+        options.config_path,
+        maximum_config_bytes,
+    );
+    defer allocator.free(config_bytes);
+    const config_override = try parseConfigOverrideV1(
+        allocator,
+        config_bytes,
+    );
+    const explicit_config =
+        try configFromExplicitOverrideV1(config_override);
+    _ = dense_profile.expectedInventoryV1(
+        explicit_config,
+    ) catch return Error.UnsupportedPackageProfile;
+    _ = tokenizer.makeUtf8ByteManifestV1(
+        explicit_config.vocab,
+        tokenizer_max_input_bytes,
+    ) catch return Error.UnsupportedPackageProfile;
+    const config_input_identity: ConfigInputIdentityV1 = .{
+        .bytes = std.math.cast(u64, config_bytes.len) orelse
+            return Error.InvalidConfigInput,
+        .sha256 = sha256(config_bytes),
+    };
 
+    var tensor_preflight: TensorPreflightContextV1 = .{
+        .config = explicit_config,
+    };
     const conversion = try converter_durable
-        .convertSafetensorsDurableV1(
+        .convertSafetensorsDurableWithPreflightV1(
         allocator,
         source_path,
         portable_path,
         options.conversion,
+        tensor_preflight.interface(),
         null,
     );
+    const tensor_inventory = tensor_preflight.receipt orelse
+        return error.InvalidTensorPreflightState;
 
     var portable = try format.FileReader.open(
         allocator,
@@ -311,17 +458,30 @@ pub fn produceSafetensorsV1(
     );
     defer model.deinit();
     const package_config = try configFromLoadedModelV1(model.config);
+    if (!std.meta.eql(package_config, explicit_config))
+        return Error.InvalidModelConfig;
     const model_content_sha256 =
-        try package_manifest.modelContentRootV1(
-            portable_identity.container_sha256,
-            package_config,
-        );
+        try package_manifest.profiledModelContentRootV1(.{
+            .family = .autoregressive,
+            .source_format = .safetensors,
+            .portable_format_abi = format.format_abi,
+            .conversion_profile_abi = converter.conversion_profile_abi,
+            .conversion_plan_abi = converter.conversion_plan_abi,
+            .model_profile_id = options.experimental_profile,
+            .tensor_profile_abi = tensor_inventory.profile_abi,
+            .tensor_count = tensor_inventory.tensor_count,
+            .config = package_config,
+            .portable_artifact_sha256 = portable_identity.container_sha256,
+            .conversion_profile_sha256 = conversion.conversion.conversion_profile_sha256,
+            .conversion_plan_sha256 = conversion.conversion.conversion_plan_sha256,
+            .tensor_inventory_sha256 = tensor_inventory.inventory_sha256,
+        });
     const tokenizer_manifest =
         try tokenizer.makeUtf8ByteManifestV1(
             package_config.vocab,
             tokenizer_max_input_bytes,
         );
-    const package = try package_manifest.makeV1(.{
+    const package = try package_manifest.makeV2(.{
         .family = .autoregressive,
         .source_format = .safetensors,
         .portable_format_abi = format.format_abi,
@@ -333,6 +493,10 @@ pub fn produceSafetensorsV1(
         .portable_bytes = conversion.artifact_identity.container_bytes,
         .portable_page_count = conversion.artifact_identity.page_count,
         .license_bytes = license_byte_count,
+        .model_profile_id = options.experimental_profile,
+        .tensor_profile_abi = tensor_inventory.profile_abi,
+        .tensor_count = tensor_inventory.tensor_count,
+        .tensor_inventory_sha256 = tensor_inventory.inventory_sha256,
         .config = package_config,
         .source_sha256 = conversion.source_identity.source_sha256,
         .portable_artifact_sha256 = conversion.artifact_identity.container_sha256,
@@ -384,24 +548,18 @@ pub fn produceSafetensorsV1(
     defer allocator.free(license_after);
     if (!std.mem.eql(u8, license_bytes, license_after))
         return bounded_input.Error.InputChanged;
-    if (options.config_path) |config_path| {
-        const config_after = try bounded_input.readAllocV1(
-            allocator,
-            config_path,
-            maximum_config_bytes,
-        );
-        defer allocator.free(config_after);
-        if (!std.mem.eql(
-            u8,
-            config_bytes orelse return Error.InvalidConfigInput,
-            config_after,
-        ))
-            return bounded_input.Error.InputChanged;
-    }
+    const config_after = try bounded_input.readAllocV1(
+        allocator,
+        options.config_path,
+        maximum_config_bytes,
+    );
+    defer allocator.free(config_after);
+    if (!std.mem.eql(u8, config_bytes, config_after))
+        return bounded_input.Error.InputChanged;
 
     var package_wire: [package_manifest.admission_bundle_bytes]u8 =
         undefined;
-    _ = try package_manifest.encodeAdmissionBundleV1(
+    _ = try package_manifest.encodeAdmissionBundleV2(
         package,
         representation,
         &package_wire,
@@ -423,12 +581,30 @@ pub fn produceSafetensorsV1(
         .tokenizer_manifest = tokenizer_manifest,
         .prepared_identity = prepared_identity,
         .prepare_stats = prepare_stats,
-        .config_source = if (options.config_path == null)
-            .derived
-        else
-            .explicit,
+        .config_source = .explicit,
         .config_input_identity = config_input_identity,
     };
+}
+
+fn validateProducerOptionsV1(options: OptionsV1) Error!void {
+    if (options.experimental_profile != .ordinary_package_v1 or
+        options.config_path.len == 0 or
+        !options.conversion.quantize_int4 or
+        options.conversion.page_size_bytes !=
+            format.PAGE_SIZE_BYTES or
+        !std.mem.eql(
+            u8,
+            options.conversion.architecture,
+            conversion_architecture_v1,
+        ) or
+        options.conversion.quant_group_size == 0 or
+        options.conversion.quant_group_size >
+            std.math.maxInt(u8) or
+        !std.math.isPowerOfTwo(
+            options.conversion.quant_group_size,
+        ) or
+        options.conversion.quant_group_overrides.len != 0)
+        return Error.UnsupportedPackageProfile;
 }
 
 fn revalidatePortablePathV1(
@@ -719,7 +895,7 @@ fn existingPackageDispositionV1(
     if (!std.meta.eql(before, after) or
         !std.mem.eql(u8, &encoded, expected))
         return Error.PackageConflict;
-    _ = package_manifest.decodeAdmissionBundleV1(&encoded) catch
+    _ = package_manifest.decodeAdmissionBundleV2(&encoded) catch
         return Error.PackageConflict;
     return .already_current;
 }
@@ -835,7 +1011,8 @@ fn parseConfigOverrideV1(
         "tie_word_embeddings",
         &recognized_fields,
     );
-    if (recognized_fields == 0)
+    if (recognized_fields == 0 or
+        recognized_fields != object.count())
         return Error.InvalidConfigInput;
     if (result.dim == null or
         result.hidden_dim == null or

@@ -1,14 +1,15 @@
 //! Stable, request-independent model package identity.
 //!
-//! `ManifestV1` binds portable model provenance, resolved model geometry,
-//! tokenizer behavior, and the license byte count plus SHA-256 identity. It
-//! deliberately excludes license payloads, prompts, request epochs, output
-//! limits, scheduler identities, and native execution-image bytes, so the same
-//! package root can be used across requests and operating-system/architecture-
-//! specific preparations.
+//! `ManifestV2` binds portable model provenance, an explicit model profile,
+//! the admitted tensor-profile inventory, resolved model geometry, tokenizer
+//! behavior, and the license byte count plus SHA-256 identity. It deliberately
+//! excludes license payloads, prompts, request epochs, output limits, scheduler
+//! identities, and native execution-image bytes, so the same package root can
+//! be used across requests and operating-system/architecture-specific
+//! preparations.
 //!
 //! `PreparedRepresentationV1` is the contextual bridge to one exact validated
-//! `.glrt` representation. `AdmissionBundleV1` concatenates the stable
+//! `.glrt` representation. `AdmissionBundleV2` concatenates the stable
 //! manifest and one representation receipt for fail-closed runtime admission;
 //! another native representation can use another bundle without changing the
 //! portable package root.
@@ -20,7 +21,7 @@ const runtime_image = @import("runtime_image.zig");
 
 pub const Digest = [32]u8;
 
-pub const manifest_abi: u64 = 0x474c_504b_0000_0001;
+pub const manifest_abi: u64 = 0x474c_504b_0000_0002;
 pub const config_abi: u64 = 0x474c_5043_0000_0001;
 pub const prepared_representation_abi: u64 =
     0x474c_5052_0000_0001;
@@ -31,21 +32,30 @@ pub const prepared_representation_body_bytes: usize =
     prepared_representation_bytes - 32;
 pub const admission_bundle_bytes: usize =
     manifest_bytes + prepared_representation_bytes;
-pub const allowed_flags: u64 = 0;
+pub const manifest_flag_model_profile: u64 = 1 << 0;
+pub const manifest_allowed_flags: u64 =
+    manifest_flag_model_profile;
+pub const prepared_representation_allowed_flags: u64 = 0;
+pub const model_profile_abi: u64 =
+    0x474c_4d50_0000_0001;
 
 pub const manifest_magic =
-    [_]u8{ 'G', 'L', 'P', 'K', 'G', '0', '1', 0 };
+    [_]u8{ 'G', 'L', 'P', 'K', 'G', '0', '2', 0 };
 pub const prepared_representation_magic =
     [_]u8{ 'G', 'L', 'P', 'R', 'E', 'P', '1', 0 };
 
 const manifest_domain =
-    "glacier-model-package-manifest-v1\x00";
+    "glacier-model-package-manifest-v2\x00";
 const config_domain =
     "glacier-model-package-config-v1\x00";
 const prepared_representation_domain =
     "glacier-model-prepared-representation-v1\x00";
 const model_content_domain =
     "glacier-prepared-provenance-v1\x00";
+const profiled_model_content_domain =
+    "glacier-model-package-profiled-content-v1\x00";
+const model_profile_domain =
+    "glacier-model-package-profile-v1\x00";
 
 pub const Error = error{
     InvalidLength,
@@ -62,6 +72,11 @@ pub const SourceFormatV1 = enum(u64) {
     other = 255,
 };
 
+pub const ModelProfileV1 = enum(u64) {
+    ordinary_package_v1 = 1,
+    _,
+};
+
 /// Canonical, architecture-independent resolved model geometry.
 pub const ConfigV1 = struct {
     dim: u32,
@@ -76,7 +91,7 @@ pub const ConfigV1 = struct {
     tie_embeddings: bool,
 };
 
-pub const InputV1 = struct {
+pub const InputV2 = struct {
     family: model_contract.ModelFamilyIdV1,
     source_format: SourceFormatV1,
     portable_format_abi: u64,
@@ -88,6 +103,10 @@ pub const InputV1 = struct {
     portable_bytes: u64,
     portable_page_count: u64,
     license_bytes: u64,
+    model_profile_id: ModelProfileV1,
+    tensor_profile_abi: u64,
+    tensor_count: u64,
+    tensor_inventory_sha256: Digest,
     config: ConfigV1,
     source_sha256: Digest,
     portable_artifact_sha256: Digest,
@@ -100,7 +119,11 @@ pub const InputV1 = struct {
     license_sha256: Digest,
 };
 
-pub const ManifestV1 = struct {
+/// Deprecated source alias retained while internal archive APIs migrate. Both
+/// names encode only the V2 wire and reject legacy V1 bytes.
+pub const InputV1 = InputV2;
+
+pub const ManifestV2 = struct {
     abi_version: u64 = manifest_abi,
     family: model_contract.ModelFamilyIdV1,
     source_format: SourceFormatV1,
@@ -113,6 +136,12 @@ pub const ManifestV1 = struct {
     portable_bytes: u64,
     portable_page_count: u64,
     license_bytes: u64,
+    model_profile_abi: u64,
+    model_profile_id: ModelProfileV1,
+    model_profile_sha256: Digest,
+    tensor_profile_abi: u64,
+    tensor_count: u64,
+    tensor_inventory_sha256: Digest,
     config: ConfigV1,
     source_sha256: Digest,
     portable_artifact_sha256: Digest,
@@ -126,6 +155,9 @@ pub const ManifestV1 = struct {
     license_sha256: Digest,
     package_sha256: Digest,
 };
+
+/// Deprecated source alias; this is not a V1 wire decoder.
+pub const ManifestV1 = ManifestV2;
 
 pub const PreparedRepresentationV1 = struct {
     abi_version: u64 = prepared_representation_abi,
@@ -140,9 +172,28 @@ pub const PreparedRepresentationV1 = struct {
     representation_sha256: Digest,
 };
 
-pub const AdmissionBundleV1 = struct {
-    package: ManifestV1,
+pub const AdmissionBundleV2 = struct {
+    package: ManifestV2,
     representation: PreparedRepresentationV1,
+};
+
+/// Deprecated source alias; this is not a V1 wire decoder.
+pub const AdmissionBundleV1 = AdmissionBundleV2;
+
+pub const ProfiledModelContentInputV1 = struct {
+    family: model_contract.ModelFamilyIdV1,
+    source_format: SourceFormatV1,
+    portable_format_abi: u64,
+    conversion_profile_abi: u64,
+    conversion_plan_abi: u64,
+    model_profile_id: ModelProfileV1,
+    tensor_profile_abi: u64,
+    tensor_count: u64,
+    config: ConfigV1,
+    portable_artifact_sha256: Digest,
+    conversion_profile_sha256: Digest,
+    conversion_plan_sha256: Digest,
+    tensor_inventory_sha256: Digest,
 };
 
 pub fn makeV1(input: InputV1) Error!ManifestV1 {
@@ -159,6 +210,12 @@ pub fn makeV1(input: InputV1) Error!ManifestV1 {
         .portable_bytes = input.portable_bytes,
         .portable_page_count = input.portable_page_count,
         .license_bytes = input.license_bytes,
+        .model_profile_abi = model_profile_abi,
+        .model_profile_id = input.model_profile_id,
+        .model_profile_sha256 = modelProfileRootV1(input.model_profile_id),
+        .tensor_profile_abi = input.tensor_profile_abi,
+        .tensor_count = input.tensor_count,
+        .tensor_inventory_sha256 = input.tensor_inventory_sha256,
         .config = input.config,
         .source_sha256 = input.source_sha256,
         .portable_artifact_sha256 = input.portable_artifact_sha256,
@@ -221,11 +278,11 @@ pub fn decodeV1(encoded: []const u8) Error!ManifestV1 {
     if (!std.mem.eql(u8, encoded[0..8], &manifest_magic) or
         readU64(encoded, 8) != manifest_abi or
         readU64(encoded, 16) != manifest_bytes or
-        readU64(encoded, 24) != allowed_flags or
+        readU64(encoded, 24) != manifest_allowed_flags or
         readU64(encoded, 120) != config_abi or
         readU32(encoded, 168) != 0 or
         readU32(encoded, 172) != 0 or
-        !allZero(encoded[496..manifest_body_bytes]))
+        !allZero(encoded[592..manifest_body_bytes]))
         return Error.InvalidManifest;
     const family = std.meta.intToEnum(
         model_contract.ModelFamilyIdV1,
@@ -235,6 +292,8 @@ pub fn decodeV1(encoded: []const u8) Error!ManifestV1 {
         SourceFormatV1,
         readU64(encoded, 40),
     ) catch return Error.InvalidManifest;
+    const model_profile_id: ModelProfileV1 =
+        @enumFromInt(readU64(encoded, 504));
     const config: ConfigV1 = .{
         .dim = readU32(encoded, 128),
         .hidden_dim = readU32(encoded, 132),
@@ -263,6 +322,12 @@ pub fn decodeV1(encoded: []const u8) Error!ManifestV1 {
         .portable_bytes = readU64(encoded, 96),
         .portable_page_count = readU64(encoded, 104),
         .license_bytes = readU64(encoded, 112),
+        .model_profile_abi = readU64(encoded, 496),
+        .model_profile_id = model_profile_id,
+        .model_profile_sha256 = encoded[512..544].*,
+        .tensor_profile_abi = readU64(encoded, 544),
+        .tensor_count = readU64(encoded, 552),
+        .tensor_inventory_sha256 = encoded[560..592].*,
         .config = config,
         .source_sha256 = encoded[176..208].*,
         .portable_artifact_sha256 = encoded[208..240].*,
@@ -278,6 +343,37 @@ pub fn decodeV1(encoded: []const u8) Error!ManifestV1 {
     };
     try validateV1(value);
     return value;
+}
+
+pub fn makeV2(input: InputV2) Error!ManifestV2 {
+    return makeV1(input);
+}
+
+pub fn validateV2(value: ManifestV2) Error!void {
+    return validateV1(value);
+}
+
+pub fn encodeV2(
+    value: ManifestV2,
+    destination: []u8,
+) Error![]u8 {
+    return encodeV1(value, destination);
+}
+
+pub fn decodeV2(encoded: []const u8) Error!ManifestV2 {
+    return decodeV1(encoded);
+}
+
+pub fn modelProfileRootV1(
+    profile: ModelProfileV1,
+) Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(model_profile_domain);
+    hashU64(&hash, model_profile_abi);
+    hashU64(&hash, @intFromEnum(profile));
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
 }
 
 pub fn resolvedConfigRootV1(config: ConfigV1) Digest {
@@ -328,6 +424,54 @@ pub fn modelContentRootV1(
         @intFromBool(config.tie_embeddings),
     };
     hash.update(&tie_embeddings);
+    var digest: Digest = undefined;
+    hash.final(&digest);
+    return digest;
+}
+
+/// Bind prepared model bytes to the exact package profile and source tensor
+/// semantics that produced them. This prevents a structurally valid package
+/// rewrite from relabeling an existing prepared image with another admitted
+/// conversion or tensor profile.
+pub fn profiledModelContentRootV1(
+    input: ProfiledModelContentInputV1,
+) Error!Digest {
+    try validateConfigV1(input.config);
+    if (@intFromEnum(input.family) == 0 or
+        @intFromEnum(input.source_format) == 0 or
+        input.portable_format_abi == 0 or
+        input.conversion_profile_abi == 0 or
+        input.conversion_plan_abi == 0 or
+        @intFromEnum(input.model_profile_id) == 0 or
+        input.tensor_profile_abi == 0 or
+        input.tensor_count == 0 or
+        isZero(input.portable_artifact_sha256) or
+        isZero(input.conversion_profile_sha256) or
+        isZero(input.conversion_plan_sha256) or
+        isZero(input.tensor_inventory_sha256))
+        return Error.InvalidManifest;
+
+    const model_profile_sha256 =
+        modelProfileRootV1(input.model_profile_id);
+    const resolved_config_sha256 =
+        resolvedConfigRootV1(input.config);
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(profiled_model_content_domain);
+    hashU64(&hash, @intFromEnum(input.family));
+    hashU64(&hash, @intFromEnum(input.source_format));
+    hashU64(&hash, input.portable_format_abi);
+    hash.update(&input.portable_artifact_sha256);
+    hashU64(&hash, input.conversion_profile_abi);
+    hash.update(&input.conversion_profile_sha256);
+    hashU64(&hash, input.conversion_plan_abi);
+    hash.update(&input.conversion_plan_sha256);
+    hashU64(&hash, model_profile_abi);
+    hashU64(&hash, @intFromEnum(input.model_profile_id));
+    hash.update(&model_profile_sha256);
+    hashU64(&hash, input.tensor_profile_abi);
+    hashU64(&hash, input.tensor_count);
+    hash.update(&input.tensor_inventory_sha256);
+    hash.update(&resolved_config_sha256);
     var digest: Digest = undefined;
     hash.final(&digest);
     return digest;
@@ -437,7 +581,8 @@ pub fn decodePreparedRepresentationV1(
         prepared_representation_abi or
         readU64(encoded, 16) !=
             prepared_representation_bytes or
-        readU64(encoded, 24) != allowed_flags or
+        readU64(encoded, 24) !=
+            prepared_representation_allowed_flags or
         readU64(encoded, 56) != 0)
         return Error.InvalidPreparedRepresentation;
     const value: PreparedRepresentationV1 = .{
@@ -514,6 +659,24 @@ pub fn decodeAdmissionBundleV1(
     };
 }
 
+pub fn encodeAdmissionBundleV2(
+    package: ManifestV2,
+    representation: PreparedRepresentationV1,
+    destination: []u8,
+) Error![]u8 {
+    return encodeAdmissionBundleV1(
+        package,
+        representation,
+        destination,
+    );
+}
+
+pub fn decodeAdmissionBundleV2(
+    encoded: []const u8,
+) Error!AdmissionBundleV2 {
+    return decodeAdmissionBundleV1(encoded);
+}
+
 fn validateConfigV1(config: ConfigV1) Error!void {
     if (config.dim == 0 or
         config.hidden_dim == 0 or
@@ -545,6 +708,15 @@ fn manifestShapeValidV1(value: ManifestV1) bool {
         value.portable_bytes != 0 and
         value.portable_page_count != 0 and
         value.license_bytes != 0 and
+        value.model_profile_abi == model_profile_abi and
+        @intFromEnum(value.model_profile_id) != 0 and
+        digestEqual(
+            value.model_profile_sha256,
+            modelProfileRootV1(value.model_profile_id),
+        ) and
+        value.tensor_profile_abi != 0 and
+        value.tensor_count != 0 and
+        !isZero(value.tensor_inventory_sha256) and
         digestEqual(
             value.resolved_config_sha256,
             resolvedConfigRootV1(value.config),
@@ -584,7 +756,11 @@ fn writeManifestBodyV1(
     @memcpy(destination[0..8], &manifest_magic);
     writeU64(destination, 8, manifest_abi);
     writeU64(destination, 16, manifest_bytes);
-    writeU64(destination, 24, allowed_flags);
+    writeU64(
+        destination,
+        24,
+        manifest_allowed_flags,
+    );
     writeU64(destination, 32, @intFromEnum(value.family));
     writeU64(
         destination,
@@ -657,6 +833,30 @@ fn writeManifestBodyV1(
         &value.tokenizer_behavior_sha256,
     );
     @memcpy(destination[464..496], &value.license_sha256);
+    writeU64(
+        destination,
+        496,
+        value.model_profile_abi,
+    );
+    writeU64(
+        destination,
+        504,
+        @intFromEnum(value.model_profile_id),
+    );
+    @memcpy(
+        destination[512..544],
+        &value.model_profile_sha256,
+    );
+    writeU64(
+        destination,
+        544,
+        value.tensor_profile_abi,
+    );
+    writeU64(destination, 552, value.tensor_count);
+    @memcpy(
+        destination[560..592],
+        &value.tensor_inventory_sha256,
+    );
 }
 
 fn writePreparedRepresentationBodyV1(
@@ -677,7 +877,11 @@ fn writePreparedRepresentationBodyV1(
         16,
         prepared_representation_bytes,
     );
-    writeU64(destination, 24, allowed_flags);
+    writeU64(
+        destination,
+        24,
+        prepared_representation_allowed_flags,
+    );
     writeU64(destination, 32, value.format_abi);
     writeU64(destination, 40, value.format_version);
     writeU64(destination, 48, value.container_bytes);
@@ -815,6 +1019,10 @@ fn testManifestV1() !ManifestV1 {
         .portable_bytes = 700,
         .portable_page_count = 4,
         .license_bytes = 21,
+        .model_profile_id = .ordinary_package_v1,
+        .tensor_profile_abi = 0x474c_5450_0000_0001,
+        .tensor_count = 21,
+        .tensor_inventory_sha256 = filledDigest(0xaa),
         .config = .{
             .dim = 64,
             .hidden_dim = 128,
@@ -876,6 +1084,55 @@ test "stable package manifest round trips without request state" {
         first.representation_sha256,
         second.representation_sha256,
     ));
+}
+
+test "model profile and tensor inventory are manifest bound" {
+    const value = try testManifestV1();
+    try std.testing.expectEqual(
+        model_profile_abi,
+        value.model_profile_abi,
+    );
+    try std.testing.expectEqual(
+        ModelProfileV1.ordinary_package_v1,
+        value.model_profile_id,
+    );
+    try std.testing.expectEqual(
+        modelProfileRootV1(.ordinary_package_v1),
+        value.model_profile_sha256,
+    );
+
+    var alternate = value;
+    alternate.model_profile_id = @enumFromInt(2);
+    alternate.model_profile_sha256 =
+        modelProfileRootV1(alternate.model_profile_id);
+    var alternate_body: [manifest_body_bytes]u8 =
+        undefined;
+    writeManifestBodyV1(alternate, &alternate_body);
+    alternate.package_sha256 =
+        manifestRootV1(&alternate_body);
+    var alternate_wire: [manifest_bytes]u8 = undefined;
+    _ = try encodeV1(alternate, &alternate_wire);
+    const decoded = try decodeV1(&alternate_wire);
+    try std.testing.expectEqualDeep(alternate, decoded);
+    try std.testing.expect(!digestEqual(
+        value.package_sha256,
+        alternate.package_sha256,
+    ));
+
+    var invalid = value;
+    invalid.tensor_count = 0;
+    var destination: [manifest_bytes]u8 = undefined;
+    try std.testing.expectError(
+        Error.InvalidManifest,
+        encodeV1(invalid, &destination),
+    );
+    invalid = value;
+    invalid.tensor_inventory_sha256 =
+        [_]u8{0} ** @sizeOf(Digest);
+    try std.testing.expectError(
+        Error.InvalidManifest,
+        encodeV1(invalid, &destination),
+    );
 }
 
 test "prepared representation is package and byte exact" {
@@ -984,10 +1241,48 @@ test "package codecs reject mutations and preserve destinations" {
         decodeV1(&corrupted),
     );
     corrupted = wire;
-    corrupted[520] = 1;
+    corrupted[600] = 1;
     try std.testing.expectError(
         Error.InvalidManifest,
         decodeV1(&corrupted),
+    );
+
+    corrupted = wire;
+    writeU64(
+        corrupted[0..manifest_body_bytes],
+        24,
+        0,
+    );
+    const missing_flag_root = manifestRootV1(
+        corrupted[0..manifest_body_bytes],
+    );
+    @memcpy(
+        corrupted[manifest_body_bytes..],
+        &missing_flag_root,
+    );
+    try std.testing.expectError(
+        Error.InvalidManifest,
+        decodeV1(&corrupted),
+    );
+
+    corrupted = wire;
+    @memcpy(
+        corrupted[0..8],
+        &[_]u8{ 'G', 'L', 'P', 'K', 'G', '0', '1', 0 },
+    );
+    writeU64(
+        corrupted[0..manifest_body_bytes],
+        8,
+        0x474c_504b_0000_0001,
+    );
+    writeU64(
+        corrupted[0..manifest_body_bytes],
+        24,
+        0,
+    );
+    try std.testing.expectError(
+        Error.InvalidManifest,
+        decodeV2(&corrupted),
     );
 
     var invalid = value;

@@ -8,7 +8,7 @@ pub fn run(
     args: []const []const u8,
     writer: *std.Io.Writer,
 ) !void {
-    if (args.len < 8) {
+    if (args.len < 12) {
         try usage(writer);
         return error.InvalidUsage;
     }
@@ -18,7 +18,9 @@ pub fn run(
     const package_path = args[5];
     var license_path: ?[]const u8 = null;
     var config_path: ?[]const u8 = null;
+    var experimental_profile: ?engine.model_package_manifest.ModelProfileV1 = null;
     var group_size: u32 = 64;
+    var group_size_seen = false;
     var index: usize = 6;
     while (index < args.len) : (index += 1) {
         const argument = args[index];
@@ -36,7 +38,27 @@ pub fn run(
             if (index >= args.len)
                 return error.InvalidUsage;
             config_path = args[index];
+        } else if (std.mem.eql(
+            u8,
+            argument,
+            "--experimental-profile",
+        )) {
+            if (experimental_profile != null)
+                return error.InvalidUsage;
+            index += 1;
+            if (index >= args.len or
+                !std.mem.eql(
+                    u8,
+                    args[index],
+                    engine.model_package_producer
+                        .experimental_profile_name_v1,
+                ))
+                return error.InvalidUsage;
+            experimental_profile = .ordinary_package_v1;
         } else if (std.mem.eql(u8, argument, "--group-size")) {
+            if (group_size_seen)
+                return error.InvalidUsage;
+            group_size_seen = true;
             index += 1;
             if (index >= args.len)
                 return error.InvalidUsage;
@@ -53,6 +75,14 @@ pub fn run(
         try usage(writer);
         return error.InvalidUsage;
     };
+    const config = config_path orelse {
+        try usage(writer);
+        return error.InvalidUsage;
+    };
+    const profile = experimental_profile orelse {
+        try usage(writer);
+        return error.InvalidUsage;
+    };
 
     const receipt = try engine.model_package_producer
         .produceSafetensorsV1(
@@ -63,8 +93,11 @@ pub fn run(
         package_path,
         license,
         .{
-            .config_path = config_path,
+            .experimental_profile = profile,
+            .config_path = config,
             .conversion = .{
+                .architecture = engine.model_package_producer
+                    .conversion_architecture_v1,
                 .quantize_int4 = true,
                 .quant_group_size = group_size,
             },
@@ -126,7 +159,15 @@ pub fn run(
         receipt.package.resolved_config_sha256,
         .lower,
     );
-    const config = receipt.package.config;
+    const model_profile_hex = std.fmt.bytesToHex(
+        receipt.package.model_profile_sha256,
+        .lower,
+    );
+    const tensor_inventory_hex = std.fmt.bytesToHex(
+        receipt.package.tensor_inventory_sha256,
+        .lower,
+    );
+    const resolved_config = receipt.package.config;
     try writer.print(
         "{{\"schema\":\"glacier.model-package-producer/v1\"," ++
             "\"conversion_disposition\":\"{s}\"," ++
@@ -134,6 +175,15 @@ pub fn run(
             "\"family\":\"autoregressive\"," ++
             "\"source_format\":\"safetensors\"," ++
             "\"tokenizer_profile\":\"utf8-byte-v1\"," ++
+            "\"model_profile\":\"{s}\"," ++
+            "\"model_profile_abi\":\"{x:0>16}\"," ++
+            "\"model_profile_id\":{d}," ++
+            "\"model_profile_sha256\":\"{s}\"," ++
+            "\"tensor_profile_abi\":\"{x:0>16}\"," ++
+            "\"tensor_count\":{d}," ++
+            "\"tensor_inventory_sha256\":\"{s}\"," ++
+            "\"experimental_profile_explicit\":true," ++
+            "\"tensor_inventory_verified\":true," ++
             "\"prepared_layout\":\"separate\"," ++
             "\"source_bytes\":{d}," ++
             "\"portable_bytes\":{d}," ++
@@ -154,6 +204,14 @@ pub fn run(
                 .published => "published",
                 .already_current => "already_current",
             },
+            engine.model_package_producer
+                .experimental_profile_name_v1,
+            receipt.package.model_profile_abi,
+            @intFromEnum(receipt.package.model_profile_id),
+            &model_profile_hex,
+            receipt.package.tensor_profile_abi,
+            receipt.package.tensor_count,
+            &tensor_inventory_hex,
             receipt.source_identity.source_bytes,
             receipt.portable_identity.container_bytes,
             receipt.portable_identity.page_count,
@@ -163,31 +221,21 @@ pub fn run(
             engine.model_package_manifest.prepared_representation_bytes,
             receipt.package.license_bytes,
             receipt.tokenizer_manifest.max_input_bytes,
-            switch (receipt.config_source) {
-                .derived => "derived",
-                .explicit => "explicit",
-            },
+            @tagName(receipt.config_source),
         },
     );
-    if (receipt.config_input_identity) |identity| {
-        const config_input_hex = std.fmt.bytesToHex(
-            identity.sha256,
-            .lower,
-        );
-        try writer.print(
-            "\"config_input_bytes\":{d}," ++
-                "\"config_input_sha256\":\"{s}\",",
-            .{
-                identity.bytes,
-                &config_input_hex,
-            },
-        );
-    } else {
-        try writer.writeAll(
-            "\"config_input_bytes\":null," ++
-                "\"config_input_sha256\":null,",
-        );
-    }
+    const config_input_hex = std.fmt.bytesToHex(
+        receipt.config_input_identity.sha256,
+        .lower,
+    );
+    try writer.print(
+        "\"config_input_bytes\":{d}," ++
+            "\"config_input_sha256\":\"{s}\",",
+        .{
+            receipt.config_input_identity.bytes,
+            &config_input_hex,
+        },
+    );
     try writer.print(
         "\"config\":{{\"dim\":{d},\"hidden_dim\":{d}," ++
             "\"layers\":{d},\"vocab\":{d},\"heads\":{d}," ++
@@ -215,16 +263,16 @@ pub fn run(
             "\"publisher_authenticity_proven\":false," ++
             "\"production_model_verified\":false}}\n",
         .{
-            config.dim,
-            config.hidden_dim,
-            config.layers,
-            config.vocab,
-            config.heads,
-            config.head_dim,
-            config.kv_heads,
-            @as(u32, @bitCast(config.rms_eps)),
-            @as(u32, @bitCast(config.rope_theta)),
-            if (config.tie_embeddings) "true" else "false",
+            resolved_config.dim,
+            resolved_config.hidden_dim,
+            resolved_config.layers,
+            resolved_config.vocab,
+            resolved_config.heads,
+            resolved_config.head_dim,
+            resolved_config.kv_heads,
+            @as(u32, @bitCast(resolved_config.rms_eps)),
+            @as(u32, @bitCast(resolved_config.rope_theta)),
+            if (resolved_config.tie_embeddings) "true" else "false",
             &source_hex,
             &portable_hex,
             &profile_hex,
@@ -247,6 +295,8 @@ fn usage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
         "usage: glacier package-model <source.safetensors> " ++
             "<out.glacier> <out.glrt> <out.glpkg> " ++
-            "--license <file> [--config <file>] [--group-size N]\n",
+            "--license <file> --config <file> " ++
+            "--experimental-profile ordinary-package-v1 " ++
+            "[--group-size N]\n",
     );
 }

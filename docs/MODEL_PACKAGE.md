@@ -14,30 +14,50 @@ container, a prepared runtime image, and a fixed package manifest:
   out.glpkg \
   --license LICENSE \
   --config config.json \
+  --experimental-profile ordinary-package-v1 \
   --group-size 64
 ```
 
-The current profile is deliberately narrow: autoregressive Safetensors,
-INT4 conversion, a separate-layout GLRT V2 image, and the exact
-`utf8-byte-v1` tokenizer. The tokenizer accepts at most 4,096 input bytes and
-requires a vocabulary large enough to represent every byte. `--group-size N`
-is optional and defaults to 64. `--config FILE` is also optional; omission
-keeps the derived configuration path and never discovers an ambient sidecar.
-Broader tokenizer behavior, source formats, model families, quantization modes,
-and GPU package production remain roadmap work.
+The current profile is deliberately narrow and must be selected explicitly
+with `--experimental-profile ordinary-package-v1`. It admits autoregressive
+Safetensors, exact F32 source tensors, MHA geometry, untied embeddings, no
+bias or extra tensors, INT4 conversion, a separate-layout GLRT V2 image, and
+the exact `utf8-byte-v1` tokenizer. `--config FILE` is required; the selected
+path never derives geometry from converted tensors or discovers an ambient
+sidecar. The tokenizer accepts at most 4,096 input bytes and requires a
+vocabulary large enough to represent every byte. `--group-size N` is optional
+and defaults to 64; the selected conversion geometry accepts powers of two
+from 1 through 128. Other values reject before source or output namespace
+mutation. Broader tokenizer behavior, source formats, model
+families, numerical profiles, and GPU package production remain roadmap work.
 
 An explicit config is a complete JSON configuration object. It accepts the
 canonical/ecosystem pairs `dim`/`hidden_size`,
 `hidden_dim`/`intermediate_size`, `num_layers`/`num_hidden_layers`,
 `num_heads`/`num_attention_heads`, `num_kv_heads`/`num_key_value_heads`, and
 `rms_eps`/`rms_norm_eps`, plus `vocab_size`, `head_dim`, `rope_theta`, and
-`tie_word_embeddings`. Unrelated fields may remain in a source config.
-Duplicate keys, wrong recognized types, non-positive or out-of-range numbers,
+`tie_word_embeddings`. Supply this narrow contract as a dedicated package
+config; unrecognized fields reject because they may carry execution semantics
+that the current profile does not bind. Duplicate keys, wrong recognized
+types, non-positive or out-of-range numbers,
 conflicting aliases, incomplete logical configuration, and inconsistent
 supplied head geometry reject. `head_dim` is the only optional logical field:
-exact `dim / num_heads` derives it. Converted-model derivation is used only
-when `--config` itself is omitted, so explicit and derived modes cannot
-silently mix.
+exact `dim / num_heads` derives it. The resulting complete configuration is
+checked against the source tensor inventory before conversion can mutate the
+output namespace.
+
+The admitted tensor inventory is exact:
+
+- globals: `model.embed_tokens.weight [vocab, dim]`,
+  `model.norm.weight [dim]`, and `lm_head.weight [vocab, dim]`;
+- every contiguous layer `0..layers-1`: input norm, Q/K/V/O projections,
+  post-attention norm, gate/up projections, and down projection with the
+  profile-defined ranks and orientation; and
+- canonical names and F32 dtype only, with no aliases, biases, duplicate
+  roles, missing layers, or extra tensors.
+
+Equal-element-count substitutions do not bypass admission: rank and every
+extent are checked, so a transposed non-square matrix is rejected.
 
 The command performs no network access. It does not download a model,
 tokenizer, license, or runtime component.
@@ -50,17 +70,28 @@ The three outputs have distinct roles:
 - `out.glrt` is the prepared representation used by the current CPU runtime.
   It is architecture and preparation specific.
 - `out.glpkg` is one fixed 896-byte admission bundle: the 640-byte
-  request-independent `ManifestV1` followed immediately by the 256-byte
+  request-independent `ManifestV2` followed immediately by the 256-byte
   `PreparedRepresentationV1` for the exact `out.glrt`. It is admission evidence,
   not a model-data archive.
+
+`ManifestV2` has a distinct wire ABI, `GLPKG02` magic, and package-root
+domain. It activates the model/tensor-profile extension bytes that were
+reserved in V1. V1 packages and durable raw-input archives are intentionally
+rejected rather than guessed or upgraded in place. Re-run `package-model` and
+start a fresh durable request directory; an already selected request directory
+has no in-place migration path.
 
 The 640-byte manifest binds:
 
 - source size and SHA-256 identity;
 - portable container size, page count, format ABI, and SHA-256 identity;
 - exact conversion-profile and conversion-plan identities;
+- the explicitly selected model-profile ABI, ID, and identity root;
+- the exact tensor-profile ABI, count, and canonical inventory root;
 - resolved model geometry and configuration;
-- a derived model-content identity;
+- a derived model-content identity that joins the portable artifact,
+  conversion profile/plan, model profile, tensor inventory, and resolved
+  configuration;
 - exact tokenizer manifest/configuration/behavior identities; and
 - the license byte count and SHA-256 identity.
 
@@ -82,9 +113,14 @@ The producer report makes this framing explicit:
 | `prepared_representation_bytes` | `256` |
 | `prepared_representation_embedded` | `true` |
 | `prepared_representation_separate` | `false` |
-| `config_source` | `derived` or `explicit` |
-| `config_input_bytes` | raw explicit-input size, otherwise `null` |
-| `config_input_sha256` | raw explicit-input SHA-256, otherwise `null` |
+| `model_profile` | `ordinary-package-v1` |
+| `experimental_profile_explicit` | `true` |
+| `model_profile_abi`, `model_profile_id`, `model_profile_sha256` | exact selected-profile identity |
+| `tensor_profile_abi`, `tensor_count`, `tensor_inventory_sha256` | exact admitted source inventory identity |
+| `tensor_inventory_verified` | `true` |
+| `config_source` | `explicit` |
+| `config_input_bytes` | raw config-input size |
+| `config_input_sha256` | raw config-input SHA-256 |
 | `resolved_config_sha256` | canonical resolved configuration identity |
 
 The manifest and prepared-representation receipt use hashes for integrity and
@@ -98,19 +134,21 @@ distribution and policy layer.
 The producer consumes the typed durable conversion receipt directly in the
 same process. It does not accept conversion hashes through command-line flags
 or recover them from rendered output. Before conversion it admits the license
-and optional explicit config through bounded stable regular-file reads and
+and required explicit config through bounded stable regular-file reads and
 strictly parses the config. It then:
 
-1. reopens and fully validates the converted portable container;
-2. resolves the explicit or derived configuration and tokenizer
-   identities;
-3. prepares and reopens the GLRT image;
-4. derives the prepared representation from the actual image, including its
+1. captures the source once through a no-follow descriptor, validates the
+   exact tensor schema on that same descriptor, and revalidates source identity
+   before borrowing the output directory or creating a lock/candidate;
+2. converts, reopens, and fully validates the portable container;
+3. resolves the explicit configuration and tokenizer identities;
+4. prepares and reopens the GLRT image;
+5. derives the prepared representation from the actual image, including its
    format version, ABI fingerprint, source fingerprint, configuration, layout,
    size, and container hash;
-5. revalidates the portable path, exact license bytes, and exact explicit
+6. revalidates the portable path, exact license bytes, and exact explicit
    config bytes; and
-6. publishes the 896-byte manifest-plus-representation bundle last.
+7. publishes the 896-byte manifest-plus-representation bundle last.
 
 On a retry, the portable conversion and an exact existing `.glpkg` may report
 `already_current`. The prepared `.glrt` is deterministically recreated and
@@ -133,19 +171,17 @@ size bounded, and descriptor metadata is checked again after the positional
 read. This boundary reduces path substitution and accidental blocking; final
 component no-follow is not a hostile-parent-directory security claim.
 
-The raw explicit-config size and hash are report provenance, not an additional
+The raw config size and hash are report provenance, not an additional
 artifact root. The existing canonical `resolved_config_sha256` participates in
 the model-content, package, and prepared-representation relationships.
 Formatting- or alias-equivalent JSON therefore converges on the same artifact
-identity while its raw report provenance may differ. With no flag, configuration
-is derived and even a malformed ambient `<output>.json` remains ignored.
+identity while its raw report provenance may differ. Omitting `--config`
+rejects; an ambient `<output>.json` is never consulted.
 
 Syntax, type, completeness, range, alias, and internal head-geometry failures
-reject before conversion. Tensor compatibility is validated while constructing
-the prepared representation. A complete but tensor-incompatible config cannot
-publish the final `.glrt` or `.glpkg`; its independently valid durable portable
-conversion may already have published `.glacier`. The three output files are
-not one atomic transaction.
+reject before conversion. Unknown profiles and tensor name/dtype/rank/shape
+mismatches reject before the portable publisher creates its directory lock,
+candidate, or target. The three output files are not one atomic transaction.
 
 ## Admission and execution
 
@@ -222,11 +258,12 @@ tools/verify.sh affected-fast --base origin/main
 
 Changes confined to the package producer, package-aware `text-run`,
 process-local variable-terminal lifecycle, bounded input helper, or independent
-package oracle select the existing focused
+package oracle or strict tensor-profile module select the existing focused
 `text-runtime-golden-path-test` DAG. That gate exercises production, portable
 and package `already_current` dispositions, deterministic prepared-image
-recreation, explicit and derived config admission, canonical config retry,
-ambient-sidecar isolation, bounded-input rejection, independent Python
+recreation, required explicit-profile/config admission, canonical config retry,
+ambient-sidecar isolation, exact tensor-schema rejection before namespace
+mutation, bounded-input rejection, independent Python
 decoding, process-local admission, distinct
 processes for durable bootstrap/resume/retry, direct checkpoint/output-wire
 decoding, acknowledged `N=2`, `N=4`, and `N=64` checkpoint/sink lineage
@@ -254,7 +291,8 @@ package admission or recovery lineage.
 Still open:
 
 - broader tokenizers, model families, source formats, and numerical profiles;
-- explicit capability gating for the current narrow experimental model profile;
+- separately named and evidenced GQA, tied-embedding, bias, F16, and BF16
+  profiles;
 - GPU/device package preparation and execution evidence;
 - native non-POSIX package production and durable recovery;
 - signed provenance and authenticated distribution;

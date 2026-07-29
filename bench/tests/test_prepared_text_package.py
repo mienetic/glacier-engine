@@ -29,6 +29,10 @@ def manifest_input(
         "portable_bytes": 700,
         "portable_page_count": 4,
         "license_bytes": 21,
+        "model_profile_id": package.ORDINARY_PACKAGE_PROFILE_ID,
+        "tensor_profile_abi": 0x474C_5450_0000_0001,
+        "tensor_count": 21,
+        "tensor_inventory_sha256": digest(0xAA),
         "config": {
             "dim": 64,
             "hidden_dim": 128,
@@ -200,6 +204,123 @@ class PreparedTextPackageTests(unittest.TestCase):
         self.assertNotEqual(root, changed_artifact)
         self.assertNotEqual(root, changed_geometry)
 
+    def test_profiled_model_content_binds_execution_semantics(
+        self,
+    ) -> None:
+        value = copy.deepcopy(fixture("Ice")["package_input"])
+        root = package.profiled_model_content_sha256(value)
+        self.assertNotEqual(bytes(32), root)
+
+        mutations = {
+            "family": 2,
+            "source_format": 2,
+            "portable_format_abi": value["portable_format_abi"] + 1,
+            "conversion_profile_abi": value["conversion_profile_abi"] + 1,
+            "conversion_plan_abi": value["conversion_plan_abi"] + 1,
+            "model_profile_id": 2,
+            "tensor_profile_abi": value["tensor_profile_abi"] + 1,
+            "tensor_count": value["tensor_count"] + 1,
+            "portable_artifact_sha256": digest(0xA1),
+            "conversion_profile_sha256": digest(0xA2),
+            "conversion_plan_sha256": digest(0xA3),
+            "tensor_inventory_sha256": digest(0xA4),
+        }
+        for name, replacement in mutations.items():
+            changed = copy.deepcopy(value)
+            changed[name] = replacement
+            with self.subTest(field=name):
+                self.assertNotEqual(
+                    root,
+                    package.profiled_model_content_sha256(changed),
+                )
+
+        changed_config = copy.deepcopy(value)
+        changed_config["config"]["hidden_dim"] += 1
+        self.assertNotEqual(
+            root,
+            package.profiled_model_content_sha256(
+                changed_config
+            ),
+        )
+
+    def test_model_profile_root_is_canonical_and_manifest_bound(
+        self,
+    ) -> None:
+        value = fixture("Ice")
+        decoded = package.decode_manifest(value["package_wire"])
+        expected = package.model_profile_sha256(
+            package.ORDINARY_PACKAGE_PROFILE_ID
+        )
+        self.assertEqual(
+            "ec0c880425e992f83d6609748288f300b8facf6e802ee181f9dad9ba2a766095",
+            expected.hex(),
+        )
+        self.assertEqual(package.MODEL_PROFILE_ABI, decoded["model_profile_abi"])
+        self.assertEqual(
+            package.ORDINARY_PACKAGE_PROFILE_ID,
+            decoded["model_profile_id"],
+        )
+        self.assertEqual(expected, decoded["model_profile_sha256"])
+
+        changed = copy.deepcopy(value["package_input"])
+        changed["model_profile_id"] = 2
+        alternate = package.decode_manifest(
+            package.encode_manifest(changed)
+        )
+        self.assertEqual(2, alternate["model_profile_id"])
+        self.assertEqual(
+            package.model_profile_sha256(2),
+            alternate["model_profile_sha256"],
+        )
+        self.assertNotEqual(
+            decoded["package_sha256"],
+            alternate["package_sha256"],
+        )
+
+    def test_manifest_requires_profile_flag_and_tensor_identity(
+        self,
+    ) -> None:
+        value = fixture("Ice")
+        wire = value["package_wire"]
+        self.assertEqual(
+            package.MANIFEST_ALLOWED_FLAGS,
+            int.from_bytes(wire[24:32], "little"),
+        )
+        self.assertEqual(
+            value["package_input"]["tensor_inventory_sha256"],
+            wire[560:592],
+        )
+
+        for field, invalid in (
+            ("model_profile_id", 0),
+            ("tensor_profile_abi", 0),
+            ("tensor_count", 0),
+            ("tensor_inventory_sha256", bytes(32)),
+        ):
+            changed = copy.deepcopy(value["package_input"])
+            changed[field] = invalid
+            with self.subTest(field=field):
+                with self.assertRaises(package.PreparedTextPackageError):
+                    package.encode_manifest(changed)
+
+        missing_flag = bytearray(wire)
+        missing_flag[24:32] = bytes(8)
+        missing_flag[-32:] = package.package_sha256(
+            bytes(missing_flag[:-32])
+        )
+        with self.assertRaises(package.PreparedTextPackageError):
+            package.decode_manifest(bytes(missing_flag))
+
+        legacy_v1 = bytearray(wire)
+        legacy_v1[0:8] = b"GLPKG01\x00"
+        legacy_v1[8:16] = (0x474C_504B_0000_0001).to_bytes(
+            8,
+            "little",
+        )
+        legacy_v1[24:32] = bytes(8)
+        with self.assertRaises(package.PreparedTextPackageError):
+            package.decode_manifest(bytes(legacy_v1))
+
     def test_package_archive_golden_and_fresh_retokenization(self) -> None:
         value = fixture()
         decoded = package.decode_archive(value["archive_wire"])
@@ -226,15 +347,15 @@ class PreparedTextPackageTests(unittest.TestCase):
             package.prepared_prompt_sha256(value["raw_text"]).hex(),
         )
         self.assertEqual(
-            "b0fb11540d4b053ac9e7813b279bfff7c0b4b12cb2c5e5b0958ea4f5b18f70c9",
+            "3ac2f8a5e8a4831b019e775e4797e6c4e0a5bef228b3eef11227844011ba4e7b",
             decoded["package"]["package_sha256"].hex(),
         )
         self.assertEqual(
-            "5af8a1df548ebe5d56fe4290e01f579ab280c9aafc280c895cf4d6ac2bf513d7",
+            "4e6425fa67b9c285d9e28dd86cd55536c640dd9b9aa16a741c3c24b64852ce6f",
             decoded["representation"]["representation_sha256"].hex(),
         )
         self.assertEqual(
-            "48ddc5176f9c310e0e07c07fc1d7ee07b1a722eccc56aabcbe2245cc525969e3",
+            "a74cbd45cf903a1b429319832a17a472ac55b72a5b7fd46991573fbfca099257",
             decoded["archive_sha256"].hex(),
         )
 

@@ -33,6 +33,18 @@ EXPECTED_PREPARED_SOURCE_FINGERPRINT = (
 EXPECTED_LICENSE_SHA256 = (
     "43c3afa81d9ea0ffdde3293b4dcc0f8d17e2a0fb76b7d2d8ff8a841fd56f5888"
 )
+EXPERIMENTAL_MODEL_PROFILE = "ordinary-package-v1"
+MODEL_PROFILE_ABI = 0x474C_4D50_0000_0001
+MODEL_PROFILE_ID = 1
+MODEL_PROFILE_DOMAIN = b"glacier-model-package-profile-v1\x00"
+TENSOR_PROFILE_ABI = 0x474C_5450_0000_0001
+TENSOR_INVENTORY_DOMAIN = (
+    b"glacier/ordinary-package/tensor-inventory/v1\x00"
+)
+CONVERSION_PROFILE_ABI = 0x474C_4350_0000_0001
+CONVERSION_PROFILE_DOMAIN = b"glacier-model-conversion-profile-v1\x00"
+CONVERSION_ARCHITECTURE = b"glacier-ordinary-package-v1"
+QUANTIZED_TENSOR_KINDS = (0, 1, 2, 3, 4, 5, 6, 7, 9, 255)
 PROMPT = "Ice"
 NEW_TOKENS = 3
 DURABLE_REQUEST_ID = "18c4d5a16c7f7a5df70c6c7d4e6f6dd1" * 2
@@ -159,6 +171,194 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _model_profile_sha256() -> bytes:
+    return hashlib.sha256(
+        MODEL_PROFILE_DOMAIN
+        + struct.pack("<Q", MODEL_PROFILE_ABI)
+        + struct.pack("<Q", MODEL_PROFILE_ID)
+    ).digest()
+
+
+def _conversion_profile_sha256(group_size: int) -> bytes:
+    if group_size not in (1, 2, 4, 8, 16, 32, 64, 128):
+        raise GoldenPathError("unsupported conversion group size")
+    digest = hashlib.sha256()
+    digest.update(CONVERSION_PROFILE_DOMAIN)
+    digest.update(
+        struct.pack(
+            "<7Q",
+            CONVERSION_PROFILE_ABI,
+            1,
+            256,
+            64,
+            0x514F_4954,
+            16,
+            1 << 18,
+        )
+    )
+    digest.update(struct.pack("<Q", len(CONVERSION_ARCHITECTURE)))
+    digest.update(CONVERSION_ARCHITECTURE)
+    digest.update(b"\x01")
+    digest.update(struct.pack("<Q", len(QUANTIZED_TENSOR_KINDS)))
+    for kind in QUANTIZED_TENSOR_KINDS:
+        digest.update(struct.pack("<II", kind, group_size))
+    return digest.digest()
+
+
+def _ordinary_tensor_inventory_sha256(
+    config: Mapping[str, object],
+) -> tuple[int, bytes]:
+    geometry_names = (
+        "dim",
+        "hidden_dim",
+        "layers",
+        "vocab",
+        "heads",
+        "head_dim",
+        "kv_heads",
+    )
+    geometry: dict[str, int] = {}
+    for name in geometry_names:
+        value = config.get(name)
+        if type(value) is not int or value <= 0 or value > 0xFFFF_FFFF:
+            raise GoldenPathError(f"invalid tensor inventory geometry {name!r}")
+        geometry[name] = value
+
+    dim = geometry["dim"]
+    hidden_dim = geometry["hidden_dim"]
+    vocab = geometry["vocab"]
+    tensors: list[tuple[int, int, tuple[int, ...]]] = [
+        (0xFFFF_FFFF, 1, (vocab, dim)),
+        (0xFFFF_FFFF, 2, (dim,)),
+        (0xFFFF_FFFF, 3, (vocab, dim)),
+    ]
+    for layer in range(geometry["layers"]):
+        tensors.extend(
+            (
+                (layer, 4, (dim,)),
+                (layer, 5, (dim, dim)),
+                (layer, 6, (dim, dim)),
+                (layer, 7, (dim, dim)),
+                (layer, 8, (dim, dim)),
+                (layer, 9, (dim,)),
+                (layer, 10, (hidden_dim, dim)),
+                (layer, 11, (hidden_dim, dim)),
+                (layer, 12, (dim, hidden_dim)),
+            )
+        )
+
+    digest = hashlib.sha256()
+    digest.update(TENSOR_INVENTORY_DOMAIN)
+    digest.update(struct.pack("<QQ", TENSOR_PROFILE_ABI, len(tensors)))
+    digest.update(
+        struct.pack(
+            "<7I",
+            *(geometry[name] for name in geometry_names),
+        )
+    )
+    for layer, role, shape in tensors:
+        digest.update(struct.pack("<IBBB", layer, role, 1, len(shape)))
+        for extent in shape:
+            digest.update(struct.pack("<Q", extent))
+    return len(tensors), digest.digest()
+
+
+def _write_safetensors_variant(
+    source: Path,
+    destination: Path,
+    *,
+    tensor_name: str,
+    expected_shape: Sequence[int],
+    replacement_name: str | None = None,
+    replacement_shape: Sequence[int] | None = None,
+    replacement_dtype: str | None = None,
+) -> None:
+    wire = source.read_bytes()
+    if len(wire) < 8:
+        raise GoldenPathError("fixture safetensors header is truncated")
+    header_bytes = struct.unpack_from("<Q", wire)[0]
+    data_offset = 8 + header_bytes
+    if data_offset > len(wire):
+        raise GoldenPathError("fixture safetensors header exceeds the file")
+    try:
+        document = json.loads(wire[8:data_offset])
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise GoldenPathError("fixture safetensors header is invalid") from error
+    if not isinstance(document, dict):
+        raise GoldenPathError("fixture safetensors header is not an object")
+    tensor = document.get(tensor_name)
+    if not isinstance(tensor, dict):
+        raise GoldenPathError(f"fixture tensor {tensor_name!r} is missing")
+    if tensor.get("dtype") != "F32" or tensor.get("shape") != list(expected_shape):
+        raise GoldenPathError(f"fixture tensor {tensor_name!r} drifted")
+
+    replacement = dict(tensor)
+    if replacement_shape is not None:
+        replacement["shape"] = list(replacement_shape)
+    if replacement_dtype is not None:
+        replacement["dtype"] = replacement_dtype
+    if replacement_name is not None:
+        if replacement_name in document:
+            raise GoldenPathError("replacement tensor name already exists")
+        del document[tensor_name]
+        document[replacement_name] = replacement
+    else:
+        document[tensor_name] = replacement
+
+    encoded_header = json.dumps(
+        document,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    destination.write_bytes(
+        struct.pack("<Q", len(encoded_header))
+        + encoded_header
+        + wire[data_offset:]
+    )
+
+
+def _assert_package_rejected_without_namespace_mutation(
+    executable: Path,
+    source: Path,
+    license_path: Path,
+    root: Path,
+    label: str,
+    package_arguments: Sequence[str],
+    retained_files: Mapping[str, bytes] | None = None,
+) -> None:
+    namespace = root / f"{label}-outputs"
+    namespace.mkdir()
+    expected_files = dict(retained_files or {})
+    for name, payload in expected_files.items():
+        retained = namespace / name
+        retained.write_bytes(payload)
+        retained.chmod(0o600)
+    _run(
+        (
+            str(executable),
+            "package-model",
+            str(source),
+            str(namespace / "model.glacier"),
+            str(namespace / "model.glrt"),
+            str(namespace / "model.glpkg"),
+            "--license",
+            str(license_path),
+            *package_arguments,
+        ),
+        expect_success=False,
+    )
+    observed_files = {
+        path.name: path.read_bytes()
+        for path in namespace.iterdir()
+        if path.is_file()
+    }
+    if observed_files != expected_files:
+        raise GoldenPathError(
+            f"rejected package case {label!r} mutated output namespace: "
+            f"{tuple(sorted(observed_files))!r}"
+        )
+
+
 def _assert_package_config_rejected(
     executable: Path,
     source: Path,
@@ -167,27 +367,18 @@ def _assert_package_config_rejected(
     label: str,
     config_arguments: Sequence[str],
 ) -> None:
-    portable = root / f"{label}.glacier"
-    prepared = root / f"{label}.glrt"
-    package = root / f"{label}.glpkg"
-    _run(
+    _assert_package_rejected_without_namespace_mutation(
+        executable,
+        source,
+        license_path,
+        root,
+        label,
         (
-            str(executable),
-            "package-model",
-            str(source),
-            str(portable),
-            str(prepared),
-            str(package),
-            "--license",
-            str(license_path),
+            "--experimental-profile",
+            EXPERIMENTAL_MODEL_PROFILE,
             *config_arguments,
         ),
-        expect_success=False,
     )
-    if any(path.exists() for path in (portable, prepared, package)):
-        raise GoldenPathError(
-            f"rejected config case {label!r} mutated package outputs"
-        )
 
 
 def _field(output: str, name: str) -> str:
@@ -1195,7 +1386,7 @@ def _verify_package_artifacts(
     package_path: Path,
     license_bytes: bytes,
     report: Mapping[str, object],
-    config_input: bytes | None = None,
+    config_input: bytes,
 ) -> tuple[dict[str, object], str]:
     bundle_wire = package_path.read_bytes()
     bundle_facts = package_oracle.decode_admission_bundle(bundle_wire)
@@ -1231,9 +1422,18 @@ def _verify_package_artifacts(
     portable_sha256 = hashlib.sha256(portable_bytes).digest()
     source_sha256 = hashlib.sha256(source_bytes).digest()
     config = package_facts["config"]
-    expected_model_content = package_oracle.model_content_sha256(
-        portable_sha256,
-        config,
+    expected_model_profile_sha256 = _model_profile_sha256()
+    (
+        expected_tensor_count,
+        expected_tensor_inventory_sha256,
+    ) = _ordinary_tensor_inventory_sha256(config)
+    expected_conversion_profile_sha256 = (
+        _conversion_profile_sha256(16)
+    )
+    expected_model_content = (
+        package_oracle.profiled_model_content_sha256(
+            package_facts
+        )
     )
     _, tokenizer_wire, _ = raw_input.tokenize(
         "Ice",
@@ -1253,6 +1453,16 @@ def _verify_package_artifacts(
         or package_facts["portable_bytes"] != len(portable_bytes)
         or package_facts["portable_page_count"] != page_count
         or package_facts["license_bytes"] != len(license_bytes)
+        or package_facts["model_profile_abi"] != MODEL_PROFILE_ABI
+        or package_facts["model_profile_id"] != MODEL_PROFILE_ID
+        or package_facts["model_profile_sha256"]
+        != expected_model_profile_sha256
+        or package_facts["tensor_profile_abi"] != TENSOR_PROFILE_ABI
+        or package_facts["tensor_count"] != expected_tensor_count
+        or package_facts["tensor_inventory_sha256"]
+        != expected_tensor_inventory_sha256
+        or package_facts["conversion_profile_sha256"]
+        != expected_conversion_profile_sha256
         or package_facts["source_sha256"] != source_sha256
         or package_facts["portable_artifact_sha256"] != portable_sha256
         or package_facts["model_content_sha256"] != expected_model_content
@@ -1328,6 +1538,17 @@ def _verify_package_artifacts(
         "family": "autoregressive",
         "source_format": "safetensors",
         "tokenizer_profile": "utf8-byte-v1",
+        "model_profile": EXPERIMENTAL_MODEL_PROFILE,
+        "model_profile_abi": f"{MODEL_PROFILE_ABI:016x}",
+        "model_profile_id": MODEL_PROFILE_ID,
+        "model_profile_sha256": expected_model_profile_sha256.hex(),
+        "tensor_profile_abi": f"{TENSOR_PROFILE_ABI:016x}",
+        "tensor_count": expected_tensor_count,
+        "tensor_inventory_sha256": (
+            expected_tensor_inventory_sha256.hex()
+        ),
+        "experimental_profile_explicit": True,
+        "tensor_inventory_verified": True,
         "prepared_layout": "separate",
         "source_bytes": len(source_bytes),
         "portable_bytes": len(portable_bytes),
@@ -1338,17 +1559,11 @@ def _verify_package_artifacts(
         "prepared_representation_bytes": (package_oracle.PREPARED_REPRESENTATION_BYTES),
         "license_bytes": len(license_bytes),
         "tokenizer_max_input_bytes": 4096,
-        "config_source": (
-            "explicit" if config_input is not None else "derived"
-        ),
-        "config_input_bytes": (
-            len(config_input) if config_input is not None else None
-        ),
-        "config_input_sha256": (
-            hashlib.sha256(config_input).hexdigest()
-            if config_input is not None
-            else None
-        ),
+        "config_source": "explicit",
+        "config_input_bytes": len(config_input),
+        "config_input_sha256": hashlib.sha256(
+            config_input
+        ).hexdigest(),
         "config": {
             **{name: config[name] for name in package_oracle.CONFIG_U32_FIELDS},
             "rms_eps_bits": config["rms_eps_bits"],
@@ -1389,6 +1604,25 @@ def _reroot_package(
     representation_facts: Mapping[str, object],
     digest_name: str,
 ) -> bytes:
+    replacement = hashlib.sha256(
+        b"glacier-golden-path-reroot-v1\x00" + digest_name.encode("ascii")
+    ).digest()
+    if replacement == package_facts[digest_name]:
+        raise GoldenPathError("reroot digest unexpectedly unchanged")
+    return _rewrite_package(
+        package_facts,
+        representation_facts,
+        {digest_name: replacement},
+    )
+
+
+def _rewrite_package(
+    package_facts: Mapping[str, object],
+    representation_facts: Mapping[str, object],
+    replacements: Mapping[str, object],
+    *,
+    recompute_model_content: bool = False,
+) -> bytes:
     value: dict[str, object] = {
         "family": package_facts["family"],
         "source_format": package_facts["source_format"],
@@ -1398,12 +1632,14 @@ def _reroot_package(
         value[name] = package_facts[name]
     for name in package_oracle.MANIFEST_DIGEST_FIELDS:
         value[name] = package_facts[name]
-    replacement = hashlib.sha256(
-        b"glacier-golden-path-reroot-v1\x00" + digest_name.encode("ascii")
-    ).digest()
-    if replacement == value[digest_name]:
-        raise GoldenPathError("reroot digest unexpectedly unchanged")
-    value[digest_name] = replacement
+    for name, replacement in replacements.items():
+        if name not in value:
+            raise GoldenPathError(f"cannot rewrite unknown package field {name!r}")
+        value[name] = replacement
+    if recompute_model_content:
+        value["model_content_sha256"] = (
+            package_oracle.profiled_model_content_sha256(value)
+        )
     manifest = package_oracle.encode_manifest(value)
     rerooted_package = package_oracle.decode_manifest(manifest)
     representation = package_oracle.encode_prepared_representation(
@@ -1846,7 +2082,7 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
         foreign_package = root / "foreign.glpkg"
         ordinary_config = root / "ordinary-config.json"
         ordinary_config_bytes = (
-            b'{"model_type":"fixture","hidden_size":32,'
+            b'{"hidden_size":32,'
             b'"intermediate_size":64,"num_hidden_layers":1,'
             b'"vocab_size":256,"num_attention_heads":4,'
             b'"num_key_value_heads":4,'
@@ -1869,6 +2105,204 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 "256",
             )
         )
+        _assert_package_rejected_without_namespace_mutation(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "missing-experimental-profile",
+            ("--config", str(ordinary_config)),
+        )
+        _assert_package_rejected_without_namespace_mutation(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "missing-experimental-profile-value",
+            (
+                "--config",
+                str(ordinary_config),
+                "--experimental-profile",
+            ),
+        )
+        _assert_package_rejected_without_namespace_mutation(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "duplicate-experimental-profile",
+            (
+                "--config",
+                str(ordinary_config),
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
+            ),
+        )
+        _assert_package_rejected_without_namespace_mutation(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "unknown-experimental-profile",
+            (
+                "--config",
+                str(ordinary_config),
+                "--experimental-profile",
+                "unknown-package-v1",
+            ),
+        )
+        _assert_package_rejected_without_namespace_mutation(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "missing-required-config",
+            (
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
+            ),
+        )
+        _assert_package_rejected_without_namespace_mutation(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "unsupported-quant-group-geometry",
+            (
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
+                "--config",
+                str(ordinary_config),
+                "--group-size",
+                "7",
+            ),
+        )
+        _assert_package_rejected_without_namespace_mutation(
+            executable,
+            ordinary_source,
+            license_path,
+            root,
+            "duplicate-quant-group-option",
+            (
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
+                "--config",
+                str(ordinary_config),
+                "--group-size",
+                "16",
+                "--group-size",
+                "32",
+            ),
+        )
+        undersized_vocab_source = root / "undersized-vocab.safetensors"
+        undersized_vocab_config = root / "undersized-vocab-config.json"
+        undersized_vocab_config.write_bytes(
+            b'{"hidden_size":32,"intermediate_size":64,'
+            b'"num_hidden_layers":1,"vocab_size":255,'
+            b'"num_attention_heads":4,"num_key_value_heads":4,'
+            b'"rms_norm_eps":1e-5,"rope_theta":5e5,'
+            b'"tie_word_embeddings":false}\n'
+        )
+        _run(
+            (
+                str(executable),
+                "gen-fixture",
+                str(undersized_vocab_source),
+                "--dim",
+                "32",
+                "--hidden",
+                "64",
+                "--layers",
+                "1",
+                "--vocab",
+                "255",
+            )
+        )
+        _assert_package_rejected_without_namespace_mutation(
+            executable,
+            undersized_vocab_source,
+            license_path,
+            root,
+            "undersized-byte-vocabulary",
+            (
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
+                "--config",
+                str(undersized_vocab_config),
+            ),
+        )
+
+        q_projection = "model.layers.0.self_attn.q_proj.weight"
+        unknown_projection = "model.layers.0.self_attn.x_proj.weight"
+        if len(q_projection) != len(unknown_projection):
+            raise GoldenPathError("unknown tensor rename changed name length")
+        strict_tensor_variants = (
+            (
+                "unknown-same-length-tensor",
+                {
+                    "tensor_name": q_projection,
+                    "expected_shape": (32, 32),
+                    "replacement_name": unknown_projection,
+                },
+            ),
+            (
+                "transposed-nonsquare-mlp",
+                {
+                    "tensor_name": "model.layers.0.mlp.down_proj.weight",
+                    "expected_shape": (32, 64),
+                    "replacement_shape": (64, 32),
+                },
+            ),
+            (
+                "wrong-rank-attention",
+                {
+                    "tensor_name": q_projection,
+                    "expected_shape": (32, 32),
+                    "replacement_shape": (1024,),
+                },
+            ),
+            (
+                "wrong-dtype-attention",
+                {
+                    "tensor_name": q_projection,
+                    "expected_shape": (32, 32),
+                    "replacement_dtype": "I32",
+                },
+            ),
+        )
+        for label, mutation in strict_tensor_variants:
+            mutated_source = root / f"{label}.safetensors"
+            _write_safetensors_variant(
+                ordinary_source,
+                mutated_source,
+                **mutation,
+            )
+            _assert_package_rejected_without_namespace_mutation(
+                executable,
+                mutated_source,
+                license_path,
+                root,
+                label,
+                (
+                    "--experimental-profile",
+                    EXPERIMENTAL_MODEL_PROFILE,
+                    "--config",
+                    str(ordinary_config),
+                    "--group-size",
+                    "16",
+                ),
+                retained_files=(
+                    {
+                        ".glacier-conversion-publication.candidate-v1":
+                            b"retained-preflight-candidate"
+                    }
+                    if label == "unknown-same-length-tensor"
+                    else None
+                ),
+            )
+
         package_result = _run(
             (
                 str(executable),
@@ -1879,6 +2313,8 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 str(foreign_package),
                 "--license",
                 str(license_path),
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
                 "--config",
                 str(ordinary_config),
                 "--group-size",
@@ -2132,6 +2568,14 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
         different_container = root / "different-package.glacier"
         different_image = root / "different-package.glrt"
         different_package = root / "different-package.glpkg"
+        different_config = root / "different-package-config.json"
+        different_config_bytes = (
+            b'{"dim":32,"hidden_dim":32,"num_layers":1,'
+            b'"vocab_size":256,"num_heads":1,"head_dim":32,'
+            b'"num_kv_heads":1,"rms_eps":1e-5,'
+            b'"rope_theta":10000,"tie_word_embeddings":false}\n'
+        )
+        different_config.write_bytes(different_config_bytes)
         ambient_config = Path(f"{different_package}.json")
         ambient_config_bytes = (
             b'{"hidden_size":"must-not-be-discovered"}\n'
@@ -2147,6 +2591,10 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 str(different_package),
                 "--license",
                 str(license_path),
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
+                "--config",
+                str(different_config),
                 "--group-size",
                 "16",
             )
@@ -2167,6 +2615,7 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 package_path=different_package,
                 license_bytes=license_bytes,
                 report=different_package_report,
+                config_input=different_config_bytes,
             )
         )
         if ambient_config.read_bytes() != ambient_config_bytes:
@@ -2824,6 +3273,8 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 str(foreign_package),
                 "--license",
                 str(license_path),
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
                 "--config",
                 str(ordinary_config),
                 "--group-size",
@@ -2998,6 +3449,75 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             expect_success=False,
         )
 
+        unsupported_profile_package = root / "unsupported-profile.glpkg"
+        unsupported_profile_package.write_bytes(
+            _rewrite_package(
+                package_facts,
+                representation_facts,
+                {"model_profile_id": 2},
+            )
+        )
+        rerooted_tensor_package = root / "rerooted-tensor-inventory.glpkg"
+        rerooted_tensor_package.write_bytes(
+            _reroot_package(
+                package_facts,
+                representation_facts,
+                "tensor_inventory_sha256",
+            )
+        )
+        rerooted_conversion_package = (
+            root / "rerooted-conversion-profile.glpkg"
+        )
+        rerooted_conversion_package.write_bytes(
+            _reroot_package(
+                package_facts,
+                representation_facts,
+                "conversion_profile_sha256",
+            )
+        )
+        relabelled_conversion_package = (
+            root / "relabelled-valid-conversion-profile.glpkg"
+        )
+        alternate_conversion_profile = _conversion_profile_sha256(32)
+        if (
+            alternate_conversion_profile
+            == package_facts["conversion_profile_sha256"]
+        ):
+            raise GoldenPathError("alternate conversion profile did not change")
+        relabelled_conversion_package.write_bytes(
+            _rewrite_package(
+                package_facts,
+                representation_facts,
+                {
+                    "conversion_profile_sha256":
+                        alternate_conversion_profile
+                },
+                recompute_model_content=True,
+            )
+        )
+        for rejected_profile_package in (
+            unsupported_profile_package,
+            rerooted_tensor_package,
+            rerooted_conversion_package,
+            relabelled_conversion_package,
+        ):
+            _run(
+                (
+                    str(executable),
+                    "text-run",
+                    str(foreign_image),
+                    "--text-file",
+                    str(prompt_path),
+                    "--license",
+                    str(license_path),
+                    "--package",
+                    str(rejected_profile_package),
+                    "--n",
+                    str(NEW_TOKENS),
+                ),
+                expect_success=False,
+            )
+
         symlink_image = root / "foreign-link.glrt"
         symlink_image.symlink_to(foreign_image)
         _run(
@@ -3066,6 +3586,10 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 str(conflicting_package),
                 "--license",
                 str(license_path),
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
+                "--config",
+                str(ordinary_config),
                 "--group-size",
                 "16",
             ),
@@ -3087,6 +3611,10 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 str(dangling_package),
                 "--license",
                 str(license_path),
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
+                "--config",
+                str(ordinary_config),
                 "--group-size",
                 "16",
             ),
@@ -3110,6 +3638,8 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             str(foreign_package),
             "--license",
             str(license_path),
+            "--experimental-profile",
+            EXPERIMENTAL_MODEL_PROFILE,
             "--config",
             str(ordinary_config),
             "--group-size",
@@ -3155,6 +3685,10 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 str(rejected_package),
                 "--license",
                 str(symlink_license),
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
+                "--config",
+                str(ordinary_config),
             ),
             expect_success=False,
         )
@@ -3183,6 +3717,27 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 b'"num_attention_heads":3,"num_key_value_heads":1,'
                 b'"rms_norm_eps":1e-5,"rope_theta":5e5,'
                 b'"tie_word_embeddings":false}\n'
+            ),
+            "unknown-semantic-config": (
+                b'{"hidden_size":32,"intermediate_size":64,'
+                b'"num_hidden_layers":1,"vocab_size":256,'
+                b'"num_attention_heads":4,"num_key_value_heads":4,'
+                b'"rms_norm_eps":1e-5,"rope_theta":5e5,'
+                b'"tie_word_embeddings":false,"hidden_act":"gelu"}\n'
+            ),
+            "unsupported-gqa-config": (
+                b'{"hidden_size":32,"intermediate_size":64,'
+                b'"num_hidden_layers":1,"vocab_size":256,'
+                b'"num_attention_heads":4,"num_key_value_heads":1,'
+                b'"rms_norm_eps":1e-5,"rope_theta":5e5,'
+                b'"tie_word_embeddings":false}\n'
+            ),
+            "unsupported-tied-embeddings-config": (
+                b'{"hidden_size":32,"intermediate_size":64,'
+                b'"num_hidden_layers":1,"vocab_size":256,'
+                b'"num_attention_heads":4,"num_key_value_heads":4,'
+                b'"rms_norm_eps":1e-5,"rope_theta":5e5,'
+                b'"tie_word_embeddings":true}\n'
             ),
         }
         for label, invalid_config_bytes in invalid_config_inputs.items():
@@ -3217,17 +3772,20 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 str(tensor_mismatch_package),
                 "--license",
                 str(license_path),
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
                 "--config",
                 str(tensor_mismatch_config),
             ),
             expect_success=False,
         )
         if (
-            tensor_mismatch_prepared.exists()
+            tensor_mismatch_portable.exists()
+            or tensor_mismatch_prepared.exists()
             or tensor_mismatch_package.exists()
         ):
             raise GoldenPathError(
-                "tensor/config mismatch reached package publication"
+                "tensor/config mismatch reached output publication"
             )
 
         oversized_config = root / "oversized-config.json"
@@ -3312,6 +3870,8 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
                 str(aliased_package),
                 "--license",
                 str(license_path),
+                "--experimental-profile",
+                EXPERIMENTAL_MODEL_PROFILE,
                 "--config",
                 str(aliased_config),
             ),
@@ -3374,9 +3934,20 @@ def run_golden_path(executable: Path, license_path: Path) -> dict[str, object]:
             "ordinary_package_produced": True,
             "ordinary_package_admitted": True,
             "ordinary_package_independently_decoded": True,
+            "experimental_profile_cli_required": True,
+            "unsupported_conversion_options_rejected_before_mutation": True,
+            "undersized_tokenizer_vocabulary_rejected_before_mutation": True,
+            "unsupported_model_geometry_rejected_before_mutation": True,
+            "model_profile_root_independently_verified": True,
+            "unsupported_model_profile_rejected": True,
+            "strict_tensor_inventory_profile_verified": True,
+            "tensor_inventory_runtime_binding_verified": True,
+            "conversion_profile_runtime_binding_verified": True,
+            "prepared_image_profile_binding_verified": True,
+            "strict_tensor_rejections_preserved_output_namespace": True,
             "explicit_bounded_config_verified": True,
+            "explicit_config_required": True,
             "canonical_config_retry_verified": True,
-            "derived_config_default_verified": True,
             "ambient_config_ignored": True,
             "invalid_config_admission_rejected_before_conversion": True,
             "config_tensor_mismatch_rejected_before_package_publication": True,

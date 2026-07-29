@@ -63,6 +63,33 @@ pub const ObserverV1 = struct {
     }
 };
 
+/// Read-only validation of the exact source descriptor captured by the
+/// durable publisher. The callback runs before the publisher borrows its
+/// directory authority or mutates any lock, candidate, or target namespace.
+pub const SourcePreflightV1 = struct {
+    context: *anyopaque,
+    validate_fn: *const fn (
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        source_file: *std.fs.File,
+        source_bytes: u64,
+    ) anyerror!void,
+
+    fn validate(
+        self: SourcePreflightV1,
+        allocator: std.mem.Allocator,
+        source_file: *std.fs.File,
+        source_bytes: u64,
+    ) !void {
+        try self.validate_fn(
+            self.context,
+            allocator,
+            source_file,
+            source_bytes,
+        );
+    }
+};
+
 pub const PublicationDispositionV1 = enum(u8) {
     published,
     already_current,
@@ -143,6 +170,25 @@ pub const PublisherV1 = struct {
         options: converter.ConvertOptions,
         observer: ?ObserverV1,
     ) !PublicationReceiptV1 {
+        return self.convertSafetensorsWithPreflight(
+            allocator,
+            source_path,
+            target_name,
+            options,
+            null,
+            observer,
+        );
+    }
+
+    pub fn convertSafetensorsWithPreflight(
+        self: *PublisherV1,
+        allocator: std.mem.Allocator,
+        source_path: []const u8,
+        target_name: []const u8,
+        options: converter.ConvertOptions,
+        source_preflight: ?SourcePreflightV1,
+        observer: ?ObserverV1,
+    ) !PublicationReceiptV1 {
         if (comptime !durableAdapterAvailableV1())
             return error.UnsupportedPlatform;
         if (self.state != .live)
@@ -156,9 +202,20 @@ pub const PublisherV1 = struct {
         // stale candidate, or otherwise mutating the output namespace.
         try validateConversionOptionsBeforeMutationV1(options);
 
-        const source_file = try openSafeSourcePathV1(source_path);
+        var source_file = try openSafeSourcePathV1(source_path);
         defer source_file.close();
         const captured_source = try captureStableSourceV1(source_file);
+        if (source_preflight) |preflight| {
+            try preflight.validate(
+                allocator,
+                &source_file,
+                captured_source.snapshot.view.size,
+            );
+            try revalidateSourceV1(
+                source_file,
+                captured_source,
+            );
+        }
         const source_identity: SourceIdentityV1 = .{
             .source_bytes = captured_source.snapshot.view.size,
             .source_sha256 = captured_source.sha256,
@@ -430,6 +487,24 @@ pub fn convertSafetensorsDurableV1(
     options: converter.ConvertOptions,
     observer: ?ObserverV1,
 ) !PublicationReceiptV1 {
+    return convertSafetensorsDurableWithPreflightV1(
+        allocator,
+        source_path,
+        output_path,
+        options,
+        null,
+        observer,
+    );
+}
+
+pub fn convertSafetensorsDurableWithPreflightV1(
+    allocator: std.mem.Allocator,
+    source_path: []const u8,
+    output_path: []const u8,
+    options: converter.ConvertOptions,
+    source_preflight: ?SourcePreflightV1,
+    observer: ?ObserverV1,
+) !PublicationReceiptV1 {
     if (comptime !durableAdapterAvailableV1())
         return error.UnsupportedPlatform;
     if (output_path.len == 0 or
@@ -454,22 +529,24 @@ pub fn convertSafetensorsDurableV1(
         defer parent.close();
         var publisher = try PublisherV1.init(parent);
         defer publisher.close();
-        return publisher.convertSafetensors(
+        return publisher.convertSafetensorsWithPreflight(
             allocator,
             source_path,
             target_name,
             options,
+            source_preflight,
             observer,
         );
     }
 
     var publisher = try PublisherV1.init(std.fs.cwd());
     defer publisher.close();
-    return publisher.convertSafetensors(
+    return publisher.convertSafetensorsWithPreflight(
         allocator,
         source_path,
         target_name,
         options,
+        source_preflight,
         observer,
     );
 }
@@ -1416,6 +1493,99 @@ test "invalid converter options cannot mutate publication namespace" {
             null,
         ),
     );
+    try testing.expectEqual(
+        PublisherStateV1.live,
+        publisher.observation().state,
+    );
+    try testing.expectError(
+        error.FileNotFound,
+        temporary.dir.openFile(directory_lock_name, .{}),
+    );
+    try testing.expectError(
+        error.FileNotFound,
+        temporary.dir.openFile("model.glacier", .{}),
+    );
+    const retained = try temporary.dir.readFileAlloc(
+        testing.allocator,
+        directory_candidate_name,
+        1024,
+    );
+    defer testing.allocator.free(retained);
+    try testing.expectEqualStrings(sentinel, retained);
+}
+
+const RejectingSourcePreflightV1 = struct {
+    calls: usize = 0,
+    observed_source_bytes: u64 = 0,
+
+    fn validate(
+        context: *anyopaque,
+        _: std.mem.Allocator,
+        source_file: *std.fs.File,
+        source_bytes: u64,
+    ) anyerror!void {
+        const self: *RejectingSourcePreflightV1 =
+            @ptrCast(@alignCast(context));
+        self.calls += 1;
+        self.observed_source_bytes = source_bytes;
+        var prefix: [8]u8 = undefined;
+        const read = try source_file.preadAll(&prefix, 0);
+        if (read != prefix.len)
+            return error.TestSourcePreflightShortRead;
+        return error.TestSourcePreflightRejected;
+    }
+
+    fn interface(
+        self: *RejectingSourcePreflightV1,
+    ) SourcePreflightV1 {
+        return .{
+            .context = self,
+            .validate_fn = validate,
+        };
+    }
+};
+
+test "source preflight rejects before publication namespace mutation" {
+    if (comptime !durableAdapterAvailableV1())
+        return error.SkipZigTest;
+    var temporary = testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const source_path = try testPathV1(
+        testing.allocator,
+        temporary.dir,
+        "source.safetensors",
+    );
+    defer testing.allocator.free(source_path);
+    try writeTestSafetensorsV1(source_path, 31);
+    const sentinel = "retained-preflight-candidate";
+    const stale = try temporary.dir.createFile(
+        directory_candidate_name,
+        .{
+            .read = true,
+            .exclusive = true,
+            .mode = 0o600,
+        },
+    );
+    try stale.writeAll(sentinel);
+    try stale.sync();
+    stale.close();
+
+    var preflight: RejectingSourcePreflightV1 = .{};
+    var publisher = try PublisherV1.init(temporary.dir);
+    defer publisher.close();
+    try testing.expectError(
+        error.TestSourcePreflightRejected,
+        publisher.convertSafetensorsWithPreflight(
+            testing.allocator,
+            source_path,
+            "model.glacier",
+            testOptionsV1(),
+            preflight.interface(),
+            null,
+        ),
+    );
+    try testing.expectEqual(@as(usize, 1), preflight.calls);
+    try testing.expect(preflight.observed_source_bytes > 8);
     try testing.expectEqual(
         PublisherStateV1.live,
         publisher.observation().state,

@@ -19,7 +19,7 @@ ZERO_DIGEST = bytes(DIGEST_BYTES)
 U32_MAX = (1 << 32) - 1
 U64_MAX = (1 << 64) - 1
 
-MANIFEST_ABI = 0x474C_504B_0000_0001
+MANIFEST_ABI = 0x474C_504B_0000_0002
 CONFIG_ABI = 0x474C_5043_0000_0001
 PREPARED_REPRESENTATION_ABI = 0x474C_5052_0000_0001
 MANIFEST_BYTES = 640
@@ -27,9 +27,13 @@ MANIFEST_BODY_BYTES = MANIFEST_BYTES - DIGEST_BYTES
 PREPARED_REPRESENTATION_BYTES = 256
 PREPARED_REPRESENTATION_BODY_BYTES = PREPARED_REPRESENTATION_BYTES - DIGEST_BYTES
 ADMISSION_BUNDLE_BYTES = MANIFEST_BYTES + PREPARED_REPRESENTATION_BYTES
-MANIFEST_MAGIC = b"GLPKG01\x00"
+MANIFEST_MAGIC = b"GLPKG02\x00"
 PREPARED_REPRESENTATION_MAGIC = b"GLPREP1\x00"
+MANIFEST_FLAG_MODEL_PROFILE = 1 << 0
+MANIFEST_ALLOWED_FLAGS = MANIFEST_FLAG_MODEL_PROFILE
 ALLOWED_FLAGS = 0
+MODEL_PROFILE_ABI = 0x474C_4D50_0000_0001
+ORDINARY_PACKAGE_PROFILE_ID = 1
 
 ARCHIVE_ABI = 0x4750_5449_0000_0001
 ARCHIVE_MAGIC = b"GPTINP1\x00"
@@ -44,10 +48,14 @@ RAW_TEXT_OFFSET = RAW_BINDING_OFFSET + raw_input.BINDING_BYTES
 ARCHIVE_FIXED_PAYLOAD_BYTES = RAW_TEXT_OFFSET - ARCHIVE_HEADER_BYTES
 ARCHIVE_MINIMUM_BYTES = RAW_TEXT_OFFSET + ARCHIVE_FOOTER_BYTES
 
-MANIFEST_DOMAIN = b"glacier-model-package-manifest-v1\x00"
+MANIFEST_DOMAIN = b"glacier-model-package-manifest-v2\x00"
 CONFIG_DOMAIN = b"glacier-model-package-config-v1\x00"
 PREPARED_REPRESENTATION_DOMAIN = b"glacier-model-prepared-representation-v1\x00"
 MODEL_CONTENT_DOMAIN = b"glacier-prepared-provenance-v1\x00"
+PROFILED_MODEL_CONTENT_DOMAIN = (
+    b"glacier-model-package-profiled-content-v1\x00"
+)
+MODEL_PROFILE_DOMAIN = b"glacier-model-package-profile-v1\x00"
 ARCHIVE_DOMAIN = b"glacier-prepared-text-input-archive-v1\x00"
 RAW_TEXT_DOMAIN = b"glacier-utf8-byte-tokenizer-raw-text-v1\x00"
 TOKEN_STREAM_DOMAIN = b"glacier-utf8-byte-tokenizer-token-stream-v1\x00"
@@ -64,7 +72,7 @@ CONFIG_U32_FIELDS = (
     "head_dim",
     "kv_heads",
 )
-MANIFEST_U64_FIELDS = (
+MANIFEST_PREFIX_U64_FIELDS = (
     "portable_format_abi",
     "conversion_profile_abi",
     "conversion_plan_abi",
@@ -74,6 +82,11 @@ MANIFEST_U64_FIELDS = (
     "portable_bytes",
     "portable_page_count",
     "license_bytes",
+)
+MANIFEST_U64_FIELDS = MANIFEST_PREFIX_U64_FIELDS + (
+    "model_profile_id",
+    "tensor_profile_abi",
+    "tensor_count",
 )
 MANIFEST_DIGEST_FIELDS = (
     "source_sha256",
@@ -85,6 +98,7 @@ MANIFEST_DIGEST_FIELDS = (
     "tokenizer_domain_sha256",
     "tokenizer_behavior_sha256",
     "license_sha256",
+    "tensor_inventory_sha256",
 )
 REPRESENTATION_DIGEST_FIELDS = (
     "package_sha256",
@@ -202,6 +216,77 @@ def model_content_sha256(
     )
 
 
+def model_profile_sha256(profile_id: object) -> bytes:
+    """Derive one canonical package-model profile identity."""
+
+    _u64(profile_id)
+    if profile_id == 0:
+        raise PreparedTextPackageError("zero model profile")
+    return _sha(
+        MODEL_PROFILE_DOMAIN,
+        _u64(MODEL_PROFILE_ABI),
+        _u64(profile_id),
+    )
+
+
+def profiled_model_content_sha256(
+    value: Mapping[str, object],
+) -> bytes:
+    """Bind a prepared fingerprint to exact package/conversion semantics."""
+
+    try:
+        family = value["family"]
+        source_format = value["source_format"]
+        portable_format_abi = value["portable_format_abi"]
+        conversion_profile_abi = value["conversion_profile_abi"]
+        conversion_plan_abi = value["conversion_plan_abi"]
+        model_profile_id = value["model_profile_id"]
+        tensor_profile_abi = value["tensor_profile_abi"]
+        tensor_count = value["tensor_count"]
+        config = value["config"]
+        portable_artifact = _digest(value["portable_artifact_sha256"])
+        conversion_profile = _digest(value["conversion_profile_sha256"])
+        conversion_plan = _digest(value["conversion_plan_sha256"])
+        tensor_inventory = _digest(value["tensor_inventory_sha256"])
+    except (KeyError, TypeError) as error:
+        raise PreparedTextPackageError(
+            "invalid profiled model content input"
+        ) from error
+    for scalar in (
+        family,
+        source_format,
+        portable_format_abi,
+        conversion_profile_abi,
+        conversion_plan_abi,
+        model_profile_id,
+        tensor_profile_abi,
+        tensor_count,
+    ):
+        _u64(scalar)
+        if scalar == 0:
+            raise PreparedTextPackageError(
+                "zero profiled model content scalar"
+            )
+    return _sha(
+        PROFILED_MODEL_CONTENT_DOMAIN,
+        _u64(family),
+        _u64(source_format),
+        _u64(portable_format_abi),
+        portable_artifact,
+        _u64(conversion_profile_abi),
+        conversion_profile,
+        _u64(conversion_plan_abi),
+        conversion_plan,
+        _u64(MODEL_PROFILE_ABI),
+        _u64(model_profile_id),
+        model_profile_sha256(model_profile_id),
+        _u64(tensor_profile_abi),
+        _u64(tensor_count),
+        tensor_inventory,
+        resolved_config_sha256(config),
+    )
+
+
 def package_sha256(body: bytes) -> bytes:
     if not isinstance(body, bytes) or len(body) != MANIFEST_BODY_BYTES:
         raise PreparedTextPackageError("invalid package body")
@@ -258,10 +343,10 @@ def encode_manifest(value: Mapping[str, object]) -> bytes:
         8,
         MANIFEST_ABI,
         MANIFEST_BYTES,
-        ALLOWED_FLAGS,
+        MANIFEST_ALLOWED_FLAGS,
         family,
         source_format,
-        *(scalars[name] for name in MANIFEST_U64_FIELDS),
+        *(scalars[name] for name in MANIFEST_PREFIX_U64_FIELDS),
         CONFIG_ABI,
     )
     for index, name in enumerate(CONFIG_U32_FIELDS):
@@ -290,6 +375,24 @@ def encode_manifest(value: Mapping[str, object]) -> bytes:
     for index, digest in enumerate(digest_values):
         offset = 176 + index * DIGEST_BYTES
         body[offset : offset + DIGEST_BYTES] = digest
+    struct.pack_into(
+        "<QQ",
+        body,
+        496,
+        MODEL_PROFILE_ABI,
+        scalars["model_profile_id"],
+    )
+    body[512:544] = model_profile_sha256(
+        scalars["model_profile_id"]
+    )
+    struct.pack_into(
+        "<QQ",
+        body,
+        544,
+        scalars["tensor_profile_abi"],
+        scalars["tensor_count"],
+    )
+    body[560:592] = digests["tensor_inventory_sha256"]
     encoded = bytes(body) + package_sha256(bytes(body))
     decode_manifest(encoded)
     return encoded
@@ -304,10 +407,10 @@ def decode_manifest(encoded: bytes) -> dict[str, object]:
         encoded[0:8] != MANIFEST_MAGIC
         or struct.unpack_from("<Q", encoded, 8)[0] != MANIFEST_ABI
         or struct.unpack_from("<Q", encoded, 16)[0] != MANIFEST_BYTES
-        or struct.unpack_from("<Q", encoded, 24)[0] != ALLOWED_FLAGS
+        or struct.unpack_from("<Q", encoded, 24)[0] != MANIFEST_ALLOWED_FLAGS
         or struct.unpack_from("<Q", encoded, 120)[0] != CONFIG_ABI
         or any(encoded[168:176])
-        or any(encoded[496:MANIFEST_BODY_BYTES])
+        or any(encoded[592:MANIFEST_BODY_BYTES])
         or encoded[MANIFEST_BODY_BYTES:]
         != package_sha256(encoded[:MANIFEST_BODY_BYTES])
     ):
@@ -317,7 +420,30 @@ def decode_manifest(encoded: bytes) -> dict[str, object]:
     if family not in FAMILY_IDS or source_format not in SOURCE_FORMAT_IDS:
         raise PreparedTextPackageError("unknown package enum")
     scalar_values = struct.unpack_from("<9Q", encoded, 48)
-    scalars = dict(zip(MANIFEST_U64_FIELDS, scalar_values, strict=True))
+    scalars = dict(
+        zip(
+            MANIFEST_PREFIX_U64_FIELDS,
+            scalar_values,
+            strict=True,
+        )
+    )
+    model_profile_abi, model_profile_id = struct.unpack_from(
+        "<QQ",
+        encoded,
+        496,
+    )
+    tensor_profile_abi, tensor_count = struct.unpack_from(
+        "<QQ",
+        encoded,
+        544,
+    )
+    scalars.update(
+        {
+            "model_profile_id": model_profile_id,
+            "tensor_profile_abi": tensor_profile_abi,
+            "tensor_count": tensor_count,
+        }
+    )
     if any(value == 0 for value in scalars.values()):
         raise PreparedTextPackageError("zero package scalar")
     config: dict[str, object] = {
@@ -349,15 +475,23 @@ def decode_manifest(encoded: bytes) -> dict[str, object]:
         name: encoded[176 + index * DIGEST_BYTES : 208 + index * DIGEST_BYTES]
         for index, name in enumerate(digest_names)
     }
-    if any(digest == ZERO_DIGEST for digest in digests.values()) or digests[
-        "resolved_config_sha256"
-    ] != resolved_config_sha256(config):
+    model_profile_root = encoded[512:544]
+    digests["tensor_inventory_sha256"] = encoded[560:592]
+    if (
+        model_profile_abi != MODEL_PROFILE_ABI
+        or model_profile_root != model_profile_sha256(model_profile_id)
+        or any(digest == ZERO_DIGEST for digest in digests.values())
+        or digests["resolved_config_sha256"]
+        != resolved_config_sha256(config)
+    ):
         raise PreparedTextPackageError("invalid package identity")
     return {
         "abi_version": MANIFEST_ABI,
         "family": family,
         "source_format": source_format,
         **scalars,
+        "model_profile_abi": model_profile_abi,
+        "model_profile_sha256": model_profile_root,
         "config": config,
         **digests,
         "package_sha256": encoded[MANIFEST_BODY_BYTES:],

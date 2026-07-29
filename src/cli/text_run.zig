@@ -427,7 +427,7 @@ pub fn run(
             engine.model_package_manifest.admission_bundle_bytes)
             return error.InvalidPackageLength;
         const admission = try engine.model_package_manifest
-            .decodeAdmissionBundleV1(bytes);
+            .decodeAdmissionBundleV2(bytes);
         const package = admission.package;
         _ = try engine.model_package_producer
             .validateSupportedPackageV1(package);
@@ -704,7 +704,8 @@ pub fn run(
             evidence,
             output,
             if (admitted_bundle != null)
-                "ordinary-package-v1"
+                engine.model_package_producer
+                    .experimental_profile_name_v1
             else
                 "retained-r1kb1-fixture-v1",
             if (raw_text_path != null) "file" else "argv",
@@ -954,7 +955,8 @@ pub fn run(
             "\"publication_transcript_replayed\":false,",
         .{
             if (package_admission)
-                "ordinary-package-v1"
+                engine.model_package_producer
+                    .experimental_profile_name_v1
             else
                 "retained-r1kb1-fixture-v1",
             prompt_source,
