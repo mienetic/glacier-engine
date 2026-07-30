@@ -1431,20 +1431,29 @@ if [ "$affected_profile" -eq 1 ] &&
     [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "workload-report-portable"; then
     if [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
-        run_gate "portable/workload-report" \
-            run_zig_build \
-            native-workload-report-test \
-            native-workload-report-compile \
-            native-workload-report-cross-compile \
-            native-workload-campaign-test \
-            native-workload-campaign-compile \
-            native-workload-campaign-cross-compile \
-            native-workload-store-fault-report-test \
-            native-workload-store-fault-report-compile \
-            native-workload-store-fault-report-cross-compile \
-            native-supervisor-recovery-death-report-test \
-            native-supervisor-recovery-death-report-compile \
-            native-supervisor-recovery-death-report-cross-compile
+        if [ "$profile" = "affected-fast" ]; then
+            run_gate "portable/workload-report" \
+                run_zig_build \
+                native-workload-report-test \
+                native-workload-campaign-test \
+                native-workload-store-fault-report-test \
+                native-supervisor-recovery-death-report-test
+        else
+            run_gate "portable/workload-report" \
+                run_zig_build \
+                native-workload-report-test \
+                native-workload-report-compile \
+                native-workload-report-cross-compile \
+                native-workload-campaign-test \
+                native-workload-campaign-compile \
+                native-workload-campaign-cross-compile \
+                native-workload-store-fault-report-test \
+                native-workload-store-fault-report-compile \
+                native-workload-store-fault-report-cross-compile \
+                native-supervisor-recovery-death-report-test \
+                native-supervisor-recovery-death-report-compile \
+                native-supervisor-recovery-death-report-cross-compile
+        fi
     else
         record_skip "portable/workload-report" \
             "requires working zig and python3 executables"

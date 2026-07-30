@@ -321,6 +321,12 @@ before the first stable release.
 
 ### Changed
 
+- Portable workload-report changes no longer expand `affected-fast` into
+  native compile-only and retained foreign-target roots. The iterative tier
+  runs the four host report/campaign tests in one Zig invocation; complete
+  `affected`, manual promotion, and release-tag workflows retain the compile
+  and cross-compile closure. This removes 28 foreign artifacts from that fast
+  path without reducing the complete verification tier.
 - An isolated `build.zig` or `build.zig.zon` change now makes
   `affected-fast` evaluate the graph with `zig build --help` without compiling
   runtime artifacts. Mixed changes retain the focused roots required by their

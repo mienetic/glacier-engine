@@ -3492,34 +3492,122 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 .read_text(encoding="ascii")
                 .splitlines()
             )
-            report_calls = [
+            build_calls = [
                 line
                 for line in calls
-                if line.startswith(
-                    "build native-workload-report-test "
-                    "native-workload-report-compile "
-                    "native-workload-report-cross-compile "
-                    "native-workload-campaign-test "
-                    "native-workload-campaign-compile "
-                    "native-workload-campaign-cross-compile "
-                    "native-workload-store-fault-report-test "
-                    "native-workload-store-fault-report-compile "
-                    "native-workload-store-fault-report-cross-compile "
-                )
+                if line.startswith("build ")
             ]
-            self.assertEqual(1, len(report_calls), report_calls)
-            self.assertIn("-Dmetal=false ", report_calls[0])
+            self.assertEqual(1, len(build_calls), build_calls)
+            report_tokens = build_calls[0].split()
+            first_option = next(
+                index
+                for index, token in enumerate(report_tokens[1:], 1)
+                if token.startswith("-")
+            )
+            self.assertEqual(
+                (
+                    "native-workload-report-test",
+                    "native-workload-report-compile",
+                    "native-workload-report-cross-compile",
+                    "native-workload-campaign-test",
+                    "native-workload-campaign-compile",
+                    "native-workload-campaign-cross-compile",
+                    "native-workload-store-fault-report-test",
+                    "native-workload-store-fault-report-compile",
+                    "native-workload-store-fault-report-cross-compile",
+                    "native-supervisor-recovery-death-report-test",
+                    "native-supervisor-recovery-death-report-compile",
+                    "native-supervisor-recovery-death-report-cross-compile",
+                ),
+                tuple(report_tokens[1:first_option]),
+            )
+            self.assertIn("-Dmetal=false ", build_calls[0])
             self.assertNotIn(
                 "native-workload-store-fault-pure-test",
-                report_calls[0],
+                build_calls[0],
             )
             self.assertNotIn(
                 " native-workload-store-fault-test ",
-                report_calls[0],
+                build_calls[0],
             )
             self.assertFalse(
                 any("native-metal-suite-test" in line for line in calls),
                 calls,
+            )
+            self.assertFalse(
+                any(" -Dtarget=" in line for line in calls),
+                calls,
+            )
+
+    def test_affected_fast_workload_report_uses_host_tests_only(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            report_path = (
+                repository
+                / "src"
+                / "core"
+                / "native_workload_report.zig"
+            )
+            report_path.parent.mkdir(parents=True)
+            report_path.write_text("", encoding="ascii")
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  portable/workload-report:",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            build_calls = [
+                line
+                for line in calls
+                if line.startswith("build ")
+            ]
+            self.assertEqual(1, len(build_calls), build_calls)
+            report_tokens = build_calls[0].split()
+            first_option = next(
+                index
+                for index, token in enumerate(report_tokens[1:], 1)
+                if token.startswith("-")
+            )
+            self.assertEqual(
+                (
+                    "native-workload-report-test",
+                    "native-workload-campaign-test",
+                    "native-workload-store-fault-report-test",
+                    "native-supervisor-recovery-death-report-test",
+                ),
+                tuple(report_tokens[1:first_option]),
+            )
+            self.assertFalse(
+                any(
+                    token.endswith("-compile")
+                    for line in build_calls
+                    for token in line.split()
+                ),
+                build_calls,
+            )
+            self.assertFalse(
+                any(
+                    token.endswith("-cross-compile")
+                    for line in build_calls
+                    for token in line.split()
+                ),
+                build_calls,
             )
             self.assertFalse(
                 any(" -Dtarget=" in line for line in calls),
