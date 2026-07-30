@@ -618,8 +618,12 @@ compile root and is not part of the default build, `affected-fast`, ordinary
 CI, or the correctness targets above. Optional
 `-Dunary-server-native-load-output=PATH` and
 `-Dunary-server-native-load-manifest-output=PATH` retain the verified
-profile-specific envelope and its JSON capture manifest atomically. The
-default all-completed profile retains the existing 79,780-byte envelope.
+profile-specific envelope and its JSON capture manifest. Each requested file
+is replaced atomically only after full verification; when both are requested,
+the replacements are independent rather than one pair-atomic transaction.
+The manifest is contextual capture metadata and is not authenticated by or
+digest-bound into the binary envelope. The default all-completed profile
+retains the existing 79,780-byte envelope.
 
 The default fixed profile runs 8 warmup and 64 measured requests in eight
 flows, with 2 transport workers and 8 pending slots. It correlates each client
@@ -630,6 +634,15 @@ latency, decoded terminal-response latency, exact throughput rational,
 all-completed outcome mix, and zero connection, Service, Scheduler, and Bank
 ownership at close. With 64 measured records, nearest-rank p99 is the measured
 maximum; it is not a tail estimate for a wider population.
+
+The accept/enqueue, FIFO-enqueue-to-worker-dispatch, and HTTP
+first-positive-read distributions are completed-request metrics. Their
+retained sample counts are exactly 64 for the default profile, 32 for
+`retention-capacity-v1`, and 16 for `queued-receive-timeout-v1`; rejected and
+timed-out attempts are not silently folded into those distributions. Terminal
+observation and the outcome mix still cover all 64 measured attempts in each
+profile. The JSON manifest and CLI use explicit
+`completed_*_{sample_count,p99_ns}` fields for this distinction.
 
 The `retention-capacity-v1` selector keeps the same target, artifact, native
 child, transport configuration, eight flows, and 72-record shape. Its 8
@@ -700,7 +713,7 @@ single-outstanding client-plan/transmit correlation enforced by each campaign
 slot, not server-parsed request attestation.
 
 For completed requests, the event mapping is explicit: arrival is immediately
-before client connect; admission is the accepted connection entering the
+before client connect; accept/enqueue is the accepted connection entering the
 FIFO; first service is worker dispatch; submit return is the exact
 admitted-work observation; first output is the client's first positive HTTP
 read; terminal is complete response decode plus oracle validation; and

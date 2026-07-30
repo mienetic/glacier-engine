@@ -189,7 +189,11 @@ before the first stable release.
   HTTP-response handles, output/terminal/completion roots, exact throughput and
   latency observations, machine state, and terminal zero ownership. Its
   default fixed profile completes every request on a tiny serialized CPU
-  fixture.
+  fixture. The manifest and CLI now label arrival-to-FIFO accept/enqueue,
+  FIFO-to-worker dispatch, and HTTP first-positive-read p99 values as
+  completed-request distributions and retain exact sample counts of 64, 32,
+  and 16 for the default, capacity, and queued-timeout profiles respectively;
+  terminal/outcome accounting still covers all 64 measured attempts.
 - Added `-Dunary-server-native-load-profile=retention-capacity-v1` to the same
   manual target and process-test artifact. The fixed 72-record profile
   completes all 8 warmup requests, then retains exactly 32 completed and 32

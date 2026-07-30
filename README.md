@@ -429,7 +429,11 @@ formats, and independent verifiers.
   binds executable and machine/boot identity, exact request/work/transport and
   HTTP-response handles, output/terminal/completion roots,
   lifecycle-linearized timestamps, throughput, outcome mix, and final zero
-  ownership.
+  ownership. Arrival-to-FIFO accept/enqueue, FIFO-to-worker dispatch, and HTTP
+  first-positive-read p99 values are completed-request distributions with
+  explicit sample counts: 64 for the default profile, 32 for the capacity
+  profile, and 16 for the queued-timeout profile. All 64 measured attempts
+  remain represented by terminal/outcome accounting.
 
   The same target and artifact accept
   `-Dunary-server-native-load-profile=retention-capacity-v1` for a second

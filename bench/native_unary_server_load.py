@@ -237,6 +237,10 @@ class CampaignProfile:
     pending_capacity: int
     placement_id: bytes
 
+    @property
+    def connection_capacity(self) -> int:
+        return self.worker_count + self.pending_capacity
+
 
 SUCCESSFUL_PROFILE = CampaignProfile(
     name=SUCCESSFUL_PROFILE_NAME,
@@ -438,8 +442,11 @@ class InnerProfile:
     interval_ns: int
     throughput_numerator: int
     throughput_denominator_ns: int
+    admission_sample_count: int
     admission_p99_ns: int
+    queue_sample_count: int
     queue_p99_ns: int
+    first_byte_sample_count: int
     first_byte_p99_ns: int
     terminal_p99_ns: int
 
@@ -644,8 +651,14 @@ def _parse_inner_profile(inner: bytes) -> InnerProfile:
     throughput_numerator = struct.unpack_from("<Q", summary, 84)[0]
     throughput_denominator = struct.unpack_from("<Q", summary, 92)[0]
 
-    def distribution_p99(distribution_index: int) -> int:
-        return struct.unpack_from("<Q", summary, 100 + distribution_index * 40 + 24)[0]
+    def distribution_sample_and_p99(
+        distribution_index: int,
+    ) -> tuple[int, int]:
+        offset = 100 + distribution_index * 40
+        return (
+            struct.unpack_from("<I", summary, offset)[0],
+            struct.unpack_from("<Q", summary, offset + 24)[0],
+        )
 
     measured_terminal = sorted(
         record.points[5][0] - record.points[0][0]
@@ -653,6 +666,13 @@ def _parse_inner_profile(inner: bytes) -> InnerProfile:
     )
     terminal_rank = math.ceil(0.99 * len(measured_terminal))
     terminal_p99 = measured_terminal[terminal_rank - 1]
+    admission_sample_count, admission_p99 = (
+        distribution_sample_and_p99(0)
+    )
+    queue_sample_count, queue_p99 = distribution_sample_and_p99(1)
+    first_byte_sample_count, first_byte_p99 = (
+        distribution_sample_and_p99(2)
+    )
 
     return InnerProfile(
         mode,
@@ -668,9 +688,12 @@ def _parse_inner_profile(inner: bytes) -> InnerProfile:
         interval_ns,
         throughput_numerator,
         throughput_denominator,
-        distribution_p99(0),
-        distribution_p99(1),
-        distribution_p99(2),
+        admission_sample_count,
+        admission_p99,
+        queue_sample_count,
+        queue_p99,
+        first_byte_sample_count,
+        first_byte_p99,
         terminal_p99,
     )
 
@@ -826,6 +849,10 @@ def _verify_closure(
         "running high-water is invalid",
     )
     _require(closure[7] == closure[8], "backpressure is not balanced")
+    _require(
+        closure[7] <= closure[0],
+        "backpressure activations exceed accepted connections",
+    )
     _require(closure[9:17] == (0,) * 8, "transport closure retains failure or ownership")
     _require(
         closure[17:23]
@@ -840,7 +867,10 @@ def _verify_closure(
         "service closure mismatch",
     )
     _require(closure[23:27] == (1, 1, 1, 0), "scheduler/Bank/thread closure mismatch")
-    _require(closure[27] > 0, "event stream is empty")
+    _require(
+        closure[27] == RECORD_COUNT * 3 + closure[7] + closure[8],
+        "event stream closure mismatch",
+    )
 
 
 def _verify_profile(
@@ -876,6 +906,15 @@ def _verify_profile(
         ),
         "inner scenario is not the fixed native load profile",
     )
+    _require(
+        (
+            profile.admission_sample_count,
+            profile.queue_sample_count,
+            profile.first_byte_sample_count,
+        )
+        == (campaign.measured_completed,) * 3,
+        "completed timing sample count mismatch",
+    )
     expected_identities = {
         0: _identity(WORKLOAD_ID),
         1: _identity(campaign.profile_id),
@@ -900,11 +939,14 @@ def _verify_profile(
     )
 
     owners: set[tuple[int, int, int, int]] = set()
+    connection_sequences: set[int] = set()
+    slot_generations: dict[int, list[tuple[int, int]]] = {}
     requests: set[bytes] = set()
     handles: set[bytes] = set()
     work_sequences: set[int] = set()
     response_evidence: set[bytes] = set()
     lifecycle_ordinals: set[int] = set()
+    lifecycle_events: list[tuple[int, int]] = []
     measured_completed_per_flow = [0] * FLOW_COUNT
     measured_rejected_per_flow = [0] * FLOW_COUNT
     measured_timed_out_per_flow = [0] * FLOW_COUNT
@@ -937,9 +979,13 @@ def _verify_profile(
             "process generation mismatch",
         )
         _require(sidecar.connection_sequence > 0, "connection sequence is zero")
+        _require(
+            sidecar.connection_sequence not in connection_sequences,
+            "connection sequence is duplicated",
+        )
         _require(sidecar.slot_generation > 0, "slot generation is zero")
         _require(
-            0 <= sidecar.slot_index < campaign.queue_count,
+            0 <= sidecar.slot_index < campaign.connection_capacity,
             "slot index is out of range",
         )
         owner = (
@@ -952,6 +998,10 @@ def _verify_profile(
         _require(sidecar.request_sha256 not in requests, "request root is duplicated")
         _require(sidecar.request_sha256 != ZERO_DIGEST, "request root is absent")
         owners.add(owner)
+        connection_sequences.add(sidecar.connection_sequence)
+        slot_generations.setdefault(sidecar.slot_index, []).append(
+            (sidecar.connection_sequence, sidecar.slot_generation)
+        )
         requests.add(sidecar.request_sha256)
         if expected_outcome == OUTCOME_COMPLETED:
             _require(
@@ -982,6 +1032,13 @@ def _verify_profile(
                     sidecar.enqueue_ordinal,
                     sidecar.dispatch_ordinal,
                     sidecar.retired_ordinal,
+                )
+            )
+            lifecycle_events.extend(
+                (
+                    (sidecar.enqueue_ordinal, sidecar.enqueue_ns),
+                    (sidecar.dispatch_ordinal, sidecar.dispatch_ns),
+                    (sidecar.retired_ordinal, sidecar.retired_ns),
                 )
             )
             _require(
@@ -1070,6 +1127,13 @@ def _verify_profile(
                     sidecar.enqueue_ordinal,
                     sidecar.dispatch_ordinal,
                     sidecar.retired_ordinal,
+                )
+            )
+            lifecycle_events.extend(
+                (
+                    (sidecar.enqueue_ordinal, sidecar.enqueue_ns),
+                    (sidecar.dispatch_ordinal, sidecar.dispatch_ns),
+                    (sidecar.retired_ordinal, sidecar.retired_ns),
                 )
             )
             _require(
@@ -1179,6 +1243,12 @@ def _verify_profile(
             lifecycle_ordinals.update(
                 (sidecar.enqueue_ordinal, sidecar.retired_ordinal)
             )
+            lifecycle_events.extend(
+                (
+                    (sidecar.enqueue_ordinal, sidecar.enqueue_ns),
+                    (sidecar.retired_ordinal, sidecar.retired_ns),
+                )
+            )
             _require(
                 (
                     record.correctness,
@@ -1286,6 +1356,37 @@ def _verify_profile(
         "lifecycle ordinal is duplicated",
     )
     _require(max(lifecycle_ordinals) <= closure[27], "lifecycle ordinal exceeds event closure")
+    _require(
+        closure[27] - len(lifecycle_ordinals) == closure[7] + closure[8],
+        "unretained lifecycle event count mismatch",
+    )
+    ordered_lifecycle_events = sorted(lifecycle_events)
+    for previous, current in zip(
+        ordered_lifecycle_events,
+        ordered_lifecycle_events[1:],
+    ):
+        _require(
+            previous[1] <= current[1],
+            "lifecycle ordinal contradicts timestamp order",
+        )
+    _require(
+        connection_sequences == set(range(1, RECORD_COUNT + 1)),
+        "connection sequence is not canonical",
+    )
+    for generations in slot_generations.values():
+        ordered_generations = [
+            generation for _, generation in sorted(generations)
+        ]
+        _require(
+            ordered_generations
+            == list(range(1, len(ordered_generations) + 1)),
+            "slot generation is not canonical",
+        )
+    _require(
+        work_sequences
+        == set(range(1, campaign.service_completed_records + 1)),
+        "work sequence is not canonical",
+    )
     expected_completed_per_flow = campaign.measured_completed // FLOW_COUNT
     expected_rejected_per_flow = (
         campaign.measured_capacity_rejected // FLOW_COUNT
@@ -1647,6 +1748,29 @@ def _canonical_json(value: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+def _completed_timing_fields(profile: InnerProfile) -> dict[str, int]:
+    return {
+        "completed_arrival_to_fifo_enqueue_sample_count": (
+            profile.admission_sample_count
+        ),
+        "completed_arrival_to_fifo_enqueue_p99_ns": (
+            profile.admission_p99_ns
+        ),
+        "completed_fifo_enqueue_to_worker_dispatch_sample_count": (
+            profile.queue_sample_count
+        ),
+        "completed_fifo_enqueue_to_worker_dispatch_p99_ns": (
+            profile.queue_p99_ns
+        ),
+        "completed_http_first_positive_read_sample_count": (
+            profile.first_byte_sample_count
+        ),
+        "completed_http_first_positive_read_p99_ns": (
+            profile.first_byte_p99_ns
+        ),
+    }
+
+
 def run_campaign(
     executable: Path,
     *,
@@ -1743,9 +1867,7 @@ def run_campaign(
             "interval_ns": verified.profile.interval_ns,
             "throughput_numerator": verified.profile.throughput_numerator,
             "throughput_denominator_ns": verified.profile.throughput_denominator_ns,
-            "admission_p99_ns": verified.profile.admission_p99_ns,
-            "queue_p99_ns": verified.profile.queue_p99_ns,
-            "http_first_byte_p99_ns": verified.profile.first_byte_p99_ns,
+            **_completed_timing_fields(verified.profile),
             **(
                 {
                     "queued_timeout_terminal_observation_p99_ns": (
@@ -1851,14 +1973,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         "ok native-unary-server-load-v1 profile=%s "
         "records=%d warmup=%d measured=%d "
-        "http_first_byte_p99_ns=%d %s=%d "
+        "completed_arrival_to_fifo_enqueue_p99_ns=%d "
+        "completed_arrival_to_fifo_enqueue_sample_count=%d "
+        "completed_fifo_enqueue_to_worker_dispatch_p99_ns=%d "
+        "completed_fifo_enqueue_to_worker_dispatch_sample_count=%d "
+        "completed_http_first_positive_read_p99_ns=%d "
+        "completed_http_first_positive_read_sample_count=%d %s=%d "
         "throughput=%d/%dns publication_eligible=%s"
         % (
             arguments.profile,
             RECORD_COUNT,
             WARMUP_COUNT,
             MEASURED_COUNT,
+            profile.admission_p99_ns,
+            profile.admission_sample_count,
+            profile.queue_p99_ns,
+            profile.queue_sample_count,
             profile.first_byte_p99_ns,
+            profile.first_byte_sample_count,
             terminal_metric_name,
             profile.terminal_p99_ns,
             profile.throughput_numerator,

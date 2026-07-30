@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+import io
 import os
+import struct
 import sys
 import unittest
 from unittest import mock
@@ -105,7 +107,7 @@ def _valid_closure(
         1,
         1,
         0,
-        216,
+        222,
     )
 
 
@@ -126,9 +128,10 @@ def _profile_fixture(
     sidecars = []
     records = []
     next_lifecycle_ordinal = 1
+    next_work_sequence = 1
     for ordinal in range(load.RECORD_COUNT):
         base = (
-            1_000_000 + ordinal * 3_000_000_000
+            1_000_000 + ordinal * 6_000_000_000
             if campaign.name
             == load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
             else 1_000 + ordinal * 100
@@ -140,6 +143,7 @@ def _profile_fixture(
         completion = _digest("completion-%d" % ordinal)
         expected_outcome = load._expected_outcome(campaign, ordinal)
         timed_out = expected_outcome == load.OUTCOME_TIMED_OUT
+        completed = expected_outcome == load.OUTCOME_COMPLETED
         enqueue_ordinal = next_lifecycle_ordinal
         if timed_out:
             dispatch_ordinal = 0
@@ -159,11 +163,11 @@ def _profile_fixture(
             dispatch_ns=base + 2,
             published_ns=base + 3,
             retired_ns=base + 7,
-            work_sequence=ordinal + 1,
+            work_sequence=next_work_sequence if completed else 0,
             process_generation=campaign.process_generation,
             connection_sequence=ordinal + 1,
-            slot_generation=ordinal // campaign.queue_count + 1,
-            slot_index=ordinal % campaign.queue_count,
+            slot_generation=ordinal // campaign.connection_capacity + 1,
+            slot_index=ordinal % campaign.connection_capacity,
             worker_index=ordinal % campaign.worker_count,
             content_byte=65,
             output_token=65,
@@ -174,6 +178,8 @@ def _profile_fixture(
             terminal_sha256=terminal,
             completion_sha256=completion,
         )
+        if completed:
+            next_work_sequence += 1
         rejected = (
             campaign.name == load.RETENTION_CAPACITY_PROFILE_NAME
             and ordinal >= campaign.service_completed_records
@@ -382,8 +388,11 @@ def _profile_fixture(
         interval_ns=7_000,
         throughput_numerator=campaign.measured_completed,
         throughput_denominator_ns=7_000,
+        admission_sample_count=campaign.measured_completed,
         admission_p99_ns=1,
+        queue_sample_count=campaign.measured_completed,
         queue_p99_ns=1,
+        first_byte_sample_count=campaign.measured_completed,
         first_byte_p99_ns=4,
         terminal_p99_ns=5,
     )
@@ -395,6 +404,29 @@ def _profile_fixture(
         machine,
         challenge,
     )
+
+
+def _reroot_completed(
+    sidecar: load.Sidecar,
+    record: load.InnerRecord,
+    **changes: int,
+) -> tuple[load.Sidecar, load.InnerRecord]:
+    candidate = replace(sidecar, **changes)
+    if candidate.outcome != load.OUTCOME_COMPLETED:
+        raise AssertionError("completed reroot helper received another outcome")
+    pin = load._pin_root(candidate)
+    roots = (
+        candidate.request_sha256,
+        candidate.handle_sha256,
+        pin,
+        load._dispatch_root(candidate, pin),
+        load._submission_root(candidate, pin),
+        candidate.output_sha256,
+        load._oracle_root(candidate),
+        candidate.terminal_sha256,
+        candidate.completion_sha256,
+    )
+    return candidate, replace(record, roots=roots)
 
 
 def _observation(
@@ -1404,7 +1436,7 @@ class NativeUnaryServerLoadTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             load.VerificationError,
-            "transport owner is duplicated",
+            "connection sequence is duplicated",
         ):
             verify(tuple(duplicate_owner))
 
@@ -1776,6 +1808,307 @@ class NativeUnaryServerLoadTests(unittest.TestCase):
                         expected_challenge=challenge,
                         system="Darwin",
                     )
+
+    def test_profile_rejects_resealed_noncanonical_counter_streams(
+        self,
+    ) -> None:
+        sidecars, closure, profile, build, machine, challenge = (
+            _profile_fixture()
+        )
+
+        def verify(
+            candidate_sidecars: list[load.Sidecar],
+            candidate_records: list[load.InnerRecord],
+        ) -> None:
+            load._verify_profile(
+                tuple(candidate_sidecars),
+                closure,
+                replace(profile, records=tuple(candidate_records)),
+                expected_build=build,
+                expected_machine=machine,
+                expected_challenge=challenge,
+                system="Darwin",
+            )
+
+        mutations = (
+            (
+                "connection",
+                load.RECORD_COUNT - 1,
+                {"connection_sequence": 999},
+                "connection sequence is not canonical",
+            ),
+            (
+                "slot-generation",
+                load.SUCCESSFUL_PROFILE.connection_capacity,
+                {"slot_generation": 1},
+                "slot generation is not canonical",
+            ),
+            (
+                "work",
+                0,
+                {"work_sequence": 999},
+                "work sequence is not canonical",
+            ),
+        )
+        for label, index, changes, message in mutations:
+            candidate_sidecars = list(sidecars)
+            candidate_records = list(profile.records)
+            (
+                candidate_sidecars[index],
+                candidate_records[index],
+            ) = _reroot_completed(
+                candidate_sidecars[index],
+                candidate_records[index],
+                **changes,
+            )
+            with self.subTest(counter=label):
+                with self.assertRaisesRegex(
+                    load.VerificationError,
+                    message,
+                ):
+                    verify(candidate_sidecars, candidate_records)
+
+    def test_profile_rejects_resealed_lifecycle_order_and_closure_gaps(
+        self,
+    ) -> None:
+        sidecars, closure, profile, build, machine, challenge = (
+            _profile_fixture()
+        )
+
+        wrong_event_count = list(closure)
+        wrong_event_count[27] += 1
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "event stream closure mismatch",
+        ):
+            load._verify_closure(tuple(wrong_event_count))
+
+        excessive_backpressure = list(closure)
+        excessive_backpressure[7] = load.RECORD_COUNT + 1
+        excessive_backpressure[8] = load.RECORD_COUNT + 1
+        excessive_backpressure[27] = (
+            load.RECORD_COUNT * 3
+            + excessive_backpressure[7]
+            + excessive_backpressure[8]
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "backpressure activations exceed accepted connections",
+        ):
+            load._verify_closure(tuple(excessive_backpressure))
+
+        candidate_sidecars = list(sidecars)
+        candidate_records = list(profile.records)
+        candidate_sidecars[0], candidate_records[0] = (
+            _reroot_completed(
+                candidate_sidecars[0],
+                candidate_records[0],
+                enqueue_ordinal=217,
+                dispatch_ordinal=218,
+                retired_ordinal=219,
+            )
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "lifecycle ordinal contradicts timestamp order",
+        ):
+            load._verify_profile(
+                tuple(candidate_sidecars),
+                closure,
+                replace(profile, records=tuple(candidate_records)),
+                expected_build=build,
+                expected_machine=machine,
+                expected_challenge=challenge,
+                system="Darwin",
+            )
+
+    def test_sidecar_slots_use_managed_connection_capacity(self) -> None:
+        for profile_name in load.CAMPAIGN_PROFILES:
+            campaign = load._campaign_profile(profile_name)
+            sidecars, closure, profile, build, machine, challenge = (
+                _profile_fixture(profile_name)
+            )
+            with self.subTest(profile=profile_name):
+                self.assertEqual(
+                    campaign.connection_capacity,
+                    campaign.worker_count + campaign.pending_capacity,
+                )
+                self.assertEqual(
+                    max(sidecar.slot_index for sidecar in sidecars),
+                    campaign.connection_capacity - 1,
+                )
+                load._verify_profile(
+                    sidecars,
+                    closure,
+                    profile,
+                    expected_build=build,
+                    expected_machine=machine,
+                    expected_challenge=challenge,
+                    system="Darwin",
+                    profile_name=profile_name,
+                )
+                invalid_sidecars = list(sidecars)
+                invalid_sidecars[0] = replace(
+                    invalid_sidecars[0],
+                    slot_index=campaign.connection_capacity,
+                )
+                with self.assertRaisesRegex(
+                    load.VerificationError,
+                    "slot index is out of range",
+                ):
+                    load._verify_profile(
+                        tuple(invalid_sidecars),
+                        closure,
+                        profile,
+                        expected_build=build,
+                        expected_machine=machine,
+                        expected_challenge=challenge,
+                        system="Darwin",
+                        profile_name=profile_name,
+                    )
+
+    def test_completed_timing_samples_and_manifest_fields_are_scoped(
+        self,
+    ) -> None:
+        old_fields = {
+            "admission_p99_ns",
+            "queue_p99_ns",
+            "http_first_byte_p99_ns",
+        }
+        for profile_name in load.CAMPAIGN_PROFILES:
+            campaign = load._campaign_profile(profile_name)
+            sidecars, closure, profile, build, machine, challenge = (
+                _profile_fixture(profile_name)
+            )
+            with self.subTest(profile=profile_name):
+                self.assertEqual(
+                    (
+                        profile.admission_sample_count,
+                        profile.queue_sample_count,
+                        profile.first_byte_sample_count,
+                    ),
+                    (campaign.measured_completed,) * 3,
+                )
+                fields = load._completed_timing_fields(profile)
+                self.assertTrue(old_fields.isdisjoint(fields))
+                self.assertEqual(
+                    fields[
+                        "completed_arrival_to_fifo_enqueue_sample_count"
+                    ],
+                    campaign.measured_completed,
+                )
+                self.assertEqual(
+                    fields[
+                        "completed_fifo_enqueue_to_worker_dispatch_sample_count"
+                    ],
+                    campaign.measured_completed,
+                )
+                self.assertEqual(
+                    fields[
+                        "completed_http_first_positive_read_sample_count"
+                    ],
+                    campaign.measured_completed,
+                )
+                with self.assertRaisesRegex(
+                    load.VerificationError,
+                    "completed timing sample count mismatch",
+                ):
+                    load._verify_profile(
+                        sidecars,
+                        closure,
+                        replace(
+                            profile,
+                            admission_sample_count=(
+                                campaign.measured_completed + 1
+                            ),
+                        ),
+                        expected_build=build,
+                        expected_machine=machine,
+                        expected_challenge=challenge,
+                        system="Darwin",
+                        profile_name=profile_name,
+                    )
+
+    def test_inner_parser_retains_distribution_sample_counts(
+        self,
+    ) -> None:
+        inner = bytearray(load.INNER_BYTES)
+        summary_offset = (
+            load.native_workload_report.HEADER_BYTES
+            + load.native_workload_report.SCENARIO_WIRE_BYTES
+            + load.RECORD_COUNT
+            * load.native_workload_report.RECORD_WIRE_BYTES
+        )
+        expected = ((32, 101), (24, 202), (16, 303))
+        for index, (sample_count, p99_ns) in enumerate(expected):
+            distribution_offset = summary_offset + 100 + index * 40
+            struct.pack_into(
+                "<I",
+                inner,
+                distribution_offset,
+                sample_count,
+            )
+            struct.pack_into(
+                "<Q",
+                inner,
+                distribution_offset + 24,
+                p99_ns,
+            )
+        profile = load._parse_inner_profile(bytes(inner))
+        self.assertEqual(
+            (
+                profile.admission_sample_count,
+                profile.admission_p99_ns,
+                profile.queue_sample_count,
+                profile.queue_p99_ns,
+                profile.first_byte_sample_count,
+                profile.first_byte_p99_ns,
+            ),
+            tuple(value for pair in expected for value in pair),
+        )
+
+    def test_cli_reports_completed_timing_scope_and_sample_count(
+        self,
+    ) -> None:
+        profile_name = load.RETENTION_CAPACITY_PROFILE_NAME
+        sidecars, closure, profile, _, _, _ = _profile_fixture(
+            profile_name
+        )
+        verified = load.VerifiedEnvelope(
+            inner_result=mock.Mock(),
+            profile=profile,
+            sidecars=sidecars,
+            closure=closure,
+            outer_sha256=_digest("outer"),
+        )
+        stdout = io.StringIO()
+        with mock.patch.object(
+            load,
+            "run_campaign",
+            return_value=(
+                b"verified",
+                {"publication_eligible": False},
+                verified,
+            ),
+        ), mock.patch.object(sys, "stdout", stdout):
+            self.assertEqual(
+                load.main(["producer", "--profile", profile_name]),
+                0,
+            )
+        output = stdout.getvalue()
+        self.assertNotIn("http_first_byte_p99_ns=", output)
+        self.assertIn(
+            "completed_http_first_positive_read_p99_ns=4",
+            output,
+        )
+        self.assertIn(
+            "completed_http_first_positive_read_sample_count=32",
+            output,
+        )
+        self.assertIn(
+            "completed_arrival_to_fifo_enqueue_sample_count=32",
+            output,
+        )
 
     def test_closure_rejects_each_material_class(self) -> None:
         valid = _valid_closure()

@@ -82,6 +82,15 @@ deterministic
 single-outstanding client-plan/transmit correlation rather than server-parsed
 request attestation.
 
+For this transport profile, the first three W6 timing distributions are
+explicitly completed-only: arrival to FIFO accept/enqueue, FIFO enqueue to
+worker dispatch, and HTTP first positive read. Their verified sample counts
+are 64 for the default profile, 32 for `retention-capacity-v1`, and 16 for
+`queued-receive-timeout-v1`. Capacity rejections and queued timeouts remain in
+the 64-attempt terminal/outcome accounting but are not relabelled as samples
+for stages they never completed. The capture manifest and CLI expose these as
+`completed_*_{sample_count,p99_ns}` fields.
+
 For each rejection, the sidecar `response_handle_sha256` is a
 domain-separated producer observation over the raw HTTP response. It is
 opaque to the offline verifier because the envelope retains only its byte

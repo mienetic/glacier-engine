@@ -2057,12 +2057,20 @@ Next slices:
   parallelism, first-token latency, production-model, GPU, or native foreign-OS
   behavior. The live campaign stays manual and is not run by GitHub CI.
 - [ ] Broaden Phase F1 load evidence beyond the three fixed synthetic CPU
-  profiles: additional overload campaigns, longer and repeated captures,
-  production-model profiles, publication-eligible native Linux environment
-  evidence, and separately declared GPU campaigns. Do not infer first-token
-  latency, fairness, completion order, parallel model execution, physical CPU
-  parallelism, GPU performance, or another operating system's behavior from
-  the fixed profiles.
+  profiles: an explicitly scheduled open-loop/transient-pressure ABI,
+  longer and repeated captures, production-model profiles,
+  publication-eligible native Linux environment evidence, and separately
+  declared GPU campaigns. Bind the offered schedule, launch lateness, achieved
+  rate, and recovery phases without reusing the closed-loop wave semantics.
+  Do not infer first-token latency, fairness, completion order, parallel model
+  execution, physical CPU parallelism, GPU performance, or another operating
+  system's behavior from the fixed profiles.
+- [ ] Bind retained native-load context into one verifier-owned publication
+  identity: selected profile, envelope digest, producer, supported operating
+  system, pre/post environment selector, and eligibility decision. Publish the
+  envelope and context as one transactional container or pair protocol; the
+  current optional envelope and JSON files are independently atomic and the
+  contextual manifest is not authenticated by the binary envelope.
 - define orderly-FIN policy for body-complete half-close, cancellation,
   response behavior, and outcome ownership before extending abandonment
   detection with one socket owner and exact accounting;
