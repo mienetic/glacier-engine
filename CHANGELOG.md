@@ -27,9 +27,9 @@ before the first stable release.
   values, rejects redirects, and validates response correlation. It does not
   add authentication, TLS, streaming, automatic retry, durable idempotency,
   restart, disconnect, production-model, GPU, or performance evidence.
-- R1k-b8 Phases A-D add an experimental managed lifecycle around that serial
-  loopback server. `ManagedLifecycleV1` records one nonzero process generation,
-  exact connection outcomes, and the monotone
+- R1k-b8 Phases A-D plus Phase E1 add an experimental managed lifecycle around
+  that serial loopback server. `ManagedLifecycleV1` records one nonzero process
+  generation, exact connection outcomes, and the monotone
   `starting -> ready -> draining -> stopped` path with a terminal `failed`
   state. Phase B adds one generation/sequence/handle-fenced active-connection
   lease with exact `receiving_head`, `request_head_received`, and
@@ -70,13 +70,34 @@ before the first stable release.
   requests, one terminal record, and zero Bank ownership. A second child drives
   the one-token request terminal while its HTTP lease remains published and
   proves drain preserves the oracle-matched completion with no work
-  cancellation. Phases B-D reuse the existing dual-mode process artifact and
-  compile roots. Phase C remains a
-  pre-admission timeout rather than a full-request timeout; Phase D does not
-  add disconnect or blocked-response-write cancellation or kernel preemption.
-  The slice adds no concurrent serving, durable idempotency or crash recovery,
-  native Windows/FreeBSD serving proof, load, or performance evidence. Native
-  deadline behavior on Windows and FreeBSD remains unproven.
+  cancellation. Phase E1 adds exact `response_ready`, `response_writing`, and
+  `response_written` connection phases. A managed checkpoint may detect a peer
+  reset between bounded drive quanta, cancel only the exact fenced active-work
+  handle, and retain separate peer-reset and work-cancellation counts and
+  phases without closing admission. A second control boundary publishes
+  `response_ready` after encoding and before the first response write. Drain
+  may cancel there with separate response-cancellation evidence while the
+  serving thread remains the sole writer and closer. Three deterministic
+  real-process controls cover reset-after-admission,
+  drain-at-response-ready, and completion from that same response-ready
+  boundary. The reset child opts into a bounded event-driven checkpoint wait
+  while the runtime default remains a zero-time probe; only typed reset or
+  not-connected socket results pass, and a timeout fails the fixture. It keeps
+  admission open, proves same-child liveness, and records one reset plus one
+  work cancellation at `request_admitted`. The
+  response-drain child records `cancelled_before_write` and one cancellation at
+  `response_ready`; the no-drain control retains the oracle response, records
+  `write_completed`, and leaves all new cancellation counters zero. All close
+  with zero active service requests and Bank ownership. Phases B-E1 reuse the
+  existing dual-mode process artifact and compile roots.
+  Phase C remains a pre-admission timeout rather than a full-request timeout.
+  Phase E1 does not detect orderly FIN abandonment, preempt an in-flight drive,
+  interrupt a slow or already kernel-blocked response write, or establish a
+  peer delivery acknowledgement; `response_written` proves only a local
+  flush. The slice adds no concurrent serving, durable idempotency or crash
+  recovery, native Windows/FreeBSD serving proof, load, or performance
+  evidence. Native reset, response-write, and deadline behavior on Windows and
+  FreeBSD remains unproven.
 
 ### Changed
 
@@ -87,10 +108,19 @@ before the first stable release.
   `matrix` adds every retained target plus the macOS compile frontier. Audited
   interop/C-contract changes no longer compile the unrelated package-module
   root, and the package-module acceptance path no longer compiles interop;
-  mixed and unclassified changes still retain the canonical union. Manual
-  GitHub CI now defaults to `affected-fast` against `origin/main`; `affected`,
-  `full`, and `matrix` must be selected explicitly, while release tags keep the
-  full matrix and macOS frontier.
+  mixed and unclassified changes still retain the canonical union. Pull
+  requests, `main` pushes, and manual GitHub CI default to `affected-fast`
+  against the exact affected base. `affected`, `full`, and `matrix` remain
+  explicit manual or milestone promotion choices, while release tags keep the
+  retained-target matrix and macOS frontier. Repeated exhaustive runs for the
+  same profile and ref, and repeated macOS-frontier runs for the same ref,
+  cancel the superseded run before it can continue consuming compile time.
+  General core, CPU, and model changes now use the main
+  `install test-compile` retained-target closure during complete affected
+  verification; bulk benchmark staging and the standalone benchmark consumer
+  closure remain mandatory for benchmark or build changes and the explicit
+  matrix/release boundary. Device diagnostics already owned by
+  `test-compile` remain in the main closure.
 - Contributor verification now has an `affected-fast` tier. Documentation-only
   changes and plans limited to workflow control, verification policy, shell, or
   ordinary Python checks perform no generic Zig build. Workflow and verifier
@@ -114,8 +144,9 @@ before the first stable release.
   root alone. All selected host roots share one Zig invocation;
   complete affected verification selects only their corresponding compile-only
   companions on retained targets. The Phase B partial-receive drain, Phase C
-  monotonic receive-timeout, and Phase D admitted-work drain cases reuse the
-  same dual-mode artifact and targets, adding no compile root.
+  monotonic receive-timeout, Phase D admitted-work drain, and Phase E1
+  reset/response-ready cases reuse the same dual-mode artifact and targets,
+  adding no compile root.
   Prepared-text session changes now select only the CPU, durable, and host-tool
   compile profiles, while the process-local variable-terminal module selects
   only the host-tool profile; both reuse that same host golden DAG instead of

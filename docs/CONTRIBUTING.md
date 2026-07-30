@@ -122,8 +122,8 @@ hides the checks required by another changed path.
 | Benchmark runtime data (`.ids`, paired manifests, evaluation text) | Full Python discovery; no foreign Zig target |
 | Darwin Swift ProcessInfo probe | Full Python discovery plus focused native `swiftc -typecheck`; no broad Zig or foreign-target build |
 | Audited C contract boundary | Native ReleaseSafe, Python discovery, and the core compile profile on every retained target |
-| General `src/core/` implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target; `src/core/root.zig` remains full because it controls build reachability |
-| CPU backend or model implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
+| General `src/core/` implementation | Native ReleaseSafe, Python discovery, and the main `install test-compile` closure on every retained target; bulk benchmark staging and the standalone benchmark consumer closure remain a benchmark/build-graph or promotion-matrix gate, while device diagnostics already owned by `test-compile` remain in the main closure and `src/core/root.zig` remains full because it controls build reachability |
+| CPU backend or model implementation | Native ReleaseSafe, Python discovery, and the main `install test-compile` closure on every retained target; bulk benchmark staging and the standalone benchmark consumer closure remain a benchmark/build-graph or promotion-matrix gate, while device diagnostics already owned by `test-compile` remain in the main closure |
 | Shared durable core/runtime implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
 | Audited durable recovery demo or worker | Native ReleaseSafe, Python discovery, and the durable profile on every retained target |
 | Bounded unary prepared-text service kernel or its focused acceptance root | A focused acceptance-only change runs `unary-text-service-test` alone. A kernel implementation change selects the service, HTTP, and managed-process roots in one host Zig invocation. Complete affected verification selects the corresponding compile-only companions on each retained target without pulling the broad model-forward suite |
@@ -271,8 +271,9 @@ prepared-text path, the verifier places all required host roots in one
 Unary-service-only test changes select one dedicated acceptance root. Leaf HTTP
 codec, client, and acceptance changes select `unary-http-test`. A unary-kernel
 implementation change selects the service, HTTP, and managed-process roots; a
-shared server implementation change selects the HTTP and managed-process roots
-without the service-only root. All selected host roots share one Zig
+shared server adapter/API change selects the HTTP and managed-process roots
+without the service-only root. A process-fixture-only change selects only the
+managed-process root. All selected host roots share one Zig
 invocation. When the package-aware CLI changes too, its selected unary root and
 installed text-runtime golden path also share that invocation. Complete
 affected verification compiles only the corresponding focused roots on
@@ -323,7 +324,12 @@ invocation, but its named roots are now the smallest audited union of
 `profile-complete-compile`, which reaches every retained test, demo, CLI, and
 benchmark compile consumer without staging the production CLI or benchmark
 set; the installed C-contract consumer still stages its boundary artifacts.
-Build controls, roots, and unknown paths fail closed to the explicit
+General core, CPU, and model changes select the main
+`install test-compile` closure, leaving bulk benchmark staging and the
+standalone benchmark consumer closure to benchmark or build-graph changes and
+the deliberate matrix/release boundary. Device diagnostics already owned by
+`test-compile` remain in the main closure. Build controls, roots, and unknown
+paths fail closed to the explicit
 `install install-benchmarks test-compile` full plan.
 That plan preserves production, benchmark/diagnostic, and compile-only test
 coverage, and dominates focused roots only for the affected target, so a

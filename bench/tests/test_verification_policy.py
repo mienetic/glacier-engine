@@ -983,10 +983,10 @@ class VerificationPolicyTests(unittest.TestCase):
                     plan.flags,
                 )
         cases = {
-            "src/core/scheduler.zig": ("profile-complete-compile",),
+            "src/core/scheduler.zig": policy.MAIN_RUNTIME_TARGET_STEPS,
             "src/ffi/model_contract_c.zig": ("profile-core-compile",),
-            "src/backends/cpu/backend.zig": ("profile-complete-compile",),
-            "src/model/runtime_image.zig": ("profile-complete-compile",),
+            "src/backends/cpu/backend.zig": policy.MAIN_RUNTIME_TARGET_STEPS,
+            "src/model/runtime_image.zig": policy.MAIN_RUNTIME_TARGET_STEPS,
             "src/cli/main.zig": ("profile-host-tool-compile",),
             "src/continuation_live_restart.zig": ("profile-complete-compile",),
         }
@@ -1010,6 +1010,17 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertFalse(
             plan.requires("prepared-text-unary-http-focused")
         )
+
+    def test_generic_benchmark_path_keeps_full_target_plan(self):
+        plan = self.assert_target_steps(
+            ["bench/main.zig"],
+            tuple(
+                (target, policy.FULL_TARGET_STEPS)
+                for target in policy.RETAINED_TARGETS
+            ),
+        )
+        self.assertTrue(plan.requires("native-full"))
+        self.assertTrue(plan.requires("python-full"))
 
     def test_variable_terminal_paths_avoid_broad_compile_profiles(self):
         cases = {
@@ -1134,7 +1145,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 )
 
     def test_target_profiles_union_and_full_dominance_are_per_target(self):
-        complete_plus_focused = self.assert_target_steps(
+        main_plus_focused = self.assert_target_steps(
             [
                 "src/core/scheduler.zig",
                 "src/cli/main.zig",
@@ -1142,12 +1153,27 @@ class VerificationPolicyTests(unittest.TestCase):
             tuple(
                 (
                     target,
-                    policy.COMPLETE_COMPILE_TARGET_STEPS,
+                    policy.MAIN_RUNTIME_TARGET_STEPS,
                 )
                 for target in policy.RETAINED_TARGETS
             ),
         )
-        self.assertTrue(complete_plus_focused.requires("native-full"))
+        self.assertTrue(main_plus_focused.requires("native-full"))
+
+        main_plus_complete = self.assert_target_steps(
+            [
+                "src/core/scheduler.zig",
+                "src/continuation_live_restart.zig",
+            ],
+            tuple(
+                (
+                    target,
+                    policy.FULL_TARGET_STEPS,
+                )
+                for target in policy.RETAINED_TARGETS
+            ),
+        )
+        self.assertTrue(main_plus_complete.requires("native-full"))
 
         per_target = self.assert_target_steps(
             [
@@ -1157,11 +1183,11 @@ class VerificationPolicyTests(unittest.TestCase):
             (
                 (
                     policy.RETAINED_TARGETS[0],
-                    policy.COMPLETE_COMPILE_TARGET_STEPS,
+                    policy.MAIN_RUNTIME_TARGET_STEPS,
                 ),
                 (
                     policy.RETAINED_TARGETS[1],
-                    policy.COMPLETE_COMPILE_TARGET_STEPS,
+                    policy.MAIN_RUNTIME_TARGET_STEPS,
                 ),
                 (
                     policy.RETAINED_TARGETS[2],
@@ -1169,7 +1195,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 ),
                 (
                     policy.RETAINED_TARGETS[3],
-                    policy.COMPLETE_COMPILE_TARGET_STEPS,
+                    policy.MAIN_RUNTIME_TARGET_STEPS,
                 ),
             ),
         )
@@ -2277,6 +2303,18 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertIn('run: tools/verify.sh "$VERIFY_PROFILE"', source)
         self.assertIn('      - "v*"', source)
         self.assertNotIn("  schedule:", source)
+        self.assertEqual(
+            3,
+            source.count("      cancel-in-progress: true"),
+        )
+        self.assertIn(
+            "ci-exhaustive-${{ inputs.profile || 'matrix' }}-${{ github.ref }}",
+            source,
+        )
+        self.assertIn(
+            "group: ci-macos-frontier-${{ github.ref }}",
+            source,
+        )
         metal_compile_at = source.index("zig build native-metal-suite-compile")
         model_recovery_at = source.index(
             "zig build model-conversion-durable-recovery-test"
@@ -2371,6 +2409,20 @@ class VerificationPolicyTests(unittest.TestCase):
             policy.write_target_steps(complete_plan, target_steps)
             self.assertEqual(
                 [policy.RETAINED_TARGETS[0] + " profile-complete-compile"],
+                target_steps.read_text(encoding="ascii").splitlines(),
+            )
+            main_runtime_plan = (
+                policy.TargetBuildPlan(
+                    policy.RETAINED_TARGETS[0],
+                    policy.MAIN_RUNTIME_TARGET_STEPS,
+                ),
+            )
+            policy.write_target_steps(main_runtime_plan, target_steps)
+            self.assertEqual(
+                [
+                    policy.RETAINED_TARGETS[0] + " install",
+                    policy.RETAINED_TARGETS[0] + " test-compile",
+                ],
                 target_steps.read_text(encoding="ascii").splitlines(),
             )
             with self.assertRaises(ValueError):
@@ -4669,7 +4721,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 target_calls[0],
             )
 
-    def test_complete_compile_closure_uses_one_invocation_per_target(self):
+    def test_main_runtime_closure_uses_one_invocation_per_target(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             repository, merge_base, environment = self.make_repository(root)
@@ -4704,14 +4756,14 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 target_calls,
             )
             for target in policy.RETAINED_TARGETS:
-                expected = "build profile-complete-compile -Dtarget=" + target + " "
+                expected = "build install test-compile -Dtarget=" + target + " "
                 self.assertEqual(
                     1,
                     sum(line.startswith(expected) for line in target_calls),
                     target_calls,
                 )
                 self.assertIn(
-                    "PASS  portability/" + target + "/profile-complete-compile:",
+                    "PASS  portability/" + target + "/install+test-compile:",
                     result.stdout,
                 )
 
@@ -4754,7 +4806,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 if target == windows_target:
                     expected_steps = "install install-benchmarks test-compile"
                 else:
-                    expected_steps = "profile-complete-compile"
+                    expected_steps = "install test-compile"
                 self.assertEqual(
                     1,
                     sum(

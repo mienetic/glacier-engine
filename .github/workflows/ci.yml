@@ -119,6 +119,10 @@ jobs:
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    concurrency:
+      group: >-
+        ci-exhaustive-${{ inputs.profile || 'matrix' }}-${{ github.ref }}
+      cancel-in-progress: true
     env:
       GLACIER_VERIFY_REQUIRE_NATIVE: "1"
       GLACIER_VERIFY_REUSE_ZIG_CACHE: "1"
@@ -199,6 +203,9 @@ jobs:
       }}
     runs-on: macos-15
     timeout-minutes: 45
+    concurrency:
+      group: ci-macos-frontier-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

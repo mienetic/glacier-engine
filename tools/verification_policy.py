@@ -33,6 +33,10 @@ FULL_TARGET_STEPS: Tuple[str, ...] = (
     "install-benchmarks",
     "test-compile",
 )
+MAIN_RUNTIME_TARGET_STEPS: Tuple[str, ...] = (
+    "install",
+    "test-compile",
+)
 FOCUSED_TARGET_STEPS: Tuple[str, ...] = (
     "unary-text-service-compile",
     "unary-http-compile",
@@ -1018,7 +1022,7 @@ def _decision_for_path(path: str) -> PathDecision:
             "portable core implementation changed",
             _compiled_flags(suffix),
             RETAINED_TARGETS,
-            COMPLETE_COMPILE_TARGET_STEPS,
+            MAIN_RUNTIME_TARGET_STEPS,
             host_roots=HOST_QUICK_ROOTS,
         )
 
@@ -1030,7 +1034,7 @@ def _decision_for_path(path: str) -> PathDecision:
             "CPU runtime or model implementation changed",
             _compiled_flags(suffix),
             RETAINED_TARGETS,
-            COMPLETE_COMPILE_TARGET_STEPS,
+            MAIN_RUNTIME_TARGET_STEPS,
             host_roots=HOST_QUICK_ROOTS,
         )
 
@@ -1196,6 +1200,7 @@ def _validated_decision_steps(
     steps = decision.target_steps
     if steps in (
         FULL_TARGET_STEPS,
+        MAIN_RUNTIME_TARGET_STEPS,
         COMPLETE_COMPILE_TARGET_STEPS,
     ):
         return steps
@@ -1216,6 +1221,7 @@ def _build_target_plans(
 ) -> Tuple[TargetBuildPlan, ...]:
     selected_steps = {target: set() for target in RETAINED_TARGETS}
     full_targets = set()
+    main_runtime_targets = set()
     complete_compile_targets = set()
     for decision in decisions:
         if not decision.targets:
@@ -1226,6 +1232,8 @@ def _build_target_plans(
                 raise ValueError("path decision selected an unknown target: " + target)
             if steps == FULL_TARGET_STEPS:
                 full_targets.add(target)
+            elif steps == MAIN_RUNTIME_TARGET_STEPS:
+                main_runtime_targets.add(target)
             elif steps == COMPLETE_COMPILE_TARGET_STEPS:
                 complete_compile_targets.add(target)
             else:
@@ -1236,11 +1244,25 @@ def _build_target_plans(
         if target in full_targets:
             plans.append(TargetBuildPlan(target, FULL_TARGET_STEPS))
             continue
+        if (
+            target in main_runtime_targets
+            and target in complete_compile_targets
+        ):
+            plans.append(TargetBuildPlan(target, FULL_TARGET_STEPS))
+            continue
         if target in complete_compile_targets:
             plans.append(
                 TargetBuildPlan(
                     target,
                     COMPLETE_COMPILE_TARGET_STEPS,
+                )
+            )
+            continue
+        if target in main_runtime_targets:
+            plans.append(
+                TargetBuildPlan(
+                    target,
+                    MAIN_RUNTIME_TARGET_STEPS,
                 )
             )
             continue

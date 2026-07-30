@@ -602,6 +602,9 @@ run_target_plan() {
             "install install-benchmarks test-compile" ]; then
             :
         elif [ "$selected_step_words" = \
+            "install test-compile" ]; then
+            :
+        elif [ "$selected_step_words" = \
             "profile-complete-compile" ]; then
             :
         elif [ "$selected_steps_valid" -ne 1 ]; then

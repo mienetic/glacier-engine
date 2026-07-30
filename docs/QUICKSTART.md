@@ -437,17 +437,20 @@ authority, physical playback/display, external codec/container conformance, or
 performance. See
 [Host-Verified Generated-Media Producer Transitions](GENERATED_MEDIA_PRODUCER_TRANSITION.md).
 
-Before submitting a runtime change, also run:
+For ordinary branch work, select only the roots affected by the change:
 
 ```sh
-zig build test -Doptimize=ReleaseFast -Dmetal=false
-zig build test -Doptimize=ReleaseSafe -Dmetal=false -Dsanitize-thread=true
-zig build test-compile -Dtarget=x86_64-linux-gnu -Dmetal=false -Doptimize=ReleaseSafe
-zig build test-compile -Dtarget=aarch64-linux-gnu -Dmetal=false -Doptimize=ReleaseSafe
+tools/verify.sh affected-fast --base origin/main
 ```
 
-ThreadSanitizer support depends on the host Zig/Clang toolchain. If the toolchain
-cannot run it, record that limitation rather than reporting it as passed.
+This Debug tier combines the selected host roots into one Zig invocation and
+defers broad ReleaseSafe, retained-target, Metal, and full Python work. Before
+promotion, or when a changed subsystem requires its complete retained-target
+closure, run `tools/verify.sh affected --base origin/main`. Use `full` or
+`matrix` only for broad integration or release evidence. ThreadSanitizer is a
+targeted gate for concurrency changes and depends on the host Zig/Clang
+toolchain; if it cannot run, record that limitation rather than reporting it
+as passed.
 
 ## 8. Try the CLI with a fixture
 
