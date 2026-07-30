@@ -726,43 +726,83 @@ pub fn run(
         );
     }
 
-    var session: engine.prepared_text_session.SessionV3 = .{};
-    defer session.deinit();
-    const start = try session.start(
-        allocator,
-        &model,
-        tokenized.tokens,
-        options,
-        local_plan,
-        bound_input,
-        bound_plan,
-        scheduling,
-        &scheduler,
-        &bank,
-    );
-    switch (start) {
-        .started => {},
-        .rejected => return error.AdmissionRejected,
+    var direct_session: engine.prepared_text_session.SessionV3 = .{};
+    defer if (admitted_bundle == null) direct_session.deinit();
+    var direct_sink: ReceiptSinkV1 = .{};
+    var direct_terminal: ?engine.prepared_text_session.TerminalResultEvidenceV1 = null;
+    var service_response: ?engine.prepared_text_unary_service.ResponseV1 = null;
+
+    if (admitted_bundle) |admission| {
+        const license_byte_count = std.math.cast(
+            u64,
+            license_bytes.len,
+        ) orelse return error.InvalidLicense;
+        service_response = try runFixedUnaryServiceV1(
+            allocator,
+            &model,
+            admission,
+            license_byte_count,
+            artifact_license_sha256,
+            text,
+            new_tokens,
+            scheduling,
+            tokenized.receipt,
+            raw_input_binding,
+            local_plan.plan_sha256,
+            bound_plan.bound_plan_sha256,
+            &scheduler,
+            &bank,
+        );
+        scheduler_closed = true;
+    } else {
+        const start = try direct_session.start(
+            allocator,
+            &model,
+            tokenized.tokens,
+            options,
+            local_plan,
+            bound_input,
+            bound_plan,
+            scheduling,
+            &scheduler,
+            &bank,
+        );
+        switch (start) {
+            .started => {},
+            .rejected => return error.AdmissionRejected,
+        }
+
+        while (!direct_session.isFinished()) {
+            _ = try direct_session.step(
+                try scheduler.prepareService(),
+                direct_sink.interface(),
+            );
+        }
+        if (direct_sink.prepare_calls != new_tokens or
+            direct_sink.commit_calls != new_tokens or
+            direct_sink.abort_calls != 0)
+            return error.PublicationMismatch;
+        direct_terminal =
+            try direct_session.sealTerminalResult();
+        if (direct_session.outputTokens().len != new_tokens)
+            return error.PublicationMismatch;
+        _ = try direct_session.retire();
+        _ = try scheduler.close();
+        scheduler_closed = true;
     }
 
-    var sink: ReceiptSinkV1 = .{};
-    while (!session.isFinished()) {
-        _ = try session.step(
-            try scheduler.prepareService(),
-            sink.interface(),
-        );
-    }
-    if (sink.prepare_calls != new_tokens or
-        sink.commit_calls != new_tokens or
-        sink.abort_calls != 0)
-        return error.PublicationMismatch;
-    const terminal = try session.sealTerminalResult();
-    const output = session.outputTokens();
-    if (output.len != new_tokens)
-        return error.PublicationMismatch;
-    _ = try session.retire();
-    _ = try scheduler.close();
-    scheduler_closed = true;
+    const terminal = if (service_response) |response|
+        response.terminal
+    else
+        direct_terminal orelse return error.PublicationMismatch;
+    const output = if (service_response) |*response|
+        response.output_tokens[0..@intCast(response.output_count)]
+    else
+        direct_session.outputTokens();
+    const sink_transcript_sha256 = if (service_response) |response|
+        response.private_transcript_sha256
+    else
+        direct_sink.last_transcript_sha256;
     const bank_snapshot = try bank.snapshot();
     if (!bank_snapshot.used.isZero() or
         bank_snapshot.committed_receipts != 0)
@@ -881,7 +921,7 @@ pub fn run(
         .lower,
     );
     const sink_transcript_hex = std.fmt.bytesToHex(
-        sink.last_transcript_sha256,
+        sink_transcript_sha256,
         .lower,
     );
     const prepared_abi_hex = std.fmt.bytesToHex(
@@ -1106,6 +1146,149 @@ pub fn run(
             &result_envelope_wire_hex,
         },
     );
+}
+
+fn runFixedUnaryServiceV1(
+    allocator: std.mem.Allocator,
+    model: *const engine.loader.LoadedModel,
+    bundle: engine.model_package_manifest.AdmissionBundleV2,
+    artifact_license_bytes: u64,
+    artifact_license_sha256: [32]u8,
+    text: []const u8,
+    new_tokens: usize,
+    expected_scheduling: engine.prepared_text_session.SchedulingV1,
+    expected_prompt_receipt: engine.tokenizer.Utf8BytePromptReceiptV1,
+    expected_raw_input_binding: engine.prepared_text_raw_input.BindingV1,
+    expected_local_plan_sha256: [32]u8,
+    expected_bound_plan_sha256: [32]u8,
+    scheduler: *engine.lane_weave_qos.Scheduler,
+    bank: *engine.resource_bank.Bank,
+) !engine.prepared_text_unary_service.ResponseV1 {
+    const unary = engine.prepared_text_unary_service;
+    const request_max_new_tokens = std.math.cast(
+        u16,
+        new_tokens,
+    ) orelse return error.InvalidUsage;
+    const binding = try unary.bindModelV1(
+        model,
+        bundle,
+        artifact_license_bytes,
+        artifact_license_sha256,
+    );
+
+    var active_storage: [1]unary.ActiveSlotV1 = undefined;
+    var record_storage: [1]unary.RecordSlotV1 = undefined;
+    var service: unary.ServiceV1 = .{};
+    var service_open = false;
+    var admitted_handle: ?unary.HandleV1 = null;
+    defer if (service_open) {
+        if (admitted_handle) |handle| {
+            _ = service.cancelV1(handle) catch {};
+        }
+        _ = service.closeV1() catch {};
+    };
+    try service.init(
+        allocator,
+        binding,
+        scheduler,
+        bank,
+        &active_storage,
+        &record_storage,
+        .{
+            .service_epoch = request_epoch,
+            .first_request_identity = request_epoch,
+            .first_scheduling_request_key = expected_scheduling.request_key,
+            .first_scheduling_request_generation = expected_scheduling.request_generation,
+            .first_resource_owner_key = expected_scheduling.resource_owner_key,
+            .private_sink_epoch = 0x5231_4b42_0000_0010,
+            .maximum_request_prompt_bytes = tokenizer_input_limit,
+            .maximum_request_output_tokens = maximum_new_tokens,
+        },
+    );
+    service_open = true;
+
+    const admission = switch (try service.admitV1(.{
+        .tenant_key = expected_scheduling.tenant_key,
+        .idempotency_key_sha256 = expected_prompt_receipt.receipt_sha256,
+        .prompt_utf8 = text,
+        .max_new_tokens = request_max_new_tokens,
+        .deadline_tick = expected_scheduling.deadline_tick,
+    })) {
+        .accepted => |receipt| receipt,
+        .rejected => return error.AdmissionRejected,
+        .existing,
+        .conflict,
+        .recovery_required,
+        => return error.UnaryServiceStateMismatch,
+    };
+    admitted_handle = admission.handle;
+    if (admission.request_epoch != request_epoch or
+        !std.meta.eql(
+            admission.scheduling,
+            expected_scheduling,
+        ) or
+        !std.meta.eql(
+            admission.prompt_receipt,
+            expected_prompt_receipt,
+        ) or
+        !std.meta.eql(
+            admission.raw_input_binding,
+            expected_raw_input_binding,
+        ) or
+        !std.mem.eql(
+            u8,
+            &admission.local_plan_sha256,
+            &expected_local_plan_sha256,
+        ) or
+        !std.mem.eql(
+            u8,
+            &admission.bound_plan_sha256,
+            &expected_bound_plan_sha256,
+        ))
+        return error.UnaryServiceEvidenceMismatch;
+
+    while (true) {
+        switch (try service.driveNextV1()) {
+            .progressed => |progress| {
+                if (!std.meta.eql(
+                    progress.handle,
+                    admission.handle,
+                ))
+                    return error.UnaryServiceStateMismatch;
+            },
+            .completed => |completion| {
+                if (!std.meta.eql(
+                    completion.handle,
+                    admission.handle,
+                ))
+                    return error.UnaryServiceStateMismatch;
+                break;
+            },
+            .idle,
+            .request_failed,
+            .recovery_required,
+            => return error.UnaryServiceStateMismatch,
+        }
+    }
+
+    const response = try service.responseV1(admission.handle);
+    if (!std.meta.eql(response.admission, admission) or
+        response.output_count != request_max_new_tokens or
+        response.private_prepare_calls !=
+            request_max_new_tokens or
+        response.private_commit_calls !=
+            request_max_new_tokens or
+        response.private_abort_calls != 0)
+        return error.UnaryServiceEvidenceMismatch;
+
+    const close_receipt = try service.closeV1();
+    service_open = false;
+    if (close_receipt.terminal_records != 1 or
+        !close_receipt.bank_snapshot.used.isZero() or
+        close_receipt.bank_snapshot.active_reservations != 0 or
+        close_receipt.bank_snapshot.committed_receipts != 0)
+        return error.ResourceLeak;
+    return response;
 }
 
 fn writeVariableTerminalReportV1(

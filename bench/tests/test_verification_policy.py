@@ -203,6 +203,13 @@ EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = frozenset(
     }
 )
 
+EXPECTED_PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS = frozenset(
+    {
+        "src/prepared_text_unary_service.zig",
+        "tests/unary_text_service.zig",
+    }
+)
+
 EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
     {
         "src/core/native_metal_supervisor_recovery_death_report.zig",
@@ -564,6 +571,10 @@ class VerificationPolicyTests(unittest.TestCase):
             EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS,
             policy.PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS,
         )
+        self.assertEqual(
+            EXPECTED_PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS,
+            policy.PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS,
+        )
         for changed_path in sorted(EXPECTED_CORE_CONTRACT_PATHS):
             with self.subTest(changed_path=changed_path):
                 self.assert_target_steps(
@@ -748,6 +759,13 @@ class VerificationPolicyTests(unittest.TestCase):
                 expected_flags = {
                     "prepared-text-package-text-run-focused",
                 }
+                if changed_path in {
+                    "src/cli/text_run.zig",
+                    "src/prepared_text_session.zig",
+                }:
+                    expected_flags.add(
+                        "prepared-text-unary-service-focused"
+                    )
                 if changed_path.endswith(".py"):
                     expected_flags.add("python-changed")
                 self.assertEqual(frozenset(expected_flags), plan.flags)
@@ -762,6 +780,37 @@ class VerificationPolicyTests(unittest.TestCase):
                     )
                 self.assertIn(
                     "native/prepared-text-package-text-run",
+                    policy._gate_names(plan.decisions[0]),
+                )
+                if changed_path == "src/cli/text_run.zig":
+                    self.assertIn(
+                        "native/prepared-text-unary-service",
+                        policy._gate_names(plan.decisions[0]),
+                    )
+        for changed_path in sorted(
+            EXPECTED_PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_target_steps(
+                    [changed_path],
+                    tuple(
+                        (
+                            target,
+                            ("unary-text-service-compile",),
+                        )
+                        for target in policy.RETAINED_TARGETS
+                    ),
+                )
+                self.assertEqual(
+                    frozenset(
+                        {"prepared-text-unary-service-focused"}
+                    ),
+                    plan.flags,
+                )
+                self.assertFalse(plan.requires("native-full"))
+                self.assertFalse(plan.requires("python-full"))
+                self.assertIn(
+                    "native/prepared-text-unary-service",
                     policy._gate_names(plan.decisions[0]),
                 )
         for changed_path in sorted(
@@ -841,12 +890,14 @@ class VerificationPolicyTests(unittest.TestCase):
                         for target in policy.RETAINED_TARGETS
                     ),
                 )
-                self.assertEqual(
-                    frozenset(
-                        {"prepared-text-package-text-run-focused"}
-                    ),
-                    plan.flags,
-                )
+                expected_flags = {
+                    "prepared-text-package-text-run-focused"
+                }
+                if changed_path == "src/prepared_text_session.zig":
+                    expected_flags.add(
+                        "prepared-text-unary-service-focused"
+                    )
+                self.assertEqual(frozenset(expected_flags), plan.flags)
                 self.assertFalse(plan.requires("native-full"))
                 self.assertFalse(plan.requires("python-full"))
                 for target_plan in plan.target_plans:
@@ -3157,6 +3208,59 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 calls,
             )
 
+    def test_affected_fast_unary_service_uses_one_focused_build(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            service = repository / "src" / "prepared_text_unary_service.zig"
+            service.write_text("", encoding="ascii")
+            test_root = repository / "tests" / "unary_text_service.zig"
+            test_root.write_text("", encoding="ascii")
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  native/prepared-text-unary-service: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "native/releasesafe-suite: covered",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            focused_calls = [
+                line
+                for line in calls
+                if line.startswith("build unary-text-service-test ")
+            ]
+            self.assertEqual(1, len(focused_calls), calls)
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(focused_calls, build_calls, calls)
+            self.assertFalse(
+                any(
+                    "model_forward" in line
+                    or "text-runtime-golden-path-test" in line
+                    or "package-module-test" in line
+                    or " -Dtarget=" in line
+                    for line in calls
+                ),
+                calls,
+            )
+
     def test_affected_fast_package_text_paths_share_one_focused_build(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -3203,6 +3307,11 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "focused host Zig DAG",
                 result.stdout,
             )
+            self.assertIn(
+                "PASS  native/prepared-text-unary-service: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
             self.assertNotIn(
                 "native/prepared-text-recovery",
                 result.stdout,
@@ -3219,7 +3328,10 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             focused_calls = [
                 line
                 for line in calls
-                if line.startswith("build text-runtime-golden-path-test ")
+                if line.startswith(
+                    "build unary-text-service-test "
+                    "text-runtime-golden-path-test "
+                )
             ]
             self.assertEqual(1, len(focused_calls), calls)
             build_calls = [line for line in calls if line.startswith("build ")]
@@ -3242,9 +3354,10 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             cli = repository / "src" / "cli"
             cli.mkdir()
             (cli / "text_run.zig").write_text("", encoding="ascii")
-            server = repository / "src" / "server"
-            server.mkdir()
-            (server / "unary_text.zig").write_text("", encoding="ascii")
+            (repository / "src" / "prepared_text_unary_service.zig").write_text(
+                "",
+                encoding="ascii",
+            )
 
             result = self.run_affected_fast(
                 repository,
@@ -3263,7 +3376,8 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout,
             )
             self.assertIn(
-                "PASS  package/modules: covered by the shared host Zig DAG",
+                "PASS  native/prepared-text-unary-service: covered by the "
+                "focused host Zig DAG",
                 result.stdout,
             )
             calls = (
@@ -3275,11 +3389,12 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertEqual(1, len(build_calls), calls)
             self.assertTrue(
                 build_calls[0].startswith(
-                    "build contract-interop-test package-module-test "
+                    "build unary-text-service-test "
                     "text-runtime-golden-path-test "
                 ),
                 build_calls,
             )
+            self.assertNotIn("package-module-test", build_calls[0])
             self.assertNotIn("-Dtarget=", build_calls[0])
 
     def test_affected_fast_direct_terminal_smoke_runs_only_smoke_target(self):

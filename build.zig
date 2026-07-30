@@ -1041,6 +1041,38 @@ pub fn build(b: *std.Build) void {
     if (int4_neon) |lib| model_tests.linkLibrary(lib);
     const run_model_tests = b.addRunArtifact(model_tests);
 
+    // Focused bounded unary text-service acceptance gate. Keep this separate
+    // from the broad model-forward root so serving lifecycle changes compile
+    // and run only the exact tiny-model surface they affect.
+    const unary_text_service_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unary_text_service.zig"),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    unary_text_service_tests.root_module.addImport("engine", engine_mod);
+    unary_text_service_tests.root_module.addImport("core", core_mod);
+    unary_text_service_tests.linkLibC();
+    if (int4_neon) |lib| unary_text_service_tests.linkLibrary(lib);
+    const run_unary_text_service_tests =
+        b.addRunArtifact(unary_text_service_tests);
+    const unary_text_service_test_step = b.step(
+        "unary-text-service-test",
+        "Run focused bounded unary text-service acceptance tests",
+    );
+    unary_text_service_test_step.dependOn(
+        &run_unary_text_service_tests.step,
+    );
+    const unary_text_service_compile_step = b.step(
+        "unary-text-service-compile",
+        "Compile bounded unary text-service acceptance tests",
+    );
+    unary_text_service_compile_step.dependOn(
+        &unary_text_service_tests.step,
+    );
+
     // Grounded DecodeLane4 evidence primitives remain separate from the
     // production CLI: fixed lane-local token journals and the four-request
     // post-commit barrier can therefore be tested without pulling protocol or
@@ -1239,6 +1271,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_integration_tests.step);
     test_step.dependOn(&run_pager_tests.step);
     test_step.dependOn(&run_model_tests.step);
+    test_step.dependOn(&run_unary_text_service_tests.step);
     test_step.dependOn(&run_lane4_runner_core_tests.step);
     test_step.dependOn(&run_lane4_runner_observation_tests.step);
     test_step.dependOn(&run_lane4_event_wire_tests.step);
@@ -1269,6 +1302,7 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&integration_tests.step);
     test_compile_step.dependOn(&pager_tests.step);
     test_compile_step.dependOn(&model_tests.step);
+    test_compile_step.dependOn(&unary_text_service_tests.step);
     test_compile_step.dependOn(&lane4_runner_core_tests.step);
     test_compile_step.dependOn(&lane4_runner_observation_tests.step);
     test_compile_step.dependOn(&lane4_event_wire_tests.step);
@@ -6921,6 +6955,9 @@ pub fn build(b: *std.Build) void {
     profile_cpu_compile_step.dependOn(&integration_tests.step);
     profile_cpu_compile_step.dependOn(&pager_tests.step);
     profile_cpu_compile_step.dependOn(&model_tests.step);
+    profile_cpu_compile_step.dependOn(
+        &unary_text_service_tests.step,
+    );
 
     const profile_durable_compile_step = b.step(
         "profile-durable-compile",

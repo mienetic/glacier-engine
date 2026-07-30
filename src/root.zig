@@ -270,6 +270,8 @@ pub const prepared_text_checkpoint =
 pub const prepared_text_session = @import("prepared_text_session.zig");
 pub const prepared_text_raw_input =
     @import("prepared_text_raw_input.zig");
+pub const prepared_text_unary_service =
+    @import("prepared_text_unary_service.zig");
 pub const prepared_text_input_archive =
     @import("prepared_text_input_archive.zig");
 pub const prepared_text_source_lease =

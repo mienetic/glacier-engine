@@ -6,6 +6,17 @@ before the first stable release.
 
 ## Unreleased
 
+### Added
+
+- An experimental bounded, transport-neutral prepared-text unary service now
+  composes one package-bound model with a dedicated Scheduler/Bank pair,
+  caller-sized active and retained-record storage, exact idempotency,
+  cancellation with hidden partial output, generation-fenced handles,
+  fail-stop, and zero-ownership close. The package-aware process-local
+  fixed-output `text-run` branch is the first compatibility-checked consumer;
+  network transport, streaming, durable replay, authentication, GPU execution,
+  and performance evidence remain open.
+
 ### Changed
 
 - Contributor verification now has an `affected-fast` tier. Documentation-only
@@ -18,6 +29,10 @@ before the first stable release.
   Ordinary package-producer, package-aware `text-run`, bounded-input, and
   package/raw-input-oracle changes reuse the existing focused
   `text-runtime-golden-path-test` DAG.
+  Bounded unary-service changes use a dedicated tiny-package acceptance root
+  and compile-only retained-target companion instead of the broad
+  model-forward suite. Package-aware CLI and prepared-session changes run that
+  root together with the text-runtime golden path in one host Zig invocation.
   Prepared-text session changes now select only the CPU, durable, and host-tool
   compile profiles, while the process-local variable-terminal module selects
   only the host-tool profile; both reuse that same host golden DAG instead of

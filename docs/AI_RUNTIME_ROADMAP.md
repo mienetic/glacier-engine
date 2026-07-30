@@ -1844,6 +1844,53 @@ cancellation campaigns, exhaustive storage faults, physical power loss,
 GPU-resident execution, remote effects, hostile writers, Win32 durable
 publication, native multi-OS evidence, or unary/streaming serving.
 
+#### R1k-b6 — Bounded process-local unary service kernel
+
+Status: **integrated experimental CPU/process-local lifecycle slice**.
+
+`prepared_text_unary_service` keeps one exact package-bound prepared model,
+dedicated `LaneWeave` Scheduler, and `ResourceBank` alive across multiple
+bounded fixed-output requests. Caller-owned active and record slices fix the
+maximum concurrent and retained-idempotency capacities before initialization.
+Each canonical intent binds the model representation, tokenizer, raw UTF-8
+identity, logical tenant, deadline, idempotency key, and runtime identity.
+
+Exact active or terminal retries return the retained handle without another
+admission or model step. The same tenant/key pair with a changed intent
+conflicts. New work that exceeds service capacity rejects before Scheduler or
+Bank mutation. Accepted requests publish through fixed private sinks; progress
+reports counts but no token IDs. Cancellation retains only the private count
+and transcript root and declares zero externally visible tokens.
+
+Terminal completion validates the private transcript against `SessionV3`
+output, seals Common Model Contract evidence while the receipt remains live,
+copies output into fixed response storage, retires Scheduler/Bank ownership,
+deinitializes the Session, and only then installs the public unary response.
+Generation-fenced handles reject evicted-slot reuse. Successful service close
+requires no active requests and verifies zero Scheduler/Bank ownership.
+Start-adoption cleanup is retryable only while its exact authority remains
+retained. Later publication rollback uncertainty, unknown permits, or runtime
+drift enters fail-stop instead of guessing a result.
+
+The package-aware, non-durable, fixed-output `text-run` branch is the first
+consumer. It preserves the retained request, scheduling, sink, plan, terminal,
+output, transcript, and JSON identities; the installed golden path remains the
+independent compatibility gate. The package-free retained fixture,
+explicit-EOS, and durable branches keep their earlier direct contracts.
+
+The focused tiny ordinary-package gate compares two interleaved requests with
+independent generation oracles and covers active/completed replay, conflict,
+capacity immutability, cancellation after a private prefix, stale handles,
+retained responses, and zero-ownership close. Service-only affected
+verification runs this root without the broad model-forward suite and uses its
+compile-only companion for retained targets.
+
+This is not a network server. It adds no HTTP/RPC route, background worker,
+committed-token streaming, durable idempotency, process-death recovery, GPU
+execution, authentication, quota, production-model quality, or performance
+claim. See
+[Bounded Prepared-Text Unary Service](PREPARED_TEXT_UNARY_SERVICE.md).
+
 #### Public durable-runtime composition foundation
 
 Status: **integrated experimental Zig surface**.

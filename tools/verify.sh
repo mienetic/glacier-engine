@@ -332,6 +332,9 @@ run_prepared_text_focused_build() {
     if [ "$generic_host_zig_requested" -eq 1 ]; then
         set -- "$@" contract-interop-test package-module-test
     fi
+    if [ "$prepared_text_unary_service_requested" -eq 1 ]; then
+        set -- "$@" unary-text-service-test
+    fi
     if [ "$prepared_text_package_text_run_requested" -eq 1 ]; then
         set -- "$@" text-runtime-golden-path-test
     fi
@@ -519,7 +522,7 @@ run_target_plan() {
                 ;;
         esac
         case "$selected_step" in
-            install | install-benchmarks | test-compile | profile-core-compile | profile-cpu-compile | profile-durable-compile | profile-device-compile | profile-host-tool-compile | profile-complete-compile) ;;
+            install | install-benchmarks | test-compile | unary-text-service-compile | profile-core-compile | profile-cpu-compile | profile-durable-compile | profile-device-compile | profile-host-tool-compile | profile-complete-compile) ;;
             *)
                 record_fail "verifier/target-steps" \
                     "policy emitted an unknown target step: $selected_step"
@@ -556,11 +559,12 @@ run_target_plan() {
                 selected_step_words="$selected_step_words $selected_step"
             fi
             case "$selected_step" in
-                profile-core-compile) profile_rank=1 ;;
-                profile-cpu-compile) profile_rank=2 ;;
-                profile-durable-compile) profile_rank=3 ;;
-                profile-device-compile) profile_rank=4 ;;
-                profile-host-tool-compile) profile_rank=5 ;;
+                unary-text-service-compile) profile_rank=1 ;;
+                profile-core-compile) profile_rank=2 ;;
+                profile-cpu-compile) profile_rank=3 ;;
+                profile-durable-compile) profile_rank=4 ;;
+                profile-device-compile) profile_rank=5 ;;
+                profile-host-tool-compile) profile_rank=6 ;;
                 install | install-benchmarks | test-compile | profile-complete-compile) profile_rank=0 ;;
                 *) selected_steps_valid=0 ;;
             esac
@@ -683,11 +687,17 @@ fi
 
 generic_host_zig_requested=1
 prepared_text_focused_requested=0
+prepared_text_unary_service_requested=0
 prepared_text_delivery_requested=0
 prepared_text_direct_terminal_smoke_requested=0
 prepared_text_inspector_requested=0
 prepared_text_package_text_run_requested=0
 prepared_text_recovery_requested=0
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "prepared-text-unary-service-focused"; then
+    prepared_text_unary_service_requested=1
+    prepared_text_focused_requested=1
+fi
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "prepared-text-package-text-run-focused"; then
     prepared_text_package_text_run_requested=1
@@ -814,6 +824,10 @@ fi
 if [ "$prepared_text_focused_requested" -eq 1 ] &&
     [ "$prepared_text_focused_in_quick" -eq 1 ]; then
     if [ "$host_quick_status" -eq 0 ]; then
+        if [ "$prepared_text_unary_service_requested" -eq 1 ]; then
+            record_pass "native/prepared-text-unary-service" \
+                "covered by the focused host Zig DAG"
+        fi
         if [ "$prepared_text_delivery_requested" -eq 1 ]; then
             record_pass "native/prepared-text-delivery" \
                 "covered by the focused host Zig DAG"
@@ -835,6 +849,10 @@ if [ "$prepared_text_focused_requested" -eq 1 ] &&
                 "covered by the focused host Zig DAG"
         fi
     else
+        if [ "$prepared_text_unary_service_requested" -eq 1 ]; then
+            record_skip "native/prepared-text-unary-service" \
+                "focused host Zig DAG failed"
+        fi
         if [ "$prepared_text_delivery_requested" -eq 1 ]; then
             record_skip "native/prepared-text-delivery" \
                 "focused host Zig DAG failed"
@@ -859,6 +877,11 @@ if [ "$prepared_text_focused_requested" -eq 1 ] &&
 elif [ "$prepared_text_focused_requested" -eq 1 ] &&
     [ "$run_native_full" -eq 0 ]; then
     if [ "$host_name" != "Darwin" ] && [ "$host_name" != "Linux" ]; then
+        if [ "$prepared_text_unary_service_requested" -eq 1 ]; then
+            record_native_unavailable \
+                "native/prepared-text-unary-service" \
+                "requires native macOS or Linux execution"
+        fi
         if [ "$prepared_text_delivery_requested" -eq 1 ]; then
             record_native_unavailable "native/prepared-text-delivery" \
                 "requires native macOS or Linux execution"
@@ -881,6 +904,11 @@ elif [ "$prepared_text_focused_requested" -eq 1 ] &&
                 "requires native macOS or Linux execution"
         fi
     else
+        if [ "$prepared_text_unary_service_requested" -eq 1 ]; then
+            record_native_unavailable \
+                "native/prepared-text-unary-service" \
+                "requires working zig and python3 executables"
+        fi
         if [ "$prepared_text_delivery_requested" -eq 1 ]; then
             record_native_unavailable "native/prepared-text-delivery" \
                 "requires working zig and python3 executables"

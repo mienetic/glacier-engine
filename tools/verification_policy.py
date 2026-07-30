@@ -34,6 +34,7 @@ FULL_TARGET_STEPS: Tuple[str, ...] = (
     "test-compile",
 )
 FOCUSED_TARGET_STEPS: Tuple[str, ...] = (
+    "unary-text-service-compile",
     "profile-core-compile",
     "profile-cpu-compile",
     "profile-durable-compile",
@@ -282,6 +283,11 @@ PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = {
     "bench/tests/test_prepared_text_package.py",
     "bench/tests/test_prepared_text_raw_input.py",
     "bench/text_runtime_golden_path.py",
+}
+
+PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS = {
+    "src/prepared_text_unary_service.zig",
+    "tests/unary_text_service.zig",
 }
 
 WORKLOAD_REPORT_PORTABLE_PATHS = {
@@ -810,6 +816,13 @@ def _decision_for_path(path: str) -> PathDecision:
 
     if lower in PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS:
         package_text_flags = {"prepared-text-package-text-run-focused"}
+        if lower in {
+            "src/cli/text_run.zig",
+            "src/prepared_text_session.zig",
+        }:
+            package_text_flags.add(
+                "prepared-text-unary-service-focused"
+            )
         if suffix == ".py":
             package_text_flags.add("python-changed")
         package_text_targets = RETAINED_TARGETS if suffix == ".zig" else ()
@@ -831,6 +844,15 @@ def _decision_for_path(path: str) -> PathDecision:
             frozenset(package_text_flags),
             package_text_targets,
             package_text_steps,
+        )
+
+    if lower in PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS:
+        return PathDecision(
+            path,
+            "bounded unary service lifecycle or focused acceptance root changed",
+            frozenset({"prepared-text-unary-service-focused"}),
+            RETAINED_TARGETS,
+            ("unary-text-service-compile",),
         )
 
     if path in PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS:
@@ -1141,6 +1163,10 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
         ("darwin-aarch64-native", "native/darwin-aarch64"),
         ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
+        (
+            "prepared-text-unary-service-focused",
+            "native/prepared-text-unary-service",
+        ),
         ("prepared-text-delivery-focused", "native/prepared-text-delivery"),
         (
             "prepared-text-direct-terminal-smoke-focused",
@@ -1187,6 +1213,10 @@ def print_report(plan: VerificationPlan) -> None:
         ("darwin-aarch64-native", "native/darwin-aarch64"),
         ("darwin-swift", "native/darwin-swift"),
         ("metal-native", "native/metal"),
+        (
+            "prepared-text-unary-service-focused",
+            "native/prepared-text-unary-service",
+        ),
         ("prepared-text-delivery-focused", "native/prepared-text-delivery"),
         (
             "prepared-text-direct-terminal-smoke-focused",
