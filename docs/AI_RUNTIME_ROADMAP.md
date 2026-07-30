@@ -961,7 +961,7 @@ Current state: **idea to prototype**, depending on component. Core contracts
 already use scoped grants, but a public extension ABI, worker protocol, stable
 SDK, installer, and compatibility policy do not yet exist. A first
 core-only, experimental C ABI can now verify one complete Model Contract V1
-artifact-plan-result chain, enumerate eleven retained-reference profiles, and
+artifact-plan-result chain, enumerate twelve retained-reference profiles, and
 query matching support-mask bits from C, Python, or Rust without exposing
 runtime struct layouts; the C++ consumer checks linkage, layouts, count, and
 registry constants. This is a compatibility seed, not the stable SDK.
@@ -995,7 +995,7 @@ expand the base adapter's capabilities.
 | Family | Representative operations | Current state | First retained slice | Integration gate |
 | --- | --- | --- | --- | --- |
 | Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication, generation-one source replay, fresh-process handoff, acknowledged local sink progress, and package-aware checked durable fixed-output `1..64` CLI integration are experimental on the POSIX durable adapter | Run the same checked route with one small legal production artifact and add focused target-boundary restart/cancellation evidence | Declared numerical equivalence, exact KV ownership, recoverable source exit, replay-safe external publication |
-| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result, vision/audio/temporal-video embedding fixtures, a generic exact-integer dense-tensor reranker with canonical ranked items, a generic dense encoder with exact Q30 L2 normalization, and a generic exact-integer classifier with authenticated batch/class maps and deterministic winners integrated | Compose embedding-to-retrieval under the same lifecycle and add production adapters | Generic class-score publication is integrated; retrieval/index identity, calibrated production quality, and production adapters remain |
+| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result, vision/audio/temporal-video embedding fixtures, a generic exact-integer dense-tensor reranker with canonical ranked items, a generic dense encoder with exact Q30 L2 normalization, a generic exact-integer classifier with authenticated batch/class maps, and fixed-corpus exact retrieval under the shared stateless lifecycle integrated | Add an optional identity-preserving retrieval-to-reranker handoff and production adapters | Generic class-score and retrieval-hit publication are integrated; calibrated production quality and production adapters remain |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, fresh-process stateful transcript continuation, and restartable exact word-timing/speaker publication integrated; production model gated | Add language/punctuation, overlapping-speaker policy, and crash-atomic checkpoint composition | No sample loss/duplication, exact streaming restart, annotation lineage, calibrated production quality |
 | Speech and audio generation | TTS, codec/audio token generation | Bounded exact-integer PCM publication, cancellation-safe retry, one-buffer backpressure, application acknowledgement, distinct-process restart, shared generated-output checkpoint composition, multi-chunk registry continuity with exact encoded payloads, host-verified retained source-model/renderer replay with separate registry-bound evidence, a validated bounded PCM s16le WAVE profile, and a real two-generation registry-transition-format chain with independent oracle coverage; production model/device paths gated | Add a production renderer/codec adapter, broader profiles, and additional replay profiles | Quality evidence, production container conformance, explicit device authority, physical playback evidence |
@@ -1005,7 +1005,7 @@ expand the base adapter's capabilities.
 | Audio/music generation | acoustic or token steps, waveform decode | Shared bounded exact-integer waveform-output transaction, multi-chunk registry continuity, and a retained deterministic producer-transition replay profile integrated; music models gated | Add a legal production artifact, additional replay profile, or production renderer/codec fixture | Timeline continuity, chunk lineage, rights/provenance policy, calibrated quality |
 | Multimodal fusion | cross-attention, joint embedding, interleaved generation | Idea; shared identities exist | Image+text or audio+text synthetic fusion fixture | Each modality retains source/state identity through one output transaction |
 | Tool-use and agent policy | choose action, arguments, observation, continue | Process-local typed transaction plus portable ActionOutbox record/recovery, ambiguity reconciliation, safe retry, compensation-child protocol, descriptor-relative POSIX durable storage, and a bounded same-process fake dispatch/status authority integrated; live adapters gated | Add a live provider/tool adapter with real credential handling, restart-persistent authoritative state, and an optional OS-isolated transport without changing the retained protocol or storage proofs | Separate action authorization, idempotency, result identity, cancellation, capability isolation, durable dispatch |
-| Retrieval and recommendation | embed, search, rerank, recommend | Prerequisite normalized embedding contract integrated; corpus/search composition remains an idea | In-memory fixed corpus, exact similarity/top-k tie policy, and optional reranker handoff | Index/version identity, tenant filtering, deterministic tie/evidence policy |
+| Retrieval and recommendation | embed, search, rerank, recommend | Bounded fixed-corpus exact scan integrated with authenticated index/version, tenant visibility, one-row query, Q30 similarity, deterministic top-k ties, and atomic stateless publication | Bind selected candidates to an optional reranker handoff, then add durable and separately identified approximate index strategies | Persistent index publication, production quality, optional reranking, and production adapters remain |
 | Time-series and tabular | forecast, classify, anomaly score | Idea | Tiny typed table/window fixture | Schema/time identity, missing-value policy, exact output horizon |
 | Graph, geospatial, and scientific | message passing, field inference, simulation surrogate | Idea | Small bounded graph or grid fixture | Topology/coordinate/unit identity, resource bound, typed scientific output |
 | Mixture and routed models | expert route, sparse execution, merge | Idea | Fake experts with deterministic router | Expert identity, route evidence, capacity/drop policy, state ownership |
@@ -1016,6 +1016,27 @@ expand the base adapter's capabilities.
 This map is extensible. A new family joins by specifying typed artifacts,
 operations, state, output, publication unit, authority, and promotion evidence;
 it does not require changing the meaning of existing families.
+
+## Current execution priority
+
+The roadmap retains the full runtime scope, but ordinary development follows a
+core-first order:
+
+1. finish the usable R1 CPU text/package/serving vertical and its exact
+   ownership, publication, cancellation, and restart contracts;
+2. harden the shared adapter, registry, scheduling, resource, and result
+   primitives used by several model families;
+3. add only the portability work required to run and verify those core paths on
+   supported hosts; and
+4. take later family, accelerator, distributed, approximate-index, long-soak,
+   and exhaustive-matrix work when a promotion gate, maintained backend, or
+   claimed contributor slice needs it.
+
+Ordinary pull requests and `main` pushes use changed-path focused verification.
+Broad ReleaseSafe, retained-target, native accelerator, and exhaustive suites
+are promotion work for explicit manual runs and tagged releases. This ordering
+reduces repeated compilation without removing later runtime capabilities from
+the roadmap.
 
 ## Delivery sequence
 
@@ -1037,7 +1058,7 @@ without family-specific fields leaking into the common wire.
 
 Exit evidence: vision u8 patches, audio i16 feature windows, strided video u8
 frames, transcript/segment outputs, and a stateful latent step share the common
-contract vocabulary while retaining distinct adapter behavior. Ten
+contract vocabulary while retaining distinct adapter behavior. Twelve
 append-only exact-integer profiles are derived directly from retained adapter
 support constants. Compile-time coverage checks, bounded query/rejection tests,
 fixed-width C consumers, standard-library Python, dependency-free Rust, and a
@@ -2207,41 +2228,53 @@ exact resume. A truly clean-host/native multi-OS run remains open.
 
 ### R2 — Stateless tensor families
 
-- add encoder/embedding/reranker/classifier operations; vision, audio, and
+- add encoder/embedding/reranker/classifier/retrieval operations; vision, audio,
+  and
   temporal-video encode operations, one generic dense-tensor reranker, and one
   generic normalized dense-tensor embedding fixture are retained, and the
   generic [dense-tensor classifier](DENSE_TENSOR_CLASSIFIER.md) now retains an
   exact `i16 × i8 → i64` class-score matrix for `B <= 64`, `F <= 4,096`, and
-  `C <= 256`; production adapters remain;
+  `C <= 256`; fixed-corpus
+  [dense-tensor retrieval](DENSE_TENSOR_RETRIEVAL.md) now retains one query,
+  up to 64 corpus rows, authenticated tenant visibility, and exact top-k
+  publication; production adapters remain;
 - define typed tensor/vector/score result envelopes; the fixed integer
   embedding envelope, canonical ranked-item elements, authenticated class map,
-  fixed class-score policy, compact signed-`i64` score matrix, and contextual
-  matrix root are complete for the retained generic fixtures;
+  fixed class-score policy, compact signed-`i64` score matrix, contextual
+  matrix root, retrieval index/query/policy wires, and fixed-capacity
+  authenticated retrieval-hit result are complete for the retained generic
+  fixtures;
 - add deterministic batch-item mapping and tie/normalization policy; exact
   batch mapping is complete for vision, audio, selected video frames, the
   generic reranker, embedding, and classifier fixtures; the reranker fixes no
   normalization, descending score, and input-ordinal tie order; the embedding
   fixture fixes Q30 L2, exact squared-threshold arithmetic,
-  nearest-ties-to-even rounding, and zero-vector rejection; and the classifier
+  nearest-ties-to-even rounding, and zero-vector rejection; the classifier
   fixes a stable class map, no normalization, descending score, and
-  class-ordinal tie order for deterministic winners;
+  class-ordinal tie order for deterministic winners; and retrieval filters
+  tenant visibility before checked `i128` Q30 dot scoring, reduces with
+  nearest-ties-to-even, sorts descending, and breaks ties by corpus ordinal;
 - integrate `ResourceBank`, `LaneWeave`, cancellation, and provider routing;
   scheduler receipt handoff, final-service typed publication, cancellation,
   and retirement are integrated for the retained bounded media runtime,
   vision/audio/temporal-video stateless adapters, dense-tensor reranker, and
-  normalized dense embedding, and generic classifier, while mixed-family
-  workload profiles, provider routing, and production adapters remain.
+  normalized dense embedding, generic classifier, and fixed-corpus retrieval,
+  while mixed-family workload profiles, provider routing, and production
+  adapters remain.
 
 Retained-slice exit gate (**met**): prepared-text generation, the exact-integer
-dense-tensor reranker, normalized dense embedding, and generic classifier share
-the common artifact, plan, result, admission, ownership, and publication planes
-while retaining different state and publication semantics. The classifier also
-retains direct and scheduled atomic publication, cancellation, zero final
-ownership, append-only registry profile 10 of 11, and cross-language discovery.
-This completes only the generic classification slice. It does not complete
-retrieval composition, probability/calibration/label semantics,
-provider-routing, production-model adapters or quality, GPU execution, native
-multi-OS validation, performance evidence, or provider-token reduction in R2.
+dense-tensor reranker, normalized dense embedding, generic classifier, and
+fixed-corpus retrieval share the common artifact, plan, result, admission,
+ownership, and publication planes while retaining different state and
+publication semantics. Registry profiles 10 and 11 of 12 append classification
+and retrieval without changing earlier meanings. Retrieval additionally
+retains candidate reconstruction, tenant filtering before ranking, direct and
+scheduled atomic publication, cancellation, zero final ownership, and
+cross-language discovery. These generic slices do not complete
+probability/calibration/label semantics, optional retrieval-to-reranker
+handoff, persistent or approximate indexes, provider routing,
+production-model adapters or quality, GPU execution, native multi-OS
+validation, performance evidence, or provider-token reduction in R2.
 
 ### R3 — Streaming perception
 
@@ -2407,7 +2440,10 @@ for profile, format-sidecar, inspector, portability, and nonclaim boundaries.
 - [x] add action proposal separate from action authorization through W4b-a;
 - [x] add an idempotent bounded fake-tool/result transaction through W4b-a;
 - add capability-scoped live tool dispatch with OS-isolated credentials;
-- add retrieval/index identity and deterministic result publication;
+- [x] add bounded retrieval/index identity, tenant filtering, exact scoring,
+  and deterministic result publication for one fixed in-memory corpus;
+- bind selected retrieval candidates to an optional reranker handoff, then add
+  durable and separately identified approximate index strategies;
 - publish templates for time-series, graph, geospatial, and scientific adapters;
 - validate routed experts and adapter composition.
 

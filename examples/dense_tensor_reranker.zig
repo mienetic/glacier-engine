@@ -5,7 +5,10 @@ const core = @import("core");
 const embedding_demo = @import("dense_tensor_embedding_demo.zig");
 const reranker = core.dense_tensor_reranker;
 const classifier = core.dense_tensor_classifier;
+const retrieval = core.dense_tensor_retrieval;
 const tensor_result = core.stateless_tensor_result;
+const embedding_result = core.stateless_embedding_result;
+const retrieval_result = core.stateless_retrieval_result;
 const resource_bank = core.resource_bank;
 const model = core.model_contract;
 
@@ -26,6 +29,8 @@ pub fn main() !void {
             return runClassifier();
         if (std.mem.eql(u8, arguments[1], "embed"))
             return embedding_demo.runEmbedding();
+        if (std.mem.eql(u8, arguments[1], "retrieve"))
+            return runRetrieval();
     }
     return error.UnexpectedArgument;
 }
@@ -234,6 +239,145 @@ fn runClassifier() !void {
                 winner.class_id,
                 winner.class_ordinal,
                 winner.score,
+            },
+        );
+    }
+    try writer.writeAll("],\"verified\":true}\n");
+    try writer.flush();
+}
+
+fn runRetrieval() !void {
+    var fixture = try retrieval.ReferenceFixtureV1.init();
+    const corpus_map = try fixture.corpusMap();
+    const query_map = try fixture.queryMap();
+    const embedding_policy = try fixture.embeddingPolicy();
+    const retrieval_policy = try fixture.retrievalPolicy();
+    const visibility = try fixture.visibility();
+    const index = try fixture.index();
+    const query_binding = try fixture.queryBinding();
+    var context = fixture.referenceContext();
+    const adapter = try retrieval.referenceAdapterV1(
+        fixture.manifest,
+        &context,
+    );
+    var slots = [_]resource_bank.Slot{.{}} ** 2;
+    var bank = try resource_bank.Bank.init(
+        &slots,
+        .{},
+        0x4445_4d4f_5254,
+    );
+    var session: retrieval.Session = .{};
+    try session.initV1(
+        &bank,
+        0x4445_4d4f_5257,
+        &fixture.publication_state,
+        fixture.manifest,
+        fixture.plan,
+        adapter,
+    );
+    var candidate: [retrieval.reference_output_bytes]u8 =
+        undefined;
+    var output: [candidate.len]u8 = undefined;
+    _ = try session.prepareV1(
+        fixture.binding,
+        index,
+        corpus_map,
+        query_map,
+        embedding_policy,
+        retrieval_policy,
+        visibility,
+        query_binding,
+        &fixture.packed_weights,
+        &fixture.query_embedding,
+        &candidate,
+        &output,
+    );
+    const result = try session.commitV1();
+    try session.closeAndRelease();
+    if (!(try bank.snapshot()).used.isZero())
+        return error.OwnershipLeak;
+    if (!std.mem.eql(
+        u8,
+        &result.output_sha256,
+        &model.sha256(&output),
+    )) return error.EvidenceMismatch;
+
+    const corpus_embedding =
+        try embedding_result.decodeAndValidateNormalizedEmbeddingV1(
+            fixture.packed_weights[retrieval_result.retrieval_index_bytes..],
+            corpus_map.batch_map_sha256,
+            embedding_policy.encoded,
+            retrieval.reference_corpus_item_ids.len,
+            retrieval.reference_dimensions,
+        );
+    const query_embedding =
+        try embedding_result.decodeAndValidateNormalizedEmbeddingV1(
+            &fixture.query_embedding,
+            query_map.batch_map_sha256,
+            embedding_policy.encoded,
+            1,
+            retrieval.reference_dimensions,
+        );
+    const retrieved = try retrieval_result.decodeRetrievalResultV1(
+        &output,
+        corpus_map,
+        visibility,
+        embedding_policy,
+        corpus_embedding,
+        index,
+        query_map,
+        query_embedding,
+        retrieval_policy,
+        query_binding,
+    );
+
+    var stdout_buffer: [32 * 1024]u8 = undefined;
+    var stdout_writer =
+        std.fs.File.stdout().writer(&stdout_buffer);
+    const writer = &stdout_writer.interface;
+    try writer.writeAll(
+        "{\"schema\":\"glacier.dense-tensor-retrieval/v1\"," ++
+            "\"corpus_map_hex\":\"",
+    );
+    try writeHex(writer, corpus_map.encoded);
+    try writer.writeAll("\",\"query_map_hex\":\"");
+    try writeHex(writer, query_map.encoded);
+    try writer.writeAll("\",\"embedding_policy_hex\":\"");
+    try writeHex(writer, embedding_policy.encoded);
+    try writer.writeAll("\",\"retrieval_policy_hex\":\"");
+    try writeHex(writer, retrieval_policy.encoded);
+    try writer.writeAll("\",\"visibility_hex\":\"");
+    try writeHex(writer, visibility.encoded);
+    try writer.writeAll("\",\"index_hex\":\"");
+    try writeHex(writer, index.encoded);
+    try writer.writeAll("\",\"query_binding_hex\":\"");
+    try writeHex(writer, query_binding.encoded);
+    try writer.writeAll("\",\"packed_weights_hex\":\"");
+    try writeHex(writer, &fixture.packed_weights);
+    try writer.writeAll("\",\"query_embedding_hex\":\"");
+    try writeHex(writer, &fixture.query_embedding);
+    try writer.writeAll("\",\"retrieval_result_hex\":\"");
+    try writeHex(writer, &output);
+    try writer.writeAll("\",\"output_sha256\":\"");
+    try writeHex(writer, &result.output_sha256);
+    try writer.writeAll("\",\"source_mapping_sha256\":\"");
+    try writeHex(writer, &result.source_mapping_sha256);
+    try writer.writeAll("\",\"result_sha256\":\"");
+    try writeHex(writer, &result.result_sha256);
+    try writer.writeAll("\",\"retrieval_result_sha256\":\"");
+    try writeHex(writer, &retrieved.retrieval_result_sha256);
+    try writer.writeAll("\",\"hits\":[");
+    for (0..retrieved.hit_count) |hit_index| {
+        if (hit_index != 0) try writer.writeByte(',');
+        const hit = try retrieved.hit(hit_index);
+        try writer.print(
+            "{{\"rank\":{d},\"item_id\":{d}," ++
+                "\"corpus_ordinal\":{d},\"score_q30\":{d}}}",
+            .{
+                hit.rank,
+                hit.item_id,
+                hit.corpus_ordinal,
+                hit.score,
             },
         );
     }

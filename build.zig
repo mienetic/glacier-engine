@@ -1478,8 +1478,8 @@ pub fn build(b: *std.Build) void {
     host_runtime_compile_step.dependOn(test_compile_step);
     host_runtime_compile_step.dependOn(contract_c_compile_step);
 
-    // The retained dense-tensor reranker, classifier, and embedding fixtures
-    // share one focused Zig test artifact and one multi-mode demo executable.
+    // The retained dense-tensor reranker, classifier, embedding, and retrieval
+    // fixtures share one focused Zig test artifact and one multi-mode demo.
     // Each compatibility step below selects only its independent oracle while
     // reusing those two compiled artifacts.
     const dense_tensor_family_tests = b.addTest(.{
@@ -1510,6 +1510,7 @@ pub fn build(b: *std.Build) void {
     const run_dense_tensor_reranker = b.addRunArtifact(
         dense_tensor_family_exe,
     );
+    if (b.args) |args| run_dense_tensor_reranker.addArgs(args);
     const dense_tensor_reranker_demo_step = b.step(
         "dense-tensor-reranker-demo",
         "Print the canonical dense-tensor reranking result",
@@ -1619,6 +1620,59 @@ pub fn build(b: *std.Build) void {
         &run_dense_tensor_embedding_python_tests.step,
     );
 
+    const run_dense_tensor_retrieval = b.addRunArtifact(
+        dense_tensor_family_exe,
+    );
+    run_dense_tensor_retrieval.addArg("retrieve");
+    const dense_tensor_retrieval_demo_step = b.step(
+        "dense-tensor-retrieval-demo",
+        "Print the canonical fixed-corpus retrieval result",
+    );
+    dense_tensor_retrieval_demo_step.dependOn(
+        &run_dense_tensor_retrieval.step,
+    );
+
+    const run_dense_tensor_retrieval_oracle =
+        b.addSystemCommand(&.{"python3"});
+    run_dense_tensor_retrieval_oracle.setCwd(b.path("."));
+    run_dense_tensor_retrieval_oracle.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+    run_dense_tensor_retrieval_oracle.addFileArg(
+        b.path("bench/stateless_retrieval_result.py"),
+    );
+    run_dense_tensor_retrieval_oracle.addArg("--shared-demo");
+    run_dense_tensor_retrieval_oracle.addArtifactArg(
+        dense_tensor_family_exe,
+    );
+    const run_dense_tensor_retrieval_python_tests =
+        b.addSystemCommand(&.{
+            "python3",
+            "-m",
+            "unittest",
+            "bench.tests.test_stateless_retrieval_result",
+        });
+    run_dense_tensor_retrieval_python_tests.setCwd(b.path("."));
+    run_dense_tensor_retrieval_python_tests.setEnvironmentVariable(
+        "PYTHONDONTWRITEBYTECODE",
+        "1",
+    );
+
+    const dense_tensor_retrieval_test_step = b.step(
+        "dense-tensor-retrieval-test",
+        "Run fixed-corpus retrieval tests and independent verification",
+    );
+    dense_tensor_retrieval_test_step.dependOn(
+        &run_dense_tensor_family_tests.step,
+    );
+    dense_tensor_retrieval_test_step.dependOn(
+        &run_dense_tensor_retrieval_oracle.step,
+    );
+    dense_tensor_retrieval_test_step.dependOn(
+        &run_dense_tensor_retrieval_python_tests.step,
+    );
+
     const dense_tensor_family_test_step = b.step(
         "dense-tensor-family-test",
         "Run the shared dense-tensor family tests and independent verification",
@@ -1628,6 +1682,9 @@ pub fn build(b: *std.Build) void {
     );
     dense_tensor_family_test_step.dependOn(
         dense_tensor_embedding_test_step,
+    );
+    dense_tensor_family_test_step.dependOn(
+        dense_tensor_retrieval_test_step,
     );
 
     const dense_tensor_family_compile_step = b.step(
@@ -1652,12 +1709,23 @@ pub fn build(b: *std.Build) void {
     dense_tensor_embedding_compile_step.dependOn(
         dense_tensor_family_compile_step,
     );
+    const dense_tensor_retrieval_compile_step = b.step(
+        "dense-tensor-retrieval-compile",
+        "Compile the shared dense-tensor family production demo",
+    );
+    dense_tensor_retrieval_compile_step.dependOn(
+        dense_tensor_family_compile_step,
+    );
 
     // core_tests already imports the family modules. Full rounds only add the
     // independent checks and the single shared demo artifact.
     test_step.dependOn(&run_dense_tensor_embedding_oracle.step);
     test_step.dependOn(
         &run_dense_tensor_embedding_python_tests.step,
+    );
+    test_step.dependOn(&run_dense_tensor_retrieval_oracle.step);
+    test_step.dependOn(
+        &run_dense_tensor_retrieval_python_tests.step,
     );
     test_compile_step.dependOn(&dense_tensor_family_exe.step);
 

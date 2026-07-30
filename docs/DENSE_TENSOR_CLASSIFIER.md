@@ -108,8 +108,9 @@ visible result or orphan ownership.
 
 The classifier is append-only runtime-support profile index 10 with slug
 `dense-tensor-classifier-reference`, profile ABI
-`0x4744434c00000001`, and mask bit `1 << 10`. The registry now contains 11
-profiles; indices 0 through 9 retain their original meanings.
+`0x4744434c00000001`, and mask bit `1 << 10`. The registry now contains 12
+profiles; retrieval is index 11, indices 0 through 9 retain their original
+meanings, and the classifier remains fixed at index 10.
 
 The C, standard-library Python, and dependency-free Rust consumers agree on the
 count, ABI, fixed profile fields, exact mask, successful maximum-bound query,
@@ -153,9 +154,9 @@ batch/class/output identities. It is AI-runtime infrastructure because it
 binds model-shaped execution to admission, scheduling, publication, and
 evidence; the retained arithmetic alone does not supply model semantics.
 
-Only this generic classification slice is complete. Retrieval composition,
-production adapters, retained model-quality evidence, and stable execution
-bindings remain separate work.
+Only this generic classification slice is established here. Fixed-corpus
+retrieval now has a separate contract; production adapters, retained
+model-quality evidence, and stable execution bindings remain separate work.
 
 ## Current nonclaims
 
@@ -178,8 +179,8 @@ This retained profile does not establish:
 
 Useful independent next slices include:
 
-- compose normalized embeddings into a versioned in-memory retrieval fixture
-  and optionally hand exact candidates to the existing reranker;
+- bind exact retrieval candidates to the existing reranker without changing
+  either result contract;
 - add a production classifier adapter while preserving explicit batch, class,
   policy, and publication identity;
 - define versioned label metadata without reinterpreting opaque class IDs;

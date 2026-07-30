@@ -7,7 +7,7 @@ static_assert(GLACIER_MODEL_CONTRACT_ROOT_V1_SIZE == 32);
 static_assert(sizeof(glacier_model_support_profile_v1_t) == 96);
 static_assert(sizeof(glacier_model_support_query_v1_t) == 72);
 static_assert(sizeof(glacier_model_support_result_v1_t) == 24);
-static_assert(GLACIER_MODEL_SUPPORT_PROFILE_COUNT_V1 == 11);
+static_assert(GLACIER_MODEL_SUPPORT_PROFILE_COUNT_V1 == 12);
 static_assert(
     GLACIER_MODEL_SUPPORT_PROFILE_DENSE_TENSOR_CLASSIFIER ==
     UINT64_C(0x4744434c00000001)
@@ -16,7 +16,18 @@ static_assert(GLACIER_MODEL_SUPPORT_INDEX_DENSE_TENSOR_CLASSIFIER == 10);
 static_assert(
     GLACIER_MODEL_SUPPORT_MASK_DENSE_TENSOR_CLASSIFIER == (UINT64_C(1) << 10)
 );
+static_assert(
+    GLACIER_MODEL_SUPPORT_PROFILE_DENSE_TENSOR_RETRIEVAL ==
+    UINT64_C(0x4744525400000001)
+);
+static_assert(GLACIER_MODEL_SUPPORT_INDEX_DENSE_TENSOR_RETRIEVAL == 11);
+static_assert(
+    GLACIER_MODEL_SUPPORT_MASK_DENSE_TENSOR_RETRIEVAL == (UINT64_C(1) << 11)
+);
 static_assert(GLACIER_MODEL_OUTPUT_TOKEN_IDS == UINT64_C(11));
+static_assert(GLACIER_MODEL_OPERATION_RETRIEVE == UINT64_C(15));
+static_assert(GLACIER_MODEL_INPUT_EMBEDDING_I32 == UINT64_C(8));
+static_assert(GLACIER_MODEL_OUTPUT_RETRIEVAL_HITS == UINT64_C(13));
 
 int main() {
     return glacier_contract_abi_v1() == GLACIER_CONTRACT_ABI_V1 &&

@@ -288,7 +288,7 @@ test "C model support profiles use fixed layouts and fail closed" {
         support.registry_abi,
         glacier_model_support_registry_abi_v1(),
     );
-    try std.testing.expectEqual(@as(usize, 11), support.profiles.len);
+    try std.testing.expectEqual(@as(usize, 12), support.profiles.len);
     try std.testing.expectEqual(
         @as(u64, support.profiles.len),
         glacier_model_support_profile_count_v1(),
@@ -437,6 +437,55 @@ test "C model support profiles use fixed layouts and fail closed" {
     try std.testing.expectEqual(@as(u64, 64), profile.max_batch_items);
     try std.testing.expectEqual(@as(u64, 4_096), profile.max_input_features);
     try std.testing.expectEqual(@as(u64, 256), profile.max_output_dimensions);
+    try std.testing.expectEqual(@as(u64, 0), profile.allowed_capabilities);
+
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_profile_get_v1(
+            @intFromEnum(support.ProfileIndexV1.dense_tensor_retrieval),
+            &profile,
+            @sizeOf(ModelSupportProfileV1),
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0x4744_5254_0000_0001),
+        profile.profile_abi,
+    );
+    try std.testing.expectEqual(
+        @as(u6, 11),
+        @intFromEnum(support.ProfileIndexV1.dense_tensor_retrieval),
+    );
+    try std.testing.expectEqual(
+        support.profiles[11].profile_abi,
+        profile.profile_abi,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(support.LifecycleV1.stateless)),
+        profile.lifecycle,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.ModelFamilyIdV1.retrieval)),
+        profile.family,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.OperationIdV1.retrieve)),
+        profile.operation,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.InputKindV1.embedding_i32)),
+        profile.input_kind,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.OutputKindV1.retrieval_hits)),
+        profile.output_kind,
+    );
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.NumericalPolicyV1.exact_integer)),
+        profile.numerical_policy,
+    );
+    try std.testing.expectEqual(@as(u64, 1), profile.max_batch_items);
+    try std.testing.expectEqual(@as(u64, 4_096), profile.max_input_features);
+    try std.testing.expectEqual(@as(u64, 6_144), profile.max_output_dimensions);
     try std.testing.expectEqual(@as(u64, 0), profile.allowed_capabilities);
 
     profile.profile_abi = 1;
@@ -672,6 +721,72 @@ test "C model support query returns every compatible profile bit" {
         statusCode(.ok),
         glacier_model_support_query_v1(
             &classifier_query,
+            @sizeOf(ModelSupportQueryV1),
+            &result,
+            @sizeOf(ModelSupportResultV1),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 0), result.compatible);
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.UnsupportedReasonV1.capabilities)),
+        result.unsupported_reason,
+    );
+    try std.testing.expectEqual(@as(u64, 0), result.matching_profile_mask);
+
+    var retrieval_query: ModelSupportQueryV1 = .{
+        .family = @intFromEnum(contract.ModelFamilyIdV1.retrieval),
+        .operation = @intFromEnum(contract.OperationIdV1.retrieve),
+        .input_kind = @intFromEnum(contract.InputKindV1.embedding_i32),
+        .output_kind = @intFromEnum(contract.OutputKindV1.retrieval_hits),
+        .numerical_policy = @intFromEnum(
+            contract.NumericalPolicyV1.exact_integer,
+        ),
+        .batch_items = 1,
+        .input_features = 4_096,
+        .output_dimensions = 6_144,
+        .required_capabilities = 0,
+    };
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_query_v1(
+            &retrieval_query,
+            @sizeOf(ModelSupportQueryV1),
+            &result,
+            @sizeOf(ModelSupportResultV1),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 1), result.compatible);
+    try std.testing.expectEqual(@as(u64, 0), result.unsupported_reason);
+    try std.testing.expectEqual(
+        @as(u64, 1) << @intFromEnum(
+            support.ProfileIndexV1.dense_tensor_retrieval,
+        ),
+        result.matching_profile_mask,
+    );
+
+    retrieval_query.output_dimensions += 1;
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_query_v1(
+            &retrieval_query,
+            @sizeOf(ModelSupportQueryV1),
+            &result,
+            @sizeOf(ModelSupportResultV1),
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 0), result.compatible);
+    try std.testing.expectEqual(
+        @as(u64, @intFromEnum(contract.UnsupportedReasonV1.dimensions)),
+        result.unsupported_reason,
+    );
+    try std.testing.expectEqual(@as(u64, 0), result.matching_profile_mask);
+
+    retrieval_query.output_dimensions = 6_144;
+    retrieval_query.required_capabilities = 1;
+    try std.testing.expectEqual(
+        statusCode(.ok),
+        glacier_model_support_query_v1(
+            &retrieval_query,
             @sizeOf(ModelSupportQueryV1),
             &result,
             @sizeOf(ModelSupportResultV1),

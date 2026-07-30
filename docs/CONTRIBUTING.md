@@ -122,7 +122,7 @@ hides the checks required by another changed path.
 | Benchmark runtime data (`.ids`, paired manifests, evaluation text) | Full Python discovery; no foreign Zig target |
 | Darwin Swift ProcessInfo probe | Full Python discovery plus focused native `swiftc -typecheck`; no broad Zig or foreign-target build |
 | Audited C contract boundary | Native ReleaseSafe, Python discovery, and the core compile profile on every retained target |
-| Dense-tensor reranker, embedding, classifier, shared demo, or independent tensor-result oracle | `affected-fast` selects `dense-tensor-family-test`; an adapter-core change also selects `runtime-support-inspector-test`. `dense-tensor-family-compile` is the production-only retained-target frontier. Existing reranker and embedding names remain compatibility targets backed by the shared compiled artifacts, while their focused test routes keep distinct oracles. Python-test-only tensor and embedding changes independently select `bench.tests.test_stateless_tensor_result` or `bench.tests.test_stateless_embedding_result`. Retrieval remains roadmap work and has no focused routing claim; foreign compilation is not native execution, quality, or performance evidence |
+| Dense-tensor reranker, embedding, classifier, retrieval, shared demo, or independent tensor-result oracle | `affected-fast` selects `dense-tensor-family-test`; an adapter-core change also selects `runtime-support-inspector-test`. `dense-tensor-family-compile` is the production-only retained-target frontier. Existing family names remain compatibility targets backed by the shared compiled artifacts, while their focused test routes keep distinct oracles. Python-test-only tensor, embedding, and retrieval changes independently select their exact unittest module; foreign compilation is not native execution, quality, or performance evidence |
 | General `src/core/` implementation | Native ReleaseSafe, Python discovery, and the main `install test-compile` closure on every retained target; bulk benchmark staging and the standalone benchmark consumer closure remain a benchmark/build-graph or promotion-matrix gate, while device diagnostics already owned by `test-compile` remain in the main closure and `src/core/root.zig` remains full because it controls build reachability |
 | CPU backend or model implementation | Native ReleaseSafe, Python discovery, and the main `install test-compile` closure on every retained target; bulk benchmark staging and the standalone benchmark consumer closure remain a benchmark/build-graph or promotion-matrix gate, while device diagnostics already owned by `test-compile` remain in the main closure |
 | Shared durable core/runtime implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
@@ -313,20 +313,20 @@ full unittest discovery. This route adds no executable or compile root.
 Dense-tensor focused routing now selects `dense-tensor-family-test` once for
 reranker, embedding, classifier, shared-demo, and independent tensor-result
 changes. Its retained-target companion is `dense-tensor-family-compile`.
-Existing reranker and embedding test, compile, and demo names remain
+Existing reranker, embedding, and retrieval test, compile, and demo names remain
 compatibility targets backed by the same compiled family artifacts, while
 their focused test routes retain distinct independent oracle dependencies. The
-demo selects the retained `rerank`, `embed`, or `classify` mode without
+demo selects the retained `rerank`, `embed`, `classify`, or `retrieve` mode without
 compiling a second executable. An adapter-core change additionally selects
 `runtime-support-inspector-test`. A Python-test-only tensor change selects
 `bench.tests.test_stateless_tensor_result`, while an embedding change selects
-`bench.tests.test_stateless_embedding_result`; either can run alone when full
+`bench.tests.test_stateless_embedding_result` and a retrieval change selects
+`bench.tests.test_stateless_retrieval_result`; each can run alone when full
 Python discovery is not otherwise selected. Changes to the installed
 support-discovery ABI continue to use the existing contract interop gates.
-Retrieval remains roadmap work and has no focused route until an implementation
-is actually imported. These checks establish deterministic contract behavior,
-not retrieval, probabilities, labels, production quality, GPU or native
-multi-OS execution, performance, or provider-token reduction.
+These checks establish deterministic contract behavior, not ANN, probability
+or label semantics, production quality, GPU or native multi-OS execution,
+performance, or provider-token reduction.
 
 Hosted affected and exhaustive jobs reuse the pinned Zig setup action's cache,
 configured with 1,024 MiB and 2,048 MiB action hard limits respectively.

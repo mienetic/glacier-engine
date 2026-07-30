@@ -31,27 +31,32 @@ OUT_OF_RANGE: Final = 7
 INVALID_QUERY: Final = 8
 
 SUPPORT_REGISTRY_ABI_V1: Final = 0x4752535200000001
-SUPPORT_PROFILE_COUNT_V1: Final = 11
+SUPPORT_PROFILE_COUNT_V1: Final = 12
 SUPPORT_PROFILE_VISION_ENCODER: Final = 0x4756454E00000001
 SUPPORT_PROFILE_DENSE_TENSOR_RERANKER: Final = 0x4744525200000001
 SUPPORT_PROFILE_DENSE_TENSOR_EMBEDDING: Final = 0x4744454D00000001
 SUPPORT_PROFILE_DENSE_TENSOR_CLASSIFIER: Final = 0x4744434C00000001
+SUPPORT_PROFILE_DENSE_TENSOR_RETRIEVAL: Final = 0x4744525400000001
 SUPPORT_LIFECYCLE_STATELESS: Final = 1
 SUPPORT_EVIDENCE_RETAINED_REFERENCE_FIXTURE: Final = 1
 MODEL_FAMILY_STATELESS_ENCODER: Final = 2
 MODEL_FAMILY_VISION_UNDERSTANDING: Final = 3
 MODEL_FAMILY_AUDIO_UNDERSTANDING: Final = 4
+MODEL_FAMILY_RETRIEVAL: Final = 12
 MODEL_OPERATION_ENCODE: Final = 3
 MODEL_OPERATION_CLASSIFY: Final = 4
 MODEL_OPERATION_RERANK: Final = 5
 MODEL_OPERATION_TRANSCRIBE: Final = 6
+MODEL_OPERATION_RETRIEVE: Final = 15
 MODEL_INPUT_DENSE_TENSOR: Final = 2
 MODEL_INPUT_IMAGE_FEATURE_U8: Final = 3
 MODEL_INPUT_AUDIO_FEATURE_I16: Final = 4
+MODEL_INPUT_EMBEDDING_I32: Final = 8
 MODEL_OUTPUT_EMBEDDING_I32: Final = 2
 MODEL_OUTPUT_CLASS_SCORES: Final = 3
 MODEL_OUTPUT_RANKED_ITEMS: Final = 4
 MODEL_OUTPUT_TRANSCRIPT: Final = 5
+MODEL_OUTPUT_RETRIEVAL_HITS: Final = 13
 NUMERICAL_EXACT_INTEGER: Final = 1
 SUPPORT_UNSUPPORTED_NONE: Final = 0
 SUPPORT_UNSUPPORTED_DIMENSIONS: Final = 6
@@ -61,6 +66,7 @@ SUPPORT_MASK_STATEFUL_TRANSCRIPT: Final = 1 << 3
 SUPPORT_MASK_DENSE_TENSOR_RERANKER: Final = 1 << 8
 SUPPORT_MASK_DENSE_TENSOR_EMBEDDING: Final = 1 << 9
 SUPPORT_MASK_DENSE_TENSOR_CLASSIFIER: Final = 1 << 10
+SUPPORT_MASK_DENSE_TENSOR_RETRIEVAL: Final = 1 << 11
 SUPPORT_MASK_TRANSCRIPT: Final = (
     SUPPORT_MASK_AUDIO_TRANSCRIPT | SUPPORT_MASK_STATEFUL_TRANSCRIPT
 )
@@ -317,6 +323,12 @@ def verify(library_path: Path, fixture_dir: Path) -> tuple[int, bytes, int, int]
     if first_values != expected_first:
         raise RuntimeError("first model-support profile does not match V1")
 
+    classifier = profiles[10]
+    if int(classifier.profile_abi) != SUPPORT_PROFILE_DENSE_TENSOR_CLASSIFIER:
+        raise RuntimeError(
+            "classifier model-support profile moved from V1 index 10"
+        )
+
     last = profiles[-1]
     last_values = (
         int(last.profile_abi),
@@ -333,17 +345,17 @@ def verify(library_path: Path, fixture_dir: Path) -> tuple[int, bytes, int, int]
         int(last.allowed_capabilities),
     )
     expected_last = (
-        SUPPORT_PROFILE_DENSE_TENSOR_CLASSIFIER,
+        SUPPORT_PROFILE_DENSE_TENSOR_RETRIEVAL,
         SUPPORT_LIFECYCLE_STATELESS,
         SUPPORT_EVIDENCE_RETAINED_REFERENCE_FIXTURE,
-        MODEL_FAMILY_STATELESS_ENCODER,
-        MODEL_OPERATION_CLASSIFY,
-        MODEL_INPUT_DENSE_TENSOR,
-        MODEL_OUTPUT_CLASS_SCORES,
+        MODEL_FAMILY_RETRIEVAL,
+        MODEL_OPERATION_RETRIEVE,
+        MODEL_INPUT_EMBEDDING_I32,
+        MODEL_OUTPUT_RETRIEVAL_HITS,
         NUMERICAL_EXACT_INTEGER,
-        64,
+        1,
         4_096,
-        256,
+        6_144,
         0,
     )
     if last_values != expected_last:
@@ -493,6 +505,86 @@ def verify(library_path: Path, fixture_dir: Path) -> tuple[int, bytes, int, int]
     ):
         raise RuntimeError(
             "classifier capability rejection did not return the explicit V1 reason"
+        )
+
+    retrieval_query = ModelSupportQueryV1(
+        family=MODEL_FAMILY_RETRIEVAL,
+        operation=MODEL_OPERATION_RETRIEVE,
+        input_kind=MODEL_INPUT_EMBEDDING_I32,
+        output_kind=MODEL_OUTPUT_RETRIEVAL_HITS,
+        numerical_policy=NUMERICAL_EXACT_INTEGER,
+        batch_items=1,
+        input_features=4_096,
+        output_dimensions=6_144,
+        required_capabilities=0,
+    )
+    retrieval_result = ModelSupportResultV1()
+    status = int(
+        library.glacier_model_support_query_v1(
+            ctypes.byref(retrieval_query),
+            ctypes.sizeof(retrieval_query),
+            ctypes.byref(retrieval_result),
+            ctypes.sizeof(retrieval_result),
+        )
+    )
+    if status != OK:
+        name = STATUS_NAMES.get(status, "UNKNOWN")
+        raise RuntimeError(f"retrieval support query failed: {name} ({status})")
+    if (
+        int(retrieval_result.compatible) != 1
+        or int(retrieval_result.unsupported_reason) != SUPPORT_UNSUPPORTED_NONE
+        or int(retrieval_result.matching_profile_mask)
+        != SUPPORT_MASK_DENSE_TENSOR_RETRIEVAL
+    ):
+        raise RuntimeError(
+            "retrieval support query did not match the appended V1 profile"
+        )
+
+    retrieval_query.output_dimensions = 6_145
+    retrieval_dimension_result = ModelSupportResultV1()
+    status = int(
+        library.glacier_model_support_query_v1(
+            ctypes.byref(retrieval_query),
+            ctypes.sizeof(retrieval_query),
+            ctypes.byref(retrieval_dimension_result),
+            ctypes.sizeof(retrieval_dimension_result),
+        )
+    )
+    if status != OK:
+        name = STATUS_NAMES.get(status, "UNKNOWN")
+        raise RuntimeError(f"retrieval dimension query failed: {name} ({status})")
+    if (
+        int(retrieval_dimension_result.compatible) != 0
+        or int(retrieval_dimension_result.unsupported_reason)
+        != SUPPORT_UNSUPPORTED_DIMENSIONS
+        or int(retrieval_dimension_result.matching_profile_mask) != 0
+    ):
+        raise RuntimeError(
+            "retrieval dimension overflow did not return the explicit V1 reason"
+        )
+
+    retrieval_query.output_dimensions = 6_144
+    retrieval_query.required_capabilities = 1
+    retrieval_capability_result = ModelSupportResultV1()
+    status = int(
+        library.glacier_model_support_query_v1(
+            ctypes.byref(retrieval_query),
+            ctypes.sizeof(retrieval_query),
+            ctypes.byref(retrieval_capability_result),
+            ctypes.sizeof(retrieval_capability_result),
+        )
+    )
+    if status != OK:
+        name = STATUS_NAMES.get(status, "UNKNOWN")
+        raise RuntimeError(f"retrieval capability query failed: {name} ({status})")
+    if (
+        int(retrieval_capability_result.compatible) != 0
+        or int(retrieval_capability_result.unsupported_reason)
+        != SUPPORT_UNSUPPORTED_CAPABILITIES
+        or int(retrieval_capability_result.matching_profile_mask) != 0
+    ):
+        raise RuntimeError(
+            "retrieval capability rejection did not return the explicit V1 reason"
         )
 
     transcript_query = ModelSupportQueryV1(

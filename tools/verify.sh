@@ -766,6 +766,7 @@ dense_tensor_family_requested=0
 runtime_support_inspector_requested=0
 dense_tensor_family_python_test_requested=0
 dense_tensor_embedding_python_test_requested=0
+dense_tensor_retrieval_python_test_requested=0
 runtime_support_inspector_python_test_requested=0
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "prepared-text-unary-service-focused"; then
@@ -830,6 +831,10 @@ fi
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "dense-tensor-embedding-python-test-focused"; then
     dense_tensor_embedding_python_test_requested=1
+fi
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "dense-tensor-retrieval-python-test-focused"; then
+    dense_tensor_retrieval_python_test_requested=1
 fi
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "runtime-support-inspector-python-test-focused"; then
@@ -1549,6 +1554,24 @@ if [ "$affected_plan_ready" -eq 1 ] &&
             "requires a working python3 executable"
     else
         record_skip "python/dense-tensor-embedding" \
+            "covering full Python discovery did not pass"
+    fi
+fi
+
+if [ "$affected_plan_ready" -eq 1 ] &&
+    [ "$dense_tensor_retrieval_python_test_requested" -eq 1 ]; then
+    if [ "$python_full_status" = "0" ]; then
+        record_pass "python/dense-tensor-retrieval" \
+            "covered by full Python discovery"
+    elif [ "$run_python_full" -eq 0 ] && [ "$has_python" -eq 1 ]; then
+        run_gate "python/dense-tensor-retrieval" \
+            python3 -m unittest \
+            bench.tests.test_stateless_retrieval_result
+    elif [ "$run_python_full" -eq 0 ]; then
+        record_skip "python/dense-tensor-retrieval" \
+            "requires a working python3 executable"
+    else
+        record_skip "python/dense-tensor-retrieval" \
             "covering full Python discovery did not pass"
     fi
 fi

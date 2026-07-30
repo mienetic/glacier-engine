@@ -7,7 +7,7 @@ use their normal C foreign-function interface.
 
 This slice is deliberately narrow. It verifies a canonical artifact manifest,
 execution plan, and result envelope as one bound chain. It also enumerates
-eleven append-only exact-integer fixture profiles and answers typed
+twelve append-only exact-integer fixture profiles and answers typed
 shape-and-capability queries over those records. It does not load model
 weights, run inference, create a session, invoke a backend, inspect the current
 host, or make the wider runtime API stable. Registration is not execution.
@@ -88,7 +88,7 @@ python3 examples/interop/python_verify.py \
 Use `.so` on Linux or `.dll` on Windows. A successful run prints the
 experimental ABI number, authenticated result root, retained profile count,
 and matching support mask. The final summary is
-`profile_count=11 transcript_mask=0x000000000000000c`.
+`profile_count=12 transcript_mask=0x000000000000000c`.
 
 ## Rust quick start
 
@@ -224,7 +224,7 @@ tools/zig-with-ephemeral-cache.sh build runtime-support-inspector \
   -Doptimize=ReleaseSafe -Dmetal=false -j2
 ```
 
-It prints the same eleven profiles in stable index order, including names and
+It prints the same twelve profiles in stable index order, including names and
 numeric IDs, their profile ABIs, lifecycle, evidence class, bounds, and allowed
 capability masks. It accepts no semantic arguments and explicitly reports
 `production_model_support: false` and `host_backend_probed: false`.

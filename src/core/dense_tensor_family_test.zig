@@ -8,4 +8,5 @@ test "dense tensor family modules are included" {
     _ = @import("dense_tensor_reranker.zig");
     _ = @import("dense_tensor_classifier.zig");
     _ = @import("dense_tensor_embedding.zig");
+    _ = @import("dense_tensor_retrieval.zig");
 }

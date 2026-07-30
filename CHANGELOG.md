@@ -8,6 +8,23 @@ before the first stable release.
 
 ### Added
 
+- Added an experimental download-free **fixed-corpus dense-tensor retrieval**
+  profile. One immutable packed index artifact binds a versioned corpus,
+  canonical batch and tenant-visibility maps, normalized Q30 embedding policy,
+  and exact corpus matrix. Each request supplies one bound Q30 query row.
+  Visibility filtering precedes an exact checked-`i128` dot scan; signed Q30
+  scores use nearest-ties-to-even reduction, descending order, and ascending
+  corpus ordinal for deterministic ties. A retrieval-specific fixed-capacity
+  result exposes only the first authenticated top-k slots and requires a
+  completely zero tail. Direct and scheduler-owned execution independently
+  reconstruct candidates before atomic publication, support cancellation, and
+  return ownership to zero. Runtime-support profile 11 is append-only, making
+  12 profiles with matching discovery across C, C++, standard-library Python,
+  and dependency-free Rust. The shared dense-family test and demo artifacts are
+  reused rather than adding another Zig compile root. This is exact in-memory
+  conformance evidence, not ANN/vector-database behavior, production retrieval
+  quality, GPU or multi-OS evidence, performance, provider routing, or reduced
+  external-provider tokens.
 - Added an experimental download-free **generic dense-tensor classifier**.
   Bounded row-major `i16` inputs and `i8` class weights produce an exact
   checked `i64` class-score matrix for `B <= 64`, `F <= 4,096`, and
@@ -15,18 +32,16 @@ before the first stable release.
   descending score order, and class-ordinal tie breaking make every winner
   deterministic. Direct and scheduler-owned execution recompute candidates
   before atomic publication, support cancellation, and return ownership to
-  zero. The append-only support registry now has 11 profiles, with classifier
-  ABI `0x4744434c00000001` at index 10, matching discovery across C, C++,
+  zero. The append-only support registry now has 12 profiles; classifier ABI
+  `0x4744434c00000001` remains at index 10, matching discovery across C, C++,
   standard-library Python, and dependency-free Rust, plus C/Python/Rust query
   rejection checks. The shared dense-tensor reranker demo accepts `classify`;
-  focused verification reuses
-  `dense-tensor-reranker-test` and `runtime-support-inspector-test` rather than
-  adding a compile root. Shared tensor-result changes now select only the
-  reranker/classifier and embedding focused roots instead of the full native,
-  Python, contract, and package suites. This completes only the generic
-  classification slice,
-  not probabilities, calibration, labels, production quality, retrieval
-  composition, production adapters, GPU execution, native multi-OS support,
+  focused verification reuses `dense-tensor-family-test` and
+  `runtime-support-inspector-test` rather than adding a compile root. Shared
+  tensor-result changes now select only the family root instead of the full
+  native, Python, contract, and package suites. This completes only the generic
+  classification slice, not probabilities, calibration, labels, production
+  quality, production adapters, GPU execution, native multi-OS support,
   performance, or provider-token reduction.
 - The existing read-only Provider Evidence Inspector now has an optional
   all-or-none composed mode. Alongside `--join`, callers may supply an exact
@@ -155,14 +170,16 @@ before the first stable release.
 - Dense-tensor focused verification now uses one Zig test artifact behind
   `dense-tensor-family-test`, one production-only
   `dense-tensor-family-compile` frontier, and one shared demo artifact.
-  Existing reranker and embedding names remain compatibility targets backed by
-  the shared compiled artifacts, while their focused test routes retain
-  distinct independent oracles. Python-test-only tensor and embedding changes
+  Existing reranker, embedding, and retrieval names remain compatibility
+  targets backed by the shared compiled artifacts, while their focused test
+  routes retain distinct independent oracles. Python-test-only tensor,
+  embedding, and retrieval changes
   select `bench.tests.test_stateless_tensor_result` and
-  `bench.tests.test_stateless_embedding_result` independently.
-  `affected-fast` routes embedding and classifier changes through the shared
-  family root, with adapter-core changes also selecting the runtime-support
-  inspector. Retrieval remains roadmap work and has no focused routing claim.
+  `bench.tests.test_stateless_embedding_result`, or
+  `bench.tests.test_stateless_retrieval_result` independently.
+  `affected-fast` routes embedding, classifier, and retrieval changes through
+  the shared family root, with adapter-core changes also selecting the
+  runtime-support inspector.
   Hosted affected jobs soft-prune the reusable Zig cache above 900 MiB, and
   exhaustive/Metal jobs above 1,800 MiB, before the setup action's
   1,024/2,048 MiB hard limits. Local verification still uses a temporary cache

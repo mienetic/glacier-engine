@@ -126,10 +126,9 @@ This retained profile does not establish:
 The same bounded contracts now support the normalized embedding fixture and
 can support independent follow-ups:
 
-- compose the normalized embedding into an in-memory retrieval fixture;
-- add class-score publication and a stable label map;
-- build an in-memory retrieval fixture that feeds exact top-k candidates into
-  this reranker;
+- bind the exact fixed-corpus retrieval candidates to this reranker without
+  changing either result contract;
+- add versioned label metadata to the existing class-score publication;
 - add a production adapter without changing batch/result identity;
 - add bounded float policies with declared tolerances and independent oracles;
   or

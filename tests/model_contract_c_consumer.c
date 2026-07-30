@@ -20,6 +20,18 @@ _Static_assert(
     GLACIER_MODEL_OUTPUT_TOOL_RESULT == UINT64_C(12),
     "tool result output kind changed"
 );
+_Static_assert(
+    GLACIER_MODEL_OPERATION_RETRIEVE == UINT64_C(15),
+    "retrieval operation ID changed"
+);
+_Static_assert(
+    GLACIER_MODEL_INPUT_EMBEDDING_I32 == UINT64_C(8),
+    "embedding input kind changed"
+);
+_Static_assert(
+    GLACIER_MODEL_OUTPUT_RETRIEVAL_HITS == UINT64_C(13),
+    "retrieval-hit output kind changed"
+);
 
 static int hex_value(int character) {
     if (character >= '0' && character <= '9') {
@@ -245,6 +257,19 @@ static const struct expected_support_profile expected_support_profiles[] = {
         UINT64_C(64),
         UINT64_C(4096),
         UINT64_C(256),
+    },
+    {
+        GLACIER_MODEL_SUPPORT_INDEX_DENSE_TENSOR_RETRIEVAL,
+        GLACIER_MODEL_SUPPORT_MASK_DENSE_TENSOR_RETRIEVAL,
+        GLACIER_MODEL_SUPPORT_PROFILE_DENSE_TENSOR_RETRIEVAL,
+        GLACIER_MODEL_SUPPORT_LIFECYCLE_STATELESS,
+        GLACIER_MODEL_FAMILY_RETRIEVAL,
+        GLACIER_MODEL_OPERATION_RETRIEVE,
+        GLACIER_MODEL_INPUT_EMBEDDING_I32,
+        GLACIER_MODEL_OUTPUT_RETRIEVAL_HITS,
+        UINT64_C(1),
+        UINT64_C(4096),
+        UINT64_C(6144),
     },
 };
 
@@ -480,6 +505,64 @@ int main(int argc, char **argv) {
             GLACIER_MODEL_SUPPORT_UNSUPPORTED_CAPABILITIES ||
         support_result.matching_profile_mask != UINT64_C(0)) {
         fprintf(stderr, "classifier capability rejection was not explicit\n");
+        return 1;
+    }
+
+    memset(&support_query, 0, sizeof support_query);
+    support_query.family = GLACIER_MODEL_FAMILY_RETRIEVAL;
+    support_query.operation = GLACIER_MODEL_OPERATION_RETRIEVE;
+    support_query.input_kind = GLACIER_MODEL_INPUT_EMBEDDING_I32;
+    support_query.output_kind = GLACIER_MODEL_OUTPUT_RETRIEVAL_HITS;
+    support_query.numerical_policy = GLACIER_NUMERICAL_EXACT_INTEGER;
+    support_query.batch_items = UINT64_C(1);
+    support_query.input_features = UINT64_C(4096);
+    support_query.output_dimensions = UINT64_C(6144);
+    status = glacier_model_support_query_v1(
+        &support_query,
+        sizeof support_query,
+        &support_result,
+        sizeof support_result
+    );
+    if (status != GLACIER_MODEL_CONTRACT_OK ||
+        support_result.compatible != UINT64_C(1) ||
+        support_result.unsupported_reason !=
+            GLACIER_MODEL_SUPPORT_UNSUPPORTED_NONE ||
+        support_result.matching_profile_mask !=
+            GLACIER_MODEL_SUPPORT_MASK_DENSE_TENSOR_RETRIEVAL) {
+        fprintf(stderr, "retrieval support query did not match exact bounds\n");
+        return 1;
+    }
+
+    support_query.output_dimensions = UINT64_C(6145);
+    status = glacier_model_support_query_v1(
+        &support_query,
+        sizeof support_query,
+        &support_result,
+        sizeof support_result
+    );
+    if (status != GLACIER_MODEL_CONTRACT_OK ||
+        support_result.compatible != UINT64_C(0) ||
+        support_result.unsupported_reason !=
+            GLACIER_MODEL_SUPPORT_UNSUPPORTED_DIMENSIONS ||
+        support_result.matching_profile_mask != UINT64_C(0)) {
+        fprintf(stderr, "retrieval dimension overflow was not explicit\n");
+        return 1;
+    }
+
+    support_query.output_dimensions = UINT64_C(6144);
+    support_query.required_capabilities = UINT64_C(1);
+    status = glacier_model_support_query_v1(
+        &support_query,
+        sizeof support_query,
+        &support_result,
+        sizeof support_result
+    );
+    if (status != GLACIER_MODEL_CONTRACT_OK ||
+        support_result.compatible != UINT64_C(0) ||
+        support_result.unsupported_reason !=
+            GLACIER_MODEL_SUPPORT_UNSUPPORTED_CAPABILITIES ||
+        support_result.matching_profile_mask != UINT64_C(0)) {
+        fprintf(stderr, "retrieval capability rejection was not explicit\n");
         return 1;
     }
 

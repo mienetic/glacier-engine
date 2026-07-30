@@ -195,10 +195,24 @@ EXPECTED_DENSE_TENSOR_EMBEDDING_FOCUSED_PATHS = frozenset(
     }
 )
 
+EXPECTED_DENSE_TENSOR_RETRIEVAL_FOCUSED_PATHS = frozenset(
+    {
+        "src/core/dense_tensor_retrieval.zig",
+        "src/core/stateless_retrieval_result.zig",
+    }
+)
+
 EXPECTED_DENSE_TENSOR_PYTHON_FOCUSED_PATHS = frozenset(
     {
         "bench/stateless_tensor_result.py",
         "bench/tests/test_stateless_tensor_result.py",
+    }
+)
+
+EXPECTED_DENSE_TENSOR_RETRIEVAL_PYTHON_FOCUSED_PATHS = frozenset(
+    {
+        "bench/stateless_retrieval_result.py",
+        "bench/tests/test_stateless_retrieval_result.py",
     }
 )
 
@@ -675,8 +689,16 @@ class VerificationPolicyTests(unittest.TestCase):
             policy.DENSE_TENSOR_EMBEDDING_FOCUSED_PATHS,
         )
         self.assertEqual(
+            EXPECTED_DENSE_TENSOR_RETRIEVAL_FOCUSED_PATHS,
+            policy.DENSE_TENSOR_RETRIEVAL_FOCUSED_PATHS,
+        )
+        self.assertEqual(
             EXPECTED_DENSE_TENSOR_PYTHON_FOCUSED_PATHS,
             policy.DENSE_TENSOR_PYTHON_FOCUSED_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_DENSE_TENSOR_RETRIEVAL_PYTHON_FOCUSED_PATHS,
+            policy.DENSE_TENSOR_RETRIEVAL_PYTHON_FOCUSED_PATHS,
         )
         self.assertEqual(
             EXPECTED_RUNTIME_SUPPORT_INSPECTOR_FOCUSED_PATHS,
@@ -1276,6 +1298,7 @@ class VerificationPolicyTests(unittest.TestCase):
         all_paths = (
             EXPECTED_DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS
             | EXPECTED_DENSE_TENSOR_EMBEDDING_FOCUSED_PATHS
+            | EXPECTED_DENSE_TENSOR_RETRIEVAL_FOCUSED_PATHS
         )
         for changed_path in sorted(all_paths):
             with self.subTest(changed_path=changed_path):
@@ -1287,6 +1310,7 @@ class VerificationPolicyTests(unittest.TestCase):
                     "src/core/dense_tensor_classifier.zig",
                     "src/core/dense_tensor_reranker.zig",
                     "src/core/dense_tensor_embedding.zig",
+                    "src/core/dense_tensor_retrieval.zig",
                 }:
                     expected_flags.add("runtime-support-inspector-focused")
                     expected_steps = (
@@ -1318,6 +1342,11 @@ class VerificationPolicyTests(unittest.TestCase):
                 policy.DENSE_TENSOR_EMBEDDING_PYTHON_FOCUSED_PATHS,
                 "dense-tensor-embedding-python-test-focused",
                 "python/dense-tensor-embedding",
+            ),
+            (
+                policy.DENSE_TENSOR_RETRIEVAL_PYTHON_FOCUSED_PATHS,
+                "dense-tensor-retrieval-python-test-focused",
+                "python/dense-tensor-retrieval",
             ),
         )
         for paths, flag, gate in cases:
@@ -4258,6 +4287,67 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 calls,
             )
 
+    def test_affected_fast_retrieval_reuses_family_and_registry_roots_once(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            core = repository / "src" / "core"
+            core.mkdir()
+            (core / "dense_tensor_retrieval.zig").write_text(
+                "",
+                encoding="ascii",
+            )
+            (core / "stateless_retrieval_result.zig").write_text(
+                "",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  host/dense-tensor-focused-dag:",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  native/dense-tensor-family:",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  native/runtime-support-inspector:",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(1, len(build_calls), calls)
+            self.assertTrue(
+                build_calls[0].startswith(
+                    "build dense-tensor-family-test "
+                    "runtime-support-inspector-test "
+                ),
+                build_calls,
+            )
+            self.assertNotIn("contract-interop-test", build_calls[0])
+            self.assertNotIn("package-module-test", build_calls[0])
+            self.assertFalse(
+                any(" -Dtarget=" in line for line in calls),
+                calls,
+            )
+
     def test_affected_fast_runs_exact_tensor_python_test_modules(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -4288,6 +4378,19 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "        self.assertTrue(True)\n",
                 encoding="ascii",
             )
+            retrieval_test = (
+                repository
+                / "bench"
+                / "tests"
+                / "test_stateless_retrieval_result.py"
+            )
+            retrieval_test.write_text(
+                "import unittest\n"
+                "class RetrievalTests(unittest.TestCase):\n"
+                "    def test_fixture(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="ascii",
+            )
 
             result = self.run_affected_fast(
                 repository,
@@ -4306,6 +4409,10 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             )
             self.assertIn(
                 "PASS  python/runtime-support-inspector:",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  python/dense-tensor-retrieval:",
                 result.stdout,
             )
             calls = (

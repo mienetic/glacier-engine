@@ -316,6 +316,27 @@ PROFILES = (
             max_output_dimensions=256,
         ),
     ),
+    ProfileSpec(
+        index=11,
+        slug="dense-tensor-retrieval-reference",
+        profile_abi=0x4744_5254_0000_0001,
+        lifecycle="stateless",
+        support=SupportSpec(
+            family="retrieval",
+            family_id=12,
+            operation="retrieve",
+            operation_id=15,
+            input_kind="embedding_i32",
+            input_kind_id=8,
+            output_kind="retrieval_hits",
+            output_kind_id=13,
+            numerical_policy="exact_integer",
+            numerical_policy_id=1,
+            max_batch_items=1,
+            max_input_features=4_096,
+            max_output_dimensions=6_144,
+        ),
+    ),
 )
 
 

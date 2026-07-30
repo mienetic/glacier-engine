@@ -188,6 +188,12 @@ test "package exports runtime and core modules independently of host tools" {
         @hasDecl(glacier, "stateless_embedding_result"),
     );
     try std.testing.expect(
+        @hasDecl(glacier, "stateless_retrieval_result"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "StatelessRetrievalResult"),
+    );
+    try std.testing.expect(
         @hasDecl(glacier, "dense_tensor_reranker"),
     );
     try std.testing.expect(
@@ -200,10 +206,22 @@ test "package exports runtime and core modules independently of host tools" {
         @hasDecl(glacier, "dense_tensor_embedding"),
     );
     try std.testing.expect(
+        @hasDecl(glacier, "dense_tensor_retrieval"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "DenseTensorRetrieval"),
+    );
+    try std.testing.expect(
         @hasDecl(glacier_core, "StatelessTensorResult"),
     );
     try std.testing.expect(
         @hasDecl(glacier_core, "StatelessEmbeddingResult"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "StatelessRetrievalResult"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "stateless_retrieval_result"),
     );
     try std.testing.expect(
         @hasDecl(glacier_core, "DenseTensorReranker"),
@@ -217,9 +235,15 @@ test "package exports runtime and core modules independently of host tools" {
     try std.testing.expect(
         @hasDecl(glacier_core, "DenseTensorEmbedding"),
     );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "DenseTensorRetrieval"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "dense_tensor_retrieval"),
+    );
     try std.testing.expect(@hasDecl(glacier_core, "RuntimeSupportRegistry"));
     try std.testing.expectEqual(
-        @as(usize, 11),
+        @as(usize, 12),
         glacier_core.RuntimeSupportRegistry.profiles.len,
     );
     try std.testing.expect(
@@ -252,6 +276,53 @@ test "package exports runtime and core modules independently of host tools" {
     try std.testing.expectEqual(
         .class_scores,
         classifier_profile.support.output_kind,
+    );
+    try std.testing.expect(
+        glacier.dense_tensor_retrieval ==
+            glacier_core.dense_tensor_retrieval,
+    );
+    try std.testing.expect(
+        glacier.DenseTensorRetrieval ==
+            glacier_core.DenseTensorRetrieval,
+    );
+    try std.testing.expect(
+        glacier.stateless_retrieval_result ==
+            glacier_core.stateless_retrieval_result,
+    );
+    try std.testing.expect(
+        glacier.StatelessRetrievalResult ==
+            glacier_core.StatelessRetrievalResult,
+    );
+    const retrieval_index =
+        glacier_core.RuntimeSupportRegistry.ProfileIndexV1
+            .dense_tensor_retrieval;
+    const retrieval_profile =
+        glacier_core.RuntimeSupportRegistry.profiles[
+            @intFromEnum(retrieval_index)
+        ];
+    try std.testing.expectEqual(
+        @as(u6, 11),
+        @intFromEnum(retrieval_index),
+    );
+    try std.testing.expectEqual(
+        retrieval_index,
+        retrieval_profile.index,
+    );
+    try std.testing.expectEqual(
+        glacier_core.DenseTensorRetrieval.reference_adapter_abi,
+        retrieval_profile.profile_abi,
+    );
+    try std.testing.expectEqual(
+        .retrieve,
+        retrieval_profile.support.operation,
+    );
+    try std.testing.expectEqual(
+        .embedding_i32,
+        retrieval_profile.support.input_kind,
+    );
+    try std.testing.expectEqual(
+        .retrieval_hits,
+        retrieval_profile.support.output_kind,
     );
     try std.testing.expect(glacier.ResourceBank == glacier_core.ResourceBank);
     try std.testing.expect(

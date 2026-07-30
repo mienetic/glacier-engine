@@ -132,12 +132,16 @@ pub const stateless_tensor_result =
     @import("stateless_tensor_result.zig");
 pub const stateless_embedding_result =
     @import("stateless_embedding_result.zig");
+pub const stateless_retrieval_result =
+    @import("stateless_retrieval_result.zig");
 pub const dense_tensor_reranker =
     @import("dense_tensor_reranker.zig");
 pub const dense_tensor_classifier =
     @import("dense_tensor_classifier.zig");
 pub const dense_tensor_embedding =
     @import("dense_tensor_embedding.zig");
+pub const dense_tensor_retrieval =
+    @import("dense_tensor_retrieval.zig");
 pub const stateful_model_adapter =
     @import("stateful_model_adapter.zig");
 pub const stateful_model_continuation =
@@ -287,9 +291,11 @@ pub const RuntimeSupportRegistry = runtime_support_registry;
 pub const StatelessModelAdapter = stateless_model_adapter;
 pub const StatelessTensorResult = stateless_tensor_result;
 pub const StatelessEmbeddingResult = stateless_embedding_result;
+pub const StatelessRetrievalResult = stateless_retrieval_result;
 pub const DenseTensorReranker = dense_tensor_reranker;
 pub const DenseTensorClassifier = dense_tensor_classifier;
 pub const DenseTensorEmbedding = dense_tensor_embedding;
+pub const DenseTensorRetrieval = dense_tensor_retrieval;
 pub const StatefulModelAdapter = stateful_model_adapter;
 pub const StatefulModelContinuation =
     stateful_model_continuation;

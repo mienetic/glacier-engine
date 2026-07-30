@@ -11,6 +11,7 @@ const latent_step = @import("latent_step_adapter.zig");
 const dense_tensor_reranker = @import("dense_tensor_reranker.zig");
 const dense_tensor_embedding = @import("dense_tensor_embedding.zig");
 const dense_tensor_classifier = @import("dense_tensor_classifier.zig");
+const dense_tensor_retrieval = @import("dense_tensor_retrieval.zig");
 
 pub const registry_abi: u64 = 0x4752_5352_0000_0001;
 pub const max_profiles: usize = 64;
@@ -38,6 +39,7 @@ pub const ProfileIndexV1 = enum(u6) {
     dense_tensor_reranker = 8,
     dense_tensor_embedding = 9,
     dense_tensor_classifier = 10,
+    dense_tensor_retrieval = 11,
 };
 
 pub const ProfileV1 = struct {
@@ -137,6 +139,14 @@ pub const profiles = [_]ProfileV1{
         .lifecycle = .stateless,
         .evidence = .retained_reference_fixture,
         .support = dense_tensor_classifier.classifier_support[0],
+    },
+    .{
+        .index = .dense_tensor_retrieval,
+        .slug = "dense-tensor-retrieval-reference",
+        .profile_abi = dense_tensor_retrieval.reference_adapter_abi,
+        .lifecycle = .stateless,
+        .evidence = .retained_reference_fixture,
+        .support = dense_tensor_retrieval.retrieval_support[0],
     },
 };
 
@@ -248,7 +258,8 @@ comptime {
         latent_step.latent_step_support.len != 1 or
         dense_tensor_reranker.reranker_support.len != 1 or
         dense_tensor_embedding.embedding_support.len != 1 or
-        dense_tensor_classifier.classifier_support.len != 1)
+        dense_tensor_classifier.classifier_support.len != 1 or
+        dense_tensor_retrieval.retrieval_support.len != 1)
     {
         @compileError(
             "each additional adapter support row needs an appended runtime profile",
@@ -278,7 +289,7 @@ comptime {
 }
 
 test "registry profiles are append-only views of adapter support constants" {
-    try std.testing.expectEqual(@as(usize, 11), profiles.len);
+    try std.testing.expectEqual(@as(usize, 12), profiles.len);
     const expected_slugs = [_][]const u8{
         "vision-encoder-reference",
         "audio-window-reference",
@@ -291,6 +302,7 @@ test "registry profiles are append-only views of adapter support constants" {
         "dense-tensor-reranker-reference",
         "dense-tensor-embedding-reference",
         "dense-tensor-classifier-reference",
+        "dense-tensor-retrieval-reference",
     };
     const expected_lifecycles = [_]LifecycleV1{
         .stateless,
@@ -301,6 +313,7 @@ test "registry profiles are append-only views of adapter support constants" {
         .stateless,
         .stateful,
         .stateful,
+        .stateless,
         .stateless,
         .stateless,
         .stateless,
@@ -407,6 +420,14 @@ test "registry profiles are append-only views of adapter support constants" {
     try std.testing.expectEqual(
         dense_tensor_classifier.classifier_support[0],
         profiles[10].support,
+    );
+    try std.testing.expectEqual(
+        dense_tensor_retrieval.reference_adapter_abi,
+        profiles[11].profile_abi,
+    );
+    try std.testing.expectEqual(
+        dense_tensor_retrieval.retrieval_support[0],
+        profiles[11].support,
     );
 }
 
@@ -519,6 +540,87 @@ test "classifier exact mask and deepest rejection reasons are append-only" {
         support.max_batch_items,
         support.max_input_features,
         support.max_output_dimensions + 1,
+        support.allowed_capabilities,
+    ));
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        dimensions.matching_profile_mask,
+    );
+    try std.testing.expectEqual(
+        @as(?model.UnsupportedReasonV1, .dimensions),
+        dimensions.deepest_unsupported_reason,
+    );
+
+    const capabilities = querySupportV1(queryFor(
+        support,
+        support.max_batch_items,
+        support.max_input_features,
+        support.max_output_dimensions,
+        support.allowed_capabilities | 1,
+    ));
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        capabilities.matching_profile_mask,
+    );
+    try std.testing.expectEqual(
+        @as(?model.UnsupportedReasonV1, .capabilities),
+        capabilities.deepest_unsupported_reason,
+    );
+}
+
+test "retrieval exact mask and deepest rejection reasons are append-only" {
+    const support = profiles[11].support;
+    try std.testing.expectEqual(
+        @as(u6, 10),
+        @intFromEnum(ProfileIndexV1.dense_tensor_classifier),
+    );
+    try std.testing.expectEqual(
+        @as(u6, 11),
+        @intFromEnum(ProfileIndexV1.dense_tensor_retrieval),
+    );
+    try std.testing.expectEqual(model.ModelFamilyIdV1.retrieval, support.family);
+    try std.testing.expectEqual(model.OperationIdV1.retrieve, support.operation);
+    try std.testing.expectEqual(
+        model.InputKindV1.embedding_i32,
+        support.input_kind,
+    );
+    try std.testing.expectEqual(
+        model.OutputKindV1.retrieval_hits,
+        support.output_kind,
+    );
+    try std.testing.expectEqual(
+        model.NumericalPolicyV1.exact_integer,
+        support.numerical_policy,
+    );
+    try std.testing.expectEqual(@as(u64, 1), support.max_batch_items);
+    try std.testing.expectEqual(@as(u64, 4_096), support.max_input_features);
+    try std.testing.expectEqual(@as(u64, 6_144), support.max_output_dimensions);
+    try std.testing.expectEqual(@as(u64, 0), support.allowed_capabilities);
+
+    const result = querySupportV1(queryFor(
+        support,
+        support.max_batch_items,
+        support.max_input_features,
+        support.max_output_dimensions,
+        support.allowed_capabilities,
+    ));
+    const retrieval_bit = @as(u64, 1) <<
+        @intFromEnum(ProfileIndexV1.dense_tensor_retrieval);
+    try std.testing.expectEqual(@as(u64, 1) << 11, retrieval_bit);
+    try std.testing.expectEqual(
+        retrieval_bit,
+        result.matching_profile_mask,
+    );
+    try std.testing.expectEqual(
+        @as(?model.UnsupportedReasonV1, null),
+        result.deepest_unsupported_reason,
+    );
+
+    const dimensions = querySupportV1(queryFor(
+        support,
+        support.max_batch_items,
+        support.max_input_features + 1,
+        support.max_output_dimensions,
         support.allowed_capabilities,
     ));
     try std.testing.expectEqual(

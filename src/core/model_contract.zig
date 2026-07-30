@@ -82,6 +82,7 @@ pub const OperationIdV1 = enum(u64) {
     select_action = 12,
     generate_sequence = 13,
     execute_action = 14,
+    retrieve = 15,
 };
 
 pub const InputKindV1 = enum(u64) {
@@ -92,6 +93,7 @@ pub const InputKindV1 = enum(u64) {
     video_feature_u8 = 5,
     latent_tensor = 6,
     typed_record = 7,
+    embedding_i32 = 8,
 };
 
 pub const OutputKindV1 = enum(u64) {
@@ -107,6 +109,7 @@ pub const OutputKindV1 = enum(u64) {
     video_segment = 10,
     token_ids = 11,
     tool_result = 12,
+    retrieval_hits = 13,
 };
 
 pub const NumericalPolicyV1 = enum(u64) {
@@ -116,7 +119,7 @@ pub const NumericalPolicyV1 = enum(u64) {
     implementation_defined = 4,
 };
 
-test "tool execution vocabulary keeps stable additive IDs" {
+test "model vocabulary keeps stable additive IDs" {
     try std.testing.expectEqual(
         @as(u64, 18),
         @intFromEnum(ModelFamilyIdV1.tool_executor),
@@ -128,6 +131,18 @@ test "tool execution vocabulary keeps stable additive IDs" {
     try std.testing.expectEqual(
         @as(u64, 12),
         @intFromEnum(OutputKindV1.tool_result),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 15),
+        @intFromEnum(OperationIdV1.retrieve),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 8),
+        @intFromEnum(InputKindV1.embedding_i32),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 13),
+        @intFromEnum(OutputKindV1.retrieval_hits),
     );
 }
 

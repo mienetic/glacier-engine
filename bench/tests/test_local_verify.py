@@ -736,6 +736,36 @@ class LocalVerifyTests(unittest.TestCase):
             self.assertIn("usage: tools/verify.sh", result.stdout)
             self.assertEqual([], list(root.glob("glacier-verify.*")))
 
+    def test_retrieval_focused_python_gate_runs_only_exact_module(self) -> None:
+        source = VERIFY.read_text(encoding="utf-8")
+        gate_start = source.index(
+            'if [ "$affected_plan_ready" -eq 1 ] &&\n'
+            '    [ "$dense_tensor_retrieval_python_test_requested" '
+            '-eq 1 ]; then'
+        )
+        gate_end = source.index(
+            'if [ "$affected_plan_ready" -eq 1 ] &&\n'
+            '    [ "$runtime_support_inspector_python_test_requested" '
+            '-eq 1 ]; then',
+            gate_start,
+        )
+        gate = source[gate_start:gate_end]
+
+        self.assertIn(
+            'run_gate "python/dense-tensor-retrieval"',
+            gate,
+        )
+        self.assertIn(
+            "python3 -m unittest \\\n"
+            "            bench.tests.test_stateless_retrieval_result",
+            gate,
+        )
+        self.assertNotIn("unittest discover", gate)
+        self.assertEqual(
+            1,
+            source.count("bench.tests.test_stateless_retrieval_result"),
+        )
+
     def test_ephemeral_zig_wrapper_exports_and_removes_compiler_caches(
         self,
     ) -> None:

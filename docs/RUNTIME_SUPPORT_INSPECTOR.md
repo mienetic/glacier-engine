@@ -59,7 +59,7 @@ tools/zig-with-ephemeral-cache.sh build runtime-support-inspector-test \
 
 ## Retained profiles
 
-Registry V1 currently contains eleven profiles:
+Registry V1 currently contains twelve profiles:
 
 | Index | Slug | Lifecycle | Contract shape |
 | ---: | --- | --- | --- |
@@ -74,8 +74,9 @@ Registry V1 currently contains eleven profiles:
 | 8 | `dense-tensor-reranker-reference` | stateless | generic rerank: dense i16 tensor → canonical ranked items |
 | 9 | `dense-tensor-embedding-reference` | stateless | generic encode: dense i16 tensor → exact Q30 L2 i32 embedding |
 | 10 | `dense-tensor-classifier-reference` | stateless | generic classify: dense i16 tensor → exact i64 class scores |
+| 11 | `dense-tensor-retrieval-reference` | stateless | fixed-corpus retrieve: Q30 query embedding → authenticated top-k hits |
 
-All eleven rows have evidence class
+All twelve rows have evidence class
 `retained_reference_fixture`, numerical policy `exact_integer`, and no allowed
 ambient capability. Their exact bounds come from the adapter support constants;
 the registry does not maintain a second handwritten copy.
@@ -165,11 +166,11 @@ any later failure.
 
 The standard-library Python example declares the same structures with
 `ctypes`; the dependency-free Rust example uses `#[repr(C)]` structures and
-`extern "C"`. Both validate the registry ABI, enumerate all eleven profiles,
+`extern "C"`. Both validate the registry ABI, enumerate all twelve profiles,
 verify the first and appended final row, and make exact embedding, reranker,
 classifier, transcript, dimension-rejected, and capability-rejected queries in
 addition to verifying the canonical contract chain. Their final summary
-contains `profile_count=11 transcript_mask=0x000000000000000c`:
+contains `profile_count=12 transcript_mask=0x000000000000000c`:
 
 ```sh
 python3 examples/interop/python_verify.py
@@ -227,7 +228,7 @@ registry.
 
 ## What this does not claim
 
-The registry and inspector cover only the eleven retained exact-integer reference
+The registry and inspector cover only the twelve retained exact-integer reference
 fixtures listed above. They make no claim about:
 
 - a production model or checkpoint;

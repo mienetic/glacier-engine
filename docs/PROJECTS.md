@@ -689,7 +689,7 @@ typed input/output kind, numerical policy, or explicit unsupported result.
 IDs plus bounded support records and malformed/unknown fixtures distinguish
 vocabulary from executable support.
 
-**Completed R0/R2 tensor registry slices:** eleven append-only exact-integer
+**Completed R0/R2 tensor registry slices:** twelve append-only exact-integer
 reference profiles now derive directly from retained adapter support constants.
 A deterministic read-only JSON inspector, fixed-width C enumeration/query
 surface, standard-library Python and dependency-free Rust consumers, and
@@ -708,10 +708,15 @@ rejection are retained across C, standard-library Python, and dependency-free
 Rust queries; the C++ consumer locks the layout, linkage, count, ABI, index,
 and mask constants.
 
-**Next slice:** compose the normalized embedding into an in-memory retrieval
-fixture or add a production adapter behind the existing contracts. Do not
-reorder an existing index or describe registration as production, platform,
-backend, quality, or performance support.
+**Completed fixed-corpus retrieval registry slice:** profile 11 appends the
+bounded exact Q30 retrieval adapter without moving indices 0 through 10. Its
+fixed index/query/visibility/top-k identities, `1 << 11` mask, exact support
+bounds, and rejection queries agree across the retained interop consumers.
+
+**Next slice:** bind exact retrieval candidates to the existing reranker or add
+a production adapter behind the existing contracts. Do not reorder an existing
+index or describe registration as production, platform, backend, quality, or
+performance support.
 
 ### Stateless encoder result envelope
 
@@ -750,9 +755,16 @@ ownership to zero. The shared reranker demo accepts `classify`, and registry
 profile 10 is visible through C, C++, Python, and Rust discovery. See
 [Dense-Tensor Classifier](DENSE_TENSOR_CLASSIFIER.md).
 
-**Next slice:** build an in-memory retrieval composition that feeds normalized
-candidates into the reranker, or add a production classifier adapter without
-reinterpreting the retained maps, policy, or output identity.
+**Completed fixed-corpus retrieval slice:** authenticated index generation,
+corpus/visibility maps, normalized Q30 matrices, one exact top-k policy, and a
+fixed-capacity retrieval-result wire now run through the shared stateless
+lifecycle. Direct and scheduled paths recompute eligibility, scores, order,
+and roots before atomic publication. See
+[Dense-Tensor Retrieval](DENSE_TENSOR_RETRIEVAL.md).
+
+**Next slice:** bind the exact retrieval candidates to the existing reranker,
+or add a production classifier/retrieval adapter without reinterpreting the
+retained maps, policies, or output identities.
 
 ### Model-family adapter lifecycle
 
@@ -760,10 +772,10 @@ Prototype `inspect → plan → prepare → validate candidate → publish/abort
 two fake families that have different state/output semantics.
 
 **Current slice:** vision, audio, temporal-video, generic dense-tensor
-reranking, normalized dense embedding, and generic dense-tensor classification
-families run under zero ambient capabilities, fixed buffers, and deterministic
-rejection tests. All six use the shared family-neutral stateless lifecycle and
-can adopt one
+reranking, normalized dense embedding, generic dense-tensor classification,
+and fixed-corpus retrieval families run under zero ambient capabilities, fixed
+buffers, and deterministic rejection tests. All seven use the shared
+family-neutral stateless lifecycle and can adopt one
 scheduler-owned receipt, preflight their exact result, publish only through the
 final V2 service commit, then cancel or retire with atomic release.
 
@@ -775,12 +787,12 @@ releases all ownership. See
 [Stateful Model Adapter and Latent-Step Fixture](STATEFUL_MODEL_ADAPTER.md) and
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md).
 
-**Next slice:** compose the non-media batch/result binding into retrieval, add a
-production classifier adapter with explicit quality and label semantics, adapt
-a production renderer/codec to the bounded generated-audio transaction and
-output registry, add a redistributable deterministic producer-transition
-profile, or build a read-only paired evidence/registry inspector that labels
-unverified bytes before rendering entries.
+**Next slice:** compose exact retrieval candidates into optional reranking, add
+a production classifier/retrieval adapter with explicit quality and label
+semantics, adapt a production renderer/codec to the bounded generated-audio
+transaction and output registry, add a redistributable deterministic
+producer-transition profile, or build a read-only paired evidence/registry
+inspector that labels unverified bytes before rendering entries.
 
 ### Portable workload-pressure campaign
 

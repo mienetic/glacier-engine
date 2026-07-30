@@ -294,6 +294,10 @@ DENSE_TENSOR_EMBEDDING_FOCUSED_PATHS = {
     "src/core/stateless_embedding_result.zig",
     "examples/dense_tensor_embedding_demo.zig",
 }
+DENSE_TENSOR_RETRIEVAL_FOCUSED_PATHS = {
+    "src/core/dense_tensor_retrieval.zig",
+    "src/core/stateless_retrieval_result.zig",
+}
 DENSE_TENSOR_PYTHON_FOCUSED_PATHS = {
     "bench/stateless_tensor_result.py",
     "bench/tests/test_stateless_tensor_result.py",
@@ -301,6 +305,10 @@ DENSE_TENSOR_PYTHON_FOCUSED_PATHS = {
 DENSE_TENSOR_EMBEDDING_PYTHON_FOCUSED_PATHS = {
     "bench/stateless_embedding_result.py",
     "bench/tests/test_stateless_embedding_result.py",
+}
+DENSE_TENSOR_RETRIEVAL_PYTHON_FOCUSED_PATHS = {
+    "bench/stateless_retrieval_result.py",
+    "bench/tests/test_stateless_retrieval_result.py",
 }
 STATELESS_TENSOR_RESULT_SHARED_PATH = "src/core/stateless_tensor_result.zig"
 
@@ -964,6 +972,23 @@ def _decision_for_path(path: str) -> PathDecision:
             embedding_steps,
         )
 
+    if path in DENSE_TENSOR_RETRIEVAL_FOCUSED_PATHS:
+        retrieval_flags = {"dense-tensor-family-focused"}
+        retrieval_steps = ("dense-tensor-family-compile",)
+        if path == "src/core/dense_tensor_retrieval.zig":
+            retrieval_flags.add("runtime-support-inspector-focused")
+            retrieval_steps = (
+                "dense-tensor-family-compile",
+                "runtime-support-inspector-compile",
+            )
+        return PathDecision(
+            path,
+            "dense-tensor retrieval adapter or result contract changed",
+            frozenset(retrieval_flags),
+            RETAINED_TARGETS,
+            retrieval_steps,
+        )
+
     if path in DENSE_TENSOR_PYTHON_FOCUSED_PATHS:
         return PathDecision(
             path,
@@ -984,6 +1009,19 @@ def _decision_for_path(path: str) -> PathDecision:
             frozenset(
                 {
                     "dense-tensor-embedding-python-test-focused",
+                    "python-changed",
+                }
+            ),
+            (),
+        )
+
+    if path in DENSE_TENSOR_RETRIEVAL_PYTHON_FOCUSED_PATHS:
+        return PathDecision(
+            path,
+            "dense-tensor retrieval Python oracle or exact test changed",
+            frozenset(
+                {
+                    "dense-tensor-retrieval-python-test-focused",
                     "python-changed",
                 }
             ),
@@ -1554,6 +1592,10 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
             "python/dense-tensor-embedding",
         ),
         (
+            "dense-tensor-retrieval-python-test-focused",
+            "python/dense-tensor-retrieval",
+        ),
+        (
             "runtime-support-inspector-python-test-focused",
             "python/runtime-support-inspector",
         ),
@@ -1641,6 +1683,10 @@ def print_report(plan: VerificationPlan) -> None:
         (
             "dense-tensor-embedding-python-test-focused",
             "python/dense-tensor-embedding",
+        ),
+        (
+            "dense-tensor-retrieval-python-test-focused",
+            "python/dense-tensor-retrieval",
         ),
         (
             "runtime-support-inspector-python-test-focused",

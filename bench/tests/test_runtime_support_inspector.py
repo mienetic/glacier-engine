@@ -198,6 +198,23 @@ EXPECTED_PROFILE_SEMANTICS = (
         4_096,
         256,
     ),
+    (
+        11,
+        "dense-tensor-retrieval-reference",
+        0x4744_5254_0000_0001,
+        "stateless",
+        "retrieval",
+        12,
+        "retrieve",
+        15,
+        "embedding_i32",
+        8,
+        "retrieval_hits",
+        13,
+        1,
+        4_096,
+        6_144,
+    ),
 )
 
 
@@ -236,7 +253,7 @@ class RuntimeSupportInspectorOracleTests(unittest.TestCase):
         slugs = [profile.slug for profile in oracle.PROFILES]
         profile_abis = [profile.profile_abi for profile in oracle.PROFILES]
 
-        self.assertEqual(list(range(11)), indices)
+        self.assertEqual(list(range(12)), indices)
         self.assertEqual(len(slugs), len(set(slugs)))
         self.assertEqual(len(profile_abis), len(set(profile_abis)))
 
@@ -252,6 +269,21 @@ class RuntimeSupportInspectorOracleTests(unittest.TestCase):
         )
         self.assertEqual(
             (1 << 11) - 1,
+            sum(1 << profile.index for profile in oracle.PROFILES[:11]),
+        )
+
+    def test_retrieval_profile_appends_exact_mask_bit(self) -> None:
+        retrieval = oracle.PROFILES[11]
+
+        self.assertEqual("dense-tensor-retrieval-reference", retrieval.slug)
+        self.assertEqual(0x4744_5254_0000_0001, retrieval.profile_abi)
+        self.assertEqual(1 << retrieval.index, 0x800)
+        self.assertEqual(
+            (1 << 11) - 1,
+            sum(1 << profile.index for profile in oracle.PROFILES[:11]),
+        )
+        self.assertEqual(
+            (1 << 12) - 1,
             sum(1 << profile.index for profile in oracle.PROFILES),
         )
 
@@ -269,7 +301,7 @@ class RuntimeSupportInspectorOracleTests(unittest.TestCase):
             "retained_reference_fixture_contracts",
             document["claim_scope"],
         )
-        self.assertEqual(11, document["profile_count"])
+        self.assertEqual(12, document["profile_count"])
         self.assertEqual(64, document["max_profiles"])
 
     def test_rendering_is_compact_ascii_json_with_exact_hex_width(self) -> None:
@@ -287,8 +319,8 @@ class RuntimeSupportInspectorOracleTests(unittest.TestCase):
             )
 
         self.assertEqual(
-            "51a56332ede82e1e772902f72698e8f3"
-            "2a2439b894fb18aeeaa7515246caac04",
+            "c107d55282b7ce4560d156b12bb82e76"
+            "7d0efae03d6d4eaf5f54c79e5ef57849",
             hashlib.sha256(rendered).hexdigest(),
         )
 
