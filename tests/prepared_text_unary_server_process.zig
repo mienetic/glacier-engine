@@ -1404,15 +1404,10 @@ fn runConcurrentWorker(
     work_barrier.release.set();
     serve_thread.join();
     joined = true;
-    if (expected_thread_error) |expected| {
-        const actual = serve_context.thread_error orelse
-            return error.MissingConcurrentServeFailure;
-        if (actual != expected)
-            return error.UnexpectedConcurrentServeFailure;
-    } else if (serve_context.thread_error) |err| {
-        return err;
-    }
-
+    try validateConcurrentServeThreadError(
+        serve_context.thread_error,
+        expected_thread_error,
+    );
     const stopped = lifecycle.snapshotV1();
     try validateConcurrentFinalSnapshot(
         profile,
@@ -2023,6 +2018,22 @@ fn validateConcurrentFinalSnapshot(
             }
         },
         else => return error.InvalidConcurrentWorkerProfile,
+    }
+}
+
+// Keep optional-error matching out of the large worker control flow: Zig
+// 0.15.2 Debug otherwise emits invalid LLVM IR with a dominance failure.
+fn validateConcurrentServeThreadError(
+    actual_error: ?anyerror,
+    expected_error: ?anyerror,
+) !void {
+    if (expected_error) |expected| {
+        const actual = actual_error orelse
+            return error.MissingConcurrentServeFailure;
+        if (actual != expected)
+            return error.UnexpectedConcurrentServeFailure;
+    } else if (actual_error) |err| {
+        return err;
     }
 }
 
