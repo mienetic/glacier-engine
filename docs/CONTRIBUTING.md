@@ -124,6 +124,7 @@ changed path.
 | Shared durable core/runtime implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
 | Audited durable recovery demo or worker | Native ReleaseSafe, Python discovery, and the durable profile on every retained target |
 | Bounded unary prepared-text service kernel or its focused acceptance root | `affected-fast` runs `unary-text-service-test` only; complete affected verification cross-compiles the same focused root with `unary-text-service-compile` on each retained target, without pulling the broad model-forward suite |
+| Bounded unary HTTP codec, loopback adapter, API, client, or focused acceptance root | `affected-fast` runs `unary-http-test` once; complete affected verification cross-compiles only `unary-http-compile` on each retained target. A kernel implementation change runs the service and HTTP roots in one host Zig invocation; foreign compilation is not native serving evidence |
 | Ordinary model package producer, strict tensor-profile admission module, package-aware `text-run`, process-local variable-terminal module, bounded-input helper, or focused package/raw-input oracle | `affected-fast` reuses the existing installed-CLI `text-runtime-golden-path-test` host DAG once; the complete affected tier adds the selected retained host-tool compile profiles |
 | Prepared-text session lifecycle | `affected-fast` runs the unary acceptance root and text-runtime golden path in one Zig invocation; the complete affected tier adds only the CPU, durable, and host-tool compile profiles instead of the complete consumer closure |
 | Prepared-text committed-output inspector or oracle | `affected-fast` runs the inspector and package-module roots in one host DAG; the complete affected tier adds broad host and selected portability coverage |
@@ -256,10 +257,15 @@ Python work therefore do not start the generic contract/package Zig DAG.
 When one change set selects both a generic compiled path and a focused
 prepared-text path, the verifier places all required host roots in one
 `zig build` invocation so compile reduction cannot hide either side.
-Unary-service-only changes select one dedicated acceptance root; when the
-package-aware CLI changes too, that root and the installed text-runtime golden
-path share the same invocation. Retained-target checks compile the focused
-unary root directly instead of expanding to the broad model-forward suite.
+Unary-service-only test changes select one dedicated acceptance root. HTTP
+codec, loopback adapter, API, client, and acceptance changes select
+`unary-http-test`; a unary-kernel implementation change selects both service
+and HTTP roots in the same host invocation. When the package-aware CLI changes
+too, its selected unary root and installed text-runtime golden path also share
+that invocation. Complete affected verification compiles the focused service
+and HTTP roots directly on selected retained targets instead of expanding to
+the broad model-forward suite. These are foreign compile checks, not native
+HTTP execution claims.
 
 Prepared-text routing keeps the default loop bounded. Changes limited to the
 direct-terminal controller or its Python tests select only the four-boundary

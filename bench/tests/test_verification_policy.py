@@ -210,6 +210,16 @@ EXPECTED_PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS = frozenset(
     }
 )
 
+EXPECTED_PREPARED_TEXT_UNARY_HTTP_FOCUSED_PATHS = frozenset(
+    {
+        "src/prepared_text_unary_http_v1.zig",
+        "src/server/prepared_text_unary_http.zig",
+        "src/client/prepared_text_unary_http.zig",
+        "src/server/api.zig",
+        "tests/prepared_text_unary_http.zig",
+    }
+)
+
 EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
     {
         "src/core/native_metal_supervisor_recovery_death_report.zig",
@@ -575,6 +585,10 @@ class VerificationPolicyTests(unittest.TestCase):
             EXPECTED_PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS,
             policy.PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS,
         )
+        self.assertEqual(
+            EXPECTED_PREPARED_TEXT_UNARY_HTTP_FOCUSED_PATHS,
+            policy.PREPARED_TEXT_UNARY_HTTP_FOCUSED_PATHS,
+        )
         for changed_path in sorted(EXPECTED_CORE_CONTRACT_PATHS):
             with self.subTest(changed_path=changed_path):
                 self.assert_target_steps(
@@ -791,26 +805,72 @@ class VerificationPolicyTests(unittest.TestCase):
             EXPECTED_PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS
         ):
             with self.subTest(changed_path=changed_path):
+                expected_steps = ["unary-text-service-compile"]
+                expected_flags = {
+                    "prepared-text-unary-service-focused",
+                }
+                if changed_path == "src/prepared_text_unary_service.zig":
+                    expected_steps.append("unary-http-compile")
+                    expected_flags.add(
+                        "prepared-text-unary-http-focused"
+                    )
                 plan = self.assert_target_steps(
                     [changed_path],
                     tuple(
                         (
                             target,
-                            ("unary-text-service-compile",),
+                            tuple(expected_steps),
                         )
                         for target in policy.RETAINED_TARGETS
                     ),
                 )
                 self.assertEqual(
-                    frozenset(
-                        {"prepared-text-unary-service-focused"}
-                    ),
+                    frozenset(expected_flags),
                     plan.flags,
                 )
                 self.assertFalse(plan.requires("native-full"))
                 self.assertFalse(plan.requires("python-full"))
                 self.assertIn(
                     "native/prepared-text-unary-service",
+                    policy._gate_names(plan.decisions[0]),
+                )
+                if changed_path == "src/prepared_text_unary_service.zig":
+                    self.assertIn(
+                        "native/prepared-text-unary-http",
+                        policy._gate_names(plan.decisions[0]),
+                    )
+                else:
+                    self.assertNotIn(
+                        "native/prepared-text-unary-http",
+                        policy._gate_names(plan.decisions[0]),
+                    )
+        for changed_path in sorted(
+            EXPECTED_PREPARED_TEXT_UNARY_HTTP_FOCUSED_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_target_steps(
+                    [changed_path],
+                    tuple(
+                        (
+                            target,
+                            ("unary-http-compile",),
+                        )
+                        for target in policy.RETAINED_TARGETS
+                    ),
+                )
+                self.assertEqual(
+                    frozenset(
+                        {"prepared-text-unary-http-focused"}
+                    ),
+                    plan.flags,
+                )
+                self.assertFalse(plan.requires("native-full"))
+                self.assertFalse(plan.requires("python-full"))
+                self.assertFalse(
+                    plan.requires("prepared-text-unary-service-focused")
+                )
+                self.assertIn(
+                    "native/prepared-text-unary-http",
                     policy._gate_names(plan.decisions[0]),
                 )
         for changed_path in sorted(
@@ -869,6 +929,20 @@ class VerificationPolicyTests(unittest.TestCase):
                     [changed_path],
                     tuple((target, steps) for target in policy.RETAINED_TARGETS),
                 )
+
+    def test_unary_http_adjacent_server_path_remains_conservative(self):
+        plan = self.assert_target_steps(
+            ["src/server/unrelated_transport.zig"],
+            tuple(
+                (target, policy.FULL_TARGET_STEPS)
+                for target in policy.RETAINED_TARGETS
+            ),
+        )
+        self.assertTrue(plan.requires("native-full"))
+        self.assertTrue(plan.requires("python-full"))
+        self.assertFalse(
+            plan.requires("prepared-text-unary-http-focused")
+        )
 
     def test_variable_terminal_paths_avoid_broad_compile_profiles(self):
         cases = {
@@ -3208,12 +3282,10 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 calls,
             )
 
-    def test_affected_fast_unary_service_uses_one_focused_build(self):
+    def test_affected_fast_unary_service_test_uses_one_focused_build(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             repository, merge_base, environment = self.make_repository(root)
-            service = repository / "src" / "prepared_text_unary_service.zig"
-            service.write_text("", encoding="ascii")
             test_root = repository / "tests" / "unary_text_service.zig"
             test_root.write_text("", encoding="ascii")
 
@@ -3231,6 +3303,10 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertIn(
                 "PASS  native/prepared-text-unary-service: covered by the "
                 "focused host Zig DAG",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "native/prepared-text-unary-http",
                 result.stdout,
             )
             self.assertNotIn(
@@ -3260,6 +3336,147 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 ),
                 calls,
             )
+
+    def test_affected_fast_unary_service_implementation_shares_http_build(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            service = repository / "src" / "prepared_text_unary_service.zig"
+            service.write_text("", encoding="ascii")
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  native/prepared-text-unary-service: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  native/prepared-text-unary-http: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(1, len(build_calls), calls)
+            self.assertTrue(
+                build_calls[0].startswith(
+                    "build unary-text-service-test unary-http-test "
+                ),
+                build_calls,
+            )
+            self.assertFalse(
+                any(
+                    "model_forward" in line
+                    or "text-runtime-golden-path-test" in line
+                    or "package-module-test" in line
+                    or " -Dtarget=" in line
+                    for line in calls
+                ),
+                calls,
+            )
+
+    def test_affected_fast_unary_http_uses_one_focused_build(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            http = repository / "src" / "prepared_text_unary_http_v1.zig"
+            http.write_text("", encoding="ascii")
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  native/prepared-text-unary-http: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "native/prepared-text-unary-service",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            focused_calls = [
+                line
+                for line in calls
+                if line.startswith("build unary-http-test ")
+            ]
+            self.assertEqual(1, len(focused_calls), calls)
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(focused_calls, build_calls, calls)
+            self.assertFalse(
+                any(
+                    "unary-text-service-test" in line
+                    or "model_forward" in line
+                    or "text-runtime-golden-path-test" in line
+                    or "package-module-test" in line
+                    or " -Dtarget=" in line
+                    for line in calls
+                ),
+                calls,
+            )
+
+    def test_affected_fast_unary_http_and_service_tests_share_one_build(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            http = repository / "src" / "prepared_text_unary_http_v1.zig"
+            http.write_text("", encoding="ascii")
+            service_test = repository / "tests" / "unary_text_service.zig"
+            service_test.write_text("", encoding="ascii")
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(1, len(build_calls), calls)
+            self.assertTrue(
+                build_calls[0].startswith(
+                    "build unary-text-service-test unary-http-test "
+                ),
+                build_calls,
+            )
+            self.assertNotIn("package-module-test", build_calls[0])
+            self.assertNotIn("text-runtime-golden-path-test", build_calls[0])
+            self.assertNotIn("-Dtarget=", build_calls[0])
 
     def test_affected_fast_package_text_paths_share_one_focused_build(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -3380,6 +3597,11 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "focused host Zig DAG",
                 result.stdout,
             )
+            self.assertIn(
+                "PASS  native/prepared-text-unary-http: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
             calls = (
                 Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
                 .read_text(encoding="ascii")
@@ -3390,6 +3612,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertTrue(
                 build_calls[0].startswith(
                     "build unary-text-service-test "
+                    "unary-http-test "
                     "text-runtime-golden-path-test "
                 ),
                 build_calls,

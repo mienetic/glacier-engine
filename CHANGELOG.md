@@ -14,8 +14,19 @@ before the first stable release.
   cancellation with hidden partial output, generation-fenced handles,
   fail-stop, and zero-ownership close. The package-aware process-local
   fixed-output `text-run` branch is the first compatibility-checked consumer;
-  network transport, streaming, durable replay, authentication, GPU execution,
-  and performance evidence remain open.
+  non-loopback serving, streaming, durable replay, authentication, GPU
+  execution, and performance evidence remain open.
+- An experimental bounded JSON HTTP/1.1 adapter now exposes the one loaded
+  package-bound model through `GET /v1/models` and fixed-output execution
+  through `POST /v1/chat/completions`. The completion profile requires one
+  strict UTF-8 `user` message, `stream=false`, `max_tokens` from 1 through 64,
+  and exact idempotency, tenant, and optional logical-deadline headers. The
+  serial socket adapter rejects non-loopback binds, reuses the unary kernel,
+  and fails closed rather than rendering non-UTF-8 model output. A retained
+  bounded client lists the model, submits completions, owns returned protocol
+  values, rejects redirects, and validates response correlation. It does not
+  add authentication, TLS, streaming, automatic retry, durable idempotency,
+  restart, disconnect, production-model, GPU, or performance evidence.
 
 ### Changed
 
@@ -33,6 +44,10 @@ before the first stable release.
   and compile-only retained-target companion instead of the broad
   model-forward suite. Package-aware CLI and prepared-session changes run that
   root together with the text-runtime golden path in one host Zig invocation.
+  Unary HTTP codec, adapter, API, client, and acceptance changes run
+  `unary-http-test` once under `affected-fast`; complete affected verification
+  selects `unary-http-compile` on retained targets. Kernel implementation
+  changes run the service and HTTP roots in one host Zig invocation.
   Prepared-text session changes now select only the CPU, durable, and host-tool
   compile profiles, while the process-local variable-terminal module selects
   only the host-tool profile; both reuse that same host golden DAG instead of

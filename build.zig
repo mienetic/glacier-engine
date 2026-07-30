@@ -1073,6 +1073,35 @@ pub fn build(b: *std.Build) void {
         &unary_text_service_tests.step,
     );
 
+    // Focused bounded HTTP/1.1 unary acceptance gate. The transport test
+    // remains a separate artifact so wire/parser and loopback lifecycle
+    // changes do not pull the broad model-forward root into affected builds.
+    const unary_http_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "tests/prepared_text_unary_http.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    unary_http_tests.root_module.addImport("engine", engine_mod);
+    unary_http_tests.root_module.addImport("core", core_mod);
+    unary_http_tests.linkLibC();
+    if (int4_neon) |lib| unary_http_tests.linkLibrary(lib);
+    const run_unary_http_tests = b.addRunArtifact(unary_http_tests);
+    const unary_http_test_step = b.step(
+        "unary-http-test",
+        "Run focused bounded unary HTTP acceptance tests",
+    );
+    unary_http_test_step.dependOn(&run_unary_http_tests.step);
+    const unary_http_compile_step = b.step(
+        "unary-http-compile",
+        "Compile bounded unary HTTP acceptance tests",
+    );
+    unary_http_compile_step.dependOn(&unary_http_tests.step);
+
     // Grounded DecodeLane4 evidence primitives remain separate from the
     // production CLI: fixed lane-local token journals and the four-request
     // post-commit barrier can therefore be tested without pulling protocol or
@@ -1272,6 +1301,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_pager_tests.step);
     test_step.dependOn(&run_model_tests.step);
     test_step.dependOn(&run_unary_text_service_tests.step);
+    test_step.dependOn(&run_unary_http_tests.step);
     test_step.dependOn(&run_lane4_runner_core_tests.step);
     test_step.dependOn(&run_lane4_runner_observation_tests.step);
     test_step.dependOn(&run_lane4_event_wire_tests.step);
@@ -1303,6 +1333,7 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&pager_tests.step);
     test_compile_step.dependOn(&model_tests.step);
     test_compile_step.dependOn(&unary_text_service_tests.step);
+    test_compile_step.dependOn(&unary_http_tests.step);
     test_compile_step.dependOn(&lane4_runner_core_tests.step);
     test_compile_step.dependOn(&lane4_runner_observation_tests.step);
     test_compile_step.dependOn(&lane4_event_wire_tests.step);
@@ -6958,6 +6989,7 @@ pub fn build(b: *std.Build) void {
     profile_cpu_compile_step.dependOn(
         &unary_text_service_tests.step,
     );
+    profile_cpu_compile_step.dependOn(&unary_http_tests.step);
 
     const profile_durable_compile_step = b.step(
         "profile-durable-compile",

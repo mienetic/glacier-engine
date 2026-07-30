@@ -272,6 +272,13 @@ pub const prepared_text_raw_input =
     @import("prepared_text_raw_input.zig");
 pub const prepared_text_unary_service =
     @import("prepared_text_unary_service.zig");
+pub const prepared_text_unary_http_v1 =
+    @import("prepared_text_unary_http_v1.zig");
+pub const prepared_text_unary_http_server =
+    @import("server/prepared_text_unary_http.zig");
+pub const prepared_text_unary_http_client =
+    @import("client/prepared_text_unary_http.zig");
+pub const server_api = @import("server/api.zig");
 pub const prepared_text_input_archive =
     @import("prepared_text_input_archive.zig");
 pub const prepared_text_source_lease =

@@ -1885,11 +1885,59 @@ retained responses, and zero-ownership close. Service-only affected
 verification runs this root without the broad model-forward suite and uses its
 compile-only companion for retained targets.
 
-This is not a network server. It adds no HTTP/RPC route, background worker,
-committed-token streaming, durable idempotency, process-death recovery, GPU
-execution, authentication, quota, production-model quality, or performance
-claim. See
+R1k-b6 itself is not a network server. It adds no HTTP/RPC route, background
+worker, committed-token streaming, durable idempotency, process-death
+recovery, GPU execution, authentication, quota, production-model quality, or
+performance claim. See
 [Bounded Prepared-Text Unary Service](PREPARED_TEXT_UNARY_SERVICE.md).
+
+#### R1k-b7 — Bounded loopback JSON HTTP/1.1 unary transport
+
+Status: **experimental loopback route and retained client integrated**.
+
+The additive R1 HTTP profile keeps `prepared_text_unary_service` as the only
+execution state machine. A serial socket accepts only `127.0.0.1` or `::1`,
+serves one request per connection, and closes that connection after the
+response. `GET /v1/models` reports the one loaded package-bound model.
+`POST /v1/chat/completions` accepts exactly one strict UTF-8 message with role
+`user`, requires `stream=false`, and bounds `max_tokens` to `1..64`.
+
+The completion route requires exactly one `Idempotency-Key` containing
+1..128 visible ASCII bytes and one canonical nonzero decimal
+`Glacier-Tenant-Key`. An optional canonical decimal
+`Glacier-Deadline-Tick` carries an absolute logical Scheduler tick; zero
+disables that logical deadline. It is not a wall-clock timeout. The
+idempotency key is domain-separated and hashed into the existing bounded
+process-local retention contract. The tenant key remains untrusted scheduling
+and accounting input rather than authenticated identity.
+
+HTTP/1.1 framing, exact content type and length, the 8 KiB header ceiling,
+32 KiB body ceiling, strict JSON schema, model identity, prompt UTF-8, and the
+4,096-byte prompt limit reject before unary admission. The response ceiling is
+8 KiB. Terminal token bytes must form strict UTF-8 before JSON rendering;
+otherwise the route emits a structured fail-closed error instead of malformed
+model text.
+
+The retained `ClientV1` wraps a real `std.http.Client` with caller-provided
+allocation plus bounded reusable request, response, parser, URI, and transfer
+workspaces. Its endpoint accepts only numeric IPv4 or IPv6 loopback and a
+nonzero port. `listModelsV1` and `completeV1` return owned protocol values,
+reject redirects, encoded or persistent responses, and validate HTTP status,
+schema, model, request, content, token-count, and structured-error
+correlation. Calls are serialized and no request is retried automatically.
+
+The focused `unary-http-test` host root covers the bounded codec, route, and
+loopback adapter without compiling the broad model-forward suite. Complete
+affected verification uses `unary-http-compile` on retained targets. A kernel
+implementation change runs the service and HTTP host roots in one Zig
+invocation. Foreign-target compilation is portability evidence only.
+
+This slice does not establish a separately managed server process,
+non-loopback exposure, authentication, authorization, TLS, concurrent model
+execution, streaming, automatic retry, timeout or disconnect cancellation,
+graceful drain, restart, durable idempotency, process-death recovery, native
+multi-OS serving, GPU execution, production-model quality, or performance
+evidence.
 
 #### Public durable-runtime composition foundation
 
