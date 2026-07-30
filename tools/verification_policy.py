@@ -360,6 +360,7 @@ PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS = {
 
 PREPARED_TEXT_UNARY_HTTP_FOCUSED_PATHS = {
     "src/prepared_text_unary_http_v1.zig",
+    "src/server/cancellable_socket_writer.zig",
     "src/server/prepared_text_unary_http.zig",
     "src/client/prepared_text_unary_http.zig",
     "src/server/api.zig",
@@ -1192,6 +1193,7 @@ def _decision_for_path(path: str) -> PathDecision:
         unary_http_steps = ["unary-http-compile"]
         if lower in {
             "src/server/api.zig",
+            "src/server/cancellable_socket_writer.zig",
             "src/server/prepared_text_unary_http.zig",
         }:
             unary_http_flags.add(

@@ -30,6 +30,10 @@ const peer_reset_release_command = "peer-reset-release\n";
 const peer_reset_drain_command = "peer-reset-drain\n";
 const drain_response_ready_command = "drain-response-ready\n";
 const complete_response_ready_command = "complete-response-ready\n";
+const drain_response_writing_command =
+    "drain-response-writing\n";
+const complete_response_writing_command =
+    "complete-response-writing\n";
 const prompt = "http-probe-6";
 const generation_a: u64 = 0x4753_5052_0000_0101;
 const generation_partial_head: u64 = 0x4753_5052_0000_0102;
@@ -45,7 +49,11 @@ const generation_drain_response_ready: u64 =
     0x4753_5052_0000_0109;
 const generation_complete_response_ready: u64 =
     0x4753_5052_0000_010a;
-const generation_b: u64 = 0x4753_5052_0000_010b;
+const generation_drain_response_writing: u64 =
+    0x4753_5052_0000_010b;
+const generation_complete_response_writing: u64 =
+    0x4753_5052_0000_010c;
+const generation_b: u64 = 0x4753_5052_0000_010d;
 const frame_max_bytes = 256;
 const worker_timeout_ns = 15 * std.time.ns_per_s;
 const watchdog_poll_ns = 10 * std.time.ns_per_ms;
@@ -71,6 +79,8 @@ const WorkerProfile = enum {
     peer_reset_work,
     drain_response_ready,
     complete_response_ready,
+    drain_response_writing,
+    complete_response_writing,
 
     fn wire(self: WorkerProfile) []const u8 {
         return switch (self) {
@@ -83,6 +93,8 @@ const WorkerProfile = enum {
             .peer_reset_work => "peer-reset-work",
             .drain_response_ready => "drain-response-ready",
             .complete_response_ready => "complete-response-ready",
+            .drain_response_writing => "drain-response-writing",
+            .complete_response_writing => "complete-response-writing",
         };
     }
 
@@ -105,6 +117,8 @@ const WorkerProfile = enum {
             .peer_reset_work,
             .drain_response_ready,
             .complete_response_ready,
+            .drain_response_writing,
+            .complete_response_writing,
             => null,
             .timeout_head => .receiving_head,
             .timeout_body => .request_head_received,
@@ -121,6 +135,8 @@ const WorkerProfile = enum {
             .peer_reset_work,
             .drain_response_ready,
             .complete_response_ready,
+            .drain_response_writing,
+            .complete_response_writing,
             => 0,
         };
     }
@@ -140,7 +156,20 @@ const WorkerProfile = enum {
 
     fn usesResponseBarrier(self: WorkerProfile) bool {
         return self == .drain_response_ready or
-            self == .complete_response_ready;
+            self == .complete_response_ready or
+            self.usesResponseProgressBarrier();
+    }
+
+    fn usesResponseProgressBarrier(self: WorkerProfile) bool {
+        return self == .drain_response_writing or
+            self == .complete_response_writing;
+    }
+
+    fn responseWriteQuantumBytes(self: WorkerProfile) u16 {
+        return if (self.usesResponseProgressBarrier())
+            1
+        else
+            server_api.maximum_response_write_quantum_bytes;
     }
 
     fn isPhaseE(self: WorkerProfile) bool {
@@ -500,9 +529,13 @@ const WorkAdmissionBarrierV1 = struct {
 const ResponseReadyBarrierV1 = struct {
     reached: std.Thread.ResetEvent = .{},
     release: std.Thread.ResetEvent = .{},
+    progress_reached: std.Thread.ResetEvent = .{},
+    progress_release: std.Thread.ResetEvent = .{},
     retired_reached: std.Thread.ResetEvent = .{},
     ready_calls: u8 = 0,
     writing_calls: u8 = 0,
+    progress_calls: u64 = 0,
+    progress_bytes: u64 = 0,
     outcome: ?http_server.ResponseWriteOutcomeV1 = null,
 
     fn readyOpaque(context: *anyopaque) anyerror!void {
@@ -526,6 +559,30 @@ const ResponseReadyBarrierV1 = struct {
         return .proceed;
     }
 
+    fn progressOpaque(
+        context: *anyopaque,
+        bytes_sent: usize,
+    ) anyerror!void {
+        const self: *ResponseReadyBarrierV1 =
+            @ptrCast(@alignCast(context));
+        if (bytes_sent != 1)
+            return error.InvalidResponseWriteProgress;
+        self.progress_calls = try std.math.add(
+            u64,
+            self.progress_calls,
+            1,
+        );
+        self.progress_bytes = try std.math.add(
+            u64,
+            self.progress_bytes,
+            @intCast(bytes_sent),
+        );
+        if (self.progress_calls == 1) {
+            self.progress_reached.set();
+            self.progress_release.wait();
+        }
+    }
+
     fn retiredOpaque(
         context: *anyopaque,
         outcome: http_server.ResponseWriteOutcomeV1,
@@ -542,12 +599,17 @@ const ResponseReadyBarrierV1 = struct {
 
     fn control(
         self: *ResponseReadyBarrierV1,
+        observe_progress: bool,
     ) http_server.RequestResponseControlV1 {
         return .{
             .context = self,
             .ready_fn = readyOpaque,
             .writing_fn = writingOpaque,
             .retired_fn = retiredOpaque,
+            .progress_fn = if (observe_progress)
+                progressOpaque
+            else
+                null,
         };
     }
 };
@@ -652,13 +714,16 @@ fn runWorker(
         .config = .{
             .receive_timeout_ns = profile.receiveTimeoutNs(),
             .peer_reset_poll_timeout_ns = profile.peerResetPollTimeoutNs(),
+            .response_write_quantum_bytes = profile.responseWriteQuantumBytes(),
         },
         .work_observer = if (profile.usesWorkBarrier())
             work_barrier.control(profile == .peer_reset_work)
         else
             null,
         .response_observer = if (profile.usesResponseBarrier())
-            response_barrier.control()
+            response_barrier.control(
+                profile.usesResponseProgressBarrier(),
+            )
         else
             null,
     };
@@ -673,6 +738,8 @@ fn runWorker(
             work_barrier.release.set();
         if (profile.usesResponseBarrier())
             response_barrier.release.set();
+        if (profile.usesResponseProgressBarrier())
+            response_barrier.progress_release.set();
         forceDrainAndWake(
             &lifecycle,
             &runtime,
@@ -751,6 +818,15 @@ fn runWorker(
     }
     if (drain_control.usesResponseBarrier()) {
         response_barrier.reached.wait();
+        if (drain_control.usesResponseProgressBarrier()) {
+            response_barrier.release.set();
+            response_barrier.progress_reached.wait();
+            if (response_barrier.progress_calls != 1 or
+                response_barrier.progress_bytes != 1)
+            {
+                return error.InvalidResponseProgressReceipt;
+            }
+        }
         if (drain_control == .response_completed) {
             response_barrier.release.set();
             response_barrier.retired_reached.wait();
@@ -759,6 +835,19 @@ fn runWorker(
                 response_barrier.writing_calls != 1)
             {
                 return error.InvalidCompletedResponseReceipt;
+            }
+        }
+        if (drain_control == .response_writing_completed) {
+            response_barrier.progress_release.set();
+            response_barrier.retired_reached.wait();
+            if (response_barrier.outcome != .write_completed or
+                response_barrier.ready_calls != 1 or
+                response_barrier.writing_calls != 1 or
+                response_barrier.progress_calls <= 1 or
+                response_barrier.progress_bytes !=
+                    response_barrier.progress_calls)
+            {
+                return error.InvalidCompletedResponseProgressReceipt;
             }
         }
     }
@@ -790,6 +879,18 @@ fn runWorker(
             response_barrier.writing_calls != 0)
         {
             return error.InvalidCancelledResponseReceipt;
+        }
+    }
+    if (drain_control == .response_writing) {
+        response_barrier.progress_release.set();
+        response_barrier.retired_reached.wait();
+        if (response_barrier.outcome != .cancelled_during_write or
+            response_barrier.ready_calls != 1 or
+            response_barrier.writing_calls != 1 or
+            response_barrier.progress_calls != 1 or
+            response_barrier.progress_bytes != 1)
+        {
+            return error.InvalidCancelledResponseProgressReceipt;
         }
     }
     if (drain_error) |err| return err;
@@ -861,7 +962,11 @@ fn runWorker(
                 return error.InvalidPeerResetServiceReceipt;
             }
         },
-        .drain_response_ready, .complete_response_ready => {
+        .drain_response_ready,
+        .complete_response_ready,
+        .drain_response_writing,
+        .complete_response_writing,
+        => {
             if (service_snapshot.terminal_records != 1 or
                 service_snapshot.completed_records != 1 or
                 service_snapshot.cancelled_records != 0 or
@@ -909,6 +1014,8 @@ const DrainControl = enum {
     terminal_work,
     response_ready,
     response_completed,
+    response_writing,
+    response_writing_completed,
 
     fn requestedPhase(
         self: DrainControl,
@@ -919,6 +1026,8 @@ const DrainControl = enum {
             .terminal_work,
             .response_ready,
             .response_completed,
+            .response_writing,
+            .response_writing_completed,
             => null,
             .partial_head => .receiving_head,
             .partial_body => .request_head_received,
@@ -936,12 +1045,19 @@ const DrainControl = enum {
 
     fn usesResponseBarrier(self: DrainControl) bool {
         return self == .response_ready or
-            self == .response_completed;
+            self == .response_completed or
+            self.usesResponseProgressBarrier();
+    }
+
+    fn usesResponseProgressBarrier(self: DrainControl) bool {
+        return self == .response_writing or
+            self == .response_writing_completed;
     }
 
     fn repeatsDrain(self: DrainControl) bool {
         return self.usesWorkBarrier() or
-            self == .response_ready;
+            self == .response_ready or
+            self == .response_writing;
     }
 };
 
@@ -954,6 +1070,8 @@ fn profileMatchesControl(
         .drain_terminal_work => control == .terminal_work,
         .drain_response_ready => control == .response_ready,
         .complete_response_ready => control == .response_completed,
+        .drain_response_writing => control == .response_writing,
+        .complete_response_writing => control == .response_writing_completed,
         .peer_reset_work => false,
         .standard,
         .drain_with_deadline,
@@ -965,7 +1083,7 @@ fn profileMatchesControl(
 }
 
 fn readDrainControl(stdin: std.fs.File) !DrainControl {
-    var command: [complete_response_ready_command.len + 1]u8 =
+    var command: [complete_response_writing_command.len + 1]u8 =
         undefined;
     var count: usize = 0;
     while (true) {
@@ -1023,6 +1141,20 @@ fn readDrainControl(stdin: std.fs.File) !DrainControl {
         complete_response_ready_command,
     )) {
         return .response_completed;
+    }
+    if (std.mem.eql(
+        u8,
+        command[0..count],
+        drain_response_writing_command,
+    )) {
+        return .response_writing;
+    }
+    if (std.mem.eql(
+        u8,
+        command[0..count],
+        complete_response_writing_command,
+    )) {
+        return .response_writing_completed;
     }
     return error.InvalidControlCommand;
 }
@@ -1159,6 +1291,8 @@ fn validatePhaseEReceipt(
         if (profile == .peer_reset_work) 1 else 0;
     const expected_response_cancel: u64 =
         if (profile == .drain_response_ready) 1 else 0;
+    const expected_response_write_cancel: u64 =
+        if (profile == .drain_response_writing) 1 else 0;
     const expected_peer_reset_phase: server_api.ManagedConnectionPhaseV1 =
         if (expected_peer_reset == 1)
             .request_admitted
@@ -1169,17 +1303,32 @@ fn validatePhaseEReceipt(
             .response_ready
         else
             .none;
+    const expected_response_write_phase: server_api.ManagedConnectionPhaseV1 =
+        if (expected_response_write_cancel == 1)
+            .response_writing
+        else
+            .none;
     if (snapshot.peer_reset_connections != expected_peer_reset or
         snapshot.peer_reset_cancelled_work_connections !=
             expected_peer_reset or
         snapshot.drain_cancelled_response_connections !=
             expected_response_cancel or
+        snapshot.drain_requested_response_write_connections !=
+            expected_response_write_cancel or
+        snapshot.drain_cancelled_response_write_connections !=
+            expected_response_write_cancel or
+        snapshot.response_write_transport_failed_connections != 0 or
         snapshot.last_peer_reset_phase !=
             expected_peer_reset_phase or
         snapshot.last_peer_reset_cancelled_work_phase !=
             expected_peer_reset_phase or
         snapshot.last_drain_cancelled_response_phase !=
-            expected_response_cancel_phase)
+            expected_response_cancel_phase or
+        snapshot.last_drain_requested_response_write_phase !=
+            expected_response_write_phase or
+        snapshot.last_drain_cancelled_response_write_phase !=
+            expected_response_write_phase or
+        snapshot.last_response_write_transport_failed_phase != .none)
     {
         return error.InvalidPhaseEReceipt;
     }
@@ -1225,7 +1374,7 @@ fn emitDraining(
     var storage: [frame_max_bytes]u8 = undefined;
     const frame = try std.fmt.bufPrint(
         &storage,
-        "DRAINING {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d}\n",
+        "DRAINING {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d}\n",
         .{
             snapshot.process_generation,
             snapshot.accepted_connections,
@@ -1251,6 +1400,18 @@ fn emitDraining(
             ),
             @intFromEnum(
                 snapshot.last_peer_reset_cancelled_work_phase,
+            ),
+            snapshot.drain_requested_response_write_connections,
+            @intFromEnum(
+                snapshot.last_drain_requested_response_write_phase,
+            ),
+            snapshot.drain_cancelled_response_write_connections,
+            @intFromEnum(
+                snapshot.last_drain_cancelled_response_write_phase,
+            ),
+            snapshot.response_write_transport_failed_connections,
+            @intFromEnum(
+                snapshot.last_response_write_transport_failed_phase,
             ),
             responseOutcomeWire(response_outcome),
         },
@@ -1283,7 +1444,7 @@ fn emitClosed(
     var storage: [frame_max_bytes]u8 = undefined;
     const frame = try std.fmt.bufPrint(
         &storage,
-        "CLOSED {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} 1\n",
+        "CLOSED {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} 1\n",
         .{
             snapshot.process_generation,
             snapshot.accepted_connections,
@@ -1309,6 +1470,18 @@ fn emitClosed(
             ),
             @intFromEnum(
                 snapshot.last_peer_reset_cancelled_work_phase,
+            ),
+            snapshot.drain_requested_response_write_connections,
+            @intFromEnum(
+                snapshot.last_drain_requested_response_write_phase,
+            ),
+            snapshot.drain_cancelled_response_write_connections,
+            @intFromEnum(
+                snapshot.last_drain_cancelled_response_write_phase,
+            ),
+            snapshot.response_write_transport_failed_connections,
+            @intFromEnum(
+                snapshot.last_response_write_transport_failed_phase,
             ),
             responseOutcomeWire(response_outcome),
             service_active,
@@ -1342,6 +1515,12 @@ const ActivityFrame = struct {
     drain_cancelled_response: u64,
     last_drain_cancelled_response_phase: server_api.ManagedConnectionPhaseV1,
     last_peer_reset_cancelled_work_phase: server_api.ManagedConnectionPhaseV1,
+    drain_requested_response_write: u64,
+    last_drain_requested_response_write_phase: server_api.ManagedConnectionPhaseV1,
+    drain_cancelled_response_write: u64,
+    last_drain_cancelled_response_write_phase: server_api.ManagedConnectionPhaseV1,
+    response_write_transport_failed: u64,
+    last_response_write_transport_failed_phase: server_api.ManagedConnectionPhaseV1,
     response_outcome: u8,
 };
 
@@ -1465,6 +1644,18 @@ fn parseActivity(
         fields.next() orelse return error.InvalidFrame;
     const last_peer_reset_cancelled_work_phase =
         fields.next() orelse return error.InvalidFrame;
+    const drain_requested_response_write = fields.next() orelse
+        return error.InvalidFrame;
+    const last_drain_requested_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const drain_cancelled_response_write = fields.next() orelse
+        return error.InvalidFrame;
+    const last_drain_cancelled_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const response_write_transport_failed = fields.next() orelse
+        return error.InvalidFrame;
+    const last_response_write_transport_failed_phase =
+        fields.next() orelse return error.InvalidFrame;
     const response_outcome = fields.next() orelse
         return error.InvalidFrame;
     if (fields.next() != null or
@@ -1511,6 +1702,27 @@ fn parseActivity(
         ),
         .last_peer_reset_cancelled_work_phase = try parseConnectionPhase(
             last_peer_reset_cancelled_work_phase,
+        ),
+        .drain_requested_response_write = try parseCanonicalInt(
+            u64,
+            drain_requested_response_write,
+        ),
+        .last_drain_requested_response_write_phase = try parseConnectionPhase(
+            last_drain_requested_response_write_phase,
+        ),
+        .drain_cancelled_response_write = try parseCanonicalInt(
+            u64,
+            drain_cancelled_response_write,
+        ),
+        .last_drain_cancelled_response_write_phase = try parseConnectionPhase(
+            last_drain_cancelled_response_write_phase,
+        ),
+        .response_write_transport_failed = try parseCanonicalInt(
+            u64,
+            response_write_transport_failed,
+        ),
+        .last_response_write_transport_failed_phase = try parseConnectionPhase(
+            last_response_write_transport_failed_phase,
         ),
         .response_outcome = try parseCanonicalInt(
             u8,
@@ -1574,6 +1786,18 @@ fn parseClosed(line: []const u8) !ClosedFrame {
         fields.next() orelse return error.InvalidFrame;
     const last_peer_reset_cancelled_work_phase =
         fields.next() orelse return error.InvalidFrame;
+    const drain_requested_response_write = fields.next() orelse
+        return error.InvalidFrame;
+    const last_drain_requested_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const drain_cancelled_response_write = fields.next() orelse
+        return error.InvalidFrame;
+    const last_drain_cancelled_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const response_write_transport_failed = fields.next() orelse
+        return error.InvalidFrame;
+    const last_response_write_transport_failed_phase =
+        fields.next() orelse return error.InvalidFrame;
     const response_outcome = fields.next() orelse
         return error.InvalidFrame;
     const service_active = fields.next() orelse
@@ -1630,6 +1854,27 @@ fn parseClosed(line: []const u8) !ClosedFrame {
             ),
             .last_peer_reset_cancelled_work_phase = try parseConnectionPhase(
                 last_peer_reset_cancelled_work_phase,
+            ),
+            .drain_requested_response_write = try parseCanonicalInt(
+                u64,
+                drain_requested_response_write,
+            ),
+            .last_drain_requested_response_write_phase = try parseConnectionPhase(
+                last_drain_requested_response_write_phase,
+            ),
+            .drain_cancelled_response_write = try parseCanonicalInt(
+                u64,
+                drain_cancelled_response_write,
+            ),
+            .last_drain_cancelled_response_write_phase = try parseConnectionPhase(
+                last_drain_cancelled_response_write_phase,
+            ),
+            .response_write_transport_failed = try parseCanonicalInt(
+                u64,
+                response_write_transport_failed,
+            ),
+            .last_response_write_transport_failed_phase = try parseConnectionPhase(
+                last_response_write_transport_failed_phase,
             ),
             .response_outcome = try parseCanonicalInt(
                 u8,
@@ -1852,6 +2097,22 @@ fn runSupervisor(allocator: std.mem.Allocator) !void {
         &fixture,
         generation_complete_response_ready,
         .complete_response_ready,
+        oracle,
+    );
+    try exercisePhaseE(
+        allocator,
+        executable,
+        &fixture,
+        generation_drain_response_writing,
+        .drain_response_writing,
+        oracle,
+    );
+    try exercisePhaseE(
+        allocator,
+        executable,
+        &fixture,
+        generation_complete_response_writing,
+        .complete_response_writing,
         oracle,
     );
     const second = try exerciseWorker(
@@ -2825,6 +3086,30 @@ fn exercisePhaseE(
             child.stdin.?.close();
             child.stdin = null;
         },
+        .drain_response_writing => {
+            peer = try openCompletionPeer(
+                ready,
+                53,
+                "server-process-response-write-drain",
+            );
+            try child.stdin.?.writeAll(
+                drain_response_writing_command,
+            );
+            child.stdin.?.close();
+            child.stdin = null;
+        },
+        .complete_response_writing => {
+            client_thread = try std.Thread.spawn(
+                .{},
+                TerminalClientContext.run,
+                .{&client_context},
+            );
+            try child.stdin.?.writeAll(
+                complete_response_writing_command,
+            );
+            child.stdin.?.close();
+            child.stdin = null;
+        },
         else => unreachable,
     }
 
@@ -2832,14 +3117,16 @@ fn exercisePhaseE(
         try readFrame(child.stdout.?, &frame_storage),
         "DRAINING",
     );
+    const response_completed =
+        profile == .complete_response_ready or
+        profile == .complete_response_writing;
     const expected_completed: u64 =
-        if (profile == .peer_reset_work or
-        profile == .complete_response_ready)
+        if (profile == .peer_reset_work or response_completed)
             1
         else
             0;
     const expected_failed: u64 =
-        if (profile == .complete_response_ready) 0 else 1;
+        if (response_completed) 0 else 1;
     try validateActivity(
         draining,
         generation,
@@ -2857,6 +3144,10 @@ fn exercisePhaseE(
 
     if (profile == .drain_response_ready) {
         try requirePeerEofWithoutResponse(peer.?);
+        peer.?.close();
+        peer = null;
+    }
+    if (profile == .drain_response_writing) {
         peer.?.close();
         peer = null;
     }
@@ -3009,10 +3300,14 @@ fn validatePhaseEActivity(
     const peer: u64 = if (profile == .peer_reset_work) 1 else 0;
     const response: u64 =
         if (profile == .drain_response_ready) 1 else 0;
+    const response_write: u64 =
+        if (profile == .drain_response_writing) 1 else 0;
     const peer_phase: server_api.ManagedConnectionPhaseV1 =
         if (peer == 1) .request_admitted else .none;
     const response_phase: server_api.ManagedConnectionPhaseV1 =
         if (response == 1) .response_ready else .none;
+    const response_write_phase: server_api.ManagedConnectionPhaseV1 =
+        if (response_write == 1) .response_writing else .none;
     try require(activity.peer_reset == peer);
     try require(activity.peer_reset_cancelled_work == peer);
     try require(activity.last_peer_reset_phase == peer_phase);
@@ -3025,9 +3320,31 @@ fn validatePhaseEActivity(
         activity.last_drain_cancelled_response_phase ==
             response_phase,
     );
+    try require(
+        activity.drain_requested_response_write ==
+            response_write,
+    );
+    try require(
+        activity.last_drain_requested_response_write_phase ==
+            response_write_phase,
+    );
+    try require(
+        activity.drain_cancelled_response_write ==
+            response_write,
+    );
+    try require(
+        activity.last_drain_cancelled_response_write_phase ==
+            response_write_phase,
+    );
+    try require(activity.response_write_transport_failed == 0);
+    try require(
+        activity.last_response_write_transport_failed_phase ==
+            .none,
+    );
     const outcome: u8 = switch (profile) {
-        .drain_response_ready => 3,
-        .complete_response_ready => 1,
+        .drain_response_ready => responseOutcomeWire(.cancelled_before_write),
+        .complete_response_ready, .complete_response_writing => responseOutcomeWire(.write_completed),
+        .drain_response_writing => responseOutcomeWire(.cancelled_during_write),
         else => 0,
     };
     try require(activity.response_outcome == outcome);

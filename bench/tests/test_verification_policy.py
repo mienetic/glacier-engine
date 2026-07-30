@@ -273,6 +273,7 @@ EXPECTED_PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS = frozenset(
 EXPECTED_PREPARED_TEXT_UNARY_HTTP_FOCUSED_PATHS = frozenset(
     {
         "src/prepared_text_unary_http_v1.zig",
+        "src/server/cancellable_socket_writer.zig",
         "src/server/prepared_text_unary_http.zig",
         "src/client/prepared_text_unary_http.zig",
         "src/server/api.zig",
@@ -1041,6 +1042,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 }
                 if changed_path in {
                     "src/server/api.zig",
+                    "src/server/cancellable_socket_writer.zig",
                     "src/server/prepared_text_unary_http.zig",
                 }:
                     expected_steps.append(

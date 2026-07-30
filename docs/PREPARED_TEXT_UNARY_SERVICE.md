@@ -1,7 +1,7 @@
 # Bounded Prepared-Text Unary Service
 
 Status: **experimental process-local kernel with a bounded loopback HTTP/1.1
-adapter, retained client, and R1k-b8 Phases A-D plus Phase E1 managed
+adapter, retained client, and R1k-b8 Phases A-D plus Phase E2a managed
 child-process lifecycle**.
 
 `prepared_text_unary_service` composes the existing prepared-model,
@@ -141,7 +141,7 @@ content, and token-count correlation. Calls are serialized because the client
 reuses its bounded workspaces. It does not authenticate the peer or
 automatically retry a request.
 
-## Managed child-process lifecycle, Phases A-D plus Phase E1
+## Managed child-process lifecycle, Phases A-D plus Phase E2a
 
 `ManagedLifecycleV1` wraps the serial listener without changing `ServiceV1` or
 the frozen HTTP profile. One nonzero process generation starts in `starting`,
@@ -154,10 +154,13 @@ phase is exactly `receiving_head` until the HTTP head arrives, then
 `request_head_received`; receipt of every byte required by the selected route
 advances it to `request_received`. Phase D advances an admitted completion to
 `request_admitted`. Phase E1 adds exact `response_ready`, `response_writing`,
-and `response_written` phases. The snapshot retains exact receive-drain,
-receive-timeout, admitted-work drain-cancellation, peer-reset, peer-reset work
-cancellation, and response-ready drain-cancellation counts plus the last phase
-for each distinct outcome.
+and `response_written` phases. Phase E2a makes the managed response writer
+nonblocking and interruptible at bounded send checkpoints. The snapshot
+retains exact receive-drain, receive-timeout, admitted-work drain-cancellation,
+peer-reset, peer-reset work cancellation, response-ready drain-cancellation,
+response-write drain request, effective response-write cancellation, and
+independent response-write transport-failure counts plus the last phase for
+each distinct outcome.
 
 Drain closes execution admission as well as listener admission. The runtime
 uses a short control boundary to disable new completion admission before
@@ -225,6 +228,29 @@ from being written. Otherwise the serving thread alone advances through
 the socket. `response_written` is local-flush evidence, not acknowledgement
 that the peer received or processed the response.
 
+Phase E2a replaces the managed response path's blocking writer with one bounded
+nonblocking writer. `ServerConfig.response_write_quantum_bytes` is inclusive
+from 1 through 4,096 bytes and bounds each kernel send attempt. The writer
+checks drain before each nonempty send, publishes a real progress checkpoint
+after every positive kernel send, and checks again when the socket reports
+`WouldBlock`; a finite writable poll keeps that blocked-socket path
+interruptible. The serving thread still owns every send and the final socket
+close.
+
+Drain requested in `response_writing` records
+`drain_requested_response_write_connections`. Cancellation becomes effective
+only when a later writer checkpoint observes it, at which point
+`drain_cancelled_response_write_connections` is recorded and the classified
+outcome is `cancelled_during_write`. A connection-close or transport failure
+that wins independently records
+`response_write_transport_failed_connections` instead, so a drain request is
+not relabeled as an effective cancellation. A drain requested from a
+post-send progress checkpoint is deferred until another nonempty send is
+needed. If that positive send completed the response, local
+`write_completed` wins and no false cancellation is recorded. These outcomes
+remain local transport evidence; none acknowledges peer receipt or
+processing.
+
 The focused real-process fixture uses one executable in supervisor and child
 worker modes. The ordinary clean path accepts `drain\n` followed by EOF or
 empty stdin EOF as out-of-band control; phase-targeted fixture controls select
@@ -279,6 +305,17 @@ accepted and completed connection, and leaves every new cancellation counter
 zero. Each child keeps the unrelated receive, timeout, work-drain, peer-reset,
 and response-drain counters unchanged. No race is selected by a sleep or
 model-duration assumption.
+Phase E2a adds two deterministic response-writing siblings to the same
+executable and compile root. Both configure a one-byte send quantum and cross
+the exact progress barrier after the first real one-byte kernel send. The
+drain sibling requests drain at that barrier and requires one requested and
+one effective response-write cancellation at `response_writing`, a
+`cancelled_during_write` outcome, and zero independent transport failures. The
+completion sibling releases the same barrier without drain, completes the
+oracle-matched response, and leaves the new counters at zero. The writer's
+focused native-loopback saturation primitive separately fills a real socket
+until `WouldBlock` and proves cancellation at that checkpoint. This is bounded
+correctness and lifecycle evidence, not a throughput or latency measurement.
 Generation B then loads the same package with a new process generation and
 idempotency key, proves the same model, binding, content, and output identity,
 and closes cleanly. This fresh restart does not preserve retained idempotency
@@ -330,9 +367,10 @@ response ownership, and final zero Scheduler/Bank ownership. The process
 acceptance separately reuses one dual-mode executable for its supervisor,
 clean/restart children, Phase B drain children, Phase C receive-timeout
 children, the Phase D cancellation-wins and completion-wins children, and the
-Phase E1 reset, response-ready drain, and response-ready completion children;
-Phases B-E1 add no artifact or build target. It is host real-process lifecycle
-evidence rather than a production daemon or native foreign-target run.
+Phase E1 reset/response-ready children plus the Phase E2a response-writing
+drain/completion siblings; Phases B-E2a add no artifact or build target. It is
+host real-process lifecycle evidence rather than a production daemon or native
+foreign-target run.
 
 `tools/verify.sh affected-fast` selects `unary-http-test` once for HTTP
 contract, client, or focused acceptance-test changes. Managed lifecycle or
@@ -349,23 +387,26 @@ explicit manual or milestone promotion action; broad exhaustive, retained
 target, and hardware work remains manual, tagged-release, or milestone work.
 Those foreign builds are compile evidence, not native serving evidence. The
 Phase B receive-drain, Phase C receive-timeout, and Phase D admitted-work drain
-cases plus Phase E1 reset/response-ready cases remain inside the existing
-process executable, test target, and compile-only companion.
-Shared prepared-text session changes continue to select the unary acceptance
-root and installed text-runtime golden path in one Zig invocation.
+cases plus Phase E1 reset/response-ready and Phase E2a interruptible
+response-write cases remain inside the existing process executable, test
+target, and compile-only companion.
+Shared prepared-text session and package-aware CLI changes continue to share
+the unary acceptance root and
+installed text-runtime golden path in one Zig invocation.
 
 ## Deliberate nonclaims and next work
 
 This slice establishes an experimental serial loopback socket, bounded JSON
 profile, retained client, and focused managed child-process Phases A-D plus
-Phase E1. Phase C is a pre-admission receive timeout, not a full-request or
+Phase E2a. Phase C is a pre-admission receive timeout, not a full-request or
 service-level guarantee. Phase D cancels admitted execution only when managed
 drain wins. Phase E1 detects a reset only at a between-quantum checkpoint and
-cancels a response only at `response_ready`, before its first write. It does
-not detect orderly FIN abandonment, preempt an in-flight drive or kernel call,
-interrupt a slow or already kernel-blocked response write, add a full-request
-elapsed timeout, or prove peer receipt. A successful local writer flush is not
-a delivery acknowledgement. This slice does not establish a packaged
+cancels a response at `response_ready`, before its first write. Phase E2a
+bounds managed kernel sends and makes progress/`WouldBlock` cancellation
+observable after writing starts, but does not detect orderly FIN abandonment,
+preempt an in-flight model drive or kernel call, add a full-request elapsed
+timeout, or prove peer receipt. A successful local writer completion is not a
+delivery acknowledgement. This slice does not establish a packaged
 production daemon, non-loopback serving, concurrent listener queue,
 process-wide overload policy, streaming publication, durable idempotency or
 crash recovery, process-death recovery, authentication, authorization, TLS,
@@ -375,16 +416,16 @@ Retained-target compilation is not native Windows or FreeBSD serving proof,
 and native reset, response-write, and deadline behavior on those systems
 remains unproven. The next serving slices are:
 
-1. extend abandonment detection to orderly FIN and interrupt slow or already
-   blocked response writes with exact connection outcome accounting;
-2. add a full-request elapsed-time cancellation boundary distinct from the
+1. add a full-request elapsed-time cancellation boundary distinct from the
    logical Scheduler deadline;
-3. define a bounded listener queue, backpressure, and concurrent-serving
+2. define a bounded listener queue, backpressure, and concurrent-serving
    overload campaign;
-4. add forced process-death evidence independently of checkpoint-aware drain
+3. add load generation after those process boundaries, separating admission
+   latency, first-token latency, throughput, fairness, and cleanup;
+4. extend abandonment detection to orderly FIN with exact connection outcome
+   accounting;
+5. add forced process-death evidence independently of checkpoint-aware drain
    and durable restart;
-5. add load generation only after those process boundaries exist, separating
-   admission latency, first-token latency, throughput, fairness, and cleanup;
 6. add committed-token streaming without exposing an unpublished token; and
 7. add authenticated authority, quota, and transport-security adapters around
    the unchanged execution state machine.

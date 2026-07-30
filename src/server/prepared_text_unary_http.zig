@@ -170,6 +170,7 @@ pub const ResponseWriteOutcomeV1 = enum {
     write_completed,
     write_failed,
     cancelled_before_write,
+    cancelled_during_write,
 };
 
 pub const RequestResponseControlV1 = struct {
@@ -179,6 +180,12 @@ pub const RequestResponseControlV1 = struct {
         *anyopaque,
     ) anyerror!ResponseWriteDispositionV1,
     retired_fn: *const fn (*anyopaque, ResponseWriteOutcomeV1) void,
+    /// Optional managed-transport evidence after a real kernel send accepts
+    /// bytes. The synchronous callback may establish a deterministic barrier.
+    progress_fn: ?*const fn (*anyopaque, usize) anyerror!void = null,
+    /// Optional managed-transport evidence after a real send reports that the
+    /// socket is not currently writable.
+    blocked_fn: ?*const fn (*anyopaque) anyerror!void = null,
 
     fn ready(self: RequestResponseControlV1) !void {
         return self.ready_fn(self.context);
