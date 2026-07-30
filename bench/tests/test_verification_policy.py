@@ -178,6 +178,25 @@ EXPECTED_PROVIDER_EVIDENCE_INSPECTOR_FOCUSED_PATHS = frozenset(
     }
 )
 
+EXPECTED_DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS = frozenset(
+    {
+        "src/core/dense_tensor_classifier.zig",
+        "src/core/dense_tensor_reranker.zig",
+        "examples/dense_tensor_reranker.zig",
+        "bench/stateless_tensor_result.py",
+        "bench/tests/test_stateless_tensor_result.py",
+    }
+)
+
+EXPECTED_RUNTIME_SUPPORT_INSPECTOR_FOCUSED_PATHS = frozenset(
+    {
+        "src/core/runtime_support_registry.zig",
+        "src/cli/runtime_support_inspector.zig",
+        "bench/runtime_support_registry.py",
+        "bench/tests/test_runtime_support_inspector.py",
+    }
+)
+
 EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS = frozenset(
     {
         "bench/runtime_image_durable_worker.zig",
@@ -591,6 +610,14 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertEqual(
             EXPECTED_PROVIDER_EVIDENCE_INSPECTOR_FOCUSED_PATHS,
             policy.PROVIDER_EVIDENCE_INSPECTOR_FOCUSED_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS,
+            policy.DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_RUNTIME_SUPPORT_INSPECTOR_FOCUSED_PATHS,
+            policy.RUNTIME_SUPPORT_INSPECTOR_FOCUSED_PATHS,
         )
         self.assertEqual(
             EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS,
@@ -1181,6 +1208,182 @@ class VerificationPolicyTests(unittest.TestCase):
                 self.assertFalse(plan.requires("native-full"))
                 self.assertFalse(plan.requires("python-full"))
                 self.assertEqual((), plan.decisions[0].host_roots)
+
+    def test_dense_tensor_classifier_paths_select_exact_focused_roots(self):
+        for changed_path in sorted(
+            EXPECTED_DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = policy.classify_paths([changed_path])
+                decision = plan.decisions[0]
+                if (
+                    changed_path
+                    == policy.DENSE_TENSOR_CLASSIFIER_PYTHON_TEST_PATH
+                ):
+                    self.assertEqual(
+                        frozenset(
+                            {
+                                "dense-tensor-classifier-python-test-focused",
+                                "python-changed",
+                            }
+                        ),
+                        plan.flags,
+                    )
+                    self.assertEqual((), plan.target_plans)
+                    self.assertEqual((), decision.host_roots)
+                    self.assertIn(
+                        "python/dense-tensor-classifier",
+                        policy._gate_names(decision),
+                    )
+                    continue
+                if changed_path.endswith(".py"):
+                    self.assertEqual(
+                        frozenset(
+                            {
+                                "dense-tensor-classifier-focused",
+                                "python-changed",
+                            }
+                        ),
+                        plan.flags,
+                    )
+                    self.assertEqual((), plan.target_plans)
+                    self.assertEqual((), decision.host_roots)
+                    continue
+
+                expected_steps = ("dense-tensor-reranker-compile",)
+                expected_roots = ()
+                expected_flags = {"dense-tensor-classifier-focused"}
+                if changed_path.startswith("src/core/"):
+                    expected_steps = (
+                        "profile-core-compile",
+                        "dense-tensor-reranker-compile",
+                    )
+                    expected_roots = policy.HOST_CONTRACT_ROOTS
+                if changed_path == "src/core/dense_tensor_classifier.zig":
+                    expected_flags.add("runtime-support-inspector-focused")
+                    expected_steps = (
+                        "profile-core-compile",
+                        "dense-tensor-reranker-compile",
+                        "runtime-support-inspector-compile",
+                    )
+                self.assertEqual(frozenset(expected_flags), plan.flags)
+                self.assertEqual(expected_roots, decision.host_roots)
+                self.assertEqual(
+                    tuple(
+                        policy.TargetBuildPlan(target, expected_steps)
+                        for target in policy.RETAINED_TARGETS
+                    ),
+                    plan.target_plans,
+                )
+                self.assertIn(
+                    "native/dense-tensor-classifier",
+                    policy._gate_names(decision),
+                )
+
+    def test_shared_stateless_tensor_result_selects_only_tensor_families(self):
+        plan = policy.classify_paths(
+            [policy.STATELESS_TENSOR_RESULT_SHARED_PATH]
+        )
+
+        self.assertEqual(
+            frozenset(
+                {
+                    "dense-tensor-classifier-focused",
+                    "dense-tensor-embedding-focused",
+                }
+            ),
+            plan.flags,
+        )
+        self.assertEqual(
+            tuple(
+                policy.TargetBuildPlan(
+                    target,
+                    (
+                        "dense-tensor-reranker-compile",
+                        "dense-tensor-embedding-compile",
+                    ),
+                )
+                for target in policy.RETAINED_TARGETS
+            ),
+            plan.target_plans,
+        )
+        self.assertEqual((), plan.decisions[0].host_roots)
+        self.assertFalse(plan.requires("native-full"))
+        self.assertFalse(plan.requires("python-full"))
+
+    def test_python_contract_consumer_selects_exact_host_root(self):
+        plan = policy.classify_paths([policy.INTEROP_PYTHON_CONSUMER_PATH])
+
+        self.assertEqual(frozenset({"python-changed"}), plan.flags)
+        self.assertEqual((), plan.target_plans)
+        self.assertEqual(
+            policy.HOST_CONTRACT_ROOTS,
+            plan.decisions[0].host_roots,
+        )
+        self.assertFalse(plan.requires("native-full"))
+        self.assertFalse(plan.requires("python-full"))
+
+    def test_runtime_support_inspector_paths_select_exact_focused_roots(self):
+        for changed_path in sorted(
+            EXPECTED_RUNTIME_SUPPORT_INSPECTOR_FOCUSED_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = policy.classify_paths([changed_path])
+                decision = plan.decisions[0]
+                if (
+                    changed_path
+                    == policy.RUNTIME_SUPPORT_INSPECTOR_PYTHON_TEST_PATH
+                ):
+                    self.assertEqual(
+                        frozenset(
+                            {
+                                "runtime-support-inspector-python-test-focused",
+                                "python-changed",
+                            }
+                        ),
+                        plan.flags,
+                    )
+                    self.assertEqual((), plan.target_plans)
+                    self.assertEqual((), decision.host_roots)
+                    continue
+                if changed_path.endswith(".py"):
+                    self.assertEqual(
+                        frozenset(
+                            {
+                                "runtime-support-inspector-focused",
+                                "python-changed",
+                            }
+                        ),
+                        plan.flags,
+                    )
+                    self.assertEqual((), plan.target_plans)
+                    self.assertEqual((), decision.host_roots)
+                    continue
+
+                expected_steps = ("runtime-support-inspector-compile",)
+                expected_roots = ()
+                if changed_path.startswith("src/core/"):
+                    expected_steps = (
+                        "profile-core-compile",
+                        "runtime-support-inspector-compile",
+                    )
+                    expected_roots = policy.HOST_CONTRACT_ROOTS
+                self.assertEqual(
+                    frozenset({"runtime-support-inspector-focused"}),
+                    plan.flags,
+                )
+                self.assertEqual(expected_roots, decision.host_roots)
+                self.assertEqual(
+                    tuple(
+                        policy.TargetBuildPlan(target, expected_steps)
+                        for target in policy.RETAINED_TARGETS
+                    ),
+                    plan.target_plans,
+                )
+                self.assertIn(
+                    "native/runtime-support-inspector",
+                    policy._gate_names(decision),
+                )
 
     def test_profile_prefixes_are_case_sensitive_and_roots_fail_closed(self):
         for changed_path in (
@@ -3389,6 +3592,56 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout,
             )
 
+    def test_affected_fast_python_contract_consumer_runs_only_contract_root(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            interop = repository / "examples" / "interop"
+            interop.mkdir(parents=True)
+            (interop / "python_verify.py").write_text(
+                "PROFILE_COUNT = 11\n",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn("PASS  python/changed-syntax:", result.stdout)
+            self.assertIn(
+                "PASS  interop/c-cpp-python: covered by the shared host Zig DAG",
+                result.stdout,
+            )
+            self.assertIn(
+                "SKIP  python/full-suite: affected-fast defers",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(1, len(build_calls), calls)
+            self.assertTrue(
+                build_calls[0].startswith("build contract-interop-test "),
+                build_calls,
+            )
+            self.assertNotIn("package-module-test", build_calls[0])
+            self.assertFalse(
+                any(" -Dtarget=" in line for line in calls),
+                calls,
+            )
+
     def test_affected_fast_package_module_runs_only_package_root(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -3874,6 +4127,290 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                     target_calls,
                 )
                 self.assertNotIn("profile-host-tool-compile", call)
+
+    def test_affected_fast_runs_classifier_and_registry_roots_once(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            core = repository / "src" / "core"
+            core.mkdir()
+            (core / "dense_tensor_classifier.zig").write_text(
+                "",
+                encoding="ascii",
+            )
+            (core / "runtime_support_registry.zig").write_text(
+                "",
+                encoding="ascii",
+            )
+            (repository / "examples" / "dense_tensor_reranker.zig").write_text(
+                "",
+                encoding="ascii",
+            )
+            (repository / "bench" / "stateless_tensor_result.py").write_text(
+                "",
+                encoding="ascii",
+            )
+            (repository / "bench" / "runtime_support_registry.py").write_text(
+                "",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  host/dense-tensor-focused-dag:",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  native/dense-tensor-classifier:",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  native/runtime-support-inspector:",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  interop/c-cpp-python: covered by the shared host Zig DAG",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(1, len(build_calls), calls)
+            self.assertTrue(
+                build_calls[0].startswith(
+                    "build contract-interop-test "
+                    "dense-tensor-reranker-test "
+                    "runtime-support-inspector-test "
+                ),
+                build_calls,
+            )
+            self.assertNotIn("package-module-test", build_calls[0])
+            self.assertNotIn("dense-tensor-embedding-test", build_calls[0])
+            self.assertFalse(
+                any(" -Dtarget=" in line for line in calls),
+                calls,
+            )
+
+    def test_affected_fast_runs_exact_tensor_python_test_modules(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            tensor_test = (
+                repository
+                / "bench"
+                / "tests"
+                / "test_stateless_tensor_result.py"
+            )
+            tensor_test.write_text(
+                "import unittest\n"
+                "class TensorTests(unittest.TestCase):\n"
+                "    def test_fixture(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="ascii",
+            )
+            registry_test = (
+                repository
+                / "bench"
+                / "tests"
+                / "test_runtime_support_inspector.py"
+            )
+            registry_test.write_text(
+                "import unittest\n"
+                "class RegistryTests(unittest.TestCase):\n"
+                "    def test_fixture(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  python/dense-tensor-classifier:",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  python/runtime-support-inspector:",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            self.assertFalse(
+                any(line.startswith("build ") for line in calls),
+                calls,
+            )
+
+    def test_affected_fast_shared_tensor_result_runs_two_family_roots(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            core = repository / "src" / "core"
+            core.mkdir()
+            (core / "stateless_tensor_result.zig").write_text(
+                "",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  native/dense-tensor-classifier:",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  native/dense-tensor-embedding:",
+                result.stdout,
+            )
+            self.assertIn(
+                "SKIP  native/releasesafe-suite: affected-fast defers",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(1, len(build_calls), calls)
+            self.assertTrue(
+                build_calls[0].startswith(
+                    "build dense-tensor-reranker-test "
+                    "dense-tensor-embedding-test "
+                ),
+                build_calls,
+            )
+            self.assertNotIn("contract-interop-test", build_calls[0])
+            self.assertNotIn("package-module-test", build_calls[0])
+            self.assertNotIn("runtime-support-inspector-test", build_calls[0])
+
+    def test_affected_fast_dense_tensor_roots_run_on_freebsd(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            self.make_fake_command(
+                root / "fake-bin" / "uname",
+                "printf 'FreeBSD\\n'\n",
+            )
+            core = repository / "src" / "core"
+            core.mkdir()
+            (core / "stateless_tensor_result.zig").write_text(
+                "",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  native/dense-tensor-classifier:",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  native/dense-tensor-embedding:",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(1, len(build_calls), calls)
+            self.assertTrue(
+                build_calls[0].startswith(
+                    "build dense-tensor-reranker-test "
+                    "dense-tensor-embedding-test "
+                ),
+                build_calls,
+            )
+
+    def test_affected_classifier_cross_compiles_only_related_roots(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            core = repository / "src" / "core"
+            core.mkdir()
+            (core / "dense_tensor_classifier.zig").write_text(
+                "",
+                encoding="ascii",
+            )
+
+            result = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            target_calls = [
+                line for line in calls if " -Dtarget=" in line
+            ]
+            self.assertEqual(
+                len(policy.RETAINED_TARGETS),
+                len(target_calls),
+                target_calls,
+            )
+            for call in target_calls:
+                self.assertTrue(
+                    call.startswith(
+                        "build profile-core-compile "
+                        "dense-tensor-reranker-compile "
+                        "runtime-support-inspector-compile "
+                    ),
+                    target_calls,
+                )
+                self.assertNotIn("profile-host-tool-compile", call)
+                self.assertNotIn("dense-tensor-embedding-compile", call)
 
     def test_affected_fast_runs_prepared_text_focused_dag_once(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -35,11 +35,11 @@ the Linux matrix plus the macOS Metal/durability frontier. There is no
 scheduled exhaustive build.
 Full Python discovery imports the retained numeric reference reporters and
 installs their pinned dependency from `bench/requirements-test.txt`; the
-embedding and runtime-contract verifiers remain standard-library-only. The
-macOS frontier compiles the complete Metal closure but does not execute or
-measure it. Native Metal runtime and performance gates remain explicit local or
-maintainer-run checks so hosted CI does not imply hardware evidence it did not
-collect.
+embedding, dense-tensor classifier, and runtime-contract verifiers remain
+standard-library-only. The macOS frontier compiles the complete Metal closure
+but does not execute or measure it. Native Metal runtime and performance gates
+remain explicit local or maintainer-run checks so hosted CI does not imply
+hardware evidence it did not collect.
 
 Then choose a bounded item from [Contributor projects](PROJECTS.md), open a
 **Claim a contributor slice** issue, and tell us what command will prove it is
@@ -122,6 +122,7 @@ hides the checks required by another changed path.
 | Benchmark runtime data (`.ids`, paired manifests, evaluation text) | Full Python discovery; no foreign Zig target |
 | Darwin Swift ProcessInfo probe | Full Python discovery plus focused native `swiftc -typecheck`; no broad Zig or foreign-target build |
 | Audited C contract boundary | Native ReleaseSafe, Python discovery, and the core compile profile on every retained target |
+| Generic dense-tensor classifier, shared reranker/classifier demo, or independent tensor-result oracle | `affected-fast` reuses `dense-tensor-reranker-test`; a classifier core/profile change also reuses `runtime-support-inspector-test`. No classifier-specific executable or test root is added. Public C/C++/Python/Rust discovery changes keep their existing contract interop gates, and a focused Python-test-only change runs only `bench.tests.test_stateless_tensor_result`. Complete affected verification compiles the existing core and shared demo roots on retained targets; foreign compilation is not native execution, quality, or performance evidence |
 | General `src/core/` implementation | Native ReleaseSafe, Python discovery, and the main `install test-compile` closure on every retained target; bulk benchmark staging and the standalone benchmark consumer closure remain a benchmark/build-graph or promotion-matrix gate, while device diagnostics already owned by `test-compile` remain in the main closure and `src/core/root.zig` remains full because it controls build reachability |
 | CPU backend or model implementation | Native ReleaseSafe, Python discovery, and the main `install test-compile` closure on every retained target; bulk benchmark staging and the standalone benchmark consumer closure remain a benchmark/build-graph or promotion-matrix gate, while device diagnostics already owned by `test-compile` remain in the main closure |
 | Shared durable core/runtime implementation | Native ReleaseSafe, Python discovery, and the complete consumer compile closure on every retained target |
@@ -308,6 +309,22 @@ affected verification. An oracle-only change keeps changed-file syntax and the
 focused root without foreign targets. A focused-test-only change runs exactly
 `bench.tests.test_provider_evidence_inspector`, without a generic Zig build or
 full unittest discovery. This route adds no executable or compile root.
+
+Dense-tensor classifier routing also stays within existing roots. Classifier
+core, shared demo, and oracle changes select `dense-tensor-reranker-test`;
+changing the classifier profile additionally selects
+`runtime-support-inspector-test`. The demo artifact is shared and accepts
+`classify`, so the focused graph does not compile a second executable. A
+focused change to `bench.tests.test_stateless_tensor_result` runs only that
+unittest module when full Python discovery is not otherwise selected. Changes
+to the installed support-discovery ABI continue to use the existing contract
+interop gates. A change isolated to the shared stateless tensor-result wire
+runs only the reranker/classifier and embedding host roots, then cross-compiles
+their two existing focused roots; it does not select the generic contract,
+package, full native, or full Python suites. These checks establish
+deterministic contract behavior, not probabilities, labels, production
+quality, GPU or native multi-OS execution, performance, or provider-token
+reduction.
 
 Hosted affected and exhaustive jobs reuse the pinned Zig setup action's cache,
 configured with 1 GiB and 2 GiB action limits respectively.

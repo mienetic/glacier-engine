@@ -191,6 +191,12 @@ test "package exports runtime and core modules independently of host tools" {
         @hasDecl(glacier, "dense_tensor_reranker"),
     );
     try std.testing.expect(
+        @hasDecl(glacier, "dense_tensor_classifier"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier, "DenseTensorClassifier"),
+    );
+    try std.testing.expect(
         @hasDecl(glacier, "dense_tensor_embedding"),
     );
     try std.testing.expect(
@@ -203,12 +209,49 @@ test "package exports runtime and core modules independently of host tools" {
         @hasDecl(glacier_core, "DenseTensorReranker"),
     );
     try std.testing.expect(
+        @hasDecl(glacier_core, "dense_tensor_classifier"),
+    );
+    try std.testing.expect(
+        @hasDecl(glacier_core, "DenseTensorClassifier"),
+    );
+    try std.testing.expect(
         @hasDecl(glacier_core, "DenseTensorEmbedding"),
     );
     try std.testing.expect(@hasDecl(glacier_core, "RuntimeSupportRegistry"));
     try std.testing.expectEqual(
-        @as(usize, 10),
+        @as(usize, 11),
         glacier_core.RuntimeSupportRegistry.profiles.len,
+    );
+    try std.testing.expect(
+        glacier.dense_tensor_classifier ==
+            glacier_core.dense_tensor_classifier,
+    );
+    try std.testing.expect(
+        glacier.DenseTensorClassifier ==
+            glacier_core.DenseTensorClassifier,
+    );
+    const classifier_index =
+        glacier_core.RuntimeSupportRegistry.ProfileIndexV1
+            .dense_tensor_classifier;
+    const classifier_profile =
+        glacier_core.RuntimeSupportRegistry.profiles[
+            @intFromEnum(classifier_index)
+        ];
+    try std.testing.expectEqual(
+        classifier_index,
+        classifier_profile.index,
+    );
+    try std.testing.expectEqual(
+        glacier_core.DenseTensorClassifier.reference_adapter_abi,
+        classifier_profile.profile_abi,
+    );
+    try std.testing.expectEqual(
+        .classify,
+        classifier_profile.support.operation,
+    );
+    try std.testing.expectEqual(
+        .class_scores,
+        classifier_profile.support.output_kind,
     );
     try std.testing.expect(glacier.ResourceBank == glacier_core.ResourceBank);
     try std.testing.expect(

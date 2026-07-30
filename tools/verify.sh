@@ -368,6 +368,15 @@ run_selected_host_build() {
     if [ "$prepared_text_inspector_requested" -eq 1 ]; then
         set -- "$@" prepared-text-result-inspector-test
     fi
+    if [ "$dense_tensor_classifier_requested" -eq 1 ]; then
+        set -- "$@" dense-tensor-reranker-test
+    fi
+    if [ "$dense_tensor_embedding_requested" -eq 1 ]; then
+        set -- "$@" dense-tensor-embedding-test
+    fi
+    if [ "$runtime_support_inspector_requested" -eq 1 ]; then
+        set -- "$@" runtime-support-inspector-test
+    fi
     if [ "$provider_evidence_inspector_requested" -eq 1 ]; then
         set -- "$@" provider-evidence-inspector-test
     fi
@@ -542,7 +551,7 @@ run_target_plan() {
                 ;;
         esac
         case "$selected_step" in
-            install | install-benchmarks | test-compile | unary-text-service-compile | unary-http-compile | unary-server-process-compile | profile-core-compile | profile-cpu-compile | profile-durable-compile | profile-device-compile | profile-host-tool-compile | provider-evidence-inspector-compile | profile-complete-compile) ;;
+            install | install-benchmarks | test-compile | unary-text-service-compile | unary-http-compile | unary-server-process-compile | profile-core-compile | profile-cpu-compile | profile-durable-compile | profile-device-compile | profile-host-tool-compile | dense-tensor-reranker-compile | dense-tensor-embedding-compile | runtime-support-inspector-compile | provider-evidence-inspector-compile | profile-complete-compile) ;;
             *)
                 record_fail "verifier/target-steps" \
                     "policy emitted an unknown target step: $selected_step"
@@ -587,7 +596,10 @@ run_target_plan() {
                 profile-durable-compile) profile_rank=6 ;;
                 profile-device-compile) profile_rank=7 ;;
                 profile-host-tool-compile) profile_rank=8 ;;
-                provider-evidence-inspector-compile) profile_rank=9 ;;
+                dense-tensor-reranker-compile) profile_rank=9 ;;
+                dense-tensor-embedding-compile) profile_rank=10 ;;
+                runtime-support-inspector-compile) profile_rank=11 ;;
+                provider-evidence-inspector-compile) profile_rank=12 ;;
                 install | install-benchmarks | test-compile | profile-complete-compile) profile_rank=0 ;;
                 *) selected_steps_valid=0 ;;
             esac
@@ -725,6 +737,11 @@ prepared_text_package_text_run_requested=0
 prepared_text_recovery_requested=0
 provider_evidence_inspector_requested=0
 provider_evidence_inspector_python_test_requested=0
+dense_tensor_classifier_requested=0
+dense_tensor_embedding_requested=0
+runtime_support_inspector_requested=0
+dense_tensor_classifier_python_test_requested=0
+runtime_support_inspector_python_test_requested=0
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "prepared-text-unary-service-focused"; then
     prepared_text_unary_service_requested=1
@@ -773,6 +790,26 @@ if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "provider-evidence-inspector-python-test-focused"; then
     provider_evidence_inspector_python_test_requested=1
 fi
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "dense-tensor-classifier-focused"; then
+    dense_tensor_classifier_requested=1
+fi
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "dense-tensor-embedding-focused"; then
+    dense_tensor_embedding_requested=1
+fi
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "runtime-support-inspector-focused"; then
+    runtime_support_inspector_requested=1
+fi
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "dense-tensor-classifier-python-test-focused"; then
+    dense_tensor_classifier_python_test_requested=1
+fi
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "runtime-support-inspector-python-test-focused"; then
+    runtime_support_inspector_python_test_requested=1
+fi
 if [ "$affected_profile" -eq 1 ]; then
     generic_host_contract_requested=0
     generic_host_package_requested=0
@@ -804,9 +841,18 @@ if [ "$provider_evidence_inspector_requested" -eq 1 ]; then
         Darwin | Linux) provider_evidence_inspector_native_host_available=1 ;;
     esac
 fi
+dense_tensor_native_host_available=0
+if [ "$dense_tensor_classifier_requested" -eq 1 ] ||
+    [ "$dense_tensor_embedding_requested" -eq 1 ] ||
+    [ "$runtime_support_inspector_requested" -eq 1 ]; then
+    case "$host_name" in
+        Darwin | Linux | FreeBSD) dense_tensor_native_host_available=1 ;;
+    esac
+fi
 host_zig_requested=$generic_host_zig_requested
 if [ "$prepared_text_native_host_available" -eq 1 ] ||
-    [ "$provider_evidence_inspector_native_host_available" -eq 1 ]; then
+    [ "$provider_evidence_inspector_native_host_available" -eq 1 ] ||
+    [ "$dense_tensor_native_host_available" -eq 1 ]; then
     host_zig_requested=1
 fi
 
@@ -844,6 +890,7 @@ fi
 host_quick_status=not-run
 prepared_text_focused_in_quick=0
 provider_evidence_inspector_focused_in_quick=0
+dense_tensor_focused_in_quick=0
 if [ "$run_native_full" -eq 1 ]; then
     :
 elif [ "$host_zig_requested" -eq 0 ]; then
@@ -855,11 +902,17 @@ elif [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
     if [ "$prepared_text_native_host_available" -eq 1 ]; then
         prepared_text_focused_in_quick=1
         provider_evidence_inspector_focused_in_quick=$provider_evidence_inspector_native_host_available
+        dense_tensor_focused_in_quick=$dense_tensor_native_host_available
         run_gate "host/prepared-text-focused-dag" \
             run_selected_host_build
     elif [ "$provider_evidence_inspector_native_host_available" -eq 1 ]; then
         provider_evidence_inspector_focused_in_quick=1
+        dense_tensor_focused_in_quick=$dense_tensor_native_host_available
         run_gate "host/provider-evidence-focused-dag" \
+            run_selected_host_build
+    elif [ "$dense_tensor_native_host_available" -eq 1 ]; then
+        dense_tensor_focused_in_quick=1
+        run_gate "host/dense-tensor-focused-dag" \
             run_selected_host_build
     else
         run_gate "host/quick-dag" \
@@ -876,6 +929,9 @@ elif [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
         elif [ "$provider_evidence_inspector_focused_in_quick" -eq 1 ]; then
             record_skip "interop/c-cpp-python" \
                 "provider-evidence focused DAG does not select generic interop"
+        elif [ "$dense_tensor_focused_in_quick" -eq 1 ]; then
+            record_skip "interop/c-cpp-python" \
+                "dense-tensor focused DAG does not select generic interop"
         else
             record_skip "interop/c-cpp-python" \
                 "affected plan did not select contract interop"
@@ -889,6 +945,9 @@ elif [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
         elif [ "$provider_evidence_inspector_focused_in_quick" -eq 1 ]; then
             record_skip "package/modules" \
                 "provider-evidence focused DAG does not select generic package modules"
+        elif [ "$dense_tensor_focused_in_quick" -eq 1 ]; then
+            record_skip "package/modules" \
+                "dense-tensor focused DAG does not select generic package modules"
         else
             record_skip "package/modules" \
                 "affected plan did not select package modules"
@@ -903,6 +962,9 @@ elif [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
         elif [ "$provider_evidence_inspector_focused_in_quick" -eq 1 ]; then
             record_skip "interop/c-cpp-python" \
                 "provider-evidence focused DAG does not select generic interop"
+        elif [ "$dense_tensor_focused_in_quick" -eq 1 ]; then
+            record_skip "interop/c-cpp-python" \
+                "dense-tensor focused DAG does not select generic interop"
         else
             record_skip "interop/c-cpp-python" \
                 "affected plan did not select contract interop"
@@ -916,6 +978,9 @@ elif [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
         elif [ "$provider_evidence_inspector_focused_in_quick" -eq 1 ]; then
             record_skip "package/modules" \
                 "provider-evidence focused DAG does not select generic package modules"
+        elif [ "$dense_tensor_focused_in_quick" -eq 1 ]; then
+            record_skip "package/modules" \
+                "dense-tensor focused DAG does not select generic package modules"
         else
             record_skip "package/modules" \
                 "affected plan did not select package modules"
@@ -931,6 +996,9 @@ else
     elif [ "$provider_evidence_inspector_native_host_available" -eq 1 ]; then
         record_skip "interop/c-cpp-python" \
             "provider-evidence focused DAG does not select generic interop"
+    elif [ "$dense_tensor_native_host_available" -eq 1 ]; then
+        record_skip "interop/c-cpp-python" \
+            "dense-tensor focused DAG does not select generic interop"
     else
         record_skip "interop/c-cpp-python" \
             "affected plan did not select contract interop"
@@ -949,6 +1017,9 @@ else
     elif [ "$provider_evidence_inspector_native_host_available" -eq 1 ]; then
         record_skip "package/modules" \
             "provider-evidence focused DAG does not select generic package modules"
+    elif [ "$dense_tensor_native_host_available" -eq 1 ]; then
+        record_skip "package/modules" \
+            "dense-tensor focused DAG does not select generic package modules"
     else
         record_skip "package/modules" \
             "affected plan did not select package modules"
@@ -1119,6 +1190,72 @@ elif [ "$provider_evidence_inspector_requested" -eq 1 ] &&
             "requires native macOS or Linux execution"
     else
         record_native_unavailable "native/provider-evidence-inspector" \
+            "requires working zig and python3 executables"
+    fi
+fi
+
+if [ "$dense_tensor_classifier_requested" -eq 1 ] &&
+    [ "$dense_tensor_focused_in_quick" -eq 1 ]; then
+    if [ "$host_quick_status" -eq 0 ]; then
+        record_pass "native/dense-tensor-classifier" \
+            "covered by the focused host Zig DAG"
+    else
+        record_skip "native/dense-tensor-classifier" \
+            "focused host Zig DAG failed"
+    fi
+elif [ "$dense_tensor_classifier_requested" -eq 1 ] &&
+    [ "$run_native_full" -eq 0 ]; then
+    if [ "$host_name" != "Darwin" ] &&
+        [ "$host_name" != "Linux" ] &&
+        [ "$host_name" != "FreeBSD" ]; then
+        record_native_unavailable "native/dense-tensor-classifier" \
+            "requires native macOS, Linux, or FreeBSD execution"
+    else
+        record_native_unavailable "native/dense-tensor-classifier" \
+            "requires working zig and python3 executables"
+    fi
+fi
+
+if [ "$dense_tensor_embedding_requested" -eq 1 ] &&
+    [ "$dense_tensor_focused_in_quick" -eq 1 ]; then
+    if [ "$host_quick_status" -eq 0 ]; then
+        record_pass "native/dense-tensor-embedding" \
+            "covered by the focused host Zig DAG"
+    else
+        record_skip "native/dense-tensor-embedding" \
+            "focused host Zig DAG failed"
+    fi
+elif [ "$dense_tensor_embedding_requested" -eq 1 ] &&
+    [ "$run_native_full" -eq 0 ]; then
+    if [ "$host_name" != "Darwin" ] &&
+        [ "$host_name" != "Linux" ] &&
+        [ "$host_name" != "FreeBSD" ]; then
+        record_native_unavailable "native/dense-tensor-embedding" \
+            "requires native macOS, Linux, or FreeBSD execution"
+    else
+        record_native_unavailable "native/dense-tensor-embedding" \
+            "requires working zig and python3 executables"
+    fi
+fi
+
+if [ "$runtime_support_inspector_requested" -eq 1 ] &&
+    [ "$dense_tensor_focused_in_quick" -eq 1 ]; then
+    if [ "$host_quick_status" -eq 0 ]; then
+        record_pass "native/runtime-support-inspector" \
+            "covered by the focused host Zig DAG"
+    else
+        record_skip "native/runtime-support-inspector" \
+            "focused host Zig DAG failed"
+    fi
+elif [ "$runtime_support_inspector_requested" -eq 1 ] &&
+    [ "$run_native_full" -eq 0 ]; then
+    if [ "$host_name" != "Darwin" ] &&
+        [ "$host_name" != "Linux" ] &&
+        [ "$host_name" != "FreeBSD" ]; then
+        record_native_unavailable "native/runtime-support-inspector" \
+            "requires native macOS, Linux, or FreeBSD execution"
+    else
+        record_native_unavailable "native/runtime-support-inspector" \
             "requires working zig and python3 executables"
     fi
 fi
@@ -1318,6 +1455,38 @@ if [ "$profile" = "affected" ] &&
     fi
 fi
 
+if [ "$profile" = "affected" ] &&
+    [ "$run_native_full" -eq 1 ] &&
+    [ "$dense_tensor_focused_in_quick" -eq 0 ]; then
+    if [ "$dense_tensor_classifier_requested" -eq 1 ]; then
+        if [ "$native_full_status" = "0" ]; then
+            record_pass "native/dense-tensor-classifier" \
+                "covered by the shared host runtime DAG"
+        else
+            record_skip "native/dense-tensor-classifier" \
+                "covering host compile or runtime DAG did not pass"
+        fi
+    fi
+    if [ "$dense_tensor_embedding_requested" -eq 1 ]; then
+        if [ "$native_full_status" = "0" ]; then
+            record_pass "native/dense-tensor-embedding" \
+                "covered by the shared host runtime DAG"
+        else
+            record_skip "native/dense-tensor-embedding" \
+                "covering host compile or runtime DAG did not pass"
+        fi
+    fi
+    if [ "$runtime_support_inspector_requested" -eq 1 ]; then
+        if [ "$native_full_status" = "0" ]; then
+            record_pass "native/runtime-support-inspector" \
+                "covered by the shared host runtime DAG"
+        else
+            record_skip "native/runtime-support-inspector" \
+                "covering host compile or runtime DAG did not pass"
+        fi
+    fi
+fi
+
 python_full_status=not-run
 if [ "$run_python_full" -eq 1 ]; then
     if [ "$has_python" -eq 1 ]; then
@@ -1351,6 +1520,42 @@ if [ "$affected_plan_ready" -eq 1 ] &&
             "requires a working python3 executable"
     else
         record_skip "python/provider-evidence-inspector" \
+            "covering full Python discovery did not pass"
+    fi
+fi
+
+if [ "$affected_plan_ready" -eq 1 ] &&
+    [ "$dense_tensor_classifier_python_test_requested" -eq 1 ]; then
+    if [ "$python_full_status" = "0" ]; then
+        record_pass "python/dense-tensor-classifier" \
+            "covered by full Python discovery"
+    elif [ "$run_python_full" -eq 0 ] && [ "$has_python" -eq 1 ]; then
+        run_gate "python/dense-tensor-classifier" \
+            python3 -m unittest \
+            bench.tests.test_stateless_tensor_result
+    elif [ "$run_python_full" -eq 0 ]; then
+        record_skip "python/dense-tensor-classifier" \
+            "requires a working python3 executable"
+    else
+        record_skip "python/dense-tensor-classifier" \
+            "covering full Python discovery did not pass"
+    fi
+fi
+
+if [ "$affected_plan_ready" -eq 1 ] &&
+    [ "$runtime_support_inspector_python_test_requested" -eq 1 ]; then
+    if [ "$python_full_status" = "0" ]; then
+        record_pass "python/runtime-support-inspector" \
+            "covered by full Python discovery"
+    elif [ "$run_python_full" -eq 0 ] && [ "$has_python" -eq 1 ]; then
+        run_gate "python/runtime-support-inspector" \
+            python3 -m unittest \
+            bench.tests.test_runtime_support_inspector
+    elif [ "$run_python_full" -eq 0 ]; then
+        record_skip "python/runtime-support-inspector" \
+            "requires a working python3 executable"
+    else
+        record_skip "python/runtime-support-inspector" \
             "covering full Python discovery did not pass"
     fi
 fi

@@ -31,31 +31,36 @@ OUT_OF_RANGE: Final = 7
 INVALID_QUERY: Final = 8
 
 SUPPORT_REGISTRY_ABI_V1: Final = 0x4752535200000001
-SUPPORT_PROFILE_COUNT_V1: Final = 10
+SUPPORT_PROFILE_COUNT_V1: Final = 11
 SUPPORT_PROFILE_VISION_ENCODER: Final = 0x4756454E00000001
 SUPPORT_PROFILE_DENSE_TENSOR_RERANKER: Final = 0x4744525200000001
 SUPPORT_PROFILE_DENSE_TENSOR_EMBEDDING: Final = 0x4744454D00000001
+SUPPORT_PROFILE_DENSE_TENSOR_CLASSIFIER: Final = 0x4744434C00000001
 SUPPORT_LIFECYCLE_STATELESS: Final = 1
 SUPPORT_EVIDENCE_RETAINED_REFERENCE_FIXTURE: Final = 1
 MODEL_FAMILY_STATELESS_ENCODER: Final = 2
 MODEL_FAMILY_VISION_UNDERSTANDING: Final = 3
 MODEL_FAMILY_AUDIO_UNDERSTANDING: Final = 4
 MODEL_OPERATION_ENCODE: Final = 3
+MODEL_OPERATION_CLASSIFY: Final = 4
 MODEL_OPERATION_RERANK: Final = 5
 MODEL_OPERATION_TRANSCRIBE: Final = 6
 MODEL_INPUT_DENSE_TENSOR: Final = 2
 MODEL_INPUT_IMAGE_FEATURE_U8: Final = 3
 MODEL_INPUT_AUDIO_FEATURE_I16: Final = 4
 MODEL_OUTPUT_EMBEDDING_I32: Final = 2
+MODEL_OUTPUT_CLASS_SCORES: Final = 3
 MODEL_OUTPUT_RANKED_ITEMS: Final = 4
 MODEL_OUTPUT_TRANSCRIPT: Final = 5
 NUMERICAL_EXACT_INTEGER: Final = 1
 SUPPORT_UNSUPPORTED_NONE: Final = 0
+SUPPORT_UNSUPPORTED_DIMENSIONS: Final = 6
 SUPPORT_UNSUPPORTED_CAPABILITIES: Final = 7
 SUPPORT_MASK_AUDIO_TRANSCRIPT: Final = 1 << 2
 SUPPORT_MASK_STATEFUL_TRANSCRIPT: Final = 1 << 3
 SUPPORT_MASK_DENSE_TENSOR_RERANKER: Final = 1 << 8
 SUPPORT_MASK_DENSE_TENSOR_EMBEDDING: Final = 1 << 9
+SUPPORT_MASK_DENSE_TENSOR_CLASSIFIER: Final = 1 << 10
 SUPPORT_MASK_TRANSCRIPT: Final = (
     SUPPORT_MASK_AUDIO_TRANSCRIPT | SUPPORT_MASK_STATEFUL_TRANSCRIPT
 )
@@ -328,13 +333,13 @@ def verify(library_path: Path, fixture_dir: Path) -> tuple[int, bytes, int, int]
         int(last.allowed_capabilities),
     )
     expected_last = (
-        SUPPORT_PROFILE_DENSE_TENSOR_EMBEDDING,
+        SUPPORT_PROFILE_DENSE_TENSOR_CLASSIFIER,
         SUPPORT_LIFECYCLE_STATELESS,
         SUPPORT_EVIDENCE_RETAINED_REFERENCE_FIXTURE,
         MODEL_FAMILY_STATELESS_ENCODER,
-        MODEL_OPERATION_ENCODE,
+        MODEL_OPERATION_CLASSIFY,
         MODEL_INPUT_DENSE_TENSOR,
-        MODEL_OUTPUT_EMBEDDING_I32,
+        MODEL_OUTPUT_CLASS_SCORES,
         NUMERICAL_EXACT_INTEGER,
         64,
         4_096,
@@ -408,6 +413,86 @@ def verify(library_path: Path, fixture_dir: Path) -> tuple[int, bytes, int, int]
     ):
         raise RuntimeError(
             "embedding support query did not match the appended V1 profile"
+        )
+
+    classifier_query = ModelSupportQueryV1(
+        family=MODEL_FAMILY_STATELESS_ENCODER,
+        operation=MODEL_OPERATION_CLASSIFY,
+        input_kind=MODEL_INPUT_DENSE_TENSOR,
+        output_kind=MODEL_OUTPUT_CLASS_SCORES,
+        numerical_policy=NUMERICAL_EXACT_INTEGER,
+        batch_items=64,
+        input_features=4_096,
+        output_dimensions=256,
+        required_capabilities=0,
+    )
+    classifier_result = ModelSupportResultV1()
+    status = int(
+        library.glacier_model_support_query_v1(
+            ctypes.byref(classifier_query),
+            ctypes.sizeof(classifier_query),
+            ctypes.byref(classifier_result),
+            ctypes.sizeof(classifier_result),
+        )
+    )
+    if status != OK:
+        name = STATUS_NAMES.get(status, "UNKNOWN")
+        raise RuntimeError(f"classifier support query failed: {name} ({status})")
+    if (
+        int(classifier_result.compatible) != 1
+        or int(classifier_result.unsupported_reason) != SUPPORT_UNSUPPORTED_NONE
+        or int(classifier_result.matching_profile_mask)
+        != SUPPORT_MASK_DENSE_TENSOR_CLASSIFIER
+    ):
+        raise RuntimeError(
+            "classifier support query did not match the appended V1 profile"
+        )
+
+    classifier_query.output_dimensions = 257
+    classifier_dimension_result = ModelSupportResultV1()
+    status = int(
+        library.glacier_model_support_query_v1(
+            ctypes.byref(classifier_query),
+            ctypes.sizeof(classifier_query),
+            ctypes.byref(classifier_dimension_result),
+            ctypes.sizeof(classifier_dimension_result),
+        )
+    )
+    if status != OK:
+        name = STATUS_NAMES.get(status, "UNKNOWN")
+        raise RuntimeError(f"classifier dimension query failed: {name} ({status})")
+    if (
+        int(classifier_dimension_result.compatible) != 0
+        or int(classifier_dimension_result.unsupported_reason)
+        != SUPPORT_UNSUPPORTED_DIMENSIONS
+        or int(classifier_dimension_result.matching_profile_mask) != 0
+    ):
+        raise RuntimeError(
+            "classifier dimension overflow did not return the explicit V1 reason"
+        )
+
+    classifier_query.output_dimensions = 256
+    classifier_query.required_capabilities = 1
+    classifier_capability_result = ModelSupportResultV1()
+    status = int(
+        library.glacier_model_support_query_v1(
+            ctypes.byref(classifier_query),
+            ctypes.sizeof(classifier_query),
+            ctypes.byref(classifier_capability_result),
+            ctypes.sizeof(classifier_capability_result),
+        )
+    )
+    if status != OK:
+        name = STATUS_NAMES.get(status, "UNKNOWN")
+        raise RuntimeError(f"classifier capability query failed: {name} ({status})")
+    if (
+        int(classifier_capability_result.compatible) != 0
+        or int(classifier_capability_result.unsupported_reason)
+        != SUPPORT_UNSUPPORTED_CAPABILITIES
+        or int(classifier_capability_result.matching_profile_mask) != 0
+    ):
+        raise RuntimeError(
+            "classifier capability rejection did not return the explicit V1 reason"
         )
 
     transcript_query = ModelSupportQueryV1(

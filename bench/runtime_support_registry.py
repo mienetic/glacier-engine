@@ -295,6 +295,27 @@ PROFILES = (
             max_output_dimensions=256,
         ),
     ),
+    ProfileSpec(
+        index=10,
+        slug="dense-tensor-classifier-reference",
+        profile_abi=0x4744_434C_0000_0001,
+        lifecycle="stateless",
+        support=SupportSpec(
+            family="stateless_encoder",
+            family_id=2,
+            operation="classify",
+            operation_id=4,
+            input_kind="dense_tensor",
+            input_kind_id=2,
+            output_kind="class_scores",
+            output_kind_id=3,
+            numerical_policy="exact_integer",
+            numerical_policy_id=1,
+            max_batch_items=64,
+            max_input_features=4_096,
+            max_output_dimensions=256,
+        ),
+    ),
 )
 
 

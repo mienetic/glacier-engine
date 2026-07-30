@@ -961,9 +961,10 @@ Current state: **idea to prototype**, depending on component. Core contracts
 already use scoped grants, but a public extension ABI, worker protocol, stable
 SDK, installer, and compatibility policy do not yet exist. A first
 core-only, experimental C ABI can now verify one complete Model Contract V1
-artifact-plan-result chain, enumerate ten retained-reference profiles, and
+artifact-plan-result chain, enumerate eleven retained-reference profiles, and
 query matching support-mask bits from C, Python, or Rust without exposing
-runtime struct layouts; it is a compatibility seed, not the stable SDK.
+runtime struct layouts; the C++ consumer checks linkage, layouts, count, and
+registry constants. This is a compatibility seed, not the stable SDK.
 
 Promotion gate: an extension receives only declared operations and bounds;
 revocation and process failure preserve accounting; version mismatch fails
@@ -994,7 +995,7 @@ expand the base adapter's capabilities.
 | Family | Representative operations | Current state | First retained slice | Integration gate |
 | --- | --- | --- | --- | --- |
 | Autoregressive text/code/chat | prefill, next-token decode, score | Prototype runtime; token publication, generation-one source replay, fresh-process handoff, acknowledged local sink progress, and package-aware checked durable fixed-output `1..64` CLI integration are experimental on the POSIX durable adapter | Run the same checked route with one small legal production artifact and add focused target-boundary restart/cancellation evidence | Declared numerical equivalence, exact KV ownership, recoverable source exit, replay-safe external publication |
-| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result, vision/audio/temporal-video embedding fixtures, a generic exact-integer dense-tensor reranker with canonical ranked items, and a generic dense encoder with exact Q30 L2 normalization integrated | Add a generic classification profile and compose embedding-to-retrieval under the same lifecycle | Typed class-score publication, retrieval/index identity, and production adapters |
+| Encoders, embeddings, rerankers, classifiers | encode, pool, rank, classify | Typed plan/result, vision/audio/temporal-video embedding fixtures, a generic exact-integer dense-tensor reranker with canonical ranked items, a generic dense encoder with exact Q30 L2 normalization, and a generic exact-integer classifier with authenticated batch/class maps and deterministic winners integrated | Compose embedding-to-retrieval under the same lifecycle and add production adapters | Generic class-score publication is integrated; retrieval/index identity, calibrated production quality, and production adapters remain |
 | Vision understanding | encode image, OCR, detect, segment, VQA inputs | Exact-integer encoder fixture integrated; production model gated | Extend from typed embedding to a bounded detection fixture | Geometry/color identity, bounded tensors, boxes/masks mapped to source regions |
 | Speech and audio understanding | ASR, translation, audio classification | Exact-integer feature-window encoder, typed transcript transaction, fresh-process stateful transcript continuation, and restartable exact word-timing/speaker publication integrated; production model gated | Add language/punctuation, overlapping-speaker policy, and crash-atomic checkpoint composition | No sample loss/duplication, exact streaming restart, annotation lineage, calibrated production quality |
 | Speech and audio generation | TTS, codec/audio token generation | Bounded exact-integer PCM publication, cancellation-safe retry, one-buffer backpressure, application acknowledgement, distinct-process restart, shared generated-output checkpoint composition, multi-chunk registry continuity with exact encoded payloads, host-verified retained source-model/renderer replay with separate registry-bound evidence, a validated bounded PCM s16le WAVE profile, and a real two-generation registry-transition-format chain with independent oracle coverage; production model/device paths gated | Add a production renderer/codec adapter, broader profiles, and additional replay profiles | Quality evidence, production container conformance, explicit device authority, physical playback evidence |
@@ -2208,29 +2209,39 @@ exact resume. A truly clean-host/native multi-OS run remains open.
 
 - add encoder/embedding/reranker/classifier operations; vision, audio, and
   temporal-video encode operations, one generic dense-tensor reranker, and one
-  generic normalized dense-tensor embedding fixture are retained, while a
-  generic classifier fixture remains;
+  generic normalized dense-tensor embedding fixture are retained, and the
+  generic [dense-tensor classifier](DENSE_TENSOR_CLASSIFIER.md) now retains an
+  exact `i16 × i8 → i64` class-score matrix for `B <= 64`, `F <= 4,096`, and
+  `C <= 256`; production adapters remain;
 - define typed tensor/vector/score result envelopes; the fixed integer
-  embedding envelope plus canonical ranked-item elements are complete;
+  embedding envelope, canonical ranked-item elements, authenticated class map,
+  fixed class-score policy, compact signed-`i64` score matrix, and contextual
+  matrix root are complete for the retained generic fixtures;
 - add deterministic batch-item mapping and tie/normalization policy; exact
   batch mapping is complete for vision, audio, selected video frames, the
-  generic reranker, and the generic embedding fixture; the reranker fixes no
-  normalization, descending score, and input-ordinal tie order, while the
-  embedding fixture fixes Q30 L2, exact squared-threshold arithmetic,
-  nearest-ties-to-even rounding, and zero-vector rejection;
+  generic reranker, embedding, and classifier fixtures; the reranker fixes no
+  normalization, descending score, and input-ordinal tie order; the embedding
+  fixture fixes Q30 L2, exact squared-threshold arithmetic,
+  nearest-ties-to-even rounding, and zero-vector rejection; and the classifier
+  fixes a stable class map, no normalization, descending score, and
+  class-ordinal tie order for deterministic winners;
 - integrate `ResourceBank`, `LaneWeave`, cancellation, and provider routing;
   scheduler receipt handoff, final-service typed publication, cancellation,
   and retirement are integrated for the retained bounded media runtime,
   vision/audio/temporal-video stateless adapters, dense-tensor reranker, and
-  normalized dense embedding, while mixed-family workload profiles and
-  provider routing remain.
+  normalized dense embedding, and generic classifier, while mixed-family
+  workload profiles, provider routing, and production adapters remain.
 
 Retained-slice exit gate (**met**): prepared-text generation, the exact-integer
-dense-tensor reranker, and the normalized dense embedding share the common
-artifact, plan, result, admission, ownership, and publication planes while
-retaining different state and publication semantics. This does not complete
-classification, retrieval composition, provider-routing, production-model, or
-native-device work in R2.
+dense-tensor reranker, normalized dense embedding, and generic classifier share
+the common artifact, plan, result, admission, ownership, and publication planes
+while retaining different state and publication semantics. The classifier also
+retains direct and scheduled atomic publication, cancellation, zero final
+ownership, append-only registry profile 10 of 11, and cross-language discovery.
+This completes only the generic classification slice. It does not complete
+retrieval composition, probability/calibration/label semantics,
+provider-routing, production-model adapters or quality, GPU execution, native
+multi-OS validation, performance evidence, or provider-token reduction in R2.
 
 ### R3 — Streaming perception
 

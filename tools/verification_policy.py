@@ -46,6 +46,9 @@ FOCUSED_TARGET_STEPS: Tuple[str, ...] = (
     "profile-durable-compile",
     "profile-device-compile",
     "profile-host-tool-compile",
+    "dense-tensor-reranker-compile",
+    "dense-tensor-embedding-compile",
+    "runtime-support-inspector-compile",
     "provider-evidence-inspector-compile",
 )
 COMPLETE_COMPILE_TARGET_STEPS: Tuple[str, ...] = ("profile-complete-compile",)
@@ -193,6 +196,7 @@ CORE_CONTRACT_PATHS = {
     "tests/model_contract_c_consumer.c",
     "tests/model_contract_cpp_consumer.cpp",
 }
+INTEROP_PYTHON_CONSUMER_PATH = "examples/interop/python_verify.py"
 
 SHARED_RUNTIME_COMPLETE_PATHS = {
     "src/model/package_manifest.zig",
@@ -276,6 +280,28 @@ PROVIDER_EVIDENCE_INSPECTOR_FOCUSED_PATHS = {
 }
 PROVIDER_EVIDENCE_INSPECTOR_PYTHON_TEST_PATH = (
     "bench/tests/test_provider_evidence_inspector.py"
+)
+
+DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS = {
+    "src/core/dense_tensor_classifier.zig",
+    "src/core/dense_tensor_reranker.zig",
+    "examples/dense_tensor_reranker.zig",
+    "bench/stateless_tensor_result.py",
+    "bench/tests/test_stateless_tensor_result.py",
+}
+DENSE_TENSOR_CLASSIFIER_PYTHON_TEST_PATH = (
+    "bench/tests/test_stateless_tensor_result.py"
+)
+STATELESS_TENSOR_RESULT_SHARED_PATH = "src/core/stateless_tensor_result.zig"
+
+RUNTIME_SUPPORT_INSPECTOR_FOCUSED_PATHS = {
+    "src/core/runtime_support_registry.zig",
+    "src/cli/runtime_support_inspector.zig",
+    "bench/runtime_support_registry.py",
+    "bench/tests/test_runtime_support_inspector.py",
+}
+RUNTIME_SUPPORT_INSPECTOR_PYTHON_TEST_PATH = (
+    "bench/tests/test_runtime_support_inspector.py"
 )
 
 RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS = {
@@ -673,6 +699,15 @@ def _decision_for_path(path: str) -> PathDecision:
             (),
         )
 
+    if lower == INTEROP_PYTHON_CONSUMER_PATH:
+        return PathDecision(
+            path,
+            "Python contract consumer changed",
+            frozenset({"python-changed"}),
+            (),
+            host_roots=HOST_CONTRACT_ROOTS,
+        )
+
     if lower in WORKLOAD_STORE_FAULT_POSIX_PATHS:
         store_fault_flags = {
             "python-changed",
@@ -871,6 +906,108 @@ def _decision_for_path(path: str) -> PathDecision:
             frozenset(inspector_flags),
             inspector_targets,
             inspector_steps,
+        )
+
+    if path == STATELESS_TENSOR_RESULT_SHARED_PATH:
+        return PathDecision(
+            path,
+            "shared stateless tensor result contract changed",
+            frozenset(
+                {
+                    "dense-tensor-classifier-focused",
+                    "dense-tensor-embedding-focused",
+                }
+            ),
+            RETAINED_TARGETS,
+            (
+                "dense-tensor-reranker-compile",
+                "dense-tensor-embedding-compile",
+            ),
+        )
+
+    if path in DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS:
+        classifier_flags = set()
+        classifier_targets: Tuple[str, ...] = ()
+        classifier_steps = FULL_TARGET_STEPS
+        classifier_host_roots: Tuple[str, ...] = ()
+        if path == DENSE_TENSOR_CLASSIFIER_PYTHON_TEST_PATH:
+            classifier_flags.update(
+                {
+                    "dense-tensor-classifier-python-test-focused",
+                    "python-changed",
+                }
+            )
+        elif suffix == ".py":
+            classifier_flags.update(
+                {
+                    "dense-tensor-classifier-focused",
+                    "python-changed",
+                }
+            )
+        else:
+            classifier_flags.add("dense-tensor-classifier-focused")
+            classifier_targets = RETAINED_TARGETS
+            if path.startswith("src/core/"):
+                classifier_steps = (
+                    "profile-core-compile",
+                    "dense-tensor-reranker-compile",
+                )
+                classifier_host_roots = HOST_CONTRACT_ROOTS
+            else:
+                classifier_steps = ("dense-tensor-reranker-compile",)
+            if path == "src/core/dense_tensor_classifier.zig":
+                classifier_flags.add("runtime-support-inspector-focused")
+                classifier_steps = (
+                    "profile-core-compile",
+                    "dense-tensor-reranker-compile",
+                    "runtime-support-inspector-compile",
+                )
+        return PathDecision(
+            path,
+            "dense-tensor classifier, shared demo, or independent oracle changed",
+            frozenset(classifier_flags),
+            classifier_targets,
+            classifier_steps,
+            host_roots=classifier_host_roots,
+        )
+
+    if path in RUNTIME_SUPPORT_INSPECTOR_FOCUSED_PATHS:
+        registry_flags = set()
+        registry_targets: Tuple[str, ...] = ()
+        registry_steps = FULL_TARGET_STEPS
+        registry_host_roots: Tuple[str, ...] = ()
+        if path == RUNTIME_SUPPORT_INSPECTOR_PYTHON_TEST_PATH:
+            registry_flags.update(
+                {
+                    "runtime-support-inspector-python-test-focused",
+                    "python-changed",
+                }
+            )
+        elif suffix == ".py":
+            registry_flags.update(
+                {
+                    "runtime-support-inspector-focused",
+                    "python-changed",
+                }
+            )
+        else:
+            registry_flags.add("runtime-support-inspector-focused")
+            registry_targets = RETAINED_TARGETS
+            if path.startswith("src/core/"):
+                registry_steps = (
+                    "profile-core-compile",
+                    "runtime-support-inspector-compile",
+                )
+                registry_host_roots = HOST_CONTRACT_ROOTS
+            else:
+                registry_steps = ("runtime-support-inspector-compile",)
+        return PathDecision(
+            path,
+            "runtime support registry, inspector, or independent oracle changed",
+            frozenset(registry_flags),
+            registry_targets,
+            registry_steps,
+            host_roots=registry_host_roots,
         )
 
     if path in PROVIDER_EVIDENCE_INSPECTOR_FOCUSED_PATHS:
@@ -1381,6 +1518,26 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
             "provider-evidence-inspector-python-test-focused",
             "python/provider-evidence-inspector",
         ),
+        (
+            "dense-tensor-classifier-focused",
+            "native/dense-tensor-classifier",
+        ),
+        (
+            "dense-tensor-embedding-focused",
+            "native/dense-tensor-embedding",
+        ),
+        (
+            "runtime-support-inspector-focused",
+            "native/runtime-support-inspector",
+        ),
+        (
+            "dense-tensor-classifier-python-test-focused",
+            "python/dense-tensor-classifier",
+        ),
+        (
+            "runtime-support-inspector-python-test-focused",
+            "python/runtime-support-inspector",
+        ),
         ("verification-policy-focused", "python/verification-policy"),
         ("workload-report-portable", "portable/workload-report"),
         ("workload-store-fault-posix", "native/workload-store-fault"),
@@ -1449,6 +1606,26 @@ def print_report(plan: VerificationPlan) -> None:
         (
             "provider-evidence-inspector-python-test-focused",
             "python/provider-evidence-inspector",
+        ),
+        (
+            "dense-tensor-classifier-focused",
+            "native/dense-tensor-classifier",
+        ),
+        (
+            "dense-tensor-embedding-focused",
+            "native/dense-tensor-embedding",
+        ),
+        (
+            "runtime-support-inspector-focused",
+            "native/runtime-support-inspector",
+        ),
+        (
+            "dense-tensor-classifier-python-test-focused",
+            "python/dense-tensor-classifier",
+        ),
+        (
+            "runtime-support-inspector-python-test-focused",
+            "python/runtime-support-inspector",
         ),
         ("verification-policy-focused", "python/verification-policy"),
         ("workload-report-portable", "portable/workload-report"),

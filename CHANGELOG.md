@@ -8,6 +8,26 @@ before the first stable release.
 
 ### Added
 
+- Added an experimental download-free **generic dense-tensor classifier**.
+  Bounded row-major `i16` inputs and `i8` class weights produce an exact
+  checked `i64` class-score matrix for `B <= 64`, `F <= 4,096`, and
+  `C <= 256`. Canonical authenticated batch and class maps, no normalization,
+  descending score order, and class-ordinal tie breaking make every winner
+  deterministic. Direct and scheduler-owned execution recompute candidates
+  before atomic publication, support cancellation, and return ownership to
+  zero. The append-only support registry now has 11 profiles, with classifier
+  ABI `0x4744434c00000001` at index 10, matching discovery across C, C++,
+  standard-library Python, and dependency-free Rust, plus C/Python/Rust query
+  rejection checks. The shared dense-tensor reranker demo accepts `classify`;
+  focused verification reuses
+  `dense-tensor-reranker-test` and `runtime-support-inspector-test` rather than
+  adding a compile root. Shared tensor-result changes now select only the
+  reranker/classifier and embedding focused roots instead of the full native,
+  Python, contract, and package suites. This completes only the generic
+  classification slice,
+  not probabilities, calibration, labels, production quality, retrieval
+  composition, production adapters, GPU execution, native multi-OS support,
+  performance, or provider-token reduction.
 - The existing read-only Provider Evidence Inspector now has an optional
   all-or-none composed mode. Alongside `--join`, callers may supply an exact
   144-byte journal header, exact 1,645-byte cost frame, and bounded gateway and

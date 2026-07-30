@@ -99,6 +99,8 @@ pub const stateless_embedding_result =
     core.stateless_embedding_result;
 pub const dense_tensor_reranker =
     core.dense_tensor_reranker;
+pub const dense_tensor_classifier =
+    core.dense_tensor_classifier;
 pub const dense_tensor_embedding =
     core.dense_tensor_embedding;
 
@@ -183,6 +185,8 @@ pub const StatelessEmbeddingResult =
     core.StatelessEmbeddingResult;
 pub const DenseTensorReranker =
     core.DenseTensorReranker;
+pub const DenseTensorClassifier =
+    core.DenseTensorClassifier;
 pub const DenseTensorEmbedding =
     core.DenseTensorEmbedding;
 pub const ContinuationObjectSweepWriter =

@@ -11,6 +11,10 @@ const qos = @import("lane_weave_qos.zig");
 const stateless = @import("stateless_model_adapter.zig");
 const tensor_result = @import("stateless_tensor_result.zig");
 
+test "dense tensor focused root includes classifier" {
+    _ = @import("dense_tensor_classifier.zig");
+}
+
 pub const Digest = [32]u8;
 pub const reference_adapter_abi: u64 = 0x4744_5252_0000_0001;
 pub const reranker_support = [_]model.SupportRecordV1{.{

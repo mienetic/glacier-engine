@@ -689,7 +689,7 @@ typed input/output kind, numerical policy, or explicit unsupported result.
 IDs plus bounded support records and malformed/unknown fixtures distinguish
 vocabulary from executable support.
 
-**Completed R0/R2 tensor registry slices:** ten append-only exact-integer
+**Completed R0/R2 tensor registry slices:** eleven append-only exact-integer
 reference profiles now derive directly from retained adapter support constants.
 A deterministic read-only JSON inspector, fixed-width C enumeration/query
 surface, standard-library Python and dependency-free Rust consumers, and
@@ -701,10 +701,17 @@ granting execution authority. See
 bounded generic dense encoder with exact Q30 L2 policy, maximum-bound and
 first-rejected-value tests, and matching C, Python, and Rust discovery.
 
-**Next slice:** append one generic classification profile or compose the
-normalized embedding into an in-memory retrieval fixture. Do not reorder an
-existing index or describe registration as production, platform, backend,
-quality, or performance support.
+**Completed generic-classifier registry slice:** profile 10 appends the bounded
+exact-integer classifier without moving indices 0 through 9. Its fixed ABI,
+`1 << 10` mask, maximum-bound success, dimension rejection, and capability
+rejection are retained across C, standard-library Python, and dependency-free
+Rust queries; the C++ consumer locks the layout, linkage, count, ABI, index,
+and mask constants.
+
+**Next slice:** compose the normalized embedding into an in-memory retrieval
+fixture or add a production adapter behind the existing contracts. Do not
+reorder an existing index or describe registration as production, platform,
+backend, quality, or performance support.
 
 ### Stateless encoder result envelope
 
@@ -733,8 +740,19 @@ publication, mutation rejection, a deterministic demo, and an independent
 Python big-integer replay cover registry profile 9. See
 [Normalized Dense-Tensor Embedding](DENSE_TENSOR_EMBEDDING.md).
 
-**Next slice:** add a typed class-score result or an in-memory retrieval
-composition that feeds normalized candidates into the reranker.
+**Completed generic-classifier slice:** authenticated batch and class maps, a
+fixed no-normalization/descending/class-ordinal tie policy, and a compact
+row-major signed-`i64` matrix now drive a download-free classifier. Exact
+`i16 × i8 → i64` scores cover `B <= 64`, `F <= 4,096`, and `C <= 256`;
+winner ties preserve the stable class ordinal. Direct and scheduled paths
+recompute candidates, publish atomically, cancel without visibility, and close
+ownership to zero. The shared reranker demo accepts `classify`, and registry
+profile 10 is visible through C, C++, Python, and Rust discovery. See
+[Dense-Tensor Classifier](DENSE_TENSOR_CLASSIFIER.md).
+
+**Next slice:** build an in-memory retrieval composition that feeds normalized
+candidates into the reranker, or add a production classifier adapter without
+reinterpreting the retained maps, policy, or output identity.
 
 ### Model-family adapter lifecycle
 
@@ -742,9 +760,10 @@ Prototype `inspect → plan → prepare → validate candidate → publish/abort
 two fake families that have different state/output semantics.
 
 **Current slice:** vision, audio, temporal-video, generic dense-tensor
-reranking, and normalized dense-embedding families run under zero ambient
-capabilities, fixed buffers, and deterministic rejection tests. All five use
-the shared family-neutral stateless lifecycle and can adopt one
+reranking, normalized dense embedding, and generic dense-tensor classification
+families run under zero ambient capabilities, fixed buffers, and deterministic
+rejection tests. All six use the shared family-neutral stateless lifecycle and
+can adopt one
 scheduler-owned receipt, preflight their exact result, publish only through the
 final V2 service commit, then cancel or retire with atomic release.
 
@@ -756,12 +775,12 @@ releases all ownership. See
 [Stateful Model Adapter and Latent-Step Fixture](STATEFUL_MODEL_ADAPTER.md) and
 [Stateful Model Continuation](STATEFUL_MODEL_CONTINUATION.md).
 
-**Next slice:** reuse the non-media batch/result binding for a classifier or
-retrieval composition, adapt a production renderer/codec to the bounded
-generated-audio transaction and output registry, add a redistributable
-deterministic producer-transition profile, or build a read-only paired
-evidence/registry inspector that labels unverified bytes before rendering
-entries.
+**Next slice:** compose the non-media batch/result binding into retrieval, add a
+production classifier adapter with explicit quality and label semantics, adapt
+a production renderer/codec to the bounded generated-audio transaction and
+output registry, add a redistributable deterministic producer-transition
+profile, or build a read-only paired evidence/registry inspector that labels
+unverified bytes before rendering entries.
 
 ### Portable workload-pressure campaign
 
