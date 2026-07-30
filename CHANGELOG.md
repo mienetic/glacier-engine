@@ -27,7 +27,7 @@ before the first stable release.
   values, rejects redirects, and validates response correlation. It does not
   add authentication, TLS, streaming, automatic retry, durable idempotency,
   restart, disconnect, production-model, GPU, or performance evidence.
-- R1k-b8 Phases A-C add an experimental managed lifecycle around that serial
+- R1k-b8 Phases A-D add an experimental managed lifecycle around that serial
   loopback server. `ManagedLifecycleV1` records one nonzero process generation,
   exact connection outcomes, and the monotone
   `starting -> ready -> draining -> stopped` path with a terminal `failed`
@@ -58,11 +58,25 @@ before the first stable release.
   still-ready child before clean drain. Existing model-list,
   completion/replay, malformed-peer, clean-close, and same-package
   fresh-restart checks remain. The elapsed receive deadline is distinct from
-  the request's logical Scheduler deadline. It is not a full-request timeout,
-  post-admission accepted-work cancellation matrix, or slow-response-write
-  cancellation. It adds no concurrent serving, durable idempotency or crash
-  recovery, native Windows/FreeBSD serving proof, load, or performance
-  evidence. Native deadline behavior on Windows and FreeBSD remains unproven.
+  the request's logical Scheduler deadline. Phase D publishes an exact
+  sequence/handle-fenced active-work lease after unary admission and before the
+  first drive operation. Drain closes completion admission and cancels only
+  that retained service handle, with idempotent race classification and
+  admitted-work evidence separate from receive drain and timeout. A
+  deterministic post-admission/pre-drive child barrier invokes drain twice and
+  proves a correlated `request_cancelled` response with retry policy `never`,
+  one accepted and completed connection, zero failed connections, zero receive
+  signals, one work cancellation at `request_admitted`, zero active service
+  requests, one terminal record, and zero Bank ownership. A second child drives
+  the one-token request terminal while its HTTP lease remains published and
+  proves drain preserves the oracle-matched completion with no work
+  cancellation. Phases B-D reuse the existing dual-mode process artifact and
+  compile roots. Phase C remains a
+  pre-admission timeout rather than a full-request timeout; Phase D does not
+  add disconnect or blocked-response-write cancellation or kernel preemption.
+  The slice adds no concurrent serving, durable idempotency or crash recovery,
+  native Windows/FreeBSD serving proof, load, or performance evidence. Native
+  deadline behavior on Windows and FreeBSD remains unproven.
 
 ### Changed
 
@@ -91,15 +105,17 @@ before the first stable release.
   and compile-only retained-target companion instead of the broad
   model-forward suite. Package-aware CLI and prepared-session changes run that
   root together with the text-runtime golden path in one host Zig invocation.
-  Unary HTTP codec, adapter, API, client, and acceptance changes run
+  Unary HTTP contract, client, and focused acceptance changes run
   `unary-http-test` once under `affected-fast`; complete affected verification
-  selects `unary-http-compile` on retained targets. Kernel implementation
-  changes run the service and HTTP roots in one host Zig invocation. Managed
-  server-process lifecycle changes add `unary-server-process-test` to that
-  shared host invocation; complete affected verification selects only its
-  `unary-server-process-compile` companion on retained targets. The Phase B
-  partial-receive drain cases and Phase C monotonic receive-timeout cases reuse
-  the same dual-mode artifact and targets, adding no compile root.
+  selects `unary-http-compile` on retained targets. Unary-kernel implementation
+  changes select the service, HTTP, and managed-process roots. Shared server
+  adapter/API changes select the HTTP and managed-process roots without the
+  service-only root. Process-fixture-only changes select the managed-process
+  root alone. All selected host roots share one Zig invocation;
+  complete affected verification selects only their corresponding compile-only
+  companions on retained targets. The Phase B partial-receive drain, Phase C
+  monotonic receive-timeout, and Phase D admitted-work drain cases reuse the
+  same dual-mode artifact and targets, adding no compile root.
   Prepared-text session changes now select only the CPU, durable, and host-tool
   compile profiles, while the process-local variable-terminal module selects
   only the host-tool profile; both reuse that same host golden DAG instead of

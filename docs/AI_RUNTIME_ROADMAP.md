@@ -1929,8 +1929,9 @@ correlation. Calls are serialized and no request is retried automatically.
 The focused `unary-http-test` host root covers the bounded codec, route, and
 loopback adapter without compiling the broad model-forward suite. Complete
 affected verification uses `unary-http-compile` on retained targets. A kernel
-implementation change runs the service and HTTP host roots in one Zig
-invocation. Foreign-target compilation is portability evidence only.
+implementation change now selects the service, HTTP, and managed-process host
+roots in one Zig invocation. Foreign-target compilation is portability
+evidence only.
 
 This slice does not establish a separately managed server process,
 non-loopback exposure, authentication, authorization, TLS, concurrent model
@@ -1939,7 +1940,7 @@ graceful drain, restart, durable idempotency, process-death recovery, native
 multi-OS serving, GPU execution, production-model quality, or performance
 evidence.
 
-#### R1k-b8 — Managed unary server process lifecycle, Phases A-C
+#### R1k-b8 — Managed unary server process lifecycle, Phases A-D
 
 Status: **integrated experimental host-process lifecycle slice**.
 
@@ -1983,6 +1984,20 @@ drain evidence. A timeout leaves the lifecycle `ready` and completion
 admission open. This elapsed receive deadline is separate from
 `Glacier-Deadline-Tick`, which remains an absolute logical Scheduler deadline.
 
+Phase D adds one active-work lease after unary admission and before the first
+status or drive operation. The runtime retains the full generation-fenced unary
+handle; managed lifecycle evidence binds the runtime work sequence and handle
+digest to the exact active connection and advances its phase to
+`request_admitted`. Drain closes completion admission first and then cancels
+only that exact service handle. Repeated drain and
+cancellation-versus-terminal races retain an idempotent classified outcome, and
+only a newly cancelled active request increments the separate admitted-work
+drain counter. Request driving does not hold the HTTP control lock, so
+cancellation may wait for the current bounded service drive quantum but does not
+wait for the whole response lifecycle. Lifecycle bookkeeping and the optional
+fixture observer execute outside the HTTP control and service locks. The
+serving thread remains the sole response writer and connection closer.
+
 The focused acceptance executable has two modes: its supervisor creates one
 generated ordinary package and re-executes the same artifact as a child worker.
 The child accepts only an exact out-of-band `drain\n` command followed by EOF,
@@ -2004,25 +2019,41 @@ drain. Each publishes exact timeout phase evidence with no drain signal or
 response to the interrupted peer, remains ready with completion admission
 open, serves a valid model-list request in the same child, then drains with
 exactly two accepted, one completed, one failed, zero service records, and zero
-Bank ownership. Generation zero fails before any `READY` frame.
+Bank ownership. Two Phase D children use a synchronous
+post-admission/pre-drive observer instead of timing or model-duration
+assumptions. The cancellation-wins child invokes ordinary drain twice after
+that exact barrier and before releasing the serving thread. Its retained client
+validates a correlated `request_cancelled` error with retry policy `never`;
+lifecycle closes with one accepted and completed connection, zero failed
+connections, no receive-drain or receive-timeout signal, and exactly one
+admitted-work drain cancellation at `request_admitted`. The completion-wins
+child drives the one-token service request terminal while the HTTP lease
+remains published, invokes drain twice, then releases the serving thread. Its
+client retains the oracle-matched successful completion and lifecycle records
+no work cancellation. Both service closures retain zero active requests, one
+terminal record, and zero Bank ownership. Generation zero fails before any
+`READY` frame.
 
 `unary-server-process-test` runs that real host-process fixture without the
 broad model-forward suite. `unary-server-process-compile` supplies compile-only
 evidence for retained targets; it does not execute a child or establish native
-serving support there. Shared kernel or server implementation changes compose
-the service, HTTP, and process roots in one host Zig invocation. Phases B-C
-reuse the same dual-mode executable and these existing targets; they add no
-compile root.
+serving support there. A unary-kernel implementation change selects the
+service, HTTP, and process roots. A shared server implementation change selects
+the HTTP and process roots without the service-only root. All selected host
+roots share one Zig invocation. Phases B-D reuse the same dual-mode executable
+and these existing targets; they add no compile root.
 
-Phases A-C do not retain idempotency records or active execution across process
+Phases A-D do not retain idempotency records or active execution across process
 restart. Phase C is a pre-admission receive timeout, not a full-request or
-service-level guarantee; it does not cancel admitted execution or a blocked
-response write. This slice adds no durable or process-death recovery,
-concurrent listener queue, process-wide overload policy, streaming, early EOS,
-authentication, authorization, TLS, quota, GPU execution, load evidence, or
-performance claim. Retained-target compile closure is not native serving proof
-on Windows or FreeBSD, and native deadline behavior on those systems remains
-unproven. It does not meet the full serving promotion gate.
+service-level guarantee. Phase D cancels admitted execution only when managed
+drain wins; it does not add disconnect- or elapsed-time cancellation, kernel
+preemption, or cancellation of a blocked response write. This slice adds no
+durable or process-death recovery, concurrent listener queue, process-wide
+overload policy, streaming, early EOS, authentication, authorization, TLS,
+quota, GPU execution, load evidence, or performance claim. Retained-target
+compile closure is not native serving proof on Windows or FreeBSD, and native
+deadline behavior on those systems remains unproven. It does not meet the full
+serving promotion gate.
 
 #### Public durable-runtime composition foundation
 
@@ -2078,18 +2109,19 @@ the direct-terminal proof remains a bounded four-boundary POSIX smoke rather
 than an exhaustive storage or power-loss campaign. Ordinary-package production
 and admission now include checked durable fixed output `1..64`, with focused
 `N=2`, fresh-process `N=4`, and `N=64` evidence for one narrow CPU/POSIX
-profile. R1k-b8 Phases A-C now prove a clean managed child-process drain,
+profile. R1k-b8 Phases A-D now prove a clean managed child-process drain,
 receive-side drain cancellation of held-open partial HTTP heads and bodies,
 bounded monotonic pre-admission receive timeout with separate evidence,
-same-child liveness after timeout, zero-ownership close, and same-package fresh
-restart. They do not prove full-request timeout, post-admission accepted-work
-or slow-response-write cancellation, durable request state, crash recovery, or
-the full serving lifecycle. Production artifacts, remote delivery, broader
-tokenizers/models, GPU package execution, and multi-OS requirements remain
-open. The combined 49-boundary worker now carries an admitted ordinary-profile
-bundle, while a separate same-host fixture executes the installed CLI from
-isolated ambient state. A truly clean-host/native multi-OS run and an installed
-package-aware command process-death campaign remain open.
+same-child liveness after timeout, exact fenced cancellation of admitted work
+when drain wins, zero-ownership close, and same-package fresh restart. They do
+not prove full-request timeout, disconnect or slow-response-write cancellation,
+kernel preemption, durable request state, crash recovery, or the full serving
+lifecycle. Production artifacts, remote delivery, broader tokenizers/models,
+GPU package execution, and multi-OS requirements remain open. The combined
+49-boundary worker now carries an admitted ordinary-profile bundle, while a
+separate same-host fixture executes the installed CLI from isolated ambient
+state. A truly clean-host/native multi-OS run and an installed package-aware
+command process-death campaign remain open.
 
 ### R2 — Stateless tensor families
 

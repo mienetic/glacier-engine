@@ -26,6 +26,8 @@ pub const LifecycleError = error{
     ConnectionHandleMismatch,
     ConnectionPhaseMismatch,
     ConnectionInterrupted,
+    WorkIdentityMismatch,
+    WorkCancellationRecoveryRequired,
     CounterOverflow,
 };
 
@@ -51,6 +53,7 @@ pub const ManagedConnectionPhaseV1 = enum(u8) {
     receiving_head = 1,
     request_head_received = 2,
     request_received = 3,
+    request_admitted = 4,
 };
 
 pub const ManagedSnapshotV1 = struct {
@@ -62,9 +65,11 @@ pub const ManagedSnapshotV1 = struct {
     active_connections: u8,
     drain_signaled_connections: u64,
     receive_timeout_signaled_connections: u64,
+    drain_cancelled_work_connections: u64 = 0,
     active_connection_phase: ManagedConnectionPhaseV1,
     last_drain_signaled_phase: ManagedConnectionPhaseV1,
     last_receive_timeout_signaled_phase: ManagedConnectionPhaseV1,
+    last_drain_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
 };
 
 const ActiveConnectionV1 = struct {
@@ -75,6 +80,9 @@ const ActiveConnectionV1 = struct {
     drain_signaled: bool = false,
     receive_timeout_signaled: bool = false,
     receive_retired: bool = false,
+    work_identity: ?prepared_http.WorkIdentityV1 = null,
+    work_retired: bool = false,
+    drain_work_cancelled: bool = false,
 };
 
 /// Process-lifetime listener state only. Request execution and retained
@@ -89,8 +97,10 @@ pub const ManagedLifecycleV1 = struct {
     active_connections: u8 = 0,
     drain_signaled_connections: u64 = 0,
     receive_timeout_signaled_connections: u64 = 0,
+    drain_cancelled_work_connections: u64 = 0,
     last_drain_signaled_phase: ManagedConnectionPhaseV1 = .none,
     last_receive_timeout_signaled_phase: ManagedConnectionPhaseV1 = .none,
+    last_drain_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
     active_connection: ?ActiveConnectionV1 = null,
 
     pub fn initV1(
@@ -192,6 +202,112 @@ pub const ManagedLifecycleV1 = struct {
         );
     }
 
+    fn markRequestAdmittedV1(
+        self: *ManagedLifecycleV1,
+        process_generation: u64,
+        connection_sequence: u64,
+        handle: std.net.Stream.Handle,
+        work_identity: prepared_http.WorkIdentityV1,
+    ) !prepared_http.WorkDispositionV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const active = self.active_connection orelse
+            return LifecycleError.NoActiveConnection;
+        if (active.process_generation != process_generation or
+            process_generation != self.process_generation or
+            active.sequence != connection_sequence or
+            connection_sequence != self.accepted_connections)
+        {
+            return LifecycleError.ConnectionSequenceMismatch;
+        }
+        if (active.handle != handle)
+            return LifecycleError.ConnectionHandleMismatch;
+        if (!active.receive_retired or
+            active.receive_timeout_signaled or
+            active.drain_signaled)
+        {
+            return LifecycleError.ConnectionInterrupted;
+        }
+        try self.bindActiveWorkLockedV1(work_identity);
+        return switch (self.state) {
+            .ready => .proceed,
+            .draining => .draining,
+            else => LifecycleError.InvalidTransition,
+        };
+    }
+
+    fn bindActiveWorkLockedV1(
+        self: *ManagedLifecycleV1,
+        work_identity: prepared_http.WorkIdentityV1,
+    ) LifecycleError!void {
+        const active = self.active_connection orelse
+            return LifecycleError.NoActiveConnection;
+        switch (active.phase) {
+            .request_received => {
+                if (active.work_identity != null)
+                    return LifecycleError.WorkIdentityMismatch;
+                self.active_connection.?.phase = .request_admitted;
+                self.active_connection.?.work_identity = work_identity;
+            },
+            .request_admitted => {
+                const existing = active.work_identity orelse
+                    return LifecycleError.WorkIdentityMismatch;
+                if (!std.meta.eql(existing, work_identity))
+                    return LifecycleError.WorkIdentityMismatch;
+            },
+            else => return LifecycleError.ConnectionPhaseMismatch,
+        }
+    }
+
+    fn retireActiveConnectionWorkV1(
+        self: *ManagedLifecycleV1,
+        process_generation: u64,
+        connection_sequence: u64,
+        handle: std.net.Stream.Handle,
+        work_identity: prepared_http.WorkIdentityV1,
+    ) LifecycleError!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.state != .ready and self.state != .draining)
+            return LifecycleError.InvalidTransition;
+        const active = self.active_connection orelse
+            return LifecycleError.NoActiveConnection;
+        if (active.process_generation != process_generation or
+            process_generation != self.process_generation or
+            active.sequence != connection_sequence or
+            connection_sequence != self.accepted_connections)
+        {
+            return LifecycleError.ConnectionSequenceMismatch;
+        }
+        if (active.handle != handle)
+            return LifecycleError.ConnectionHandleMismatch;
+        if (active.phase != .request_admitted)
+            return LifecycleError.ConnectionPhaseMismatch;
+        const existing = active.work_identity orelse
+            return LifecycleError.WorkIdentityMismatch;
+        if (!std.meta.eql(existing, work_identity))
+            return LifecycleError.WorkIdentityMismatch;
+        self.active_connection.?.work_retired = true;
+    }
+
+    fn recordDrainWorkCancellationLockedV1(
+        self: *ManagedLifecycleV1,
+        work_identity: prepared_http.WorkIdentityV1,
+    ) LifecycleError!void {
+        try self.bindActiveWorkLockedV1(work_identity);
+        const active = self.active_connection orelse
+            return LifecycleError.NoActiveConnection;
+        if (active.drain_work_cancelled) return;
+        const next_cancelled = std.math.add(
+            u64,
+            self.drain_cancelled_work_connections,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        self.drain_cancelled_work_connections = next_cancelled;
+        self.last_drain_cancelled_work_phase = active.phase;
+        self.active_connection.?.drain_work_cancelled = true;
+    }
+
     fn transitionActiveConnectionReceiveLockedV1(
         self: *ManagedLifecycleV1,
         connection_sequence: u64,
@@ -256,6 +372,11 @@ pub const ManagedLifecycleV1 = struct {
         }
         if (active.handle != handle)
             return LifecycleError.ConnectionHandleMismatch;
+        if (active.phase == .request_admitted and
+            !active.work_retired)
+        {
+            return LifecycleError.ConnectionInterrupted;
+        }
         if (succeeded) {
             self.completed_connections = std.math.add(
                 u64,
@@ -307,12 +428,14 @@ pub const ManagedLifecycleV1 = struct {
             .active_connections = self.active_connections,
             .drain_signaled_connections = self.drain_signaled_connections,
             .receive_timeout_signaled_connections = self.receive_timeout_signaled_connections,
+            .drain_cancelled_work_connections = self.drain_cancelled_work_connections,
             .active_connection_phase = if (self.active_connection) |active|
                 active.phase
             else
                 .none,
             .last_drain_signaled_phase = self.last_drain_signaled_phase,
             .last_receive_timeout_signaled_phase = self.last_receive_timeout_signaled_phase,
+            .last_drain_cancelled_work_phase = self.last_drain_cancelled_work_phase,
         };
     }
 
@@ -384,6 +507,7 @@ pub const ManagedLifecycleV1 = struct {
             return false;
         }
         if (active.phase == .request_received or
+            active.phase == .request_admitted or
             active.drain_signaled or
             active.receive_timeout_signaled or
             active.receive_retired)
@@ -487,6 +611,28 @@ pub fn serveManagedListenerV1(
     runtime: *prepared_http.RuntimeV1,
     lifecycle: *ManagedLifecycleV1,
 ) !void {
+    return serveManagedListenerWithWorkObserverV1(
+        listener,
+        config,
+        runtime,
+        lifecycle,
+        null,
+    );
+}
+
+/// Managed-listener variant with an optional post-admission observer.
+///
+/// Lifecycle bookkeeping always runs before the observer. The observer is
+/// invoked outside lifecycle, HTTP-control, and service locks, so a test or
+/// host coordinator can establish a deterministic drain barrier without
+/// becoming part of the runtime lock order.
+pub fn serveManagedListenerWithWorkObserverV1(
+    listener: *std.net.Server,
+    config: ServerConfig,
+    runtime: *prepared_http.RuntimeV1,
+    lifecycle: *ManagedLifecycleV1,
+    work_observer: ?prepared_http.RequestWorkControlV1,
+) !void {
     try validateConfig(config);
     if (!isLoopbackAddress(listener.listen_address))
         return Error.NonLoopbackBind;
@@ -527,6 +673,7 @@ pub fn serveManagedListenerV1(
             sequence,
             config.receive_timeout_ns,
             receive_timer,
+            work_observer,
         ) catch |err| {
             lifecycle.markFailedV1();
             return err;
@@ -576,7 +723,18 @@ fn beginManagedDrainV1(
     defer lifecycle.mutex.unlock();
     return switch (lifecycle.state) {
         .ready => blk: {
-            _ = prepared_http.beginDrainV1(runtime);
+            const drain_receipt =
+                prepared_http.beginDrainV1(runtime) catch |err| {
+                    lifecycle.state = .failed;
+                    return err;
+                };
+            applyDrainWorkReceiptLockedV1(
+                lifecycle,
+                drain_receipt,
+            ) catch |err| {
+                lifecycle.state = .failed;
+                return err;
+            };
             const active_was_signaled =
                 lifecycle.signalActiveConnectionForDrainLockedV1() catch |err|
                     {
@@ -587,11 +745,37 @@ fn beginManagedDrainV1(
             break :blk active_was_signaled;
         },
         .draining => blk: {
-            _ = prepared_http.beginDrainV1(runtime);
+            const drain_receipt =
+                prepared_http.beginDrainV1(runtime) catch |err| {
+                    lifecycle.state = .failed;
+                    return err;
+                };
+            applyDrainWorkReceiptLockedV1(
+                lifecycle,
+                drain_receipt,
+            ) catch |err| {
+                lifecycle.state = .failed;
+                return err;
+            };
             break :blk lifecycle.active_connection != null;
         },
         else => LifecycleError.InvalidTransition,
     };
+}
+
+fn applyDrainWorkReceiptLockedV1(
+    lifecycle: *ManagedLifecycleV1,
+    receipt: prepared_http.DrainReceiptV1,
+) LifecycleError!void {
+    const work_identity = receipt.active_work orelse return;
+    try lifecycle.bindActiveWorkLockedV1(work_identity);
+    if (receipt.cancellation == .recovery_required)
+        return LifecycleError.WorkCancellationRecoveryRequired;
+    if (receipt.cancellation_was_new) {
+        try lifecycle.recordDrainWorkCancellationLockedV1(
+            work_identity,
+        );
+    }
 }
 
 pub fn serveConnectionV1(
@@ -603,6 +787,7 @@ pub fn serveConnectionV1(
     try serveOpenConnectionV1(
         &owned_connection.stream,
         runtime,
+        null,
         null,
     );
 }
@@ -794,6 +979,73 @@ const ManagedDeadlineReaderV1 = struct {
     }
 };
 
+const ManagedRequestWorkControlV1 = struct {
+    lifecycle: *ManagedLifecycleV1,
+    process_generation: u64,
+    connection_sequence: u64,
+    handle: std.net.Stream.Handle,
+    observer: ?prepared_http.RequestWorkControlV1,
+    observer_admitted: bool = false,
+    retire_error: ?anyerror = null,
+
+    fn admittedOpaque(
+        context: *anyopaque,
+        work_identity: prepared_http.WorkIdentityV1,
+    ) anyerror!prepared_http.WorkDispositionV1 {
+        const self: *ManagedRequestWorkControlV1 =
+            @ptrCast(@alignCast(context));
+        const lifecycle_disposition =
+            try self.lifecycle.markRequestAdmittedV1(
+                self.process_generation,
+                self.connection_sequence,
+                self.handle,
+                work_identity,
+            );
+        if (lifecycle_disposition == .draining)
+            return .draining;
+        if (self.observer) |observer| {
+            const observer_disposition = try observer.admitted_fn(
+                observer.context,
+                work_identity,
+            );
+            self.observer_admitted = true;
+            return observer_disposition;
+        }
+        return .proceed;
+    }
+
+    fn retiredOpaque(
+        context: *anyopaque,
+        work_identity: prepared_http.WorkIdentityV1,
+    ) void {
+        const self: *ManagedRequestWorkControlV1 =
+            @ptrCast(@alignCast(context));
+        self.lifecycle.retireActiveConnectionWorkV1(
+            self.process_generation,
+            self.connection_sequence,
+            self.handle,
+            work_identity,
+        ) catch |err| {
+            self.retire_error = err;
+        };
+        if (self.observer) |observer| {
+            if (!self.observer_admitted) return;
+            observer.retired_fn(
+                observer.context,
+                work_identity,
+            );
+        }
+    }
+
+    fn control(self: *ManagedRequestWorkControlV1) prepared_http.RequestWorkControlV1 {
+        return .{
+            .context = self,
+            .admitted_fn = admittedOpaque,
+            .retired_fn = retiredOpaque,
+        };
+    }
+};
+
 fn serveManagedConnectionV1(
     connection: std.net.Server.Connection,
     runtime: *prepared_http.RuntimeV1,
@@ -801,6 +1053,7 @@ fn serveManagedConnectionV1(
     sequence: u64,
     receive_timeout_ns: u64,
     receive_timer: ?std.time.Timer,
+    work_observer: ?prepared_http.RequestWorkControlV1,
 ) !bool {
     var owned_connection = connection;
     defer owned_connection.stream.close();
@@ -812,6 +1065,13 @@ fn serveManagedConnectionV1(
         .timeout_ns = receive_timeout_ns,
         .decision_timer = receive_timer,
         .wait_timer = receive_timer,
+    };
+    var work_control: ManagedRequestWorkControlV1 = .{
+        .lifecycle = lifecycle,
+        .process_generation = lifecycle.process_generation,
+        .connection_sequence = sequence,
+        .handle = owned_connection.stream.handle,
+        .observer = work_observer,
     };
     const timeout_thread = if (receive_timer == null)
         null
@@ -833,6 +1093,7 @@ fn serveManagedConnectionV1(
             &owned_connection.stream,
             runtime,
             &receive_timeout,
+            work_control.control(),
         ) catch break :blk false;
         break :blk true;
     };
@@ -848,7 +1109,8 @@ fn serveManagedConnectionV1(
         receive_retired and
         !receive_timeout.signaled and
         receive_timeout.signal_error == null and
-        stop_error == null;
+        stop_error == null and
+        work_control.retire_error == null;
     try lifecycle.finishConnectionV1(
         sequence,
         owned_connection.stream.handle,
@@ -856,6 +1118,7 @@ fn serveManagedConnectionV1(
     );
     if (receive_timeout.signal_error) |err| return err;
     if (stop_error) |err| return err;
+    if (work_control.retire_error) |err| return err;
     return connection_succeeded;
 }
 
@@ -863,6 +1126,7 @@ fn serveOpenConnectionV1(
     stream: *std.net.Stream,
     runtime: *prepared_http.RuntimeV1,
     receive_timeout: ?*ManagedReceiveTimeoutV1,
+    work_control: ?prepared_http.RequestWorkControlV1,
 ) !void {
     var receive_buffer: [prepared_http.header_max_bytes]u8 = undefined;
     var send_buffer: [4096]u8 = undefined;
@@ -892,7 +1156,7 @@ fn serveOpenConnectionV1(
     }
     var workspace: prepared_http.WorkspaceV1 = undefined;
     if (receive_timeout) |timeout| {
-        try prepared_http.serveRequestWithReceiveControlV1(
+        try prepared_http.serveRequestWithControlsV1(
             runtime,
             &request,
             &workspace,
@@ -901,12 +1165,15 @@ fn serveOpenConnectionV1(
                 .complete_fn = ManagedReceiveTimeoutV1.completeOpaque,
                 .stop_fn = ManagedReceiveTimeoutV1.stopOpaque,
             },
+            work_control,
         );
     } else {
-        try prepared_http.serveRequestV1(
+        try prepared_http.serveRequestWithControlsV1(
             runtime,
             &request,
             &workspace,
+            null,
+            work_control,
         );
     }
 }
@@ -1109,6 +1376,172 @@ test "managed lifecycle has one drain linearization point" {
         starting.snapshotV1().state,
     );
     try starting.markStoppedV1();
+}
+
+test "managed admitted work is connection fenced and counted once" {
+    const handle: std.net.Stream.Handle = @intCast(91);
+    const stale_handle: std.net.Stream.Handle = @intCast(92);
+    var lifecycle = try ManagedLifecycleV1.initV1(29);
+    try lifecycle.markReadyV1();
+    const connection_sequence =
+        try lifecycle.beginConnectionV1(handle);
+    try lifecycle.markRequestHeadReceivedV1(
+        connection_sequence,
+        handle,
+    );
+    try lifecycle.markRequestReceivedBeforeDeadlineV1(
+        connection_sequence,
+        handle,
+        null,
+        0,
+    );
+
+    const identity: prepared_http.WorkIdentityV1 = .{
+        .sequence = 7,
+        .handle_sha256 = [_]u8{0x71} ** 32,
+    };
+    try std.testing.expectError(
+        LifecycleError.ConnectionSequenceMismatch,
+        lifecycle.markRequestAdmittedV1(
+            30,
+            connection_sequence,
+            handle,
+            identity,
+        ),
+    );
+    try std.testing.expectError(
+        LifecycleError.ConnectionSequenceMismatch,
+        lifecycle.markRequestAdmittedV1(
+            29,
+            connection_sequence + 1,
+            handle,
+            identity,
+        ),
+    );
+    try std.testing.expectError(
+        LifecycleError.ConnectionHandleMismatch,
+        lifecycle.markRequestAdmittedV1(
+            29,
+            connection_sequence,
+            stale_handle,
+            identity,
+        ),
+    );
+    try std.testing.expectEqual(
+        prepared_http.WorkDispositionV1.proceed,
+        try lifecycle.markRequestAdmittedV1(
+            29,
+            connection_sequence,
+            handle,
+            identity,
+        ),
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.request_admitted,
+        lifecycle.snapshotV1().active_connection_phase,
+    );
+
+    var stale_identity = identity;
+    stale_identity.sequence += 1;
+    try std.testing.expectError(
+        LifecycleError.WorkIdentityMismatch,
+        lifecycle.markRequestAdmittedV1(
+            29,
+            connection_sequence,
+            handle,
+            stale_identity,
+        ),
+    );
+    try std.testing.expectError(
+        LifecycleError.WorkIdentityMismatch,
+        lifecycle.retireActiveConnectionWorkV1(
+            29,
+            connection_sequence,
+            handle,
+            stale_identity,
+        ),
+    );
+
+    lifecycle.mutex.lock();
+    lifecycle.recordDrainWorkCancellationLockedV1(
+        identity,
+    ) catch |err| {
+        lifecycle.mutex.unlock();
+        return err;
+    };
+    lifecycle.recordDrainWorkCancellationLockedV1(
+        identity,
+    ) catch |err| {
+        lifecycle.mutex.unlock();
+        return err;
+    };
+    lifecycle.mutex.unlock();
+    const cancellation_snapshot = lifecycle.snapshotV1();
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        cancellation_snapshot.drain_cancelled_work_connections,
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.request_admitted,
+        cancellation_snapshot.last_drain_cancelled_work_phase,
+    );
+
+    try lifecycle.retireActiveConnectionWorkV1(
+        29,
+        connection_sequence,
+        handle,
+        identity,
+    );
+    try lifecycle.finishConnectionV1(
+        connection_sequence,
+        handle,
+        true,
+    );
+
+    var recovery = try ManagedLifecycleV1.initV1(31);
+    try recovery.markReadyV1();
+    const recovery_sequence =
+        try recovery.beginConnectionV1(handle);
+    try recovery.markRequestHeadReceivedV1(
+        recovery_sequence,
+        handle,
+    );
+    try recovery.markRequestReceivedBeforeDeadlineV1(
+        recovery_sequence,
+        handle,
+        null,
+        0,
+    );
+    recovery.mutex.lock();
+    const recovery_result = applyDrainWorkReceiptLockedV1(
+        &recovery,
+        .{
+            .admission_was_open = true,
+            .active_work = identity,
+            .cancellation = .recovery_required,
+        },
+    );
+    recovery.mutex.unlock();
+    try std.testing.expectError(
+        LifecycleError.WorkCancellationRecoveryRequired,
+        recovery_result,
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.request_admitted,
+        recovery.snapshotV1().active_connection_phase,
+    );
+    try std.testing.expectError(
+        LifecycleError.ConnectionInterrupted,
+        recovery.finishConnectionV1(
+            recovery_sequence,
+            handle,
+            false,
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        recovery.snapshotV1().active_connections,
+    );
 }
 
 test "managed receive timeout is fenced and drain has one winner" {

@@ -23,13 +23,18 @@ const loopback_host = "127.0.0.1";
 const drain_command = "drain\n";
 const drain_head_command = "drain-head\n";
 const drain_body_command = "drain-body\n";
+const drain_work_command = "drain-work\n";
+const drain_terminal_work_command = "drain-terminal-work\n";
 const prompt = "http-probe-6";
 const generation_a: u64 = 0x4753_5052_0000_0101;
 const generation_partial_head: u64 = 0x4753_5052_0000_0102;
 const generation_partial_body: u64 = 0x4753_5052_0000_0103;
 const generation_timeout_head: u64 = 0x4753_5052_0000_0104;
 const generation_timeout_body: u64 = 0x4753_5052_0000_0105;
-const generation_b: u64 = 0x4753_5052_0000_0106;
+const generation_drain_work: u64 = 0x4753_5052_0000_0106;
+const generation_drain_terminal_work: u64 =
+    0x4753_5052_0000_0107;
+const generation_b: u64 = 0x4753_5052_0000_0108;
 const frame_max_bytes = 256;
 const worker_timeout_ns = 15 * std.time.ns_per_s;
 const watchdog_poll_ns = 10 * std.time.ns_per_ms;
@@ -48,6 +53,8 @@ const WorkerProfile = enum {
     drain_with_deadline,
     timeout_head,
     timeout_body,
+    drain_work,
+    drain_terminal_work,
 
     fn wire(self: WorkerProfile) []const u8 {
         return switch (self) {
@@ -55,6 +62,8 @@ const WorkerProfile = enum {
             .drain_with_deadline => "drain-with-deadline",
             .timeout_head => "timeout-head",
             .timeout_body => "timeout-body",
+            .drain_work => "drain-work",
+            .drain_terminal_work => "drain-terminal-work",
         };
     }
 
@@ -70,7 +79,11 @@ const WorkerProfile = enum {
         self: WorkerProfile,
     ) ?server_api.ManagedConnectionPhaseV1 {
         return switch (self) {
-            .standard, .drain_with_deadline => null,
+            .standard,
+            .drain_with_deadline,
+            .drain_work,
+            .drain_terminal_work,
+            => null,
             .timeout_head => .receiving_head,
             .timeout_body => .request_head_received,
         };
@@ -81,7 +94,13 @@ const WorkerProfile = enum {
             .standard => 0,
             .drain_with_deadline => server_api.maximum_receive_timeout_ns,
             .timeout_head, .timeout_body => retained_receive_timeout_ns,
+            .drain_work, .drain_terminal_work => 0,
         };
+    }
+
+    fn usesWorkBarrier(self: WorkerProfile) bool {
+        return self == .drain_work or
+            self == .drain_terminal_work;
     }
 };
 
@@ -316,16 +335,67 @@ const ServeContext = struct {
     runtime: *http_server.RuntimeV1,
     lifecycle: *server_api.ManagedLifecycleV1,
     config: server_api.ServerConfig,
+    work_observer: ?http_server.RequestWorkControlV1 = null,
     thread_error: ?anyerror = null,
 
     fn run(self: *ServeContext) void {
-        server_api.serveManagedListenerV1(
+        server_api.serveManagedListenerWithWorkObserverV1(
             self.listener,
             self.config,
             self.runtime,
             self.lifecycle,
+            self.work_observer,
         ) catch |err| {
             self.thread_error = err;
+        };
+    }
+};
+
+const WorkAdmissionBarrierV1 = struct {
+    reached: std.Thread.ResetEvent = .{},
+    release: std.Thread.ResetEvent = .{},
+    identity: ?http_server.WorkIdentityV1 = null,
+    retired: bool = false,
+    retire_identity_mismatch: bool = false,
+
+    fn admittedOpaque(
+        context: *anyopaque,
+        identity: http_server.WorkIdentityV1,
+    ) anyerror!http_server.WorkDispositionV1 {
+        const self: *WorkAdmissionBarrierV1 =
+            @ptrCast(@alignCast(context));
+        if (self.identity != null)
+            return error.DuplicateWorkAdmission;
+        self.identity = identity;
+        self.reached.set();
+        self.release.wait();
+        return .proceed;
+    }
+
+    fn retiredOpaque(
+        context: *anyopaque,
+        identity: http_server.WorkIdentityV1,
+    ) void {
+        const self: *WorkAdmissionBarrierV1 =
+            @ptrCast(@alignCast(context));
+        const admitted_identity = self.identity orelse {
+            self.retire_identity_mismatch = true;
+            return;
+        };
+        if (!std.meta.eql(admitted_identity, identity)) {
+            self.retire_identity_mismatch = true;
+            return;
+        }
+        self.retired = true;
+    }
+
+    fn control(
+        self: *WorkAdmissionBarrierV1,
+    ) http_server.RequestWorkControlV1 {
+        return .{
+            .context = self,
+            .admitted_fn = admittedOpaque,
+            .retired_fn = retiredOpaque,
         };
     }
 };
@@ -421,6 +491,7 @@ fn runWorker(
     const listen_address = listener.listen_address;
 
     try lifecycle.markReadyV1();
+    var work_barrier: WorkAdmissionBarrierV1 = .{};
     var serve_context: ServeContext = .{
         .listener = &listener,
         .runtime = &runtime,
@@ -428,6 +499,10 @@ fn runWorker(
         .config = .{
             .receive_timeout_ns = profile.receiveTimeoutNs(),
         },
+        .work_observer = if (profile.usesWorkBarrier())
+            work_barrier.control()
+        else
+            null,
     };
     const serve_thread = try std.Thread.spawn(
         .{},
@@ -436,6 +511,8 @@ fn runWorker(
     );
     var joined = false;
     defer if (!joined) {
+        if (profile.usesWorkBarrier())
+            work_barrier.release.set();
         forceDrainAndWake(
             &lifecycle,
             &runtime,
@@ -471,14 +548,49 @@ fn runWorker(
     }
     const drain_control =
         try readDrainControl(std.fs.File.stdin());
+    if (profile.usesWorkBarrier() !=
+        drain_control.usesWorkBarrier() or
+        (profile == .drain_work) !=
+            drain_control.expectsWorkCancellation())
+    {
+        return error.InvalidProfileControlPair;
+    }
     if (drain_control.requestedPhase()) |phase| {
         try waitForActivePhase(&lifecycle, phase);
     }
-    try server_api.requestDrainAndWakeV1(
+    if (drain_control.usesWorkBarrier()) {
+        work_barrier.reached.wait();
+        if (drain_control == .terminal_work) {
+            const drive = try harness.service.driveNextV1();
+            switch (drive) {
+                .completed => {},
+                else => return error.WorkDidNotReachTerminal,
+            }
+        }
+    }
+    var drain_error: ?anyerror = null;
+    server_api.requestDrainAndWakeV1(
         &lifecycle,
         &runtime,
         listen_address,
-    );
+    ) catch |err| {
+        drain_error = err;
+    };
+    if (drain_error == null and
+        drain_control.usesWorkBarrier())
+    {
+        server_api.requestDrainAndWakeV1(
+            &lifecycle,
+            &runtime,
+            listen_address,
+        ) catch |err| {
+            drain_error = err;
+        };
+    }
+    if (drain_control.usesWorkBarrier()) {
+        work_barrier.release.set();
+    }
+    if (drain_error) |err| return err;
     if (http_server.acceptingCompletionsV1(&runtime))
         return error.DrainAdmissionStillOpen;
     try waitForInactiveConnection(&lifecycle);
@@ -487,11 +599,21 @@ fn runWorker(
         draining,
         drain_control.requestedPhase(),
     );
+    try validateDrainWorkReceipt(
+        draining,
+        drain_control.expectsWorkCancellation(),
+    );
     try emitDraining(draining);
 
     serve_thread.join();
     joined = true;
     if (serve_context.thread_error) |err| return err;
+    if (profile.usesWorkBarrier() and
+        (!work_barrier.retired or
+            work_barrier.retire_identity_mismatch))
+    {
+        return error.InvalidWorkRetirementReceipt;
+    }
 
     const stopped = lifecycle.snapshotV1();
     if (stopped.state != .stopped or
@@ -503,6 +625,10 @@ fn runWorker(
     try validateDrainSignalReceipt(
         stopped,
         drain_control.requestedPhase(),
+    );
+    try validateDrainWorkReceipt(
+        stopped,
+        drain_control.expectsWorkCancellation(),
     );
     const service_snapshot = try harness.service.snapshotV1();
     if (service_snapshot.active_requests != 0 or
@@ -531,7 +657,7 @@ fn forceDrainAndWake(
         runtime,
         listen_address,
     ) catch {
-        _ = http_server.beginDrainV1(runtime);
+        _ = http_server.beginDrainV1(runtime) catch {};
         const wake = std.net.tcpConnectToAddress(
             listen_address,
         ) catch return;
@@ -543,20 +669,32 @@ const DrainControl = enum {
     immediate,
     partial_head,
     partial_body,
+    admitted_work,
+    terminal_work,
 
     fn requestedPhase(
         self: DrainControl,
     ) ?server_api.ManagedConnectionPhaseV1 {
         return switch (self) {
-            .immediate => null,
+            .immediate, .admitted_work, .terminal_work => null,
             .partial_head => .receiving_head,
             .partial_body => .request_head_received,
         };
     }
+
+    fn usesWorkBarrier(self: DrainControl) bool {
+        return self == .admitted_work or
+            self == .terminal_work;
+    }
+
+    fn expectsWorkCancellation(self: DrainControl) bool {
+        return self == .admitted_work;
+    }
 };
 
 fn readDrainControl(stdin: std.fs.File) !DrainControl {
-    var command: [drain_body_command.len + 1]u8 = undefined;
+    var command: [drain_terminal_work_command.len + 1]u8 =
+        undefined;
     var count: usize = 0;
     while (true) {
         var byte: [1]u8 = undefined;
@@ -585,6 +723,20 @@ fn readDrainControl(stdin: std.fs.File) !DrainControl {
         drain_body_command,
     )) {
         return .partial_body;
+    }
+    if (std.mem.eql(
+        u8,
+        command[0..count],
+        drain_work_command,
+    )) {
+        return .admitted_work;
+    }
+    if (std.mem.eql(
+        u8,
+        command[0..count],
+        drain_terminal_work_command,
+    )) {
+        return .terminal_work;
     }
     return error.InvalidControlCommand;
 }
@@ -676,6 +828,24 @@ fn validateDrainSignalReceipt(
     }
 }
 
+fn validateDrainWorkReceipt(
+    snapshot: server_api.ManagedSnapshotV1,
+    expected: bool,
+) !void {
+    if (expected) {
+        if (snapshot.drain_cancelled_work_connections != 1 or
+            snapshot.last_drain_cancelled_work_phase !=
+                .request_admitted)
+        {
+            return error.InvalidDrainWorkReceipt;
+        }
+    } else if (snapshot.drain_cancelled_work_connections != 0 or
+        snapshot.last_drain_cancelled_work_phase != .none)
+    {
+        return error.InvalidDrainWorkReceipt;
+    }
+}
+
 fn emitReady(
     generation: u64,
     port: u16,
@@ -696,7 +866,7 @@ fn emitDraining(
     var storage: [frame_max_bytes]u8 = undefined;
     const frame = try std.fmt.bufPrint(
         &storage,
-        "DRAINING {d} {d} {d} {d} {d} {d} {d} {d} {d}\n",
+        "DRAINING {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d}\n",
         .{
             snapshot.process_generation,
             snapshot.accepted_connections,
@@ -705,6 +875,10 @@ fn emitDraining(
             snapshot.active_connections,
             snapshot.drain_signaled_connections,
             @intFromEnum(snapshot.last_drain_signaled_phase),
+            snapshot.drain_cancelled_work_connections,
+            @intFromEnum(
+                snapshot.last_drain_cancelled_work_phase,
+            ),
             snapshot.receive_timeout_signaled_connections,
             @intFromEnum(
                 snapshot.last_receive_timeout_signaled_phase,
@@ -738,7 +912,7 @@ fn emitClosed(
     var storage: [frame_max_bytes]u8 = undefined;
     const frame = try std.fmt.bufPrint(
         &storage,
-        "CLOSED {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} 1\n",
+        "CLOSED {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} 1\n",
         .{
             snapshot.process_generation,
             snapshot.accepted_connections,
@@ -747,6 +921,10 @@ fn emitClosed(
             snapshot.active_connections,
             snapshot.drain_signaled_connections,
             @intFromEnum(snapshot.last_drain_signaled_phase),
+            snapshot.drain_cancelled_work_connections,
+            @intFromEnum(
+                snapshot.last_drain_cancelled_work_phase,
+            ),
             snapshot.receive_timeout_signaled_connections,
             @intFromEnum(
                 snapshot.last_receive_timeout_signaled_phase,
@@ -772,6 +950,8 @@ const ActivityFrame = struct {
     active: u8,
     drain_signaled: u64,
     last_drain_phase: server_api.ManagedConnectionPhaseV1,
+    drain_cancelled_work: u64,
+    last_drain_cancelled_work_phase: server_api.ManagedConnectionPhaseV1,
     receive_timeout_signaled: u64,
     last_receive_timeout_phase: server_api.ManagedConnectionPhaseV1,
 };
@@ -858,6 +1038,10 @@ fn parseActivity(
         return error.InvalidFrame;
     const last_drain_phase = fields.next() orelse
         return error.InvalidFrame;
+    const drain_cancelled_work = fields.next() orelse
+        return error.InvalidFrame;
+    const last_drain_cancelled_work_phase =
+        fields.next() orelse return error.InvalidFrame;
     const receive_timeout_signaled = fields.next() orelse
         return error.InvalidFrame;
     const last_receive_timeout_phase = fields.next() orelse
@@ -875,6 +1059,13 @@ fn parseActivity(
         .active = try parseCanonicalInt(u8, active),
         .drain_signaled = try parseCanonicalInt(u64, drain_signaled),
         .last_drain_phase = try parseConnectionPhase(last_drain_phase),
+        .drain_cancelled_work = try parseCanonicalInt(
+            u64,
+            drain_cancelled_work,
+        ),
+        .last_drain_cancelled_work_phase = try parseConnectionPhase(
+            last_drain_cancelled_work_phase,
+        ),
         .receive_timeout_signaled = try parseCanonicalInt(
             u64,
             receive_timeout_signaled,
@@ -920,6 +1111,10 @@ fn parseClosed(line: []const u8) !ClosedFrame {
         return error.InvalidFrame;
     const last_drain_phase = fields.next() orelse
         return error.InvalidFrame;
+    const drain_cancelled_work = fields.next() orelse
+        return error.InvalidFrame;
+    const last_drain_cancelled_work_phase =
+        fields.next() orelse return error.InvalidFrame;
     const receive_timeout_signaled = fields.next() orelse
         return error.InvalidFrame;
     const last_receive_timeout_phase = fields.next() orelse
@@ -947,6 +1142,13 @@ fn parseClosed(line: []const u8) !ClosedFrame {
             .active = try parseCanonicalInt(u8, active),
             .drain_signaled = try parseCanonicalInt(u64, drain_signaled),
             .last_drain_phase = try parseConnectionPhase(last_drain_phase),
+            .drain_cancelled_work = try parseCanonicalInt(
+                u64,
+                drain_cancelled_work,
+            ),
+            .last_drain_cancelled_work_phase = try parseConnectionPhase(
+                last_drain_cancelled_work_phase,
+            ),
             .receive_timeout_signaled = try parseCanonicalInt(
                 u64,
                 receive_timeout_signaled,
@@ -969,6 +1171,7 @@ fn parseConnectionPhase(
         1 => .receiving_head,
         2 => .request_head_received,
         3 => .request_received,
+        4 => .request_admitted,
         else => error.InvalidFrame,
     };
 }
@@ -1130,6 +1333,20 @@ fn runSupervisor(allocator: std.mem.Allocator) !void {
         generation_timeout_body,
         .body,
         &oracle.model_id,
+    );
+    try exerciseAdmittedWorkDrain(
+        allocator,
+        executable,
+        &fixture,
+        generation_drain_work,
+        &oracle.model_id,
+    );
+    try exerciseTerminalWorkDrain(
+        allocator,
+        executable,
+        &fixture,
+        generation_drain_terminal_work,
+        oracle,
     );
     const second = try exerciseWorker(
         allocator,
@@ -1394,6 +1611,8 @@ fn exercisePartialDrain(
         kind.phase(),
         0,
         .none,
+        0,
+        .none,
     );
     try requirePeerEofWithoutResponse(peer);
 
@@ -1408,6 +1627,8 @@ fn exercisePartialDrain(
         1,
         1,
         kind.phase(),
+        0,
+        .none,
         0,
         .none,
     );
@@ -1535,6 +1756,8 @@ fn exerciseReceiveTimeout(
         .none,
         1,
         kind.phase(),
+        0,
+        .none,
     );
     const closed = try parseClosed(
         try readFrame(child.stdout.?, &frame_storage),
@@ -1549,6 +1772,8 @@ fn exerciseReceiveTimeout(
         .none,
         1,
         kind.phase(),
+        0,
+        .none,
     );
     try require(closed.service_active == 0);
     try require(closed.terminal_records == 0);
@@ -1626,6 +1851,343 @@ fn requirePeerEofWithoutResponse(peer: std.net.Stream) !void {
     };
     if (read_count != 0)
         return error.UnexpectedPartialDrainResponse;
+}
+
+const CancellationClientContext = struct {
+    port: u16,
+    model_id: [protocol.model_id_bytes]u8,
+    api_error: ?protocol.ApiErrorV1 = null,
+    unexpected_completion: bool = false,
+    thread_error: ?anyerror = null,
+
+    fn run(self: *CancellationClientContext) void {
+        self.runFallible() catch |err| {
+            self.thread_error = err;
+        };
+    }
+
+    fn runFallible(self: *CancellationClientContext) !void {
+        var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+        defer _ = gpa.deinit();
+        var client = try http_client.ClientV1.initLoopback(
+            gpa.allocator(),
+            loopback_host,
+            self.port,
+        );
+        defer client.deinit();
+        const result = try client.completeV1(.{
+            .model_id = &self.model_id,
+            .tenant_key = 37,
+            .idempotency_key = "server-process-drain-work",
+            .prompt_utf8 = prompt,
+            .max_new_tokens = 1,
+        });
+        switch (result) {
+            .ok => self.unexpected_completion = true,
+            .api_error => |api_error| self.api_error = api_error,
+        }
+    }
+};
+
+fn exerciseAdmittedWorkDrain(
+    allocator: std.mem.Allocator,
+    executable: []const u8,
+    fixture: *const Fixture,
+    generation: u64,
+    expected_model_id: *const [protocol.model_id_bytes]u8,
+) !void {
+    var child = try spawnWorker(
+        allocator,
+        executable,
+        fixture,
+        generation,
+        .drain_work,
+    );
+    var waited = false;
+    defer if (!waited) terminateChild(&child);
+    var watchdog: WorkerWatchdog = .{
+        .process_id = child.id,
+    };
+    try watchdog.start();
+    var watchdog_running = true;
+    defer if (watchdog_running) {
+        _ = watchdog.stop();
+    };
+
+    var frame_storage: [frame_max_bytes]u8 = undefined;
+    const ready = try parseReady(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try require(ready.generation == generation);
+    try require(std.mem.eql(
+        u8,
+        &ready.model_id,
+        expected_model_id,
+    ));
+
+    var client_context: CancellationClientContext = .{
+        .port = ready.port,
+        .model_id = ready.model_id,
+    };
+    const client_thread = try std.Thread.spawn(
+        .{},
+        CancellationClientContext.run,
+        .{&client_context},
+    );
+    var client_joined = false;
+    defer if (!client_joined) {
+        if (!waited) {
+            terminateChild(&child);
+            waited = true;
+        }
+        client_thread.join();
+    };
+
+    try child.stdin.?.writeAll(drain_work_command);
+    child.stdin.?.close();
+    child.stdin = null;
+
+    const draining = try parseActivity(
+        try readFrame(child.stdout.?, &frame_storage),
+        "DRAINING",
+    );
+    client_thread.join();
+    client_joined = true;
+    if (client_context.thread_error) |err| return err;
+    try require(!client_context.unexpected_completion);
+    const api_error = client_context.api_error orelse
+        return error.MissingCancellationResponse;
+    try require(api_error.code == .request_cancelled);
+    try require(api_error.retry == .never);
+    const request_sha256 = try protocol.requestSha256V1(.{
+        .model_id = &ready.model_id,
+        .tenant_key = 37,
+        .idempotency_key = "server-process-drain-work",
+        .prompt_utf8 = prompt,
+        .max_new_tokens = 1,
+    });
+    const response_request_sha256 =
+        api_error.request_sha256 orelse
+        return error.MissingCancellationCorrelation;
+    try require(std.mem.eql(
+        u8,
+        &request_sha256,
+        &response_request_sha256,
+    ));
+
+    try validateActivity(
+        draining,
+        generation,
+        1,
+        1,
+        0,
+        0,
+        .none,
+        0,
+        .none,
+        1,
+        .request_admitted,
+    );
+    const closed = try parseClosed(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try validateActivity(
+        closed.activity,
+        generation,
+        1,
+        1,
+        0,
+        0,
+        .none,
+        0,
+        .none,
+        1,
+        .request_admitted,
+    );
+    try require(closed.service_active == 0);
+    try require(closed.terminal_records == 1);
+    try require(closed.bank_zero == 1);
+    try requireWorkerEof(child.stdout.?);
+
+    const did_time_out = watchdog.stop();
+    watchdog_running = false;
+    if (did_time_out) return error.WorkerTimeout;
+    const term = try child.wait();
+    waited = true;
+    switch (term) {
+        .Exited => |code| try require(code == 0),
+        else => return error.UnexpectedWorkerTermination,
+    }
+}
+
+const TerminalClientContext = struct {
+    port: u16,
+    model_id: [protocol.model_id_bytes]u8,
+    completion: ?protocol.CompletionV1 = null,
+    unexpected_api_error: ?protocol.ApiErrorV1 = null,
+    thread_error: ?anyerror = null,
+
+    fn run(self: *TerminalClientContext) void {
+        self.runFallible() catch |err| {
+            self.thread_error = err;
+        };
+    }
+
+    fn runFallible(self: *TerminalClientContext) !void {
+        var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+        defer _ = gpa.deinit();
+        var client = try http_client.ClientV1.initLoopback(
+            gpa.allocator(),
+            loopback_host,
+            self.port,
+        );
+        defer client.deinit();
+        const result = try client.completeV1(.{
+            .model_id = &self.model_id,
+            .tenant_key = 41,
+            .idempotency_key = "server-process-terminal-work",
+            .prompt_utf8 = prompt,
+            .max_new_tokens = 1,
+        });
+        switch (result) {
+            .ok => |completion| self.completion = completion,
+            .api_error => |api_error| {
+                self.unexpected_api_error = api_error;
+            },
+        }
+    }
+};
+
+fn exerciseTerminalWorkDrain(
+    allocator: std.mem.Allocator,
+    executable: []const u8,
+    fixture: *const Fixture,
+    generation: u64,
+    oracle: LocalOracle,
+) !void {
+    var child = try spawnWorker(
+        allocator,
+        executable,
+        fixture,
+        generation,
+        .drain_terminal_work,
+    );
+    var waited = false;
+    defer if (!waited) terminateChild(&child);
+    var watchdog: WorkerWatchdog = .{
+        .process_id = child.id,
+    };
+    try watchdog.start();
+    var watchdog_running = true;
+    defer if (watchdog_running) {
+        _ = watchdog.stop();
+    };
+
+    var frame_storage: [frame_max_bytes]u8 = undefined;
+    const ready = try parseReady(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try require(ready.generation == generation);
+    try require(std.mem.eql(
+        u8,
+        &ready.model_id,
+        &oracle.model_id,
+    ));
+
+    var client_context: TerminalClientContext = .{
+        .port = ready.port,
+        .model_id = ready.model_id,
+    };
+    const client_thread = try std.Thread.spawn(
+        .{},
+        TerminalClientContext.run,
+        .{&client_context},
+    );
+    var client_joined = false;
+    defer if (!client_joined) {
+        if (!waited) {
+            terminateChild(&child);
+            waited = true;
+        }
+        client_thread.join();
+    };
+
+    try child.stdin.?.writeAll(drain_terminal_work_command);
+    child.stdin.?.close();
+    child.stdin = null;
+
+    const draining = try parseActivity(
+        try readFrame(child.stdout.?, &frame_storage),
+        "DRAINING",
+    );
+    client_thread.join();
+    client_joined = true;
+    if (client_context.thread_error) |err| return err;
+    try require(client_context.unexpected_api_error == null);
+    const completion = client_context.completion orelse
+        return error.MissingTerminalCompletion;
+    try require(completion.output_count == 1);
+    try require(completion.output_tokens[0] ==
+        oracle.output_token);
+    try require(completion.content_bytes == 1);
+    try require(completion.content[0] ==
+        oracle.content_byte);
+    const request_sha256 = try protocol.requestSha256V1(.{
+        .model_id = &ready.model_id,
+        .tenant_key = 41,
+        .idempotency_key = "server-process-terminal-work",
+        .prompt_utf8 = prompt,
+        .max_new_tokens = 1,
+    });
+    try require(std.mem.eql(
+        u8,
+        &completion.request_sha256,
+        &request_sha256,
+    ));
+
+    try validateActivity(
+        draining,
+        generation,
+        1,
+        1,
+        0,
+        0,
+        .none,
+        0,
+        .none,
+        0,
+        .none,
+    );
+    const closed = try parseClosed(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try validateActivity(
+        closed.activity,
+        generation,
+        1,
+        1,
+        0,
+        0,
+        .none,
+        0,
+        .none,
+        0,
+        .none,
+    );
+    try require(closed.service_active == 0);
+    try require(closed.terminal_records == 1);
+    try require(closed.bank_zero == 1);
+    try requireWorkerEof(child.stdout.?);
+
+    const did_time_out = watchdog.stop();
+    watchdog_running = false;
+    if (did_time_out) return error.WorkerTimeout;
+    const term = try child.wait();
+    waited = true;
+    switch (term) {
+        .Exited => |code| try require(code == 0),
+        else => return error.UnexpectedWorkerTermination,
+    }
 }
 
 fn exerciseWorker(
@@ -1732,6 +2294,8 @@ fn exerciseWorker(
         .none,
         0,
         .none,
+        0,
+        .none,
     );
     try validateActivity(
         closed.activity,
@@ -1739,6 +2303,8 @@ fn exerciseWorker(
         expected_accepted,
         expected_completed,
         expected_failed,
+        0,
+        .none,
         0,
         .none,
         0,
@@ -1823,6 +2389,8 @@ fn validateActivity(
     last_drain_phase: server_api.ManagedConnectionPhaseV1,
     receive_timeout_signaled: u64,
     last_receive_timeout_phase: server_api.ManagedConnectionPhaseV1,
+    drain_cancelled_work: u64,
+    last_drain_cancelled_work_phase: server_api.ManagedConnectionPhaseV1,
 ) !void {
     try require(activity.generation == generation);
     try require(activity.accepted == accepted);
@@ -1840,6 +2408,14 @@ fn validateActivity(
     try require(
         activity.last_receive_timeout_phase ==
             last_receive_timeout_phase,
+    );
+    try require(
+        activity.drain_cancelled_work ==
+            drain_cancelled_work,
+    );
+    try require(
+        activity.last_drain_cancelled_work_phase ==
+            last_drain_cancelled_work_phase,
     );
 }
 

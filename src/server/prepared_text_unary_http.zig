@@ -20,7 +20,13 @@ pub const RuntimeV1 = struct {
     service: *unary.ServiceV1,
     model_binding_sha256: protocol.Digest,
     model_id: [protocol.model_id_bytes]u8,
+    /// Preserves bounded single-request execution without blocking drain.
     request_mutex: std.Thread.Mutex = .{},
+    /// Lock order is control -> unary service. Request driving never holds
+    /// this mutex, so drain can fence and cancel the exact retained handle.
+    control_mutex: std.Thread.Mutex = .{},
+    next_work_sequence: u64 = 0,
+    active_work: ?ActiveWorkV1 = null,
     accepting_completions: bool = true,
 };
 
@@ -33,6 +39,104 @@ pub const WorkspaceV1 = struct {
     tenant_key: [20]u8,
     deadline_tick: [20]u8,
     output: [protocol.output_max_tokens]u8,
+};
+
+pub const WorkIdentityV1 = struct {
+    sequence: u64,
+    handle_sha256: protocol.Digest,
+};
+
+pub const WorkDispositionV1 = enum {
+    proceed,
+    draining,
+};
+
+/// Optional transport-owned boundary after unary admission has published an
+/// exact active-work lease and before the first status/drive operation.
+pub const RequestWorkControlV1 = struct {
+    context: *anyopaque,
+    admitted_fn: *const fn (
+        *anyopaque,
+        WorkIdentityV1,
+    ) anyerror!WorkDispositionV1,
+    retired_fn: *const fn (*anyopaque, WorkIdentityV1) void,
+
+    fn admitted(
+        self: RequestWorkControlV1,
+        identity: WorkIdentityV1,
+    ) !WorkDispositionV1 {
+        return self.admitted_fn(self.context, identity);
+    }
+
+    fn retired(
+        self: RequestWorkControlV1,
+        identity: WorkIdentityV1,
+    ) void {
+        self.retired_fn(self.context, identity);
+    }
+};
+
+pub const DrainCancellationOutcomeV1 = enum {
+    none,
+    cancelled,
+    already_cancelled,
+    already_terminal,
+    start_rolled_back,
+    recovery_required,
+};
+
+pub const DrainReceiptV1 = struct {
+    admission_was_open: bool,
+    active_work: ?WorkIdentityV1 = null,
+    cancellation: DrainCancellationOutcomeV1 = .none,
+    cancellation_was_new: bool = false,
+};
+
+const ActiveWorkV1 = struct {
+    sequence: u64,
+    handle: unary.HandleV1,
+    drain_cancellation: ?DrainCancellationOutcomeV1 = null,
+
+    fn identity(self: ActiveWorkV1) WorkIdentityV1 {
+        return .{
+            .sequence = self.sequence,
+            .handle_sha256 = self.handle.handle_sha256,
+        };
+    }
+};
+
+const PublishedWorkV1 = struct {
+    identity: WorkIdentityV1,
+    handle: unary.HandleV1,
+};
+
+const WorkAdmissionV1 = union(enum) {
+    published: PublishedWorkV1,
+    api_error: protocol.ErrorCodeV1,
+};
+
+const WorkCancellationReceiptV1 = struct {
+    outcome: DrainCancellationOutcomeV1,
+    cancellation_was_new: bool = false,
+};
+
+const ActiveWorkGuardV1 = struct {
+    runtime: *RuntimeV1,
+    identity: WorkIdentityV1,
+    handle: unary.HandleV1,
+    control: ?RequestWorkControlV1,
+    terminal: bool = false,
+
+    fn retire(self: *ActiveWorkGuardV1) void {
+        if (!self.terminal) return;
+        if (!retireActiveWorkV1(
+            self.runtime,
+            self.identity,
+            self.handle,
+        )) return;
+        if (self.control) |control|
+            control.retired(self.identity);
+    }
 };
 
 /// Optional transport-owned boundary for one complete request receive.
@@ -144,19 +248,45 @@ pub fn initV1(
     };
 }
 
-/// Closes only HTTP completion admission. A request already admitted to the
-/// unary service finishes under the same mutex before this call returns.
-pub fn beginDrainV1(runtime: *RuntimeV1) bool {
-    runtime.request_mutex.lock();
-    defer runtime.request_mutex.unlock();
+/// Closes completion admission before generation-fenced cancellation of the
+/// exact active unary handle. Cancellation may wait for one in-flight service
+/// drive quantum, but it never waits for the whole HTTP response lifecycle.
+pub fn beginDrainV1(
+    runtime: *RuntimeV1,
+) unary.Error!DrainReceiptV1 {
+    runtime.control_mutex.lock();
+    defer runtime.control_mutex.unlock();
     const was_accepting = runtime.accepting_completions;
     runtime.accepting_completions = false;
-    return was_accepting;
+    const active = runtime.active_work orelse return .{
+        .admission_was_open = was_accepting,
+    };
+    const identity = active.identity();
+    if (active.drain_cancellation) |outcome| {
+        return .{
+            .admission_was_open = was_accepting,
+            .active_work = identity,
+            .cancellation = outcome,
+        };
+    }
+
+    const cancellation = try cancelHandleLockedV1(
+        runtime,
+        active.handle,
+    );
+    runtime.active_work.?.drain_cancellation =
+        cancellation.outcome;
+    return .{
+        .admission_was_open = was_accepting,
+        .active_work = identity,
+        .cancellation = cancellation.outcome,
+        .cancellation_was_new = cancellation.cancellation_was_new,
+    };
 }
 
 pub fn acceptingCompletionsV1(runtime: *RuntimeV1) bool {
-    runtime.request_mutex.lock();
-    defer runtime.request_mutex.unlock();
+    runtime.control_mutex.lock();
+    defer runtime.control_mutex.unlock();
     return runtime.accepting_completions;
 }
 
@@ -165,10 +295,11 @@ pub fn serveRequestV1(
     request: *std.http.Server.Request,
     workspace: *WorkspaceV1,
 ) !void {
-    return serveRequestWithReceiveControlV1(
+    return serveRequestWithControlsV1(
         runtime,
         request,
         workspace,
+        null,
         null,
     );
 }
@@ -178,6 +309,22 @@ pub fn serveRequestWithReceiveControlV1(
     request: *std.http.Server.Request,
     workspace: *WorkspaceV1,
     receive_control: ?RequestReceiveControlV1,
+) !void {
+    return serveRequestWithControlsV1(
+        runtime,
+        request,
+        workspace,
+        receive_control,
+        null,
+    );
+}
+
+pub fn serveRequestWithControlsV1(
+    runtime: *RuntimeV1,
+    request: *std.http.Server.Request,
+    workspace: *WorkspaceV1,
+    receive_control: ?RequestReceiveControlV1,
+    work_control: ?RequestWorkControlV1,
 ) !void {
     var receive_guard: RequestReceiveGuardV1 = .{
         .control = receive_control,
@@ -235,6 +382,7 @@ pub fn serveRequestWithReceiveControlV1(
             request,
             workspace,
             &receive_guard,
+            work_control,
         );
     }
 
@@ -305,6 +453,7 @@ fn serveCompletionV1(
     request: *std.http.Server.Request,
     workspace: *WorkspaceV1,
     receive_guard: *RequestReceiveGuardV1,
+    work_control: ?RequestWorkControlV1,
 ) !void {
     const content_length_u64 = request.head.content_length orelse {
         request.head.expect = null;
@@ -412,16 +561,7 @@ fn serveCompletionV1(
     runtime.request_mutex.lock();
     defer runtime.request_mutex.unlock();
 
-    if (!runtime.accepting_completions) {
-        return respondApiError(
-            request,
-            workspace,
-            .service_closed,
-            request_sha256,
-        );
-    }
-
-    const admission = runtime.service.admitV1(.{
+    const work_admission = admitActiveWorkV1(runtime, .{
         .tenant_key = decoded.request.tenant_key,
         .idempotency_key_sha256 = idempotency_key_sha256,
         .prompt_utf8 = decoded.request.prompt_utf8,
@@ -436,75 +576,97 @@ fn serveCompletionV1(
         );
     };
 
-    const handle = switch (admission) {
-        .accepted => |receipt| receipt.handle,
-        .existing => |existing| switch (existing.state) {
-            .active, .completed => existing.handle,
-            .recovery_required => {
+    const published = switch (work_admission) {
+        .published => |value| value,
+        .api_error => |code| {
+            return respondApiError(
+                request,
+                workspace,
+                code,
+                request_sha256,
+            );
+        },
+    };
+    var work_guard: ActiveWorkGuardV1 = .{
+        .runtime = runtime,
+        .identity = published.identity,
+        .handle = published.handle,
+        .control = work_control,
+    };
+    defer work_guard.retire();
+
+    if (work_control) |control| {
+        const disposition = control.admitted(
+            published.identity,
+        ) catch |callback_error| {
+            const cancellation = cancelPublishedWorkV1(
+                runtime,
+                published,
+            ) catch null;
+            if (cancellation) |receipt| {
+                work_guard.terminal =
+                    cancellationEndsLeaseV1(receipt.outcome);
+            }
+            return callback_error;
+        };
+        if (disposition == .draining) {
+            const cancellation = cancelPublishedWorkV1(
+                runtime,
+                published,
+            ) catch |err| {
                 return respondApiError(
                     request,
                     workspace,
-                    .recovery_required,
+                    mapServiceError(err),
                     request_sha256,
                 );
-            },
-            .cancelled => {
+            };
+            if (cancellationHidesResponseV1(
+                cancellation.outcome,
+            )) {
+                work_guard.terminal = true;
                 return respondApiError(
                     request,
                     workspace,
                     .request_cancelled,
                     request_sha256,
                 );
-            },
-            .failed => {
-                return respondApiError(
-                    request,
-                    workspace,
-                    .execution_failed,
-                    request_sha256,
-                );
-            },
-        },
-        .rejected => |rejection| {
-            return respondApiError(
-                request,
-                workspace,
-                switch (rejection) {
-                    .service_capacity => .service_capacity,
-                    .scheduler => .scheduler_rejected,
-                },
-                request_sha256,
-            );
-        },
-        .conflict => {
-            return respondApiError(
-                request,
-                workspace,
-                .idempotency_conflict,
-                request_sha256,
-            );
-        },
-        .recovery_required => {
-            return respondApiError(
-                request,
-                workspace,
-                .recovery_required,
-                request_sha256,
-            );
-        },
-    };
+            }
+        }
+    }
 
     const response = awaitResponseV1(
         runtime.service,
-        handle,
+        published.handle,
     ) catch |err| {
+        var response_code = mapAwaitError(err);
+        work_guard.terminal = switch (err) {
+            TerminalError.RequestCancelled,
+            TerminalError.ExecutionFailed,
+            => true,
+            else => blk: {
+                const cancellation = cancelPublishedWorkV1(
+                    runtime,
+                    published,
+                ) catch break :blk false;
+                if (cancellationHidesResponseV1(
+                    cancellation.outcome,
+                )) {
+                    response_code = .request_cancelled;
+                }
+                break :blk cancellationEndsLeaseV1(
+                    cancellation.outcome,
+                );
+            },
+        };
         return respondApiError(
             request,
             workspace,
-            mapAwaitError(err),
+            response_code,
             request_sha256,
         );
     };
+    work_guard.terminal = true;
 
     const output_count: usize = response.output_count;
     if (output_count == 0 or
@@ -570,6 +732,74 @@ fn serveCompletionV1(
     });
 }
 
+/// Admission and active-work publication are one control-plane transaction.
+/// The lock order is control -> unary service. No network or host callback
+/// runs while either lock is held.
+fn admitActiveWorkV1(
+    runtime: *RuntimeV1,
+    service_request: unary.RequestV1,
+) unary.Error!WorkAdmissionV1 {
+    runtime.control_mutex.lock();
+    defer runtime.control_mutex.unlock();
+
+    if (!runtime.accepting_completions)
+        return .{ .api_error = .service_closed };
+    if (runtime.active_work != null)
+        return .{ .api_error = .runtime_unavailable };
+
+    const work_sequence = std.math.add(
+        u64,
+        runtime.next_work_sequence,
+        1,
+    ) catch {
+        runtime.accepting_completions = false;
+        return unary.Error.SequenceExhausted;
+    };
+    const admission = try runtime.service.admitV1(
+        service_request,
+    );
+    const handle: unary.HandleV1 = switch (admission) {
+        .accepted => |receipt| receipt.handle,
+        .existing => |existing| switch (existing.state) {
+            .active, .completed => existing.handle,
+            .recovery_required => return .{
+                .api_error = .recovery_required,
+            },
+            .cancelled => return .{
+                .api_error = .request_cancelled,
+            },
+            .failed => return .{
+                .api_error = .execution_failed,
+            },
+        },
+        .rejected => |rejection| return .{
+            .api_error = switch (rejection) {
+                .service_capacity => .service_capacity,
+                .scheduler => .scheduler_rejected,
+            },
+        },
+        .conflict => return .{
+            .api_error = .idempotency_conflict,
+        },
+        .recovery_required => return .{
+            .api_error = .recovery_required,
+        },
+    };
+
+    runtime.next_work_sequence = work_sequence;
+    runtime.active_work = .{
+        .sequence = work_sequence,
+        .handle = handle,
+    };
+    return .{ .published = .{
+        .identity = .{
+            .sequence = work_sequence,
+            .handle_sha256 = handle.handle_sha256,
+        },
+        .handle = handle,
+    } };
+}
+
 fn awaitResponseV1(
     service: *unary.ServiceV1,
     handle: unary.HandleV1,
@@ -597,6 +827,165 @@ fn awaitResponseV1(
         }
     }
     unreachable;
+}
+
+/// Requires `runtime.control_mutex`. This is the only helper that calls
+/// `ServiceV1.cancelV1`, preserving the control -> service lock order.
+fn cancelHandleLockedV1(
+    runtime: *RuntimeV1,
+    handle: unary.HandleV1,
+) unary.Error!WorkCancellationReceiptV1 {
+    const decision = try runtime.service.cancelV1(handle);
+    return switch (decision) {
+        .cancelled => .{
+            .outcome = .cancelled,
+            .cancellation_was_new = true,
+        },
+        .already_cancelled => .{
+            .outcome = .already_cancelled,
+        },
+        .already_terminal => .{
+            .outcome = .already_terminal,
+        },
+        .start_rolled_back => .{
+            .outcome = .start_rolled_back,
+            .cancellation_was_new = true,
+        },
+        .recovery_required => .{
+            .outcome = .recovery_required,
+        },
+    };
+}
+
+fn cancelPublishedWorkV1(
+    runtime: *RuntimeV1,
+    published: PublishedWorkV1,
+) unary.Error!WorkCancellationReceiptV1 {
+    runtime.control_mutex.lock();
+    defer runtime.control_mutex.unlock();
+    const active = runtime.active_work orelse
+        return unary.Error.StaleHandle;
+    if (!activeWorkMatchesV1(
+        active,
+        published.identity,
+        published.handle,
+    )) {
+        return unary.Error.StaleHandle;
+    }
+    if (active.drain_cancellation) |outcome| {
+        return .{ .outcome = outcome };
+    }
+    return cancelHandleLockedV1(runtime, published.handle);
+}
+
+fn retireActiveWorkV1(
+    runtime: *RuntimeV1,
+    identity: WorkIdentityV1,
+    handle: unary.HandleV1,
+) bool {
+    runtime.control_mutex.lock();
+    defer runtime.control_mutex.unlock();
+    const active = runtime.active_work orelse return false;
+    if (!activeWorkMatchesV1(active, identity, handle))
+        return false;
+    runtime.active_work = null;
+    return true;
+}
+
+fn activeWorkMatchesV1(
+    active: ActiveWorkV1,
+    identity: WorkIdentityV1,
+    handle: unary.HandleV1,
+) bool {
+    return active.sequence == identity.sequence and
+        std.mem.eql(
+            u8,
+            &active.handle.handle_sha256,
+            &identity.handle_sha256,
+        ) and
+        std.meta.eql(active.handle, handle);
+}
+
+fn cancellationEndsLeaseV1(
+    outcome: DrainCancellationOutcomeV1,
+) bool {
+    return switch (outcome) {
+        .cancelled,
+        .already_cancelled,
+        .already_terminal,
+        .start_rolled_back,
+        => true,
+        .none, .recovery_required => false,
+    };
+}
+
+fn cancellationHidesResponseV1(
+    outcome: DrainCancellationOutcomeV1,
+) bool {
+    return switch (outcome) {
+        .cancelled,
+        .already_cancelled,
+        .start_rolled_back,
+        => true,
+        .none,
+        .already_terminal,
+        .recovery_required,
+        => false,
+    };
+}
+
+test "active work retirement requires the exact runtime and service fences" {
+    const handle: unary.HandleV1 = .{
+        .service_epoch = 41,
+        .record_index = 3,
+        .record_generation = 17,
+        .intent_sha256 = [_]u8{0x31} ** 32,
+        .handle_sha256 = [_]u8{0x52} ** 32,
+    };
+    const identity: WorkIdentityV1 = .{
+        .sequence = 9,
+        .handle_sha256 = handle.handle_sha256,
+    };
+    var runtime: RuntimeV1 = .{
+        .service = undefined,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+        .next_work_sequence = identity.sequence,
+        .active_work = .{
+            .sequence = identity.sequence,
+            .handle = handle,
+        },
+    };
+
+    var stale_identity = identity;
+    stale_identity.sequence += 1;
+    try std.testing.expect(!retireActiveWorkV1(
+        &runtime,
+        stale_identity,
+        handle,
+    ));
+    stale_identity = identity;
+    stale_identity.handle_sha256[0] ^= 0xff;
+    try std.testing.expect(!retireActiveWorkV1(
+        &runtime,
+        stale_identity,
+        handle,
+    ));
+
+    var stale_handle = handle;
+    stale_handle.record_generation += 1;
+    try std.testing.expect(!retireActiveWorkV1(
+        &runtime,
+        identity,
+        stale_handle,
+    ));
+    try std.testing.expect(runtime.active_work != null);
+    try std.testing.expect(retireActiveWorkV1(
+        &runtime,
+        identity,
+        handle,
+    ));
+    try std.testing.expect(runtime.active_work == null);
 }
 
 fn validateModelListHeaders(

@@ -626,4 +626,66 @@ test "bounded unary HTTP uses one kernel over real loopback" {
     const close = try harness.service.closeV1();
     try testing.expect(close.bank_snapshot.used.isZero());
     try testing.expectEqual(@as(u32, 1), close.terminal_records);
+
+    var closed_harness: ServiceHarness(1, 1) = .{};
+    try closed_harness.init(binding, 0x4854_5450_5232);
+    const closed_initial =
+        try closed_harness.service.snapshotV1();
+    var closed_runtime = try server.initV1(
+        &closed_harness.service,
+        binding.binding_sha256,
+    );
+    const first_drain = try server.beginDrainV1(
+        &closed_runtime,
+    );
+    try testing.expect(first_drain.admission_was_open);
+    try testing.expect(first_drain.active_work == null);
+    try testing.expectEqual(
+        server.DrainCancellationOutcomeV1.none,
+        first_drain.cancellation,
+    );
+    const repeated_drain = try server.beginDrainV1(
+        &closed_runtime,
+    );
+    try testing.expect(!repeated_drain.admission_was_open);
+    try testing.expect(repeated_drain.active_work == null);
+    try testing.expectEqual(
+        server.DrainCancellationOutcomeV1.none,
+        repeated_drain.cancellation,
+    );
+
+    var closed_loopback: LoopbackServer = .{};
+    try closed_loopback.start(&closed_runtime, 1);
+    defer closed_loopback.deinit();
+    var closed_client = try client_api.ClientV1.initLoopback(
+        testing.allocator,
+        "127.0.0.1",
+        closed_loopback.port(),
+    );
+    defer closed_client.deinit();
+    const closed_error = try expectApiError(
+        try closed_client.completeV1(.{
+            .model_id = &closed_runtime.model_id,
+            .tenant_key = 19,
+            .idempotency_key = "http-closed-gate",
+            .prompt_utf8 = prompt,
+            .max_new_tokens = 1,
+        }),
+        .service_closed,
+    );
+    try testing.expect(closed_error.request_sha256 != null);
+    try closed_loopback.finish();
+    try testing.expectEqualDeep(
+        closed_initial,
+        try closed_harness.service.snapshotV1(),
+    );
+    const closed_receipt =
+        try closed_harness.service.closeV1();
+    try testing.expectEqual(
+        @as(u32, 0),
+        closed_receipt.terminal_records,
+    );
+    try testing.expect(
+        closed_receipt.bank_snapshot.used.isZero(),
+    );
 }
