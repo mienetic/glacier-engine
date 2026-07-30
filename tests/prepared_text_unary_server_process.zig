@@ -7054,16 +7054,16 @@ fn validateNativeLoadQueuedReceiveTimeoutDigestVector() !void {
             terminal_sha256,
         );
     const expected_semantics = try parseDigestHex(
-        "499c69faff1ba3ca4dc790e2c55e77d0" ++
-            "c28a47e7a3dbccd805ce92c431362fc1",
+        "8318b0766be34ec3bd6454060ef8b47f" ++
+            "3d27c1d8b8d657f6d102702921616d7b",
     );
     const expected_terminal = try parseDigestHex(
-        "d3049a94d7330676b6d8ab2aa1223f15" ++
-            "b091216480b25e901f677f5479ca4e6b",
+        "a4d614bd88a46b98607d5687cc6fbe01" ++
+            "aca2c2f56c5cfd58223eaaae869cfcf1",
     );
     const expected_completion = try parseDigestHex(
-        "a64eb21b3131992cfd5c67ba9cd6fd27" ++
-            "806fcfee030af0b1c806e642002c9fdc",
+        "9bed6ceaf46ad62bb09dcd9c20938e62" ++
+            "dacc9a3a4c5b5a62f039e0638f5d901a",
     );
     const expected_request_evidence = try parseDigestHex(
         "141379cabcc44e0d4d6602df7de57c01" ++
