@@ -11,11 +11,12 @@ usage: tools/verify.sh [quick|full|matrix]
        GLACIER_VERIFY_BASE=REV tools/verify.sh affected
        GLACIER_VERIFY_REQUIRE_NATIVE=1 tools/verify.sh affected --base REV
 
-quick  Run bounded format, documentation-policy, package, and interop gates.
+quick  Run bounded Debug format, documentation-policy, package, and interop gates.
 full   Add broad ReleaseSafe/Python, native POSIX store-fault, and optional Rust.
 affected-fast
-       Select changed-path syntax and focused native gates, while deferring
-       broad ReleaseSafe/Python suites and retained cross-target compilation.
+       Select changed-path syntax and focused Debug native gates, while
+       deferring broad ReleaseSafe/Python suites and retained cross-target
+       compilation.
 affected
        Select the union of host and cross-target gates for every path changed
        since the merge base with REV. --base overrides GLACIER_VERIFY_BASE.
@@ -85,6 +86,11 @@ if [ "$affected_profile" -eq 1 ] && [ -z "$base_ref" ]; then
     usage >&2
     exit 64
 fi
+
+zig_optimize=ReleaseSafe
+case "$profile" in
+    quick | affected-fast) zig_optimize=Debug ;;
+esac
 
 require_native=${GLACIER_VERIFY_REQUIRE_NATIVE:-0}
 case "$require_native" in
@@ -319,7 +325,7 @@ run_gate() {
 
 run_zig_build() {
     zig build "$@" \
-        -Doptimize=ReleaseSafe \
+        -Doptimize="$zig_optimize" \
         -Dmetal=false \
         -j2 \
         --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
@@ -327,10 +333,15 @@ run_zig_build() {
         --prefix "$verification_prefix"
 }
 
-run_prepared_text_focused_build() {
+# Keep the canonical generic roots first, then append each selected focused
+# root once so one Zig invocation owns the complete affected host DAG.
+run_selected_host_build() {
     set --
-    if [ "$generic_host_zig_requested" -eq 1 ]; then
-        set -- "$@" contract-interop-test package-module-test
+    if [ "$generic_host_contract_requested" -eq 1 ]; then
+        set -- "$@" contract-interop-test
+    fi
+    if [ "$generic_host_package_requested" -eq 1 ]; then
+        set -- "$@" package-module-test
     fi
     if [ "$prepared_text_unary_service_requested" -eq 1 ]; then
         set -- "$@" unary-text-service-test
@@ -364,7 +375,7 @@ run_prepared_text_focused_build() {
 run_zig_metal_build() {
     zig build native-metal-suite-compile \
         -Dmetal-output-dir="$verification_root/metal" \
-        -Doptimize=ReleaseSafe \
+        -Doptimize="$zig_optimize" \
         -Dmetal=true \
         -j2 \
         --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
@@ -373,7 +384,7 @@ run_zig_metal_build() {
         return $?
     zig build native-metal-suite-test \
         -Dmetal-output-dir="$verification_root/metal" \
-        -Doptimize=ReleaseSafe \
+        -Doptimize="$zig_optimize" \
         -Dmetal=true \
         -j1 \
         --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
@@ -386,7 +397,7 @@ run_zig_target_build() {
     shift
     zig build "$@" \
         -Dtarget="$target_name" \
-        -Doptimize=ReleaseSafe \
+        -Doptimize="$zig_optimize" \
         -Dmetal=false \
         -j2 \
         --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
@@ -617,6 +628,7 @@ run_target_plan() {
 }
 
 printf 'Glacier local verification (%s)\n' "$profile"
+printf 'Zig optimization tier: %s\n' "$zig_optimize"
 printf 'Temporary workspace: %s\n' "$verification_root"
 
 has_zig=0
@@ -693,7 +705,8 @@ elif [ "$profile" = "matrix" ]; then
     fi
 fi
 
-generic_host_zig_requested=1
+generic_host_contract_requested=1
+generic_host_package_requested=1
 prepared_text_focused_requested=0
 prepared_text_unary_service_requested=0
 prepared_text_unary_http_requested=0
@@ -743,12 +756,23 @@ if [ "$affected_plan_ready" -eq 1 ] &&
     prepared_text_inspector_requested=1
     prepared_text_focused_requested=1
 fi
-if [ "$affected_profile" -eq 1 ] &&
-    [ "$affected_plan_ready" -eq 1 ]; then
-    generic_host_zig_requested=0
-    if plan_has "host-quick"; then
-        generic_host_zig_requested=1
+if [ "$affected_profile" -eq 1 ]; then
+    generic_host_contract_requested=0
+    generic_host_package_requested=0
+    if [ "$affected_plan_ready" -eq 1 ]; then
+        if plan_has "host-contract"; then
+            generic_host_contract_requested=1
+        fi
+        if plan_has "host-package"; then
+            generic_host_package_requested=1
+        fi
     fi
+fi
+
+generic_host_zig_requested=0
+if [ "$generic_host_contract_requested" -eq 1 ] ||
+    [ "$generic_host_package_requested" -eq 1 ]; then
+    generic_host_zig_requested=1
 fi
 
 prepared_text_native_host_available=0
@@ -806,38 +830,80 @@ elif [ "$has_zig" -eq 1 ] && [ "$has_python" -eq 1 ]; then
     if [ "$prepared_text_native_host_available" -eq 1 ]; then
         prepared_text_focused_in_quick=1
         run_gate "host/prepared-text-focused-dag" \
-            run_prepared_text_focused_build
+            run_selected_host_build
     else
         run_gate "host/quick-dag" \
-            run_zig_build contract-interop-test package-module-test
+            run_selected_host_build
     fi
     host_quick_status=$last_gate_status
     if [ "$host_quick_status" -eq 0 ]; then
-        if [ "$generic_host_zig_requested" -eq 1 ]; then
+        if [ "$generic_host_contract_requested" -eq 1 ]; then
             record_pass "interop/c-cpp-python" \
-                "covered by the shared host Zig DAG"
-            record_pass "package/modules" \
                 "covered by the shared host Zig DAG"
         elif [ "$prepared_text_focused_in_quick" -eq 1 ]; then
             record_skip "interop/c-cpp-python" \
                 "prepared-text focused DAG does not select generic interop"
+        else
+            record_skip "interop/c-cpp-python" \
+                "affected plan did not select contract interop"
+        fi
+        if [ "$generic_host_package_requested" -eq 1 ]; then
+            record_pass "package/modules" \
+                "covered by the shared host Zig DAG"
+        elif [ "$prepared_text_focused_in_quick" -eq 1 ]; then
             record_skip "package/modules" \
                 "prepared-text focused DAG does not select generic package modules"
+        else
+            record_skip "package/modules" \
+                "affected plan did not select package modules"
         fi
     else
-        record_skip "interop/c-cpp-python" \
-            "shared host Zig DAG failed"
-        record_skip "package/modules" \
-            "shared host Zig DAG failed"
+        if [ "$generic_host_contract_requested" -eq 1 ]; then
+            record_skip "interop/c-cpp-python" \
+                "shared host Zig DAG failed"
+        elif [ "$prepared_text_focused_in_quick" -eq 1 ]; then
+            record_skip "interop/c-cpp-python" \
+                "prepared-text focused DAG does not select generic interop"
+        else
+            record_skip "interop/c-cpp-python" \
+                "affected plan did not select contract interop"
+        fi
+        if [ "$generic_host_package_requested" -eq 1 ]; then
+            record_skip "package/modules" \
+                "shared host Zig DAG failed"
+        elif [ "$prepared_text_focused_in_quick" -eq 1 ]; then
+            record_skip "package/modules" \
+                "prepared-text focused DAG does not select generic package modules"
+        else
+            record_skip "package/modules" \
+                "affected plan did not select package modules"
+        fi
     fi
 else
-    record_skip "interop/c-cpp-python" "requires both zig and python3"
-    if [ "$has_zig" -eq 1 ]; then
-        run_gate "package/modules" \
-            run_zig_build package-module-test
+    if [ "$generic_host_contract_requested" -eq 1 ]; then
+        record_skip "interop/c-cpp-python" \
+            "requires both zig and python3"
+    elif [ "$prepared_text_native_host_available" -eq 1 ]; then
+        record_skip "interop/c-cpp-python" \
+            "prepared-text focused DAG does not select generic interop"
+    else
+        record_skip "interop/c-cpp-python" \
+            "affected plan did not select contract interop"
+    fi
+    if [ "$generic_host_package_requested" -eq 1 ]; then
+        if [ "$has_zig" -eq 1 ]; then
+            run_gate "package/modules" \
+                run_zig_build package-module-test
+        else
+            record_skip "package/modules" \
+                "requires a working zig executable"
+        fi
+    elif [ "$prepared_text_native_host_available" -eq 1 ]; then
+        record_skip "package/modules" \
+            "prepared-text focused DAG does not select generic package modules"
     else
         record_skip "package/modules" \
-            "requires a working zig executable"
+            "affected plan did not select package modules"
     fi
 fi
 

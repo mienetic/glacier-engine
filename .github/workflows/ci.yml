@@ -12,16 +12,17 @@ on:
       profile:
         description: Verification depth for this manual run
         required: true
-        default: affected
+        default: affected-fast
         type: choice
         options:
+          - affected-fast
           - affected
           - full
           - matrix
       base_ref:
-        description: Base revision for a manual affected run
+        description: Base revision for a manual path-aware run
         required: true
-        default: HEAD^
+        default: origin/main
         type: string
 
 permissions:
@@ -36,7 +37,9 @@ jobs:
     if: >-
       ${{
         github.event_name == 'pull_request' ||
-        (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_dispatch' &&
+          inputs.profile == 'affected-fast')
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -64,6 +67,7 @@ jobs:
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
+          MANUAL_BASE_REF: ${{ inputs.base_ref }}
         run: |
           set -euo pipefail
           case "$GITHUB_EVENT_NAME" in
@@ -72,6 +76,9 @@ jobs:
               ;;
             push)
               base="$PUSH_BEFORE_SHA"
+              ;;
+            workflow_dispatch)
+              base="$MANUAL_BASE_REF"
               ;;
             *)
               echo "unsupported event for affected verification: $GITHUB_EVENT_NAME" >&2
@@ -106,7 +113,8 @@ jobs:
     name: Exhaustive verification (${{ inputs.profile || 'matrix' }})
     if: >-
       ${{
-        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'workflow_dispatch' &&
+          inputs.profile != 'affected-fast') ||
         startsWith(github.ref, 'refs/tags/v')
       }}
     runs-on: ubuntu-24.04

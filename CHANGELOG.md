@@ -51,6 +51,17 @@ before the first stable release.
 
 ### Changed
 
+- Quick and `affected-fast` verification now compile their exact host roots in
+  Debug mode for a shorter ordinary feedback loop. Complete `affected`, `full`,
+  and `matrix` verification retain ReleaseSafe compilation: `affected` adds
+  the selected retained-target plan, `full` runs the broad host suites, and
+  `matrix` adds every retained target plus the macOS compile frontier. Audited
+  interop/C-contract changes no longer compile the unrelated package-module
+  root, and the package-module acceptance path no longer compiles interop;
+  mixed and unclassified changes still retain the canonical union. Manual
+  GitHub CI now defaults to `affected-fast` against `origin/main`; `affected`,
+  `full`, and `matrix` must be selected explicitly, while release tags keep the
+  full matrix and macOS frontier.
 - Contributor verification now has an `affected-fast` tier. Documentation-only
   changes and plans limited to workflow control, verification policy, shell, or
   ordinary Python checks perform no generic Zig build. Workflow and verifier
@@ -85,13 +96,10 @@ before the first stable release.
   for the 49-boundary acknowledged campaign and the direct smoke instead of
   compiling a second worker.
   Pull requests and `main` pushes use this bounded tier and cancel superseded
-  runs. Manual CI now defaults to complete path-aware `affected` verification
-  against an explicit `base_ref`; broad `full` or `matrix` CI remains explicit,
-  while `v*` tags retain the matrix and macOS frontier. Hosted affected and
-  promotion jobs reuse the pinned setup action's Zig cache across runs with
-  configured 1 GiB and 2 GiB action limits, respectively. Local verification
-  still ignores inherited Zig cache paths and removes its private temporary
-  cache after every run.
+  runs. Hosted fast and promotion jobs reuse the pinned setup action's Zig
+  cache across runs with configured 1 GiB and 2 GiB action limits,
+  respectively. Local verification still ignores inherited Zig cache paths
+  and removes its private temporary cache after every run.
 - The raw-text golden path now stages and executes the production `bin/glacier`
   install artifact. Every CLI child starts from an empty working directory
   with bounded temporary home/config/cache paths and a minimal environment;

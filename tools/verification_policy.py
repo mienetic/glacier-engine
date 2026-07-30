@@ -45,6 +45,10 @@ FOCUSED_TARGET_STEPS: Tuple[str, ...] = (
 )
 COMPLETE_COMPILE_TARGET_STEPS: Tuple[str, ...] = ("profile-complete-compile",)
 
+HOST_CONTRACT_ROOTS: Tuple[str, ...] = ("contract-interop-test",)
+HOST_PACKAGE_ROOTS: Tuple[str, ...] = ("package-module-test",)
+HOST_QUICK_ROOTS: Tuple[str, ...] = HOST_CONTRACT_ROOTS + HOST_PACKAGE_ROOTS
+
 GITHUB_CONTROL_PREFIXES = (
     ".github/workflows/",
     ".github/actions/",
@@ -342,7 +346,11 @@ class PathDecision:
     flags: FrozenSet[str]
     targets: Tuple[str, ...]
     target_steps: Tuple[str, ...] = FULL_TARGET_STEPS
-    host_quick: bool = False
+    host_roots: Tuple[str, ...] = ()
+
+    @property
+    def host_quick(self) -> bool:
+        return bool(self.host_roots)
 
 
 @dataclass(frozen=True)
@@ -363,8 +371,32 @@ class VerificationPlan:
         return flag in self.flags
 
 
+def _validated_host_roots(decision: PathDecision) -> Tuple[str, ...]:
+    roots = decision.host_roots
+    if (
+        len(set(roots)) != len(roots)
+        or any(root not in HOST_QUICK_ROOTS for root in roots)
+        or tuple(root for root in HOST_QUICK_ROOTS if root in roots) != roots
+    ):
+        raise ValueError(
+            "path decision has an invalid host-root plan: " + decision.path
+        )
+    return roots
+
+
 def _requires_generic_host_zig(decision: PathDecision) -> bool:
-    return decision.host_quick
+    return bool(_validated_host_roots(decision))
+
+
+def _selected_host_roots(
+    decisions: Sequence[PathDecision],
+) -> Tuple[str, ...]:
+    selected = {
+        root
+        for decision in decisions
+        for root in _validated_host_roots(decision)
+    }
+    return tuple(root for root in HOST_QUICK_ROOTS if root in selected)
 
 
 def _validated_path(path: str) -> str:
@@ -558,7 +590,11 @@ def _decision_for_path(path: str) -> PathDecision:
             "non-canonical code path; conservatively validate every target",
             _compiled_flags(suffix),
             RETAINED_TARGETS,
-            host_quick=suffix not in {".metal", ".rs"},
+            host_roots=(
+                HOST_QUICK_ROOTS
+                if suffix not in {".metal", ".rs"}
+                else ()
+            ),
         )
 
     policy_flags = POLICY_CONTROL_PATHS.get(lower)
@@ -660,7 +696,7 @@ def _decision_for_path(path: str) -> PathDecision:
             "runtime interop fixture changed; replay native consumers",
             frozenset({"python-full", "rust-native"}),
             (),
-            host_quick=True,
+            host_roots=HOST_CONTRACT_ROOTS,
         )
 
     if lower in BENCH_RUNTIME_DATA_PATHS:
@@ -695,7 +731,7 @@ def _decision_for_path(path: str) -> PathDecision:
                 "profile-cpu-compile",
                 "profile-host-tool-compile",
             ),
-            host_quick=True,
+            host_roots=HOST_QUICK_ROOTS,
         )
 
     if path in METAL_PORTABLE_SOURCE_PATHS:
@@ -705,7 +741,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix) | frozenset({"metal-native"}),
             RETAINED_TARGETS,
             ("profile-device-compile",),
-            host_quick=True,
+            host_roots=HOST_QUICK_ROOTS,
         )
 
     if path in METAL_NATIVE_SOURCE_PATHS:
@@ -719,6 +755,15 @@ def _decision_for_path(path: str) -> PathDecision:
             (),
         )
 
+    if lower == "tests/package_module.zig":
+        return PathDecision(
+            path,
+            "exported package-module acceptance root changed",
+            _compiled_flags(suffix),
+            RETAINED_TARGETS,
+            host_roots=HOST_PACKAGE_ROOTS,
+        )
+
     if path in CORE_CONTRACT_PATHS:
         return PathDecision(
             path,
@@ -726,7 +771,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             ("profile-core-compile",),
-            host_quick=True,
+            host_roots=HOST_CONTRACT_ROOTS,
         )
 
     if path in PREPARED_TEXT_DIRECT_TERMINAL_RECOVERY_DEPENDENCY_PATHS:
@@ -772,7 +817,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             COMPLETE_COMPILE_TARGET_STEPS,
-            host_quick=True,
+            host_roots=HOST_QUICK_ROOTS,
         )
 
     if path in DURABLE_RUNTIME_PROFILE_PATHS:
@@ -782,7 +827,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             ("profile-durable-compile",),
-            host_quick=True,
+            host_roots=HOST_QUICK_ROOTS,
         )
 
     if path in PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS:
@@ -947,7 +992,7 @@ def _decision_for_path(path: str) -> PathDecision:
             frozenset(recovery_flags),
             POSIX_TARGETS,
             ("profile-durable-compile",),
-            host_quick=suffix == ".zig",
+            host_roots=HOST_QUICK_ROOTS if suffix == ".zig" else (),
         )
 
     if path in MODEL_CONVERSION_DURABLE_RECOVERY_CAMPAIGN_PATHS:
@@ -960,7 +1005,7 @@ def _decision_for_path(path: str) -> PathDecision:
             frozenset(recovery_flags),
             POSIX_TARGETS,
             ("profile-durable-compile",),
-            host_quick=suffix == ".zig",
+            host_roots=HOST_QUICK_ROOTS if suffix == ".zig" else (),
         )
 
     if (
@@ -974,7 +1019,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             COMPLETE_COMPILE_TARGET_STEPS,
-            host_quick=True,
+            host_roots=HOST_QUICK_ROOTS,
         )
 
     if (path.startswith("src/backends/cpu/") or path.startswith("src/model/")) and Path(
@@ -986,7 +1031,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             COMPLETE_COMPILE_TARGET_STEPS,
-            host_quick=True,
+            host_roots=HOST_QUICK_ROOTS,
         )
 
     if path.startswith("src/cli/") and Path(path).suffix == ".zig":
@@ -996,7 +1041,7 @@ def _decision_for_path(path: str) -> PathDecision:
             _compiled_flags(suffix),
             RETAINED_TARGETS,
             ("profile-host-tool-compile",),
-            host_quick=True,
+            host_roots=HOST_QUICK_ROOTS,
         )
 
     if suffix == ".py":
@@ -1073,7 +1118,11 @@ def _decision_for_path(path: str) -> PathDecision:
             "unclassified Metal code path; run native Metal and fail closed",
             _compiled_flags(suffix) | frozenset({"metal-native"}),
             RETAINED_TARGETS,
-            host_quick=suffix not in {".metal", ".rs"},
+            host_roots=(
+                HOST_QUICK_ROOTS
+                if suffix not in {".metal", ".rs"}
+                else ()
+            ),
         )
 
     special_flags = set()
@@ -1089,9 +1138,13 @@ def _decision_for_path(path: str) -> PathDecision:
             "platform-specific runtime or backend code changed",
             frozenset(special_flags),
             platform_targets,
-            host_quick=bool(platform_targets)
-            and suffix in SHARED_CODE_SUFFIXES
-            and suffix not in {".metal", ".rs"},
+            host_roots=(
+                HOST_QUICK_ROOTS
+                if bool(platform_targets)
+                and suffix in SHARED_CODE_SUFFIXES
+                and suffix not in {".metal", ".rs"}
+                else ()
+            ),
         )
 
     if lower in BUILD_CONTROL_PATHS:
@@ -1103,7 +1156,7 @@ def _decision_for_path(path: str) -> PathDecision:
             "build or package control changed; validate every retained target",
             frozenset(build_flags),
             RETAINED_TARGETS,
-            host_quick=True,
+            host_roots=HOST_QUICK_ROOTS,
         )
 
     if suffix in SHARED_CODE_SUFFIXES:
@@ -1112,7 +1165,11 @@ def _decision_for_path(path: str) -> PathDecision:
             "shared compiled code changed; validate every retained target",
             _compiled_flags(suffix),
             RETAINED_TARGETS,
-            host_quick=suffix not in {".metal", ".rs"},
+            host_roots=(
+                HOST_QUICK_ROOTS
+                if suffix not in {".metal", ".rs"}
+                else ()
+            ),
         )
 
     if first_component in CODE_ROOTS:
@@ -1121,7 +1178,7 @@ def _decision_for_path(path: str) -> PathDecision:
             "unknown code-tree input changed; conservatively validate every target",
             frozenset({"native-full", "python-full"}),
             RETAINED_TARGETS,
-            host_quick=True,
+            host_roots=HOST_QUICK_ROOTS,
         )
 
     return PathDecision(
@@ -1129,7 +1186,7 @@ def _decision_for_path(path: str) -> PathDecision:
         "unknown repository input; conservatively validate every target",
         frozenset({"native-full", "python-full"}),
         RETAINED_TARGETS,
-        host_quick=True,
+        host_roots=HOST_QUICK_ROOTS,
     )
 
 
@@ -1199,6 +1256,7 @@ def classify_paths(paths: Iterable[str]) -> VerificationPlan:
     unique_paths = {_validated_path(path) for path in paths}
     ordered_paths = tuple(sorted(unique_paths, key=os.fsencode))
     decisions = tuple(_decision_for_path(path) for path in ordered_paths)
+    _selected_host_roots(decisions)
 
     flags = frozenset(flag for decision in decisions for flag in decision.flags)
     target_plans = _build_target_plans(decisions)
@@ -1214,8 +1272,11 @@ def classify_paths(paths: Iterable[str]) -> VerificationPlan:
 
 def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
     names = ["quick"]
-    if _requires_generic_host_zig(decision):
-        names.append("host/quick-dag")
+    host_roots = _validated_host_roots(decision)
+    if "contract-interop-test" in host_roots:
+        names.append("host/contract-interop")
+    if "package-module-test" in host_roots:
+        names.append("host/package-module")
     for flag, label in (
         ("python-changed", "python/changed-syntax"),
         ("python-full", "python/full-suite"),
@@ -1272,8 +1333,11 @@ def print_report(plan: VerificationPlan) -> None:
         print("    gates: " + ", ".join(_gate_names(decision)))
 
     selected_gates = ["quick"]
-    if any(_requires_generic_host_zig(decision) for decision in plan.decisions):
-        selected_gates.append("host/quick-dag")
+    host_roots = _selected_host_roots(plan.decisions)
+    if "contract-interop-test" in host_roots:
+        selected_gates.append("host/contract-interop")
+    if "package-module-test" in host_roots:
+        selected_gates.append("host/package-module")
     for flag, label in (
         ("python-changed", "python/changed-syntax"),
         ("python-full", "python/full-suite"),
@@ -1324,8 +1388,11 @@ def print_report(plan: VerificationPlan) -> None:
 
 def write_flags(plan: VerificationPlan, output: Union[os.PathLike, str]) -> None:
     flags = ["quick"]
-    if any(_requires_generic_host_zig(decision) for decision in plan.decisions):
-        flags.append("host-quick")
+    host_roots = _selected_host_roots(plan.decisions)
+    if "contract-interop-test" in host_roots:
+        flags.append("host-contract")
+    if "package-module-test" in host_roots:
+        flags.append("host-package")
     flags.extend(sorted(plan.flags))
     Path(output).write_text("".join(flag + "\n" for flag in flags), encoding="utf-8")
 

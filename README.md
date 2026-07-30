@@ -1121,21 +1121,25 @@ tools/verify.sh
 ```
 
 Every gate is reported as `PASS`, `FAIL`, or `SKIP` with a reason. The default
-quick profile verifies formatting, public-document policy, package imports, and
-the Zig/C/C++/Python contract chain. Its compatible Zig roots share one build
-DAG instead of starting a compiler process for each gate. During ordinary
-branch work, use the path-aware fast tier:
+quick profile uses Debug compilation to verify formatting, public-document
+policy, package imports, and the Zig/C/C++/Python contract chain. Its
+compatible Zig roots share one build DAG instead of starting a compiler
+process for each gate. During ordinary branch work, use the path-aware fast
+tier:
 
 ```sh
 tools/verify.sh affected-fast --base origin/main
 ```
 
-It avoids a generic Zig build for documentation, workflow-control,
-verification-policy, shell-only, and ordinary Python-only plans. Focused
-prepared-text gates remain selected when relevant, and broad host, Python, and
-foreign-target work is reported as explicitly deferred. Package producer,
-package-aware `text-run`, bounded-input, and package/raw-input-oracle changes
-reuse the existing `text-runtime-golden-path-test` DAG. Bounded unary-service
+The fast tier also uses Debug compilation. It avoids a generic Zig build for
+documentation, workflow-control, verification-policy, shell-only, and ordinary
+Python-only plans. Audited contract-only and package-module-only changes select
+just their matching host root; mixed changes still share one invocation.
+Focused prepared-text gates remain selected when relevant, and broad host,
+Python, and foreign-target work is reported as explicitly deferred. Package
+producer, package-aware `text-run`, bounded-input, and
+package/raw-input-oracle changes reuse the existing
+`text-runtime-golden-path-test` DAG. Bounded unary-service
 changes run only `unary-text-service-test`; retained-target verification uses
 its compile-only companion instead of the broad model-forward suite. Unary HTTP
 codec, adapter, API, client, and acceptance changes run `unary-http-test` once;
@@ -1148,11 +1152,11 @@ Kernel or shared server implementation changes compose the service, HTTP, and
 process roots in one host Zig invocation. When the CLI changes, its selected
 focused roots likewise share one invocation. If a change set also needs the
 generic package/contract roots, those roots join that invocation.
-Full and deep suites remain integration/release gates. Variable-terminal
-changes use the text-runtime host DAG, and prepared-session lifecycle changes
-run the unary acceptance root in that same invocation, then select only the
-CPU, durable, and host-tool portability profiles when the complete affected
-tier is requested. In a clean environment, install the
+ReleaseSafe full and deep suites remain integration/release gates.
+Variable-terminal changes use the text-runtime host DAG, and prepared-session
+lifecycle changes run the unary acceptance root in that same invocation, then
+select only the CPU, durable, and host-tool portability profiles when the
+complete affected tier is requested. In a clean environment, install the
 hash-locked binary dependency before selecting the full profile:
 
 ```sh
@@ -1161,11 +1165,11 @@ python3 -m pip install --only-binary=:all: --require-hashes \
 tools/verify.sh full
 ```
 
-The full profile adds the broad native ReleaseSafe and Python suites plus the
-optional Rust gate. It compiles the complete host test and contract frontier
-through `host-runtime-compile` first; runtime tests start only after that
-compile-only gate succeeds, and their compatible roots likewise share one Zig
-DAG.
+The full profile switches to ReleaseSafe and adds the broad native and Python
+suites plus the optional Rust gate. It compiles the complete host test and
+contract frontier through `host-runtime-compile` first; runtime tests start
+only after that compile-only gate succeeds, and their compatible roots likewise
+share one Zig DAG.
 
 All Zig invocations in one verifier run reuse the same private local and global
 caches. Clang, Swift, and Metal compiler module caches are rooted in that same

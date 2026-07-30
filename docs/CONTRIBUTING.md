@@ -12,14 +12,15 @@ cd glacier-engine
 tools/verify.sh
 ```
 
-The default quick profile uses no model or provider credentials and reports
-every gate as `PASS`, `FAIL`, or `SKIP` with a reason. Run
+The default quick profile uses Debug compilation, no model or provider
+credentials, and reports every gate as `PASS`, `FAIL`, or `SKIP` with a reason.
+Run
 `tools/verify.sh affected-fast --base origin/main` during ordinary iteration.
-It keeps changed-file checks and explicitly selected Rust, Darwin Swift, Metal,
-portable-report, POSIX fault, and prepared-text focused gates, while deferring
-broad host suites and foreign-target compilation. A documentation-only plan
-runs no Zig build beyond formatting. Before release or when the complete
-path-aware matrix is needed, run
+It runs changed-file checks plus selected focused roots; deferred broad
+Darwin/AArch64 native suites, Metal, ReleaseSafe host, and foreign-target work
+remains visible as `SKIP` rather than being reported as evidence. A
+documentation-only plan runs no Zig build beyond formatting. Before release or
+when the complete path-aware matrix is needed, run
 `tools/verify.sh affected --base origin/main`; use `tools/verify.sh full` for
 the broad local ReleaseSafe and Python suites.
 
@@ -27,10 +28,11 @@ The quick profile remains dependency-free. Use CPython 3.10–3.12 and install
 `bench/requirements-test.txt` in a clean environment before running `full`,
 `matrix`, or full unittest discovery.
 
-Pull requests and pushes to `main` run `affected-fast` on Ubuntu. Maintainers
-can dispatch `affected` (the default, with an explicit `base_ref`), `full`, or
-`matrix`; `v*` tags run the Linux matrix plus the macOS Metal/durability
-frontier. There is no scheduled exhaustive build.
+Pull requests and pushes to `main` run `affected-fast` on Ubuntu. Manual CI
+also defaults to `affected-fast` against `origin/main`; maintainers explicitly
+select `affected`, `full`, or `matrix` only for promotion work. `v*` tags run
+the Linux matrix plus the macOS Metal/durability frontier. There is no
+scheduled exhaustive build.
 Full Python discovery imports the retained numeric reference reporters and
 installs their pinned dependency from `bench/requirements-test.txt`; the
 embedding and runtime-contract verifiers remain standard-library-only. The
@@ -90,12 +92,13 @@ label assumptions and questions clearly.
 
 ## Verification matrix
 
-The quick and full profiles remain stable contributor entry points.
+The quick and full profiles remain stable contributor entry points. Quick and
+`affected-fast` use Debug compilation for the short feedback loop.
 `affected-fast` is the iterative path-aware tier: it keeps focused high-risk
 gates but deliberately defers broad ReleaseSafe/Python suites and the retained
-cross-target plan. The `affected` profile adds every row needed by the complete
-changed-path set; one narrow change never hides the checks required by another
-changed path.
+cross-target plan. The `affected` profile switches to ReleaseSafe and adds
+every row needed by the complete changed-path set; one narrow change never
+hides the checks required by another changed path.
 
 | Change | Required checks |
 | --- | --- |
@@ -236,24 +239,31 @@ required Zig toolchain is a failure rather than a silent pass.
 
 Changed `.sh` files must declare one of the retained `sh` or `bash` shebangs;
 syntax is checked by that interpreter. Both affected tiers keep selected
-changed-Python, shell, Rust, Darwin Swift, Metal, portable-report, POSIX
-store-fault, and prepared-text focused gates. A generic Darwin flag currently
-has only the broad host suite, so `affected-fast` defers it explicitly instead
-of expanding to `zig build test`. Changed Rust source makes the native Rust
-gate required rather than optional. On a non-Darwin host, selected Darwin and
-Metal gates remain visible `SKIP` results for ordinary contributor planning.
+changed-Python, shell, Rust, Darwin Swift, portable-report, POSIX store-fault,
+and prepared-text focused gates. A generic Darwin flag currently has only the
+broad host suite, and native Metal is a deep hardware frontier, so
+`affected-fast` leaves either selection visible as `SKIP` instead of expanding
+the short loop. Changed Rust source makes the native Rust gate required rather
+than optional. On a non-Darwin host, selected Darwin and Metal gates remain
+visible `SKIP` results for ordinary contributor planning.
 The selected native POSIX store-fault gate runs on Darwin, Linux, or FreeBSD;
 other hosts likewise report it as unavailable. Ordinary pull-request and
-`main` CI uses `affected-fast`. Maintainer and release validation should use
-complete `affected` locally with `GLACIER_VERIFY_REQUIRE_NATIVE=1`, or dispatch
-the hosted `affected` profile with the intended `base_ref`. Hosted `full` and
-`matrix` remain explicit broad promotion gates; `v*` tags select `matrix` and
-the macOS frontier. Strict native mode turns any unavailable selected native
-gate into `FAIL`.
+`main` and default manual CI use `affected-fast`. Maintainer and release
+validation should use complete `affected` locally with
+`GLACIER_VERIFY_REQUIRE_NATIVE=1`, or explicitly dispatch the hosted
+`affected` profile with the intended `base_ref`. Hosted `full` and `matrix`
+remain explicit broad promotion gates; `v*` tags select `matrix` and the macOS
+frontier. Strict native mode turns any unavailable selected native gate into
+`FAIL`.
 
 Host routing is explicit rather than inferred from a foreign-target plan.
 Plans limited to documentation, workflow control, policy, shell, or ordinary
 Python work therefore do not start the generic contract/package Zig DAG.
+An audited interop fixture or C contract change selects only
+`contract-interop-test`; a package-module acceptance change selects only
+`package-module-test`. If both are selected, their canonical union still runs
+in one Zig invocation. Build controls and unclassified inputs retain both roots
+until a narrower mapping is audited.
 When one change set selects both a generic compiled path and a focused
 prepared-text path, the verifier places all required host roots in one
 `zig build` invocation so compile reduction cannot hide either side.
@@ -325,8 +335,9 @@ named. The default install now contains only the production CLI; use
 `zig build install-benchmarks` to stage all benchmark and diagnostic
 executables. `zig build run` also builds only the CLI.
 
-The quick profile passes its compatible contract and package roots to one Zig
-invocation. The full profile first runs `host-runtime-compile`, which closes
+The quick profile passes its compatible contract and package roots to one
+Debug Zig invocation. The full profile first runs ReleaseSafe
+`host-runtime-compile`, which closes
 over the complete `test-compile` graph and the C/C++/Python contract artifacts
 needed by the subsequent host runtime DAG. A compile failure stops the broad
 runtime phase, while a successful frontier warms the same private caches used
@@ -403,12 +414,13 @@ The caches are reused across compatible compile and runtime phases, then
 removed with the workspace on normal exit so repeated target matrices do not
 grow a repository cache. Foreign configurations are not merged into one Zig
 graph: each selected target receives exactly one invocation containing its
-audited root union. No persistent repository cache is needed. The quick profile
-intentionally marks broad native, Python, Rust, sanitizer, and cross-target work
-as skipped. `affected-fast` adds changed-path syntax and focused high-risk gates
-while still deferring broad suites and foreign targets. Neither is evidence
-that the deferred matrices passed. The matrix profile intentionally retains full
-`install install-benchmarks test-compile` coverage for all four targets.
+audited root union. No persistent repository cache is needed. The Debug quick
+profile intentionally marks broad native, Python, Rust, sanitizer, and
+cross-target work as skipped. `affected-fast` adds changed-path syntax and
+focused high-risk gates while still deferring broad suites and foreign targets.
+Neither is evidence that the deferred ReleaseSafe matrices passed. The matrix
+profile intentionally retains full `install install-benchmarks test-compile`
+coverage for all four targets.
 
 Record an unsupported ThreadSanitizer environment as **not run**, not passed.
 

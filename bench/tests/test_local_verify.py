@@ -157,6 +157,7 @@ class LocalVerifyTests(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stdout)
             self.assertIn("Glacier local verification (quick)", result.stdout)
+            self.assertIn("Zig optimization tier: Debug", result.stdout)
             self.assertIn("PASS  format/zig:", result.stdout)
             self.assertIn("PASS  policy/public-markdown:", result.stdout)
             self.assertIn("PASS  host/quick-dag:", result.stdout)
@@ -190,6 +191,7 @@ class LocalVerifyTests(unittest.TestCase):
                 self.assertIn("--cache-dir ", line)
                 self.assertIn("--global-cache-dir ", line)
                 self.assertIn("--prefix ", line)
+                self.assertIn("-Doptimize=Debug", line)
                 self.assertIn("-Dmetal=false", line)
                 self.assertIn("-j2", line)
                 match = re.search(
@@ -448,6 +450,10 @@ class LocalVerifyTests(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stdout)
             self.assertIn(
+                "Zig optimization tier: ReleaseSafe",
+                result.stdout,
+            )
+            self.assertIn(
                 "PASS  compile/host-test-frontier:",
                 result.stdout,
             )
@@ -482,6 +488,13 @@ class LocalVerifyTests(unittest.TestCase):
                 or line.startswith("zig|args=build test contract-interop-test ")
             ]
             self.assertEqual(2, len(host_build_lines), log)
+            self.assertTrue(
+                all(
+                    "-Doptimize=ReleaseSafe" in line
+                    for line in host_build_lines
+                ),
+                host_build_lines,
+            )
             self.assertTrue(
                 host_build_lines[0].startswith("zig|args=build host-runtime-compile "),
                 host_build_lines,
