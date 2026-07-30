@@ -20,6 +20,7 @@ const fixture_config =
 ;
 
 const worker_mode = "worker";
+const death_worker_mode = "death-worker";
 const native_load_mode = "--native-load";
 const native_load_retention_capacity_mode =
     "--native-load-retention-capacity";
@@ -109,6 +110,13 @@ const generation_peer_send_close_partial_request_body: u64 =
     0x4753_5052_0000_0120;
 const generation_peer_send_close_final_send: u64 =
     0x4753_5052_0000_0121;
+const generation_death_base: u64 =
+    0x4753_5052_0000_0200;
+const death_receipt_abi: u64 =
+    0x4753_5044_0000_0001;
+const death_receipt_domain =
+    "glacier-managed-unary-forced-death-receipt-v1\x00";
+const death_receipt_scalar_count: usize = 48;
 const frame_max_bytes = 1024;
 const concurrent_event_capacity = 512;
 const native_load_flow_count: usize = 8;
@@ -259,6 +267,7 @@ const native_load_queued_receive_timeout_kind_wire: u8 = 6;
 const native_load_queued_phase_wire: u8 = 8;
 const native_load_zero_digest = [_]u8{0} ** 32;
 const worker_timeout_ns = 15 * std.time.ns_per_s;
+const death_settlement_timeout_ns = 5 * std.time.ns_per_s;
 const watchdog_poll_ns = 10 * std.time.ns_per_ms;
 const retained_receive_timeout_ns =
     std.time.ns_per_s;
@@ -497,6 +506,157 @@ const NativeLoadProfile = enum {
         else
             native_load_outer_bytes;
     }
+};
+
+const DeathCaseV1 = enum(u8) {
+    queued = 1,
+    receiving_head = 2,
+    request_head_received = 3,
+    request_received = 4,
+    request_admitted_live = 5,
+    request_admitted_terminal = 6,
+    response_ready = 7,
+    response_writing = 8,
+    response_written = 9,
+
+    fn wire(self: DeathCaseV1) []const u8 {
+        return switch (self) {
+            .queued => "queued",
+            .receiving_head => "receiving-head",
+            .request_head_received => "request-head-received",
+            .request_received => "request-received",
+            .request_admitted_live => "request-admitted-live",
+            .request_admitted_terminal => "request-admitted-terminal-unretired",
+            .response_ready => "response-ready",
+            .response_writing => "response-writing",
+            .response_written => "response-written",
+        };
+    }
+
+    fn parse(value: []const u8) !DeathCaseV1 {
+        inline for (std.meta.tags(DeathCaseV1)) |case| {
+            if (std.mem.eql(u8, value, case.wire()))
+                return case;
+        }
+        return error.InvalidDeathCase;
+    }
+
+    fn generation(self: DeathCaseV1) u64 {
+        return generation_death_base +
+            @intFromEnum(self);
+    }
+
+    fn phase(
+        self: DeathCaseV1,
+    ) server_api.ManagedConnectionPhaseV1 {
+        return switch (self) {
+            .queued => .queued,
+            .receiving_head => .receiving_head,
+            .request_head_received => .request_head_received,
+            .request_received => .request_received,
+            .request_admitted_live,
+            .request_admitted_terminal,
+            => .request_admitted,
+            .response_ready => .response_ready,
+            .response_writing => .response_writing,
+            .response_written => .response_written,
+        };
+    }
+
+    fn tenantKey(self: DeathCaseV1) u64 {
+        return 200 + @intFromEnum(self);
+    }
+
+    fn idempotencyKey(self: DeathCaseV1) []const u8 {
+        return switch (self) {
+            .queued => "forced-death-queued",
+            .receiving_head => "forced-death-receiving-head",
+            .request_head_received => "forced-death-request-head-received",
+            .request_received => "forced-death-request-received",
+            .request_admitted_live => "forced-death-request-admitted-live",
+            .request_admitted_terminal => "forced-death-request-admitted-terminal",
+            .response_ready => "forced-death-response-ready",
+            .response_writing => "forced-death-response-writing",
+            .response_written => "forced-death-response-written",
+        };
+    }
+
+    fn responseKind(self: DeathCaseV1) DeathResponseKindV1 {
+        return switch (self) {
+            .queued,
+            .receiving_head,
+            .request_head_received,
+            .request_received,
+            .request_admitted_live,
+            .request_admitted_terminal,
+            .response_ready,
+            => .none,
+            .response_writing => .one_byte_prefix,
+            .response_written => .complete,
+        };
+    }
+};
+
+const death_cases = std.meta.tags(DeathCaseV1);
+
+const DeathResponseKindV1 = enum {
+    none,
+    one_byte_prefix,
+    complete,
+};
+
+const DeathLeaseFactsV1 = struct {
+    owner: http_server.TransportOwnerTokenV1,
+    phase: server_api.ManagedConnectionPhaseV1,
+    receive_retired: bool,
+    work_identity: ?http_server.WorkIdentityV1,
+    work_retired: bool,
+    response_retired: bool,
+    response_progress_bytes: u64,
+};
+
+const DeathReceiptV1 = struct {
+    abi_version: u64 = death_receipt_abi,
+    case: DeathCaseV1,
+    phase: server_api.ManagedConnectionPhaseV1,
+    process_id: u64,
+    generation: u64,
+    state: server_api.ManagedStateV1,
+    accepted: u64,
+    completed: u64,
+    failed: u64,
+    active: u8,
+    queued: u8,
+    running: u8,
+    worker_count: u8,
+    pending_capacity: u8,
+    enqueued: u64,
+    dispatched: u64,
+    event_ordinal: u64,
+    phase_counts: [8]u8,
+    owner: http_server.TransportOwnerTokenV1,
+    work_present: bool,
+    work_sequence: u64,
+    work_handle_sha256: protocol.Digest,
+    receive_retired: bool,
+    work_retired: bool,
+    response_retired: bool,
+    response_progress_bytes: u64,
+    service_active: u32,
+    terminal_records: u32,
+    completed_records: u32,
+    cancelled_records: u32,
+    failed_records: u32,
+    recovery_required: u32,
+    scheduler_active: u32,
+    scheduler_finished: u32,
+    scheduler_used_zero: bool,
+    scheduler_poisoned: bool,
+    bank_used_zero: bool,
+    bank_active_reservations: u64,
+    bank_committed_receipts: u64,
+    receipt_sha256: protocol.Digest =
+        native_load_zero_digest,
 };
 
 const WorkerProfile = enum {
@@ -845,6 +1005,20 @@ fn supportedMain() !void {
             args[4],
             native_profile,
         );
+    }
+    if (args.len == 7 and
+        std.mem.eql(u8, args[1], death_worker_mode))
+    {
+        const generation = try parseCanonicalInt(u64, args[5]);
+        const death_case = try DeathCaseV1.parse(args[6]);
+        return runDeathWorker(
+            allocator,
+            args[2],
+            args[3],
+            args[4],
+            generation,
+            death_case,
+        ) catch std.process.exit(2);
     }
     if (args.len != 7 or
         !std.mem.eql(u8, args[1], worker_mode))
@@ -2453,6 +2627,488 @@ const ResponseReadyBarrierV1 = struct {
     }
 };
 
+fn runDeathWorker(
+    allocator: std.mem.Allocator,
+    prepared_path: []const u8,
+    package_path: []const u8,
+    license_path: []const u8,
+    generation: u64,
+    death_case: DeathCaseV1,
+) !void {
+    if (generation != death_case.generation())
+        return error.InvalidDeathGeneration;
+
+    const package_bytes = try engine.bounded_file_input.readAllocV1(
+        allocator,
+        package_path,
+        engine.model_package_manifest.admission_bundle_bytes,
+    );
+    if (package_bytes.len !=
+        engine.model_package_manifest.admission_bundle_bytes)
+    {
+        return error.InvalidPackageLength;
+    }
+    const bundle =
+        try engine.model_package_manifest.decodeAdmissionBundleV2(
+            package_bytes,
+        );
+    _ = try engine.model_package_producer.validateSupportedPackageV1(
+        bundle.package,
+    );
+
+    const license_bytes = try engine.bounded_file_input.readAllocV1(
+        allocator,
+        license_path,
+        engine.model_package_producer.maximum_license_bytes,
+    );
+    const license_byte_count = std.math.cast(
+        u64,
+        license_bytes.len,
+    ) orelse return error.InvalidLicense;
+    const license_sha256 =
+        engine.core.model_contract.sha256(license_bytes);
+    if (bundle.package.license_bytes != license_byte_count or
+        !std.mem.eql(
+            u8,
+            &bundle.package.license_sha256,
+            &license_sha256,
+        ))
+    {
+        return error.PackageLicenseMismatch;
+    }
+
+    const model_file =
+        try engine.bounded_file_input.openRegularV1(prepared_path);
+    var model =
+        try engine.loader.loadPreparedOwnedFileWithOptionsV1(
+            allocator,
+            model_file,
+            .{
+                .expected_source_fingerprint = bundle.package.model_content_sha256,
+                .mlp_layout = .separate_required,
+            },
+        );
+    const binding = try unary.bindModelV1(
+        &model,
+        bundle,
+        license_byte_count,
+        license_sha256,
+    );
+
+    if (death_case == .queued) {
+        return runQueuedDeathWorker(
+            allocator,
+            binding,
+            generation,
+            death_case,
+        );
+    }
+    return runSerialDeathWorker(
+        allocator,
+        binding,
+        generation,
+        death_case,
+    );
+}
+
+fn runQueuedDeathWorker(
+    allocator: std.mem.Allocator,
+    binding: unary.ModelBindingV1,
+    generation: u64,
+    death_case: DeathCaseV1,
+) !void {
+    var harness: ServiceHarness(1, 4) = .{};
+    try harness.init(allocator, binding, generation);
+    var runtime = try http_server.initV1(
+        &harness.service,
+        binding.binding_sha256,
+    );
+    var lifecycle =
+        try server_api.ManagedConcurrentLifecycleV1.initV1(
+            generation,
+            .{
+                .worker_count = 1,
+                .pending_connection_capacity = 1,
+            },
+        );
+    try lifecycle.markReadyV1();
+
+    const bind_address =
+        try std.net.Address.parseIp(loopback_host, 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    const listen_address = listener.listen_address;
+    var event_log: ConcurrentEventLog = .{};
+    var serve_context: ConcurrentServeContext = .{
+        .listener = &listener,
+        .runtime = &runtime,
+        .lifecycle = &lifecycle,
+        .config = .{},
+        .event_observer = event_log.observer(),
+    };
+    _ = try std.Thread.spawn(
+        .{},
+        ConcurrentServeContext.run,
+        .{&serve_context},
+    );
+
+    try emitReady(
+        generation,
+        listen_address.getPort(),
+        &runtime.model_id,
+    );
+    _ = try event_log.waitForKind(.dispatched, 1);
+    const queued_event =
+        try event_log.waitForKind(.enqueued, 2);
+    const queued_lease = queued_event.lease orelse
+        return error.MissingDeathQueuedLease;
+    const owner = transportOwnerFromLeaseV1(queued_lease);
+    const lease_facts = try captureDeathLeaseFactsV1(
+        &lifecycle.managed,
+        death_case.phase(),
+        owner,
+    );
+    const concurrent_snapshot = lifecycle.snapshotV1();
+    const service_snapshot = try harness.service.snapshotV1();
+    const receipt = try makeDeathReceiptV1(
+        death_case,
+        try currentProcessIdV1(),
+        lease_facts,
+        concurrent_snapshot.managed,
+        concurrent_snapshot,
+        service_snapshot,
+    );
+    try emitDeathReceiptV1(receipt);
+    awaitForcedDeathV1();
+}
+
+fn runSerialDeathWorker(
+    allocator: std.mem.Allocator,
+    binding: unary.ModelBindingV1,
+    generation: u64,
+    death_case: DeathCaseV1,
+) !void {
+    var lifecycle =
+        try server_api.ManagedLifecycleV1.initV1(generation);
+    var harness: ServiceHarness(1, 4) = .{};
+    try harness.init(allocator, binding, generation);
+    var runtime = try http_server.initV1(
+        &harness.service,
+        binding.binding_sha256,
+    );
+    const hold_request_mutex =
+        death_case == .request_received;
+    if (hold_request_mutex)
+        runtime.request_mutex.lock();
+
+    const bind_address =
+        try std.net.Address.parseIp(loopback_host, 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    const listen_address = listener.listen_address;
+    try lifecycle.markReadyV1();
+
+    var work_barrier: WorkAdmissionBarrierV1 = .{};
+    var response_barrier: ResponseReadyBarrierV1 = .{
+        .observe_written = death_case == .response_written,
+    };
+    var serve_context: ServeContext = .{
+        .listener = &listener,
+        .runtime = &runtime,
+        .lifecycle = &lifecycle,
+        .config = .{
+            .response_write_quantum_bytes = if (death_case == .response_writing)
+                1
+            else
+                server_api.maximum_response_write_quantum_bytes,
+        },
+        .work_observer = if (death_case == .request_admitted_live or
+            death_case == .request_admitted_terminal)
+            work_barrier.control(false, false)
+        else
+            null,
+        .response_observer = if (death_case == .response_ready or
+            death_case == .response_writing or
+            death_case == .response_written)
+            response_barrier.control(
+                death_case == .response_writing,
+            )
+        else
+            null,
+    };
+    _ = try std.Thread.spawn(
+        .{},
+        ServeContext.run,
+        .{&serve_context},
+    );
+    try emitReady(
+        generation,
+        listen_address.getPort(),
+        &runtime.model_id,
+    );
+
+    switch (death_case) {
+        .queued => unreachable,
+        .receiving_head,
+        .request_head_received,
+        .request_received,
+        => try waitForActivePhase(
+            &lifecycle,
+            death_case.phase(),
+        ),
+        .request_admitted_live => {
+            work_barrier.reached.wait();
+        },
+        .request_admitted_terminal => {
+            work_barrier.reached.wait();
+            switch (try harness.service.driveNextV1()) {
+                .completed => {},
+                else => return error.DeathWorkDidNotReachTerminal,
+            }
+        },
+        .response_ready => {
+            response_barrier.reached.wait();
+        },
+        .response_writing => {
+            response_barrier.reached.wait();
+            response_barrier.release.set();
+            response_barrier.progress_reached.wait();
+        },
+        .response_written => {
+            response_barrier.reached.wait();
+            response_barrier.release.set();
+            response_barrier.written_reached.wait();
+        },
+    }
+
+    const managed_snapshot = lifecycle.snapshotV1();
+    const lease_facts = try captureDeathLeaseFactsV1(
+        &lifecycle,
+        death_case.phase(),
+        null,
+    );
+    const service_snapshot = try harness.service.snapshotV1();
+    const receipt = try makeDeathReceiptV1(
+        death_case,
+        try currentProcessIdV1(),
+        lease_facts,
+        managed_snapshot,
+        null,
+        service_snapshot,
+    );
+    try emitDeathReceiptV1(receipt);
+    awaitForcedDeathV1();
+}
+
+fn currentProcessIdV1() !u64 {
+    if (builtin.os.tag == .windows) {
+        const process_id = std.os.windows.GetCurrentProcessId();
+        if (process_id == 0)
+            return error.InvalidDeathProcessId;
+        return process_id;
+    }
+    const process_id = std.c.getpid();
+    if (process_id <= 0)
+        return error.InvalidDeathProcessId;
+    return @intCast(process_id);
+}
+
+fn transportOwnerFromLeaseV1(
+    lease: server_api.ManagedConnectionLeaseV1,
+) http_server.TransportOwnerTokenV1 {
+    return .{
+        .process_generation = lease.process_generation,
+        .connection_sequence = lease.connection_sequence,
+        .slot_index = lease.slot_index,
+        .slot_generation = lease.slot_generation,
+    };
+}
+
+fn captureDeathLeaseFactsV1(
+    lifecycle: *server_api.ManagedLifecycleV1,
+    expected_phase: server_api.ManagedConnectionPhaseV1,
+    expected_owner: ?http_server.TransportOwnerTokenV1,
+) !DeathLeaseFactsV1 {
+    lifecycle.mutex.lock();
+    defer lifecycle.mutex.unlock();
+
+    var found: ?DeathLeaseFactsV1 = null;
+    for (
+        lifecycle.connection_slots[0..lifecycle.connection_capacity],
+        0..,
+    ) |slot, slot_index| {
+        const active = slot.active orelse continue;
+        const owner: http_server.TransportOwnerTokenV1 = .{
+            .process_generation = active.process_generation,
+            .connection_sequence = active.sequence,
+            .slot_index = @intCast(slot_index),
+            .slot_generation = slot.generation,
+        };
+        if (expected_owner) |target| {
+            if (!std.meta.eql(owner, target)) continue;
+        } else if (active.phase != expected_phase) {
+            continue;
+        }
+        if (found != null)
+            return error.AmbiguousDeathLease;
+        found = .{
+            .owner = owner,
+            .phase = active.phase,
+            .receive_retired = active.receive_retired,
+            .work_identity = active.work_identity,
+            .work_retired = active.work_retired,
+            .response_retired = active.response_retired,
+            .response_progress_bytes = active.response_write_progress_bytes,
+        };
+    }
+    const facts = found orelse return error.MissingDeathLease;
+    if (facts.phase != expected_phase)
+        return error.DeathLeasePhaseMismatch;
+    return facts;
+}
+
+fn makeDeathReceiptV1(
+    death_case: DeathCaseV1,
+    process_id: u64,
+    lease: DeathLeaseFactsV1,
+    managed: server_api.ManagedSnapshotV1,
+    concurrent: ?server_api.ManagedConcurrentSnapshotV1,
+    service: unary.SnapshotV1,
+) !DeathReceiptV1 {
+    const scheduler = service.scheduler orelse
+        return error.MissingDeathSchedulerSnapshot;
+    const bank = service.bank orelse
+        return error.MissingDeathBankSnapshot;
+    const work_identity = lease.work_identity orelse
+        http_server.WorkIdentityV1{
+            .sequence = 0,
+            .handle_sha256 = native_load_zero_digest,
+        };
+    var receipt: DeathReceiptV1 = .{
+        .case = death_case,
+        .phase = death_case.phase(),
+        .process_id = process_id,
+        .generation = managed.process_generation,
+        .state = managed.state,
+        .accepted = managed.accepted_connections,
+        .completed = managed.completed_connections,
+        .failed = managed.failed_connections,
+        .active = managed.active_connections,
+        .queued = managed.queued_connections,
+        .running = if (concurrent) |snapshot|
+            snapshot.running_connections
+        else
+            managed.active_connections,
+        .worker_count = if (concurrent) |snapshot|
+            snapshot.worker_count
+        else
+            1,
+        .pending_capacity = if (concurrent) |snapshot|
+            snapshot.pending_connection_capacity
+        else
+            0,
+        .enqueued = if (concurrent) |snapshot|
+            snapshot.queue_enqueued_connections
+        else
+            0,
+        .dispatched = if (concurrent) |snapshot|
+            snapshot.queue_dispatched_connections
+        else
+            0,
+        .event_ordinal = if (concurrent) |snapshot|
+            snapshot.event_ordinal
+        else
+            0,
+        .phase_counts = if (concurrent) |snapshot|
+            deathPhaseCountsFromConcurrentV1(
+                snapshot.phase_counts,
+            )
+        else
+            try deathSerialPhaseCountsV1(
+                managed.active_connection_phase,
+                managed.active_connections,
+            ),
+        .owner = lease.owner,
+        .work_present = lease.work_identity != null,
+        .work_sequence = work_identity.sequence,
+        .work_handle_sha256 = work_identity.handle_sha256,
+        .receive_retired = lease.receive_retired,
+        .work_retired = lease.work_retired,
+        .response_retired = lease.response_retired,
+        .response_progress_bytes = lease.response_progress_bytes,
+        .service_active = service.active_requests,
+        .terminal_records = service.terminal_records,
+        .completed_records = service.completed_records,
+        .cancelled_records = service.cancelled_records,
+        .failed_records = service.failed_records,
+        .recovery_required = service.recovery_required,
+        .scheduler_active = scheduler.active,
+        .scheduler_finished = scheduler.finished,
+        .scheduler_used_zero = scheduler.used.isZero(),
+        .scheduler_poisoned = scheduler.poisoned,
+        .bank_used_zero = bank.used.isZero(),
+        .bank_active_reservations = @intCast(bank.active_reservations),
+        .bank_committed_receipts = @intCast(bank.committed_receipts),
+    };
+    receipt.receipt_sha256 = deathReceiptSha256V1(receipt);
+    return receipt;
+}
+
+fn deathPhaseCountsFromConcurrentV1(
+    counts: server_api.ManagedConnectionPhaseCountsV1,
+) [8]u8 {
+    return .{
+        counts.queued,
+        counts.receiving_head,
+        counts.request_head_received,
+        counts.request_received,
+        counts.request_admitted,
+        counts.response_ready,
+        counts.response_writing,
+        counts.response_written,
+    };
+}
+
+fn deathSerialPhaseCountsV1(
+    phase: server_api.ManagedConnectionPhaseV1,
+    active: u8,
+) ![8]u8 {
+    var counts = [_]u8{0} ** 8;
+    if (active == 0) {
+        if (phase != .none)
+            return error.InvalidDeathSerialPhase;
+        return counts;
+    }
+    if (active != 1 or phase == .none)
+        return error.InvalidDeathSerialPhase;
+    counts[try deathPhaseIndexV1(phase)] = 1;
+    return counts;
+}
+
+fn deathPhaseIndexV1(
+    phase: server_api.ManagedConnectionPhaseV1,
+) !usize {
+    return switch (phase) {
+        .queued => 0,
+        .receiving_head => 1,
+        .request_head_received => 2,
+        .request_received => 3,
+        .request_admitted => 4,
+        .response_ready => 5,
+        .response_writing => 6,
+        .response_written => 7,
+        .none => error.InvalidDeathPhase,
+    };
+}
+
+fn awaitForcedDeathV1() noreturn {
+    var never: std.Thread.ResetEvent = .{};
+    never.wait();
+    unreachable;
+}
+
 fn runWorker(
     allocator: std.mem.Allocator,
     prepared_path: []const u8,
@@ -2707,6 +3363,7 @@ fn runWorker(
             stopped,
             service_snapshot.active_requests,
             close_receipt.terminal_records,
+            serviceSchedulerZeroV1(service_snapshot),
             null,
         );
         return;
@@ -3128,6 +3785,7 @@ fn runWorker(
         stopped,
         service_snapshot.active_requests,
         close_receipt.terminal_records,
+        serviceSchedulerZeroV1(service_snapshot),
         response_barrier.outcome,
     );
 }
@@ -3313,6 +3971,7 @@ fn runApplicationRejectionWorker(
         stopped,
         service_snapshot.active_requests,
         close_receipt.terminal_records,
+        serviceSchedulerZeroV1(service_snapshot),
         null,
     );
 }
@@ -6155,6 +6814,106 @@ fn emitCheckpoint(name: []const u8, generation: u64) !void {
     try std.fs.File.stdout().writeAll(frame);
 }
 
+fn deathReceiptScalarsV1(
+    receipt: DeathReceiptV1,
+) [death_receipt_scalar_count]u64 {
+    return .{
+        receipt.abi_version,
+        @intFromEnum(receipt.case),
+        @intFromEnum(receipt.phase),
+        receipt.process_id,
+        receipt.generation,
+        @intFromEnum(receipt.state),
+        receipt.accepted,
+        receipt.completed,
+        receipt.failed,
+        receipt.active,
+        receipt.queued,
+        receipt.running,
+        receipt.worker_count,
+        receipt.pending_capacity,
+        receipt.enqueued,
+        receipt.dispatched,
+        receipt.event_ordinal,
+        receipt.phase_counts[0],
+        receipt.phase_counts[1],
+        receipt.phase_counts[2],
+        receipt.phase_counts[3],
+        receipt.phase_counts[4],
+        receipt.phase_counts[5],
+        receipt.phase_counts[6],
+        receipt.phase_counts[7],
+        receipt.owner.process_generation,
+        receipt.owner.connection_sequence,
+        receipt.owner.slot_index,
+        receipt.owner.slot_generation,
+        @intFromBool(receipt.work_present),
+        receipt.work_sequence,
+        @intFromBool(receipt.receive_retired),
+        @intFromBool(receipt.work_retired),
+        @intFromBool(receipt.response_retired),
+        receipt.response_progress_bytes,
+        receipt.service_active,
+        receipt.terminal_records,
+        receipt.completed_records,
+        receipt.cancelled_records,
+        receipt.failed_records,
+        receipt.recovery_required,
+        receipt.scheduler_active,
+        receipt.scheduler_finished,
+        @intFromBool(receipt.scheduler_used_zero),
+        @intFromBool(receipt.scheduler_poisoned),
+        @intFromBool(receipt.bank_used_zero),
+        receipt.bank_active_reservations,
+        receipt.bank_committed_receipts,
+    };
+}
+
+fn deathReceiptSha256V1(
+    receipt: DeathReceiptV1,
+) protocol.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(death_receipt_domain);
+    const scalars = deathReceiptScalarsV1(receipt);
+    for (scalars) |value| {
+        var encoded: [8]u8 = undefined;
+        std.mem.writeInt(u64, &encoded, value, .little);
+        hash.update(&encoded);
+    }
+    hash.update(&receipt.work_handle_sha256);
+    var result: protocol.Digest = undefined;
+    hash.final(&result);
+    return result;
+}
+
+fn emitDeathReceiptV1(receipt: DeathReceiptV1) !void {
+    if (!std.mem.eql(
+        u8,
+        &receipt.receipt_sha256,
+        &deathReceiptSha256V1(receipt),
+    )) return error.InvalidDeathReceiptRoot;
+
+    var storage: [frame_max_bytes]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&storage);
+    const writer = stream.writer();
+    try writer.writeAll("KILL-READY-V1");
+    const scalars = deathReceiptScalarsV1(receipt);
+    for (scalars) |value| {
+        try writer.print(" {d}", .{value});
+    }
+    const work_hex =
+        std.fmt.bytesToHex(receipt.work_handle_sha256, .lower);
+    const receipt_hex =
+        std.fmt.bytesToHex(receipt.receipt_sha256, .lower);
+    try writer.print(
+        " {s} {s}\n",
+        .{ &work_hex, &receipt_hex },
+    );
+    try std.fs.File.stdout().writeAll(
+        stream.getWritten(),
+    );
+}
+
 fn emitConcurrentEventCheckpoint(
     name: []const u8,
     event: server_api.ManagedConcurrentEventV1,
@@ -6317,6 +7076,7 @@ fn emitClosed(
     snapshot: server_api.ManagedSnapshotV1,
     service_active: u32,
     terminal_records: u32,
+    scheduler_zero: bool,
     response_outcome: ?http_server.ResponseWriteOutcomeV1,
 ) !void {
     var storage: [frame_max_bytes]u8 = undefined;
@@ -6367,7 +7127,7 @@ fn emitClosed(
         storage[prefix.len..],
         "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
             "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
-            "{d} {d} {d} {d} {d} {d} {d} {d} {d} 1\n",
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} 1\n",
         .{
             snapshot.peer_reset_connections,
             snapshot.peer_reset_cancelled_work_connections,
@@ -6420,11 +7180,23 @@ fn emitClosed(
             responseOutcomeWire(response_outcome),
             service_active,
             terminal_records,
+            @intFromBool(scheduler_zero),
         },
     );
     try std.fs.File.stdout().writeAll(
         storage[0 .. prefix.len + suffix.len],
     );
+}
+
+fn serviceSchedulerZeroV1(
+    snapshot: unary.SnapshotV1,
+) bool {
+    const scheduler = snapshot.scheduler orelse return false;
+    return scheduler.active == 0 and
+        scheduler.finished == 0 and
+        scheduler.used.isZero() and
+        !scheduler.poisoned and
+        !scheduler.closed;
 }
 
 fn emitConcurrentClosed(
@@ -6603,6 +7375,7 @@ const ClosedFrame = struct {
     activity: ActivityFrame,
     service_active: u32,
     terminal_records: u32,
+    scheduler_zero: u8,
     bank_zero: u8,
 };
 
@@ -6692,6 +7465,169 @@ fn readFrame(
         count += 1;
     }
     return error.FrameTooLarge;
+}
+
+fn parseDeathReceiptV1(line: []const u8) !DeathReceiptV1 {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const name = fields.next() orelse
+        return error.InvalidDeathReceiptFrame;
+    if (!std.mem.eql(u8, name, "KILL-READY-V1"))
+        return error.InvalidDeathReceiptFrame;
+
+    var values: [death_receipt_scalar_count]u64 = undefined;
+    for (&values) |*value| {
+        const text = fields.next() orelse
+            return error.InvalidDeathReceiptFrame;
+        value.* = try parseCanonicalInt(u64, text);
+    }
+    const work_hex = fields.next() orelse
+        return error.InvalidDeathReceiptFrame;
+    const receipt_hex = fields.next() orelse
+        return error.InvalidDeathReceiptFrame;
+    if (fields.next() != null)
+        return error.InvalidDeathReceiptFrame;
+
+    const case_wire = std.math.cast(u8, values[1]) orelse
+        return error.InvalidDeathReceiptFrame;
+    const death_case = std.meta.intToEnum(
+        DeathCaseV1,
+        case_wire,
+    ) catch return error.InvalidDeathReceiptFrame;
+    const phase = try deathPhaseFromIntV1(values[2]);
+    const state = try deathStateFromIntV1(values[5]);
+    const receipt: DeathReceiptV1 = .{
+        .abi_version = values[0],
+        .case = death_case,
+        .phase = phase,
+        .process_id = values[3],
+        .generation = values[4],
+        .state = state,
+        .accepted = values[6],
+        .completed = values[7],
+        .failed = values[8],
+        .active = try deathCastV1(u8, values[9]),
+        .queued = try deathCastV1(u8, values[10]),
+        .running = try deathCastV1(u8, values[11]),
+        .worker_count = try deathCastV1(u8, values[12]),
+        .pending_capacity = try deathCastV1(u8, values[13]),
+        .enqueued = values[14],
+        .dispatched = values[15],
+        .event_ordinal = values[16],
+        .phase_counts = .{
+            try deathCastV1(u8, values[17]),
+            try deathCastV1(u8, values[18]),
+            try deathCastV1(u8, values[19]),
+            try deathCastV1(u8, values[20]),
+            try deathCastV1(u8, values[21]),
+            try deathCastV1(u8, values[22]),
+            try deathCastV1(u8, values[23]),
+            try deathCastV1(u8, values[24]),
+        },
+        .owner = .{
+            .process_generation = values[25],
+            .connection_sequence = values[26],
+            .slot_index = try deathCastV1(u8, values[27]),
+            .slot_generation = values[28],
+        },
+        .work_present = try deathBoolV1(values[29]),
+        .work_sequence = values[30],
+        .work_handle_sha256 = try parseDigestHex(work_hex),
+        .receive_retired = try deathBoolV1(values[31]),
+        .work_retired = try deathBoolV1(values[32]),
+        .response_retired = try deathBoolV1(values[33]),
+        .response_progress_bytes = values[34],
+        .service_active = try deathCastV1(u32, values[35]),
+        .terminal_records = try deathCastV1(
+            u32,
+            values[36],
+        ),
+        .completed_records = try deathCastV1(
+            u32,
+            values[37],
+        ),
+        .cancelled_records = try deathCastV1(
+            u32,
+            values[38],
+        ),
+        .failed_records = try deathCastV1(
+            u32,
+            values[39],
+        ),
+        .recovery_required = try deathCastV1(
+            u32,
+            values[40],
+        ),
+        .scheduler_active = try deathCastV1(
+            u32,
+            values[41],
+        ),
+        .scheduler_finished = try deathCastV1(
+            u32,
+            values[42],
+        ),
+        .scheduler_used_zero = try deathBoolV1(values[43]),
+        .scheduler_poisoned = try deathBoolV1(values[44]),
+        .bank_used_zero = try deathBoolV1(values[45]),
+        .bank_active_reservations = values[46],
+        .bank_committed_receipts = values[47],
+        .receipt_sha256 = try parseDigestHex(receipt_hex),
+    };
+    if (receipt.abi_version != death_receipt_abi or
+        !std.mem.eql(
+            u8,
+            &receipt.receipt_sha256,
+            &deathReceiptSha256V1(receipt),
+        ))
+    {
+        return error.InvalidDeathReceiptRoot;
+    }
+    return receipt;
+}
+
+fn deathCastV1(
+    comptime T: type,
+    value: u64,
+) !T {
+    return std.math.cast(T, value) orelse
+        error.InvalidDeathReceiptFrame;
+}
+
+fn deathBoolV1(value: u64) !bool {
+    return switch (value) {
+        0 => false,
+        1 => true,
+        else => error.InvalidDeathReceiptFrame,
+    };
+}
+
+fn deathPhaseFromIntV1(
+    value: u64,
+) !server_api.ManagedConnectionPhaseV1 {
+    return switch (value) {
+        0 => .none,
+        1 => .receiving_head,
+        2 => .request_head_received,
+        3 => .request_received,
+        4 => .request_admitted,
+        5 => .response_ready,
+        6 => .response_writing,
+        7 => .response_written,
+        8 => .queued,
+        else => error.InvalidDeathReceiptFrame,
+    };
+}
+
+fn deathStateFromIntV1(
+    value: u64,
+) !server_api.ManagedStateV1 {
+    return switch (value) {
+        1 => .starting,
+        2 => .ready,
+        3 => .draining,
+        4 => .stopped,
+        5 => .failed,
+        else => error.InvalidDeathReceiptFrame,
+    };
 }
 
 fn parseReady(line: []const u8) !ReadyFrame {
@@ -7475,6 +8411,8 @@ fn parseClosed(line: []const u8) !ClosedFrame {
         return error.InvalidFrame;
     const terminal_records = fields.next() orelse
         return error.InvalidFrame;
+    const scheduler_zero = fields.next() orelse
+        return error.InvalidFrame;
     const bank_zero = fields.next() orelse
         return error.InvalidFrame;
     if (fields.next() != null or
@@ -7639,6 +8577,7 @@ fn parseClosed(line: []const u8) !ClosedFrame {
         },
         .service_active = try parseCanonicalInt(u32, service_active),
         .terminal_records = try parseCanonicalInt(u32, terminal_records),
+        .scheduler_zero = try parseCanonicalInt(u8, scheduler_zero),
         .bank_zero = try parseCanonicalInt(u8, bank_zero),
     };
 }
@@ -11679,6 +12618,12 @@ fn runSupervisor(allocator: std.mem.Allocator) !void {
         .concurrent_stale_owner_failure,
         oracle,
     );
+    try exerciseForcedDeathMatrix(
+        allocator,
+        executable,
+        &fixture,
+        oracle,
+    );
     const second = try exerciseWorker(
         allocator,
         executable,
@@ -11735,6 +12680,550 @@ fn validateObservation(
     try require(observation.completion.content_bytes == 1);
     try require(observation.completion.content[0] ==
         oracle.content_byte);
+}
+
+fn exerciseForcedDeathMatrix(
+    allocator: std.mem.Allocator,
+    executable: []const u8,
+    fixture: *const Fixture,
+    oracle: LocalOracle,
+) !void {
+    if (comptime builtin.os.tag != .linux and
+        builtin.os.tag != .macos and
+        builtin.os.tag != .freebsd)
+    {
+        return;
+    }
+
+    var covered = [_]bool{false} ** death_cases.len;
+    var previous_generation: u64 = 0;
+    for (death_cases) |death_case| {
+        const receipt = try exerciseForcedDeathCase(
+            allocator,
+            executable,
+            fixture,
+            death_case,
+            oracle,
+        );
+        const index: usize = @intFromEnum(death_case) - 1;
+        if (covered[index] or
+            receipt.generation <= previous_generation)
+        {
+            return error.InvalidDeathCaseCoverage;
+        }
+        covered[index] = true;
+        previous_generation = receipt.generation;
+    }
+    for (covered) |present| {
+        if (!present)
+            return error.IncompleteDeathCaseCoverage;
+    }
+}
+
+fn exerciseForcedDeathCase(
+    allocator: std.mem.Allocator,
+    executable: []const u8,
+    fixture: *const Fixture,
+    death_case: DeathCaseV1,
+    oracle: LocalOracle,
+) !DeathReceiptV1 {
+    var child = try spawnDeathWorker(
+        allocator,
+        executable,
+        fixture,
+        death_case,
+    );
+    var waited = false;
+    defer if (!waited) terminateChild(&child);
+    const expected_process_id =
+        try childProcessIdForDeathV1(child.id);
+    var watchdog: WorkerWatchdog = .{
+        .process_id = child.id,
+    };
+    try watchdog.start();
+    var watchdog_running = true;
+    defer if (watchdog_running) {
+        _ = watchdog.stop();
+    };
+
+    var frame_storage: [frame_max_bytes]u8 = undefined;
+    const ready = try parseReady(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try require(ready.generation == death_case.generation());
+    try require(std.mem.eql(
+        u8,
+        &ready.model_id,
+        &oracle.model_id,
+    ));
+
+    var blocker_peer: ?std.net.Stream = null;
+    defer if (blocker_peer) |peer| peer.close();
+    var target_peer: ?std.net.Stream = null;
+    defer if (target_peer) |peer| peer.close();
+    switch (death_case) {
+        .queued => {
+            blocker_peer = try connectReadyPeer(ready);
+            target_peer = try connectReadyPeer(ready);
+        },
+        .receiving_head => {
+            target_peer = try connectReadyPeer(ready);
+        },
+        .request_head_received => {
+            target_peer = try connectReadyPeer(ready);
+            try writePartialRequest(
+                target_peer.?,
+                ready,
+                .body,
+            );
+        },
+        .request_received,
+        .request_admitted_live,
+        .request_admitted_terminal,
+        .response_ready,
+        .response_writing,
+        .response_written,
+        => {
+            target_peer = try openCompletionPeer(
+                ready,
+                death_case.tenantKey(),
+                death_case.idempotencyKey(),
+            );
+        },
+    }
+
+    const receipt = try parseDeathReceiptV1(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try validateDeathReceiptV1(
+        receipt,
+        death_case,
+        expected_process_id,
+    );
+
+    const death_stdout = child.stdout orelse
+        return error.MissingForcedDeathStdout;
+    child.stdout = null;
+    defer death_stdout.close();
+    const death_stderr = child.stderr orelse
+        return error.MissingForcedDeathStderr;
+    child.stderr = null;
+    defer death_stderr.close();
+
+    try hardTerminateProcessCheckedV1(child.id);
+    const term = try child.wait();
+    waited = true;
+    const did_time_out = watchdog.stop();
+    watchdog_running = false;
+    if (did_time_out)
+        return error.WorkerTimeout;
+    try expectForcedDeathTerminationV1(term);
+
+    try requireWorkerEof(death_stdout);
+    const stderr = try death_stderr.readToEndAlloc(
+        allocator,
+        frame_max_bytes,
+    );
+    defer allocator.free(stderr);
+    if (stderr.len != 0)
+        return error.ForcedDeathWorkerStderr;
+
+    var response_storage: [
+        protocol.header_max_bytes +
+            protocol.response_body_max_bytes
+    ]u8 = undefined;
+    const response_bytes = try captureDeathPeerBytesV1(
+        target_peer.?,
+        &response_storage,
+    );
+    try validateDeathTransportV1(
+        death_case,
+        receipt,
+        response_storage[0..response_bytes],
+        ready,
+        oracle,
+    );
+    target_peer.?.close();
+    target_peer = null;
+    if (blocker_peer) |peer| {
+        var blocker_storage: [1]u8 = undefined;
+        const blocker_bytes = try captureDeathPeerBytesV1(
+            peer,
+            &blocker_storage,
+        );
+        if (blocker_bytes != 0)
+            return error.ForcedDeathBlockerResponse;
+        peer.close();
+        blocker_peer = null;
+    }
+
+    return receipt;
+}
+
+fn validateDeathReceiptV1(
+    receipt: DeathReceiptV1,
+    death_case: DeathCaseV1,
+    expected_process_id: u64,
+) !void {
+    if (receipt.abi_version != death_receipt_abi or
+        receipt.case != death_case or
+        receipt.phase != death_case.phase() or
+        receipt.process_id != expected_process_id or
+        receipt.generation != death_case.generation() or
+        receipt.state != .ready or
+        receipt.owner.process_generation != receipt.generation or
+        receipt.owner.connection_sequence == 0 or
+        receipt.owner.slot_generation == 0 or
+        receipt.accepted !=
+            receipt.completed + receipt.failed + receipt.active or
+        receipt.completed != 0 or
+        receipt.failed != 0 or
+        receipt.active == 0 or
+        receipt.response_retired or
+        receipt.recovery_required != 0 or
+        receipt.scheduler_poisoned or
+        receipt.terminal_records !=
+            receipt.completed_records +
+                receipt.cancelled_records +
+                receipt.failed_records)
+    {
+        return error.InvalidDeathReceipt;
+    }
+    var phase_total: u16 = 0;
+    for (receipt.phase_counts) |count|
+        phase_total += count;
+    if (phase_total != receipt.active or
+        receipt.phase_counts[
+            try deathPhaseIndexV1(death_case.phase())
+        ] == 0)
+    {
+        return error.InvalidDeathPhaseConservation;
+    }
+    if (receipt.work_present) {
+        if (receipt.work_sequence == 0 or
+            std.mem.eql(
+                u8,
+                &receipt.work_handle_sha256,
+                &native_load_zero_digest,
+            ))
+        {
+            return error.InvalidDeathWorkIdentity;
+        }
+    } else if (receipt.work_sequence != 0 or
+        !std.mem.eql(
+            u8,
+            &receipt.work_handle_sha256,
+            &native_load_zero_digest,
+        ))
+    {
+        return error.InvalidDeathWorkIdentity;
+    }
+
+    if (death_case == .queued) {
+        if (receipt.accepted != 2 or
+            receipt.active != 2 or
+            receipt.queued != 1 or
+            receipt.running != 1 or
+            receipt.worker_count != 1 or
+            receipt.pending_capacity != 1 or
+            receipt.enqueued != 2 or
+            receipt.dispatched != 1 or
+            receipt.event_ordinal < 3 or
+            receipt.enqueued !=
+                receipt.dispatched + receipt.queued or
+            receipt.phase_counts[0] != 1 or
+            receipt.phase_counts[1] != 1 or
+            receipt.owner.slot_index >= 2 or
+            receipt.receive_retired or
+            receipt.work_present or
+            receipt.work_retired or
+            receipt.response_progress_bytes != 0)
+        {
+            return error.InvalidQueuedDeathReceipt;
+        }
+    } else {
+        if (receipt.accepted != 1 or
+            receipt.active != 1 or
+            receipt.queued != 0 or
+            receipt.running != 1 or
+            receipt.worker_count != 1 or
+            receipt.pending_capacity != 0 or
+            receipt.enqueued != 0 or
+            receipt.dispatched != 0 or
+            receipt.event_ordinal != 0 or
+            receipt.owner.slot_index != 0)
+        {
+            return error.InvalidSerialDeathReceipt;
+        }
+        const expected_index =
+            try deathPhaseIndexV1(death_case.phase());
+        for (receipt.phase_counts, 0..) |count, index| {
+            const expected_count: u8 =
+                if (index == expected_index) 1 else 0;
+            if (count != expected_count)
+                return error.InvalidSerialDeathPhaseCounts;
+        }
+    }
+
+    switch (death_case) {
+        .queued,
+        .receiving_head,
+        .request_head_received,
+        .request_received,
+        => {
+            if (receipt.work_present or
+                receipt.work_retired or
+                receipt.service_active != 0 or
+                receipt.terminal_records != 0 or
+                receipt.scheduler_active != 0 or
+                receipt.scheduler_finished != 0 or
+                !receipt.scheduler_used_zero or
+                !receipt.bank_used_zero or
+                receipt.bank_active_reservations != 0 or
+                receipt.bank_committed_receipts != 0)
+            {
+                return error.InvalidPreadmissionDeathOwnership;
+            }
+            const expected_receive_retired =
+                death_case == .request_received;
+            if (receipt.receive_retired !=
+                expected_receive_retired or
+                receipt.response_progress_bytes != 0)
+            {
+                return error.InvalidPreadmissionDeathPhase;
+            }
+        },
+        .request_admitted_live => {
+            if (!receipt.receive_retired or
+                !receipt.work_present or
+                receipt.work_retired or
+                receipt.service_active != 1 or
+                receipt.terminal_records != 0 or
+                receipt.scheduler_active != 1 or
+                receipt.scheduler_finished != 0 or
+                receipt.scheduler_used_zero or
+                receipt.bank_used_zero or
+                receipt.bank_active_reservations != 0 or
+                receipt.bank_committed_receipts != 1 or
+                receipt.response_progress_bytes != 0)
+            {
+                return error.InvalidLiveAdmittedDeathOwnership;
+            }
+        },
+        .request_admitted_terminal => {
+            if (!receipt.receive_retired or
+                !receipt.work_present or
+                receipt.work_retired or
+                receipt.service_active != 0 or
+                receipt.terminal_records != 1 or
+                receipt.completed_records != 1 or
+                receipt.cancelled_records != 0 or
+                receipt.failed_records != 0 or
+                receipt.scheduler_active != 0 or
+                receipt.scheduler_finished != 0 or
+                !receipt.scheduler_used_zero or
+                !receipt.bank_used_zero or
+                receipt.bank_active_reservations != 0 or
+                receipt.bank_committed_receipts != 0 or
+                receipt.response_progress_bytes != 0)
+            {
+                return error.InvalidTerminalAdmittedDeathOwnership;
+            }
+        },
+        .response_ready,
+        .response_writing,
+        .response_written,
+        => {
+            if (!receipt.receive_retired or
+                !receipt.work_present or
+                !receipt.work_retired or
+                receipt.service_active != 0 or
+                receipt.terminal_records != 1 or
+                receipt.completed_records != 1 or
+                receipt.cancelled_records != 0 or
+                receipt.failed_records != 0 or
+                receipt.scheduler_active != 0 or
+                receipt.scheduler_finished != 0 or
+                !receipt.scheduler_used_zero or
+                !receipt.bank_used_zero or
+                receipt.bank_active_reservations != 0 or
+                receipt.bank_committed_receipts != 0)
+            {
+                return error.InvalidResponseDeathOwnership;
+            }
+            const progress_valid = switch (death_case) {
+                .response_ready => receipt.response_progress_bytes == 0,
+                .response_writing => receipt.response_progress_bytes == 1,
+                .response_written => receipt.response_progress_bytes > 1,
+                else => unreachable,
+            };
+            if (!progress_valid)
+                return error.InvalidResponseDeathProgress;
+        },
+    }
+}
+
+fn captureDeathPeerBytesV1(
+    peer: std.net.Stream,
+    storage: []u8,
+) !usize {
+    var timer = try std.time.Timer.start();
+    var used: usize = 0;
+    while (used < storage.len) {
+        try waitForDeathPeerReadableV1(
+            peer.handle,
+            &timer,
+        );
+        const read_count = peer.read(storage[used..]) catch |read_error| {
+            const transport_error: anyerror = read_error;
+            switch (transport_error) {
+                error.ConnectionResetByPeer,
+                error.ConnectionAborted,
+                => break,
+                else => return read_error,
+            }
+        };
+        if (read_count == 0) break;
+        used += read_count;
+    }
+    if (used == storage.len)
+        return error.ForcedDeathResponseTooLarge;
+    return used;
+}
+
+fn waitForDeathPeerReadableV1(
+    handle: std.net.Stream.Handle,
+    timer: *std.time.Timer,
+) !void {
+    while (true) {
+        const elapsed_ns = timer.read();
+        if (elapsed_ns >= death_settlement_timeout_ns)
+            return error.ForcedDeathSettlementTimedOut;
+        const remaining_ns =
+            death_settlement_timeout_ns - elapsed_ns;
+        const remaining_ms =
+            remaining_ns / std.time.ns_per_ms +
+            @intFromBool(
+                remaining_ns % std.time.ns_per_ms != 0,
+            );
+        const timeout_ms: i32 = @intCast(@min(
+            remaining_ms,
+            @as(u64, std.math.maxInt(i32)),
+        ));
+        var descriptors = [_]std.posix.pollfd{.{
+            .fd = handle,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        if (try std.posix.poll(
+            &descriptors,
+            timeout_ms,
+        ) == 0) {
+            return error.ForcedDeathSettlementTimedOut;
+        }
+        const events = descriptors[0].revents;
+        if ((events & std.posix.POLL.NVAL) != 0)
+            return error.ForcedDeathPeerInvalid;
+        if ((events & (std.posix.POLL.IN |
+            std.posix.POLL.HUP |
+            std.posix.POLL.ERR)) != 0)
+        {
+            return;
+        }
+    }
+}
+
+fn validateDeathTransportV1(
+    death_case: DeathCaseV1,
+    receipt: DeathReceiptV1,
+    response: []const u8,
+    ready: ReadyFrame,
+    oracle: LocalOracle,
+) !void {
+    switch (death_case.responseKind()) {
+        .none => {
+            if (response.len != 0)
+                return error.UnexpectedForcedDeathResponse;
+        },
+        .one_byte_prefix => {
+            if (!std.mem.eql(u8, response, "H") or
+                receipt.response_progress_bytes != response.len)
+            {
+                return error.InvalidForcedDeathResponsePrefix;
+            }
+        },
+        .complete => {
+            if (receipt.response_progress_bytes != response.len)
+                return error.InvalidForcedDeathResponseProgress;
+            const parsed = try parseNativeLoadResponse(response);
+            if (parsed.status != .ok)
+                return error.InvalidForcedDeathCompletionStatus;
+            var parser_storage: [
+                protocol.parser_workspace_bytes
+            ]u8 = undefined;
+            var parser =
+                std.heap.FixedBufferAllocator.init(&parser_storage);
+            const completion = try protocol.decodeCompletionV1(
+                parser.allocator(),
+                parsed.body,
+            );
+            try validateCompletionAgainstOracle(
+                completion,
+                ready,
+                oracle,
+                death_case.tenantKey(),
+                death_case.idempotencyKey(),
+            );
+        },
+    }
+}
+
+fn childProcessIdForDeathV1(
+    child_id: std.process.Child.Id,
+) !u64 {
+    if (comptime builtin.os.tag == .windows)
+        return error.UnsupportedDeathPlatform;
+    if (child_id <= 0)
+        return error.InvalidDeathProcessId;
+    return @intCast(child_id);
+}
+
+fn hardTerminateProcessCheckedV1(
+    process_id: std.process.Child.Id,
+) !void {
+    switch (builtin.os.tag) {
+        .windows => {
+            if (std.os.windows.kernel32.TerminateProcess(
+                process_id,
+                124,
+            ) == 0) return error.ForcedDeathSignalFailed;
+        },
+        .linux, .macos, .freebsd => {
+            try std.posix.kill(
+                process_id,
+                std.posix.SIG.KILL,
+            );
+        },
+        else => return error.UnsupportedDeathPlatform,
+    }
+}
+
+fn expectForcedDeathTerminationV1(
+    term: std.process.Child.Term,
+) !void {
+    switch (builtin.os.tag) {
+        .windows => switch (term) {
+            .Exited => |code| try require(code == 124),
+            else => return error.UnexpectedForcedDeathTermination,
+        },
+        .linux, .macos, .freebsd => switch (term) {
+            .Signal => |signal| try require(
+                signal == std.posix.SIG.KILL,
+            ),
+            else => return error.UnexpectedForcedDeathTermination,
+        },
+        else => return error.UnsupportedDeathPlatform,
+    }
 }
 
 const WorkerWatchdog = struct {
@@ -12471,6 +13960,7 @@ fn exerciseAdmittedWorkDrain(
     );
     try require(closed.service_active == 0);
     try require(closed.terminal_records == 1);
+    try require(closed.scheduler_zero == 1);
     try require(closed.bank_zero == 1);
     try requireWorkerEof(child.stdout.?);
 
@@ -14850,6 +16340,7 @@ fn exerciseWorker(
     );
     try require(closed.service_active == 0);
     try require(closed.terminal_records == 1);
+    try require(closed.scheduler_zero == 1);
     try require(closed.bank_zero == 1);
     try requireWorkerEof(child.stdout.?);
 
@@ -14909,6 +16400,38 @@ fn spawnWorker(
         .Inherit
     else
         .Ignore;
+    try child.spawn();
+    child.argv = &.{};
+    return child;
+}
+
+fn spawnDeathWorker(
+    allocator: std.mem.Allocator,
+    executable: []const u8,
+    fixture: *const Fixture,
+    death_case: DeathCaseV1,
+) !std.process.Child {
+    var generation_storage: [20]u8 = undefined;
+    const generation_text = try std.fmt.bufPrint(
+        &generation_storage,
+        "{d}",
+        .{death_case.generation()},
+    );
+    var child = std.process.Child.init(
+        &.{
+            executable,
+            death_worker_mode,
+            fixture.prepared_path,
+            fixture.package_path,
+            fixture.license_path,
+            generation_text,
+            death_case.wire(),
+        },
+        allocator,
+    );
+    child.stdin_behavior = .Pipe;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
     try child.spawn();
     child.argv = &.{};
     return child;

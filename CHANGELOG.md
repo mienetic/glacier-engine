@@ -8,6 +8,17 @@ before the first stable release.
 
 ### Added
 
+- Added a test-only forced process-death matrix to the existing managed unary
+  process artifact and compile root. Nine fresh native POSIX victims cover all
+  eight owned connection phases, including separate live and
+  terminal-but-runtime-unretired `request_admitted` states. Each victim
+  publishes a canonical
+  ownership receipt before the supervisor validates its exact PID, sends
+  `SIGKILL`, and checks signal termination, stdout EOF, empty stderr, and the
+  phase-appropriate client bytes. A fresh same-package successor then completes
+  and drains with zero connection, Service, Scheduler, and Bank ownership. This
+  is abrupt-death phase evidence, not graceful victim cleanup, durable request
+  recovery, idempotency, checkpoint-aware drain, or retry safety.
 - A Python-first, read-only TokenTxn inspector now verifies one bounded
   strict-B4 journal against a complete caller-supplied trusted expectation.
   It rejects noncanonical or oversized inputs, replays the fixed receipt and

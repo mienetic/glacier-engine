@@ -629,6 +629,40 @@ zero Bank ownership. Unrelated receive-timeout, drain, reset, response, and
 transport-failure counters remain zero, while the general signal and selected
 phase-specific subset are exactly one.
 
+A separate test-only `death-worker` mode reuses the same process artifact and
+compile root for nine fresh native POSIX victims across all eight non-`none`
+owned connection phases:
+
+1. `queued`;
+2. `receiving_head`;
+3. `request_head_received`;
+4. `request_received`;
+5. `request_admitted` with live Service/Scheduler/Bank work;
+6. `request_admitted` after the Service result is terminal and Scheduler/Bank
+   ownership has retired, while the runtime work identity remains published;
+7. `response_ready`;
+8. `response_writing`; and
+9. `response_written`.
+
+Every victim reaches a deterministic barrier and emits a canonical pre-kill
+receipt binding its fresh generation, exact PID, phase geometry, and
+phase-appropriate ownership. The supervisor validates that receipt before
+sending PID-only `SIGKILL`, then requires signal-9 termination, stdout EOF
+after reap without a graceful close frame, empty stderr, and
+deadline-bounded client settlement. Victims before response writing expose
+zero response bytes;
+`response_writing` exposes exactly the one-byte HTTP prefix already sent; and
+`response_written` exposes the complete oracle-validated response. That final
+case proves local write completion only, not peer processing.
+
+The supervisor rejects missing, duplicate, or substituted cases. After all
+nine kills, one fresh process loads the same package, completes a distinct
+healthy request, drains cleanly, and proves its own zero connection, Service,
+Scheduler, and Bank ownership. Killed victims cannot provide graceful cleanup
+or zero-ownership close evidence. This matrix does not recover their requests,
+preserve durable idempotency, establish retry safety, or exercise
+checkpoint-aware drain.
+
 Generation B then loads the same package with a new process generation and
 idempotency key, proves the same model, binding, content, and output identity,
 and closes cleanly. This fresh restart does not preserve retained idempotency
@@ -904,8 +938,9 @@ admitted-work policy, opt-in `response_ready`/`response_writing` probes, and
 final-send local-completion child, plus the Phase E2a response-writing
 drain/completion siblings, Phase E2b elapsed-timeout children, and the Phase
 F1 queued-timeout, simultaneous-drain, and stale-owner children, plus the
-application-rejection child; Phases B-F1 and rejection evidence add no artifact
-or build target. It is
+application-rejection child. The dedicated death-worker mode adds the
+nine-victim owned-phase matrix and final clean successor; Phases B-F1,
+rejection, and forced-death evidence add no artifact or build target. It is
 host real-process lifecycle evidence rather than a production daemon or native
 foreign-target run.
 
@@ -931,7 +966,8 @@ cases across receive, `request_admitted`, opt-in
 `response_ready`/`response_writing`, and final-send local completion, Phase
 E2a interruptible response-write, and Phase E2b full-request-timeout cases
 remain inside the existing process executable, test target, and compile-only
-companion. They add no compile root or CI load profile.
+companion. The forced-death mode remains in that artifact as well. They add no
+compile root or CI load profile.
 Shared prepared-text session and package-aware CLI changes continue to share
 the unary acceptance root and
 installed text-runtime golden path in one Zig invocation.
@@ -941,7 +977,9 @@ installed text-runtime golden path in one Zig invocation.
 This surface establishes an experimental loopback socket, bounded JSON
 profile, retained client, focused managed child-process evidence through Phase
 E2b, and a Phase F1 concurrent-transport implementation with deterministic
-same-process plus native POSIX child-process loopback correctness retained.
+same-process plus native POSIX child-process loopback correctness retained. It
+also retains the nine-victim native POSIX forced-death phase matrix and one
+final clean same-package successor.
 Phase C remains the shorter pre-admission receive boundary. Phase D
 cancels admitted execution only when managed drain wins. Phase E1 detects a
 reset only at a between-quantum checkpoint and cancels a response at
@@ -992,15 +1030,19 @@ callback does not run for conflict or other API errors and proves neither
 response write nor peer delivery.
 
 This work does not establish a packaged production daemon, non-loopback
-serving, streaming publication, durable idempotency or crash recovery,
-process-death recovery, authentication, authorization, TLS, automatic retry,
-quota enforcement, GPU execution, production-model quality, overload
-performance, or a replicated performance claim. Retained-target compilation
-is not native Windows or FreeBSD serving proof, and native reset, FIN,
-response-write, deadline, queue, watchdog, and drain behavior on those systems
-remains unproven. The next serving slices are:
+serving, streaming publication, durable request recovery or idempotency,
+automatic-retry safety, authentication, authorization, TLS, quota
+enforcement, GPU execution, production-model quality, overload performance,
+or a replicated performance claim. Killed victims do not drain and cannot
+provide graceful cleanup or a zero-ownership close receipt; only the final
+fresh successor proves its own clean zero ownership. Retained-target
+compilation is not native Windows or FreeBSD serving proof, and native reset,
+FIN, response-write, deadline, queue, watchdog, and drain behavior on those
+systems remains unproven. The next serving slices are:
 
-1. retain longer and repeated captures of the fixed all-completed,
+1. add checkpoint-aware drain independently of forced death;
+2. add durable restart with honest terminal-or-resumable request state;
+3. retain longer and repeated captures of the fixed all-completed,
    retained-record-capacity, queued-receive-timeout, and scheduled
    transient-pressure native CPU profiles across reproducible native machines,
    then add production-model profiles.
@@ -1011,8 +1053,6 @@ remains unproven. The next serving slices are:
    byte as first-token latency, treat retained-record saturation or the fixed
    queue-pressure shape as throughput superiority or general overload, or infer
    fairness, GPU performance, or native foreign-OS behavior;
-2. add forced process-death evidence independently of checkpoint-aware drain
-   and durable restart;
-3. add committed-token streaming without exposing an unpublished token; and
-4. add authenticated authority, quota, and transport-security adapters around
+4. add committed-token streaming without exposing an unpublished token; and
+5. add authenticated authority, quota, and transport-security adapters around
    the unchanged execution state machine.
