@@ -1,8 +1,8 @@
 # Bounded Prepared-Text Unary Service
 
 Status: **experimental process-local kernel with a bounded loopback HTTP/1.1
-adapter, retained client, and R1k-b8 Phases A-D managed child-process
-lifecycle**.
+adapter, retained client, and R1k-b8 Phases A-D plus Phase E1 managed
+child-process lifecycle**.
 
 `prepared_text_unary_service` composes the existing prepared-model,
 `LaneWeave`, `ResourceBank`, publication, and terminal-result contracts into a
@@ -141,7 +141,7 @@ content, and token-count correlation. Calls are serialized because the client
 reuses its bounded workspaces. It does not authenticate the peer or
 automatically retry a request.
 
-## Managed child-process lifecycle, Phases A-D
+## Managed child-process lifecycle, Phases A-D plus Phase E1
 
 `ManagedLifecycleV1` wraps the serial listener without changing `ServiceV1` or
 the frozen HTTP profile. One nonzero process generation starts in `starting`,
@@ -153,9 +153,11 @@ fenced by process generation, connection sequence, and native handle. Its
 phase is exactly `receiving_head` until the HTTP head arrives, then
 `request_head_received`; receipt of every byte required by the selected route
 advances it to `request_received`. Phase D advances an admitted completion to
-`request_admitted`. The snapshot retains exact receive-drain,
-receive-timeout, and admitted-work drain-cancellation counts plus the last
-phase for each distinct outcome.
+`request_admitted`. Phase E1 adds exact `response_ready`, `response_writing`,
+and `response_written` phases. The snapshot retains exact receive-drain,
+receive-timeout, admitted-work drain-cancellation, peer-reset, peer-reset work
+cancellation, and response-ready drain-cancellation counts plus the last phase
+for each distinct outcome.
 
 Drain closes execution admission as well as listener admission. The runtime
 uses a short control boundary to disable new completion admission before
@@ -199,6 +201,30 @@ but not for the whole response lifecycle. Lifecycle bookkeeping and the
 optional process-test observer run outside the HTTP control and service locks.
 The serving thread remains the sole response writer and socket closer.
 
+Phase E1 adds two bounded post-admission transport decisions without adding a
+second execution state machine. Between service drive quanta, the managed work
+checkpoint may classify a reset on the exact active connection. It then
+cancels only the generation-fenced active-work handle and records
+`peer_reset_connections`, `peer_reset_cancelled_work_connections`,
+`last_peer_reset_phase`, and `last_peer_reset_cancelled_work_phase`. The
+checkpoint runs outside the service drive quantum, so it cannot preempt a
+model call already in progress. A peer reset does not close listener or
+completion admission. `peer_reset_poll_timeout_ns` is zero by default, so the
+ordinary runtime probe remains non-blocking. A managed host may opt into a
+bounded 1-millisecond-to-1-second event-driven wait at each checkpoint when it
+needs reset observation to precede the next quantum; only a typed reset or
+not-connected result from the non-consuming socket probe counts as reset.
+
+After a bounded response has been encoded, the response control advances the
+exact fenced connection to `response_ready` before the first response write.
+Drain may win at that boundary, record
+`drain_cancelled_response_connections` and
+`last_drain_cancelled_response_phase`, and prevent the first response byte
+from being written. Otherwise the serving thread alone advances through
+`response_writing` and `response_written`, flushes its local writer, and closes
+the socket. `response_written` is local-flush evidence, not acknowledgement
+that the peer received or processed the response.
+
 The focused real-process fixture uses one executable in supervisor and child
 worker modes. The ordinary clean path accepts `drain\n` followed by EOF or
 empty stdin EOF as out-of-band control; phase-targeted fixture controls select
@@ -234,6 +260,25 @@ terminal while the HTTP lease remains published, then invokes drain twice and
 releases the observer. The client receives the successful oracle-matched
 completion and lifecycle records no work cancellation. Both close with zero
 active service requests, one terminal service record, and zero Bank ownership.
+Phase E1 reuses that executable with three further synchronous controls. The
+peer-reset child resets the real peer after admitted-work publication. The next
+between-quantum checkpoint uses the maximum bounded event wait so kernel reset
+readiness, rather than a sleep or model-duration proxy, precedes the next work
+quantum. It cancels only the exact active handle; a timeout fails the fixture
+instead of allowing work to complete. The same child then serves a valid
+model-list request and closes with two accepted, one completed, one failed, one
+peer reset and one peer-reset work cancellation at `request_admitted`, one
+cancelled service terminal, and zero Bank ownership.
+The response-drain child reaches `response_ready`, invokes ordinary drain
+before releasing the serving thread, and closes with one accepted, zero
+completed, one failed, one response cancellation at `response_ready`,
+`cancelled_before_write`, one completed service terminal, and zero Bank
+ownership. A completion control releases the same boundary without drain,
+retains the oracle-matched response, records `write_completed`, closes with one
+accepted and completed connection, and leaves every new cancellation counter
+zero. Each child keeps the unrelated receive, timeout, work-drain, peer-reset,
+and response-drain counters unchanged. No race is selected by a sleep or
+model-duration assumption.
 Generation B then loads the same package with a new process generation and
 idempotency key, proves the same model, binding, content, and output identity,
 and closes cleanly. This fresh restart does not preserve retained idempotency
@@ -284,8 +329,9 @@ cancellation with a hidden private prefix, stale-handle fencing, retained
 response ownership, and final zero Scheduler/Bank ownership. The process
 acceptance separately reuses one dual-mode executable for its supervisor,
 clean/restart children, Phase B drain children, Phase C receive-timeout
-children, and the Phase D cancellation-wins and completion-wins children;
-Phases B-D add no artifact or build target. It is host real-process lifecycle
+children, the Phase D cancellation-wins and completion-wins children, and the
+Phase E1 reset, response-ready drain, and response-ready completion children;
+Phases B-E1 add no artifact or build target. It is host real-process lifecycle
 evidence rather than a production daemon or native foreign-target run.
 
 `tools/verify.sh affected-fast` selects `unary-http-test` once for HTTP
@@ -295,40 +341,50 @@ implementation change selects `unary-text-service-test`, `unary-http-test`, and
 `unary-server-process-test`. A shared server adapter/API implementation change
 selects the HTTP and managed-process roots without the service-only root. A
 process-fixture-only change selects the managed-process root alone. All
-selected host roots share one Zig invocation. Complete affected verification
-selects only the corresponding compile-only companions on retained targets;
-those foreign builds are compile evidence, not native serving evidence. The
+selected host roots share one Zig invocation.
+Ordinary pull requests and `main` pushes run this bounded Debug
+`affected-fast` plan. Complete affected verification selects only the
+corresponding compile-only companions on retained targets and remains an
+explicit manual or milestone promotion action; broad exhaustive, retained
+target, and hardware work remains manual, tagged-release, or milestone work.
+Those foreign builds are compile evidence, not native serving evidence. The
 Phase B receive-drain, Phase C receive-timeout, and Phase D admitted-work drain
-cases remain inside the existing process executable, test target, and
-compile-only companion.
+cases plus Phase E1 reset/response-ready cases remain inside the existing
+process executable, test target, and compile-only companion.
 Package-aware CLI changes continue to share the unary acceptance root and
 installed text-runtime golden path in one Zig invocation.
 
 ## Deliberate nonclaims and next work
 
 This slice establishes an experimental serial loopback socket, bounded JSON
-profile, retained client, and focused managed child-process Phases A-D. Phase C
-is a pre-admission receive timeout, not a full-request or service-level
-guarantee. Phase D cancels admitted execution only when managed drain wins; it
-does not add disconnect- or elapsed-time cancellation, kernel preemption, or
-cancellation of a blocked response write. This slice does not establish a
-packaged production daemon, non-loopback serving, concurrent listener queue,
+profile, retained client, and focused managed child-process Phases A-D plus
+Phase E1. Phase C is a pre-admission receive timeout, not a full-request or
+service-level guarantee. Phase D cancels admitted execution only when managed
+drain wins. Phase E1 detects a reset only at a between-quantum checkpoint and
+cancels a response only at `response_ready`, before its first write. It does
+not detect orderly FIN abandonment, preempt an in-flight drive or kernel call,
+interrupt a slow or already kernel-blocked response write, add a full-request
+elapsed timeout, or prove peer receipt. A successful local writer flush is not
+a delivery acknowledgement. This slice does not establish a packaged
+production daemon, non-loopback serving, concurrent listener queue,
 process-wide overload policy, streaming publication, durable idempotency or
 crash recovery, process-death recovery, authentication, authorization, TLS,
 automatic retry, quota enforcement, GPU execution, production-model quality,
 load evidence, or performance.
 Retained-target compilation is not native Windows or FreeBSD serving proof,
-and native deadline behavior on those systems remains unproven. The next
-serving slices are:
+and native reset, response-write, and deadline behavior on those systems
+remains unproven. The next serving slices are:
 
-1. add slow-response-write and disconnect cancellation with exact connection
-   outcome accounting;
-2. define a bounded listener queue, backpressure, and concurrent-serving
+1. extend abandonment detection to orderly FIN and interrupt slow or already
+   blocked response writes with exact connection outcome accounting;
+2. add a full-request elapsed-time cancellation boundary distinct from the
+   logical Scheduler deadline;
+3. define a bounded listener queue, backpressure, and concurrent-serving
    overload campaign;
-3. add forced process-death evidence independently of checkpoint-aware drain
+4. add forced process-death evidence independently of checkpoint-aware drain
    and durable restart;
-4. add load generation only after those process boundaries exist, separating
+5. add load generation only after those process boundaries exist, separating
    admission latency, first-token latency, throughput, fairness, and cleanup;
-5. add committed-token streaming without exposing an unpublished token; and
-6. add authenticated authority, quota, and transport-security adapters around
+6. add committed-token streaming without exposing an unpublished token; and
+7. add authenticated authority, quota, and transport-security adapters around
    the unchanged execution state machine.
