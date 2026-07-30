@@ -157,10 +157,14 @@ before the first stable release.
 - R1k-b8 Phase E2a replaces managed response writes with bounded nonblocking
   send quanta and distinguishes a drain request, an effectively observed
   cancellation, and a transport failure. Phase E2b adds an optional managed
-  full-request elapsed-time boundary from accept through response retirement.
+  full-request elapsed-time boundary from accept through local response write
+  completion. Once local completion wins, later response retirement or
+  observer cleanup cannot relabel it as a timeout. A timeout claimed before
+  completion publication remains the lifecycle winner even if already-flushed
+  bytes leave the transport outcome as `write_completed`.
   It shares the accept-origin monotonic clock with the earlier receive budget,
   rechecks the deadline under the lifecycle lock at admission, each bounded
-  work checkpoint, response publication, writer checkpoints, and retirement,
+  work checkpoint, response publication, and writer checkpoints,
   and closes an expired connection without attempting a post-deadline HTTP
   error. Exact evidence separately records the timeout signal, newly cancelled
   work, a response suppressed before its first byte, requested writer stop,
@@ -171,6 +175,32 @@ before the first stable release.
   the same child and zero active service or Bank ownership. This boundary is
   distinct from both the pre-admission receive timeout and the request's
   logical Scheduler deadline.
+- Public `PeerSendClosePolicyV1` now makes the post-admission TCP
+  send-half-close decision explicit. At the admitted-work checkpoint, the
+  default `preserve_response` policy records FIN and continues normal response
+  publication; the managed-only
+  `abandon_after_complete_request` policy treats that observation as
+  abandonment. At `request_admitted` it cancels only the exact fenced work
+  handle and keeps
+  `peer_send_closed_connections` distinct from
+  `peer_send_close_cancelled_work_connections`. At `response_ready`,
+  `peer_send_close_cancelled_response_connections` records zero-byte
+  `cancelled_before_write`. At `response_writing`, the requested and effective
+  counters separately retain `cancelled_during_write` after an exact one-byte
+  prefix. Receive-side FIN is classified independently as zero request bytes,
+  a partial request head, or a partial declared request body, with exact
+  subtype counters and receive phases. The zero-byte and partial-head cases
+  close without a response; the partial-body case returns the canonical HTTP
+  400 invalid-request response. Each then completes a healthy successor in
+  the same child with exact connection, terminal-record, Service, and Bank
+  accounting. A final-send control delivers real peer `shutdown(.send)` only
+  after the retained `response_written` barrier. It makes no post-send socket
+  probe, advances no FIN observation or cancellation counter, and retains
+  local `write_completed` plus a healthy successor. Together with the four
+  admitted/response-phase controls, these are eight deterministic native POSIX
+  child controls. They reuse the existing process artifact, compile root, and
+  bounded CI selection. They prove native POSIX correctness only; peer delivery
+  acknowledgement, native foreign-OS behavior, and performance remain open.
 - R1k-b8 Phase F1 now has a production-path concurrent transport
   implementation behind `ManagedConcurrentLifecycleV1`,
   `serveManagedConcurrentListenerV1`,
@@ -363,13 +393,15 @@ before the first stable release.
   with zero active service requests and Bank ownership. Phases B-E1 reuse the
   existing dual-mode process artifact and compile roots.
   Phase C remains a pre-admission timeout rather than a full-request timeout.
-  Phase E1 does not detect orderly FIN abandonment, preempt an in-flight drive,
-  interrupt a slow or already kernel-blocked response write, or establish a
-  peer delivery acknowledgement; `response_written` proves only a local
-  flush. The slice adds no concurrent serving, durable idempotency or crash
-  recovery, native Windows/FreeBSD serving proof, load, or performance
-  evidence. Native reset, response-write, and deadline behavior on Windows and
-  FreeBSD remains unproven.
+  Receive FIN now has exact zero-byte, partial-head, and partial-body
+  classification, while the final-send control retains local completion after
+  a real peer send-half-close at `response_written`. It makes no post-send
+  probe and does not establish peer delivery acknowledgement;
+  `response_written` proves only local completion. The slice does not preempt
+  an in-flight drive and adds no concurrent serving, durable idempotency or
+  crash recovery, native Windows/FreeBSD serving proof, load, or performance
+  evidence. Native reset, FIN, response-write, and deadline behavior on
+  Windows and FreeBSD remains unproven.
 
 ### Changed
 
@@ -473,8 +505,10 @@ before the first stable release.
   complete affected verification selects only their corresponding compile-only
   companions on retained targets. The Phase B partial-receive drain, Phase C
   monotonic receive-timeout, Phase D admitted-work drain, and Phase E1
-  reset/response-ready cases reuse the same dual-mode artifact and targets,
-  adding no compile root.
+  reset/response-ready plus FIN-policy cases across receive,
+  `request_admitted`, opt-in `response_ready`/`response_writing`, and the
+  final-send local-completion control reuse the same dual-mode artifact and
+  targets, adding no compile root or CI load profile.
   Prepared-text session changes now select only the CPU, durable, and host-tool
   compile profiles, while the process-local variable-terminal module selects
   only the host-tool profile; both reuse that same host golden DAG instead of

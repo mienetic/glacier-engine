@@ -157,11 +157,18 @@ advances it to `request_received`. Phase D advances an admitted completion to
 `request_admitted`. Phase E1 adds exact `response_ready`, `response_writing`,
 and `response_written` phases. Phase E2a makes the managed response writer
 nonblocking and interruptible at bounded send checkpoints. Phase E2b adds one
-full-request elapsed deadline from accept through response retirement. The
-snapshot retains exact receive-drain, receive-timeout, admitted-work
-drain-cancellation, peer-reset, peer-reset work cancellation, response-ready
-drain-cancellation, response-write drain request, effective response-write
-cancellation, and independent response-write transport-failure counts. It also
+full-request elapsed deadline from accept through local response write
+completion; later response retirement or observer cleanup cannot change the
+already-selected lifecycle winner. The snapshot retains exact receive-drain,
+receive-timeout, admitted-work
+drain-cancellation, peer-reset, peer-reset work cancellation, observed peer
+send-half-close, zero-request-byte FIN, partial-request-head FIN,
+partial-request-body FIN, the last receive FIN phase, peer-send-close work
+cancellation, peer-send-close response cancellation before write,
+peer-send-close requested/effective response-write cancellation,
+response-ready drain-cancellation, response-write drain request, effective
+response-write cancellation, and independent response-write transport-failure
+counts. It also
 separates the full-request signal, newly cancelled work, response cancellation
 before the first byte, response-write stop request, and effective
 response-write cancellation. Every distinct outcome retains its exact count
@@ -223,6 +230,30 @@ bounded 1-millisecond-to-1-second event-driven wait at each checkpoint when it
 needs reset observation to precede the next quantum; only a typed reset or
 not-connected result from the non-consuming socket probe counts as reset.
 
+Before admission, orderly receive EOF is classified independently of the
+post-admission policy. `peer_send_close_zero_request_bytes_connections`,
+`peer_send_close_partial_request_head_connections`, and
+`peer_send_close_partial_request_body_connections` distinguish zero bytes at
+`receiving_head`, a nonempty partial head at `receiving_head`, and a complete
+head plus partial declared body at `request_head_received`.
+`last_peer_send_close_receive_phase` retains the exact phase. Zero-byte and
+partial-head cases close without a response; partial body produces the
+canonical HTTP 400 invalid-request response. This receive classification
+advances no FIN work or response cancellation counter.
+
+The admitted-work checkpoint may observe a TCP FIN without consuming response
+bytes. Public `PeerSendClosePolicyV1` defaults to
+`preserve_response`, because a peer that closed only its send half may still
+be waiting for the response. A managed host may select
+`abandon_after_complete_request` only when its application contract defines
+FIN after a complete request as abandonment; the unmanaged listener rejects
+this opt-in instead of ignoring it. `peer_send_closed_connections` and
+`last_peer_send_closed_phase` retain
+the observation independently. Only an exact newly cancelled fenced handle
+increments `peer_send_close_cancelled_work_connections` and sets
+`last_peer_send_close_cancelled_work_phase`; both phases are
+`request_admitted`.
+
 After a bounded response has been encoded, the response control advances the
 exact fenced connection to `response_ready` before the first response write.
 Drain may win at that boundary, record
@@ -232,6 +263,26 @@ from being written. Otherwise the serving thread alone advances through
 `response_writing` and `response_written`, flushes its local writer, and closes
 the socket. `response_written` is local-flush evidence, not acknowledgement
 that the peer received or processed the response.
+
+Response-side FIN probing is enabled only by
+`abandon_after_complete_request`; the default adds no response-side socket
+probe and continues publication. Under that opt-in, FIN at `response_ready`
+increments
+`peer_send_close_cancelled_response_connections`, fixes its last
+phase to `response_ready`, records `cancelled_before_write`, and writes zero
+response bytes. At `response_writing`,
+`peer_send_close_requested_response_write_connections` records the stop
+request and `peer_send_close_cancelled_response_write_connections` records its
+effective observation, both at `response_writing`. The retained child reaches
+that checkpoint after one real positive one-byte send and exposes exactly that
+prefix before `cancelled_during_write`.
+
+A separate final-send control delivers real peer `shutdown(.send)` only after
+the retained `response_written` barrier, when the local writer has no response
+bytes left. It performs no post-send transport probe or FIN counter update.
+Local `write_completed` remains the transport outcome; the deterministic
+observer barrier proves only local completion, not peer delivery or SLA
+success.
 
 Phase E2a replaces the managed response path's blocking writer with one bounded
 nonblocking writer. `ServerConfig.response_write_quantum_bytes` is inclusive
@@ -261,7 +312,11 @@ Zero disables it; valid nonzero values are inclusive from 1 millisecond
 through 60 seconds. The ordinary unmanaged listener rejects a nonzero value
 rather than silently dropping the contract. One monotonic clock starts
 immediately after `accept`, shares that accept origin with the receive
-deadline, and bounds the connection through response retirement. When both
+deadline, and adjudicates the lifecycle timeout-versus-local-completion winner
+through local response write completion. A timeout claimed before completion
+publication remains the lifecycle winner even if already-flushed bytes leave
+the transport outcome as `write_completed`. Once local completion wins, later
+response retirement or observer cleanup cannot change that winner. When both
 elapsed timers are enabled, `receive_timeout_ns` must be strictly less than
 `full_request_timeout_ns`; this makes the receive timeout the unique winner
 while an incomplete request is still in `receiving_head` or
@@ -497,6 +552,45 @@ instead of allowing work to complete. The same child then serves a valid
 model-list request and closes with two accepted, one completed, one failed, one
 peer reset and one peer-reset work cancellation at `request_admitted`, one
 cancelled service terminal, and zero Bank ownership.
+
+Eight deterministic native POSIX FIN children call real
+`shutdown(.send)`. Three receive-side children classify zero request bytes at
+`receiving_head`, a partial request head at `receiving_head`, and a partial
+declared request body at `request_head_received`. The zero-byte and
+partial-head peers receive orderly EOF without a response and close at
+accepted/completed/failed `2/1/1`; the partial-body peer receives the canonical
+HTTP 400 invalid-request response and closes at `2/2/0`. Each serves a healthy
+successor, retains one terminal service record, advances only the common FIN
+counter plus its exact receive subtype and phase, leaves FIN work/response
+cancellation, drain, and timeout counters zero, and closes with zero active
+Service/Bank ownership.
+
+Two admitted-work children exercise the public send-half-close policy after
+their exact barriers. The default child records one peer send close at
+`request_admitted`, records no peer-send-close work cancellation, and receives
+the full oracle-matched response. The opt-in child records both counters once
+at `request_admitted`, receives orderly EOF with zero response bytes, then
+serves a healthy completion successor in the same child. Their final frames
+retain exact accepted/completed/failed connection counts, one terminal record
+for preservation or two for cancellation plus successor, zero active service
+requests, and zero Bank ownership. Two additional opt-in children use real
+`shutdown(.send)` at the response barriers. The `response_ready` case retains
+zero response bytes, `cancelled_before_write`, and one response-cancellation
+counter at that exact phase. The `response_writing` case uses a one-byte
+quantum, retains exactly one response byte, and records one requested plus one
+effective `cancelled_during_write` counter at that phase. Each then serves a
+healthy successor in the same child and closes with two accepted, one
+completed, one failed connection, two terminal service records, zero active
+service requests, and zero Bank ownership.
+
+The final-send child waits for the retained `response_written` barrier before
+the controller performs real peer `shutdown(.send)`. The runtime makes no
+post-send socket probe, so every FIN observation/cancellation counter remains
+zero and local `write_completed` stays the outcome. The client receives the
+full oracle-matched completion, a healthy successor completes, and the child
+closes with two accepted/completed connections, zero failures, two terminal
+records, and zero Service/Bank ownership. This is local-completion evidence,
+not peer-delivery or SLA evidence.
 The response-drain child reaches `response_ready`, invokes ordinary drain
 before releasing the serving thread, and closes with one accepted, zero
 completed, one failed, one response cancellation at `response_ready`,
@@ -805,9 +899,11 @@ response ownership, and final zero Scheduler/Bank ownership. The process
 acceptance separately reuses one dual-mode executable for its supervisor,
 clean/restart children, Phase B drain children, Phase C receive-timeout
 children, the Phase D cancellation-wins and completion-wins children, and the
-Phase E1 reset/response-ready children plus the Phase E2a response-writing
-drain/completion siblings, Phase E2b elapsed-timeout children, the Phase F1
-queued-timeout, simultaneous-drain, and stale-owner children, and the
+Phase E1 reset/response-ready children plus the three receive FIN classes,
+admitted-work policy, opt-in `response_ready`/`response_writing` probes, and
+final-send local-completion child, plus the Phase E2a response-writing
+drain/completion siblings, Phase E2b elapsed-timeout children, and the Phase
+F1 queued-timeout, simultaneous-drain, and stale-owner children, plus the
 application-rejection child; Phases B-F1 and rejection evidence add no artifact
 or build target. It is
 host real-process lifecycle evidence rather than a production daemon or native
@@ -830,10 +926,12 @@ For this surface, the retained compile targets are x86_64 and AArch64 Linux
 musl, x86_64 Windows GNU, and x86_64 FreeBSD. Those foreign builds are
 multi-OS compile evidence, not native socket, timer, cancellation, or serving
 evidence. The Phase B receive-drain, Phase C receive-timeout, and Phase D
-admitted-work drain cases plus Phase E1 reset/response-ready, Phase E2a
-interruptible response-write, and Phase E2b full-request-timeout cases remain
-inside the existing process executable, test target, and compile-only
-companion.
+admitted-work drain cases plus Phase E1 reset/response-ready and FIN-policy
+cases across receive, `request_admitted`, opt-in
+`response_ready`/`response_writing`, and final-send local completion, Phase
+E2a interruptible response-write, and Phase E2b full-request-timeout cases
+remain inside the existing process executable, test target, and compile-only
+companion. They add no compile root or CI load profile.
 Shared prepared-text session and package-aware CLI changes continue to share
 the unary acceptance root and
 installed text-runtime golden path in one Zig invocation.
@@ -849,10 +947,14 @@ cancels admitted execution only when managed drain wins. Phase E1 detects a
 reset only at a between-quantum checkpoint and cancels a response at
 `response_ready`, before its first write. Phase E2a bounds managed kernel sends
 and makes progress/`WouldBlock` cancellation observable after writing starts.
-Phase E2b adds a full-request elapsed boundary, but it does not detect orderly
-FIN abandonment, preempt an in-flight model drive or kernel call, acknowledge
-peer receipt, or turn the logical Scheduler deadline into wall time. A
-successful local writer completion is not a delivery acknowledgement.
+Phase E2b adds a full-request elapsed boundary but does not itself classify
+FIN, preempt an in-flight model drive or kernel call, acknowledge peer receipt,
+or turn the logical Scheduler deadline into wall time. The separate FIN
+controls now cover zero-byte, partial-head, and partial-body receive closure,
+`request_admitted`, opt-in zero-byte `response_ready`, opt-in one-byte
+`response_writing`, and final-send local completion. The final-send control
+makes no post-send socket probe and leaves all FIN counters zero. A successful
+local writer completion is not a delivery acknowledgement or SLA result.
 
 Phase F1 makes multiple transport workers available around one bounded
 accepted FIFO, but model admission and execution remain serialized. FIFO
@@ -894,13 +996,14 @@ serving, streaming publication, durable idempotency or crash recovery,
 process-death recovery, authentication, authorization, TLS, automatic retry,
 quota enforcement, GPU execution, production-model quality, overload
 performance, or a replicated performance claim. Retained-target compilation
-is not native Windows or FreeBSD serving proof, and native reset,
+is not native Windows or FreeBSD serving proof, and native reset, FIN,
 response-write, deadline, queue, watchdog, and drain behavior on those systems
 remains unproven. The next serving slices are:
 
-1. broaden the fixed all-completed, retained-record-capacity, and closed-loop
-   queued-receive-timeout native CPU profiles with additional mixed-outcome
-   profiles, then retain eligible captures across reproducible native machines.
+1. retain longer and repeated captures of the fixed all-completed,
+   retained-record-capacity, queued-receive-timeout, and scheduled
+   transient-pressure native CPU profiles across reproducible native machines,
+   then add production-model profiles.
    Continue to report only profile-defined transport timing, FIFO queue delay,
    HTTP first-byte latency for this non-streaming unary profile,
    terminal-response latency, throughput, outcome mix, and cleanup under a
@@ -908,11 +1011,8 @@ remains unproven. The next serving slices are:
    byte as first-token latency, treat retained-record saturation or the fixed
    queue-pressure shape as throughput superiority or general overload, or infer
    fairness, GPU performance, or native foreign-OS behavior;
-2. define body-complete half-close, cancellation, response, and outcome
-   ownership policy before extending orderly-FIN abandonment detection with
-   exact connection accounting;
-3. add forced process-death evidence independently of checkpoint-aware drain
+2. add forced process-death evidence independently of checkpoint-aware drain
    and durable restart;
-4. add committed-token streaming without exposing an unpublished token; and
-5. add authenticated authority, quota, and transport-security adapters around
+3. add committed-token streaming without exposing an unpublished token; and
+4. add authenticated authority, quota, and transport-security adapters around
    the unchanged execution state machine.

@@ -36,6 +36,10 @@ const drain_terminal_work_command = "drain-terminal-work\n";
 const peer_reset_arm_command = "peer-reset-arm\n";
 const peer_reset_release_command = "peer-reset-release\n";
 const peer_reset_drain_command = "peer-reset-drain\n";
+const peer_send_close_arm_command = "peer-send-close-arm\n";
+const peer_send_close_release_command =
+    "peer-send-close-release\n";
+const peer_send_close_drain_command = "peer-send-close-drain\n";
 const drain_response_ready_command = "drain-response-ready\n";
 const complete_response_ready_command = "complete-response-ready\n";
 const drain_response_writing_command =
@@ -89,6 +93,22 @@ const generation_native_load_queued_receive_timeout: u64 =
     0x4753_5052_0000_0118;
 const generation_native_load_open_loop_transient_pressure: u64 =
     0x4753_5052_0000_0119;
+const generation_peer_send_close_preserve_work: u64 =
+    0x4753_5052_0000_011a;
+const generation_peer_send_close_cancel_work: u64 =
+    0x4753_5052_0000_011b;
+const generation_peer_send_close_response_ready: u64 =
+    0x4753_5052_0000_011c;
+const generation_peer_send_close_response_writing: u64 =
+    0x4753_5052_0000_011d;
+const generation_peer_send_close_zero_request_bytes: u64 =
+    0x4753_5052_0000_011e;
+const generation_peer_send_close_partial_request_head: u64 =
+    0x4753_5052_0000_011f;
+const generation_peer_send_close_partial_request_body: u64 =
+    0x4753_5052_0000_0120;
+const generation_peer_send_close_final_send: u64 =
+    0x4753_5052_0000_0121;
 const frame_max_bytes = 1024;
 const concurrent_event_capacity = 512;
 const native_load_flow_count: usize = 8;
@@ -503,6 +523,14 @@ const WorkerProfile = enum {
     native_load_retention_capacity,
     native_load_queued_receive_timeout,
     native_load_open_loop_transient_pressure,
+    peer_send_close_preserve_work,
+    peer_send_close_cancel_work,
+    peer_send_close_response_ready,
+    peer_send_close_response_writing,
+    peer_send_close_zero_request_bytes,
+    peer_send_close_partial_request_head,
+    peer_send_close_partial_request_body,
+    peer_send_close_final_send,
 
     fn wire(self: WorkerProfile) []const u8 {
         return switch (self) {
@@ -513,6 +541,14 @@ const WorkerProfile = enum {
             .drain_work => "drain-work",
             .drain_terminal_work => "drain-terminal-work",
             .peer_reset_work => "peer-reset-work",
+            .peer_send_close_preserve_work => "peer-send-close-preserve-work",
+            .peer_send_close_cancel_work => "peer-send-close-cancel-work",
+            .peer_send_close_response_ready => "peer-send-close-response-ready",
+            .peer_send_close_response_writing => "peer-send-close-response-writing",
+            .peer_send_close_zero_request_bytes => "peer-send-close-zero-request-bytes",
+            .peer_send_close_partial_request_head => "peer-send-close-partial-request-head",
+            .peer_send_close_partial_request_body => "peer-send-close-partial-request-body",
+            .peer_send_close_final_send => "peer-send-close-final-send",
             .drain_response_ready => "drain-response-ready",
             .complete_response_ready => "complete-response-ready",
             .drain_response_writing => "drain-response-writing",
@@ -549,6 +585,14 @@ const WorkerProfile = enum {
             .drain_work,
             .drain_terminal_work,
             .peer_reset_work,
+            .peer_send_close_preserve_work,
+            .peer_send_close_cancel_work,
+            .peer_send_close_response_ready,
+            .peer_send_close_response_writing,
+            .peer_send_close_zero_request_bytes,
+            .peer_send_close_partial_request_head,
+            .peer_send_close_partial_request_body,
+            .peer_send_close_final_send,
             .drain_response_ready,
             .complete_response_ready,
             .drain_response_writing,
@@ -579,6 +623,14 @@ const WorkerProfile = enum {
             .drain_work,
             .drain_terminal_work,
             .peer_reset_work,
+            .peer_send_close_preserve_work,
+            .peer_send_close_cancel_work,
+            .peer_send_close_response_ready,
+            .peer_send_close_response_writing,
+            .peer_send_close_zero_request_bytes,
+            .peer_send_close_partial_request_head,
+            .peer_send_close_partial_request_body,
+            .peer_send_close_final_send,
             .drain_response_ready,
             .complete_response_ready,
             .drain_response_writing,
@@ -625,22 +677,59 @@ const WorkerProfile = enum {
     }
 
     fn peerResetPollTimeoutNs(self: WorkerProfile) u64 {
-        return if (self == .peer_reset_work)
+        return if (self == .peer_reset_work or
+            self == .peer_send_close_preserve_work or
+            self == .peer_send_close_cancel_work or
+            self == .peer_send_close_response_ready or
+            self == .peer_send_close_response_writing)
             retained_peer_reset_poll_timeout_ns
         else
             0;
+    }
+
+    fn peerSendClosePolicy(
+        self: WorkerProfile,
+    ) server_api.PeerSendClosePolicyV1 {
+        return if (self == .peer_send_close_cancel_work or
+            self == .peer_send_close_response_ready or
+            self == .peer_send_close_response_writing or
+            self == .peer_send_close_partial_request_body or
+            self == .peer_send_close_final_send)
+            .abandon_after_complete_request
+        else
+            .preserve_response;
+    }
+
+    fn peerSendCloseReceivePhase(
+        self: WorkerProfile,
+    ) ?server_api.ManagedConnectionPhaseV1 {
+        return switch (self) {
+            .peer_send_close_zero_request_bytes,
+            .peer_send_close_partial_request_head,
+            => .receiving_head,
+            .peer_send_close_partial_request_body => .request_head_received,
+            else => null,
+        };
+    }
+
+    fn isPeerSendCloseReceive(self: WorkerProfile) bool {
+        return self.peerSendCloseReceivePhase() != null;
     }
 
     fn usesWorkBarrier(self: WorkerProfile) bool {
         return self == .drain_work or
             self == .drain_terminal_work or
             self == .peer_reset_work or
+            self == .peer_send_close_preserve_work or
+            self == .peer_send_close_cancel_work or
             self == .full_request_timeout_request_admitted;
     }
 
     fn usesResponseBarrier(self: WorkerProfile) bool {
         return self == .drain_response_ready or
             self == .complete_response_ready or
+            self == .peer_send_close_response_ready or
+            self == .peer_send_close_final_send or
             self == .full_request_timeout_response_ready or
             self.usesResponseProgressBarrier();
     }
@@ -648,6 +737,7 @@ const WorkerProfile = enum {
     fn usesResponseProgressBarrier(self: WorkerProfile) bool {
         return self == .drain_response_writing or
             self == .complete_response_writing or
+            self == .peer_send_close_response_writing or
             self == .full_request_timeout_response_writing;
     }
 
@@ -660,6 +750,11 @@ const WorkerProfile = enum {
 
     fn isPhaseE(self: WorkerProfile) bool {
         return self == .peer_reset_work or
+            self == .peer_send_close_preserve_work or
+            self == .peer_send_close_cancel_work or
+            self == .peer_send_close_zero_request_bytes or
+            self == .peer_send_close_partial_request_head or
+            self == .peer_send_close_partial_request_body or
             self.usesResponseBarrier() or
             self.isFullRequestTimeout();
     }
@@ -2090,6 +2185,7 @@ const WorkAdmissionBarrierV1 = struct {
     cancellation: ?http_server.WorkCancellationReceiptV1 = null,
     cancellation_identity_mismatch: bool = false,
     checkpoint_failed: bool = false,
+    checkpoint_calls: u64 = 0,
     checkpoint_result_reached: std.Thread.ResetEvent = .{},
     retired_reached: std.Thread.ResetEvent = .{},
     rejections: [2]http_server.RequestAdmissionRejectionV1 =
@@ -2175,7 +2271,7 @@ const WorkAdmissionBarrierV1 = struct {
         self.checkpoint_result_reached.set();
     }
 
-    fn unobservedPeerResetOpaque(
+    fn unobservedRequiredPeerStopOpaque(
         context: *anyopaque,
         identity: http_server.WorkIdentityV1,
     ) anyerror!http_server.WorkCheckpointDispositionV1 {
@@ -2183,23 +2279,50 @@ const WorkAdmissionBarrierV1 = struct {
             @ptrCast(@alignCast(context));
         const admitted_identity = self.identity orelse
             return error.MissingWorkAdmission;
-        if (!std.meta.eql(admitted_identity, identity))
+        if (!std.meta.eql(admitted_identity, identity)) {
+            if (self.passthrough_after_first)
+                return .proceed;
             return error.WorkIdentityMismatch;
+        }
         self.checkpoint_failed = true;
         self.checkpoint_result_reached.set();
-        return error.PeerResetPollTimedOut;
+        return error.RequiredPeerStopPollTimedOut;
+    }
+
+    fn proceedCheckpointOpaque(
+        context: *anyopaque,
+        identity: http_server.WorkIdentityV1,
+    ) anyerror!http_server.WorkCheckpointDispositionV1 {
+        const self: *WorkAdmissionBarrierV1 =
+            @ptrCast(@alignCast(context));
+        const admitted_identity = self.identity orelse
+            return error.MissingWorkAdmission;
+        if (!std.meta.eql(admitted_identity, identity)) {
+            if (self.passthrough_after_first)
+                return .proceed;
+            return error.WorkIdentityMismatch;
+        }
+        self.checkpoint_calls = try std.math.add(
+            u64,
+            self.checkpoint_calls,
+            1,
+        );
+        return .proceed;
     }
 
     fn control(
         self: *WorkAdmissionBarrierV1,
-        require_peer_reset: bool,
+        require_peer_stop: bool,
+        observe_checkpoint: bool,
     ) http_server.RequestWorkControlV1 {
         return .{
             .context = self,
             .admitted_fn = admittedOpaque,
             .retired_fn = retiredOpaque,
-            .checkpoint_fn = if (require_peer_reset)
-                unobservedPeerResetOpaque
+            .checkpoint_fn = if (require_peer_stop)
+                unobservedRequiredPeerStopOpaque
+            else if (observe_checkpoint)
+                proceedCheckpointOpaque
             else
                 null,
             .cancellation_fn = cancellationOpaque,
@@ -2213,13 +2336,18 @@ const ResponseReadyBarrierV1 = struct {
     release: std.Thread.ResetEvent = .{},
     progress_reached: std.Thread.ResetEvent = .{},
     progress_release: std.Thread.ResetEvent = .{},
+    written_reached: std.Thread.ResetEvent = .{},
+    written_release: std.Thread.ResetEvent = .{},
     retired_reached: std.Thread.ResetEvent = .{},
     ready_calls: u8 = 0,
     writing_calls: u8 = 0,
+    written_calls: u8 = 0,
     progress_calls: u64 = 0,
     progress_bytes: u64 = 0,
     outcome: ?http_server.ResponseWriteOutcomeV1 = null,
     passthrough_response: bool = false,
+    observe_written: bool = false,
+    invalid_written_boundary: bool = false,
 
     fn readyOpaque(context: *anyopaque) anyerror!void {
         const self: *ResponseReadyBarrierV1 =
@@ -2291,6 +2419,19 @@ const ResponseReadyBarrierV1 = struct {
         self.retired_reached.set();
     }
 
+    fn writtenOpaque(context: *anyopaque) void {
+        const self: *ResponseReadyBarrierV1 =
+            @ptrCast(@alignCast(context));
+        if (self.passthrough_response) return;
+        if (self.written_calls != 0) {
+            self.invalid_written_boundary = true;
+            return;
+        }
+        self.written_calls = 1;
+        self.written_reached.set();
+        self.written_release.wait();
+    }
+
     fn control(
         self: *ResponseReadyBarrierV1,
         observe_progress: bool,
@@ -2302,6 +2443,10 @@ const ResponseReadyBarrierV1 = struct {
             .retired_fn = retiredOpaque,
             .progress_fn = if (observe_progress)
                 progressOpaque
+            else
+                null,
+            .written_fn = if (self.observe_written)
+                writtenOpaque
             else
                 null,
         };
@@ -2433,20 +2578,30 @@ fn runWorker(
     const listen_address = listener.listen_address;
 
     try lifecycle.markReadyV1();
-    var work_barrier: WorkAdmissionBarrierV1 = .{};
-    var response_barrier: ResponseReadyBarrierV1 = .{};
+    var work_barrier: WorkAdmissionBarrierV1 = .{
+        .passthrough_after_first = profile == .peer_send_close_cancel_work,
+    };
+    var response_barrier: ResponseReadyBarrierV1 = .{
+        .observe_written = profile == .peer_send_close_final_send,
+    };
     var serve_context: ServeContext = .{
         .listener = &listener,
         .runtime = &runtime,
         .lifecycle = &lifecycle,
         .config = .{
+            .stop_after_requests = if (profile.isPeerSendCloseReceive()) 2 else null,
             .receive_timeout_ns = profile.receiveTimeoutNs(),
             .full_request_timeout_ns = profile.fullRequestTimeoutNs(),
             .peer_reset_poll_timeout_ns = profile.peerResetPollTimeoutNs(),
+            .peer_send_close_policy = profile.peerSendClosePolicy(),
             .response_write_quantum_bytes = profile.responseWriteQuantumBytes(),
         },
         .work_observer = if (profile.usesWorkBarrier())
-            work_barrier.control(profile == .peer_reset_work)
+            work_barrier.control(
+                profile == .peer_reset_work or
+                    profile == .peer_send_close_cancel_work,
+                profile == .peer_send_close_preserve_work,
+            )
         else
             null,
         .response_observer = if (profile.usesResponseBarrier())
@@ -2469,6 +2624,8 @@ fn runWorker(
             response_barrier.release.set();
         if (profile.usesResponseProgressBarrier())
             response_barrier.progress_release.set();
+        if (profile == .peer_send_close_final_send)
+            response_barrier.written_release.set();
         forceDrainAndWake(
             &lifecycle,
             &runtime,
@@ -2512,6 +2669,48 @@ fn runWorker(
         );
     }
     const stdin = std.fs.File.stdin();
+    if (profile.isPeerSendCloseReceive()) {
+        try expectControlLine(
+            stdin,
+            peer_send_close_drain_command,
+        );
+        serve_thread.join();
+        joined = true;
+        if (serve_context.thread_error) |err| return err;
+        if (http_server.acceptingCompletionsV1(&runtime))
+            return error.PeerSendCloseReceiveAdmissionStillOpen;
+        const stopped = lifecycle.snapshotV1();
+        try validatePeerSendCloseReceiveSnapshot(
+            stopped,
+            profile,
+        );
+        const service_snapshot =
+            try harness.service.snapshotV1();
+        if (service_snapshot.active_requests != 0 or
+            service_snapshot.terminal_records != 1 or
+            service_snapshot.completed_records != 1 or
+            service_snapshot.cancelled_records != 0 or
+            service_snapshot.failed_records != 0 or
+            service_snapshot.bank == null or
+            !service_snapshot.bank.?.used.isZero())
+        {
+            return error.InvalidPeerSendCloseReceiveServiceReceipt;
+        }
+        try emitDraining(stopped, null);
+        const close_receipt = try harness.service.closeV1();
+        if (!close_receipt.bank_snapshot.used.isZero() or
+            close_receipt.terminal_records != 1)
+        {
+            return error.InvalidPeerSendCloseReceiveCloseReceipt;
+        }
+        try emitClosed(
+            stopped,
+            service_snapshot.active_requests,
+            close_receipt.terminal_records,
+            null,
+        );
+        return;
+    }
     const drain_control: DrainControl = if (profile == .peer_reset_work) blk: {
         try expectControlLine(stdin, peer_reset_arm_command);
         work_barrier.reached.wait();
@@ -2535,8 +2734,174 @@ fn runWorker(
         try emitCheckpoint("PEER_RESET", generation);
         try expectControlLine(stdin, peer_reset_drain_command);
         break :blk .immediate;
+    } else if (profile == .peer_send_close_preserve_work) blk: {
+        try expectControlLine(stdin, peer_send_close_arm_command);
+        work_barrier.reached.wait();
+        try emitCheckpoint("WORK_ADMITTED", generation);
+        try expectControlLine(
+            stdin,
+            peer_send_close_release_command,
+        );
+        work_barrier.release.set();
+        work_barrier.retired_reached.wait();
+        if (work_barrier.cancellation != null or
+            work_barrier.cancellation_identity_mismatch or
+            work_barrier.checkpoint_failed or
+            work_barrier.checkpoint_calls == 0)
+        {
+            return error.InvalidPreservedPeerSendClose;
+        }
+        try emitCheckpoint(
+            "PEER_SEND_CLOSE_PRESERVED",
+            generation,
+        );
+        try expectControlLine(
+            stdin,
+            peer_send_close_drain_command,
+        );
+        break :blk .immediate;
+    } else if (profile == .peer_send_close_cancel_work) blk: {
+        try expectControlLine(stdin, peer_send_close_arm_command);
+        work_barrier.reached.wait();
+        try emitCheckpoint("WORK_ADMITTED", generation);
+        try expectControlLine(
+            stdin,
+            peer_send_close_release_command,
+        );
+        work_barrier.release.set();
+        work_barrier.checkpoint_result_reached.wait();
+        if (work_barrier.checkpoint_failed)
+            return error.PeerSendClosePollTimedOut;
+        const cancellation = work_barrier.cancellation orelse
+            return error.MissingPeerSendCloseCancellation;
+        if (work_barrier.cancellation_identity_mismatch or
+            cancellation.requested_cause != .peer_send_close or
+            cancellation.winner != .peer_send_close or
+            cancellation.outcome != .cancelled or
+            !cancellation.cancellation_was_new)
+        {
+            return error.InvalidPeerSendCloseCancellation;
+        }
+        work_barrier.retired_reached.wait();
+        try emitCheckpoint(
+            "PEER_SEND_CLOSE_CANCELLED",
+            generation,
+        );
+        try expectControlLine(
+            stdin,
+            peer_send_close_drain_command,
+        );
+        break :blk .immediate;
+    } else if (profile == .peer_send_close_response_ready) blk: {
+        try expectControlLine(stdin, peer_send_close_arm_command);
+        response_barrier.reached.wait();
+        try emitCheckpoint("RESPONSE_READY", generation);
+        try expectControlLine(
+            stdin,
+            peer_send_close_release_command,
+        );
+        response_barrier.release.set();
+        response_barrier.retired_reached.wait();
+        if (response_barrier.outcome !=
+            .cancelled_before_write or
+            response_barrier.ready_calls != 1 or
+            response_barrier.writing_calls != 0)
+        {
+            return error.InvalidPeerSendCloseResponseReadyReceipt;
+        }
+        try emitCheckpoint(
+            "PEER_SEND_CLOSE_RESPONSE_CANCELLED",
+            generation,
+        );
+        try expectControlLine(
+            stdin,
+            peer_send_close_drain_command,
+        );
+        break :blk .immediate;
+    } else if (profile == .peer_send_close_response_writing) blk: {
+        try expectControlLine(stdin, peer_send_close_arm_command);
+        response_barrier.reached.wait();
+        response_barrier.release.set();
+        response_barrier.progress_reached.wait();
+        if (response_barrier.ready_calls != 1 or
+            response_barrier.writing_calls != 1 or
+            response_barrier.progress_calls != 1 or
+            response_barrier.progress_bytes != 1)
+        {
+            return error.InvalidPeerSendCloseResponseProgress;
+        }
+        try emitCheckpoint("RESPONSE_WRITING", generation);
+        try expectControlLine(
+            stdin,
+            peer_send_close_release_command,
+        );
+        response_barrier.progress_release.set();
+        response_barrier.retired_reached.wait();
+        if (response_barrier.outcome !=
+            .cancelled_during_write or
+            response_barrier.ready_calls != 1 or
+            response_barrier.writing_calls != 1 or
+            response_barrier.progress_calls != 1 or
+            response_barrier.progress_bytes != 1)
+        {
+            return error.InvalidPeerSendCloseResponseWritingReceipt;
+        }
+        try emitCheckpoint(
+            "PEER_SEND_CLOSE_RESPONSE_CANCELLED",
+            generation,
+        );
+        try expectControlLine(
+            stdin,
+            peer_send_close_drain_command,
+        );
+        break :blk .immediate;
+    } else if (profile == .peer_send_close_final_send) blk: {
+        try expectControlLine(stdin, peer_send_close_arm_command);
+        response_barrier.reached.wait();
+        response_barrier.release.set();
+        response_barrier.written_reached.wait();
+        const written_snapshot = lifecycle.snapshotV1();
+        if (response_barrier.ready_calls != 1 or
+            response_barrier.writing_calls != 1 or
+            response_barrier.written_calls != 1 or
+            response_barrier.invalid_written_boundary or
+            written_snapshot.active_connections != 1 or
+            written_snapshot.active_connection_phase !=
+                .response_written)
+        {
+            return error.InvalidPeerSendCloseFinalSendBoundary;
+        }
+        try emitCheckpoint("RESPONSE_WRITTEN", generation);
+        try expectControlLine(
+            stdin,
+            peer_send_close_release_command,
+        );
+        response_barrier.written_release.set();
+        response_barrier.retired_reached.wait();
+        if (response_barrier.outcome != .write_completed or
+            response_barrier.ready_calls != 1 or
+            response_barrier.writing_calls != 1 or
+            response_barrier.written_calls != 1 or
+            response_barrier.invalid_written_boundary)
+        {
+            return error.InvalidPeerSendCloseFinalSendReceipt;
+        }
+        try emitCheckpoint(
+            "PEER_SEND_CLOSE_FINAL_SEND_COMPLETED",
+            generation,
+        );
+        try expectControlLine(
+            stdin,
+            peer_send_close_drain_command,
+        );
+        break :blk .immediate;
     } else try readDrainControl(stdin);
     if (profile != .peer_reset_work and
+        profile != .peer_send_close_preserve_work and
+        profile != .peer_send_close_cancel_work and
+        profile != .peer_send_close_response_ready and
+        profile != .peer_send_close_response_writing and
+        profile != .peer_send_close_final_send and
         !profileMatchesControl(profile, drain_control))
     {
         return error.InvalidProfileControlPair;
@@ -2700,6 +3065,36 @@ fn runWorker(
                 return error.InvalidPeerResetServiceReceipt;
             }
         },
+        .peer_send_close_preserve_work => {
+            if (service_snapshot.terminal_records != 1 or
+                service_snapshot.cancelled_records != 0 or
+                service_snapshot.completed_records != 1 or
+                service_snapshot.failed_records != 0)
+            {
+                return error.InvalidPeerSendClosePreserveServiceReceipt;
+            }
+        },
+        .peer_send_close_cancel_work => {
+            if (service_snapshot.terminal_records != 2 or
+                service_snapshot.cancelled_records != 1 or
+                service_snapshot.completed_records != 1 or
+                service_snapshot.failed_records != 0)
+            {
+                return error.InvalidPeerSendCloseCancelServiceReceipt;
+            }
+        },
+        .peer_send_close_response_ready,
+        .peer_send_close_response_writing,
+        .peer_send_close_final_send,
+        => {
+            if (service_snapshot.terminal_records != 2 or
+                service_snapshot.cancelled_records != 0 or
+                service_snapshot.completed_records != 2 or
+                service_snapshot.failed_records != 0)
+            {
+                return error.InvalidPeerSendCloseResponseServiceReceipt;
+            }
+        },
         .full_request_timeout_request_admitted => {
             if (service_snapshot.terminal_records != 1 or
                 service_snapshot.cancelled_records != 1 or
@@ -2770,7 +3165,7 @@ fn runApplicationRejectionWorker(
         .runtime = &runtime,
         .lifecycle = &lifecycle,
         .config = .{ .stop_after_requests = 4 },
-        .work_observer = observer.control(false),
+        .work_observer = observer.control(false, false),
     };
     const serve_thread = try std.Thread.spawn(
         .{},
@@ -2980,7 +3375,7 @@ fn runConcurrentWorker(
         .work_observer = if (profile == .concurrent_stale_owner_failure or
             profile == .concurrent_queued_receive_timeout or
             profile == .concurrent_queued_full_request_timeout)
-            work_barrier.control(false)
+            work_barrier.control(false, false)
         else
             null,
     };
@@ -5232,7 +5627,16 @@ fn profileMatchesControl(
         .full_request_timeout_response_ready,
         .full_request_timeout_response_writing,
         => control == .immediate,
-        .peer_reset_work => false,
+        .peer_reset_work,
+        .peer_send_close_preserve_work,
+        .peer_send_close_cancel_work,
+        .peer_send_close_response_ready,
+        .peer_send_close_response_writing,
+        .peer_send_close_zero_request_bytes,
+        .peer_send_close_partial_request_head,
+        .peer_send_close_partial_request_body,
+        .peer_send_close_final_send,
+        => false,
         .concurrent_queued_receive_timeout,
         .concurrent_queued_full_request_timeout,
         .concurrent_drain,
@@ -5418,6 +5822,113 @@ fn waitForReceiveTimeout(
     return error.ReceiveTimeoutObservationTimeout;
 }
 
+fn validatePeerSendCloseReceiveSnapshot(
+    snapshot: server_api.ManagedSnapshotV1,
+    profile: WorkerProfile,
+) !void {
+    const expected_phase =
+        profile.peerSendCloseReceivePhase() orelse
+        return error.InvalidWorkerProfile;
+    const expected_zero: u64 =
+        if (profile == .peer_send_close_zero_request_bytes)
+            1
+        else
+            0;
+    const expected_head: u64 =
+        if (profile == .peer_send_close_partial_request_head)
+            1
+        else
+            0;
+    const expected_body: u64 =
+        if (profile == .peer_send_close_partial_request_body)
+            1
+        else
+            0;
+    const expected_completed: u64 =
+        if (profile == .peer_send_close_partial_request_body)
+            2
+        else
+            1;
+    const expected_failed: u64 = 2 - expected_completed;
+    if (snapshot.state != .stopped or
+        snapshot.connection_capacity != 1 or
+        snapshot.accepted_connections != 2 or
+        snapshot.completed_connections != expected_completed or
+        snapshot.failed_connections != expected_failed or
+        snapshot.active_connections != 0 or
+        snapshot.queued_connections != 0 or
+        snapshot.active_connection_phase != .none or
+        snapshot.drain_signaled_connections != 0 or
+        snapshot.last_drain_signaled_phase != .none or
+        snapshot.receive_timeout_signaled_connections != 0 or
+        snapshot.last_receive_timeout_signaled_phase != .none or
+        snapshot.full_request_timeout_signaled_connections != 0 or
+        snapshot.last_full_request_timeout_signaled_phase != .none or
+        snapshot.full_request_timeout_cancelled_work_connections != 0 or
+        snapshot.last_full_request_timeout_cancelled_work_phase != .none or
+        snapshot.full_request_timeout_cancelled_response_connections !=
+            0 or
+        snapshot.last_full_request_timeout_cancelled_response_phase !=
+            .none or
+        snapshot.full_request_timeout_requested_response_write_connections !=
+            0 or
+        snapshot.last_full_request_timeout_requested_response_write_phase !=
+            .none or
+        snapshot.full_request_timeout_cancelled_response_write_connections !=
+            0 or
+        snapshot.last_full_request_timeout_cancelled_response_write_phase !=
+            .none or
+        snapshot.drain_cancelled_work_connections != 0 or
+        snapshot.last_drain_cancelled_work_phase != .none or
+        snapshot.failure_signaled_connections != 0 or
+        snapshot.last_failure_signaled_phase != .none or
+        snapshot.failure_cancelled_work_connections != 0 or
+        snapshot.last_failure_cancelled_work_phase != .none or
+        snapshot.failure_cancelled_response_connections != 0 or
+        snapshot.last_failure_cancelled_response_phase != .none or
+        snapshot.failure_requested_response_write_connections != 0 or
+        snapshot.last_failure_requested_response_write_phase != .none or
+        snapshot.failure_cancelled_response_write_connections != 0 or
+        snapshot.last_failure_cancelled_response_write_phase != .none or
+        snapshot.peer_reset_connections != 0 or
+        snapshot.peer_reset_cancelled_work_connections != 0 or
+        snapshot.last_peer_reset_phase != .none or
+        snapshot.last_peer_reset_cancelled_work_phase != .none or
+        snapshot.peer_send_closed_connections != 1 or
+        snapshot.peer_send_close_zero_request_bytes_connections !=
+            expected_zero or
+        snapshot.peer_send_close_partial_request_head_connections !=
+            expected_head or
+        snapshot.peer_send_close_partial_request_body_connections !=
+            expected_body or
+        snapshot.last_peer_send_closed_phase != expected_phase or
+        snapshot.last_peer_send_close_receive_phase !=
+            expected_phase or
+        snapshot.peer_send_close_cancelled_work_connections != 0 or
+        snapshot.peer_send_close_cancelled_response_connections != 0 or
+        snapshot.peer_send_close_requested_response_write_connections !=
+            0 or
+        snapshot.peer_send_close_cancelled_response_write_connections !=
+            0 or
+        snapshot.last_peer_send_close_cancelled_work_phase != .none or
+        snapshot.last_peer_send_close_cancelled_response_phase != .none or
+        snapshot.last_peer_send_close_requested_response_write_phase !=
+            .none or
+        snapshot.last_peer_send_close_cancelled_response_write_phase !=
+            .none or
+        snapshot.drain_cancelled_response_connections != 0 or
+        snapshot.last_drain_cancelled_response_phase != .none or
+        snapshot.drain_requested_response_write_connections != 0 or
+        snapshot.last_drain_requested_response_write_phase != .none or
+        snapshot.drain_cancelled_response_write_connections != 0 or
+        snapshot.last_drain_cancelled_response_write_phase != .none or
+        snapshot.response_write_transport_failed_connections != 0 or
+        snapshot.last_response_write_transport_failed_phase != .none)
+    {
+        return error.InvalidPeerSendCloseReceiveReceipt;
+    }
+}
+
 fn validateDrainSignalReceipt(
     snapshot: server_api.ManagedSnapshotV1,
     expected_phase: ?server_api.ManagedConnectionPhaseV1,
@@ -5459,6 +5970,20 @@ fn validatePhaseEReceipt(
 ) !void {
     const expected_peer_reset: u64 =
         if (profile == .peer_reset_work) 1 else 0;
+    const expected_peer_send_close: u64 =
+        if (profile == .peer_send_close_preserve_work or
+        profile == .peer_send_close_cancel_work or
+        profile == .peer_send_close_response_ready or
+        profile == .peer_send_close_response_writing)
+            1
+        else
+            0;
+    const expected_peer_send_close_cancelled_work: u64 =
+        if (profile == .peer_send_close_cancel_work) 1 else 0;
+    const expected_peer_send_close_cancelled_response: u64 =
+        if (profile == .peer_send_close_response_ready) 1 else 0;
+    const expected_peer_send_close_response_write: u64 =
+        if (profile == .peer_send_close_response_writing) 1 else 0;
     const expected_response_cancel: u64 =
         if (profile == .drain_response_ready) 1 else 0;
     const expected_response_write_cancel: u64 =
@@ -5483,6 +6008,30 @@ fn validatePhaseEReceipt(
     const expected_peer_reset_phase: server_api.ManagedConnectionPhaseV1 =
         if (expected_peer_reset == 1)
             .request_admitted
+        else
+            .none;
+    const expected_peer_send_close_phase: server_api.ManagedConnectionPhaseV1 =
+        switch (profile) {
+            .peer_send_close_preserve_work,
+            .peer_send_close_cancel_work,
+            => .request_admitted,
+            .peer_send_close_response_ready => .response_ready,
+            .peer_send_close_response_writing => .response_writing,
+            else => .none,
+        };
+    const expected_peer_send_close_cancelled_work_phase: server_api.ManagedConnectionPhaseV1 =
+        if (expected_peer_send_close_cancelled_work == 1)
+            .request_admitted
+        else
+            .none;
+    const expected_peer_send_close_cancelled_response_phase: server_api.ManagedConnectionPhaseV1 =
+        if (expected_peer_send_close_cancelled_response == 1)
+            .response_ready
+        else
+            .none;
+    const expected_peer_send_close_response_write_phase: server_api.ManagedConnectionPhaseV1 =
+        if (expected_peer_send_close_response_write == 1)
+            .response_writing
         else
             .none;
     const expected_response_cancel_phase: server_api.ManagedConnectionPhaseV1 =
@@ -5515,6 +6064,16 @@ fn validatePhaseEReceipt(
     if (snapshot.peer_reset_connections != expected_peer_reset or
         snapshot.peer_reset_cancelled_work_connections !=
             expected_peer_reset or
+        snapshot.peer_send_closed_connections !=
+            expected_peer_send_close or
+        snapshot.peer_send_close_cancelled_work_connections !=
+            expected_peer_send_close_cancelled_work or
+        snapshot.peer_send_close_cancelled_response_connections !=
+            expected_peer_send_close_cancelled_response or
+        snapshot.peer_send_close_requested_response_write_connections !=
+            expected_peer_send_close_response_write or
+        snapshot.peer_send_close_cancelled_response_write_connections !=
+            expected_peer_send_close_response_write or
         snapshot.drain_cancelled_response_connections !=
             expected_response_cancel or
         snapshot.drain_requested_response_write_connections !=
@@ -5532,10 +6091,23 @@ fn validatePhaseEReceipt(
         snapshot.full_request_timeout_cancelled_response_write_connections !=
             expected_full_request_timeout_response_write or
         snapshot.response_write_transport_failed_connections != 0 or
+        snapshot.peer_send_close_zero_request_bytes_connections != 0 or
+        snapshot.peer_send_close_partial_request_head_connections != 0 or
+        snapshot.peer_send_close_partial_request_body_connections != 0 or
         snapshot.last_peer_reset_phase !=
             expected_peer_reset_phase or
         snapshot.last_peer_reset_cancelled_work_phase !=
             expected_peer_reset_phase or
+        snapshot.last_peer_send_closed_phase !=
+            expected_peer_send_close_phase or
+        snapshot.last_peer_send_close_cancelled_work_phase !=
+            expected_peer_send_close_cancelled_work_phase or
+        snapshot.last_peer_send_close_cancelled_response_phase !=
+            expected_peer_send_close_cancelled_response_phase or
+        snapshot.last_peer_send_close_requested_response_write_phase !=
+            expected_peer_send_close_response_write_phase or
+        snapshot.last_peer_send_close_cancelled_response_write_phase !=
+            expected_peer_send_close_response_write_phase or
         snapshot.last_drain_cancelled_response_phase !=
             expected_response_cancel_phase or
         snapshot.last_drain_requested_response_write_phase !=
@@ -5552,7 +6124,8 @@ fn validatePhaseEReceipt(
             expected_full_request_timeout_response_write_phase or
         snapshot.last_full_request_timeout_cancelled_response_write_phase !=
             expected_full_request_timeout_response_write_phase or
-        snapshot.last_response_write_transport_failed_phase != .none)
+        snapshot.last_response_write_transport_failed_phase != .none or
+        snapshot.last_peer_send_close_receive_phase != .none)
     {
         return error.InvalidPhaseEReceipt;
     }
@@ -5664,7 +6237,9 @@ fn emitDraining(
     );
     const suffix = try std.fmt.bufPrint(
         storage[prefix.len..],
-        "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d}\n",
+        "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
+            "{d} {d} {d} {d} {d} {d} {d}\n",
         .{
             snapshot.peer_reset_connections,
             snapshot.peer_reset_cancelled_work_connections,
@@ -5675,6 +6250,26 @@ fn emitDraining(
             ),
             @intFromEnum(
                 snapshot.last_peer_reset_cancelled_work_phase,
+            ),
+            snapshot.peer_send_closed_connections,
+            snapshot.peer_send_close_cancelled_work_connections,
+            @intFromEnum(
+                snapshot.last_peer_send_closed_phase,
+            ),
+            @intFromEnum(
+                snapshot.last_peer_send_close_cancelled_work_phase,
+            ),
+            snapshot.peer_send_close_cancelled_response_connections,
+            @intFromEnum(
+                snapshot.last_peer_send_close_cancelled_response_phase,
+            ),
+            snapshot.peer_send_close_requested_response_write_connections,
+            @intFromEnum(
+                snapshot.last_peer_send_close_requested_response_write_phase,
+            ),
+            snapshot.peer_send_close_cancelled_response_write_connections,
+            @intFromEnum(
+                snapshot.last_peer_send_close_cancelled_response_write_phase,
             ),
             snapshot.drain_requested_response_write_connections,
             @intFromEnum(
@@ -5687,6 +6282,12 @@ fn emitDraining(
             snapshot.response_write_transport_failed_connections,
             @intFromEnum(
                 snapshot.last_response_write_transport_failed_phase,
+            ),
+            snapshot.peer_send_close_zero_request_bytes_connections,
+            snapshot.peer_send_close_partial_request_head_connections,
+            snapshot.peer_send_close_partial_request_body_connections,
+            @intFromEnum(
+                snapshot.last_peer_send_close_receive_phase,
             ),
             responseOutcomeWire(response_outcome),
         },
@@ -5764,8 +6365,9 @@ fn emitClosed(
     );
     const suffix = try std.fmt.bufPrint(
         storage[prefix.len..],
-        "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
-            "{d} {d} 1\n",
+        "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} 1\n",
         .{
             snapshot.peer_reset_connections,
             snapshot.peer_reset_cancelled_work_connections,
@@ -5776,6 +6378,26 @@ fn emitClosed(
             ),
             @intFromEnum(
                 snapshot.last_peer_reset_cancelled_work_phase,
+            ),
+            snapshot.peer_send_closed_connections,
+            snapshot.peer_send_close_cancelled_work_connections,
+            @intFromEnum(
+                snapshot.last_peer_send_closed_phase,
+            ),
+            @intFromEnum(
+                snapshot.last_peer_send_close_cancelled_work_phase,
+            ),
+            snapshot.peer_send_close_cancelled_response_connections,
+            @intFromEnum(
+                snapshot.last_peer_send_close_cancelled_response_phase,
+            ),
+            snapshot.peer_send_close_requested_response_write_connections,
+            @intFromEnum(
+                snapshot.last_peer_send_close_requested_response_write_phase,
+            ),
+            snapshot.peer_send_close_cancelled_response_write_connections,
+            @intFromEnum(
+                snapshot.last_peer_send_close_cancelled_response_write_phase,
             ),
             snapshot.drain_requested_response_write_connections,
             @intFromEnum(
@@ -5788,6 +6410,12 @@ fn emitClosed(
             snapshot.response_write_transport_failed_connections,
             @intFromEnum(
                 snapshot.last_response_write_transport_failed_phase,
+            ),
+            snapshot.peer_send_close_zero_request_bytes_connections,
+            snapshot.peer_send_close_partial_request_head_connections,
+            snapshot.peer_send_close_partial_request_body_connections,
+            @intFromEnum(
+                snapshot.last_peer_send_close_receive_phase,
             ),
             responseOutcomeWire(response_outcome),
             service_active,
@@ -5943,12 +6571,26 @@ const ActivityFrame = struct {
     drain_cancelled_response: u64,
     last_drain_cancelled_response_phase: server_api.ManagedConnectionPhaseV1,
     last_peer_reset_cancelled_work_phase: server_api.ManagedConnectionPhaseV1,
+    peer_send_closed: u64 = 0,
+    peer_send_close_cancelled_work: u64 = 0,
+    last_peer_send_closed_phase: server_api.ManagedConnectionPhaseV1 = .none,
+    last_peer_send_close_cancelled_work_phase: server_api.ManagedConnectionPhaseV1 = .none,
+    peer_send_close_cancelled_response: u64 = 0,
+    last_peer_send_close_cancelled_response_phase: server_api.ManagedConnectionPhaseV1 = .none,
+    peer_send_close_requested_response_write: u64 = 0,
+    last_peer_send_close_requested_response_write_phase: server_api.ManagedConnectionPhaseV1 = .none,
+    peer_send_close_cancelled_response_write: u64 = 0,
+    last_peer_send_close_cancelled_response_write_phase: server_api.ManagedConnectionPhaseV1 = .none,
     drain_requested_response_write: u64,
     last_drain_requested_response_write_phase: server_api.ManagedConnectionPhaseV1,
     drain_cancelled_response_write: u64,
     last_drain_cancelled_response_write_phase: server_api.ManagedConnectionPhaseV1,
     response_write_transport_failed: u64,
     last_response_write_transport_failed_phase: server_api.ManagedConnectionPhaseV1,
+    peer_send_close_zero_request_bytes: u64 = 0,
+    peer_send_close_partial_request_head: u64 = 0,
+    peer_send_close_partial_request_body: u64 = 0,
+    last_peer_send_close_receive_phase: server_api.ManagedConnectionPhaseV1 = .none,
     response_outcome: u8,
 };
 
@@ -6512,6 +7154,26 @@ fn parseActivity(
         fields.next() orelse return error.InvalidFrame;
     const last_peer_reset_cancelled_work_phase =
         fields.next() orelse return error.InvalidFrame;
+    const peer_send_closed = fields.next() orelse
+        return error.InvalidFrame;
+    const peer_send_close_cancelled_work = fields.next() orelse
+        return error.InvalidFrame;
+    const last_peer_send_closed_phase = fields.next() orelse
+        return error.InvalidFrame;
+    const last_peer_send_close_cancelled_work_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_cancelled_response =
+        fields.next() orelse return error.InvalidFrame;
+    const last_peer_send_close_cancelled_response_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_requested_response_write =
+        fields.next() orelse return error.InvalidFrame;
+    const last_peer_send_close_requested_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_cancelled_response_write =
+        fields.next() orelse return error.InvalidFrame;
+    const last_peer_send_close_cancelled_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
     const drain_requested_response_write = fields.next() orelse
         return error.InvalidFrame;
     const last_drain_requested_response_write_phase =
@@ -6523,6 +7185,14 @@ fn parseActivity(
     const response_write_transport_failed = fields.next() orelse
         return error.InvalidFrame;
     const last_response_write_transport_failed_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_zero_request_bytes =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_partial_request_head =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_partial_request_body =
+        fields.next() orelse return error.InvalidFrame;
+    const last_peer_send_close_receive_phase =
         fields.next() orelse return error.InvalidFrame;
     const response_outcome = fields.next() orelse
         return error.InvalidFrame;
@@ -6606,6 +7276,41 @@ fn parseActivity(
         .last_peer_reset_cancelled_work_phase = try parseConnectionPhase(
             last_peer_reset_cancelled_work_phase,
         ),
+        .peer_send_closed = try parseCanonicalInt(
+            u64,
+            peer_send_closed,
+        ),
+        .peer_send_close_cancelled_work = try parseCanonicalInt(
+            u64,
+            peer_send_close_cancelled_work,
+        ),
+        .last_peer_send_closed_phase = try parseConnectionPhase(
+            last_peer_send_closed_phase,
+        ),
+        .last_peer_send_close_cancelled_work_phase = try parseConnectionPhase(
+            last_peer_send_close_cancelled_work_phase,
+        ),
+        .peer_send_close_cancelled_response = try parseCanonicalInt(
+            u64,
+            peer_send_close_cancelled_response,
+        ),
+        .last_peer_send_close_cancelled_response_phase = try parseConnectionPhase(
+            last_peer_send_close_cancelled_response_phase,
+        ),
+        .peer_send_close_requested_response_write = try parseCanonicalInt(
+            u64,
+            peer_send_close_requested_response_write,
+        ),
+        .last_peer_send_close_requested_response_write_phase = try parseConnectionPhase(
+            last_peer_send_close_requested_response_write_phase,
+        ),
+        .peer_send_close_cancelled_response_write = try parseCanonicalInt(
+            u64,
+            peer_send_close_cancelled_response_write,
+        ),
+        .last_peer_send_close_cancelled_response_write_phase = try parseConnectionPhase(
+            last_peer_send_close_cancelled_response_write_phase,
+        ),
         .drain_requested_response_write = try parseCanonicalInt(
             u64,
             drain_requested_response_write,
@@ -6626,6 +7331,21 @@ fn parseActivity(
         ),
         .last_response_write_transport_failed_phase = try parseConnectionPhase(
             last_response_write_transport_failed_phase,
+        ),
+        .peer_send_close_zero_request_bytes = try parseCanonicalInt(
+            u64,
+            peer_send_close_zero_request_bytes,
+        ),
+        .peer_send_close_partial_request_head = try parseCanonicalInt(
+            u64,
+            peer_send_close_partial_request_head,
+        ),
+        .peer_send_close_partial_request_body = try parseCanonicalInt(
+            u64,
+            peer_send_close_partial_request_body,
+        ),
+        .last_peer_send_close_receive_phase = try parseConnectionPhase(
+            last_peer_send_close_receive_phase,
         ),
         .response_outcome = try parseCanonicalInt(
             u8,
@@ -6709,6 +7429,26 @@ fn parseClosed(line: []const u8) !ClosedFrame {
         fields.next() orelse return error.InvalidFrame;
     const last_peer_reset_cancelled_work_phase =
         fields.next() orelse return error.InvalidFrame;
+    const peer_send_closed = fields.next() orelse
+        return error.InvalidFrame;
+    const peer_send_close_cancelled_work = fields.next() orelse
+        return error.InvalidFrame;
+    const last_peer_send_closed_phase = fields.next() orelse
+        return error.InvalidFrame;
+    const last_peer_send_close_cancelled_work_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_cancelled_response =
+        fields.next() orelse return error.InvalidFrame;
+    const last_peer_send_close_cancelled_response_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_requested_response_write =
+        fields.next() orelse return error.InvalidFrame;
+    const last_peer_send_close_requested_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_cancelled_response_write =
+        fields.next() orelse return error.InvalidFrame;
+    const last_peer_send_close_cancelled_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
     const drain_requested_response_write = fields.next() orelse
         return error.InvalidFrame;
     const last_drain_requested_response_write_phase =
@@ -6720,6 +7460,14 @@ fn parseClosed(line: []const u8) !ClosedFrame {
     const response_write_transport_failed = fields.next() orelse
         return error.InvalidFrame;
     const last_response_write_transport_failed_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_zero_request_bytes =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_partial_request_head =
+        fields.next() orelse return error.InvalidFrame;
+    const peer_send_close_partial_request_body =
+        fields.next() orelse return error.InvalidFrame;
+    const last_peer_send_close_receive_phase =
         fields.next() orelse return error.InvalidFrame;
     const response_outcome = fields.next() orelse
         return error.InvalidFrame;
@@ -6813,6 +7561,41 @@ fn parseClosed(line: []const u8) !ClosedFrame {
             .last_peer_reset_cancelled_work_phase = try parseConnectionPhase(
                 last_peer_reset_cancelled_work_phase,
             ),
+            .peer_send_closed = try parseCanonicalInt(
+                u64,
+                peer_send_closed,
+            ),
+            .peer_send_close_cancelled_work = try parseCanonicalInt(
+                u64,
+                peer_send_close_cancelled_work,
+            ),
+            .last_peer_send_closed_phase = try parseConnectionPhase(
+                last_peer_send_closed_phase,
+            ),
+            .last_peer_send_close_cancelled_work_phase = try parseConnectionPhase(
+                last_peer_send_close_cancelled_work_phase,
+            ),
+            .peer_send_close_cancelled_response = try parseCanonicalInt(
+                u64,
+                peer_send_close_cancelled_response,
+            ),
+            .last_peer_send_close_cancelled_response_phase = try parseConnectionPhase(
+                last_peer_send_close_cancelled_response_phase,
+            ),
+            .peer_send_close_requested_response_write = try parseCanonicalInt(
+                u64,
+                peer_send_close_requested_response_write,
+            ),
+            .last_peer_send_close_requested_response_write_phase = try parseConnectionPhase(
+                last_peer_send_close_requested_response_write_phase,
+            ),
+            .peer_send_close_cancelled_response_write = try parseCanonicalInt(
+                u64,
+                peer_send_close_cancelled_response_write,
+            ),
+            .last_peer_send_close_cancelled_response_write_phase = try parseConnectionPhase(
+                last_peer_send_close_cancelled_response_write_phase,
+            ),
             .drain_requested_response_write = try parseCanonicalInt(
                 u64,
                 drain_requested_response_write,
@@ -6833,6 +7616,21 @@ fn parseClosed(line: []const u8) !ClosedFrame {
             ),
             .last_response_write_transport_failed_phase = try parseConnectionPhase(
                 last_response_write_transport_failed_phase,
+            ),
+            .peer_send_close_zero_request_bytes = try parseCanonicalInt(
+                u64,
+                peer_send_close_zero_request_bytes,
+            ),
+            .peer_send_close_partial_request_head = try parseCanonicalInt(
+                u64,
+                peer_send_close_partial_request_head,
+            ),
+            .peer_send_close_partial_request_body = try parseCanonicalInt(
+                u64,
+                peer_send_close_partial_request_body,
+            ),
+            .last_peer_send_close_receive_phase = try parseConnectionPhase(
+                last_peer_send_close_receive_phase,
             ),
             .response_outcome = try parseCanonicalInt(
                 u8,
@@ -7459,6 +8257,7 @@ const NativeLoadQueuedTimeoutClient = struct {
 
 const NativeLoadResponseStatus = enum {
     ok,
+    bad_request,
     too_many_requests,
 };
 
@@ -7490,6 +8289,12 @@ fn parseNativeLoadResponse(
             "HTTP/1.1 200 OK",
         ))
             .ok
+        else if (std.mem.eql(
+            u8,
+            status,
+            "HTTP/1.1 400 Bad Request",
+        ))
+            .bad_request
         else if (std.mem.eql(
             u8,
             status,
@@ -10693,6 +11498,30 @@ fn runSupervisor(allocator: std.mem.Allocator) !void {
         .body,
         &oracle.model_id,
     );
+    try exercisePeerSendCloseReceive(
+        allocator,
+        executable,
+        &fixture,
+        generation_peer_send_close_zero_request_bytes,
+        .peer_send_close_zero_request_bytes,
+        oracle,
+    );
+    try exercisePeerSendCloseReceive(
+        allocator,
+        executable,
+        &fixture,
+        generation_peer_send_close_partial_request_head,
+        .peer_send_close_partial_request_head,
+        oracle,
+    );
+    try exercisePeerSendCloseReceive(
+        allocator,
+        executable,
+        &fixture,
+        generation_peer_send_close_partial_request_body,
+        .peer_send_close_partial_request_body,
+        oracle,
+    );
     try exerciseAdmittedWorkDrain(
         allocator,
         executable,
@@ -10713,6 +11542,46 @@ fn runSupervisor(allocator: std.mem.Allocator) !void {
         &fixture,
         generation_peer_reset_work,
         .peer_reset_work,
+        oracle,
+    );
+    try exercisePhaseE(
+        allocator,
+        executable,
+        &fixture,
+        generation_peer_send_close_preserve_work,
+        .peer_send_close_preserve_work,
+        oracle,
+    );
+    try exercisePhaseE(
+        allocator,
+        executable,
+        &fixture,
+        generation_peer_send_close_cancel_work,
+        .peer_send_close_cancel_work,
+        oracle,
+    );
+    try exercisePhaseE(
+        allocator,
+        executable,
+        &fixture,
+        generation_peer_send_close_response_ready,
+        .peer_send_close_response_ready,
+        oracle,
+    );
+    try exercisePhaseE(
+        allocator,
+        executable,
+        &fixture,
+        generation_peer_send_close_response_writing,
+        .peer_send_close_response_writing,
+        oracle,
+    );
+    try exercisePhaseE(
+        allocator,
+        executable,
+        &fixture,
+        generation_peer_send_close_final_send,
+        .peer_send_close_final_send,
         oracle,
     );
     try exercisePhaseE(
@@ -11341,6 +12210,114 @@ fn requirePeerEofWithoutCompleteResponse(
     return used;
 }
 
+fn requirePeerOrderlyEofWithoutResponse(
+    peer: std.net.Stream,
+) !void {
+    var response: [1]u8 = undefined;
+    const read_count = try peer.read(&response);
+    if (read_count != 0)
+        return error.UnexpectedPeerSendCloseResponse;
+}
+
+fn requirePeerOrderlyEofAfterPrefix(
+    peer: std.net.Stream,
+    expected_prefix: []const u8,
+) !void {
+    var response: [16]u8 = undefined;
+    var used: usize = 0;
+    while (used < response.len) {
+        const read_count = try peer.read(response[used..]);
+        if (read_count == 0) break;
+        used += read_count;
+    }
+    if (used != expected_prefix.len or
+        !std.mem.eql(
+            u8,
+            response[0..used],
+            expected_prefix,
+        ))
+    {
+        return error.InvalidPeerSendCloseResponsePrefix;
+    }
+}
+
+fn requirePeerCompletion(
+    peer: std.net.Stream,
+    ready: ReadyFrame,
+    oracle: LocalOracle,
+    tenant_key: u64,
+    idempotency_key: []const u8,
+) !void {
+    var response_storage: [
+        protocol.header_max_bytes +
+            protocol.response_body_max_bytes
+    ]u8 = undefined;
+    var used: usize = 0;
+    while (used < response_storage.len) {
+        const read_count =
+            try peer.read(response_storage[used..]);
+        if (read_count == 0) break;
+        used += read_count;
+    }
+    if (used == 0 or used == response_storage.len)
+        return error.InvalidPeerCompletionSize;
+    const parsed = try parseNativeLoadResponse(
+        response_storage[0..used],
+    );
+    if (parsed.status != .ok)
+        return error.InvalidPeerCompletionStatus;
+    var parser_storage: [protocol.parser_workspace_bytes]u8 =
+        undefined;
+    var parser =
+        std.heap.FixedBufferAllocator.init(&parser_storage);
+    const completion = try protocol.decodeCompletionV1(
+        parser.allocator(),
+        parsed.body,
+    );
+    try validateCompletionAgainstOracle(
+        completion,
+        ready,
+        oracle,
+        tenant_key,
+        idempotency_key,
+    );
+}
+
+fn requirePeerInvalidRequest(peer: std.net.Stream) !void {
+    var response_storage: [
+        protocol.header_max_bytes +
+            protocol.response_body_max_bytes
+    ]u8 = undefined;
+    var used: usize = 0;
+    while (used < response_storage.len) {
+        const read_count =
+            try peer.read(response_storage[used..]);
+        if (read_count == 0) break;
+        used += read_count;
+    }
+    if (used == 0 or used == response_storage.len)
+        return error.InvalidPeerInvalidRequestSize;
+    const parsed = try parseNativeLoadResponse(
+        response_storage[0..used],
+    );
+    if (parsed.status != .bad_request)
+        return error.InvalidPeerInvalidRequestStatus;
+    var parser_storage: [protocol.parser_workspace_bytes]u8 =
+        undefined;
+    var parser =
+        std.heap.FixedBufferAllocator.init(&parser_storage);
+    const api_error = try protocol.decodeErrorV1(
+        parser.allocator(),
+        parsed.body,
+    );
+    if (api_error.code != .invalid_request or
+        api_error.retry != .never or
+        api_error.request_sha256 != null)
+    {
+        return error.InvalidPeerInvalidRequestEvidence;
+    }
+}
+
 const CancellationClientContext = struct {
     port: u16,
     model_id: [protocol.model_id_bytes]u8,
@@ -11678,6 +12655,164 @@ fn exerciseTerminalWorkDrain(
     }
 }
 
+fn exercisePeerSendCloseReceive(
+    allocator: std.mem.Allocator,
+    executable: []const u8,
+    fixture: *const Fixture,
+    generation: u64,
+    profile: WorkerProfile,
+    oracle: LocalOracle,
+) !void {
+    if (!profile.isPeerSendCloseReceive())
+        return error.InvalidWorkerProfile;
+    var child = try spawnWorker(
+        allocator,
+        executable,
+        fixture,
+        generation,
+        profile,
+    );
+    var waited = false;
+    defer if (!waited) terminateChild(&child);
+    var watchdog: WorkerWatchdog = .{
+        .process_id = child.id,
+    };
+    try watchdog.start();
+    var watchdog_running = true;
+    defer if (watchdog_running) {
+        _ = watchdog.stop();
+    };
+
+    var frame_storage: [frame_max_bytes]u8 = undefined;
+    const ready = try parseReady(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try require(ready.generation == generation);
+    try require(std.mem.eql(
+        u8,
+        &ready.model_id,
+        &oracle.model_id,
+    ));
+
+    {
+        const peer = try connectReadyPeer(ready);
+        defer peer.close();
+        switch (profile) {
+            .peer_send_close_zero_request_bytes => {},
+            .peer_send_close_partial_request_head => {
+                try writePartialRequest(peer, ready, .head);
+            },
+            .peer_send_close_partial_request_body => {
+                try writePartialRequest(peer, ready, .body);
+            },
+            else => unreachable,
+        }
+        try std.posix.shutdown(peer.handle, .send);
+        if (profile == .peer_send_close_partial_request_body) {
+            try requirePeerInvalidRequest(peer);
+        } else {
+            try requirePeerOrderlyEofWithoutResponse(peer);
+        }
+    }
+
+    const successor_key = switch (profile) {
+        .peer_send_close_zero_request_bytes => "server-process-fin-zero-successor",
+        .peer_send_close_partial_request_head => "server-process-fin-head-successor",
+        .peer_send_close_partial_request_body => "server-process-fin-body-successor",
+        else => unreachable,
+    };
+    const successor_tenant: u64 = switch (profile) {
+        .peer_send_close_zero_request_bytes => 61,
+        .peer_send_close_partial_request_head => 62,
+        .peer_send_close_partial_request_body => 63,
+        else => unreachable,
+    };
+    {
+        const successor = try openCompletionPeer(
+            ready,
+            successor_tenant,
+            successor_key,
+        );
+        defer successor.close();
+        try requirePeerCompletion(
+            successor,
+            ready,
+            oracle,
+            successor_tenant,
+            successor_key,
+        );
+    }
+
+    try child.stdin.?.writeAll(
+        peer_send_close_drain_command,
+    );
+    child.stdin.?.close();
+    child.stdin = null;
+
+    const expected_completed: u64 =
+        if (profile == .peer_send_close_partial_request_body)
+            2
+        else
+            1;
+    const expected_failed: u64 = 2 - expected_completed;
+    const draining = try parseActivity(
+        try readFrame(child.stdout.?, &frame_storage),
+        "DRAINING",
+    );
+    try validateActivity(
+        draining,
+        generation,
+        2,
+        expected_completed,
+        expected_failed,
+        0,
+        .none,
+        0,
+        .none,
+        0,
+        .none,
+    );
+    try validatePeerSendCloseReceiveActivity(
+        draining,
+        profile,
+    );
+
+    const closed = try parseClosed(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try validateActivity(
+        closed.activity,
+        generation,
+        2,
+        expected_completed,
+        expected_failed,
+        0,
+        .none,
+        0,
+        .none,
+        0,
+        .none,
+    );
+    try validatePeerSendCloseReceiveActivity(
+        closed.activity,
+        profile,
+    );
+    try require(closed.service_active == 0);
+    try require(closed.terminal_records == 1);
+    try require(closed.bank_zero == 1);
+    try requireWorkerEof(child.stdout.?);
+
+    const did_time_out = watchdog.stop();
+    watchdog_running = false;
+    if (did_time_out) return error.WorkerTimeout;
+    const term = try child.wait();
+    waited = true;
+    switch (term) {
+        .Exited => |code| try require(code == 0),
+        else => return error.UnexpectedWorkerTermination,
+    }
+}
+
 fn exercisePhaseE(
     allocator: std.mem.Allocator,
     executable: []const u8,
@@ -11779,6 +12914,212 @@ fn exercisePhaseE(
             ));
             try child.stdin.?.writeAll(
                 peer_reset_drain_command,
+            );
+            child.stdin.?.close();
+            child.stdin = null;
+        },
+        .peer_send_close_response_ready => {
+            peer = try openCompletionPeer(
+                ready,
+                83,
+                "server-process-peer-send-close-response-ready",
+            );
+            try child.stdin.?.writeAll(
+                peer_send_close_arm_command,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "RESPONSE_READY",
+                generation,
+            );
+            try std.posix.shutdown(peer.?.handle, .send);
+            try child.stdin.?.writeAll(
+                peer_send_close_release_command,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "PEER_SEND_CLOSE_RESPONSE_CANCELLED",
+                generation,
+            );
+            try requirePeerOrderlyEofWithoutResponse(peer.?);
+            peer.?.close();
+            peer = null;
+            try completeConcurrentSuccessor(
+                allocator,
+                ready,
+                oracle,
+                89,
+                "server-process-peer-send-close-ready-successor",
+            );
+            try child.stdin.?.writeAll(
+                peer_send_close_drain_command,
+            );
+            child.stdin.?.close();
+            child.stdin = null;
+        },
+        .peer_send_close_response_writing => {
+            peer = try openCompletionPeer(
+                ready,
+                97,
+                "server-process-peer-send-close-response-writing",
+            );
+            try child.stdin.?.writeAll(
+                peer_send_close_arm_command,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "RESPONSE_WRITING",
+                generation,
+            );
+            try std.posix.shutdown(peer.?.handle, .send);
+            try child.stdin.?.writeAll(
+                peer_send_close_release_command,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "PEER_SEND_CLOSE_RESPONSE_CANCELLED",
+                generation,
+            );
+            try requirePeerOrderlyEofAfterPrefix(peer.?, "H");
+            peer.?.close();
+            peer = null;
+            try completeConcurrentSuccessor(
+                allocator,
+                ready,
+                oracle,
+                101,
+                "server-process-peer-send-close-writing-successor",
+            );
+            try child.stdin.?.writeAll(
+                peer_send_close_drain_command,
+            );
+            child.stdin.?.close();
+            child.stdin = null;
+        },
+        .peer_send_close_final_send => {
+            const tenant_key: u64 = 103;
+            const idempotency_key =
+                "server-process-peer-send-close-final-send";
+            peer = try openCompletionPeer(
+                ready,
+                tenant_key,
+                idempotency_key,
+            );
+            try child.stdin.?.writeAll(
+                peer_send_close_arm_command,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "RESPONSE_WRITTEN",
+                generation,
+            );
+            try std.posix.shutdown(peer.?.handle, .send);
+            try child.stdin.?.writeAll(
+                peer_send_close_release_command,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "PEER_SEND_CLOSE_FINAL_SEND_COMPLETED",
+                generation,
+            );
+            try requirePeerCompletion(
+                peer.?,
+                ready,
+                oracle,
+                tenant_key,
+                idempotency_key,
+            );
+            peer.?.close();
+            peer = null;
+            try completeConcurrentSuccessor(
+                allocator,
+                ready,
+                oracle,
+                107,
+                "server-process-peer-send-close-final-successor",
+            );
+            try child.stdin.?.writeAll(
+                peer_send_close_drain_command,
+            );
+            child.stdin.?.close();
+            child.stdin = null;
+        },
+        .peer_send_close_preserve_work => {
+            const tenant_key: u64 = 71;
+            const idempotency_key =
+                "server-process-peer-send-close-preserve";
+            peer = try openCompletionPeer(
+                ready,
+                tenant_key,
+                idempotency_key,
+            );
+            try child.stdin.?.writeAll(
+                peer_send_close_arm_command,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "WORK_ADMITTED",
+                generation,
+            );
+            try std.posix.shutdown(peer.?.handle, .send);
+            try child.stdin.?.writeAll(
+                peer_send_close_release_command,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "PEER_SEND_CLOSE_PRESERVED",
+                generation,
+            );
+            try requirePeerCompletion(
+                peer.?,
+                ready,
+                oracle,
+                tenant_key,
+                idempotency_key,
+            );
+            peer.?.close();
+            peer = null;
+            try child.stdin.?.writeAll(
+                peer_send_close_drain_command,
+            );
+            child.stdin.?.close();
+            child.stdin = null;
+        },
+        .peer_send_close_cancel_work => {
+            peer = try openCompletionPeer(
+                ready,
+                73,
+                "server-process-peer-send-close-cancel",
+            );
+            try child.stdin.?.writeAll(
+                peer_send_close_arm_command,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "WORK_ADMITTED",
+                generation,
+            );
+            try std.posix.shutdown(peer.?.handle, .send);
+            try child.stdin.?.writeAll(
+                peer_send_close_release_command,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "PEER_SEND_CLOSE_CANCELLED",
+                generation,
+            );
+            try requirePeerOrderlyEofWithoutResponse(peer.?);
+            peer.?.close();
+            peer = null;
+            try completeConcurrentSuccessor(
+                allocator,
+                ready,
+                oracle,
+                79,
+                "server-process-peer-send-close-successor",
+            );
+            try child.stdin.?.writeAll(
+                peer_send_close_drain_command,
             );
             child.stdin.?.close();
             child.stdin = null;
@@ -11897,22 +13238,41 @@ fn exercisePhaseE(
     );
     const response_completed =
         profile == .complete_response_ready or
-        profile == .complete_response_writing;
+        profile == .complete_response_writing or
+        profile == .peer_send_close_final_send;
+    const peer_send_close_final =
+        profile == .peer_send_close_final_send;
+    const peer_send_close_preserved =
+        profile == .peer_send_close_preserve_work;
+    const peer_send_close_cancelled =
+        profile == .peer_send_close_cancel_work;
+    const peer_send_close_response =
+        profile == .peer_send_close_response_ready or
+        profile == .peer_send_close_response_writing;
     const full_request_timeout =
         profile.isFullRequestTimeout();
     const expected_completed: u64 =
-        if (profile == .peer_reset_work or
+        if (peer_send_close_final)
+            2
+        else if (profile == .peer_reset_work or
+        peer_send_close_preserved or
+        peer_send_close_cancelled or
+        peer_send_close_response or
         response_completed or
         full_request_timeout)
             1
         else
             0;
     const expected_failed: u64 =
-        if (response_completed) 0 else 1;
+        if (response_completed or
+        peer_send_close_preserved) 0 else 1;
     try validateActivity(
         draining,
         generation,
         if (profile == .peer_reset_work or
+            peer_send_close_cancelled or
+            peer_send_close_response or
+            peer_send_close_final or
             full_request_timeout)
             2
         else
@@ -11976,6 +13336,9 @@ fn exercisePhaseE(
         closed.activity,
         generation,
         if (profile == .peer_reset_work or
+            peer_send_close_cancelled or
+            peer_send_close_response or
+            peer_send_close_final or
             full_request_timeout)
             2
         else
@@ -11991,7 +13354,13 @@ fn exercisePhaseE(
     );
     try validatePhaseEActivity(closed.activity, profile);
     try require(closed.service_active == 0);
-    try require(closed.terminal_records == 1);
+    const expected_terminal_records: u32 =
+        if (peer_send_close_cancelled or
+        peer_send_close_response or
+        peer_send_close_final) 2 else 1;
+    try require(
+        closed.terminal_records == expected_terminal_records,
+    );
     try require(closed.bank_zero == 1);
     try requireWorkerEof(child.stdout.?);
 
@@ -12833,11 +14202,156 @@ fn setAbortiveReset(peer: std.net.Stream) !void {
     }
 }
 
+fn validatePeerSendCloseReceiveActivity(
+    activity: ActivityFrame,
+    profile: WorkerProfile,
+) !void {
+    const phase =
+        profile.peerSendCloseReceivePhase() orelse
+        return error.InvalidWorkerProfile;
+    const zero: u64 =
+        if (profile == .peer_send_close_zero_request_bytes)
+            1
+        else
+            0;
+    const head: u64 =
+        if (profile == .peer_send_close_partial_request_head)
+            1
+        else
+            0;
+    const body: u64 =
+        if (profile == .peer_send_close_partial_request_body)
+            1
+        else
+            0;
+    try require(activity.peer_send_closed == 1);
+    try require(activity.last_peer_send_closed_phase == phase);
+    try require(
+        activity.peer_send_close_zero_request_bytes == zero,
+    );
+    try require(
+        activity.peer_send_close_partial_request_head == head,
+    );
+    try require(
+        activity.peer_send_close_partial_request_body == body,
+    );
+    try require(
+        activity.last_peer_send_close_receive_phase == phase,
+    );
+    try require(activity.drain_signaled == 0);
+    try require(activity.last_drain_phase == .none);
+    try require(activity.drain_cancelled_work == 0);
+    try require(
+        activity.last_drain_cancelled_work_phase == .none,
+    );
+    try require(activity.receive_timeout_signaled == 0);
+    try require(activity.last_receive_timeout_phase == .none);
+    try require(activity.full_request_timeout_signaled == 0);
+    try require(
+        activity.last_full_request_timeout_signaled_phase ==
+            .none,
+    );
+    try require(
+        activity.full_request_timeout_cancelled_work == 0,
+    );
+    try require(
+        activity.last_full_request_timeout_cancelled_work_phase ==
+            .none,
+    );
+    try require(
+        activity.full_request_timeout_cancelled_response == 0,
+    );
+    try require(
+        activity.last_full_request_timeout_cancelled_response_phase ==
+            .none,
+    );
+    try require(
+        activity.full_request_timeout_requested_response_write == 0,
+    );
+    try require(
+        activity.last_full_request_timeout_requested_response_write_phase ==
+            .none,
+    );
+    try require(
+        activity.full_request_timeout_cancelled_response_write == 0,
+    );
+    try require(
+        activity.last_full_request_timeout_cancelled_response_write_phase ==
+            .none,
+    );
+    try require(activity.peer_reset == 0);
+    try require(activity.peer_reset_cancelled_work == 0);
+    try require(activity.last_peer_reset_phase == .none);
+    try require(
+        activity.last_peer_reset_cancelled_work_phase == .none,
+    );
+    try require(activity.peer_send_close_cancelled_work == 0);
+    try require(
+        activity.last_peer_send_close_cancelled_work_phase ==
+            .none,
+    );
+    try require(
+        activity.peer_send_close_cancelled_response == 0,
+    );
+    try require(
+        activity.last_peer_send_close_cancelled_response_phase ==
+            .none,
+    );
+    try require(
+        activity.peer_send_close_requested_response_write == 0,
+    );
+    try require(
+        activity.last_peer_send_close_requested_response_write_phase ==
+            .none,
+    );
+    try require(
+        activity.peer_send_close_cancelled_response_write == 0,
+    );
+    try require(
+        activity.last_peer_send_close_cancelled_response_write_phase ==
+            .none,
+    );
+    try require(activity.drain_cancelled_response == 0);
+    try require(
+        activity.last_drain_cancelled_response_phase == .none,
+    );
+    try require(activity.drain_requested_response_write == 0);
+    try require(
+        activity.last_drain_requested_response_write_phase ==
+            .none,
+    );
+    try require(activity.drain_cancelled_response_write == 0);
+    try require(
+        activity.last_drain_cancelled_response_write_phase ==
+            .none,
+    );
+    try require(activity.response_write_transport_failed == 0);
+    try require(
+        activity.last_response_write_transport_failed_phase ==
+            .none,
+    );
+    try require(activity.response_outcome == 0);
+}
+
 fn validatePhaseEActivity(
     activity: ActivityFrame,
     profile: WorkerProfile,
 ) !void {
     const peer: u64 = if (profile == .peer_reset_work) 1 else 0;
+    const peer_send_close: u64 =
+        if (profile == .peer_send_close_preserve_work or
+        profile == .peer_send_close_cancel_work or
+        profile == .peer_send_close_response_ready or
+        profile == .peer_send_close_response_writing)
+            1
+        else
+            0;
+    const peer_send_close_cancelled_work: u64 =
+        if (profile == .peer_send_close_cancel_work) 1 else 0;
+    const peer_send_close_cancelled_response: u64 =
+        if (profile == .peer_send_close_response_ready) 1 else 0;
+    const peer_send_close_response_write: u64 =
+        if (profile == .peer_send_close_response_writing) 1 else 0;
     const response: u64 =
         if (profile == .drain_response_ready) 1 else 0;
     const response_write: u64 =
@@ -12861,6 +14375,30 @@ fn validatePhaseEActivity(
             0;
     const peer_phase: server_api.ManagedConnectionPhaseV1 =
         if (peer == 1) .request_admitted else .none;
+    const peer_send_close_phase: server_api.ManagedConnectionPhaseV1 =
+        switch (profile) {
+            .peer_send_close_preserve_work,
+            .peer_send_close_cancel_work,
+            => .request_admitted,
+            .peer_send_close_response_ready => .response_ready,
+            .peer_send_close_response_writing => .response_writing,
+            else => .none,
+        };
+    const peer_send_close_cancelled_work_phase: server_api.ManagedConnectionPhaseV1 =
+        if (peer_send_close_cancelled_work == 1)
+            .request_admitted
+        else
+            .none;
+    const peer_send_close_cancelled_response_phase: server_api.ManagedConnectionPhaseV1 =
+        if (peer_send_close_cancelled_response == 1)
+            .response_ready
+        else
+            .none;
+    const peer_send_close_response_write_phase: server_api.ManagedConnectionPhaseV1 =
+        if (peer_send_close_response_write == 1)
+            .response_writing
+        else
+            .none;
     const response_phase: server_api.ManagedConnectionPhaseV1 =
         if (response == 1) .response_ready else .none;
     const response_write_phase: server_api.ManagedConnectionPhaseV1 =
@@ -12888,6 +14426,46 @@ fn validatePhaseEActivity(
     try require(
         activity.last_peer_reset_cancelled_work_phase ==
             peer_phase,
+    );
+    try require(
+        activity.peer_send_closed ==
+            peer_send_close,
+    );
+    try require(
+        activity.peer_send_close_cancelled_work ==
+            peer_send_close_cancelled_work,
+    );
+    try require(
+        activity.last_peer_send_closed_phase ==
+            peer_send_close_phase,
+    );
+    try require(
+        activity.last_peer_send_close_cancelled_work_phase ==
+            peer_send_close_cancelled_work_phase,
+    );
+    try require(
+        activity.peer_send_close_cancelled_response ==
+            peer_send_close_cancelled_response,
+    );
+    try require(
+        activity.last_peer_send_close_cancelled_response_phase ==
+            peer_send_close_cancelled_response_phase,
+    );
+    try require(
+        activity.peer_send_close_requested_response_write ==
+            peer_send_close_response_write,
+    );
+    try require(
+        activity.last_peer_send_close_requested_response_write_phase ==
+            peer_send_close_response_write_phase,
+    );
+    try require(
+        activity.peer_send_close_cancelled_response_write ==
+            peer_send_close_response_write,
+    );
+    try require(
+        activity.last_peer_send_close_cancelled_response_write_phase ==
+            peer_send_close_response_write_phase,
     );
     try require(activity.drain_cancelled_response == response);
     try require(
@@ -12955,13 +14533,30 @@ fn validatePhaseEActivity(
         activity.last_response_write_transport_failed_phase ==
             .none,
     );
+    try require(
+        activity.peer_send_close_zero_request_bytes == 0,
+    );
+    try require(
+        activity.peer_send_close_partial_request_head == 0,
+    );
+    try require(
+        activity.peer_send_close_partial_request_body == 0,
+    );
+    try require(
+        activity.last_peer_send_close_receive_phase == .none,
+    );
     const outcome: u8 = switch (profile) {
         .drain_response_ready,
         .full_request_timeout_response_ready,
+        .peer_send_close_response_ready,
         => responseOutcomeWire(.cancelled_before_write),
-        .complete_response_ready, .complete_response_writing => responseOutcomeWire(.write_completed),
+        .complete_response_ready,
+        .complete_response_writing,
+        .peer_send_close_final_send,
+        => responseOutcomeWire(.write_completed),
         .drain_response_writing,
         .full_request_timeout_response_writing,
+        .peer_send_close_response_writing,
         => responseOutcomeWire(.cancelled_during_write),
         else => 0,
     };
@@ -13202,6 +14797,7 @@ fn exerciseWorker(
             );
         const malformed =
             try std.net.tcpConnectToAddress(malformed_address);
+        try setAbortiveReset(malformed);
         malformed.close();
         const barrier_models = try expectModels(
             try client.listModelsV1(),

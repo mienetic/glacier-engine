@@ -109,6 +109,7 @@ pub const WorkCheckpointDispositionV1 = enum {
     proceed,
     peer_reset,
     full_request_timeout,
+    peer_send_close,
 };
 
 pub const WorkCancellationCauseV1 = enum {
@@ -117,6 +118,7 @@ pub const WorkCancellationCauseV1 = enum {
     full_request_timeout,
     transport_failure,
     preexisting,
+    peer_send_close,
 };
 
 pub const WorkCancellationReceiptV1 = struct {
@@ -303,6 +305,10 @@ pub const RequestResponseControlV1 = struct {
     /// Optional managed-transport evidence after a real send reports that the
     /// socket is not currently writable.
     blocked_fn: ?*const fn (*anyopaque) anyerror!void = null,
+    /// Optional boundary after the complete response has been accepted by the
+    /// local writer and no response bytes remain, but before response
+    /// retirement. This is local completion evidence, not peer receipt.
+    written_fn: ?*const fn (*anyopaque) void = null,
 
     fn ready(self: RequestResponseControlV1) !void {
         return self.ready_fn(self.context);
@@ -319,6 +325,11 @@ pub const RequestResponseControlV1 = struct {
         outcome: ResponseWriteOutcomeV1,
     ) void {
         self.retired_fn(self.context, outcome);
+    }
+
+    fn written(self: RequestResponseControlV1) void {
+        if (self.written_fn) |callback|
+            callback(self.context);
     }
 };
 
@@ -343,6 +354,7 @@ const AwaitResponseDecisionV1 = union(enum) {
     response: unary.ResponseV1,
     peer_reset: WorkCancellationReceiptV1,
     full_request_timeout: WorkCancellationReceiptV1,
+    peer_send_close: WorkCancellationReceiptV1,
 };
 
 const ActiveWorkGuardV1 = struct {
@@ -1130,6 +1142,11 @@ fn executePublishedCompletionLockedV1(
                 cancellationEndsLeaseV1(receipt.outcome);
             return error.ConnectionPeerReset;
         },
+        .peer_send_close => |receipt| {
+            work_guard.terminal =
+                cancellationEndsLeaseV1(receipt.outcome);
+            return error.ConnectionPeerSendClosed;
+        },
         .full_request_timeout => |receipt| {
             work_guard.terminal =
                 cancellationEndsLeaseV1(receipt.outcome);
@@ -1316,6 +1333,12 @@ fn observeWorkCheckpointV1(
             control,
             .peer_reset,
         ) },
+        .peer_send_close => .{ .peer_send_close = try cancelPublishedWorkAndNotifyV1(
+            runtime,
+            published,
+            control,
+            .peer_send_close,
+        ) },
         .full_request_timeout => .{ .full_request_timeout = try cancelPublishedWorkAndNotifyV1(
             runtime,
             published,
@@ -1468,6 +1491,49 @@ fn cancellationHidesResponseV1(
         .recovery_required,
         => false,
     };
+}
+
+test "peer send close additions retain predecessor enum ordinals" {
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        @intFromEnum(WorkCheckpointDispositionV1.proceed),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        @intFromEnum(WorkCheckpointDispositionV1.peer_reset),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 2),
+        @intFromEnum(WorkCheckpointDispositionV1.full_request_timeout),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 3),
+        @intFromEnum(WorkCheckpointDispositionV1.peer_send_close),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        @intFromEnum(WorkCancellationCauseV1.drain),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        @intFromEnum(WorkCancellationCauseV1.peer_reset),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 2),
+        @intFromEnum(WorkCancellationCauseV1.full_request_timeout),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 3),
+        @intFromEnum(WorkCancellationCauseV1.transport_failure),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 4),
+        @intFromEnum(WorkCancellationCauseV1.preexisting),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 5),
+        @intFromEnum(WorkCancellationCauseV1.peer_send_close),
+    );
 }
 
 test "active work retirement requires the exact runtime and service fences" {
@@ -2641,6 +2707,8 @@ fn respondV1(
         return err;
     };
     guard.outcome = .write_completed;
+    if (response_control) |control|
+        control.written();
 }
 
 fn mapProtocolError(
