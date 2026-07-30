@@ -90,10 +90,10 @@ Scheduler, and Bank ownership. It uses real child processes and TCP loopback
 over a generated synthetic tiny-model fixture. It is real
 child-process/native POSIX loopback correctness, not simulation. The separate
 manual native-load target now supplies fixed all-completed,
-retained-record-capacity, and deterministic closed-loop
-queued-receive-timeout CPU profiles. Additional arrival-driven overload
-campaigns, production-model profiles, repeated captures, GPU campaigns, and
-publication-eligible native Linux evidence remain pending.
+retained-record-capacity, deterministic closed-loop queued-receive-timeout,
+and explicitly scheduled transient-pressure CPU profiles. Longer and repeated
+captures, natural or application-driven overload, production-model profiles,
+GPU campaigns, and publication-eligible native Linux evidence remain pending.
 
 ## Current conformance surfaces
 
@@ -207,6 +207,37 @@ publication-eligible native Linux evidence remain pending.
 | `zig build provider-context-pack-demo -Dmetal=false` | Lossless exact-duplicate mapping and deterministic token fixture |
 | `zig build provider-context-reconciliation-demo -Dmetal=false` | Raw/packed full-wire token observations bound to one execution identity |
 | `zig build provider-context-adapter-demo -Dmetal=false` | Allocation-free renderer/token-counter adapter fixture |
+
+The fourth native-load surface is:
+
+```sh
+zig build unary-server-native-load-test -Dmetal=false \
+  -Doptimize=ReleaseSafe -j1 \
+  -Dunary-server-native-load-profile=open-loop-transient-pressure-v1
+```
+
+It reuses the existing process artifact and compile root. After 8 sequential
+warmups, all 64 measured client actors reach one ready barrier before a shared
+anchor, then make 16 baseline launch attempts at 25-millisecond steps, 32
+pressure attempts at 5-millisecond steps, and 16 recovery attempts at
+25-millisecond steps starting at anchor plus 1,800 milliseconds. Launches are
+independent of request outcomes. The verifier binds each plan ordinal and phase
+to its fixed scheduled offset, observed launch lateness, and transmit-complete
+time; checks the fixed gate, pressure, release, recovery, lateness, and
+recovery-slack boundaries; and requires all attempts to settle with joined
+cleanup and zero ownership. Its embedded W6 scenario uses 64 logical
+client-actor slots and a maximum logical in-flight bound of 64; these describe
+the schedule/report bound, not transport occupancy. Retained transport evidence
+separately fixes 2 workers, 8 pending slots, a 128-connection backlog, FIFO
+high-water 8, and running high-water 2. Schedule count/window ratios and
+observed launch/transmit timing are retained separately from environment
+eligibility. The live capture stays manual. This proves only explicitly
+scheduled client launches under deterministic, test-controlled native-loopback
+FIFO pressure and recovery—not server arrivals, throughput superiority,
+natural/general overload, a capacity limit, Scheduler saturation, rate
+tolerance, fairness or completion order, first-token latency, production-model
+behavior, physical CPU parallelism, GPU behavior, native foreign-OS behavior,
+or a recovery SLA.
 
 The ActionOutbox recovery gate deliberately separates two evidence classes.
 The Zig/Python matrices deterministically enumerate logical persistence
@@ -1064,6 +1095,16 @@ affected jobs and 1,800 MiB for exhaustive/Metal jobs, below the setup action's
 1,024/2,048 MiB hard limits. Local verification retains no persistent cache.
 Exhaustive, retained-target, GPU/native, and manual promotion gates stay
 outside the ordinary fast loop.
+
+The affected-path policy keeps the native-load loop focus-first. A change to
+the shared process producer in
+`tests/prepared_text_unary_server_process.zig` selects the focused managed
+process gate and the focused Python native-load verifier, but the Zig process
+artifact is compiled once through the shared `unary-server-process-test` DAG.
+A Python-verifier-only change runs its exact Python tests without a Zig
+compile. Build-graph-only changes stop after `zig build --help`; live captures,
+broad suites, retained-target cross-compiles, and GPU campaigns remain manual,
+tagged-release, or milestone-promotion work.
 
 Concurrency and portability gates:
 

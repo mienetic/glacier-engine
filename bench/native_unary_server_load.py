@@ -46,6 +46,8 @@ RETENTION_CAPACITY_MAGIC = b"GF1CAP01"
 RETENTION_CAPACITY_OUTER_ABI = 0x4746314300000001
 QUEUED_RECEIVE_TIMEOUT_MAGIC = b"GF1QRT01"
 QUEUED_RECEIVE_TIMEOUT_OUTER_ABI = 0x4746315100000001
+OPEN_LOOP_TRANSIENT_PRESSURE_MAGIC = b"GF1OLP01"
+OPEN_LOOP_TRANSIENT_PRESSURE_OUTER_ABI = 0x4746314F00000001
 HEADER_BYTES = 40
 SIDECAR_BYTES = 296
 CLOSURE_U64_COUNT = 28
@@ -66,6 +68,18 @@ OUTER_BYTES = (
     HEADER_BYTES
     + RECORD_COUNT * SIDECAR_BYTES
     + CLOSURE_BYTES
+    + INNER_BYTES
+    + OUTER_DIGEST_BYTES
+)
+OPEN_LOOP_SCHEDULE_STRUCT = struct.Struct("<IBBHQQQ")
+OPEN_LOOP_SCHEDULE_BYTES = OPEN_LOOP_SCHEDULE_STRUCT.size
+OPEN_LOOP_SIDECAR_BYTES = SIDECAR_BYTES + OPEN_LOOP_SCHEDULE_BYTES
+OPEN_LOOP_CLOSURE_U64_COUNT = 44
+OPEN_LOOP_CLOSURE_BYTES = OPEN_LOOP_CLOSURE_U64_COUNT * 8
+OPEN_LOOP_OUTER_BYTES = (
+    HEADER_BYTES
+    + RECORD_COUNT * OPEN_LOOP_SIDECAR_BYTES
+    + OPEN_LOOP_CLOSURE_BYTES
     + INNER_BYTES
     + OUTER_DIGEST_BYTES
 )
@@ -135,6 +149,12 @@ QUEUED_RECEIVE_TIMEOUT_BODY_DOMAIN = (
 QUEUED_RECEIVE_TIMEOUT_FOOTER_DOMAIN = (
     b"glacier-f1-native-unary-queued-receive-timeout-footer-v1\x00"
 )
+OPEN_LOOP_TRANSIENT_PRESSURE_BODY_DOMAIN = (
+    b"glacier-f1-native-unary-open-loop-transient-pressure-body-v1\x00"
+)
+OPEN_LOOP_TRANSIENT_PRESSURE_FOOTER_DOMAIN = (
+    b"glacier-f1-native-unary-open-loop-transient-pressure-footer-v1\x00"
+)
 PIN_DOMAIN = b"glacier-f1-native-unary-load-pin-v1\x00"
 DISPATCH_DOMAIN = b"glacier-f1-native-unary-load-dispatch-v1\x00"
 SUBMISSION_DOMAIN = b"glacier-f1-native-unary-load-submission-v1\x00"
@@ -183,11 +203,24 @@ QUEUED_RECEIVE_TIMEOUT_PROFILE_ID = (
     b"4000000000ns-observation-cap-3000000000ns-queue-cap-"
     b"1000000000ns-settlement-cap/v1"
 )
+OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_ID = (
+    b"glacier-f1-native-unary-load-profile/"
+    b"open-loop-transient-pressure-8-warmup-16-baseline-32-pressure-"
+    b"16-recovery-8-flow-2-worker-8-pending-128-backlog-"
+    b"25000000ns-baseline-step-500000000ns-gate-arm-"
+    b"600000000ns-pressure-start-5000000ns-pressure-step-"
+    b"1000000000ns-fixed-release-1800000000ns-recovery-start-"
+    b"25000000ns-recovery-step-100000000ns-lateness-cap-"
+    b"100000000ns-recovery-slack/v1"
+)
 BACKEND_ID = b"glacier-prepared-text-unary-cpu-backend/v1"
 DEVICE_ID = b"host-cpu-device-physical-metrics-unavailable/v1"
 PLACEMENT_ID = b"managed-concurrent-loopback-2-worker-8-pending/v1"
 QUEUED_RECEIVE_TIMEOUT_PLACEMENT_ID = (
     b"managed-concurrent-loopback-2-worker-6-pending/v1"
+)
+OPEN_LOOP_TRANSIENT_PRESSURE_PLACEMENT_ID = (
+    b"managed-concurrent-loopback-2-worker-8-pending-128-backlog/v1"
 )
 HOST_SOURCE_ID = b"f1-native-load-parent-child-observers/v1"
 DEVICE_SOURCE_ID = b"f1-native-load-device-observer-unsupported/v1"
@@ -195,6 +228,7 @@ DEVICE_CLOCK_ID = b"f1-native-load-device-clock-unsupported/v1"
 PROCESS_GENERATION = 0x4753505200000116
 RETENTION_CAPACITY_PROCESS_GENERATION = 0x4753505200000117
 QUEUED_RECEIVE_TIMEOUT_PROCESS_GENERATION = 0x4753505200000118
+OPEN_LOOP_TRANSIENT_PRESSURE_PROCESS_GENERATION = 0x4753505200000119
 ZERO_DIGEST = b"\x00" * 32
 NO_QUEUE_SLOT = (1 << 32) - 1
 OUTCOME_COMPLETED = 0
@@ -204,6 +238,9 @@ CAPACITY_REJECTED_PRESENCE = 0x61
 SUCCESSFUL_PROFILE_NAME = "successful-v1"
 RETENTION_CAPACITY_PROFILE_NAME = "retention-capacity-v1"
 QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME = "queued-receive-timeout-v1"
+OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME = (
+    "open-loop-transient-pressure-v1"
+)
 RETENTION_CAPACITY_COMPLETED_RECORDS = 40
 RETENTION_CAPACITY_MEASURED_COMPLETED = 32
 RETENTION_CAPACITY_MEASURED_REJECTED = 32
@@ -223,6 +260,32 @@ QUEUED_RECEIVE_TIMEOUT_MAX_QUEUE_RESIDENCE_NS = 3_000_000_000
 QUEUED_RECEIVE_TIMEOUT_MAX_SETTLEMENT_PROPAGATION_NS = 1_000_000_000
 QUEUED_RECEIVE_TIMEOUT_EVENT_KIND = 6
 QUEUED_RECEIVE_TIMEOUT_PHASE = 8
+OPEN_LOOP_PHASE_WARMUP = 0
+OPEN_LOOP_PHASE_BASELINE = 1
+OPEN_LOOP_PHASE_PRESSURE = 2
+OPEN_LOOP_PHASE_RECOVERY = 3
+OPEN_LOOP_SCHEDULE_FLAG_MEASURED = 1
+OPEN_LOOP_BASELINE_COUNT = 16
+OPEN_LOOP_PRESSURE_COUNT = 32
+OPEN_LOOP_RECOVERY_COUNT = 16
+OPEN_LOOP_BASELINE_START = WARMUP_COUNT
+OPEN_LOOP_PRESSURE_START = (
+    OPEN_LOOP_BASELINE_START + OPEN_LOOP_BASELINE_COUNT
+)
+OPEN_LOOP_RECOVERY_START = (
+    OPEN_LOOP_PRESSURE_START + OPEN_LOOP_PRESSURE_COUNT
+)
+OPEN_LOOP_BASELINE_STEP_NS = 25_000_000
+OPEN_LOOP_PRESSURE_START_OFFSET_NS = 600_000_000
+OPEN_LOOP_PRESSURE_STEP_NS = 5_000_000
+OPEN_LOOP_RECOVERY_START_OFFSET_NS = 1_800_000_000
+OPEN_LOOP_RECOVERY_STEP_NS = 25_000_000
+OPEN_LOOP_GATE_ARM_OFFSET_NS = 500_000_000
+OPEN_LOOP_FIXED_RELEASE_OFFSET_NS = 1_000_000_000
+OPEN_LOOP_LAUNCH_LATENESS_CAP_NS = 100_000_000
+OPEN_LOOP_RECOVERY_SLACK_NS = 100_000_000
+OPEN_LOOP_LISTEN_BACKLOG = 128
+OPEN_LOOP_LOGICAL_ACTOR_COUNT = MEASURED_COUNT
 NO_WORKER_INDEX = (1 << 8) - 1
 QUEUED_RECEIVE_TIMEOUT_CLOSURE = (
     72,
@@ -284,10 +347,31 @@ class CampaignProfile:
     worker_count: int
     pending_capacity: int
     placement_id: bytes
+    scenario_mode: int = 0
+    sidecar_bytes: int = SIDECAR_BYTES
+    closure_u64_count: int = CLOSURE_U64_COUNT
 
     @property
     def connection_capacity(self) -> int:
         return self.worker_count + self.pending_capacity
+
+    @property
+    def closure_bytes(self) -> int:
+        return self.closure_u64_count * 8
+
+    @property
+    def outer_bytes(self) -> int:
+        return (
+            HEADER_BYTES
+            + RECORD_COUNT * self.sidecar_bytes
+            + self.closure_bytes
+            + INNER_BYTES
+            + OUTER_DIGEST_BYTES
+        )
+
+    @property
+    def has_open_loop_schedule(self) -> bool:
+        return self.name == OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME
 
 
 SUCCESSFUL_PROFILE = CampaignProfile(
@@ -347,10 +431,35 @@ QUEUED_RECEIVE_TIMEOUT_PROFILE = CampaignProfile(
     pending_capacity=QUEUED_RECEIVE_TIMEOUT_PENDING_CAPACITY,
     placement_id=QUEUED_RECEIVE_TIMEOUT_PLACEMENT_ID,
 )
+OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE = CampaignProfile(
+    name=OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME,
+    producer_mode="--native-load-open-loop-transient-pressure",
+    magic=OPEN_LOOP_TRANSIENT_PRESSURE_MAGIC,
+    outer_abi=OPEN_LOOP_TRANSIENT_PRESSURE_OUTER_ABI,
+    body_domain=OPEN_LOOP_TRANSIENT_PRESSURE_BODY_DOMAIN,
+    footer_domain=OPEN_LOOP_TRANSIENT_PRESSURE_FOOTER_DOMAIN,
+    profile_id=OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_ID,
+    process_generation=OPEN_LOOP_TRANSIENT_PRESSURE_PROCESS_GENERATION,
+    measured_completed=MEASURED_COUNT,
+    measured_capacity_rejected=0,
+    measured_timed_out=0,
+    service_completed_records=RECORD_COUNT,
+    max_in_flight=OPEN_LOOP_LOGICAL_ACTOR_COUNT,
+    queue_count=OPEN_LOOP_LOGICAL_ACTOR_COUNT,
+    worker_count=WORKER_COUNT,
+    pending_capacity=PENDING_CAPACITY,
+    placement_id=OPEN_LOOP_TRANSIENT_PRESSURE_PLACEMENT_ID,
+    scenario_mode=1,
+    sidecar_bytes=OPEN_LOOP_SIDECAR_BYTES,
+    closure_u64_count=OPEN_LOOP_CLOSURE_U64_COUNT,
+)
 CAMPAIGN_PROFILES = {
     SUCCESSFUL_PROFILE.name: SUCCESSFUL_PROFILE,
     RETENTION_CAPACITY_PROFILE.name: RETENTION_CAPACITY_PROFILE,
     QUEUED_RECEIVE_TIMEOUT_PROFILE.name: QUEUED_RECEIVE_TIMEOUT_PROFILE,
+    OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE.name: (
+        OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE
+    ),
 }
 
 
@@ -363,7 +472,10 @@ def _campaign_profile(name: str) -> CampaignProfile:
 
 def _expected_outcome(campaign: CampaignProfile, ordinal: int) -> int:
     _require(0 <= ordinal < RECORD_COUNT, "record ordinal is out of range")
-    if campaign.name == SUCCESSFUL_PROFILE_NAME:
+    if campaign.name in {
+        SUCCESSFUL_PROFILE_NAME,
+        OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME,
+    }:
         return OUTCOME_COMPLETED
     if campaign.name == RETENTION_CAPACITY_PROFILE_NAME:
         return (
@@ -371,10 +483,18 @@ def _expected_outcome(campaign: CampaignProfile, ordinal: int) -> int:
             if ordinal < campaign.service_completed_records
             else OUTCOME_CAPACITY_REJECTED
         )
-    if ordinal < WARMUP_COUNT:
-        return OUTCOME_COMPLETED
-    epoch_lane = (ordinal - WARMUP_COUNT) % FLOW_COUNT
-    return OUTCOME_COMPLETED if epoch_lane < 2 else OUTCOME_TIMED_OUT
+    if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME:
+        if ordinal < WARMUP_COUNT:
+            return OUTCOME_COMPLETED
+        epoch_lane = (ordinal - WARMUP_COUNT) % FLOW_COUNT
+        return (
+            OUTCOME_COMPLETED
+            if epoch_lane < 2
+            else OUTCOME_TIMED_OUT
+        )
+    raise VerificationError(
+        "unsupported native load outcome profile: %s" % campaign.name
+    )
 
 
 def _expected_flow(campaign: CampaignProfile, ordinal: int) -> int | None:
@@ -433,6 +553,17 @@ def _host_clock_identity(system: str) -> bytes:
 
 
 @dataclass(frozen=True)
+class OpenLoopSchedule:
+    planned_ordinal: int
+    phase: int
+    flags: int
+    reserved: int
+    scheduled_offset_ns: int
+    launch_lateness_ns: int
+    transmit_complete_ns: int
+
+
+@dataclass(frozen=True)
 class Sidecar:
     ordinal: int
     response_bytes: int
@@ -458,6 +589,7 @@ class Sidecar:
     terminal_sha256: bytes
     completion_sha256: bytes
     outcome: int = OUTCOME_COMPLETED
+    schedule: OpenLoopSchedule | None = None
 
 
 @dataclass(frozen=True)
@@ -539,17 +671,32 @@ def _parse_sidecar_exact(
         terminal_sha256,
         completion_sha256,
     ) = SIDECAR_STRUCT.unpack_from(encoded, offset)
-    if campaign.name == SUCCESSFUL_PROFILE_NAME:
+    if campaign.name in {
+        SUCCESSFUL_PROFILE_NAME,
+        OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME,
+    }:
         _require(outcome == OUTCOME_COMPLETED, "sidecar reserved byte is nonzero")
     elif campaign.name == RETENTION_CAPACITY_PROFILE_NAME:
         _require(
             outcome in {OUTCOME_COMPLETED, OUTCOME_CAPACITY_REJECTED},
             "sidecar outcome is invalid",
         )
-    else:
+    elif campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME:
         _require(
             outcome in {OUTCOME_COMPLETED, OUTCOME_TIMED_OUT},
             "sidecar outcome is invalid",
+        )
+    else:
+        raise VerificationError(
+            "unsupported sidecar profile: %s" % campaign.name
+        )
+    schedule: OpenLoopSchedule | None = None
+    if campaign.has_open_loop_schedule:
+        schedule = OpenLoopSchedule(
+            *OPEN_LOOP_SCHEDULE_STRUCT.unpack_from(
+                encoded,
+                offset + SIDECAR_BYTES,
+            )
         )
     return Sidecar(
         ordinal,
@@ -576,6 +723,7 @@ def _parse_sidecar_exact(
         terminal_sha256,
         completion_sha256,
         outcome,
+        schedule,
     )
 
 
@@ -586,7 +734,10 @@ def _parse_outer(
 ) -> tuple[tuple[Sidecar, ...], tuple[int, ...], bytes]:
     campaign = _campaign_profile(profile_name)
     _require(type(encoded) is bytes, "outer envelope must be bytes")
-    _require(len(encoded) == OUTER_BYTES, "outer envelope length is not fixed")
+    _require(
+        len(encoded) == campaign.outer_bytes,
+        "outer envelope length is not fixed",
+    )
     (
         magic,
         abi,
@@ -600,8 +751,14 @@ def _parse_outer(
     _require(abi == campaign.outer_abi, "invalid outer ABI")
     _require(declared_length == len(encoded), "outer length mismatch")
     _require(record_count == RECORD_COUNT, "outer record count mismatch")
-    _require(sidecar_bytes == SIDECAR_BYTES, "sidecar size mismatch")
-    _require(closure_bytes == CLOSURE_BYTES, "closure size mismatch")
+    _require(
+        sidecar_bytes == campaign.sidecar_bytes,
+        "sidecar size mismatch",
+    )
+    _require(
+        closure_bytes == campaign.closure_bytes,
+        "closure size mismatch",
+    )
     _require(inner_bytes == INNER_BYTES, "inner report size mismatch")
 
     body_end = len(encoded) - OUTER_DIGEST_BYTES
@@ -629,9 +786,13 @@ def _parse_outer(
         sidecar = _parse_sidecar_exact(encoded, cursor, campaign)
         _require(sidecar.ordinal == index, "sidecar ordinal is not canonical")
         sidecars.append(sidecar)
-        cursor += SIDECAR_BYTES
-    closure = struct.unpack_from("<%dQ" % CLOSURE_U64_COUNT, encoded, cursor)
-    cursor += CLOSURE_BYTES
+        cursor += campaign.sidecar_bytes
+    closure = struct.unpack_from(
+        "<%dQ" % campaign.closure_u64_count,
+        encoded,
+        cursor,
+    )
+    cursor += campaign.closure_bytes
     inner = encoded[cursor : cursor + INNER_BYTES]
     cursor += INNER_BYTES
     _require(cursor == body_end, "outer body layout mismatch")
@@ -880,11 +1041,42 @@ def _verify_closure(
     profile_name: str = SUCCESSFUL_PROFILE_NAME,
 ) -> None:
     campaign = _campaign_profile(profile_name)
-    _require(len(closure) == CLOSURE_U64_COUNT, "closure field count mismatch")
+    _require(
+        len(closure) == campaign.closure_u64_count,
+        "closure field count mismatch",
+    )
     if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME:
         _require(
             closure == QUEUED_RECEIVE_TIMEOUT_CLOSURE,
             "queued receive timeout closure mismatch",
+        )
+        return
+    if campaign.name == OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME:
+        _require(
+            closure[0:7] == (72, 72, 0, 72, 72, 8, 2),
+            "open-loop connection and pressure closure mismatch",
+        )
+        _require(
+            closure[7] == closure[8]
+            and 1 <= closure[7] <= closure[0],
+            "open-loop backpressure is absent or unbalanced",
+        )
+        _require(
+            closure[9:17] == (0,) * 8,
+            "open-loop transport closure retains failure or ownership",
+        )
+        _require(
+            closure[17:23] == (0, 72, 72, 0, 0, 0),
+            "open-loop service closure mismatch",
+        )
+        _require(
+            closure[23:27] == (1, 1, 1, 0),
+            "open-loop scheduler/Bank/thread closure mismatch",
+        )
+        _require(
+            closure[27]
+            == RECORD_COUNT * 3 + closure[7] + closure[8],
+            "open-loop event stream closure mismatch",
         )
         return
     _require(closure[0:5] == (72, 72, 0, 72, 72), "connection conservation mismatch")
@@ -921,6 +1113,461 @@ def _verify_closure(
     )
 
 
+def _open_loop_expected_schedule(
+    planned_ordinal: int,
+) -> tuple[int, int, int]:
+    _require(
+        0 <= planned_ordinal < RECORD_COUNT,
+        "open-loop planned ordinal is out of range",
+    )
+    if planned_ordinal < WARMUP_COUNT:
+        return OPEN_LOOP_PHASE_WARMUP, 0, 0
+    if planned_ordinal < OPEN_LOOP_PRESSURE_START:
+        phase_ordinal = planned_ordinal - OPEN_LOOP_BASELINE_START
+        return (
+            OPEN_LOOP_PHASE_BASELINE,
+            OPEN_LOOP_SCHEDULE_FLAG_MEASURED,
+            phase_ordinal * OPEN_LOOP_BASELINE_STEP_NS,
+        )
+    if planned_ordinal < OPEN_LOOP_RECOVERY_START:
+        phase_ordinal = planned_ordinal - OPEN_LOOP_PRESSURE_START
+        return (
+            OPEN_LOOP_PHASE_PRESSURE,
+            OPEN_LOOP_SCHEDULE_FLAG_MEASURED,
+            OPEN_LOOP_PRESSURE_START_OFFSET_NS
+            + phase_ordinal * OPEN_LOOP_PRESSURE_STEP_NS,
+        )
+    phase_ordinal = planned_ordinal - OPEN_LOOP_RECOVERY_START
+    return (
+        OPEN_LOOP_PHASE_RECOVERY,
+        OPEN_LOOP_SCHEDULE_FLAG_MEASURED,
+        OPEN_LOOP_RECOVERY_START_OFFSET_NS
+        + phase_ordinal * OPEN_LOOP_RECOVERY_STEP_NS,
+    )
+
+
+def _open_loop_phase_report(
+    entries: Sequence[
+        tuple[Sidecar, InnerRecord, OpenLoopSchedule]
+    ],
+    *,
+    planned_first: int,
+    scheduled_first_ns: int,
+    scheduled_last_ns: int,
+) -> dict[str, int]:
+    arrivals = [record.points[0][0] for _, record, _ in entries]
+    lateness = [schedule.launch_lateness_ns for _, _, schedule in entries]
+    actual_first = min(arrivals)
+    actual_last = max(arrivals)
+    actual_span = actual_last - actual_first
+    scheduled_span = scheduled_last_ns - scheduled_first_ns
+    _require(actual_span > 0, "open-loop actual phase span is not positive")
+    return {
+        "planned_records": len(entries),
+        "planned_ordinal_first": planned_first,
+        "planned_ordinal_last": planned_first + len(entries) - 1,
+        "scheduled_offset_first_ns": scheduled_first_ns,
+        "scheduled_offset_last_ns": scheduled_last_ns,
+        "scheduled_launch_span_ns": scheduled_span,
+        "actual_client_launch_first_ns": actual_first,
+        "actual_client_launch_last_ns": actual_last,
+        "actual_client_launch_span_ns": actual_span,
+        "max_launch_lateness_ns": max(lateness),
+        "offered_launch_rate_numerator": len(entries) - 1,
+        "offered_launch_rate_denominator_ns": scheduled_span,
+        "achieved_launch_rate_numerator": len(entries) - 1,
+        "achieved_launch_rate_denominator_ns": actual_span,
+    }
+
+
+def _verify_open_loop_evidence(
+    sidecars: tuple[Sidecar, ...],
+    records: tuple[InnerRecord, ...],
+    closure: tuple[int, ...],
+) -> dict[str, Any]:
+    _require(
+        len(sidecars) == RECORD_COUNT
+        and len(records) == RECORD_COUNT
+        and len(closure) == OPEN_LOOP_CLOSURE_U64_COUNT,
+        "open-loop evidence shape mismatch",
+    )
+    anchor_ns = closure[28]
+    _require(anchor_ns > 0, "open-loop schedule anchor is absent")
+    _require(
+        closure[29:33]
+        == (
+            MEASURED_COUNT,
+            OPEN_LOOP_BASELINE_COUNT,
+            OPEN_LOOP_PRESSURE_COUNT,
+            OPEN_LOOP_RECOVERY_COUNT,
+        ),
+        "open-loop phase count closure mismatch",
+    )
+
+    planned: dict[
+        int,
+        tuple[Sidecar, InnerRecord, OpenLoopSchedule],
+    ] = {}
+    phase_entries: dict[
+        int,
+        list[tuple[Sidecar, InnerRecord, OpenLoopSchedule]],
+    ] = {
+        OPEN_LOOP_PHASE_BASELINE: [],
+        OPEN_LOOP_PHASE_PRESSURE: [],
+        OPEN_LOOP_PHASE_RECOVERY: [],
+    }
+    for sidecar, record in zip(sidecars, records):
+        schedule = sidecar.schedule
+        _require(
+            type(schedule) is OpenLoopSchedule,
+            "open-loop schedule sidecar is absent",
+        )
+        assert schedule is not None
+        scalar_values = (
+            schedule.planned_ordinal,
+            schedule.phase,
+            schedule.flags,
+            schedule.reserved,
+            schedule.scheduled_offset_ns,
+            schedule.launch_lateness_ns,
+            schedule.transmit_complete_ns,
+        )
+        _require(
+            all(type(value) is int for value in scalar_values),
+            "open-loop schedule scalar type is invalid",
+        )
+        _require(
+            schedule.planned_ordinal not in planned,
+            "open-loop planned ordinal is duplicated",
+        )
+        expected_phase, expected_flags, expected_offset = (
+            _open_loop_expected_schedule(schedule.planned_ordinal)
+        )
+        _require(
+            (
+                schedule.phase,
+                schedule.flags,
+                schedule.reserved,
+                schedule.scheduled_offset_ns,
+            )
+            == (
+                expected_phase,
+                expected_flags,
+                0,
+                expected_offset,
+            ),
+            "open-loop schedule geometry mismatch",
+        )
+        expected_cohort = (
+            0
+            if expected_phase == OPEN_LOOP_PHASE_WARMUP
+            else 1
+        )
+        _require(
+            record.cohort == expected_cohort,
+            "open-loop schedule phase/cohort mismatch",
+        )
+        actual_launch_ns = record.points[0][0]
+        _require(
+            actual_launch_ns > 0
+            and schedule.transmit_complete_ns >= actual_launch_ns
+            and schedule.transmit_complete_ns <= record.points[4][0],
+            "open-loop transmit boundary is not causal",
+        )
+        if expected_phase == OPEN_LOOP_PHASE_WARMUP:
+            _require(
+                schedule.launch_lateness_ns == 0,
+                "open-loop warmup retains scheduled lateness",
+            )
+            _require(
+                record.flow_id == schedule.planned_ordinal,
+                "open-loop warmup flow schedule mismatch",
+            )
+        else:
+            scheduled_launch_ns = anchor_ns + expected_offset
+            _require(
+                scheduled_launch_ns <= (1 << 64) - 1,
+                "open-loop scheduled launch overflows u64",
+            )
+            _require(
+                actual_launch_ns >= scheduled_launch_ns,
+                "open-loop request launched before its schedule",
+            )
+            _require(
+                schedule.launch_lateness_ns
+                == actual_launch_ns - scheduled_launch_ns,
+                "open-loop launch lateness mismatch",
+            )
+            _require(
+                schedule.launch_lateness_ns
+                <= OPEN_LOOP_LAUNCH_LATENESS_CAP_NS,
+                "open-loop launch lateness exceeds fixed cap",
+            )
+            _require(
+                record.flow_id
+                == (schedule.planned_ordinal - WARMUP_COUNT)
+                % FLOW_COUNT,
+                "open-loop measured flow schedule mismatch",
+            )
+            phase_entries[expected_phase].append(
+                (sidecar, record, schedule)
+            )
+        planned[schedule.planned_ordinal] = (
+            sidecar,
+            record,
+            schedule,
+        )
+    _require(
+        set(planned) == set(range(RECORD_COUNT)),
+        "open-loop planned ordinal set is not canonical",
+    )
+    actual_order = [
+        (
+            record.points[0][0],
+            sidecar.schedule.planned_ordinal,
+        )
+        for sidecar, record in zip(sidecars, records)
+        if sidecar.schedule is not None
+    ]
+    _require(
+        actual_order == sorted(actual_order),
+        "open-loop records are not actual-launch ordered",
+    )
+
+    warmups = [planned[index] for index in range(WARMUP_COUNT)]
+    for previous, current in zip(warmups, warmups[1:]):
+        _require(
+            previous[1].points[6][0]
+            <= current[1].points[0][0],
+            "open-loop warmups are not sequential",
+        )
+
+    expected_phase_counts = {
+        OPEN_LOOP_PHASE_BASELINE: OPEN_LOOP_BASELINE_COUNT,
+        OPEN_LOOP_PHASE_PRESSURE: OPEN_LOOP_PRESSURE_COUNT,
+        OPEN_LOOP_PHASE_RECOVERY: OPEN_LOOP_RECOVERY_COUNT,
+    }
+    for phase, expected_count in expected_phase_counts.items():
+        _require(
+            len(phase_entries[phase]) == expected_count,
+            "open-loop measured phase count mismatch",
+        )
+
+    baseline = phase_entries[OPEN_LOOP_PHASE_BASELINE]
+    pressure = phase_entries[OPEN_LOOP_PHASE_PRESSURE]
+    recovery = phase_entries[OPEN_LOOP_PHASE_RECOVERY]
+    pressure_fifo = sorted(
+        (sidecar.enqueue_ordinal, sidecar.dispatch_ordinal)
+        for sidecar, _, _ in pressure
+    )
+    _require(
+        all(
+            previous[1] < current[1]
+            for previous, current in zip(
+                pressure_fifo,
+                pressure_fifo[1:],
+            )
+        ),
+        "open-loop pressure dispatch violates FIFO enqueue order",
+    )
+    baseline_arrivals = [record.points[0][0] for _, record, _ in baseline]
+    pressure_arrivals = [record.points[0][0] for _, record, _ in pressure]
+    recovery_arrivals = [record.points[0][0] for _, record, _ in recovery]
+    _require(
+        max(baseline_arrivals) < min(pressure_arrivals)
+        and max(pressure_arrivals) < min(recovery_arrivals),
+        "open-loop measured phases overlap",
+    )
+
+    baseline_report = _open_loop_phase_report(
+        baseline,
+        planned_first=OPEN_LOOP_BASELINE_START,
+        scheduled_first_ns=0,
+        scheduled_last_ns=(
+            (OPEN_LOOP_BASELINE_COUNT - 1)
+            * OPEN_LOOP_BASELINE_STEP_NS
+        ),
+    )
+    pressure_report = _open_loop_phase_report(
+        pressure,
+        planned_first=OPEN_LOOP_PRESSURE_START,
+        scheduled_first_ns=OPEN_LOOP_PRESSURE_START_OFFSET_NS,
+        scheduled_last_ns=(
+            OPEN_LOOP_PRESSURE_START_OFFSET_NS
+            + (OPEN_LOOP_PRESSURE_COUNT - 1)
+            * OPEN_LOOP_PRESSURE_STEP_NS
+        ),
+    )
+    recovery_report = _open_loop_phase_report(
+        recovery,
+        planned_first=OPEN_LOOP_RECOVERY_START,
+        scheduled_first_ns=OPEN_LOOP_RECOVERY_START_OFFSET_NS,
+        scheduled_last_ns=(
+            OPEN_LOOP_RECOVERY_START_OFFSET_NS
+            + (OPEN_LOOP_RECOVERY_COUNT - 1)
+            * OPEN_LOOP_RECOVERY_STEP_NS
+        ),
+    )
+    _require(
+        closure[33:36]
+        == (
+            baseline_report["actual_client_launch_span_ns"],
+            pressure_report["actual_client_launch_span_ns"],
+            recovery_report["actual_client_launch_span_ns"],
+        ),
+        "open-loop actual phase span closure mismatch",
+    )
+    _require(
+        closure[36:39]
+        == (
+            baseline_report["max_launch_lateness_ns"],
+            pressure_report["max_launch_lateness_ns"],
+            recovery_report["max_launch_lateness_ns"],
+        ),
+        "open-loop launch lateness closure mismatch",
+    )
+
+    gate_arm_due_ns = anchor_ns + OPEN_LOOP_GATE_ARM_OFFSET_NS
+    release_due_ns = anchor_ns + OPEN_LOOP_FIXED_RELEASE_OFFSET_NS
+    _require(
+        release_due_ns
+        <= (1 << 64) - 1 - OPEN_LOOP_LAUNCH_LATENESS_CAP_NS,
+        "open-loop release schedule overflows u64",
+    )
+    pressure_ready_ns = closure[39]
+    release_ns = closure[40]
+    _require(
+        gate_arm_due_ns
+        <= pressure_ready_ns
+        <= release_due_ns,
+        "open-loop pressure gate readiness is outside its window",
+    )
+    _require(
+        release_due_ns
+        <= release_ns
+        <= release_due_ns + OPEN_LOOP_LAUNCH_LATENESS_CAP_NS,
+        "open-loop fixed release is outside its window",
+    )
+    baseline_settled_ns = max(
+        record.points[6][0] for _, record, _ in baseline
+    )
+    _require(
+        baseline_settled_ns <= gate_arm_due_ns,
+        "open-loop baseline did not settle before gate arm",
+    )
+    _require(
+        pressure_ready_ns
+        >= min(sidecar.enqueue_ns for sidecar, _, _ in pressure),
+        "open-loop pressure readiness precedes pressure admission",
+    )
+    pressure_transmit_max_ns = max(
+        schedule.transmit_complete_ns for _, _, schedule in pressure
+    )
+    _require(
+        pressure_transmit_max_ns <= release_ns,
+        "open-loop pressure transmit crossed fixed release",
+    )
+    pressure_decision_min_ns = min(
+        sidecar.published_ns for sidecar, _, _ in pressure
+    )
+    pressure_retirement_min_ns = min(
+        sidecar.retired_ns for sidecar, _, _ in pressure
+    )
+    pressure_terminal_min_ns = min(
+        record.points[5][0] for _, record, _ in pressure
+    )
+    pressure_joined_settlement_min_ns = min(
+        record.points[6][0] for _, record, _ in pressure
+    )
+    _require(
+        min(
+            pressure_decision_min_ns,
+            pressure_retirement_min_ns,
+            pressure_terminal_min_ns,
+            pressure_joined_settlement_min_ns,
+        )
+        >= release_ns,
+        "open-loop pressure gate was bypassed",
+    )
+
+    pressure_server_settled_ns = max(
+        sidecar.retired_ns for sidecar, _, _ in pressure
+    )
+    pressure_joined_settled_ns = max(
+        record.points[6][0] for _, record, _ in pressure
+    )
+    _require(
+        closure[41] == pressure_server_settled_ns
+        and closure[42] == pressure_joined_settled_ns,
+        "open-loop pressure settlement closure mismatch",
+    )
+    recovery_first_ns = min(recovery_arrivals)
+    pressure_settled_ns = max(
+        pressure_server_settled_ns,
+        pressure_joined_settled_ns,
+    )
+    _require(
+        recovery_first_ns >= pressure_settled_ns,
+        "open-loop recovery overlaps pressure settlement",
+    )
+    recovery_slack_ns = recovery_first_ns - pressure_settled_ns
+    _require(
+        closure[43] == recovery_slack_ns
+        and recovery_slack_ns >= OPEN_LOOP_RECOVERY_SLACK_NS,
+        "open-loop recovery slack is below the fixed bound",
+    )
+
+    return {
+        "schema": (
+            "glacier.native-unary-open-loop-transient-pressure/v1"
+        ),
+        "arrival_policy": "scheduled-open-loop",
+        "warmup_records": WARMUP_COUNT,
+        "measured_records": MEASURED_COUNT,
+        "schedule_anchor_ns": anchor_ns,
+        "launch_lateness_cap_ns": (
+            OPEN_LOOP_LAUNCH_LATENESS_CAP_NS
+        ),
+        "phases": {
+            "baseline": baseline_report,
+            "pressure": pressure_report,
+            "recovery": recovery_report,
+        },
+        "pressure_gate": {
+            "arm_offset_ns": OPEN_LOOP_GATE_ARM_OFFSET_NS,
+            "ready_ns": pressure_ready_ns,
+            "fixed_release_offset_ns": (
+                OPEN_LOOP_FIXED_RELEASE_OFFSET_NS
+            ),
+            "release_ns": release_ns,
+            "transmit_complete_max_ns": pressure_transmit_max_ns,
+            "server_decision_min_ns": pressure_decision_min_ns,
+            "server_retirement_min_ns": pressure_retirement_min_ns,
+            "client_terminal_min_ns": pressure_terminal_min_ns,
+            "joined_settlement_min_ns": (
+                pressure_joined_settlement_min_ns
+            ),
+            "queue_high_water": closure[5],
+            "running_high_water": closure[6],
+            "backpressure_cycles": closure[7],
+        },
+        "recovery": {
+            "scheduled_start_offset_ns": (
+                OPEN_LOOP_RECOVERY_START_OFFSET_NS
+            ),
+            "pressure_server_settled_ns": (
+                pressure_server_settled_ns
+            ),
+            "pressure_joined_settled_ns": (
+                pressure_joined_settled_ns
+            ),
+            "actual_client_launch_first_ns": recovery_first_ns,
+            "slack_ns": recovery_slack_ns,
+            "minimum_slack_ns": OPEN_LOOP_RECOVERY_SLACK_NS,
+        },
+    }
+
+
 def _verify_profile(
     sidecars: tuple[Sidecar, ...],
     closure: tuple[int, ...],
@@ -944,7 +1591,7 @@ def _verify_profile(
             profile.flow_count,
         )
         == (
-            0,
+            campaign.scenario_mode,
             1,
             WARMUP_COUNT,
             MEASURED_COUNT,
@@ -1103,7 +1750,30 @@ def _verify_profile(
                 == (1, 0, 1, 0x7F),
                 "record is not one correct completed request",
             )
-            _require(record.queue_slot == sidecar.slot_index, "queue slot/owner mismatch")
+            if campaign.has_open_loop_schedule:
+                schedule = sidecar.schedule
+                _require(
+                    type(schedule) is OpenLoopSchedule,
+                    "open-loop schedule sidecar is absent",
+                )
+                assert schedule is not None
+                logical_actor_slot = (
+                    schedule.planned_ordinal
+                    if schedule.planned_ordinal < WARMUP_COUNT
+                    else schedule.planned_ordinal - WARMUP_COUNT
+                )
+                _require(
+                    0
+                    <= logical_actor_slot
+                    < OPEN_LOOP_LOGICAL_ACTOR_COUNT
+                    and record.queue_slot == logical_actor_slot,
+                    "open-loop logical actor slot mismatch",
+                )
+            else:
+                _require(
+                    record.queue_slot == sidecar.slot_index,
+                    "queue slot/owner mismatch",
+                )
             _require(
                 sidecar.output_token == sidecar.content_byte,
                 "fixture output token/content mismatch",
@@ -1435,6 +2105,12 @@ def _verify_profile(
         == set(range(1, campaign.service_completed_records + 1)),
         "work sequence is not canonical",
     )
+    if campaign.has_open_loop_schedule:
+        _verify_open_loop_evidence(
+            sidecars,
+            profile.records,
+            closure,
+        )
     expected_completed_per_flow = campaign.measured_completed // FLOW_COUNT
     expected_rejected_per_flow = (
         campaign.measured_capacity_rejected // FLOW_COUNT
@@ -1754,7 +2430,7 @@ def _run_producer(
             build_sha256.hex(),
             machine_sha256.hex(),
         ],
-        stdout_limit=OUTER_BYTES,
+        stdout_limit=campaign.outer_bytes,
         stderr_limit=MAX_RUNNER_STDERR_BYTES,
         timeout_seconds=timeout_seconds,
         env={"LC_ALL": "C", "PATH": os.defpath},
@@ -1765,7 +2441,10 @@ def _run_producer(
         % (returncode, stderr.decode("utf-8", "replace")),
     )
     _require(stderr == b"", "producer emitted stderr")
-    _require(len(stdout) == OUTER_BYTES, "producer output length is not fixed")
+    _require(
+        len(stdout) == campaign.outer_bytes,
+        "producer output length is not fixed",
+    )
     return stdout
 
 
@@ -2160,6 +2839,11 @@ def _claim_scope(campaign: CampaignProfile) -> str:
             "native-loopback-unary-queued-receive-timeout-and-"
             "serialized-fixture-only"
         )
+    if campaign.name == OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME:
+        return (
+            "native-loopback-unary-open-loop-transient-pressure-and-"
+            "serialized-fixture-only"
+        )
     return "native-loopback-unary-transport-and-serialized-fixture-only"
 
 
@@ -2203,6 +2887,17 @@ def _report_manifest(
             "cancelled": 0,
             "timed_out": campaign.measured_timed_out,
         },
+        **(
+            {
+                "open_loop": _verify_open_loop_evidence(
+                    verified.sidecars,
+                    verified.profile.records,
+                    verified.closure,
+                )
+            }
+            if campaign.has_open_loop_schedule
+            else {}
+        ),
     }
 
 
@@ -2227,10 +2922,19 @@ def _manifest_limitations(
                 "Queued receive timeout proves the fixed accept-origin "
                 "queued-expiry profile, not full-request timeout or "
                 "application overload."
-                if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                if campaign.name
+                == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
                 else (
-                    "The successful profile contains no "
-                    "capacity-rejection evidence."
+                    "The fixed scheduled open-loop profile proves "
+                    "bounded client launch and loopback queue pressure "
+                    "for one synthetic fixture, not an uncontrolled "
+                    "arrival process or production capacity limit."
+                    if campaign.name
+                    == OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME
+                    else (
+                        "The successful profile contains no "
+                        "capacity-rejection evidence."
+                    )
                 )
             )
         ),
@@ -2251,7 +2955,14 @@ def _manifest_limitations(
             "evidence; W6 queue latency and throughput include completed "
             "work only."
             if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
-            else "The campaign mode is closed-loop."
+            else (
+                "Offered and achieved open-loop rates describe client "
+                "attempt launches; W6 throughput remains completed work "
+                "over the measured settlement interval."
+                if campaign.name
+                == OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME
+                else "The campaign mode is closed-loop."
+            )
         ),
         (
             "Logical queue and in-flight facts do not prove physical CPU "

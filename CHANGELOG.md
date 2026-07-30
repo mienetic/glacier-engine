@@ -8,6 +8,26 @@ before the first stable release.
 
 ### Added
 
+- Added the manual
+  `open-loop-transient-pressure-v1` native CPU/loopback profile without another
+  executable or compile root. After 8 sequential warmups, 64 measured client
+  actors join one ready barrier and follow a fixed baseline, pressure, and
+  recovery launch schedule independent of request outcomes. The exact
+  client-plan ordinal, phase, scheduled offset, observed launch lateness, and
+  transmit-complete time are retained alongside a profile closure requiring
+  the declared pressure/release boundary, recovery slack, complete settlement,
+  joined cleanup, and zero ownership. The independent verifier and
+  authoritative `.glpub` path recompute the profile without consulting the
+  current host. This is deterministic, test-controlled native-loopback FIFO
+  pressure and recovery evidence, not server-arrival measurement, throughput
+  superiority, natural/general overload, a capacity limit, Scheduler
+  saturation, fairness, completion-order, first-token, production-model,
+  physical-parallelism, GPU, native foreign-OS, or recovery-SLA evidence.
+  Producer-root changes select the focused process gate and Python native-load
+  verifier while compiling the shared Zig process artifact once;
+  Python-verifier-only changes compile no Zig. Live capture stays manual;
+  exhaustive, cross-target, and GPU gates remain outside ordinary fast CI and
+  run only through manual, tagged-release, or milestone promotion.
 - Added the authoritative single-file `.glpub` publication-bundle primitive
   for native-load evidence. A fixed little-endian header frames canonical
   compact manifest JSON followed by the exact verified envelope. The footer

@@ -473,6 +473,30 @@ formats, and independent verifiers.
   latency, physical parallelism, production-model, GPU, or native foreign-OS
   evidence.
 
+  A fourth selector,
+  `-Dunary-server-native-load-profile=open-loop-transient-pressure-v1`,
+  retains explicitly scheduled, outcome-independent client launches under
+  controlled native-loopback FIFO pressure and recovery. After 8 sequential
+  warmups, all 64 measured client actors reach one ready barrier before a
+  shared schedule anchor. The fixed schedule launches 16 baseline attempts at
+  25-millisecond steps, 32 pressure attempts at 5-millisecond steps, and 16
+  recovery attempts at 25-millisecond steps after the fixed release boundary.
+  Two workers, eight pending slots, and a 128-connection backlog remain fixed;
+  the retained FIFO/running high-water marks are `8/2`. The embedded W6
+  scenario separately declares 64 logical client-actor slots and a maximum
+  logical in-flight bound of 64. That logical schedule/report bound is not
+  transport capacity, queue occupancy, or physical parallelism.
+  The verifier binds each client plan ordinal and phase to its scheduled
+  offset, observed launch lateness, and transmit-complete time, requires the
+  declared launch-lateness and recovery-slack bounds, and requires every
+  attempt to settle with final zero ownership. These are client launch and
+  transmit observations, not server-arrival timestamps. The profile proves
+  only its deterministic schedule and test-controlled transient FIFO pressure;
+  it does not establish throughput superiority, natural or general overload,
+  a capacity limit, Scheduler saturation, fairness or completion order,
+  first-token latency, production-model behavior, physical CPU parallelism,
+  GPU behavior, native foreign-OS behavior, or a recovery SLA.
+
   The repository now includes the bounded `.glpub` publication-bundle
   primitive for retaining an exact load envelope and its exact canonical
   context as one authoritative file. Its strict offline decoder requires the
@@ -1598,12 +1622,13 @@ hardware-independent surface without those native backend dependencies.
 | Runtime Workload Lab | W0 deterministic mixed-media open-loop conformance, W1 scheduler-coupled media execution, the W2 four-seed/32-case generated corpus, W3 finite-source closed-loop conformance, W4a mixed typed-perception conformance, the W4b-a typed tool transaction, W4b-b ActionOutbox record recovery, the W4b-c durable POSIX store, W4b-d generation-fenced fake dispatch/status, W5a native observation, a bounded Linux host-source implementation, native macOS Metal readiness, pinned-allocation and bounded two-slot pressure gates, the portable W6a raw-record/summary/closure foundation, the W6b production-native 20-request Metal report producer, W7a finite controlled disruption, W7b-b3 paired-thread concurrent-caller cancellation, W7b-b4 controlled event-blocked in-flight process kill with a fresh production control, W7b-a bounded segmented soak, W7b-b1 quiescent-worker process kill, the W7b-b2 production-publisher/reference-recovery campaign-store process-death/error roll-forward, and W7b-b5 generation-six supervisor-death plus prepared-generation-twelve recovery-process-death cover overload, fairness, timeout, cancellation, turnover, typed publication/effect delivery, uncertain external handoff, fenced safe retry, deterministic crash modeling, explicit machine-state availability, fail-closed pre-run admission, retained post-run contamination, strict unavailable-not-zero behavior, independently recomputed workload evidence, correctness-gated accelerator dispatches, clean and forced worker restart, canonical checkpoint publication/offline audit, and controlled recovery without performance or physical-residency claims | Complete W7b-b active-kernel, broader supervisor/recovery interruption, adapter, and physical device/storage/driver/power campaigns; retain native Linux and broader accelerator campaign matrices; add trustworthy direct CPU/GPU metrics where platform sources exist; then W8 multi-OS replication |
 | Tooling | Zig build, exported `glacier`/`glacier_core` package modules, deterministic demos, benchmark harnesses, five domain compile profiles plus one complete consumer-closure profile, CLI-only default install, and opt-in benchmark installation | Distributable product profiles, installer, stable library API, and simpler fixture workflow |
 
-The AI-runtime and Serving rows now include three fixed native CPU load
-profiles: all-completed, retained-record-capacity, and deterministic
-queued-receive-timeout. References to collecting broader native-load evidence
-next mean explicit open-loop and transient/general overload campaigns,
-production models, repeated machines, publication-eligible native Linux, and
-separately declared GPU campaigns.
+The manual native-load surface now includes four fixed native CPU load
+profiles: all-completed, retained-record-capacity, deterministic
+queued-receive-timeout, and an explicitly scheduled outcome-independent
+client-launch profile under controlled native-loopback FIFO pressure and
+recovery. References to broader native-load evidence next mean longer and
+repeated captures, natural or application-driven overload, production models,
+publication-eligible native Linux, and separately declared GPU campaigns.
 
 The R1d Common artifact remains request-specific, while the additive R1k-b2
 package manifest supplies a separate request-independent portable identity and

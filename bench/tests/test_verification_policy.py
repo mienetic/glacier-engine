@@ -1150,16 +1150,26 @@ class VerificationPolicyTests(unittest.TestCase):
                 self.assertEqual(
                     frozenset(
                         {
-                            "prepared-text-unary-server-process-focused"
+                            "prepared-text-unary-server-process-focused",
+                            "native-unary-load-focused",
                         }
                     ),
                     plan.flags,
                 )
                 self.assertFalse(plan.requires("native-full"))
                 self.assertFalse(plan.requires("python-full"))
+                self.assertFalse(plan.requires("metal-native"))
                 self.assertIn(
                     "native/prepared-text-unary-server-process",
                     policy._gate_names(plan.decisions[0]),
+                )
+                self.assertIn(
+                    "python/native-unary-load",
+                    policy._gate_names(plan.decisions[0]),
+                )
+                self.assertEqual(
+                    ("unary-server-process-compile",),
+                    plan.target_plans[0].steps,
                 )
         for changed_path in sorted(
             EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS
@@ -5254,6 +5264,13 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "the focused host Zig DAG",
                 result.stdout,
             )
+            self.assertEqual(
+                1,
+                result.stdout.count(
+                    "PASS  python/native-unary-load:"
+                ),
+                result.stdout,
+            )
             self.assertNotIn(
                 "native/prepared-text-unary-service",
                 result.stdout,
@@ -5262,6 +5279,22 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "native/prepared-text-unary-http",
                 result.stdout,
             )
+            self.assertIn(
+                "SKIP  native/releasesafe-suite: affected-fast defers "
+                "the broad suite",
+                result.stdout,
+            )
+            self.assertIn(
+                "SKIP  python/full-suite: affected-fast defers full "
+                "discovery",
+                result.stdout,
+            )
+            self.assertIn(
+                "SKIP  portability/cross-target: affected-fast defers "
+                "retained targets",
+                result.stdout,
+            )
+            self.assertNotIn("PASS  native/metal:", result.stdout)
             calls = (
                 Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
                 .read_text(encoding="ascii")
@@ -5281,6 +5314,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                     or "unary-http-test" in line
                     or "model_forward" in line
                     or "package-module-test" in line
+                    or "native-metal" in line
                     or " -Dtarget=" in line
                     for line in calls
                 ),

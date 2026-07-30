@@ -1238,9 +1238,15 @@ def _decision_for_path(path: str) -> PathDecision:
     if lower in PREPARED_TEXT_UNARY_SERVER_PROCESS_FOCUSED_PATHS:
         return PathDecision(
             path,
-            "bounded managed unary server process lifecycle changed",
+            (
+                "bounded managed unary server process or native-load "
+                "producer changed"
+            ),
             frozenset(
-                {"prepared-text-unary-server-process-focused"}
+                {
+                    "prepared-text-unary-server-process-focused",
+                    "native-unary-load-focused",
+                }
             ),
             RETAINED_TARGETS,
             ("unary-server-process-compile",),

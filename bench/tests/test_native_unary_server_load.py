@@ -21,36 +21,53 @@ def _seal_structural_outer(
     campaign = load._campaign_profile(profile_name)
     sidecars = []
     for ordinal in range(load.RECORD_COUNT):
-        sidecars.append(
-            load.SIDECAR_STRUCT.pack(
-                ordinal,
-                0,
-                *([0] * 11),
-                0,
-                0,
-                0,
-                0,
-                0,
-                load.ZERO_DIGEST,
-                load.ZERO_DIGEST,
-                load.ZERO_DIGEST,
-                load.ZERO_DIGEST,
-                load.ZERO_DIGEST,
-                load.ZERO_DIGEST,
-            )
+        encoded_sidecar = load.SIDECAR_STRUCT.pack(
+            ordinal,
+            0,
+            *([0] * 11),
+            0,
+            0,
+            0,
+            0,
+            0,
+            load.ZERO_DIGEST,
+            load.ZERO_DIGEST,
+            load.ZERO_DIGEST,
+            load.ZERO_DIGEST,
+            load.ZERO_DIGEST,
+            load.ZERO_DIGEST,
         )
+        if campaign.has_open_loop_schedule:
+            encoded_sidecar += load.OPEN_LOOP_SCHEDULE_STRUCT.pack(
+                ordinal,
+                (
+                    load.OPEN_LOOP_PHASE_WARMUP
+                    if ordinal < load.WARMUP_COUNT
+                    else load.OPEN_LOOP_PHASE_BASELINE
+                ),
+                (
+                    0
+                    if ordinal < load.WARMUP_COUNT
+                    else load.OPEN_LOOP_SCHEDULE_FLAG_MEASURED
+                ),
+                0,
+                0,
+                0,
+                0,
+            )
+        sidecars.append(encoded_sidecar)
     body = (
         b"".join(sidecars)
-        + b"\x00" * load.CLOSURE_BYTES
+        + b"\x00" * campaign.closure_bytes
         + b"\x00" * load.INNER_BYTES
     )
     header = load.HEADER_STRUCT.pack(
         campaign.magic,
         campaign.outer_abi,
-        load.OUTER_BYTES,
+        campaign.outer_bytes,
         load.RECORD_COUNT,
-        load.SIDECAR_BYTES,
-        load.CLOSURE_BYTES,
+        campaign.sidecar_bytes,
+        campaign.closure_bytes,
         load.INNER_BYTES,
     )
     body_digest = load._domain_hash(campaign.body_domain, body)
@@ -82,6 +99,8 @@ def _valid_closure(
     campaign = load._campaign_profile(profile_name)
     if campaign.name == load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME:
         return load.QUEUED_RECEIVE_TIMEOUT_CLOSURE
+    if campaign.has_open_loop_schedule:
+        return _open_loop_profile_fixture()[1]
     return (
         72,
         72,
@@ -125,6 +144,8 @@ def _profile_fixture(
     bytes,
 ]:
     campaign = load._campaign_profile(profile_name)
+    if campaign.has_open_loop_schedule:
+        return _open_loop_profile_fixture()
     build = _digest("build")
     machine = _digest("machine")
     challenge = _digest("challenge")
@@ -409,6 +430,369 @@ def _profile_fixture(
     )
 
 
+def _open_loop_profile_fixture() -> tuple[
+    tuple[load.Sidecar, ...],
+    tuple[int, ...],
+    load.InnerProfile,
+    bytes,
+    bytes,
+    bytes,
+]:
+    campaign = load.OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE
+    build = _digest("build")
+    machine = _digest("machine")
+    challenge = _digest("challenge")
+    anchor_ns = 10_000_000_000
+    release_ns = (
+        anchor_ns + load.OPEN_LOOP_FIXED_RELEASE_OFFSET_NS + 10_000_000
+    )
+    timing: list[dict[str, int]] = []
+    previous_pressure_retired_by_slot: dict[int, int] = {}
+    for planned_ordinal in range(load.RECORD_COUNT):
+        phase, flags, scheduled_offset_ns = (
+            load._open_loop_expected_schedule(planned_ordinal)
+        )
+        if phase == load.OPEN_LOOP_PHASE_WARMUP:
+            arrival_ns = 8_000_000_000 + planned_ordinal * 10_000_000
+            launch_lateness_ns = 0
+        else:
+            launch_lateness_ns = 1_000_000
+            arrival_ns = (
+                anchor_ns
+                + scheduled_offset_ns
+                + launch_lateness_ns
+            )
+        slot_index = planned_ordinal % campaign.connection_capacity
+        if phase == load.OPEN_LOOP_PHASE_PRESSURE:
+            phase_ordinal = (
+                planned_ordinal - load.OPEN_LOOP_PRESSURE_START
+            )
+            prior_retired_ns = previous_pressure_retired_by_slot.get(
+                slot_index,
+                0,
+            )
+            enqueue_ns = max(
+                arrival_ns + 100_000,
+                prior_retired_ns + 100_000,
+            )
+            dispatch_ns = max(
+                release_ns + phase_ordinal * 1_000_000,
+                enqueue_ns + 100_000,
+            )
+            published_ns = dispatch_ns + 100_000
+            first_output_ns = published_ns + 50_000
+            terminal_ns = published_ns + 150_000
+            retired_ns = published_ns + 200_000
+            settlement_ns = retired_ns + 100_000
+            previous_pressure_retired_by_slot[slot_index] = retired_ns
+        else:
+            enqueue_ns = arrival_ns + 100_000
+            dispatch_ns = arrival_ns + 200_000
+            published_ns = arrival_ns + 300_000
+            first_output_ns = arrival_ns + 350_000
+            terminal_ns = arrival_ns + 400_000
+            retired_ns = arrival_ns + 450_000
+            settlement_ns = arrival_ns + 550_000
+        timing.append(
+            {
+                "arrival_ns": arrival_ns,
+                "enqueue_ns": enqueue_ns,
+                "dispatch_ns": dispatch_ns,
+                "published_ns": published_ns,
+                "first_output_ns": first_output_ns,
+                "terminal_ns": terminal_ns,
+                "retired_ns": retired_ns,
+                "settlement_ns": settlement_ns,
+                "transmit_complete_ns": arrival_ns + 50_000,
+                "phase": phase,
+                "flags": flags,
+                "scheduled_offset_ns": scheduled_offset_ns,
+                "launch_lateness_ns": launch_lateness_ns,
+                "slot_index": slot_index,
+            }
+        )
+
+    lifecycle_events: list[tuple[int, int, int]] = []
+    for index, values in enumerate(timing):
+        lifecycle_events.extend(
+            (
+                (values["enqueue_ns"], 0, index),
+                (values["dispatch_ns"], 1, index),
+                (values["retired_ns"], 2, index),
+            )
+        )
+    lifecycle_ordinals: dict[tuple[int, int], int] = {}
+    for ordinal, (_, kind, index) in enumerate(
+        sorted(lifecycle_events),
+        start=1,
+    ):
+        lifecycle_ordinals[(index, kind)] = ordinal
+
+    host_events: list[tuple[int, int, int]] = []
+    for index, values in enumerate(timing):
+        for event_index, field in enumerate(
+            (
+                "arrival_ns",
+                "enqueue_ns",
+                "dispatch_ns",
+                "published_ns",
+                "first_output_ns",
+                "terminal_ns",
+                "settlement_ns",
+            )
+        ):
+            host_events.append((values[field], event_index, index))
+    host_sequences: dict[tuple[int, int], int] = {}
+    for sequence, (_, event_index, index) in enumerate(
+        sorted(host_events),
+        start=1,
+    ):
+        host_sequences[(index, event_index)] = sequence
+
+    sidecars: list[load.Sidecar] = []
+    records: list[load.InnerRecord] = []
+    for index, values in enumerate(timing):
+        request = _digest("open-request-%d" % index)
+        handle = _digest("open-handle-%d" % index)
+        output = _digest("open-output-%d" % index)
+        terminal = _digest("open-terminal-%d" % index)
+        completion = _digest("open-completion-%d" % index)
+        sidecar = load.Sidecar(
+            ordinal=index,
+            response_bytes=512,
+            enqueue_ordinal=lifecycle_ordinals[(index, 0)],
+            dispatch_ordinal=lifecycle_ordinals[(index, 1)],
+            retired_ordinal=lifecycle_ordinals[(index, 2)],
+            enqueue_ns=values["enqueue_ns"],
+            dispatch_ns=values["dispatch_ns"],
+            published_ns=values["published_ns"],
+            retired_ns=values["retired_ns"],
+            work_sequence=index + 1,
+            process_generation=campaign.process_generation,
+            connection_sequence=index + 1,
+            slot_generation=(
+                index // campaign.connection_capacity + 1
+            ),
+            slot_index=values["slot_index"],
+            worker_index=index % campaign.worker_count,
+            content_byte=65,
+            output_token=65,
+            request_sha256=request,
+            response_handle_sha256=handle,
+            handle_sha256=handle,
+            output_sha256=output,
+            terminal_sha256=terminal,
+            completion_sha256=completion,
+            schedule=load.OpenLoopSchedule(
+                planned_ordinal=index,
+                phase=values["phase"],
+                flags=values["flags"],
+                reserved=0,
+                scheduled_offset_ns=values[
+                    "scheduled_offset_ns"
+                ],
+                launch_lateness_ns=values[
+                    "launch_lateness_ns"
+                ],
+                transmit_complete_ns=values[
+                    "transmit_complete_ns"
+                ],
+            ),
+        )
+        pin = load._pin_root(sidecar)
+        points = tuple(
+            (
+                values[field],
+                host_sequences[(index, event_index)],
+            )
+            for event_index, field in enumerate(
+                (
+                    "arrival_ns",
+                    "enqueue_ns",
+                    "dispatch_ns",
+                    "published_ns",
+                    "first_output_ns",
+                    "terminal_ns",
+                    "settlement_ns",
+                )
+            )
+        )
+        records.append(
+            load.InnerRecord(
+                ordinal=index,
+                cohort=0 if index < load.WARMUP_COUNT else 1,
+                outcome=load.OUTCOME_COMPLETED,
+                correctness=1,
+                fallback=0,
+                flow_id=(
+                    index
+                    if index < load.WARMUP_COUNT
+                    else (index - load.WARMUP_COUNT)
+                    % load.FLOW_COUNT
+                ),
+                work_units=1,
+                queue_slot=(
+                    index
+                    if index < load.WARMUP_COUNT
+                    else index - load.WARMUP_COUNT
+                ),
+                presence_mask=0x7F,
+                points=points,
+                roots=(
+                    request,
+                    handle,
+                    pin,
+                    load._dispatch_root(sidecar, pin),
+                    load._submission_root(sidecar, pin),
+                    output,
+                    load._oracle_root(sidecar),
+                    terminal,
+                    completion,
+                ),
+            )
+        )
+        sidecars.append(sidecar)
+
+    measured_records = records[load.WARMUP_COUNT :]
+
+    def p99(values: list[int]) -> int:
+        ordered = sorted(values)
+        return ordered[(99 * len(ordered) + 99) // 100 - 1]
+
+    interval_ns = (
+        max(record.points[6][0] for record in measured_records)
+        - min(record.points[0][0] for record in measured_records)
+    )
+    profile = load.InnerProfile(
+        mode=1,
+        evidence=1,
+        warmup_count=load.WARMUP_COUNT,
+        measured_count=load.MEASURED_COUNT,
+        max_in_flight=campaign.max_in_flight,
+        queue_count=campaign.queue_count,
+        flow_count=load.FLOW_COUNT,
+        identities=(
+            load._identity(load.WORKLOAD_ID),
+            load._identity(campaign.profile_id),
+            _digest("artifact"),
+            build,
+            machine,
+            load._identity(load.BACKEND_ID),
+            load._identity(load.DEVICE_ID),
+            load._identity(campaign.placement_id),
+            load._identity(load.HOST_SOURCE_ID),
+            load._host_clock_identity("Darwin"),
+            load._identity(load.DEVICE_SOURCE_ID),
+            load._identity(load.DEVICE_CLOCK_ID),
+            challenge,
+        ),
+        records=tuple(records),
+        completed_work_units=load.MEASURED_COUNT,
+        interval_ns=interval_ns,
+        throughput_numerator=load.MEASURED_COUNT,
+        throughput_denominator_ns=interval_ns,
+        admission_sample_count=load.MEASURED_COUNT,
+        admission_p99_ns=p99(
+            [
+                record.points[1][0] - record.points[0][0]
+                for record in measured_records
+            ]
+        ),
+        queue_sample_count=load.MEASURED_COUNT,
+        queue_p99_ns=p99(
+            [
+                record.points[2][0] - record.points[1][0]
+                for record in measured_records
+            ]
+        ),
+        first_byte_sample_count=load.MEASURED_COUNT,
+        first_byte_p99_ns=p99(
+            [
+                record.points[4][0] - record.points[0][0]
+                for record in measured_records
+            ]
+        ),
+        terminal_p99_ns=p99(
+            [
+                record.points[5][0] - record.points[0][0]
+                for record in measured_records
+            ]
+        ),
+    )
+    pressure = timing[
+        load.OPEN_LOOP_PRESSURE_START :
+        load.OPEN_LOOP_RECOVERY_START
+    ]
+    recovery = timing[load.OPEN_LOOP_RECOVERY_START :]
+    pressure_server_settled_ns = max(
+        values["retired_ns"] for values in pressure
+    )
+    pressure_joined_settled_ns = max(
+        values["settlement_ns"] for values in pressure
+    )
+    recovery_first_ns = min(
+        values["arrival_ns"] for values in recovery
+    )
+    closure = (
+        72,
+        72,
+        0,
+        72,
+        72,
+        8,
+        2,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        72,
+        72,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        0,
+        218,
+        anchor_ns,
+        64,
+        16,
+        32,
+        16,
+        375_000_000,
+        155_000_000,
+        375_000_000,
+        1_000_000,
+        1_000_000,
+        1_000_000,
+        anchor_ns + 700_000_000,
+        release_ns,
+        pressure_server_settled_ns,
+        pressure_joined_settled_ns,
+        recovery_first_ns
+        - max(
+            pressure_server_settled_ns,
+            pressure_joined_settled_ns,
+        ),
+    )
+    return (
+        tuple(sidecars),
+        closure,
+        profile,
+        build,
+        machine,
+        challenge,
+    )
+
+
 def _reroot_completed(
     sidecar: load.Sidecar,
     record: load.InnerRecord,
@@ -601,14 +985,17 @@ def _publication_observation(
 def _publication_fixture(
     *,
     publication_eligible: bool = True,
+    profile_name: str = load.SUCCESSFUL_PROFILE_NAME,
 ) -> tuple[
     load.publication.PublicationBundle,
     load.VerifiedEnvelope,
     bytes,
     dict[str, object],
 ]:
-    campaign = load.SUCCESSFUL_PROFILE
-    sidecars, closure, profile, _, _, _ = _profile_fixture()
+    campaign = load._campaign_profile(profile_name)
+    sidecars, closure, profile, _, _, _ = _profile_fixture(
+        profile_name
+    )
     envelope = b"native-unary-load-envelope-fixture"
     report_sha256 = _digest("inner-report")
     verified = load.VerifiedEnvelope(
@@ -873,6 +1260,435 @@ class NativeUnaryServerLoadTests(unittest.TestCase):
             with self.subTest(offset=offset):
                 with self.assertRaises(load.VerificationError):
                     load._parse_outer(bytes(mutated))
+
+    def test_open_loop_outer_layout_and_profile_abi_are_isolated(
+        self,
+    ) -> None:
+        campaign = load.OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE
+        self.assertEqual(load.OPEN_LOOP_SCHEDULE_STRUCT.size, 32)
+        self.assertEqual(load.OPEN_LOOP_SIDECAR_BYTES, 328)
+        self.assertEqual(load.OPEN_LOOP_CLOSURE_BYTES, 352)
+        self.assertEqual(load.OPEN_LOOP_OUTER_BYTES, 82_212)
+        self.assertEqual(campaign.outer_bytes, load.OPEN_LOOP_OUTER_BYTES)
+        encoded = _seal_structural_outer(campaign.name)
+        sidecars, closure, inner = load._parse_outer(
+            encoded,
+            profile_name=campaign.name,
+        )
+        self.assertEqual(len(encoded), load.OPEN_LOOP_OUTER_BYTES)
+        self.assertEqual(len(sidecars), load.RECORD_COUNT)
+        self.assertEqual(len(closure), load.OPEN_LOOP_CLOSURE_U64_COUNT)
+        self.assertEqual(len(inner), load.INNER_BYTES)
+        self.assertEqual(sidecars[0].schedule.planned_ordinal, 0)
+        self.assertEqual(
+            load.HEADER_STRUCT.unpack_from(encoded, 0),
+            (
+                load.OPEN_LOOP_TRANSIENT_PRESSURE_MAGIC,
+                load.OPEN_LOOP_TRANSIENT_PRESSURE_OUTER_ABI,
+                load.OPEN_LOOP_OUTER_BYTES,
+                load.RECORD_COUNT,
+                load.OPEN_LOOP_SIDECAR_BYTES,
+                load.OPEN_LOOP_CLOSURE_BYTES,
+                load.INNER_BYTES,
+            ),
+        )
+        for old_profile in (
+            load.SUCCESSFUL_PROFILE_NAME,
+            load.RETENTION_CAPACITY_PROFILE_NAME,
+            load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME,
+        ):
+            with self.subTest(old_profile=old_profile):
+                with self.assertRaises(load.VerificationError):
+                    load._parse_outer(
+                        encoded,
+                        profile_name=old_profile,
+                    )
+        with self.assertRaises(load.VerificationError):
+            load._parse_outer(
+                _seal_structural_outer(),
+                profile_name=campaign.name,
+            )
+
+        invalid_outcome = bytearray(encoded)
+        invalid_outcome[load.HEADER_BYTES + 99] = (
+            load.OUTCOME_CAPACITY_REJECTED
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "sidecar reserved byte is nonzero",
+        ):
+            load._parse_outer(
+                _reseal_outer(invalid_outcome, campaign.name),
+                profile_name=campaign.name,
+            )
+
+    def test_open_loop_profile_binds_schedule_gate_and_recovery(
+        self,
+    ) -> None:
+        profile_name = load.OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME
+        sidecars, closure, profile, build, machine, challenge = (
+            _profile_fixture(profile_name)
+        )
+
+        def verify(
+            candidate_sidecars: tuple[load.Sidecar, ...] = sidecars,
+            candidate_closure: tuple[int, ...] = closure,
+            candidate_profile: load.InnerProfile = profile,
+        ) -> None:
+            load._verify_profile(
+                candidate_sidecars,
+                candidate_closure,
+                candidate_profile,
+                expected_build=build,
+                expected_machine=machine,
+                expected_challenge=challenge,
+                system="Darwin",
+                profile_name=profile_name,
+            )
+
+        verify()
+        self.assertEqual(profile.mode, 1)
+        self.assertEqual(
+            (profile.max_in_flight, profile.queue_count),
+            (64, 64),
+        )
+        planned = {
+            sidecar.schedule.planned_ordinal: (
+                sidecar,
+                record,
+                sidecar.schedule,
+            )
+            for sidecar, record in zip(sidecars, profile.records)
+        }
+        self.assertEqual(set(planned), set(range(load.RECORD_COUNT)))
+        self.assertEqual(
+            [
+                planned[index][1].queue_slot
+                for index in range(load.RECORD_COUNT)
+            ],
+            list(range(load.WARMUP_COUNT))
+            + list(range(load.MEASURED_COUNT)),
+        )
+        self.assertEqual(
+            max(sidecar.slot_index for sidecar in sidecars),
+            9,
+        )
+        self.assertEqual(
+            max(record.queue_slot for record in profile.records),
+            63,
+        )
+        self.assertEqual(
+            [
+                planned[index][2].phase
+                for index in range(load.WARMUP_COUNT)
+            ],
+            [load.OPEN_LOOP_PHASE_WARMUP] * load.WARMUP_COUNT,
+        )
+        self.assertEqual(
+            [
+                planned[index][2].scheduled_offset_ns
+                for index in (
+                    load.OPEN_LOOP_BASELINE_START,
+                    load.OPEN_LOOP_PRESSURE_START,
+                    load.OPEN_LOOP_RECOVERY_START,
+                    load.RECORD_COUNT - 1,
+                )
+            ],
+            [0, 600_000_000, 1_800_000_000, 2_175_000_000],
+        )
+        self.assertEqual(closure[5:9], (8, 2, 1, 1))
+        self.assertEqual(closure[29:33], (64, 16, 32, 16))
+        evidence = load._verify_open_loop_evidence(
+            sidecars,
+            profile.records,
+            closure,
+        )
+        self.assertEqual(
+            evidence["phases"]["baseline"][
+                "offered_launch_rate_numerator"
+            ],
+            15,
+        )
+        self.assertEqual(
+            evidence["phases"]["baseline"][
+                "offered_launch_rate_denominator_ns"
+            ],
+            375_000_000,
+        )
+        self.assertEqual(
+            evidence["phases"]["pressure"][
+                "offered_launch_rate_denominator_ns"
+            ],
+            155_000_000,
+        )
+        self.assertEqual(
+            evidence["phases"]["recovery"][
+                "scheduled_offset_first_ns"
+            ],
+            1_800_000_000,
+        )
+        self.assertGreaterEqual(
+            evidence["recovery"]["slack_ns"],
+            load.OPEN_LOOP_RECOVERY_SLACK_NS,
+        )
+
+        verified = load.VerifiedEnvelope(
+            inner_result=SimpleNamespace(
+                report_sha256=_digest("open-inner-report")
+            ),
+            profile=profile,
+            sidecars=sidecars,
+            closure=closure,
+            outer_sha256=_digest("open-outer"),
+        )
+        report = load._report_manifest(
+            load.OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE,
+            b"open-loop-envelope",
+            verified,
+        )
+        self.assertEqual(report["open_loop"], evidence)
+        self.assertEqual(
+            report["throughput_numerator"],
+            load.MEASURED_COUNT,
+        )
+        self.assertNotEqual(
+            report["throughput_denominator_ns"],
+            evidence["phases"]["pressure"][
+                "achieved_launch_rate_denominator_ns"
+            ],
+        )
+
+    def test_open_loop_profile_rejects_schedule_and_plan_mutations(
+        self,
+    ) -> None:
+        profile_name = load.OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME
+        sidecars, closure, profile, build, machine, challenge = (
+            _profile_fixture(profile_name)
+        )
+
+        def verify(
+            candidate_sidecars: tuple[load.Sidecar, ...] = sidecars,
+            candidate_closure: tuple[int, ...] = closure,
+            candidate_profile: load.InnerProfile = profile,
+        ) -> None:
+            load._verify_profile(
+                candidate_sidecars,
+                candidate_closure,
+                candidate_profile,
+                expected_build=build,
+                expected_machine=machine,
+                expected_challenge=challenge,
+                system="Darwin",
+                profile_name=profile_name,
+            )
+
+        actor_index = load.OPEN_LOOP_PRESSURE_START
+        actor_record = profile.records[actor_index]
+        wrong_actor_slot = sidecars[actor_index].slot_index
+        self.assertNotEqual(
+            actor_record.queue_slot,
+            wrong_actor_slot,
+        )
+        actor_records = list(profile.records)
+        actor_records[actor_index] = replace(
+            actor_record,
+            queue_slot=wrong_actor_slot,
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "logical actor slot",
+        ):
+            verify(
+                candidate_profile=replace(
+                    profile,
+                    records=tuple(actor_records),
+                ),
+            )
+
+        schedule_index = load.OPEN_LOOP_PRESSURE_START
+        original = sidecars[schedule_index]
+        assert original.schedule is not None
+        schedule_mutations = {
+            "duplicate": replace(
+                original.schedule,
+                planned_ordinal=(
+                    original.schedule.planned_ordinal - 1
+                ),
+            ),
+            "phase": replace(
+                original.schedule,
+                phase=load.OPEN_LOOP_PHASE_BASELINE,
+            ),
+            "flags": replace(original.schedule, flags=0),
+            "reserved": replace(original.schedule, reserved=1),
+            "offset": replace(
+                original.schedule,
+                scheduled_offset_ns=(
+                    original.schedule.scheduled_offset_ns + 1
+                ),
+            ),
+            "lateness": replace(
+                original.schedule,
+                launch_lateness_ns=(
+                    original.schedule.launch_lateness_ns + 1
+                ),
+            ),
+            "transmit": replace(
+                original.schedule,
+                transmit_complete_ns=closure[40] + 1,
+            ),
+        }
+        for label, schedule in schedule_mutations.items():
+            mutated = list(sidecars)
+            mutated[schedule_index] = replace(
+                original,
+                schedule=schedule,
+            )
+            with self.subTest(schedule=label):
+                with self.assertRaises(load.VerificationError):
+                    verify(tuple(mutated))
+
+        cohort_index = load.OPEN_LOOP_BASELINE_START
+        cohort_records = list(profile.records)
+        cohort_records[cohort_index] = replace(
+            cohort_records[cohort_index],
+            cohort=0,
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "phase/cohort",
+        ):
+            load._verify_open_loop_evidence(
+                sidecars,
+                tuple(cohort_records),
+                closure,
+            )
+
+        for phase_name, transmit_index in (
+            ("baseline", load.OPEN_LOOP_BASELINE_START),
+            ("recovery", load.OPEN_LOOP_RECOVERY_START),
+        ):
+            transmit_sidecar = sidecars[transmit_index]
+            assert transmit_sidecar.schedule is not None
+            transmit_record = profile.records[transmit_index]
+            self.assertLess(
+                transmit_record.points[4][0],
+                transmit_record.points[6][0],
+            )
+            transmit_sidecars = list(sidecars)
+            transmit_sidecars[transmit_index] = replace(
+                transmit_sidecar,
+                schedule=replace(
+                    transmit_sidecar.schedule,
+                    transmit_complete_ns=(
+                        transmit_record.points[4][0] + 1
+                    ),
+                ),
+            )
+            with self.subTest(transmit_phase=phase_name):
+                with self.assertRaisesRegex(
+                    load.VerificationError,
+                    "transmit boundary",
+                ):
+                    verify(tuple(transmit_sidecars))
+
+        first_pressure = sidecars[load.OPEN_LOOP_PRESSURE_START]
+        second_pressure = sidecars[
+            load.OPEN_LOOP_PRESSURE_START + 1
+        ]
+        self.assertLess(
+            first_pressure.enqueue_ordinal,
+            second_pressure.enqueue_ordinal,
+        )
+        fifo_mutated = list(sidecars)
+        fifo_mutated[load.OPEN_LOOP_PRESSURE_START] = replace(
+            first_pressure,
+            dispatch_ordinal=second_pressure.dispatch_ordinal + 1,
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "FIFO enqueue order",
+        ):
+            load._verify_open_loop_evidence(
+                tuple(fifo_mutated),
+                profile.records,
+                closure,
+            )
+
+        baseline_index = load.OPEN_LOOP_BASELINE_START
+        baseline_sidecar = sidecars[baseline_index]
+        assert baseline_sidecar.schedule is not None
+        baseline_record = profile.records[baseline_index]
+        early_points = list(baseline_record.points)
+        early_points[0] = (
+            closure[28] - 1,
+            early_points[0][1],
+        )
+        early_records = list(profile.records)
+        early_records[baseline_index] = replace(
+            baseline_record,
+            points=tuple(early_points),
+        )
+        early_sidecars = list(sidecars)
+        early_sidecars[baseline_index] = replace(
+            baseline_sidecar,
+            schedule=replace(
+                baseline_sidecar.schedule,
+                launch_lateness_ns=0,
+                transmit_complete_ns=closure[28],
+            ),
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "launched before its schedule",
+        ):
+            verify(
+                tuple(early_sidecars),
+                candidate_profile=replace(
+                    profile,
+                    records=tuple(early_records),
+                ),
+            )
+
+        closure_mutations = {
+            "counts": (29, closure[29] - 1),
+            "span": (34, closure[34] + 1),
+            "lateness": (37, closure[37] + 1),
+            "ready": (
+                39,
+                closure[28]
+                + load.OPEN_LOOP_FIXED_RELEASE_OFFSET_NS
+                + 1,
+            ),
+            "release": (
+                40,
+                closure[28]
+                + load.OPEN_LOOP_FIXED_RELEASE_OFFSET_NS
+                + load.OPEN_LOOP_LAUNCH_LATENESS_CAP_NS
+                + 1,
+            ),
+            "server-settlement": (41, closure[41] + 1),
+            "joined-settlement": (42, closure[42] + 1),
+            "recovery-slack": (43, closure[43] - 1),
+        }
+        for label, (index, value) in closure_mutations.items():
+            mutated = list(closure)
+            mutated[index] = value
+            with self.subTest(plan=label):
+                with self.assertRaises(load.VerificationError):
+                    verify(candidate_closure=tuple(mutated))
+
+        for index, value in ((5, 7), (6, 1), (7, 0), (8, 0)):
+            mutated = list(closure)
+            mutated[index] = value
+            if index in (7, 8):
+                mutated[7] = mutated[8] = value
+                mutated[27] = (
+                    load.RECORD_COUNT * 3 + value * 2
+                )
+            with self.subTest(base_closure=index):
+                with self.assertRaises(load.VerificationError):
+                    verify(candidate_closure=tuple(mutated))
 
     def test_retention_capacity_outer_abi_rejects_profile_substitution(
         self,
@@ -1946,16 +2762,22 @@ class NativeUnaryServerLoadTests(unittest.TestCase):
                 load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME,
                 "--native-load-queued-receive-timeout",
             ),
+            (
+                load.OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME,
+                "--native-load-open-loop-transient-pressure",
+            ),
         ):
             captured: list[list[str]] = []
+            stdout_limits: list[int] = []
 
             def bounded_capture(
                 command: list[str],
                 **kwargs: object,
             ) -> tuple[int, bytes, bytes]:
-                _ = kwargs
                 captured.append(command)
-                return 0, b"\x00" * load.OUTER_BYTES, b""
+                campaign = load._campaign_profile(profile_name)
+                stdout_limits.append(int(kwargs["stdout_limit"]))
+                return 0, b"\x00" * campaign.outer_bytes, b""
 
             with self.subTest(profile_name=profile_name), mock.patch.object(
                 load,
@@ -1972,6 +2794,14 @@ class NativeUnaryServerLoadTests(unittest.TestCase):
                 )
                 self.assertEqual(captured[0][1], expected_mode)
                 self.assertEqual(len(captured), 1)
+                self.assertEqual(
+                    stdout_limits,
+                    [
+                        load._campaign_profile(
+                            profile_name
+                        ).outer_bytes
+                    ],
+                )
 
     def test_profile_composes_transport_roots_and_exact_closure(self) -> None:
         sidecars, closure, profile, build, machine, challenge = (
@@ -2395,6 +3225,81 @@ class NativeUnaryServerLoadTests(unittest.TestCase):
             system="Darwin",
             profile_name=load.SUCCESSFUL_PROFILE_NAME,
         )
+
+    def test_open_loop_publication_round_trip_recomputes_schedule(
+        self,
+    ) -> None:
+        profile_name = load.OPEN_LOOP_TRANSIENT_PRESSURE_PROFILE_NAME
+        bundle, verified, challenge, _ = _publication_fixture(
+            profile_name=profile_name
+        )
+        context = bundle.manifest["publication_context"]
+        producer = context["producer"]
+        machine = bytes.fromhex(
+            context["machine_fingerprint_sha256"]
+        )
+        with mock.patch.object(
+            load,
+            "verify_envelope",
+            return_value=verified,
+        ) as verify, mock.patch.object(
+            load.platform,
+            "system",
+            side_effect=AssertionError(
+                "offline open-loop verification read host system"
+            ),
+        ), mock.patch.object(
+            load,
+            "_capture_native_observation",
+            side_effect=AssertionError(
+                "offline open-loop verification sampled host"
+            ),
+        ):
+            self.assertIs(
+                load.verify_publication_bundle(bundle),
+                verified,
+            )
+        verify.assert_called_once_with(
+            bundle.envelope,
+            expected_build=bytes.fromhex(producer["sha256"]),
+            expected_machine=machine,
+            expected_challenge=challenge,
+            system="Darwin",
+            profile_name=profile_name,
+        )
+        open_loop = bundle.manifest["report"]["open_loop"]
+        self.assertEqual(
+            open_loop["arrival_policy"],
+            "scheduled-open-loop",
+        )
+        self.assertEqual(
+            open_loop["pressure_gate"]["queue_high_water"],
+            8,
+        )
+        self.assertEqual(
+            open_loop["recovery"]["minimum_slack_ns"],
+            load.OPEN_LOOP_RECOVERY_SLACK_NS,
+        )
+
+        mutated_manifest = copy.deepcopy(bundle.manifest)
+        mutated_manifest["report"]["open_loop"]["phases"][
+            "pressure"
+        ]["actual_client_launch_span_ns"] += 1
+        mutated_bundle = load.publication.decode_bundle(
+            load.publication.encode_bundle(
+                bundle.envelope,
+                mutated_manifest,
+            )
+        )
+        with mock.patch.object(
+            load,
+            "verify_envelope",
+            return_value=verified,
+        ), self.assertRaisesRegex(
+            load.VerificationError,
+            "publication report summary mismatch",
+        ):
+            load.verify_publication_bundle(mutated_bundle)
 
     def test_publication_bundle_api_reconstructs_structural_identity(
         self,

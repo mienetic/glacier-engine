@@ -25,6 +25,8 @@ const native_load_retention_capacity_mode =
     "--native-load-retention-capacity";
 const native_load_queued_receive_timeout_mode =
     "--native-load-queued-receive-timeout";
+const native_load_open_loop_transient_pressure_mode =
+    "--native-load-open-loop-transient-pressure";
 const loopback_host = "127.0.0.1";
 const drain_command = "drain\n";
 const drain_head_command = "drain-head\n";
@@ -85,6 +87,8 @@ const generation_native_load_retention_capacity: u64 =
     0x4753_5052_0000_0117;
 const generation_native_load_queued_receive_timeout: u64 =
     0x4753_5052_0000_0118;
+const generation_native_load_open_loop_transient_pressure: u64 =
+    0x4753_5052_0000_0119;
 const frame_max_bytes = 1024;
 const concurrent_event_capacity = 512;
 const native_load_flow_count: usize = 8;
@@ -115,6 +119,36 @@ const native_load_queued_receive_timeout_event_count: usize =
             native_load_queued_receive_timeout_running_per_epoch * 2 +
             native_load_queued_receive_timeout_queued_per_epoch +
             2);
+const native_load_open_loop_baseline_count: usize = 16;
+const native_load_open_loop_pressure_count: usize = 32;
+const native_load_open_loop_recovery_count: usize = 16;
+const native_load_open_loop_measured_actor_count: usize =
+    native_load_open_loop_baseline_count +
+    native_load_open_loop_pressure_count +
+    native_load_open_loop_recovery_count;
+const native_load_open_loop_worker_count: u8 = 2;
+const native_load_open_loop_pending_capacity: u8 = 8;
+const native_load_open_loop_kernel_backlog: u31 = 128;
+const native_load_open_loop_anchor_lead_ns =
+    100 * std.time.ns_per_ms;
+const native_load_open_loop_baseline_step_ns =
+    25 * std.time.ns_per_ms;
+const native_load_open_loop_gate_arm_offset_ns =
+    500 * std.time.ns_per_ms;
+const native_load_open_loop_pressure_start_offset_ns =
+    600 * std.time.ns_per_ms;
+const native_load_open_loop_pressure_step_ns =
+    5 * std.time.ns_per_ms;
+const native_load_open_loop_fixed_release_offset_ns =
+    std.time.ns_per_s;
+const native_load_open_loop_recovery_start_offset_ns =
+    1800 * std.time.ns_per_ms;
+const native_load_open_loop_recovery_step_ns =
+    25 * std.time.ns_per_ms;
+const native_load_open_loop_max_launch_lateness_ns =
+    100 * std.time.ns_per_ms;
+const native_load_open_loop_min_recovery_slack_ns =
+    100 * std.time.ns_per_ms;
 const native_load_wave_count: usize =
     native_load_record_count / native_load_flow_count;
 const native_load_worker_count: u8 = 2;
@@ -123,6 +157,7 @@ const native_load_queued_receive_timeout_worker_count: u8 = 2;
 const native_load_queued_receive_timeout_pending_capacity: u8 = 6;
 const native_load_no_worker: u8 = std.math.maxInt(u8);
 const native_load_sidecar_bytes: usize = 296;
+const native_load_open_loop_sidecar_bytes: usize = 328;
 const native_load_closure_u64_count: usize = 28;
 const native_load_closure_bytes: usize =
     native_load_closure_u64_count * @sizeOf(u64);
@@ -135,6 +170,18 @@ const native_load_outer_bytes: usize =
     native_load_outer_header_bytes +
     native_load_record_count * native_load_sidecar_bytes +
     native_load_closure_bytes +
+    native_load_inner_bytes +
+    native_load_outer_digest_bytes;
+const native_load_open_loop_plan_u64_count: usize = 16;
+const native_load_open_loop_closure_u64_count: usize =
+    native_load_closure_u64_count +
+    native_load_open_loop_plan_u64_count;
+const native_load_open_loop_closure_bytes: usize =
+    native_load_open_loop_closure_u64_count * @sizeOf(u64);
+const native_load_open_loop_outer_bytes: usize =
+    native_load_outer_header_bytes +
+    native_load_record_count * native_load_open_loop_sidecar_bytes +
+    native_load_open_loop_closure_bytes +
     native_load_inner_bytes +
     native_load_outer_digest_bytes;
 const native_load_outer_magic =
@@ -169,6 +216,14 @@ const native_load_queued_receive_timeout_outer_body_domain =
     "glacier-f1-native-unary-queued-receive-timeout-body-v1\x00";
 const native_load_queued_receive_timeout_outer_footer_domain =
     "glacier-f1-native-unary-queued-receive-timeout-footer-v1\x00";
+const native_load_open_loop_outer_magic =
+    [_]u8{ 'G', 'F', '1', 'O', 'L', 'P', '0', '1' };
+const native_load_open_loop_outer_abi: u64 =
+    0x4746_314f_0000_0001;
+const native_load_open_loop_outer_body_domain =
+    "glacier-f1-native-unary-open-loop-transient-pressure-body-v1\x00";
+const native_load_open_loop_outer_footer_domain =
+    "glacier-f1-native-unary-open-loop-transient-pressure-footer-v1\x00";
 const native_load_queued_receive_timeout_http_request_domain =
     "glacier-f1-native-unary-queued-receive-timeout-http-request-v1\x00";
 const native_load_queued_receive_timeout_transport_semantics_domain =
@@ -208,6 +263,16 @@ const timeout_head_trickle_count = 3;
 const control_poll_limit: usize = 500;
 
 comptime {
+    if (native_load_open_loop_measured_actor_count !=
+        native_load_measured_count or
+        native_load_open_loop_sidecar_bytes != 328 or
+        native_load_open_loop_closure_u64_count != 44 or
+        native_load_open_loop_outer_bytes != 82_212)
+    {
+        @compileError(
+            "open-loop-transient-pressure-v1 geometry drifted",
+        );
+    }
     if (@intFromEnum(protocol.ErrorCodeV1.service_capacity) !=
         native_load_retention_capacity_error_code_wire or
         @intFromEnum(
@@ -236,18 +301,20 @@ const NativeLoadProfile = enum {
     successful,
     retention_capacity,
     queued_receive_timeout,
+    open_loop_transient_pressure,
 
     fn generation(self: NativeLoadProfile) u64 {
         return switch (self) {
             .successful => generation_native_load,
             .retention_capacity => generation_native_load_retention_capacity,
             .queued_receive_timeout => generation_native_load_queued_receive_timeout,
+            .open_loop_transient_pressure => generation_native_load_open_loop_transient_pressure,
         };
     }
 
     fn completedCount(self: NativeLoadProfile) usize {
         return switch (self) {
-            .successful => native_load_record_count,
+            .successful, .open_loop_transient_pressure => native_load_record_count,
             .retention_capacity => native_load_retention_capacity_completed_count,
             .queued_receive_timeout => native_load_queued_receive_timeout_completed_count,
         };
@@ -256,14 +323,14 @@ const NativeLoadProfile = enum {
     fn capacityRejectedCount(self: NativeLoadProfile) usize {
         return switch (self) {
             .retention_capacity => native_load_retention_capacity_rejected_count,
-            .successful, .queued_receive_timeout => 0,
+            .successful, .queued_receive_timeout, .open_loop_transient_pressure => 0,
         };
     }
 
     fn timedOutCount(self: NativeLoadProfile) usize {
         return switch (self) {
             .queued_receive_timeout => native_load_queued_receive_timeout_timed_out_count,
-            .successful, .retention_capacity => 0,
+            .successful, .retention_capacity, .open_loop_transient_pressure => 0,
         };
     }
 
@@ -277,7 +344,7 @@ const NativeLoadProfile = enum {
         ordinal: usize,
     ) native_report.OutcomeV1 {
         return switch (self) {
-            .successful => .completed,
+            .successful, .open_loop_transient_pressure => .completed,
             .retention_capacity => if (ordinal <
                 native_load_retention_capacity_completed_count)
                 .completed
@@ -312,6 +379,17 @@ const NativeLoadProfile = enum {
                 "4000000000ns-observation-cap-" ++
                 "3000000000ns-queue-cap-" ++
                 "1000000000ns-settlement-cap/v1",
+            .open_loop_transient_pressure => "glacier-f1-native-unary-load-profile/" ++
+                "open-loop-transient-pressure-8-warmup-" ++
+                "16-baseline-32-pressure-16-recovery-8-flow-" ++
+                "2-worker-8-pending-128-backlog-" ++
+                "25000000ns-baseline-step-500000000ns-gate-arm-" ++
+                "600000000ns-pressure-start-5000000ns-pressure-step-" ++
+                "1000000000ns-fixed-release-" ++
+                "1800000000ns-recovery-start-" ++
+                "25000000ns-recovery-step-" ++
+                "100000000ns-lateness-cap-" ++
+                "100000000ns-recovery-slack/v1",
         };
     }
 
@@ -319,6 +397,7 @@ const NativeLoadProfile = enum {
         return switch (self) {
             .successful, .retention_capacity => native_load_worker_count,
             .queued_receive_timeout => native_load_queued_receive_timeout_worker_count,
+            .open_loop_transient_pressure => native_load_open_loop_worker_count,
         };
     }
 
@@ -326,6 +405,7 @@ const NativeLoadProfile = enum {
         return switch (self) {
             .successful, .retention_capacity => native_load_pending_capacity,
             .queued_receive_timeout => native_load_queued_receive_timeout_pending_capacity,
+            .open_loop_transient_pressure => native_load_open_loop_pending_capacity,
         };
     }
 
@@ -333,6 +413,7 @@ const NativeLoadProfile = enum {
         return switch (self) {
             .successful, .retention_capacity => "managed-concurrent-loopback-2-worker-8-pending/v1",
             .queued_receive_timeout => "managed-concurrent-loopback-2-worker-6-pending/v1",
+            .open_loop_transient_pressure => "managed-concurrent-loopback-2-worker-8-pending-128-backlog/v1",
         };
     }
 
@@ -341,6 +422,7 @@ const NativeLoadProfile = enum {
             .successful => native_load_outer_magic,
             .retention_capacity => native_load_retention_capacity_outer_magic,
             .queued_receive_timeout => native_load_queued_receive_timeout_outer_magic,
+            .open_loop_transient_pressure => native_load_open_loop_outer_magic,
         };
     }
 
@@ -349,6 +431,7 @@ const NativeLoadProfile = enum {
             .successful => native_load_outer_abi,
             .retention_capacity => native_load_retention_capacity_outer_abi,
             .queued_receive_timeout => native_load_queued_receive_timeout_outer_abi,
+            .open_loop_transient_pressure => native_load_open_loop_outer_abi,
         };
     }
 
@@ -357,6 +440,7 @@ const NativeLoadProfile = enum {
             .successful => native_load_outer_body_domain,
             .retention_capacity => native_load_retention_capacity_outer_body_domain,
             .queued_receive_timeout => native_load_queued_receive_timeout_outer_body_domain,
+            .open_loop_transient_pressure => native_load_open_loop_outer_body_domain,
         };
     }
 
@@ -365,7 +449,33 @@ const NativeLoadProfile = enum {
             .successful => native_load_outer_footer_domain,
             .retention_capacity => native_load_retention_capacity_outer_footer_domain,
             .queued_receive_timeout => native_load_queued_receive_timeout_outer_footer_domain,
+            .open_loop_transient_pressure => native_load_open_loop_outer_footer_domain,
         };
+    }
+
+    fn isOpenLoop(self: NativeLoadProfile) bool {
+        return self == .open_loop_transient_pressure;
+    }
+
+    fn sidecarBytes(self: NativeLoadProfile) usize {
+        return if (self.isOpenLoop())
+            native_load_open_loop_sidecar_bytes
+        else
+            native_load_sidecar_bytes;
+    }
+
+    fn closureBytes(self: NativeLoadProfile) usize {
+        return if (self.isOpenLoop())
+            native_load_open_loop_closure_bytes
+        else
+            native_load_closure_bytes;
+    }
+
+    fn outerBytes(self: NativeLoadProfile) usize {
+        return if (self.isOpenLoop())
+            native_load_open_loop_outer_bytes
+        else
+            native_load_outer_bytes;
     }
 };
 
@@ -392,6 +502,7 @@ const WorkerProfile = enum {
     native_load,
     native_load_retention_capacity,
     native_load_queued_receive_timeout,
+    native_load_open_loop_transient_pressure,
 
     fn wire(self: WorkerProfile) []const u8 {
         return switch (self) {
@@ -417,6 +528,7 @@ const WorkerProfile = enum {
             .native_load => "native-load",
             .native_load_retention_capacity => "native-load-retention-capacity",
             .native_load_queued_receive_timeout => "native-load-queued-receive-timeout",
+            .native_load_open_loop_transient_pressure => "native-load-open-loop-transient-pressure",
         };
     }
 
@@ -452,6 +564,7 @@ const WorkerProfile = enum {
             .native_load,
             .native_load_retention_capacity,
             .native_load_queued_receive_timeout,
+            .native_load_open_loop_transient_pressure,
             => null,
             .timeout_head => .receiving_head,
             .timeout_body => .request_head_received,
@@ -479,6 +592,7 @@ const WorkerProfile = enum {
             .application_rejection,
             .native_load,
             .native_load_retention_capacity,
+            .native_load_open_loop_transient_pressure,
             => 0,
             .native_load_queued_receive_timeout => native_load_queued_receive_timeout_ns,
             .concurrent_queued_receive_timeout => retained_receive_timeout_ns,
@@ -559,6 +673,7 @@ const WorkerProfile = enum {
             .native_load,
             .native_load_retention_capacity,
             .native_load_queued_receive_timeout,
+            .native_load_open_loop_transient_pressure,
             => true,
             .application_rejection => false,
             else => false,
@@ -601,6 +716,10 @@ fn supportedMain() !void {
             u8,
             args[1],
             native_load_queued_receive_timeout_mode,
+        ) or std.mem.eql(
+            u8,
+            args[1],
+            native_load_open_loop_transient_pressure_mode,
         )))
     {
         const native_profile: NativeLoadProfile =
@@ -616,8 +735,14 @@ fn supportedMain() !void {
                 native_load_retention_capacity_mode,
             ))
                 .retention_capacity
+            else if (std.mem.eql(
+                u8,
+                args[1],
+                native_load_queued_receive_timeout_mode,
+            ))
+                .queued_receive_timeout
             else
-                .queued_receive_timeout;
+                .open_loop_transient_pressure;
         return runNativeLoadSupervisor(
             allocator,
             args[2],
@@ -1055,6 +1180,244 @@ fn nativeLoadMonotonicNs() !u64 {
     ) catch return error.NativeLoadClockOverflow;
 }
 
+fn nativeLoadWaitUntil(target_ns: u64) !u64 {
+    while (true) {
+        const now_ns = try nativeLoadMonotonicNs();
+        if (now_ns >= target_ns) return now_ns;
+        std.Thread.sleep(target_ns - now_ns);
+    }
+}
+
+const NativeLoadOpenLoopPhase = enum(u8) {
+    warmup = 0,
+    baseline = 1,
+    pressure = 2,
+    recovery = 3,
+};
+
+fn nativeLoadOpenLoopPhase(
+    planned_ordinal: usize,
+) !NativeLoadOpenLoopPhase {
+    if (planned_ordinal >= native_load_record_count)
+        return error.InvalidNativeLoadOpenLoopOrdinal;
+    if (planned_ordinal < native_load_warmup_count)
+        return .warmup;
+    const measured =
+        planned_ordinal - native_load_warmup_count;
+    if (measured < native_load_open_loop_baseline_count)
+        return .baseline;
+    if (measured <
+        native_load_open_loop_baseline_count +
+            native_load_open_loop_pressure_count)
+    {
+        return .pressure;
+    }
+    return .recovery;
+}
+
+fn nativeLoadOpenLoopOffsetNs(
+    planned_ordinal: usize,
+) !u64 {
+    const phase =
+        try nativeLoadOpenLoopPhase(planned_ordinal);
+    if (phase == .warmup) return 0;
+    const measured =
+        planned_ordinal - native_load_warmup_count;
+    return switch (phase) {
+        .warmup => unreachable,
+        .baseline => std.math.mul(
+            u64,
+            @intCast(measured),
+            native_load_open_loop_baseline_step_ns,
+        ) catch return error.NativeLoadClockOverflow,
+        .pressure => std.math.add(
+            u64,
+            native_load_open_loop_pressure_start_offset_ns,
+            std.math.mul(
+                u64,
+                @intCast(
+                    measured -
+                        native_load_open_loop_baseline_count,
+                ),
+                native_load_open_loop_pressure_step_ns,
+            ) catch return error.NativeLoadClockOverflow,
+        ) catch return error.NativeLoadClockOverflow,
+        .recovery => std.math.add(
+            u64,
+            native_load_open_loop_recovery_start_offset_ns,
+            std.math.mul(
+                u64,
+                @intCast(
+                    measured -
+                        native_load_open_loop_baseline_count -
+                        native_load_open_loop_pressure_count,
+                ),
+                native_load_open_loop_recovery_step_ns,
+            ) catch return error.NativeLoadClockOverflow,
+        ) catch return error.NativeLoadClockOverflow,
+    };
+}
+
+const NativeLoadOpenLoopPollMode = enum {
+    connect,
+    read,
+    write,
+};
+
+fn nativeLoadOpenLoopPollSocket(
+    handle: std.net.Stream.Handle,
+    mode: NativeLoadOpenLoopPollMode,
+    deadline_ns: u64,
+) !void {
+    if (comptime builtin.os.tag != .macos and
+        builtin.os.tag != .linux)
+    {
+        return error.NativeLoadUnsupported;
+    } else {
+        const requested_events: i16 = switch (mode) {
+            .connect, .write => std.posix.POLL.OUT,
+            .read => std.posix.POLL.IN,
+        };
+        while (true) {
+            const now_ns = try nativeLoadMonotonicNs();
+            if (now_ns >= deadline_ns)
+                return error.NativeLoadOpenLoopClientIoTimedOut;
+            const remaining_ns = deadline_ns - now_ns;
+            const remaining_ms =
+                remaining_ns / std.time.ns_per_ms +
+                @intFromBool(
+                    remaining_ns % std.time.ns_per_ms != 0,
+                );
+            const timeout_ms: i32 = @intCast(@min(
+                remaining_ms,
+                @as(u64, std.math.maxInt(i32)),
+            ));
+            var descriptors = [_]std.posix.pollfd{.{
+                .fd = handle,
+                .events = requested_events,
+                .revents = 0,
+            }};
+            if (try std.posix.poll(
+                &descriptors,
+                timeout_ms,
+            ) == 0) {
+                return error.NativeLoadOpenLoopClientIoTimedOut;
+            }
+            const events = descriptors[0].revents;
+            if ((events & std.posix.POLL.NVAL) != 0)
+                return error.NativeLoadOpenLoopClientSocketFailed;
+            switch (mode) {
+                .connect => {
+                    try std.posix.getsockoptError(handle);
+                    if ((events & std.posix.POLL.OUT) != 0)
+                        return;
+                    if ((events & (std.posix.POLL.ERR |
+                        std.posix.POLL.HUP)) != 0)
+                    {
+                        return error.NativeLoadOpenLoopClientSocketFailed;
+                    }
+                },
+                .read => {
+                    if ((events & std.posix.POLL.ERR) != 0)
+                        return error.NativeLoadOpenLoopClientSocketFailed;
+                    if ((events & (std.posix.POLL.IN |
+                        std.posix.POLL.HUP)) != 0)
+                    {
+                        return;
+                    }
+                },
+                .write => {
+                    if ((events & (std.posix.POLL.ERR |
+                        std.posix.POLL.HUP)) != 0)
+                    {
+                        return error.NativeLoadOpenLoopClientSocketFailed;
+                    }
+                    if ((events & std.posix.POLL.OUT) != 0)
+                        return;
+                },
+            }
+        }
+    }
+}
+
+fn nativeLoadOpenLoopConnect(
+    address: std.net.Address,
+    deadline_ns: u64,
+) !std.net.Stream {
+    if (comptime builtin.os.tag != .macos and
+        builtin.os.tag != .linux)
+    {
+        return error.NativeLoadUnsupported;
+    } else {
+        const socket_flags = std.posix.SOCK.STREAM |
+            std.posix.SOCK.NONBLOCK |
+            std.posix.SOCK.CLOEXEC;
+        const socket = try std.posix.socket(
+            address.any.family,
+            socket_flags,
+            std.posix.IPPROTO.TCP,
+        );
+        errdefer std.posix.close(socket);
+        std.posix.connect(
+            socket,
+            &address.any,
+            address.getOsSockLen(),
+        ) catch |err| switch (err) {
+            error.WouldBlock, error.ConnectionPending => {
+                try nativeLoadOpenLoopPollSocket(
+                    socket,
+                    .connect,
+                    deadline_ns,
+                );
+            },
+            else => return err,
+        };
+        return .{ .handle = socket };
+    }
+}
+
+fn nativeLoadOpenLoopWriteAll(
+    peer: std.net.Stream,
+    bytes: []const u8,
+    deadline_ns: u64,
+) !void {
+    var written: usize = 0;
+    while (written < bytes.len) {
+        try nativeLoadOpenLoopPollSocket(
+            peer.handle,
+            .write,
+            deadline_ns,
+        );
+        const count = peer.write(
+            bytes[written..],
+        ) catch |err| switch (err) {
+            error.WouldBlock => continue,
+            else => return err,
+        };
+        if (count == 0)
+            return error.NativeLoadOpenLoopClientSocketFailed;
+        written += count;
+    }
+}
+
+fn nativeLoadOpenLoopRead(
+    peer: std.net.Stream,
+    bytes: []u8,
+    deadline_ns: u64,
+) !usize {
+    while (true) {
+        try nativeLoadOpenLoopPollSocket(
+            peer.handle,
+            .read,
+            deadline_ns,
+        );
+        return peer.read(bytes) catch |err| switch (err) {
+            error.WouldBlock => continue,
+            else => return err,
+        };
+    }
+}
+
 const NativeLoadDecisionRecord = struct {
     outcome: native_report.OutcomeV1,
     request_sha256: protocol.Digest,
@@ -1062,6 +1425,138 @@ const NativeLoadDecisionRecord = struct {
     work_identity: ?http_server.WorkIdentityV1 = null,
     decision_ns: u64,
     work_retired: bool = false,
+};
+
+const NativeLoadOpenLoopAdmissionBarrier = struct {
+    mutex: std.Thread.Mutex = .{},
+    condition: std.Thread.Condition = .{},
+    enabled: bool = false,
+    reached: bool = false,
+    released: bool = false,
+    aborted: bool = false,
+    invalid: bool = false,
+
+    fn enable(self: *NativeLoadOpenLoopAdmissionBarrier) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.enabled or self.reached or self.released or
+            self.aborted or self.invalid)
+        {
+            return error.InvalidNativeLoadOpenLoopBarrier;
+        }
+        self.enabled = true;
+    }
+
+    fn admitted(
+        self: *NativeLoadOpenLoopAdmissionBarrier,
+    ) !http_server.WorkDispositionV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.enabled) return .proceed;
+        if (self.aborted or self.invalid) {
+            self.invalid = true;
+            return error.InvalidNativeLoadOpenLoopBarrier;
+        }
+        if (self.reached) return .proceed;
+        self.reached = true;
+        self.condition.broadcast();
+        var timer = std.time.Timer.start() catch {
+            self.invalid = true;
+            self.aborted = true;
+            self.condition.broadcast();
+            return error.NativeLoadOpenLoopBarrierClockUnavailable;
+        };
+        while (!self.released and !self.aborted) {
+            const elapsed_ns = timer.read();
+            if (elapsed_ns >= worker_timeout_ns) {
+                self.invalid = true;
+                self.aborted = true;
+                self.condition.broadcast();
+                return error.NativeLoadOpenLoopBarrierTimedOut;
+            }
+            self.condition.timedWait(
+                &self.mutex,
+                worker_timeout_ns - elapsed_ns,
+            ) catch {
+                self.invalid = true;
+                self.aborted = true;
+                self.condition.broadcast();
+                return error.NativeLoadOpenLoopBarrierTimedOut;
+            };
+        }
+        if (self.aborted or self.invalid)
+            return error.InvalidNativeLoadOpenLoopBarrier;
+        return .proceed;
+    }
+
+    fn waitReached(
+        self: *NativeLoadOpenLoopAdmissionBarrier,
+    ) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.enabled)
+            return error.InvalidNativeLoadOpenLoopBarrier;
+        var timer = std.time.Timer.start() catch {
+            self.invalid = true;
+            self.aborted = true;
+            self.condition.broadcast();
+            return error.NativeLoadOpenLoopBarrierClockUnavailable;
+        };
+        while (!self.reached and !self.aborted) {
+            const elapsed_ns = timer.read();
+            if (elapsed_ns >= worker_timeout_ns) {
+                self.invalid = true;
+                self.aborted = true;
+                self.condition.broadcast();
+                return error.NativeLoadOpenLoopBarrierTimedOut;
+            }
+            self.condition.timedWait(
+                &self.mutex,
+                worker_timeout_ns - elapsed_ns,
+            ) catch {
+                self.invalid = true;
+                self.aborted = true;
+                self.condition.broadcast();
+                return error.NativeLoadOpenLoopBarrierTimedOut;
+            };
+        }
+        if (self.aborted or self.invalid)
+            return error.InvalidNativeLoadOpenLoopBarrier;
+    }
+
+    fn release(
+        self: *NativeLoadOpenLoopAdmissionBarrier,
+    ) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.enabled or !self.reached or self.released or
+            self.aborted or self.invalid)
+        {
+            self.invalid = true;
+            return error.InvalidNativeLoadOpenLoopBarrier;
+        }
+        self.released = true;
+        self.condition.broadcast();
+    }
+
+    fn abort(self: *NativeLoadOpenLoopAdmissionBarrier) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.aborted = true;
+        self.condition.broadcast();
+    }
+
+    fn validateComplete(
+        self: *NativeLoadOpenLoopAdmissionBarrier,
+    ) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.enabled or !self.reached or !self.released or
+            self.aborted or self.invalid)
+        {
+            return error.InvalidNativeLoadOpenLoopBarrier;
+        }
+    }
 };
 
 const NativeLoadQueuedAdmissionBarrier = struct {
@@ -1237,6 +1732,7 @@ const NativeLoadDecisionLog = struct {
     count: usize = 0,
     invalid: bool = false,
     admission_barrier: ?*NativeLoadQueuedAdmissionBarrier = null,
+    open_loop_admission_barrier: ?*NativeLoadOpenLoopAdmissionBarrier = null,
 
     fn admittedOpaque(
         context: *anyopaque,
@@ -1245,7 +1741,15 @@ const NativeLoadDecisionLog = struct {
         const self: *NativeLoadDecisionLog =
             @ptrCast(@alignCast(context));
         _ = identity;
+        if (self.admission_barrier != null and
+            self.open_loop_admission_barrier != null)
+        {
+            self.markInvalid();
+            return error.InvalidNativeLoadAdmissionBarrier;
+        }
         if (self.admission_barrier) |barrier|
+            return barrier.admitted();
+        if (self.open_loop_admission_barrier) |barrier|
             return barrier.admitted();
         return .proceed;
     }
@@ -1880,7 +2384,8 @@ fn runWorker(
     }
     if (profile == .native_load or
         profile == .native_load_retention_capacity or
-        profile == .native_load_queued_receive_timeout)
+        profile == .native_load_queued_receive_timeout or
+        profile == .native_load_open_loop_transient_pressure)
     {
         return runNativeLoadWorker(
             allocator,
@@ -1890,8 +2395,11 @@ fn runWorker(
                 .successful
             else if (profile == .native_load_retention_capacity)
                 .retention_capacity
+            else if (profile ==
+                .native_load_queued_receive_timeout)
+                .queued_receive_timeout
             else
-                .queued_receive_timeout,
+                .open_loop_transient_pressure,
         );
     }
     if (profile.isConcurrent()) {
@@ -2662,6 +3170,71 @@ fn emitNativeLoadWave(expected: usize) !void {
     try std.fs.File.stdout().writeAll(frame);
 }
 
+fn emitNativeLoadOpenLoopStep(
+    label: []const u8,
+    value: u64,
+) !void {
+    var storage: [128]u8 = undefined;
+    const frame = try std.fmt.bufPrint(
+        &storage,
+        "{s} {d}\n",
+        .{ label, value },
+    );
+    try std.fs.File.stdout().writeAll(frame);
+}
+
+fn emitNativeLoadOpenLoopPressureReady(
+    anchor_ns: u64,
+    pressure_ready_ns: u64,
+) !void {
+    var storage: [192]u8 = undefined;
+    const frame = try std.fmt.bufPrint(
+        &storage,
+        "NATIVE-LOAD-OPEN-PRESSURE-READY {d} {d}\n",
+        .{ anchor_ns, pressure_ready_ns },
+    );
+    try std.fs.File.stdout().writeAll(frame);
+}
+
+fn emitNativeLoadOpenLoopRelease(
+    anchor_ns: u64,
+    actual_release_ns: u64,
+) !void {
+    var storage: [192]u8 = undefined;
+    const frame = try std.fmt.bufPrint(
+        &storage,
+        "NATIVE-LOAD-OPEN-RELEASE {d} {d}\n",
+        .{ anchor_ns, actual_release_ns },
+    );
+    try std.fs.File.stdout().writeAll(frame);
+}
+
+fn readNativeLoadOpenLoopArm(
+    stdin: std.fs.File,
+) !u64 {
+    var storage: [frame_max_bytes]u8 = undefined;
+    const line = try readFrame(stdin, &storage);
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const name = fields.next() orelse
+        return error.InvalidFrame;
+    const anchor = fields.next() orelse
+        return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(
+            u8,
+            name,
+            "native-load-open-loop-arm",
+        ))
+    {
+        return error.InvalidNativeLoadOpenLoopArm;
+    }
+    const anchor_ns =
+        try parseCanonicalInt(u64, anchor);
+    if (anchor_ns == 0)
+        return error.InvalidNativeLoadOpenLoopArm;
+    return anchor_ns;
+}
+
 fn emitNativeLoadServerRecords(
     records: *const [native_load_record_count]NativeLoadServerRecord,
 ) !void {
@@ -2747,6 +3320,11 @@ fn runNativeLoadWorker(
             profile,
         ),
         .queued_receive_timeout => runNativeLoadQueuedReceiveTimeoutWorker(
+            allocator,
+            binding,
+            generation,
+        ),
+        .open_loop_transient_pressure => runNativeLoadOpenLoopTransientPressureWorker(
             allocator,
             binding,
             generation,
@@ -2931,6 +3509,374 @@ fn runNativeLoadWorkerWithCapacity(
     {
         return error.InvalidNativeLoadCloseReceipt;
     }
+    const closure = [native_load_closure_u64_count]u64{
+        stopped.managed.accepted_connections,
+        stopped.managed.completed_connections,
+        stopped.managed.failed_connections,
+        stopped.queue_enqueued_connections,
+        stopped.queue_dispatched_connections,
+        stopped.queue_high_watermark,
+        stopped.running_high_watermark,
+        stopped.listener_backpressure_activations,
+        stopped.listener_backpressure_resumptions,
+        stopped.drain_cancelled_queued_connections,
+        stopped.failure_cancelled_queued_connections,
+        stopped.receive_timeout_queued_connections,
+        stopped.full_request_timeout_queued_connections,
+        stopped.managed.active_connections,
+        stopped.managed.queued_connections,
+        stopped.running_connections,
+        @intFromBool(stopped.cleanup_failed),
+        service_snapshot.active_requests,
+        service_snapshot.terminal_records,
+        service_snapshot.completed_records,
+        service_snapshot.cancelled_records,
+        service_snapshot.failed_records,
+        service_snapshot.recovery_required,
+        @intFromBool(scheduler_zero),
+        @intFromBool(bank_zero),
+        @intFromBool(joined),
+        @intFromBool(serving_after_join),
+        event_count,
+    };
+    try emitNativeLoadServerRecords(&server_records);
+    try emitNativeLoadClosure(&closure);
+}
+
+fn waitForNativeLoadOpenLoopReadyGeometry(
+    lifecycle: *server_api.ManagedConcurrentLifecycleV1,
+) !void {
+    var timer = try std.time.Timer.start();
+    while (timer.read() < worker_timeout_ns) {
+        const snapshot = lifecycle.snapshotV1();
+        if (snapshot.managed.state != .ready)
+            return error.UnexpectedLifecycleState;
+        if (snapshot.managed.accepted_connections ==
+            native_load_warmup_count +
+                native_load_open_loop_baseline_count + 10 and
+            snapshot.managed.completed_connections ==
+                native_load_warmup_count +
+                    native_load_open_loop_baseline_count and
+            snapshot.managed.failed_connections == 0 and
+            snapshot.queue_enqueued_connections ==
+                native_load_warmup_count +
+                    native_load_open_loop_baseline_count + 10 and
+            snapshot.queue_dispatched_connections ==
+                native_load_warmup_count +
+                    native_load_open_loop_baseline_count + 2 and
+            snapshot.managed.queued_connections ==
+                native_load_open_loop_pending_capacity and
+            snapshot.running_connections ==
+                native_load_open_loop_worker_count and
+            snapshot.queue_high_watermark ==
+                native_load_open_loop_pending_capacity and
+            snapshot.running_high_watermark ==
+                native_load_open_loop_worker_count and
+            snapshot.listener_backpressure_activations == 1 and
+            snapshot.listener_backpressure_resumptions == 0 and
+            snapshot.accept_paused and
+            snapshot.phase_counts.queued ==
+                native_load_open_loop_pending_capacity and
+            snapshot.phase_counts.request_admitted == 1 and
+            snapshot.phase_counts.request_received == 1)
+        {
+            return;
+        }
+        std.Thread.sleep(watchdog_poll_ns);
+    }
+    return error.NativeLoadOpenLoopGeometryTimedOut;
+}
+
+fn runNativeLoadOpenLoopTransientPressureWorker(
+    allocator: std.mem.Allocator,
+    binding: unary.ModelBindingV1,
+    generation: u64,
+) !void {
+    const profile: NativeLoadProfile =
+        .open_loop_transient_pressure;
+    if (generation != profile.generation())
+        return error.InvalidNativeLoadGeneration;
+    var harness: ServiceHarness(
+        1,
+        native_load_record_count,
+    ) = .{};
+    try harness.init(
+        allocator,
+        binding,
+        generation,
+    );
+    var service_closed = false;
+    defer if (!service_closed) {
+        _ = harness.service.closeV1() catch {};
+    };
+    var runtime = try http_server.initV1(
+        &harness.service,
+        binding.binding_sha256,
+    );
+    var lifecycle =
+        try server_api.ManagedConcurrentLifecycleV1.initV1(
+            generation,
+            .{
+                .worker_count = native_load_open_loop_worker_count,
+                .pending_connection_capacity = native_load_open_loop_pending_capacity,
+            },
+        );
+    try lifecycle.markReadyV1();
+
+    const bind_address =
+        try std.net.Address.parseIp(loopback_host, 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+        .kernel_backlog = native_load_open_loop_kernel_backlog,
+    });
+    defer listener.deinit();
+    const listen_address = listener.listen_address;
+    var event_log: ConcurrentEventLog = .{};
+    var admission_barrier: NativeLoadOpenLoopAdmissionBarrier = .{};
+    var decision_log: NativeLoadDecisionLog = .{
+        .open_loop_admission_barrier = &admission_barrier,
+    };
+    var serve_context: ConcurrentServeContext = .{
+        .listener = &listener,
+        .runtime = &runtime,
+        .lifecycle = &lifecycle,
+        .config = .{},
+        .event_observer = event_log.observer(),
+        .work_observer = decision_log.control(),
+    };
+    const serve_thread = try std.Thread.spawn(
+        .{},
+        ConcurrentServeContext.run,
+        .{&serve_context},
+    );
+    var joined = false;
+    var barrier_released = false;
+    defer if (!joined) {
+        if (!barrier_released)
+            admission_barrier.abort();
+        server_api.requestManagedConcurrentDrainAndWakeV1(
+            &lifecycle,
+            &runtime,
+            listen_address,
+        ) catch {};
+        serve_thread.join();
+    };
+
+    try emitReady(
+        generation,
+        listen_address.getPort(),
+        &runtime.model_id,
+    );
+    const stdin = std.fs.File.stdin();
+    for (1..native_load_warmup_count + 1) |expected| {
+        var command_storage: [64]u8 = undefined;
+        const command = try std.fmt.bufPrint(
+            &command_storage,
+            "native-load-open-warmup {d}\n",
+            .{expected},
+        );
+        try expectControlLine(stdin, command);
+        try event_log.waitForRetiredCount(expected);
+        try emitNativeLoadOpenLoopStep(
+            "NATIVE-LOAD-OPEN-WARMUP",
+            @intCast(expected),
+        );
+    }
+
+    const anchor_ns =
+        try readNativeLoadOpenLoopArm(stdin);
+    const arm_due_ns = std.math.add(
+        u64,
+        anchor_ns,
+        native_load_open_loop_gate_arm_offset_ns,
+    ) catch return error.NativeLoadClockOverflow;
+    const arm_actual_ns =
+        try nativeLoadWaitUntil(arm_due_ns);
+    if (arm_actual_ns - arm_due_ns >
+        native_load_open_loop_max_launch_lateness_ns)
+    {
+        return error.NativeLoadOpenLoopArmLate;
+    }
+    const baseline = lifecycle.snapshotV1();
+    const expected_baseline_retired =
+        native_load_warmup_count +
+        native_load_open_loop_baseline_count;
+    if (baseline.managed.state != .ready or
+        baseline.managed.accepted_connections !=
+            expected_baseline_retired or
+        baseline.managed.completed_connections !=
+            expected_baseline_retired or
+        baseline.managed.failed_connections != 0 or
+        baseline.queue_enqueued_connections !=
+            expected_baseline_retired or
+        baseline.queue_dispatched_connections !=
+            expected_baseline_retired or
+        baseline.managed.active_connections != 0 or
+        baseline.managed.queued_connections != 0 or
+        baseline.running_connections != 0 or
+        baseline.listener_backpressure_activations != 0 or
+        baseline.listener_backpressure_resumptions != 0 or
+        baseline.accept_paused)
+    {
+        return error.InvalidNativeLoadOpenLoopBaselineClosure;
+    }
+    try admission_barrier.enable();
+
+    const release_due_ns = std.math.add(
+        u64,
+        anchor_ns,
+        native_load_open_loop_fixed_release_offset_ns,
+    ) catch return error.NativeLoadClockOverflow;
+    try admission_barrier.waitReached();
+    _ = try event_log.waitForKind(
+        .dispatched,
+        expected_baseline_retired + 1,
+    );
+    try waitForNativeLoadOpenLoopReadyGeometry(
+        &lifecycle,
+    );
+    _ = try event_log.waitForKind(
+        .backpressure_paused,
+        1,
+    );
+    const pressure_ready_ns =
+        try nativeLoadMonotonicNs();
+    if (pressure_ready_ns > release_due_ns)
+        return error.NativeLoadOpenLoopPressureReadyLate;
+    try emitNativeLoadOpenLoopPressureReady(
+        anchor_ns,
+        pressure_ready_ns,
+    );
+
+    const actual_release_ns =
+        try nativeLoadWaitUntil(release_due_ns);
+    if (actual_release_ns - release_due_ns >
+        native_load_open_loop_max_launch_lateness_ns)
+    {
+        return error.NativeLoadOpenLoopReleaseLate;
+    }
+    try admission_barrier.release();
+    barrier_released = true;
+    try emitNativeLoadOpenLoopRelease(
+        anchor_ns,
+        actual_release_ns,
+    );
+
+    try event_log.waitForRetiredCount(
+        native_load_record_count,
+    );
+    try emitNativeLoadOpenLoopStep(
+        "NATIVE-LOAD-OPEN-SETTLED",
+        native_load_record_count,
+    );
+    try expectControlLine(
+        stdin,
+        native_load_drain_command,
+    );
+    try server_api.requestManagedConcurrentDrainAndWakeV1(
+        &lifecycle,
+        &runtime,
+        listen_address,
+    );
+    serve_thread.join();
+    joined = true;
+    if (serve_context.thread_error) |err| return err;
+    try admission_barrier.validateComplete();
+
+    const stopped = lifecycle.snapshotV1();
+    const service_snapshot =
+        try harness.service.snapshotV1();
+    const scheduler_snapshot =
+        service_snapshot.scheduler orelse
+        return error.MissingNativeLoadSchedulerSnapshot;
+    const bank_snapshot = service_snapshot.bank orelse
+        return error.MissingNativeLoadBankSnapshot;
+    const scheduler_zero =
+        scheduler_snapshot.active == 0 and
+        scheduler_snapshot.finished == 0 and
+        scheduler_snapshot.used.isZero() and
+        !scheduler_snapshot.poisoned and
+        !scheduler_snapshot.closed;
+    const bank_zero =
+        bank_snapshot.used.isZero() and
+        bank_snapshot.active_reservations == 0 and
+        bank_snapshot.committed_receipts == 0;
+    lifecycle.managed.mutex.lock();
+    const serving_after_join = lifecycle.serving;
+    lifecycle.managed.mutex.unlock();
+    if (stopped.managed.state != .stopped or
+        stopped.worker_count !=
+            native_load_open_loop_worker_count or
+        stopped.pending_connection_capacity !=
+            native_load_open_loop_pending_capacity or
+        stopped.managed.accepted_connections !=
+            native_load_record_count or
+        stopped.managed.completed_connections !=
+            native_load_record_count or
+        stopped.managed.failed_connections != 0 or
+        stopped.queue_enqueued_connections !=
+            native_load_record_count or
+        stopped.queue_dispatched_connections !=
+            native_load_record_count or
+        stopped.queue_high_watermark !=
+            native_load_open_loop_pending_capacity or
+        stopped.running_high_watermark !=
+            native_load_open_loop_worker_count or
+        stopped.listener_backpressure_activations == 0 or
+        stopped.listener_backpressure_activations !=
+            stopped.listener_backpressure_resumptions or
+        stopped.drain_cancelled_queued_connections != 0 or
+        stopped.failure_cancelled_queued_connections != 0 or
+        stopped.receive_timeout_queued_connections != 0 or
+        stopped.full_request_timeout_queued_connections != 0 or
+        stopped.managed.active_connections != 0 or
+        stopped.managed.queued_connections != 0 or
+        stopped.running_connections != 0 or
+        stopped.accept_paused or stopped.cleanup_failed or
+        service_snapshot.active_requests != 0 or
+        service_snapshot.terminal_records !=
+            native_load_record_count or
+        service_snapshot.completed_records !=
+            native_load_record_count or
+        service_snapshot.cancelled_records != 0 or
+        service_snapshot.failed_records != 0 or
+        service_snapshot.recovery_required != 0 or
+        !scheduler_zero or !bank_zero or
+        !joined or serving_after_join)
+    {
+        return error.InvalidNativeLoadOpenLoopClosure;
+    }
+
+    var server_records: [native_load_record_count]NativeLoadServerRecord =
+        undefined;
+    try collectNativeLoadServerRecords(
+        profile,
+        &decision_log,
+        &event_log,
+        &server_records,
+    );
+    try event_log.validateOrdinals();
+    const event_count = try event_log.totalCount();
+    if (event_count != stopped.event_ordinal or
+        event_count !=
+            native_load_record_count * 3 +
+                stopped.listener_backpressure_activations +
+                stopped.listener_backpressure_resumptions)
+    {
+        return error.InvalidNativeLoadOpenLoopEventCount;
+    }
+
+    const close_receipt = try harness.service.closeV1();
+    service_closed = true;
+    if (!close_receipt.bank_snapshot.used.isZero() or
+        close_receipt.bank_snapshot.active_reservations != 0 or
+        close_receipt.bank_snapshot.committed_receipts != 0 or
+        close_receipt.terminal_records !=
+            native_load_record_count)
+    {
+        return error.InvalidNativeLoadCloseReceipt;
+    }
+
     const closure = [native_load_closure_u64_count]u64{
         stopped.managed.accepted_connections,
         stopped.managed.completed_connections,
@@ -4295,6 +5241,7 @@ fn profileMatchesControl(
         .native_load,
         .native_load_retention_capacity,
         .native_load_queued_receive_timeout,
+        .native_load_open_loop_transient_pressure,
         => false,
         .standard,
         .drain_with_deadline,
@@ -5979,9 +6926,125 @@ const NativeLoadClientObservation = struct {
     first_output_ns: u64 = 0,
     terminal_ns: u64 = 0,
     client_settlement_ns: u64 = 0,
+    transmit_complete_ns: u64 = 0,
     response_bytes: u32 = 0,
     output_token: u32 = 0,
     content_byte: u8 = 0,
+};
+
+const NativeLoadOpenLoopSchedule = struct {
+    mutex: std.Thread.Mutex = .{},
+    condition: std.Thread.Condition = .{},
+    ready_count: usize = 0,
+    anchor_ns: u64 = 0,
+    aborted: bool = false,
+    invalid: bool = false,
+
+    fn readyAndWait(
+        self: *NativeLoadOpenLoopSchedule,
+    ) !u64 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.aborted or self.invalid or
+            self.anchor_ns != 0 or
+            self.ready_count >=
+                native_load_open_loop_measured_actor_count)
+        {
+            self.invalid = true;
+            return error.InvalidNativeLoadOpenLoopSchedule;
+        }
+        self.ready_count += 1;
+        self.condition.broadcast();
+        while (self.anchor_ns == 0 and !self.aborted)
+            self.condition.wait(&self.mutex);
+        if (self.aborted or self.invalid or
+            self.anchor_ns == 0)
+        {
+            return error.InvalidNativeLoadOpenLoopSchedule;
+        }
+        return self.anchor_ns;
+    }
+
+    fn waitReady(
+        self: *NativeLoadOpenLoopSchedule,
+    ) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        var timer = try std.time.Timer.start();
+        while (self.ready_count <
+            native_load_open_loop_measured_actor_count and
+            !self.aborted)
+        {
+            const elapsed_ns = timer.read();
+            if (elapsed_ns >= worker_timeout_ns) {
+                self.invalid = true;
+                self.aborted = true;
+                self.condition.broadcast();
+                return error.NativeLoadOpenLoopReadyTimedOut;
+            }
+            self.condition.timedWait(
+                &self.mutex,
+                worker_timeout_ns - elapsed_ns,
+            ) catch {
+                self.invalid = true;
+                self.aborted = true;
+                self.condition.broadcast();
+                return error.NativeLoadOpenLoopReadyTimedOut;
+            };
+        }
+        if (self.aborted or self.invalid or
+            self.ready_count !=
+                native_load_open_loop_measured_actor_count)
+        {
+            return error.InvalidNativeLoadOpenLoopSchedule;
+        }
+    }
+
+    fn publish(
+        self: *NativeLoadOpenLoopSchedule,
+        anchor_ns: u64,
+    ) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const published_ns =
+            try nativeLoadMonotonicNs();
+        if (self.aborted or self.invalid or
+            self.ready_count !=
+                native_load_open_loop_measured_actor_count or
+            self.anchor_ns != 0 or
+            anchor_ns <= published_ns or
+            anchor_ns - published_ns >
+                native_load_open_loop_anchor_lead_ns)
+        {
+            self.invalid = true;
+            self.aborted = true;
+            self.condition.broadcast();
+            return error.InvalidNativeLoadOpenLoopSchedule;
+        }
+        self.anchor_ns = anchor_ns;
+        self.condition.broadcast();
+    }
+
+    fn abort(self: *NativeLoadOpenLoopSchedule) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.aborted = true;
+        self.condition.broadcast();
+    }
+
+    fn validateComplete(
+        self: *NativeLoadOpenLoopSchedule,
+    ) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.aborted or self.invalid or
+            self.ready_count !=
+                native_load_open_loop_measured_actor_count or
+            self.anchor_ns == 0)
+        {
+            return error.InvalidNativeLoadOpenLoopSchedule;
+        }
+    }
 };
 
 const NativeLoadClientContext = struct {
@@ -5990,7 +7053,9 @@ const NativeLoadClientContext = struct {
     oracle: LocalOracle,
     planned_ordinal: u32,
     flow_id: u32,
-    start: *std.Thread.ResetEvent,
+    start: ?*std.Thread.ResetEvent = null,
+    open_loop_schedule: ?*NativeLoadOpenLoopSchedule = null,
+    planned_offset_ns: u64 = 0,
     observation: NativeLoadClientObservation = .{},
     thread_error: ?anyerror = null,
 
@@ -6048,17 +7113,72 @@ const NativeLoadClientContext = struct {
             },
         );
 
-        self.start.wait();
+        var due_ns: ?u64 = null;
+        if (self.open_loop_schedule) |schedule| {
+            const anchor_ns =
+                try schedule.readyAndWait();
+            due_ns = std.math.add(
+                u64,
+                anchor_ns,
+                self.planned_offset_ns,
+            ) catch return error.NativeLoadClockOverflow;
+            _ = try nativeLoadWaitUntil(due_ns.?);
+        } else {
+            const start = self.start orelse
+                return error.MissingNativeLoadStart;
+            start.wait();
+        }
         const arrival_ns = try nativeLoadMonotonicNs();
+        if (due_ns) |due| {
+            if (arrival_ns < due or
+                arrival_ns - due >
+                    native_load_open_loop_max_launch_lateness_ns)
+            {
+                return error.NativeLoadOpenLoopLaunchLate;
+            }
+        }
         const address = try std.net.Address.parseIp(
             loopback_host,
             self.ready.port,
         );
-        const peer =
+        const io_deadline_ns: ?u64 =
+            if (self.profile.isOpenLoop())
+                std.math.add(
+                    u64,
+                    arrival_ns,
+                    worker_timeout_ns,
+                ) catch
+                    return error.NativeLoadClockOverflow
+            else
+                null;
+        const peer = if (io_deadline_ns) |deadline_ns|
+            try nativeLoadOpenLoopConnect(
+                address,
+                deadline_ns,
+            )
+        else
             try std.net.tcpConnectToAddress(address);
         defer peer.close();
-        try peer.writeAll(head);
-        try peer.writeAll(body);
+        if (io_deadline_ns) |deadline_ns| {
+            try nativeLoadOpenLoopWriteAll(
+                peer,
+                head,
+                deadline_ns,
+            );
+            try nativeLoadOpenLoopWriteAll(
+                peer,
+                body,
+                deadline_ns,
+            );
+        } else {
+            try peer.writeAll(head);
+            try peer.writeAll(body);
+        }
+        const transmit_complete_ns =
+            if (self.profile.isOpenLoop())
+                try nativeLoadMonotonicNs()
+            else
+                0;
 
         var response_storage: [
             protocol.header_max_bytes +
@@ -6069,7 +7189,14 @@ const NativeLoadClientContext = struct {
         var first_output_ns: u64 = 0;
         while (used < response_storage.len) {
             const read_count =
-                try peer.read(response_storage[used..]);
+                if (io_deadline_ns) |deadline_ns|
+                    try nativeLoadOpenLoopRead(
+                        peer,
+                        response_storage[used..],
+                        deadline_ns,
+                    )
+                else
+                    try peer.read(response_storage[used..]);
             if (read_count == 0) break;
             if (first_output_ns == 0)
                 first_output_ns =
@@ -6138,6 +7265,7 @@ const NativeLoadClientContext = struct {
                     .first_output_ns = first_output_ns,
                     .terminal_ns = terminal_ns,
                     .client_settlement_ns = try nativeLoadMonotonicNs(),
+                    .transmit_complete_ns = transmit_complete_ns,
                     .response_bytes = @intCast(used),
                     .output_token = completion.output_tokens[0],
                     .content_byte = completion.content[0],
@@ -6196,6 +7324,7 @@ const NativeLoadClientContext = struct {
                     .first_output_ns = first_output_ns,
                     .terminal_ns = terminal_ns,
                     .client_settlement_ns = try nativeLoadMonotonicNs(),
+                    .transmit_complete_ns = transmit_complete_ns,
                     .response_bytes = @intCast(used),
                 };
             },
@@ -6562,6 +7691,84 @@ fn parseNativeLoadWave(
     ) != expected) {
         return error.InvalidNativeLoadWave;
     }
+}
+
+fn parseNativeLoadOpenLoopStep(
+    line: []const u8,
+    expected_label: []const u8,
+    expected_value: u64,
+) !void {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const label = fields.next() orelse
+        return error.InvalidFrame;
+    const value = fields.next() orelse
+        return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(u8, label, expected_label) or
+        try parseCanonicalInt(u64, value) != expected_value)
+    {
+        return error.InvalidNativeLoadOpenLoopFrame;
+    }
+}
+
+const NativeLoadOpenLoopPressureReady = struct {
+    anchor_ns: u64,
+    pressure_ready_ns: u64,
+};
+
+fn parseNativeLoadOpenLoopPressureReady(
+    line: []const u8,
+) !NativeLoadOpenLoopPressureReady {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const label = fields.next() orelse
+        return error.InvalidFrame;
+    const anchor = fields.next() orelse
+        return error.InvalidFrame;
+    const ready = fields.next() orelse
+        return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(
+            u8,
+            label,
+            "NATIVE-LOAD-OPEN-PRESSURE-READY",
+        ))
+    {
+        return error.InvalidNativeLoadOpenLoopFrame;
+    }
+    return .{
+        .anchor_ns = try parseCanonicalInt(u64, anchor),
+        .pressure_ready_ns = try parseCanonicalInt(u64, ready),
+    };
+}
+
+const NativeLoadOpenLoopRelease = struct {
+    anchor_ns: u64,
+    actual_release_ns: u64,
+};
+
+fn parseNativeLoadOpenLoopRelease(
+    line: []const u8,
+) !NativeLoadOpenLoopRelease {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const label = fields.next() orelse
+        return error.InvalidFrame;
+    const anchor = fields.next() orelse
+        return error.InvalidFrame;
+    const actual = fields.next() orelse
+        return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(
+            u8,
+            label,
+            "NATIVE-LOAD-OPEN-RELEASE",
+        ))
+    {
+        return error.InvalidNativeLoadOpenLoopFrame;
+    }
+    return .{
+        .anchor_ns = try parseCanonicalInt(u64, anchor),
+        .actual_release_ns = try parseCanonicalInt(u64, actual),
+    };
 }
 
 fn parseNativeLoadQueuedStep(
@@ -7193,6 +8400,333 @@ const NativeLoadJoinedRecord = struct {
     server: NativeLoadServerRecord,
 };
 
+const NativeLoadOpenLoopPlan = struct {
+    anchor_ns: u64,
+    baseline_actual_span_ns: u64,
+    pressure_actual_span_ns: u64,
+    recovery_actual_span_ns: u64,
+    baseline_max_lateness_ns: u64,
+    pressure_max_lateness_ns: u64,
+    recovery_max_lateness_ns: u64,
+    pressure_ready_ns: u64,
+    fixed_release_actual_ns: u64,
+    pressure_server_settled_ns: u64,
+    pressure_joined_settled_ns: u64,
+    recovery_slack_ns: u64,
+
+    fn closureValues(
+        self: NativeLoadOpenLoopPlan,
+    ) [native_load_open_loop_plan_u64_count]u64 {
+        return .{
+            self.anchor_ns,
+            native_load_measured_count,
+            native_load_open_loop_baseline_count,
+            native_load_open_loop_pressure_count,
+            native_load_open_loop_recovery_count,
+            self.baseline_actual_span_ns,
+            self.pressure_actual_span_ns,
+            self.recovery_actual_span_ns,
+            self.baseline_max_lateness_ns,
+            self.pressure_max_lateness_ns,
+            self.recovery_max_lateness_ns,
+            self.pressure_ready_ns,
+            self.fixed_release_actual_ns,
+            self.pressure_server_settled_ns,
+            self.pressure_joined_settled_ns,
+            self.recovery_slack_ns,
+        };
+    }
+};
+
+fn makeNativeLoadOpenLoopPlan(
+    joined: *const [native_load_record_count]NativeLoadJoinedRecord,
+    anchor_ns: u64,
+    pressure_ready_ns: u64,
+    fixed_release_actual_ns: u64,
+) !NativeLoadOpenLoopPlan {
+    if (anchor_ns == 0 or pressure_ready_ns == 0 or
+        fixed_release_actual_ns == 0)
+    {
+        return error.InvalidNativeLoadOpenLoopPlan;
+    }
+    const release_due_ns = std.math.add(
+        u64,
+        anchor_ns,
+        native_load_open_loop_fixed_release_offset_ns,
+    ) catch return error.NativeLoadClockOverflow;
+    if (pressure_ready_ns > release_due_ns or
+        fixed_release_actual_ns < release_due_ns or
+        fixed_release_actual_ns - release_due_ns >
+            native_load_open_loop_max_launch_lateness_ns)
+    {
+        return error.InvalidNativeLoadOpenLoopRelease;
+    }
+
+    var seen =
+        [_]bool{false} ** native_load_record_count;
+    var measured_slots_seen =
+        [_]bool{false} **
+        native_load_open_loop_measured_actor_count;
+    var phase_counts = [_]usize{0} ** 4;
+    var phase_min_arrival =
+        [_]u64{std.math.maxInt(u64)} ** 4;
+    var phase_max_arrival = [_]u64{0} ** 4;
+    var phase_max_lateness = [_]u64{0} ** 4;
+    var baseline_settled_ns: u64 = 0;
+    var pressure_min_enqueue_ns: u64 =
+        std.math.maxInt(u64);
+    var pressure_server_settled_ns: u64 = 0;
+    var pressure_joined_settled_ns: u64 = 0;
+
+    for (joined) |record| {
+        const planned: usize =
+            @intCast(record.client.planned_ordinal);
+        if (planned >= native_load_record_count or
+            seen[planned] or
+            record.client.arrival_ns == 0 or
+            record.client.transmit_complete_ns == 0 or
+            record.client.transmit_complete_ns <
+                record.client.arrival_ns or
+            record.client.transmit_complete_ns >
+                record.client.client_settlement_ns)
+        {
+            return error.InvalidNativeLoadOpenLoopObservation;
+        }
+        seen[planned] = true;
+        const phase =
+            try nativeLoadOpenLoopPhase(planned);
+        const logical_slot =
+            try nativeLoadOpenLoopLogicalActorSlot(
+                record.client.planned_ordinal,
+            );
+        if (phase == .warmup) {
+            if (logical_slot !=
+                record.client.planned_ordinal)
+            {
+                return error.InvalidNativeLoadOpenLoopLogicalSlot;
+            }
+        } else {
+            const expected_slot: u32 = @intCast(
+                planned - native_load_warmup_count,
+            );
+            if (logical_slot != expected_slot or
+                measured_slots_seen[expected_slot])
+            {
+                return error.InvalidNativeLoadOpenLoopLogicalSlot;
+            }
+            measured_slots_seen[expected_slot] = true;
+        }
+        const phase_index: usize =
+            @intFromEnum(phase);
+        phase_counts[phase_index] += 1;
+        phase_min_arrival[phase_index] = @min(
+            phase_min_arrival[phase_index],
+            record.client.arrival_ns,
+        );
+        phase_max_arrival[phase_index] = @max(
+            phase_max_arrival[phase_index],
+            record.client.arrival_ns,
+        );
+        if (phase == .warmup) continue;
+
+        const offset_ns =
+            try nativeLoadOpenLoopOffsetNs(planned);
+        const scheduled_ns = std.math.add(
+            u64,
+            anchor_ns,
+            offset_ns,
+        ) catch return error.NativeLoadClockOverflow;
+        if (record.client.arrival_ns < scheduled_ns)
+            return error.InvalidNativeLoadOpenLoopObservation;
+        const lateness_ns =
+            record.client.arrival_ns - scheduled_ns;
+        if (lateness_ns >
+            native_load_open_loop_max_launch_lateness_ns)
+        {
+            return error.NativeLoadOpenLoopLaunchLate;
+        }
+        phase_max_lateness[phase_index] = @max(
+            phase_max_lateness[phase_index],
+            lateness_ns,
+        );
+        if (phase == .baseline) {
+            baseline_settled_ns = @max(
+                baseline_settled_ns,
+                @max(
+                    record.server.retired_ns,
+                    record.client.client_settlement_ns,
+                ),
+            );
+        } else if (phase == .pressure) {
+            pressure_min_enqueue_ns = @min(
+                pressure_min_enqueue_ns,
+                record.server.enqueue_ns,
+            );
+            if (record.client.transmit_complete_ns >
+                fixed_release_actual_ns or
+                record.server.decision_ns <
+                    fixed_release_actual_ns or
+                record.server.retired_ns <
+                    fixed_release_actual_ns or
+                record.client.terminal_ns <
+                    fixed_release_actual_ns or
+                record.client.client_settlement_ns <
+                    fixed_release_actual_ns)
+            {
+                return error.NativeLoadOpenLoopGateBypassed;
+            }
+            pressure_server_settled_ns = @max(
+                pressure_server_settled_ns,
+                record.server.retired_ns,
+            );
+            pressure_joined_settled_ns = @max(
+                pressure_joined_settled_ns,
+                @max(
+                    record.client.client_settlement_ns,
+                    record.server.retired_ns,
+                ),
+            );
+        }
+    }
+    for (seen) |present| {
+        if (!present)
+            return error.InvalidNativeLoadOpenLoopPlan;
+    }
+    for (measured_slots_seen) |present| {
+        if (!present)
+            return error.InvalidNativeLoadOpenLoopLogicalSlot;
+    }
+    for (joined) |left| {
+        if (try nativeLoadOpenLoopPhase(
+            @intCast(left.client.planned_ordinal),
+        ) != .pressure) continue;
+        for (joined) |right| {
+            if (try nativeLoadOpenLoopPhase(
+                @intCast(right.client.planned_ordinal),
+            ) != .pressure) continue;
+            if (left.server.enqueue_ordinal <
+                right.server.enqueue_ordinal and
+                left.server.dispatch_ordinal >=
+                    right.server.dispatch_ordinal)
+            {
+                return error.InvalidNativeLoadOpenLoopFifo;
+            }
+        }
+    }
+    if (phase_counts[
+        @intFromEnum(
+            NativeLoadOpenLoopPhase.warmup,
+        )
+    ] != native_load_warmup_count or
+        phase_counts[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.baseline,
+            )
+        ] != native_load_open_loop_baseline_count or
+        phase_counts[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.pressure,
+            )
+        ] != native_load_open_loop_pressure_count or
+        phase_counts[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.recovery,
+            )
+        ] != native_load_open_loop_recovery_count)
+    {
+        return error.InvalidNativeLoadOpenLoopPlan;
+    }
+    const arm_due_ns = std.math.add(
+        u64,
+        anchor_ns,
+        native_load_open_loop_gate_arm_offset_ns,
+    ) catch return error.NativeLoadClockOverflow;
+    const pressure_min_arrival_ns =
+        phase_min_arrival[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.pressure,
+            )
+        ];
+    if (baseline_settled_ns == 0 or
+        baseline_settled_ns > arm_due_ns or
+        pressure_min_enqueue_ns == std.math.maxInt(u64) or
+        pressure_ready_ns < pressure_min_arrival_ns or
+        pressure_ready_ns < pressure_min_enqueue_ns)
+    {
+        return error.InvalidNativeLoadOpenLoopPressureReady;
+    }
+    const recovery_first_actual_ns =
+        phase_min_arrival[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.recovery,
+            )
+        ];
+    const pressure_settled_ns = @max(
+        pressure_server_settled_ns,
+        pressure_joined_settled_ns,
+    );
+    if (recovery_first_actual_ns < pressure_settled_ns)
+        return error.InvalidNativeLoadOpenLoopRecovery;
+    const recovery_slack_ns =
+        recovery_first_actual_ns - pressure_settled_ns;
+    if (recovery_slack_ns <
+        native_load_open_loop_min_recovery_slack_ns)
+    {
+        return error.InvalidNativeLoadOpenLoopRecovery;
+    }
+
+    return .{
+        .anchor_ns = anchor_ns,
+        .baseline_actual_span_ns = phase_max_arrival[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.baseline,
+            )
+        ] - phase_min_arrival[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.baseline,
+            )
+        ],
+        .pressure_actual_span_ns = phase_max_arrival[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.pressure,
+            )
+        ] - phase_min_arrival[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.pressure,
+            )
+        ],
+        .recovery_actual_span_ns = phase_max_arrival[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.recovery,
+            )
+        ] - phase_min_arrival[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.recovery,
+            )
+        ],
+        .baseline_max_lateness_ns = phase_max_lateness[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.baseline,
+            )
+        ],
+        .pressure_max_lateness_ns = phase_max_lateness[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.pressure,
+            )
+        ],
+        .recovery_max_lateness_ns = phase_max_lateness[
+            @intFromEnum(
+                NativeLoadOpenLoopPhase.recovery,
+            )
+        ],
+        .pressure_ready_ns = pressure_ready_ns,
+        .fixed_release_actual_ns = fixed_release_actual_ns,
+        .pressure_server_settled_ns = pressure_server_settled_ns,
+        .pressure_joined_settled_ns = pressure_joined_settled_ns,
+        .recovery_slack_ns = recovery_slack_ns,
+    };
+}
+
 const NativeLoadSequencePoint = struct {
     ns: u64,
     record_index: u16,
@@ -7327,6 +8861,23 @@ fn makeNativeLoadHostEvents(
     return result;
 }
 
+fn nativeLoadOpenLoopLogicalActorSlot(
+    planned_ordinal: u32,
+) !u32 {
+    if (planned_ordinal >= native_load_record_count)
+        return error.InvalidNativeLoadOpenLoopOrdinal;
+    if (planned_ordinal < native_load_warmup_count)
+        return planned_ordinal;
+    const measured_slot =
+        planned_ordinal - native_load_warmup_count;
+    if (measured_slot >=
+        native_load_open_loop_measured_actor_count)
+    {
+        return error.InvalidNativeLoadOpenLoopLogicalSlot;
+    }
+    return @intCast(measured_slot);
+}
+
 fn makeNativeLoadScenario(
     profile: NativeLoadProfile,
     fixture: *const Fixture,
@@ -7335,13 +8886,22 @@ fn makeNativeLoadScenario(
     machine_sha256: protocol.Digest,
 ) !native_report.ScenarioV1 {
     return native_report.makeScenarioV1(.{
-        .mode = .closed,
+        .mode = if (profile.isOpenLoop())
+            .open
+        else
+            .closed,
         .evidence = .production_native,
         .warmup_count = native_load_warmup_count,
         .measured_count = native_load_measured_count,
-        .max_in_flight = native_load_flow_count,
-        .queue_count = profile.workerCount() +
-            profile.pendingCapacity(),
+        .max_in_flight = if (profile.isOpenLoop())
+            native_load_open_loop_measured_actor_count
+        else
+            native_load_flow_count,
+        .queue_count = if (profile.isOpenLoop())
+            native_load_open_loop_measured_actor_count
+        else
+            profile.workerCount() +
+                profile.pendingCapacity(),
         .flow_count = native_load_flow_count,
         .workload_sha256 = native_report.digestV1(
             "glacier-f1-native-unary-load-workload/v1",
@@ -7496,7 +9056,12 @@ fn buildNativeLoadInnerReport(
                     .fallback = false,
                     .flow_id = record.client.flow_id,
                     .work_units = 1,
-                    .adapter_queue_slot = record.server.slot_index,
+                    .adapter_queue_slot = if (profile.isOpenLoop())
+                        try nativeLoadOpenLoopLogicalActorSlot(
+                            record.client.planned_ordinal,
+                        )
+                    else
+                        record.server.slot_index,
                     .host = host,
                     .roots = .{
                         .request_sha256 = record.client.request_sha256,
@@ -7718,6 +9283,36 @@ fn validateNativeLoadClosureValues(
     profile: NativeLoadProfile,
     values: *const [native_load_closure_u64_count]u64,
 ) !void {
+    if (profile.isOpenLoop()) {
+        if (values[0] != native_load_record_count or
+            values[1] != native_load_record_count or
+            values[2] != 0 or
+            values[3] != native_load_record_count or
+            values[4] != native_load_record_count or
+            values[5] !=
+                native_load_open_loop_pending_capacity or
+            values[6] !=
+                native_load_open_loop_worker_count or
+            values[7] == 0 or values[7] != values[8] or
+            values[9] != 0 or values[10] != 0 or
+            values[11] != 0 or values[12] != 0 or
+            values[13] != 0 or values[14] != 0 or
+            values[15] != 0 or values[16] != 0 or
+            values[17] != 0 or
+            values[18] != native_load_record_count or
+            values[19] != native_load_record_count or
+            values[20] != 0 or values[21] != 0 or
+            values[22] != 0 or values[23] != 1 or
+            values[24] != 1 or values[25] != 1 or
+            values[26] != 0 or
+            values[27] !=
+                @as(u64, native_load_record_count * 3) +
+                    values[7] + values[8])
+        {
+            return error.InvalidNativeLoadClosure;
+        }
+        return;
+    }
     if (profile == .queued_receive_timeout) {
         if (values[0] != native_load_record_count or
             values[1] !=
@@ -7788,11 +9383,16 @@ fn encodeNativeLoadOuter(
     profile: NativeLoadProfile,
     joined: *const [native_load_record_count]NativeLoadJoinedRecord,
     closure: *const [native_load_closure_u64_count]u64,
+    open_loop_plan: ?NativeLoadOpenLoopPlan,
     inner: []const u8,
-    output: *[native_load_outer_bytes]u8,
+    output: []u8,
 ) ![]const u8 {
-    if (inner.len != native_load_inner_bytes)
+    if (inner.len != native_load_inner_bytes or
+        output.len != profile.outerBytes() or
+        profile.isOpenLoop() != (open_loop_plan != null))
+    {
         return error.InvalidNativeLoadInnerLength;
+    }
     try validateNativeLoadClosureValues(profile, closure);
     @memset(output, 0);
     var writer: NativeLoadOuterWriter = .{
@@ -7801,10 +9401,12 @@ fn encodeNativeLoadOuter(
     const outer_magic = profile.outerMagic();
     try writer.writeBytes(&outer_magic);
     try writer.writeU64(profile.outerAbi());
-    try writer.writeU64(native_load_outer_bytes);
+    try writer.writeU64(
+        @intCast(profile.outerBytes()),
+    );
     try writer.writeU32(native_load_record_count);
-    try writer.writeU32(native_load_sidecar_bytes);
-    try writer.writeU32(native_load_closure_bytes);
+    try writer.writeU32(@intCast(profile.sidecarBytes()));
+    try writer.writeU32(@intCast(profile.closureBytes()));
     try writer.writeU32(native_load_inner_bytes);
     if (writer.position !=
         native_load_outer_header_bytes)
@@ -8001,8 +9603,54 @@ fn encodeNativeLoadOuter(
         {
             return error.InvalidNativeLoadSidecarLayout;
         }
+        if (open_loop_plan) |plan| {
+            const planned: usize =
+                @intCast(record.client.planned_ordinal);
+            const phase =
+                try nativeLoadOpenLoopPhase(planned);
+            const offset_ns =
+                try nativeLoadOpenLoopOffsetNs(planned);
+            const lateness_ns = if (phase == .warmup)
+                0
+            else blk: {
+                const scheduled_ns = std.math.add(
+                    u64,
+                    plan.anchor_ns,
+                    offset_ns,
+                ) catch return error.NativeLoadClockOverflow;
+                if (record.client.arrival_ns <
+                    scheduled_ns)
+                {
+                    return error.InvalidNativeLoadOpenLoopObservation;
+                }
+                break :blk record.client.arrival_ns -
+                    scheduled_ns;
+            };
+            try writer.writeU32(
+                record.client.planned_ordinal,
+            );
+            try writer.writeU8(@intFromEnum(phase));
+            try writer.writeU8(
+                @intFromBool(phase != .warmup),
+            );
+            try writer.writeReserved(2);
+            try writer.writeU64(offset_ns);
+            try writer.writeU64(lateness_ns);
+            try writer.writeU64(
+                record.client.transmit_complete_ns,
+            );
+        }
+        if (writer.position - sidecar_start !=
+            profile.sidecarBytes())
+        {
+            return error.InvalidNativeLoadSidecarLayout;
+        }
     }
     for (closure) |value| try writer.writeU64(value);
+    if (open_loop_plan) |plan| {
+        for (plan.closureValues()) |value|
+            try writer.writeU64(value);
+    }
     try writer.writeBytes(inner);
     const body_end = writer.position;
     if (body_end + native_load_outer_digest_bytes !=
@@ -8410,6 +10058,322 @@ fn runNativeLoadQueuedReceiveTimeoutSupervisor(
         profile,
         &joined,
         &closure,
+        null,
+        inner,
+        &outer_storage,
+    );
+    var stdout_storage: [8192]u8 = undefined;
+    var stdout =
+        std.fs.File.stdout().writer(&stdout_storage);
+    try stdout.interface.writeAll(outer);
+    try stdout.interface.flush();
+}
+
+fn runNativeLoadOpenLoopTransientPressureSupervisor(
+    allocator: std.mem.Allocator,
+    challenge_hex: []const u8,
+    build_hex: []const u8,
+    machine_hex: []const u8,
+) !void {
+    const profile: NativeLoadProfile =
+        .open_loop_transient_pressure;
+    const challenge_sha256 =
+        try parseDigestHex(challenge_hex);
+    const build_sha256 =
+        try parseDigestHex(build_hex);
+    const machine_sha256 =
+        try parseDigestHex(machine_hex);
+
+    var fixture = try Fixture.init(allocator);
+    defer fixture.deinit();
+    const executable =
+        try std.fs.selfExePathAlloc(allocator);
+    defer allocator.free(executable);
+    const oracle =
+        try makeLocalOracle(allocator, &fixture);
+    var child = try spawnWorker(
+        allocator,
+        executable,
+        &fixture,
+        profile.generation(),
+        .native_load_open_loop_transient_pressure,
+    );
+    var waited = false;
+    defer if (!waited) terminateChild(&child);
+    var watchdog: WorkerWatchdog = .{
+        .process_id = child.id,
+    };
+    try watchdog.start();
+    var watchdog_running = true;
+    defer if (watchdog_running) {
+        _ = watchdog.stop();
+    };
+
+    var frame_storage: [frame_max_bytes]u8 = undefined;
+    const ready = try parseReady(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    if (ready.generation != profile.generation() or
+        !std.mem.eql(
+            u8,
+            &ready.model_id,
+            &oracle.model_id,
+        ))
+    {
+        return error.InvalidNativeLoadReady;
+    }
+
+    var client_observations: [native_load_record_count]NativeLoadClientObservation =
+        undefined;
+    for (0..native_load_warmup_count) |planned| {
+        var start: std.Thread.ResetEvent = .{};
+        start.set();
+        var context: NativeLoadClientContext = .{
+            .profile = profile,
+            .ready = ready,
+            .oracle = oracle,
+            .planned_ordinal = @intCast(planned),
+            .flow_id = @intCast(planned),
+            .start = &start,
+        };
+        try context.execute();
+        if (context.observation.transmit_complete_ns == 0)
+            return error.InvalidNativeLoadOpenLoopObservation;
+        client_observations[planned] =
+            context.observation;
+        const expected = planned + 1;
+        var command_storage: [64]u8 = undefined;
+        const command = try std.fmt.bufPrint(
+            &command_storage,
+            "native-load-open-warmup {d}\n",
+            .{expected},
+        );
+        try child.stdin.?.writeAll(command);
+        try parseNativeLoadOpenLoopStep(
+            try readFrame(
+                child.stdout.?,
+                &frame_storage,
+            ),
+            "NATIVE-LOAD-OPEN-WARMUP",
+            @intCast(expected),
+        );
+    }
+
+    var schedule: NativeLoadOpenLoopSchedule = .{};
+    var contexts: [native_load_open_loop_measured_actor_count]NativeLoadClientContext =
+        undefined;
+    var threads: [native_load_open_loop_measured_actor_count]std.Thread =
+        undefined;
+    var spawned: usize = 0;
+    errdefer {
+        schedule.abort();
+        if (!waited) {
+            terminateChild(&child);
+            waited = true;
+        }
+        for (threads[0..spawned]) |thread|
+            thread.join();
+    }
+    for (0..native_load_open_loop_measured_actor_count) |measured| {
+        const planned =
+            native_load_warmup_count + measured;
+        contexts[measured] = .{
+            .profile = profile,
+            .ready = ready,
+            .oracle = oracle,
+            .planned_ordinal = @intCast(planned),
+            .flow_id = @intCast(
+                measured % native_load_flow_count,
+            ),
+            .open_loop_schedule = &schedule,
+            .planned_offset_ns = try nativeLoadOpenLoopOffsetNs(planned),
+        };
+        threads[measured] = try std.Thread.spawn(
+            .{},
+            NativeLoadClientContext.run,
+            .{&contexts[measured]},
+        );
+        spawned += 1;
+    }
+    try schedule.waitReady();
+    const selected_ns =
+        try nativeLoadMonotonicNs();
+    const anchor_ns = std.math.add(
+        u64,
+        selected_ns,
+        native_load_open_loop_anchor_lead_ns,
+    ) catch return error.NativeLoadClockOverflow;
+    try schedule.publish(anchor_ns);
+
+    var arm_storage: [128]u8 = undefined;
+    const arm = try std.fmt.bufPrint(
+        &arm_storage,
+        "native-load-open-loop-arm {d}\n",
+        .{anchor_ns},
+    );
+    try child.stdin.?.writeAll(arm);
+
+    const pressure_ready =
+        try parseNativeLoadOpenLoopPressureReady(
+            try readFrame(
+                child.stdout.?,
+                &frame_storage,
+            ),
+        );
+    const release_due_ns = std.math.add(
+        u64,
+        anchor_ns,
+        native_load_open_loop_fixed_release_offset_ns,
+    ) catch return error.NativeLoadClockOverflow;
+    if (pressure_ready.anchor_ns != anchor_ns or
+        pressure_ready.pressure_ready_ns > release_due_ns)
+    {
+        return error.InvalidNativeLoadOpenLoopPressureReady;
+    }
+    const release = try parseNativeLoadOpenLoopRelease(
+        try readFrame(
+            child.stdout.?,
+            &frame_storage,
+        ),
+    );
+    if (release.anchor_ns != anchor_ns or
+        release.actual_release_ns < release_due_ns or
+        release.actual_release_ns - release_due_ns >
+            native_load_open_loop_max_launch_lateness_ns)
+    {
+        return error.InvalidNativeLoadOpenLoopRelease;
+    }
+
+    for (threads) |thread| thread.join();
+    spawned = 0;
+    for (contexts, 0..) |context, measured| {
+        if (context.thread_error) |err| return err;
+        const planned =
+            native_load_warmup_count + measured;
+        if (context.observation.planned_ordinal !=
+            planned or
+            context.observation.transmit_complete_ns <
+                context.observation.arrival_ns)
+        {
+            return error.InvalidNativeLoadOpenLoopObservation;
+        }
+        client_observations[planned] =
+            context.observation;
+    }
+    try schedule.validateComplete();
+    try parseNativeLoadOpenLoopStep(
+        try readFrame(
+            child.stdout.?,
+            &frame_storage,
+        ),
+        "NATIVE-LOAD-OPEN-SETTLED",
+        native_load_record_count,
+    );
+    try child.stdin.?.writeAll(
+        native_load_drain_command,
+    );
+    child.stdin.?.close();
+    child.stdin = null;
+
+    var server_records: [native_load_record_count]NativeLoadServerRecord =
+        undefined;
+    for (&server_records, 0..) |*record, index| {
+        record.* = try parseNativeLoadServerRecord(
+            try readFrame(
+                child.stdout.?,
+                &frame_storage,
+            ),
+            index,
+            profile,
+        );
+    }
+    const closure = try parseNativeLoadClosure(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try requireWorkerEof(child.stdout.?);
+    const did_time_out = watchdog.stop();
+    watchdog_running = false;
+    if (did_time_out) return error.WorkerTimeout;
+    const term = try child.wait();
+    waited = true;
+    switch (term) {
+        .Exited => |code| if (code != 0)
+            return error.NativeLoadWorkerFailed,
+        else => return error.UnexpectedWorkerTermination,
+    }
+
+    var joined: [native_load_record_count]NativeLoadJoinedRecord =
+        undefined;
+    var matched =
+        [_]bool{false} ** native_load_record_count;
+    for (client_observations, 0..) |
+        client,
+        client_index,
+    | {
+        var found: ?usize = null;
+        for (server_records, 0..) |
+            server,
+            server_index,
+        | {
+            if (!std.mem.eql(
+                u8,
+                &client.request_sha256,
+                &server.request_sha256,
+            )) continue;
+            if (found != null or matched[server_index])
+                return error.DuplicateNativeLoadCorrelation;
+            found = server_index;
+        }
+        const server_index = found orelse
+            return error.MissingNativeLoadCorrelation;
+        const server = server_records[server_index];
+        if (client.outcome != .completed or
+            server.outcome != .completed or
+            !std.mem.eql(
+                u8,
+                &client.response_handle_sha256,
+                &server.handle_sha256,
+            ))
+        {
+            return error.InvalidNativeLoadJoinedOutcome;
+        }
+        matched[server_index] = true;
+        joined[client_index] = .{
+            .client = client,
+            .server = server,
+        };
+    }
+    for (matched) |present| {
+        if (!present)
+            return error.MissingNativeLoadCorrelation;
+    }
+
+    const plan = try makeNativeLoadOpenLoopPlan(
+        &joined,
+        anchor_ns,
+        pressure_ready.pressure_ready_ns,
+        release.actual_release_ns,
+    );
+    var report_records: [native_load_record_count]native_report.RecordV1 =
+        undefined;
+    var inner_storage: [native_load_inner_bytes]u8 = undefined;
+    const inner = try buildNativeLoadInnerReport(
+        profile,
+        &fixture,
+        &joined,
+        challenge_sha256,
+        build_sha256,
+        machine_sha256,
+        &report_records,
+        &inner_storage,
+    );
+    var outer_storage: [native_load_open_loop_outer_bytes]u8 =
+        undefined;
+    const outer = try encodeNativeLoadOuter(
+        profile,
+        &joined,
+        &closure,
+        plan,
         inner,
         &outer_storage,
     );
@@ -8434,6 +10398,14 @@ fn runNativeLoadSupervisor(
     }
     if (profile == .queued_receive_timeout) {
         return runNativeLoadQueuedReceiveTimeoutSupervisor(
+            allocator,
+            challenge_hex,
+            build_hex,
+            machine_hex,
+        );
+    }
+    if (profile.isOpenLoop()) {
+        return runNativeLoadOpenLoopTransientPressureSupervisor(
             allocator,
             challenge_hex,
             build_hex,
@@ -8657,6 +10629,7 @@ fn runNativeLoadSupervisor(
         profile,
         &joined,
         &closure,
+        null,
         inner,
         &outer_storage,
     );
@@ -11335,7 +13308,8 @@ fn spawnWorker(
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = if (profile == .native_load or
         profile == .native_load_retention_capacity or
-        profile == .native_load_queued_receive_timeout)
+        profile == .native_load_queued_receive_timeout or
+        profile == .native_load_open_loop_transient_pressure)
         .Inherit
     else
         .Ignore;
