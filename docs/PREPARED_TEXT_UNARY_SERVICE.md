@@ -663,6 +663,28 @@ or zero-ownership close evidence. This matrix does not recover their requests,
 preserve durable idempotency, establish retry safety, or exercise
 checkpoint-aware drain.
 
+Separately, the same process artifact now retains an independent nine-case
+managed-drain phase matrix. It invokes the public drain entry point while each
+owned phase is held, with separate live-work and
+terminal-but-runtime-unretired `request_admitted` cases. The concurrent
+`queued` case binds retirement to the exact queued lease while accounting for
+the required running receive blocker. Partial receive phases close without a
+response; `request_received` closes admission before work publication and
+returns a complete correlated `service_closed` response; live admitted work
+returns correlated `request_cancelled`; terminal admitted work preserves its
+completion; `response_ready` cancels before the first byte;
+`response_writing` retains only its bounded one-byte prefix; and
+`response_written` preserves the complete oracle-validated response.
+
+Every managed-drain case reaches a stopped lifecycle with zero connection,
+Service, Scheduler, and Bank ownership. The late `request_received` and
+`response_written` cases intentionally retain no drain-action phase counter
+because receive or response work has already retired; their held-phase
+snapshots and client outcomes provide the evidence instead. This establishes
+the current phase-aware bounded-cleanup policy. It does not expose a stable
+host-facing checkpoint receipt, checkpoint ordinal, committed-token progress,
+resumable state, peer delivery, or a finish-all-in-flight policy.
+
 Generation B then loads the same package with a new process generation and
 idempotency key, proves the same model, binding, content, and output identity,
 and closes cleanly. This fresh restart does not preserve retained idempotency
@@ -938,8 +960,10 @@ admitted-work policy, opt-in `response_ready`/`response_writing` probes, and
 final-send local-completion child, plus the Phase E2a response-writing
 drain/completion siblings, Phase E2b elapsed-timeout children, and the Phase
 F1 queued-timeout, simultaneous-drain, and stale-owner children, plus the
-application-rejection child. The dedicated death-worker mode adds the
-nine-victim owned-phase matrix and final clean successor; Phases B-F1,
+application-rejection child. The supervisor composes the existing drain
+children plus two late-phase children into the independent nine-case managed
+drain matrix. The dedicated death-worker mode adds the separate nine-victim
+owned-phase matrix and final clean successor; managed drain, Phases B-F1,
 rejection, and forced-death evidence add no artifact or build target. It is
 host real-process lifecycle evidence rather than a production daemon or native
 foreign-target run.
@@ -966,8 +990,8 @@ cases across receive, `request_admitted`, opt-in
 `response_ready`/`response_writing`, and final-send local completion, Phase
 E2a interruptible response-write, and Phase E2b full-request-timeout cases
 remain inside the existing process executable, test target, and compile-only
-companion. The forced-death mode remains in that artifact as well. They add no
-compile root or CI load profile.
+companion. The complete managed-drain phase matrix and forced-death mode remain
+in that artifact as well. They add no compile root or CI load profile.
 Shared prepared-text session and package-aware CLI changes continue to share
 the unary acceptance root and
 installed text-runtime golden path in one Zig invocation.
@@ -979,7 +1003,8 @@ profile, retained client, focused managed child-process evidence through Phase
 E2b, and a Phase F1 concurrent-transport implementation with deterministic
 same-process plus native POSIX child-process loopback correctness retained. It
 also retains the nine-victim native POSIX forced-death phase matrix and one
-final clean same-package successor.
+final clean same-package successor, independently from the nine-case
+managed-drain phase matrix.
 Phase C remains the shorter pre-admission receive boundary. Phase D
 cancels admitted execution only when managed drain wins. Phase E1 detects a
 reset only at a between-quantum checkpoint and cancels a response at
@@ -1040,7 +1065,9 @@ compilation is not native Windows or FreeBSD serving proof, and native reset,
 FIN, response-write, deadline, queue, watchdog, and drain behavior on those
 systems remains unproven. The next serving slices are:
 
-1. add checkpoint-aware drain independently of forced death;
+1. expose a stable host-facing drain policy and receipt that distinguishes
+   abort, finish, and resumable outcomes and binds resumable work to committed
+   progress;
 2. add durable restart with honest terminal-or-resumable request state;
 3. retain longer and repeated captures of the fixed all-completed,
    retained-record-capacity, queued-receive-timeout, and scheduled
