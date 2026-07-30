@@ -8,6 +8,18 @@ before the first stable release.
 
 ### Added
 
+- The existing read-only Provider Evidence Inspector now has an optional
+  all-or-none composed mode. Alongside `--join`, callers may supply an exact
+  144-byte journal header, exact 1,645-byte cost frame, and bounded gateway and
+  transport event wires through `--journal-header`, `--cost-frame`,
+  `--gateway-events`, and `--transport-events`. Each variable wire is capped at
+  8 MiB. Outer-only output remains byte-identical with
+  `composition_verified:false`; the composed route reports `true` only after
+  nested replay and exact cross-wire equality. Authority remains false, and the
+  result does not establish authenticity, historical provider execution,
+  billed-usage or billed-cost truth, confidentiality, or trust. This reuses the
+  existing executable, schema, wire ABI, and
+  `provider-evidence-inspector-test` root without adding another compile root.
 - `text-run` reports now include additive `output_text`, a derived strict UTF-8
   view of verified committed `utf8-byte-v1` byte-token IDs. Exact
   `output_tokens` remain canonical and unchanged; invalid UTF-8 or undisclosed
@@ -120,6 +132,12 @@ before the first stable release.
 
 ### Changed
 
+- Provider Evidence Inspector verification now keeps each change at its
+  narrowest existing boundary. CLI changes use
+  `provider-evidence-inspector-compile` instead of the broader host-tool
+  profile on retained targets, oracle changes reuse the single focused host
+  DAG, and focused-test-only changes run exactly their Python unittest module
+  without a generic Zig build or full discovery.
 - Quick and `affected-fast` verification now compile their exact host roots in
   Debug mode for a shorter ordinary feedback loop. Complete `affected`, `full`,
   and `matrix` verification retain ReleaseSafe compilation: `affected` adds

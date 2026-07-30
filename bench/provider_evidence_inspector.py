@@ -1,8 +1,8 @@
 """Independent oracle and subprocess contract for the provider inspector.
 
-The inspector deliberately verifies only the fixed outer join envelope.  The
-scalars and named roots inside that envelope remain self-asserted until a
-caller supplies all nested evidence to the full composition verifier.
+Outer-only inspection preserves the fixed framing boundary.  The optional
+composed mode must replay every explicitly supplied nested artifact before it
+may promote the same scalar/root document to composition-verified.
 """
 
 from __future__ import annotations
@@ -17,8 +17,10 @@ import tempfile
 from typing import Any
 
 if __package__:
+    from . import provider_cost_journal as cost_journal
     from . import provider_evidence_join_wire as join_wire
 else:
+    import provider_cost_journal as cost_journal
     import provider_evidence_join_wire as join_wire
 
 
@@ -29,6 +31,7 @@ MAGIC = b"GPJOINR1"
 WIRE_ABI = 0x47504A4F00000001
 WIRE_BYTES = 712
 FLAG_REQUIRE_CLOSED = 1
+MAXIMUM_NESTED_WIRE_BYTES = 8 * 1024 * 1024
 ENVELOPE_DOMAIN = b"glacier-provider-evidence-join-wire-v1\x00"
 
 ROOT_FIELDS = (
@@ -119,16 +122,22 @@ def decode_outer(encoded: bytes) -> Record:
     return value
 
 
-def expected_document(encoded: bytes) -> Record:
-    """Build the exact field-ordered document for one outer-verified join."""
+def expected_document(
+    encoded: bytes,
+    *,
+    composition_verified: bool = False,
+) -> Record:
+    """Build the exact field-ordered document for one inspected join."""
 
+    if type(composition_verified) is not bool:
+        raise ProviderEvidenceInspectorError("invalid composition claim")
     value = decode_outer(encoded)
     document: Record = {
         "schema": SCHEMA,
         "wire_abi": f"{WIRE_ABI:016x}",
         "wire_bytes": WIRE_BYTES,
         "outer_envelope_verified": True,
-        "composition_verified": False,
+        "composition_verified": composition_verified,
         "authority_granted": False,
         "journal_sequence": value["journal_sequence"],
         "gateway_event_index": value["gateway_event_index"],
@@ -143,12 +152,19 @@ def expected_document(encoded: bytes) -> Record:
     return document
 
 
-def render_expected(encoded: bytes) -> bytes:
+def render_expected(
+    encoded: bytes,
+    *,
+    composition_verified: bool = False,
+) -> bytes:
     """Render the deterministic compact one-line JSON contract."""
 
     return (
         json.dumps(
-            expected_document(encoded),
+            expected_document(
+                encoded,
+                composition_verified=composition_verified,
+            ),
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode("ascii")
@@ -176,7 +192,7 @@ def parse_rendered(encoded: bytes) -> Record:
         or document["wire_abi"] != f"{WIRE_ABI:016x}"
         or document["wire_bytes"] != WIRE_BYTES
         or document["outer_envelope_verified"] is not True
-        or document["composition_verified"] is not False
+        or type(document["composition_verified"]) is not bool
         or document["authority_granted"] is not False
     ):
         raise ProviderEvidenceInspectorError("invalid inspector claim boundary")
@@ -238,7 +254,7 @@ def _invoke(executable: Path, *arguments: str) -> subprocess.CompletedProcess[by
 
 
 def verify_executable(executable: Path) -> None:
-    """Run the retained valid, contradictory, and corrupt subprocess cases."""
+    """Run outer, composed, contradictory, and corrupt subprocess cases."""
 
     bundle = join_wire.build_demo_bundle()
     with tempfile.TemporaryDirectory(prefix="glacier-provider-inspector-oracle-") as name:
@@ -253,6 +269,60 @@ def verify_executable(executable: Path) -> None:
         ):
             raise ProviderEvidenceInspectorError("valid inspector execution drift")
         parse_rendered(valid.stdout)
+
+        nested_payloads = {
+            "journal-header": cost_journal.encode_header(bundle["header"]),
+            "cost-frame": bundle["frame"],
+            "gateway-events": bundle["gateway"],
+            "transport-events": bundle["transport"],
+        }
+        nested_paths: dict[str, Path] = {}
+        for label, payload in nested_payloads.items():
+            path = directory / f"private-{label}-credentials.bin"
+            path.write_bytes(payload)
+            nested_paths[label] = path
+        composition_arguments = (
+            "--join",
+            str(valid_path),
+            "--journal-header",
+            str(nested_paths["journal-header"]),
+            "--cost-frame",
+            str(nested_paths["cost-frame"]),
+            "--gateway-events",
+            str(nested_paths["gateway-events"]),
+            "--transport-events",
+            str(nested_paths["transport-events"]),
+        )
+        before_nested = {
+            label: path.read_bytes()
+            for label, path in nested_paths.items()
+        }
+        join_wire.decode_and_verify(
+            bundle["join"],
+            bundle["header"],
+            bundle["frame"],
+            bundle["gateway"],
+            bundle["transport"],
+        )
+        composed = _invoke(executable, *composition_arguments)
+        if (
+            composed.returncode != 0
+            or composed.stderr != b""
+            or composed.stdout
+            != render_expected(
+                bundle["join"],
+                composition_verified=True,
+            )
+            or parse_rendered(composed.stdout)["composition_verified"]
+            is not True
+            or any(
+                path.read_bytes() != before_nested[label]
+                for label, path in nested_paths.items()
+            )
+        ):
+            raise ProviderEvidenceInspectorError(
+                "valid composed inspector execution drift"
+            )
 
         contradictory = reseal_nonzero_contradiction(bundle["join"])
         contradiction_path = directory / "contradictory.join"
@@ -280,6 +350,23 @@ def verify_executable(executable: Path) -> None:
             raise ProviderEvidenceInspectorError(
                 "full composition accepted contradictory join"
             )
+        composed_contradiction = _invoke(
+            executable,
+            "--join",
+            str(contradiction_path),
+            *composition_arguments[2:],
+        )
+        if (
+            composed_contradiction.returncode != 2
+            or composed_contradiction.stdout != b""
+            or not composed_contradiction.stderr.startswith(
+                b"provider-evidence-inspector: "
+            )
+            or not composed_contradiction.stderr.endswith(b"\n")
+        ):
+            raise ProviderEvidenceInspectorError(
+                "composed contradiction was not rejected"
+            )
 
         corrupt = bytearray(bundle["join"])
         corrupt[-1] ^= 0x01
@@ -294,6 +381,73 @@ def verify_executable(executable: Path) -> None:
             or str(corrupt_path).encode() in rejected.stderr
         ):
             raise ProviderEvidenceInspectorError("corrupt join was not rejected")
+
+        partial = _invoke(
+            executable,
+            "--join",
+            str(valid_path),
+            "--journal-header",
+            str(nested_paths["journal-header"]),
+        )
+        if partial.returncode != 2 or partial.stdout != b"":
+            raise ProviderEvidenceInspectorError(
+                "partial composition arguments were not rejected"
+            )
+
+        oversized = bytearray(bundle["join"])
+        struct.pack_into(
+            "<Q",
+            oversized,
+            56,
+            MAXIMUM_NESTED_WIRE_BYTES + 1,
+        )
+        oversized_path = directory / "oversized-gateway.join"
+        oversized_path.write_bytes(reseal_outer(bytes(oversized)))
+        oversized_arguments = list(composition_arguments)
+        oversized_arguments[1] = str(oversized_path)
+        rejected_oversized = _invoke(executable, *oversized_arguments)
+        if (
+            rejected_oversized.returncode != 2
+            or rejected_oversized.stdout != b""
+        ):
+            raise ProviderEvidenceInspectorError(
+                "oversized nested wire claim was not rejected"
+            )
+
+        argument_positions = {
+            "journal-header": 3,
+            "cost-frame": 5,
+            "gateway-events": 7,
+            "transport-events": 9,
+        }
+        for label, position in argument_positions.items():
+            mutated = bytearray(nested_payloads[label])
+            mutated[-1] ^= 0x01
+            mutated_path = directory / f"mutated-{label}-credentials.bin"
+            mutated_path.write_bytes(mutated)
+            arguments = list(composition_arguments)
+            arguments[position] = str(mutated_path)
+            rejected_nested = _invoke(executable, *arguments)
+            if (
+                rejected_nested.returncode != 2
+                or rejected_nested.stdout != b""
+                or not rejected_nested.stderr.startswith(
+                    b"provider-evidence-inspector: "
+                )
+                or not rejected_nested.stderr.endswith(b"\n")
+                or str(mutated_path).encode() in rejected_nested.stderr
+            ):
+                raise ProviderEvidenceInspectorError(
+                    f"corrupt {label} evidence was not rejected"
+                )
+
+        swapped = list(composition_arguments)
+        swapped[7], swapped[9] = swapped[9], swapped[7]
+        rejected_swap = _invoke(executable, *swapped)
+        if rejected_swap.returncode != 2 or rejected_swap.stdout != b"":
+            raise ProviderEvidenceInspectorError(
+                "swapped nested evidence was not rejected"
+            )
 
 
 def main() -> None:

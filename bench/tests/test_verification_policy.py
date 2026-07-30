@@ -170,6 +170,14 @@ EXPECTED_PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS = frozenset(
     }
 )
 
+EXPECTED_PROVIDER_EVIDENCE_INSPECTOR_FOCUSED_PATHS = frozenset(
+    {
+        "src/cli/provider_evidence_inspector.zig",
+        "bench/provider_evidence_inspector.py",
+        "bench/tests/test_provider_evidence_inspector.py",
+    }
+)
+
 EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS = frozenset(
     {
         "bench/runtime_image_durable_worker.zig",
@@ -579,6 +587,10 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertEqual(
             EXPECTED_PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS,
             policy.PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_PROVIDER_EVIDENCE_INSPECTOR_FOCUSED_PATHS,
+            policy.PROVIDER_EVIDENCE_INSPECTOR_FOCUSED_PATHS,
         )
         self.assertEqual(
             EXPECTED_RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS,
@@ -1114,6 +1126,61 @@ class VerificationPolicyTests(unittest.TestCase):
                         plan.target_plans,
                     )
                 self.assertEqual(frozenset(expected_flags), plan.flags)
+
+    def test_provider_evidence_inspector_paths_select_focused_gate(self):
+        for changed_path in sorted(
+            EXPECTED_PROVIDER_EVIDENCE_INSPECTOR_FOCUSED_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = policy.classify_paths([changed_path])
+                if (
+                    changed_path
+                    == policy.PROVIDER_EVIDENCE_INSPECTOR_PYTHON_TEST_PATH
+                ):
+                    expected_flags = {
+                        "provider-evidence-inspector-python-test-focused",
+                        "python-changed",
+                    }
+                    self.assertEqual((), plan.target_plans)
+                    self.assertNotIn(
+                        "native/provider-evidence-inspector",
+                        policy._gate_names(plan.decisions[0]),
+                    )
+                    self.assertIn(
+                        "python/provider-evidence-inspector",
+                        policy._gate_names(plan.decisions[0]),
+                    )
+                elif changed_path.endswith(".py"):
+                    expected_flags = {
+                        "provider-evidence-inspector-focused",
+                        "python-changed",
+                    }
+                    self.assertEqual((), plan.target_plans)
+                else:
+                    expected_flags = {"provider-evidence-inspector-focused"}
+                    self.assertEqual(
+                        tuple(
+                            policy.TargetBuildPlan(
+                                target,
+                                (
+                                    "provider-evidence-inspector-compile",
+                                ),
+                            )
+                            for target in policy.RETAINED_TARGETS
+                        ),
+                        plan.target_plans,
+                    )
+                self.assertEqual(frozenset(expected_flags), plan.flags)
+                if changed_path != (
+                    policy.PROVIDER_EVIDENCE_INSPECTOR_PYTHON_TEST_PATH
+                ):
+                    self.assertIn(
+                        "native/provider-evidence-inspector",
+                        policy._gate_names(plan.decisions[0]),
+                    )
+                self.assertFalse(plan.requires("native-full"))
+                self.assertFalse(plan.requires("python-full"))
+                self.assertEqual((), plan.decisions[0].host_roots)
 
     def test_profile_prefixes_are_case_sensitive_and_roots_fail_closed(self):
         for changed_path in (
@@ -3629,6 +3696,184 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 any(line.startswith("build ") for line in calls),
                 calls,
             )
+
+    def test_affected_fast_runs_provider_evidence_focused_root_once(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            cli = repository / "src" / "cli"
+            cli.mkdir()
+            (cli / "provider_evidence_inspector.zig").write_text(
+                "",
+                encoding="ascii",
+            )
+            (repository / "bench" / "provider_evidence_inspector.py").write_text(
+                "",
+                encoding="ascii",
+            )
+            (
+                repository
+                / "bench"
+                / "tests"
+                / "test_provider_evidence_inspector.py"
+            ).write_text(
+                "import unittest\n"
+                "class ProviderEvidenceInspectorTests(unittest.TestCase):\n"
+                "    def test_fixture(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  host/provider-evidence-focused-dag:",
+                result.stdout,
+            )
+            self.assertIn(
+                "PASS  native/provider-evidence-inspector: covered by the "
+                "focused host Zig DAG",
+                result.stdout,
+            )
+            self.assertIn(
+                "SKIP  interop/c-cpp-python: provider-evidence focused DAG "
+                "does not select generic interop",
+                result.stdout,
+            )
+            self.assertIn(
+                "SKIP  package/modules: provider-evidence focused DAG does "
+                "not select generic package modules",
+                result.stdout,
+            )
+            self.assertIn("PASS  python/changed-syntax:", result.stdout)
+            self.assertIn(
+                "PASS  python/provider-evidence-inspector:",
+                result.stdout,
+            )
+            self.assertIn(
+                "SKIP  python/full-suite: affected-fast defers full discovery",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            build_calls = [line for line in calls if line.startswith("build ")]
+            self.assertEqual(1, len(build_calls), calls)
+            self.assertTrue(
+                build_calls[0].startswith(
+                    "build provider-evidence-inspector-test "
+                ),
+                build_calls,
+            )
+            self.assertEqual(
+                1,
+                build_calls[0].count("provider-evidence-inspector-test"),
+            )
+            self.assertNotIn("contract-interop-test", build_calls[0])
+            self.assertNotIn("package-module-test", build_calls[0])
+            self.assertFalse(
+                any(" -Dtarget=" in line for line in calls),
+                calls,
+            )
+
+    def test_affected_fast_runs_provider_evidence_python_test_file(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            test_path = (
+                repository
+                / "bench"
+                / "tests"
+                / "test_provider_evidence_inspector.py"
+            )
+            test_path.write_text(
+                "import unittest\n"
+                "class ProviderEvidenceInspectorTests(unittest.TestCase):\n"
+                "    def test_fixture(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  python/provider-evidence-inspector:",
+                result.stdout,
+            )
+            self.assertIn("PASS  python/changed-syntax:", result.stdout)
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            self.assertFalse(
+                any(line.startswith("build ") for line in calls),
+                calls,
+            )
+
+    def test_affected_provider_cli_cross_compiles_only_inspector(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            cli = repository / "src" / "cli"
+            cli.mkdir()
+            (cli / "provider_evidence_inspector.zig").write_text(
+                "",
+                encoding="ascii",
+            )
+
+            result = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            target_calls = [
+                line for line in calls if " -Dtarget=" in line
+            ]
+            self.assertEqual(
+                len(policy.RETAINED_TARGETS),
+                len(target_calls),
+                target_calls,
+            )
+            for call in target_calls:
+                self.assertTrue(
+                    call.startswith(
+                        "build provider-evidence-inspector-compile "
+                    ),
+                    target_calls,
+                )
+                self.assertNotIn("profile-host-tool-compile", call)
 
     def test_affected_fast_runs_prepared_text_focused_dag_once(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

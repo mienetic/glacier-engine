@@ -46,6 +46,7 @@ FOCUSED_TARGET_STEPS: Tuple[str, ...] = (
     "profile-durable-compile",
     "profile-device-compile",
     "profile-host-tool-compile",
+    "provider-evidence-inspector-compile",
 )
 COMPLETE_COMPILE_TARGET_STEPS: Tuple[str, ...] = ("profile-complete-compile",)
 
@@ -267,6 +268,15 @@ PREPARED_TEXT_INSPECTOR_FOCUSED_PATHS = {
     "bench/prepared_text_committed_output.py",
     "bench/tests/test_prepared_text_committed_output.py",
 }
+
+PROVIDER_EVIDENCE_INSPECTOR_FOCUSED_PATHS = {
+    "src/cli/provider_evidence_inspector.zig",
+    "bench/provider_evidence_inspector.py",
+    "bench/tests/test_provider_evidence_inspector.py",
+}
+PROVIDER_EVIDENCE_INSPECTOR_PYTHON_TEST_PATH = (
+    "bench/tests/test_provider_evidence_inspector.py"
+)
 
 RUNTIME_IMAGE_DURABLE_RECOVERY_CAMPAIGN_PATHS = {
     "bench/runtime_image_durable_worker.zig",
@@ -863,6 +873,40 @@ def _decision_for_path(path: str) -> PathDecision:
             inspector_steps,
         )
 
+    if path in PROVIDER_EVIDENCE_INSPECTOR_FOCUSED_PATHS:
+        provider_inspector_flags = set()
+        if path == PROVIDER_EVIDENCE_INSPECTOR_PYTHON_TEST_PATH:
+            provider_inspector_flags.update(
+                {
+                    "provider-evidence-inspector-python-test-focused",
+                    "python-changed",
+                }
+            )
+            provider_inspector_targets: Tuple[str, ...] = ()
+            provider_inspector_steps = FULL_TARGET_STEPS
+        elif suffix == ".py":
+            provider_inspector_flags.update(
+                {
+                    "provider-evidence-inspector-focused",
+                    "python-changed",
+                }
+            )
+            provider_inspector_targets = ()
+            provider_inspector_steps = FULL_TARGET_STEPS
+        else:
+            provider_inspector_flags.add("provider-evidence-inspector-focused")
+            provider_inspector_targets = RETAINED_TARGETS
+            provider_inspector_steps = (
+                "provider-evidence-inspector-compile",
+            )
+        return PathDecision(
+            path,
+            "provider evidence inspector or focused oracle changed",
+            frozenset(provider_inspector_flags),
+            provider_inspector_targets,
+            provider_inspector_steps,
+        )
+
     if path in PREPARED_TEXT_DIRECT_TERMINAL_RECOVERY_SMOKE_PATHS:
         return PathDecision(
             path,
@@ -1329,6 +1373,14 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
             "native/prepared-text-package-text-run",
         ),
         ("prepared-text-recovery-focused", "native/prepared-text-recovery"),
+        (
+            "provider-evidence-inspector-focused",
+            "native/provider-evidence-inspector",
+        ),
+        (
+            "provider-evidence-inspector-python-test-focused",
+            "python/provider-evidence-inspector",
+        ),
         ("verification-policy-focused", "python/verification-policy"),
         ("workload-report-portable", "portable/workload-report"),
         ("workload-store-fault-posix", "native/workload-store-fault"),
@@ -1390,6 +1442,14 @@ def print_report(plan: VerificationPlan) -> None:
             "native/prepared-text-package-text-run",
         ),
         ("prepared-text-recovery-focused", "native/prepared-text-recovery"),
+        (
+            "provider-evidence-inspector-focused",
+            "native/provider-evidence-inspector",
+        ),
+        (
+            "provider-evidence-inspector-python-test-focused",
+            "python/provider-evidence-inspector",
+        ),
         ("verification-policy-focused", "python/verification-policy"),
         ("workload-report-portable", "portable/workload-report"),
         ("workload-store-fault-posix", "native/workload-store-fault"),

@@ -99,9 +99,16 @@ counts, and named digests as self-asserted JSON. It exposes no raw prompt,
 payload, response, or credential bytes and makes no nested-composition,
 authenticity, usage, cost, or authority claim.
 
-**Next slice:** accept every required nested journal, gateway, transport, and
-cost artifact explicitly, run the full composition verifier, and preserve the
-same deterministic, raw-payload-free presentation boundary.
+**Second slice delivered:** the same command optionally accepts every required
+journal header, cost frame, gateway event wire, and transport event wire
+explicitly. It replays their canonical validators and marks composition true
+only when the reconstructed join has exact cross-wire equality with the
+supplied envelope. The presentation remains deterministic and raw-payload-free,
+authority remains false, and the result does not authenticate origin or prove
+historical provider execution, billed truth, confidentiality, or trust.
+
+**Next slice:** define privacy-safe export, retention, and operational policy.
+Credential-isolated live adapters remain separate open work.
 
 ### Cost-journal portability campaign
 

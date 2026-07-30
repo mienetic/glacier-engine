@@ -133,6 +133,7 @@ hides the checks required by another changed path.
 | Prepared-text session lifecycle | `affected-fast` runs the unary acceptance root and text-runtime golden path in one Zig invocation; the complete affected tier adds only the CPU, durable, and host-tool compile profiles instead of the complete consumer closure |
 | Prepared-text committed-output inspector or oracle | `affected-fast` runs the inspector and package-module roots in one host DAG; the complete affected tier adds broad host and selected portability coverage |
 | Prepared-text durable writer, runtime, or process-death campaign | `affected-fast` runs the recovery and package-module roots in one host DAG; when inspector paths change in the same worktree, all selected roots share that invocation |
+| Provider evidence inspector, independent oracle, or focused test | `affected-fast` runs the existing `provider-evidence-inspector-test` root once for Zig CLI or oracle changes. Complete affected verification cross-compiles only `provider-evidence-inspector-compile` for a Zig CLI change. A focused-test-only change runs that exact Python unittest module without a generic Zig build or full discovery |
 | CLI or retained read-only inspector | Native ReleaseSafe, Python discovery, and the host-tool profile on every retained target |
 | Shared root, unclassified Zig/C/C++/header, or other build input | Native ReleaseSafe, Python discovery, and the full production-install, benchmark-install, and test-compile roots on every retained target |
 | Zig build graph (`build.zig` or `build.zig.zon`) | Native ReleaseSafe, Python discovery, the hard native POSIX store-fault gate, the serialized native Darwin Metal suite, and the full production-install, benchmark-install, and test-compile roots on every retained target |
@@ -297,6 +298,16 @@ still depends directly on the CLI artifact, so retained cross-target compile
 profiles do not stage another binary. The installed-shape run uses an empty
 working directory and isolated ambient state without introducing another Zig
 compile root.
+
+Provider evidence inspector routing is similarly bounded. Inspector and
+independent-oracle changes select the existing
+`provider-evidence-inspector-test` root, whose Zig tests and subprocess oracle
+share one host build. A Zig CLI change adds only the existing
+`provider-evidence-inspector-compile` step on retained targets in complete
+affected verification. An oracle-only change keeps changed-file syntax and the
+focused root without foreign targets. A focused-test-only change runs exactly
+`bench.tests.test_provider_evidence_inspector`, without a generic Zig build or
+full unittest discovery. This route adds no executable or compile root.
 
 Hosted affected and exhaustive jobs reuse the pinned Zig setup action's cache,
 configured with 1 GiB and 2 GiB action limits respectively.

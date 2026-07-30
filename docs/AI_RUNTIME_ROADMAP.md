@@ -481,10 +481,14 @@ Responsibilities:
 Current state: **integrated credential-free control-plane prototype**. Context
 packing, gateway state, transport harness, settlement, cost journal, and compact
 evidence join exist. An experimental read-only inspector verifies the join's
-fixed outer framing and checksum, then renders only self-asserted scalars and
-digests as deterministic JSON. It does not verify nested composition, provider
-execution, usage, cost, authenticity, or authority. Live adapters remain
-outside the authority-free core.
+fixed outer framing and checksum while preserving byte-identical outer-only
+output. Its optional all-or-none composed mode accepts the exact journal header,
+cost frame, gateway events, and transport events, replays their canonical
+validators, and reports composition only after exact cross-wire equality.
+Authority remains false. The stronger mode does not authenticate origin or prove
+historical provider execution, billed-usage or billed-cost truth,
+confidentiality, or trust. Privacy-safe export, retention policy, and live
+credential-isolated adapters remain outside the authority-free core.
 
 Promotion gate: credentials and private payloads never enter core evidence;
 ambiguous attempts never double-settle; provider-reported usage attaches to the
@@ -566,10 +570,14 @@ and workload tooling**. The experimental generated-media inspector validates a
 registry archive plus its producer-transition evidence, requires the exact
 predecessor pair for successors, and can optionally validate
 current/predecessor format sidecars through the composed oracle. A separate
-provider evidence command intentionally has a narrower boundary: it validates
-only the 712-byte join envelope's framing and checksum and labels all rendered
-nested values self-asserted, with composition and authority fixed to false. The
-first portable workload-pressure contract drives a bounded mixed-media
+provider evidence command preserves a narrow byte-identical outer-only mode and
+adds an explicit optional composition route. The latter accepts every required
+nested artifact, replays the journal, gateway, and transport validators, and
+requires the reconstructed join to equal the supplied 712-byte envelope before
+setting composition true. Authority remains false, and the report does not
+authenticate origin or prove historical execution, billed truth,
+confidentiality, or trust. The first portable workload-pressure contract drives
+a bounded mixed-media
 explicit-open-loop scenario through the real scheduler and resource bank, with
 exact Zig replay and an independent Python oracle. Its additive scheduled-media
 sidecar executes the three completed image/audio/video transactions under the
