@@ -70,6 +70,8 @@ const generation_concurrent_drain: u64 =
     0x4753_5052_0000_0113;
 const generation_concurrent_stale_owner_failure: u64 =
     0x4753_5052_0000_0114;
+const generation_application_rejection: u64 =
+    0x4753_5052_0000_0115;
 const frame_max_bytes = 1024;
 const concurrent_event_capacity = 64;
 const worker_timeout_ns = 15 * std.time.ns_per_s;
@@ -107,6 +109,7 @@ const WorkerProfile = enum {
     concurrent_queued_full_request_timeout,
     concurrent_drain,
     concurrent_stale_owner_failure,
+    application_rejection,
 
     fn wire(self: WorkerProfile) []const u8 {
         return switch (self) {
@@ -128,6 +131,7 @@ const WorkerProfile = enum {
             .concurrent_queued_full_request_timeout => "concurrent-queued-full-request-timeout",
             .concurrent_drain => "concurrent-drain",
             .concurrent_stale_owner_failure => "concurrent-stale-owner-failure",
+            .application_rejection => "application-rejection",
         };
     }
 
@@ -159,6 +163,7 @@ const WorkerProfile = enum {
             .concurrent_queued_full_request_timeout,
             .concurrent_drain,
             .concurrent_stale_owner_failure,
+            .application_rejection,
             => null,
             .timeout_head => .receiving_head,
             .timeout_body => .request_head_received,
@@ -183,6 +188,7 @@ const WorkerProfile = enum {
             .concurrent_queued_full_request_timeout,
             .concurrent_drain,
             .concurrent_stale_owner_failure,
+            .application_rejection,
             => 0,
             .concurrent_queued_receive_timeout => retained_receive_timeout_ns,
         };
@@ -260,6 +266,7 @@ const WorkerProfile = enum {
             .concurrent_drain,
             .concurrent_stale_owner_failure,
             => true,
+            .application_rejection => false,
             else => false,
         };
     }
@@ -681,12 +688,17 @@ const WorkAdmissionBarrierV1 = struct {
     passthrough_after_first: bool = false,
     identity: ?http_server.WorkIdentityV1 = null,
     retired: bool = false,
+    retired_count: usize = 0,
     retire_identity_mismatch: bool = false,
     cancellation: ?http_server.WorkCancellationReceiptV1 = null,
     cancellation_identity_mismatch: bool = false,
     checkpoint_failed: bool = false,
     checkpoint_result_reached: std.Thread.ResetEvent = .{},
     retired_reached: std.Thread.ResetEvent = .{},
+    rejections: [2]http_server.RequestAdmissionRejectionV1 =
+        undefined,
+    rejection_count: usize = 0,
+    rejection_overflowed: bool = false,
 
     fn admittedOpaque(
         context: *anyopaque,
@@ -720,8 +732,23 @@ const WorkAdmissionBarrierV1 = struct {
             self.retire_identity_mismatch = true;
             return;
         }
+        self.retired_count += 1;
         self.retired = true;
         self.retired_reached.set();
+    }
+
+    fn rejectedOpaque(
+        context: *anyopaque,
+        rejection: http_server.RequestAdmissionRejectionV1,
+    ) void {
+        const self: *WorkAdmissionBarrierV1 =
+            @ptrCast(@alignCast(context));
+        if (self.rejection_count == self.rejections.len) {
+            self.rejection_overflowed = true;
+            return;
+        }
+        self.rejections[self.rejection_count] = rejection;
+        self.rejection_count += 1;
     }
 
     fn cancellationOpaque(
@@ -779,6 +806,7 @@ const WorkAdmissionBarrierV1 = struct {
             else
                 null,
             .cancellation_fn = cancellationOpaque,
+            .admission_rejected_fn = rejectedOpaque,
         };
     }
 };
@@ -950,6 +978,13 @@ fn runWorker(
         license_byte_count,
         license_sha256,
     );
+    if (profile == .application_rejection) {
+        return runApplicationRejectionWorker(
+            allocator,
+            binding,
+            generation,
+        );
+    }
     if (profile.isConcurrent()) {
         return runConcurrentWorker(
             allocator,
@@ -1282,6 +1317,191 @@ fn runWorker(
         service_snapshot.active_requests,
         close_receipt.terminal_records,
         response_barrier.outcome,
+    );
+}
+
+fn runApplicationRejectionWorker(
+    allocator: std.mem.Allocator,
+    binding: unary.ModelBindingV1,
+    generation: u64,
+) !void {
+    var lifecycle =
+        try server_api.ManagedLifecycleV1.initV1(generation);
+    var harness: ServiceHarness(1, 1) = .{};
+    try harness.init(
+        allocator,
+        binding,
+        generation,
+    );
+    var runtime = try http_server.initV1(
+        &harness.service,
+        binding.binding_sha256,
+    );
+    const bind_address =
+        try std.net.Address.parseIp(loopback_host, 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    defer listener.deinit();
+    const listen_address = listener.listen_address;
+
+    try lifecycle.markReadyV1();
+    var observer: WorkAdmissionBarrierV1 = .{};
+    observer.release.set();
+    var serve_context: ServeContext = .{
+        .listener = &listener,
+        .runtime = &runtime,
+        .lifecycle = &lifecycle,
+        .config = .{ .stop_after_requests = 4 },
+        .work_observer = observer.control(false),
+    };
+    const serve_thread = try std.Thread.spawn(
+        .{},
+        ServeContext.run,
+        .{&serve_context},
+    );
+    var joined = false;
+    defer if (!joined) {
+        forceDrainAndWake(
+            &lifecycle,
+            &runtime,
+            listen_address,
+        );
+        serve_thread.join();
+    };
+
+    try emitReady(
+        generation,
+        listen_address.getPort(),
+        &runtime.model_id,
+    );
+    serve_thread.join();
+    joined = true;
+    if (serve_context.thread_error) |err| return err;
+    if (observer.rejection_overflowed or
+        observer.rejection_count != 2 or
+        observer.identity == null or
+        !observer.retired or
+        observer.retired_count != 1 or
+        observer.retire_identity_mismatch or
+        runtime.next_work_sequence != 1)
+    {
+        return error.InvalidApplicationRejectionObservation;
+    }
+
+    const scheduler_observation = observer.rejections[0];
+    const scheduler_owner =
+        scheduler_observation.transport_owner orelse
+        return error.MissingApplicationRejectionOwner;
+    const scheduler_cause =
+        switch (scheduler_observation.cause) {
+            .scheduler => |cause| cause,
+            .service_capacity => return error.InvalidApplicationRejectionCause,
+        };
+    const expected_scheduler_sha256 =
+        try protocol.requestSha256V1(.{
+            .model_id = &runtime.model_id,
+            .tenant_key = 73,
+            .idempotency_key = "process-observer-scheduler",
+            .prompt_utf8 = prompt,
+            .max_new_tokens = 2,
+            .deadline_tick = 1,
+        });
+    if (scheduler_owner.process_generation != generation or
+        scheduler_owner.connection_sequence != 1 or
+        scheduler_owner.slot_index != 0 or
+        scheduler_owner.slot_generation != 1 or
+        scheduler_cause.event_abi_version !=
+            engine.lane_weave_qos.event_abi or
+        scheduler_cause.scheduler_epoch !=
+            generation ^ 0x5343_4844 or
+        scheduler_cause.event_sequence != 0 or
+        scheduler_cause.reason != .deadline_infeasible or
+        !std.mem.eql(
+            u8,
+            &scheduler_observation.request_sha256,
+            &expected_scheduler_sha256,
+        ))
+    {
+        return error.InvalidSchedulerRejectionObservation;
+    }
+    const zero_digest = [_]u8{0} ** 32;
+    if (std.mem.eql(
+        u8,
+        &zero_digest,
+        &scheduler_cause.event_sha256,
+    )) {
+        return error.InvalidSchedulerRejectionObservation;
+    }
+
+    const capacity_observation = observer.rejections[1];
+    const capacity_owner =
+        capacity_observation.transport_owner orelse
+        return error.MissingApplicationRejectionOwner;
+    switch (capacity_observation.cause) {
+        .service_capacity => {},
+        .scheduler => return error.InvalidApplicationRejectionCause,
+    }
+    const expected_capacity_sha256 =
+        try protocol.requestSha256V1(.{
+            .model_id = &runtime.model_id,
+            .tenant_key = 83,
+            .idempotency_key = "process-observer-capacity",
+            .prompt_utf8 = prompt,
+            .max_new_tokens = 1,
+        });
+    if (capacity_owner.process_generation != generation or
+        capacity_owner.connection_sequence != 3 or
+        capacity_owner.slot_index != 0 or
+        capacity_owner.slot_generation != 3 or
+        !std.mem.eql(
+            u8,
+            &capacity_observation.request_sha256,
+            &expected_capacity_sha256,
+        ))
+    {
+        return error.InvalidCapacityRejectionObservation;
+    }
+
+    const stopped = lifecycle.snapshotV1();
+    if (stopped.state != .stopped or
+        stopped.accepted_connections != 4 or
+        stopped.completed_connections != 4 or
+        stopped.failed_connections != 0 or
+        stopped.active_connections != 0)
+    {
+        return error.InvalidApplicationRejectionLifecycle;
+    }
+    const service_snapshot =
+        try harness.service.snapshotV1();
+    if (service_snapshot.active_requests != 0 or
+        service_snapshot.terminal_records != 1 or
+        service_snapshot.completed_records != 1 or
+        service_snapshot.cancelled_records != 0 or
+        service_snapshot.failed_records != 0 or
+        service_snapshot.scheduler == null or
+        service_snapshot.scheduler.?.active != 0 or
+        !service_snapshot.scheduler.?.used.isZero() or
+        service_snapshot.bank == null or
+        !service_snapshot.bank.?.used.isZero())
+    {
+        return error.InvalidApplicationRejectionService;
+    }
+    const close_receipt = try harness.service.closeV1();
+    if (close_receipt.terminal_records != 1 or
+        !close_receipt.bank_snapshot.used.isZero())
+    {
+        return error.InvalidApplicationRejectionClose;
+    }
+    try emitCheckpoint(
+        "APPLICATION_REJECTION",
+        generation,
+    );
+    try emitClosed(
+        stopped,
+        service_snapshot.active_requests,
+        close_receipt.terminal_records,
+        null,
     );
 }
 
@@ -2323,6 +2543,7 @@ fn profileMatchesControl(
         .concurrent_queued_full_request_timeout,
         .concurrent_drain,
         .concurrent_stale_owner_failure,
+        .application_rejection,
         => false,
         .standard,
         .drain_with_deadline,
@@ -4177,6 +4398,13 @@ fn runSupervisor(allocator: std.mem.Allocator) !void {
         &fixture,
         generation_full_request_timeout_response_writing,
         .full_request_timeout_response_writing,
+        oracle,
+    );
+    try exerciseApplicationRejection(
+        allocator,
+        executable,
+        &fixture,
+        generation_application_rejection,
         oracle,
     );
     try exerciseConcurrentProfile(
@@ -6369,6 +6597,170 @@ fn validatePhaseEActivity(
     try require(activity.response_outcome == outcome);
 }
 
+fn exerciseApplicationRejection(
+    allocator: std.mem.Allocator,
+    executable: []const u8,
+    fixture: *const Fixture,
+    generation: u64,
+    oracle: LocalOracle,
+) !void {
+    var child = try spawnWorker(
+        allocator,
+        executable,
+        fixture,
+        generation,
+        .application_rejection,
+    );
+    var waited = false;
+    defer if (!waited) terminateChild(&child);
+    var watchdog: WorkerWatchdog = .{
+        .process_id = child.id,
+    };
+    try watchdog.start();
+    var watchdog_running = true;
+    defer if (watchdog_running) {
+        _ = watchdog.stop();
+    };
+
+    var frame_storage: [frame_max_bytes]u8 = undefined;
+    const ready = try parseReady(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try require(ready.generation == generation);
+    var client = try http_client.ClientV1.initLoopback(
+        allocator,
+        loopback_host,
+        ready.port,
+    );
+    defer client.deinit();
+
+    const scheduler_request: protocol.RequestV1 = .{
+        .model_id = &ready.model_id,
+        .tenant_key = 73,
+        .idempotency_key = "process-observer-scheduler",
+        .prompt_utf8 = prompt,
+        .max_new_tokens = 2,
+        .deadline_tick = 1,
+    };
+    const scheduler_request_sha256 =
+        try protocol.requestSha256V1(scheduler_request);
+    const scheduler_error = try expectApiError(
+        try client.completeV1(scheduler_request),
+        .scheduler_rejected,
+    );
+    try require(
+        scheduler_error.retry ==
+            .same_request_after_backoff,
+    );
+    try require(scheduler_error.request_sha256 != null);
+    try require(std.mem.eql(
+        u8,
+        &scheduler_request_sha256,
+        &scheduler_error.request_sha256.?,
+    ));
+
+    const success_tenant: u64 = 79;
+    const success_key = "process-observer-success";
+    const success = try expectCompletion(
+        try client.completeV1(.{
+            .model_id = &ready.model_id,
+            .tenant_key = success_tenant,
+            .idempotency_key = success_key,
+            .prompt_utf8 = prompt,
+            .max_new_tokens = 1,
+        }),
+    );
+    try validateCompletionAgainstOracle(
+        success,
+        ready,
+        oracle,
+        success_tenant,
+        success_key,
+    );
+
+    const capacity_request: protocol.RequestV1 = .{
+        .model_id = &ready.model_id,
+        .tenant_key = 83,
+        .idempotency_key = "process-observer-capacity",
+        .prompt_utf8 = prompt,
+        .max_new_tokens = 1,
+    };
+    const capacity_request_sha256 =
+        try protocol.requestSha256V1(capacity_request);
+    const capacity_error = try expectApiError(
+        try client.completeV1(capacity_request),
+        .service_capacity,
+    );
+    try require(
+        capacity_error.retry ==
+            .same_request_after_backoff,
+    );
+    try require(capacity_error.request_sha256 != null);
+    try require(std.mem.eql(
+        u8,
+        &capacity_request_sha256,
+        &capacity_error.request_sha256.?,
+    ));
+
+    const conflict_request: protocol.RequestV1 = .{
+        .model_id = &ready.model_id,
+        .tenant_key = success_tenant,
+        .idempotency_key = success_key,
+        .prompt_utf8 = "changed intent",
+        .max_new_tokens = 1,
+    };
+    const conflict_request_sha256 =
+        try protocol.requestSha256V1(conflict_request);
+    const conflict_error = try expectApiError(
+        try client.completeV1(conflict_request),
+        .idempotency_conflict,
+    );
+    try require(conflict_error.request_sha256 != null);
+    try require(std.mem.eql(
+        u8,
+        &conflict_request_sha256,
+        &conflict_error.request_sha256.?,
+    ));
+
+    child.stdin.?.close();
+    child.stdin = null;
+    try expectCheckpointFrame(
+        try readFrame(child.stdout.?, &frame_storage),
+        "APPLICATION_REJECTION",
+        generation,
+    );
+    const closed = try parseClosed(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try validateActivity(
+        closed.activity,
+        generation,
+        4,
+        4,
+        0,
+        0,
+        .none,
+        0,
+        .none,
+        0,
+        .none,
+    );
+    try require(closed.service_active == 0);
+    try require(closed.terminal_records == 1);
+    try require(closed.bank_zero == 1);
+    try requireWorkerEof(child.stdout.?);
+
+    const did_time_out = watchdog.stop();
+    watchdog_running = false;
+    if (did_time_out) return error.WorkerTimeout;
+    const term = try child.wait();
+    waited = true;
+    switch (term) {
+        .Exited => |code| try require(code == 0),
+        else => return error.UnexpectedWorkerTermination,
+    }
+}
+
 fn exerciseWorker(
     allocator: std.mem.Allocator,
     executable: []const u8,
@@ -6613,6 +7005,19 @@ fn expectCompletion(
     return switch (result) {
         .ok => |completion| completion,
         .api_error => error.UnexpectedApiError,
+    };
+}
+
+fn expectApiError(
+    result: http_client.CompletionResultV1,
+    expected: protocol.ErrorCodeV1,
+) !protocol.ApiErrorV1 {
+    return switch (result) {
+        .ok => error.UnexpectedCompletion,
+        .api_error => |api_error| {
+            try require(api_error.code == expected);
+            return api_error;
+        },
     };
 }
 

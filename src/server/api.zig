@@ -4399,6 +4399,24 @@ const ManagedRequestWorkControlV1 = struct {
         }
     }
 
+    fn admissionRejectedOpaque(
+        context: *anyopaque,
+        rejection: prepared_http.RequestAdmissionRejectionV1,
+    ) void {
+        const self: *ManagedRequestWorkControlV1 =
+            @ptrCast(@alignCast(context));
+        const observer = self.observer orelse return;
+        const callback =
+            observer.admission_rejected_fn orelse return;
+        callback(observer.context, .{
+            .request_sha256 = rejection.request_sha256,
+            .cause = rejection.cause,
+            .transport_owner = transportOwnerTokenV1(
+                self.lease,
+            ),
+        });
+    }
+
     fn retiredOpaque(
         context: *anyopaque,
         work_identity: prepared_http.WorkIdentityV1,
@@ -4430,6 +4448,7 @@ const ManagedRequestWorkControlV1 = struct {
             ),
             .checkpoint_fn = checkpointOpaque,
             .cancellation_fn = cancellationOpaque,
+            .admission_rejected_fn = admissionRejectedOpaque,
         };
     }
 };
@@ -5763,6 +5782,129 @@ test "managed admitted work is connection fenced and counted once" {
         @as(u8, 1),
         recovery.snapshotV1().active_connections,
     );
+}
+
+test "managed admission rejection forwards exact connection owner" {
+    const RejectionObserverV1 = struct {
+        rejection: ?prepared_http.RequestAdmissionRejectionV1 =
+            null,
+        admitted_calls: u8 = 0,
+        rejected_calls: u8 = 0,
+        retired_calls: u8 = 0,
+
+        fn admittedOpaque(
+            context: *anyopaque,
+            identity: prepared_http.WorkIdentityV1,
+        ) anyerror!prepared_http.WorkDispositionV1 {
+            const self: *@This() =
+                @ptrCast(@alignCast(context));
+            _ = identity;
+            self.admitted_calls += 1;
+            return .proceed;
+        }
+
+        fn rejectedOpaque(
+            context: *anyopaque,
+            rejection: prepared_http.RequestAdmissionRejectionV1,
+        ) void {
+            const self: *@This() =
+                @ptrCast(@alignCast(context));
+            self.rejected_calls += 1;
+            self.rejection = rejection;
+        }
+
+        fn retiredOpaque(
+            context: *anyopaque,
+            identity: prepared_http.WorkIdentityV1,
+        ) void {
+            const self: *@This() =
+                @ptrCast(@alignCast(context));
+            _ = identity;
+            self.retired_calls += 1;
+        }
+
+        fn control(
+            self: *@This(),
+        ) prepared_http.RequestWorkControlV1 {
+            return .{
+                .context = self,
+                .admitted_fn = admittedOpaque,
+                .retired_fn = retiredOpaque,
+                .transport_owner = .{
+                    .process_generation = 1,
+                    .connection_sequence = 2,
+                    .slot_index = 3,
+                    .slot_generation = 4,
+                },
+                .admission_rejected_fn = rejectedOpaque,
+            };
+        }
+    };
+
+    var lifecycle = try ManagedLifecycleV1.initV1(61);
+    try lifecycle.markReadyV1();
+    const lease =
+        try lifecycle.beginConnectionV1(@intCast(127));
+    try lifecycle.markRequestHeadReceivedV1(lease);
+    try lifecycle.markRequestReceivedBeforeDeadlineV1(
+        lease,
+        null,
+        0,
+    );
+    var observer: RejectionObserverV1 = .{};
+    var work_control: ManagedRequestWorkControlV1 = .{
+        .lifecycle = &lifecycle,
+        .lease = lease,
+        .peer_reset_poll_timeout_ms = 0,
+        .observer = observer.control(),
+    };
+    const control = work_control.control();
+    const request_sha256 = [_]u8{0xb2} ** 32;
+    const cause: prepared_http.AdmissionRejectionCauseV1 =
+        .{ .scheduler = .{
+            .event_abi_version = 1,
+            .scheduler_epoch = 67,
+            .event_sequence = 71,
+            .reason = .deadline_infeasible,
+            .event_sha256 = [_]u8{0xb3} ** 32,
+        } };
+    control.admission_rejected_fn.?(
+        control.context,
+        .{
+            .request_sha256 = request_sha256,
+            .cause = cause,
+            .transport_owner = null,
+        },
+    );
+
+    try std.testing.expect(!work_control.observer_admitted);
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        observer.rejected_calls,
+    );
+    try std.testing.expectEqualDeep(
+        prepared_http.RequestAdmissionRejectionV1{
+            .request_sha256 = request_sha256,
+            .cause = cause,
+            .transport_owner = transportOwnerTokenV1(
+                lease,
+            ),
+        },
+        observer.rejection.?,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        observer.admitted_calls,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        observer.retired_calls,
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.request_received,
+        lifecycle.snapshotV1().active_connection_phase,
+    );
+    try lifecycle.finishConnectionV1(lease, true);
 }
 
 test "managed drain routes work to the exact published transport owner" {

@@ -455,10 +455,26 @@ test "bounded unary service interleaves, replays, and closes at zero" {
         try harness.service.snapshotV1();
     switch (try harness.service.admitV1(same_tenant)) {
         .rejected => |rejection| switch (rejection) {
-            .scheduler => |event| try testing.expectEqual(
-                engine.lane_weave_qos.RejectionReason.duplicate_tenant,
-                event.rejection_reason,
-            ),
+            .scheduler => |event| {
+                try testing.expectEqual(
+                    engine.lane_weave_qos.RejectionReason.duplicate_tenant,
+                    event.rejection_reason,
+                );
+                const scheduler_snapshot =
+                    try harness.scheduler.snapshot();
+                try testing.expectEqual(
+                    engine.lane_weave_qos.eventSha256(event),
+                    event.event_sha256,
+                );
+                try testing.expectEqual(
+                    scheduler_snapshot.chain_head_sha256,
+                    event.event_sha256,
+                );
+                try testing.expectEqual(
+                    scheduler_snapshot.next_event_sequence,
+                    event.event_sequence + 1,
+                );
+            },
             else => return error.TestUnexpectedResult,
         },
         else => return error.TestUnexpectedResult,

@@ -264,6 +264,8 @@ const LoopbackServer = struct {
     listener: std.net.Server = undefined,
     runtime: *server.RuntimeV1 = undefined,
     request_count: u64 = 0,
+    lifecycle: ?*server_api.ManagedLifecycleV1 = null,
+    work_observer: ?server.RequestWorkControlV1 = null,
     thread: ?std.Thread = null,
     thread_error: ?anyerror = null,
     listener_open: bool = false,
@@ -272,6 +274,36 @@ const LoopbackServer = struct {
         self: *LoopbackServer,
         runtime: *server.RuntimeV1,
         request_count: u64,
+    ) !void {
+        return self.startWithControls(
+            runtime,
+            request_count,
+            null,
+            null,
+        );
+    }
+
+    fn startManaged(
+        self: *LoopbackServer,
+        runtime: *server.RuntimeV1,
+        request_count: u64,
+        lifecycle: *server_api.ManagedLifecycleV1,
+        work_observer: server.RequestWorkControlV1,
+    ) !void {
+        return self.startWithControls(
+            runtime,
+            request_count,
+            lifecycle,
+            work_observer,
+        );
+    }
+
+    fn startWithControls(
+        self: *LoopbackServer,
+        runtime: *server.RuntimeV1,
+        request_count: u64,
+        lifecycle: ?*server_api.ManagedLifecycleV1,
+        work_observer: ?server.RequestWorkControlV1,
     ) !void {
         if (request_count == 0)
             return error.TestUnexpectedResult;
@@ -285,6 +317,8 @@ const LoopbackServer = struct {
         self.listener_open = true;
         self.runtime = runtime;
         self.request_count = request_count;
+        self.lifecycle = lifecycle;
+        self.work_observer = work_observer;
         self.thread = std.Thread.spawn(
             .{},
             run,
@@ -297,13 +331,25 @@ const LoopbackServer = struct {
     }
 
     fn run(self: *LoopbackServer) void {
-        engine.server_api.serveListenerV1(
-            &self.listener,
-            .{ .stop_after_requests = self.request_count },
-            self.runtime,
-        ) catch |err| {
-            self.thread_error = err;
-        };
+        if (self.lifecycle) |lifecycle| {
+            engine.server_api.serveManagedListenerWithWorkObserverV1(
+                &self.listener,
+                .{ .stop_after_requests = self.request_count },
+                self.runtime,
+                lifecycle,
+                self.work_observer,
+            ) catch |err| {
+                self.thread_error = err;
+            };
+        } else {
+            engine.server_api.serveListenerV1(
+                &self.listener,
+                .{ .stop_after_requests = self.request_count },
+                self.runtime,
+            ) catch |err| {
+                self.thread_error = err;
+            };
+        }
     }
 
     fn port(self: *const LoopbackServer) u16 {
@@ -339,6 +385,101 @@ const LoopbackServer = struct {
             self.listener.deinit();
             self.listener_open = false;
         }
+    }
+};
+
+const AdmissionObservationLogV1 = struct {
+    mutex: std.Thread.Mutex = .{},
+    rejections: [2]server.RequestAdmissionRejectionV1 =
+        undefined,
+    rejection_count: usize = 0,
+    admitted_count: usize = 0,
+    retired_count: usize = 0,
+    overflowed: bool = false,
+
+    fn admittedOpaque(
+        context: *anyopaque,
+        identity: server.WorkIdentityV1,
+    ) anyerror!server.WorkDispositionV1 {
+        const self: *AdmissionObservationLogV1 =
+            @ptrCast(@alignCast(context));
+        _ = identity;
+        self.mutex.lock();
+        self.admitted_count += 1;
+        self.mutex.unlock();
+        return .proceed;
+    }
+
+    fn rejectedOpaque(
+        context: *anyopaque,
+        rejection: server.RequestAdmissionRejectionV1,
+    ) void {
+        const self: *AdmissionObservationLogV1 =
+            @ptrCast(@alignCast(context));
+        self.mutex.lock();
+        if (self.rejection_count == self.rejections.len) {
+            self.overflowed = true;
+        } else {
+            self.rejections[self.rejection_count] = rejection;
+            self.rejection_count += 1;
+        }
+        self.mutex.unlock();
+    }
+
+    fn retiredOpaque(
+        context: *anyopaque,
+        identity: server.WorkIdentityV1,
+    ) void {
+        const self: *AdmissionObservationLogV1 =
+            @ptrCast(@alignCast(context));
+        _ = identity;
+        self.mutex.lock();
+        self.retired_count += 1;
+        self.mutex.unlock();
+    }
+
+    fn control(
+        self: *AdmissionObservationLogV1,
+    ) server.RequestWorkControlV1 {
+        return .{
+            .context = self,
+            .admitted_fn = admittedOpaque,
+            .retired_fn = retiredOpaque,
+            .transport_owner = .{
+                .process_generation = 1,
+                .connection_sequence = 2,
+                .slot_index = 3,
+                .slot_generation = 4,
+            },
+            .admission_rejected_fn = rejectedOpaque,
+        };
+    }
+
+    fn rejectionAt(
+        self: *AdmissionObservationLogV1,
+        index: usize,
+    ) !server.RequestAdmissionRejectionV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.overflowed)
+            return error.AdmissionObservationOverflow;
+        if (index >= self.rejection_count)
+            return error.MissingAdmissionObservation;
+        return self.rejections[index];
+    }
+
+    fn expectCounts(
+        self: *AdmissionObservationLogV1,
+        admitted: usize,
+        rejected: usize,
+        retired: usize,
+    ) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try testing.expect(!self.overflowed);
+        try testing.expectEqual(admitted, self.admitted_count);
+        try testing.expectEqual(rejected, self.rejection_count);
+        try testing.expectEqual(retired, self.retired_count);
     }
 };
 
@@ -1807,6 +1948,277 @@ test "phase F1 bounded concurrent transport is deterministic over native loopbac
         std.log.err("F1 scenario D failed", .{});
         return err;
     };
+}
+
+test "managed unary HTTP observes exact admission rejections" {
+    var fixture = try ModelFixture.init();
+    defer fixture.deinit();
+    const binding = try fixture.bind();
+    const service_epoch: u64 = 0x4854_5450_5233;
+    const process_generation: u64 =
+        0x4854_5450_4f42_5331;
+
+    var harness: ServiceHarness(1, 1) = .{};
+    try harness.init(binding, service_epoch);
+    var service_closed = false;
+    defer if (!service_closed) {
+        _ = harness.service.closeV1() catch {};
+    };
+    const initial = try harness.service.snapshotV1();
+    var runtime = try server.initV1(
+        &harness.service,
+        binding.binding_sha256,
+    );
+    var lifecycle =
+        try server_api.ManagedLifecycleV1.initV1(
+            process_generation,
+        );
+    try lifecycle.markReadyV1();
+    var observations: AdmissionObservationLogV1 = .{};
+    var loopback: LoopbackServer = .{};
+    try loopback.startManaged(
+        &runtime,
+        4,
+        &lifecycle,
+        observations.control(),
+    );
+    defer loopback.deinit();
+
+    var client = try client_api.ClientV1.initLoopback(
+        testing.allocator,
+        "127.0.0.1",
+        loopback.port(),
+    );
+    defer client.deinit();
+
+    const scheduler_request: protocol.RequestV1 = .{
+        .model_id = &runtime.model_id,
+        .tenant_key = 73,
+        .idempotency_key = "observer-scheduler",
+        .prompt_utf8 = "http-probe-6",
+        .max_new_tokens = 2,
+        .deadline_tick = 1,
+    };
+    const scheduler_request_sha256 =
+        try protocol.requestSha256V1(scheduler_request);
+    const scheduler_error = try expectApiError(
+        try client.completeV1(scheduler_request),
+        .scheduler_rejected,
+    );
+    try testing.expectEqual(
+        protocol.RetryDispositionV1.same_request_after_backoff,
+        scheduler_error.retry,
+    );
+    try testing.expectEqual(
+        scheduler_request_sha256,
+        scheduler_error.request_sha256.?,
+    );
+    try observations.expectCounts(0, 1, 0);
+    try testing.expectEqual(@as(u64, 0), runtime.next_work_sequence);
+
+    const scheduler_observation =
+        try observations.rejectionAt(0);
+    try testing.expectEqual(
+        scheduler_request_sha256,
+        scheduler_observation.request_sha256,
+    );
+    try testing.expectEqualDeep(
+        server.TransportOwnerTokenV1{
+            .process_generation = process_generation,
+            .connection_sequence = 1,
+            .slot_index = 0,
+            .slot_generation = 1,
+        },
+        scheduler_observation.transport_owner.?,
+    );
+    const scheduler_cause =
+        switch (scheduler_observation.cause) {
+            .scheduler => |cause| cause,
+            .service_capacity => return error.TestUnexpectedResult,
+        };
+    try testing.expectEqual(
+        engine.lane_weave_qos.event_abi,
+        scheduler_cause.event_abi_version,
+    );
+    try testing.expectEqual(
+        service_epoch ^ 0x5343_4844,
+        scheduler_cause.scheduler_epoch,
+    );
+    try testing.expectEqual(
+        initial.scheduler.?.next_event_sequence,
+        scheduler_cause.event_sequence,
+    );
+    try testing.expectEqual(
+        server.SchedulerAdmissionRejectionReasonV1
+            .deadline_infeasible,
+        scheduler_cause.reason,
+    );
+    const after_scheduler =
+        try harness.service.snapshotV1();
+    try testing.expectEqual(
+        scheduler_cause.event_sha256,
+        after_scheduler.scheduler.?.chain_head_sha256,
+    );
+    const zero_digest = [_]u8{0} ** 32;
+    try testing.expect(!std.mem.eql(
+        u8,
+        &zero_digest,
+        &scheduler_cause.event_sha256,
+    ));
+    try testing.expectEqual(
+        initial.next_request_identity + 1,
+        after_scheduler.next_request_identity,
+    );
+    try testing.expectEqual(
+        initial.scheduler.?.next_event_sequence + 1,
+        after_scheduler.scheduler.?.next_event_sequence,
+    );
+    try testing.expectEqual(
+        initial.scheduler.?.logical_tick,
+        after_scheduler.scheduler.?.logical_tick,
+    );
+    try testing.expectEqual(
+        initial.scheduler.?.active,
+        after_scheduler.scheduler.?.active,
+    );
+    try testing.expectEqual(
+        initial.scheduler.?.finished,
+        after_scheduler.scheduler.?.finished,
+    );
+    try testing.expectEqualDeep(
+        initial.bank.?,
+        after_scheduler.bank.?,
+    );
+    try testing.expectEqual(@as(u32, 0), after_scheduler.active_requests);
+    try testing.expectEqual(@as(u32, 0), after_scheduler.terminal_records);
+
+    const success_request: protocol.RequestV1 = .{
+        .model_id = &runtime.model_id,
+        .tenant_key = 79,
+        .idempotency_key = "observer-success",
+        .prompt_utf8 = "http-probe-6",
+        .max_new_tokens = 1,
+    };
+    _ = try expectCompletion(
+        try client.completeV1(success_request),
+    );
+    try observations.expectCounts(1, 1, 1);
+    try testing.expectEqual(@as(u64, 1), runtime.next_work_sequence);
+
+    const before_capacity =
+        try harness.service.snapshotV1();
+    const capacity_request: protocol.RequestV1 = .{
+        .model_id = &runtime.model_id,
+        .tenant_key = 83,
+        .idempotency_key = "observer-capacity",
+        .prompt_utf8 = "http-probe-6",
+        .max_new_tokens = 1,
+    };
+    const capacity_request_sha256 =
+        try protocol.requestSha256V1(capacity_request);
+    const capacity_error = try expectApiError(
+        try client.completeV1(capacity_request),
+        .service_capacity,
+    );
+    try testing.expectEqual(
+        protocol.RetryDispositionV1.same_request_after_backoff,
+        capacity_error.retry,
+    );
+    try testing.expectEqual(
+        capacity_request_sha256,
+        capacity_error.request_sha256.?,
+    );
+    try observations.expectCounts(1, 2, 1);
+    try testing.expectEqual(@as(u64, 1), runtime.next_work_sequence);
+
+    const capacity_observation =
+        try observations.rejectionAt(1);
+    try testing.expectEqual(
+        capacity_request_sha256,
+        capacity_observation.request_sha256,
+    );
+    try testing.expectEqualDeep(
+        server.TransportOwnerTokenV1{
+            .process_generation = process_generation,
+            .connection_sequence = 3,
+            .slot_index = 0,
+            .slot_generation = 3,
+        },
+        capacity_observation.transport_owner.?,
+    );
+    switch (capacity_observation.cause) {
+        .service_capacity => {},
+        .scheduler => return error.TestUnexpectedResult,
+    }
+    try testing.expectEqualDeep(
+        before_capacity,
+        try harness.service.snapshotV1(),
+    );
+
+    const conflict_request: protocol.RequestV1 = .{
+        .model_id = &runtime.model_id,
+        .tenant_key = success_request.tenant_key,
+        .idempotency_key = success_request.idempotency_key,
+        .prompt_utf8 = "changed intent",
+        .max_new_tokens = 1,
+    };
+    const conflict_request_sha256 =
+        try protocol.requestSha256V1(conflict_request);
+    const conflict_error = try expectApiError(
+        try client.completeV1(conflict_request),
+        .idempotency_conflict,
+    );
+    try testing.expectEqual(
+        conflict_request_sha256,
+        conflict_error.request_sha256.?,
+    );
+    try observations.expectCounts(1, 2, 1);
+    try testing.expectEqual(@as(u64, 1), runtime.next_work_sequence);
+    try testing.expectEqualDeep(
+        before_capacity,
+        try harness.service.snapshotV1(),
+    );
+
+    try loopback.finish();
+    const lifecycle_snapshot = lifecycle.snapshotV1();
+    try testing.expectEqual(
+        server_api.ManagedStateV1.stopped,
+        lifecycle_snapshot.state,
+    );
+    try testing.expectEqual(
+        @as(u64, 4),
+        lifecycle_snapshot.accepted_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 4),
+        lifecycle_snapshot.completed_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        lifecycle_snapshot.failed_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 0),
+        lifecycle_snapshot.active_connections,
+    );
+    const final_snapshot =
+        try harness.service.snapshotV1();
+    try testing.expectEqual(
+        @as(u32, 0),
+        final_snapshot.active_requests,
+    );
+    try testing.expectEqual(
+        @as(u32, 1),
+        final_snapshot.terminal_records,
+    );
+    try testing.expect(final_snapshot.bank.?.used.isZero());
+    const close = try harness.service.closeV1();
+    service_closed = true;
+    try testing.expectEqual(
+        @as(u32, 1),
+        close.terminal_records,
+    );
+    try testing.expect(close.bank_snapshot.used.isZero());
 }
 
 test "bounded unary HTTP uses one kernel over real loopback" {

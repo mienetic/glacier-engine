@@ -578,12 +578,16 @@ native-loopback scenarios A-D: sibling liveness, accepted-FIFO
 backpressure/order, exact queued full-request timeout, and repeated drain with
 conservation plus zero ownership.
 
-The existing process commands retain Phases A-D through Phase E2b and the four
-Phase F1 native POSIX child-process profiles described above. Phase F1 uses
-the production fixed-worker/FIFO/shared-watchdog path and the existing
-dual-mode executable, test root, and compile companion; it adds no artifact or
-build target. The same-process HTTP root and the child-process root remain
-separate evidence surfaces.
+The existing process commands retain Phases A-D through Phase E2b, the four
+Phase F1 native POSIX child-process profiles described above, and one serial
+four-request application-rejection profile. The latter retains exact
+service-capacity and deadline-infeasible Scheduler evidence, canonical request
+digests, managed owners, callback counts, unchanged rejected-work sequencing,
+and final zero ownership. Phase F1 uses the production
+fixed-worker/FIFO/shared-watchdog path and the existing dual-mode executable,
+test root, and compile companion; the rejection profile reuses those same
+surfaces. Neither adds an artifact or build target. The same-process HTTP root
+and the child-process root remain separate evidence surfaces.
 
 The acceptance fixture uses a generated `32/64/1/256` ordinary package. It
 checks two-request interleaving against independent generation oracles, active
@@ -594,9 +598,10 @@ acceptance separately reuses one dual-mode executable for its supervisor,
 clean/restart children, Phase B drain children, Phase C receive-timeout
 children, the Phase D cancellation-wins and completion-wins children, and the
 Phase E1 reset/response-ready children plus the Phase E2a response-writing
-drain/completion siblings, Phase E2b elapsed-timeout children, and the Phase
-F1 queued-timeout, simultaneous-drain, and stale-owner children; Phases B-F1
-add no artifact or build target. It is
+drain/completion siblings, Phase E2b elapsed-timeout children, the Phase F1
+queued-timeout, simultaneous-drain, and stale-owner children, and the
+application-rejection child; Phases B-F1 and rejection evidence add no artifact
+or build target. It is
 host real-process lifecycle evidence rather than a production daemon or native
 foreign-target run.
 
@@ -648,6 +653,32 @@ accept backpressure leaves peers in the kernel backlog and sends no pre-parse
 429/503. The retained real-process campaign validates bounded correctness,
 cleanup, and ownership; it is not a native-load or performance campaign.
 
+`RequestWorkControlV1.admission_rejected_fn` is an optional evidence boundary
+for a canonical request whose Service admission returns either
+service-capacity or Scheduler rejection before active-work publication. Its
+event binds the request SHA-256, an optional transport owner, and the exact
+application cause. Before returning a Scheduler rejection, the Service checks
+the live Scheduler identity and current snapshot, recomputes the event digest,
+and requires the event to be the current chain head. The observer receives only
+the validated event identity projection: ABI, Scheduler epoch, event sequence,
+rejection reason, and event SHA-256. It does not receive the complete event and
+cannot independently replay or recompute that digest. Service capacity does not
+claim a narrower active-versus-retained subtype. Managed serving replaces the
+supplied owner with the fenced connection lease; on a rejection this token is
+correlation evidence, not active-work authority.
+
+The synchronous callback runs after control, Service, Scheduler, and Bank locks
+return, while the unary request mutex remains held and before response handling.
+It must be bounded, non-blocking, thread-safe, and must not re-enter serving,
+drain or join the same runtime, or mutate its managed lifecycle. It has no
+return channel for selecting the mapped HTTP code, but a trusted callback that
+blocks, panics, or violates this contract can still prevent progress. The
+rejection publishes no HTTP `WorkIdentityV1` and does not increment
+`RuntimeV1.next_work_sequence`; Scheduler rejection still consumes the
+Service's internal request identity and a Scheduler event sequence. The
+callback does not run for conflict or other API errors and proves neither
+response write nor peer delivery.
+
 This work does not establish a packaged production daemon, non-loopback
 serving, streaming publication, durable idempotency or crash recovery,
 process-death recovery, authentication, authorization, TLS, automatic retry,
@@ -656,20 +687,17 @@ performance. Retained-target compilation is not native Windows or FreeBSD
 serving proof, and native reset, response-write, deadline, queue, watchdog, and
 drain behavior on those systems remains unproven. The next serving slices are:
 
-1. add exact cause-specific post-parse application-rejection observability for
-   service-capacity and Scheduler rejection through the existing unary HTTP
-   and managed-process roots, without a new artifact or compile root;
-2. later run a separate native-load campaign reporting
+1. later run a separate native-load campaign reporting
    accept/admission and queue delay, HTTP first-byte latency for this
    non-streaming unary profile, terminal-response latency, throughput, outcome
    mix, and cleanup under a declared machine/OS/backend/power/thermal
    envelope; do not label HTTP first byte as first-token latency or infer
    fairness, GPU performance, or native foreign-OS behavior;
-3. define body-complete half-close, cancellation, response, and outcome
+2. define body-complete half-close, cancellation, response, and outcome
    ownership policy before extending orderly-FIN abandonment detection with
    exact connection accounting;
-4. add forced process-death evidence independently of checkpoint-aware drain
+3. add forced process-death evidence independently of checkpoint-aware drain
    and durable restart;
-5. add committed-token streaming without exposing an unpublished token; and
-6. add authenticated authority, quota, and transport-security adapters around
+4. add committed-token streaming without exposing an unpublished token; and
+5. add authenticated authority, quota, and transport-security adapters around
    the unchanged execution state machine.

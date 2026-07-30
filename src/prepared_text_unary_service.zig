@@ -827,9 +827,26 @@ pub const ServiceV1 = struct {
             .rejected => |event| {
                 active.* = .{};
                 self.records[record_index] = .{};
-                if (event.kind != .admission_rejected or
-                    event.rejection_reason == .none)
-                {
+                const live_scheduler_identity =
+                    self.scheduler.identityV1() catch {
+                        self.enterFailStopLocked(null);
+                        return Error.FailStopRequired;
+                    };
+                const scheduler_snapshot =
+                    self.scheduler.snapshot() catch {
+                        self.enterFailStopLocked(null);
+                        return Error.FailStopRequired;
+                    };
+                if (!std.meta.eql(
+                    live_scheduler_identity,
+                    self.scheduler_identity,
+                ) or !schedulerRejectionEventMatches(
+                    event,
+                    self.scheduler_identity,
+                    scheduler_snapshot,
+                    scheduling,
+                    local_plan,
+                )) {
                     self.enterFailStopLocked(null);
                     return Error.FailStopRequired;
                 }
@@ -1780,6 +1797,62 @@ fn startEventMatches(
         request_epoch != 0 and
         event.abi_version == lane.event_abi and
         digestEqual(event.event_sha256, lane.eventSha256(event));
+}
+
+fn schedulerRejectionEventMatches(
+    event: lane.EventV1,
+    identity: lane.IdentityV1,
+    snapshot: lane.SnapshotV1,
+    scheduling: prepared.SchedulingV1,
+    plan: prepared.PlanV1,
+) bool {
+    return event.abi_version == lane.event_abi and
+        event.kind == .admission_rejected and
+        event.rejection_reason != .none and
+        event.scheduler_epoch == identity.scheduler_epoch and
+        event.spec.tenant_key == scheduling.tenant_key and
+        event.spec.request_key == scheduling.request_key and
+        event.spec.request_generation ==
+            scheduling.request_generation and
+        event.spec.resource_owner_key ==
+            scheduling.resource_owner_key and
+        event.spec.weight == scheduling.weight and
+        event.spec.work_quanta == plan.max_new_tokens and
+        event.spec.deadline_tick == scheduling.deadline_tick and
+        std.meta.eql(event.spec.claim, plan.claim) and
+        std.meta.eql(event.handle, lane.Handle{}) and
+        event.resource_receipt.bank_epoch == 0 and
+        event.resource_receipt.slot_index == 0 and
+        event.resource_receipt.generation == 0 and
+        event.resource_receipt.owner_key == 0 and
+        event.resource_receipt.claim.isZero() and
+        event.resource_receipt.integrity == 0 and
+        digestEqual(event.resource_receipt_sha256, zero_digest) and
+        event.remaining_before == 0 and
+        event.remaining_after == 0 and
+        event.wait_quanta == 0 and
+        event.logical_tick_before == event.logical_tick_after and
+        event.cursor_before == event.cursor_after and
+        event.level_before == event.level_after and
+        event.active_before == event.active_after and
+        event.finished_before == event.finished_after and
+        std.meta.eql(event.bank_used_before, event.bank_used_after) and
+        snapshot.abi_version == lane.abi and
+        snapshot.scheduler_epoch == identity.scheduler_epoch and
+        event.event_sequence != std.math.maxInt(u64) and
+        event.event_sequence + 1 == snapshot.next_event_sequence and
+        digestEqual(event.event_sha256, lane.eventSha256(event)) and
+        digestEqual(
+            event.event_sha256,
+            snapshot.chain_head_sha256,
+        ) and
+        event.logical_tick_after == snapshot.logical_tick and
+        event.cursor_after == snapshot.cursor and
+        event.level_after == snapshot.level and
+        event.maximum_service_gap == snapshot.maximum_service_gap and
+        event.active_after == snapshot.active and
+        event.finished_after == snapshot.finished and
+        std.meta.eql(event.bank_used_after, snapshot.used);
 }
 
 fn recoveryCancelEventMatches(

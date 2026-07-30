@@ -8,6 +8,19 @@ before the first stable release.
 
 ### Added
 
+- Added an optional post-parse admission-rejection observer to
+  the existing prepared-text unary work-control surface. It distinguishes
+  service capacity from Scheduler rejection; the Service validates the current
+  Scheduler event before projecting its reason, ABI, epoch, sequence, and event
+  SHA-256. Every observation binds the canonical request SHA-256 and optional
+  transport owner, while managed serving replaces that owner with the exact
+  fenced connection lease. The synchronous callback has no return channel to
+  select the mapped HTTP code, publishes no HTTP `WorkIdentityV1`, and proves
+  neither response write nor peer delivery. Focused real-loopback and native
+  child-process coverage retain both rejection causes, exact managed owners,
+  non-rejection exclusion, unchanged HTTP work sequencing, and final zero
+  ownership through the existing compile roots; no artifact or build target
+  was added.
 - Added an experimental download-free **fixed-corpus dense-tensor retrieval**
   profile. One immutable packed index artifact binds a versioned corpus,
   canonical batch and tenant-visibility maps, normalized Q30 embedding policy,

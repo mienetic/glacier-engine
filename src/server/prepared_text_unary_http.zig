@@ -47,16 +47,56 @@ pub const WorkIdentityV1 = struct {
     handle_sha256: protocol.Digest,
 };
 
-/// Opaque, transport-owned routing identity for one published work lease.
+/// Opaque transport-attempt identity used to correlate request observations.
 ///
 /// The HTTP runtime only retains and returns this value. It deliberately
-/// contains no native handle, so a managed transport can route a drain receipt
-/// without making process-local socket representation part of this contract.
+/// contains no native handle. Only an accepted publication paired with a
+/// `WorkIdentityV1` grants enough identity to route a drain receipt; a token
+/// attached to a rejection is correlation evidence, not active-work authority.
 pub const TransportOwnerTokenV1 = struct {
     process_generation: u64,
     connection_sequence: u64,
     slot_index: u8,
     slot_generation: u64,
+};
+
+pub const SchedulerAdmissionRejectionReasonV1 = enum(u8) {
+    no_slot = 1,
+    duplicate_tenant = 2,
+    resource_limit = 3,
+    projection_limit = 4,
+    deadline_infeasible = 5,
+};
+
+/// Service-validated identity projection for one Scheduler rejection.
+///
+/// This is not the complete Scheduler event and cannot independently replay or
+/// recompute the event digest.
+pub const SchedulerAdmissionRejectionV1 = struct {
+    event_abi_version: u64,
+    scheduler_epoch: u64,
+    event_sequence: u64,
+    reason: SchedulerAdmissionRejectionReasonV1,
+    event_sha256: protocol.Digest,
+};
+
+pub const AdmissionRejectionCauseV1 = union(enum) {
+    service_capacity,
+    scheduler: SchedulerAdmissionRejectionV1,
+};
+
+/// Correlates one canonical request with an application admission rejection.
+///
+/// The synchronous observation runs after Service admission and all nested
+/// control locks return, while the HTTP request mutex remains held and before
+/// response handling. It has no return channel for selecting the mapped HTTP
+/// code, but a trusted callback that blocks, panics, or violates the control
+/// contract can still prevent request progress. It proves the application
+/// decision, not response delivery.
+pub const RequestAdmissionRejectionV1 = struct {
+    request_sha256: protocol.Digest,
+    cause: AdmissionRejectionCauseV1,
+    transport_owner: ?TransportOwnerTokenV1,
 };
 
 pub const WorkDispositionV1 = enum {
@@ -86,8 +126,10 @@ pub const WorkCancellationReceiptV1 = struct {
     cancellation_was_new: bool = false,
 };
 
-/// Optional transport-owned boundary after unary admission has published an
-/// exact active-work lease and before the first status/drive operation.
+/// Transport-owned control around unary admission, active-work execution, and
+/// retirement. Admission-rejection observers must be bounded, non-blocking,
+/// thread-safe, and must not re-enter request serving, drain/join the runtime,
+/// or mutate its managed lifecycle.
 pub const RequestWorkControlV1 = struct {
     context: *anyopaque,
     admitted_fn: *const fn (
@@ -106,6 +148,10 @@ pub const RequestWorkControlV1 = struct {
         *anyopaque,
         WorkIdentityV1,
         WorkCancellationReceiptV1,
+    ) void = null,
+    admission_rejected_fn: ?*const fn (
+        *anyopaque,
+        RequestAdmissionRejectionV1,
     ) void = null,
 
     fn admitted(
@@ -137,6 +183,19 @@ pub const RequestWorkControlV1 = struct {
     ) void {
         const callback = self.cancellation_fn orelse return;
         callback(self.context, identity, receipt);
+    }
+
+    fn admissionRejected(
+        self: RequestWorkControlV1,
+        request_sha256: protocol.Digest,
+        cause: AdmissionRejectionCauseV1,
+    ) void {
+        const callback = self.admission_rejected_fn orelse return;
+        callback(self.context, .{
+            .request_sha256 = request_sha256,
+            .cause = cause,
+            .transport_owner = self.transport_owner,
+        });
     }
 };
 
@@ -179,6 +238,7 @@ const PublishedWorkV1 = struct {
 
 const WorkAdmissionV1 = union(enum) {
     published: PublishedWorkV1,
+    rejected: unary.AdmissionRejectionV1,
     api_error: protocol.ErrorCodeV1,
 };
 
@@ -868,6 +928,14 @@ fn executeCompletionLockedV1(
 
     const published = switch (work_admission) {
         .published => |value| value,
+        .rejected => |rejection| {
+            const cause = projectAdmissionRejectionV1(rejection);
+            if (work_control) |control|
+                control.admissionRejected(request_sha256, cause);
+            return .{
+                .api_error = errorCodeForAdmissionRejectionV1(cause),
+            };
+        },
         .api_error => |code| return .{ .api_error = code },
     };
     return executePublishedCompletionLockedV1(
@@ -877,6 +945,37 @@ fn executeCompletionLockedV1(
         request_sha256,
         work_control,
     );
+}
+
+fn projectAdmissionRejectionV1(
+    rejection: unary.AdmissionRejectionV1,
+) AdmissionRejectionCauseV1 {
+    return switch (rejection) {
+        .service_capacity => .service_capacity,
+        .scheduler => |event| .{ .scheduler = .{
+            .event_abi_version = event.abi_version,
+            .scheduler_epoch = event.scheduler_epoch,
+            .event_sequence = event.event_sequence,
+            .reason = switch (event.rejection_reason) {
+                .none => unreachable,
+                .no_slot => .no_slot,
+                .duplicate_tenant => .duplicate_tenant,
+                .resource_limit => .resource_limit,
+                .projection_limit => .projection_limit,
+                .deadline_infeasible => .deadline_infeasible,
+            },
+            .event_sha256 = event.event_sha256,
+        } },
+    };
+}
+
+fn errorCodeForAdmissionRejectionV1(
+    cause: AdmissionRejectionCauseV1,
+) protocol.ErrorCodeV1 {
+    return switch (cause) {
+        .service_capacity => .service_capacity,
+        .scheduler => .scheduler_rejected,
+    };
 }
 
 /// Completes one already-published lease while the caller retains
@@ -1090,10 +1189,7 @@ fn admitActiveWorkV1(
             },
         },
         .rejected => |rejection| return .{
-            .api_error = switch (rejection) {
-                .service_capacity => .service_capacity,
-                .scheduler => .scheduler_rejected,
-            },
+            .rejected = rejection,
         },
         .conflict => return .{
             .api_error = .idempotency_conflict,
