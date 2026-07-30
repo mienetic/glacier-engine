@@ -1478,23 +1478,24 @@ pub fn build(b: *std.Build) void {
     host_runtime_compile_step.dependOn(test_compile_step);
     host_runtime_compile_step.dependOn(contract_c_compile_step);
 
-    // R2a exposes one download-free dense-tensor reranking fixture. The
-    // independent Python verifier executes the exact demo artifact produced by
-    // this graph, so the focused gate compiles the executable only once.
-    const dense_tensor_reranker_tests = b.addTest(.{
+    // The retained dense-tensor reranker, classifier, and embedding fixtures
+    // share one focused Zig test artifact and one multi-mode demo executable.
+    // Each compatibility step below selects only its independent oracle while
+    // reusing those two compiled artifacts.
+    const dense_tensor_family_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path(
-                "src/core/dense_tensor_reranker.zig",
+                "src/core/dense_tensor_family_test.zig",
             ),
             .target = target,
             .optimize = optimize,
             .sanitize_thread = sanitize_thread,
         }),
     });
-    const run_dense_tensor_reranker_tests = b.addRunArtifact(
-        dense_tensor_reranker_tests,
+    const run_dense_tensor_family_tests = b.addRunArtifact(
+        dense_tensor_family_tests,
     );
-    const dense_tensor_reranker_exe = b.addExecutable(.{
+    const dense_tensor_family_exe = b.addExecutable(.{
         .name = "glacier-dense-tensor-reranker-demo",
         .root_module = b.createModule(.{
             .root_source_file = b.path(
@@ -1505,9 +1506,9 @@ pub fn build(b: *std.Build) void {
             .sanitize_thread = sanitize_thread,
         }),
     });
-    dense_tensor_reranker_exe.root_module.addImport("core", core_mod);
+    dense_tensor_family_exe.root_module.addImport("core", core_mod);
     const run_dense_tensor_reranker = b.addRunArtifact(
-        dense_tensor_reranker_exe,
+        dense_tensor_family_exe,
     );
     const dense_tensor_reranker_demo_step = b.step(
         "dense-tensor-reranker-demo",
@@ -1529,7 +1530,7 @@ pub fn build(b: *std.Build) void {
     );
     run_dense_tensor_reranker_oracle.addArg("--demo");
     run_dense_tensor_reranker_oracle.addArtifactArg(
-        dense_tensor_reranker_exe,
+        dense_tensor_family_exe,
     );
     const run_dense_tensor_reranker_python_tests =
         b.addSystemCommand(&.{
@@ -1549,23 +1550,13 @@ pub fn build(b: *std.Build) void {
         "Run dense-tensor reranking tests and independent verification",
     );
     dense_tensor_reranker_test_step.dependOn(
-        &run_dense_tensor_reranker_tests.step,
+        &run_dense_tensor_family_tests.step,
     );
     dense_tensor_reranker_test_step.dependOn(
         &run_dense_tensor_reranker_oracle.step,
     );
     dense_tensor_reranker_test_step.dependOn(
         &run_dense_tensor_reranker_python_tests.step,
-    );
-    const dense_tensor_reranker_compile_step = b.step(
-        "dense-tensor-reranker-compile",
-        "Compile dense-tensor reranking tests and demo",
-    );
-    dense_tensor_reranker_compile_step.dependOn(
-        &dense_tensor_reranker_tests.step,
-    );
-    dense_tensor_reranker_compile_step.dependOn(
-        &dense_tensor_reranker_exe.step,
     );
     // The umbrella core test artifact already imports this module. Attach the
     // independent checks and demo directly so full rounds do not compile a
@@ -1574,39 +1565,11 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(
         &run_dense_tensor_reranker_python_tests.step,
     );
-    test_compile_step.dependOn(&dense_tensor_reranker_exe.step);
 
-    // The normalized-embedding fixture shares the same compile-once shape:
-    // one Zig test artifact, one demo executable, and an independent Python
-    // replay of that exact executable.
-    const dense_tensor_embedding_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path(
-                "src/core/dense_tensor_embedding.zig",
-            ),
-            .target = target,
-            .optimize = optimize,
-            .sanitize_thread = sanitize_thread,
-        }),
-    });
-    const run_dense_tensor_embedding_tests = b.addRunArtifact(
-        dense_tensor_embedding_tests,
-    );
-    const dense_tensor_embedding_exe = b.addExecutable(.{
-        .name = "glacier-dense-tensor-embedding-demo",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path(
-                "examples/dense_tensor_embedding_demo.zig",
-            ),
-            .target = target,
-            .optimize = optimize,
-            .sanitize_thread = sanitize_thread,
-        }),
-    });
-    dense_tensor_embedding_exe.root_module.addImport("core", core_mod);
     const run_dense_tensor_embedding = b.addRunArtifact(
-        dense_tensor_embedding_exe,
+        dense_tensor_family_exe,
     );
+    run_dense_tensor_embedding.addArg("embed");
     const dense_tensor_embedding_demo_step = b.step(
         "dense-tensor-embedding-demo",
         "Print the canonical normalized dense embedding",
@@ -1625,9 +1588,9 @@ pub fn build(b: *std.Build) void {
     run_dense_tensor_embedding_oracle.addFileArg(
         b.path("bench/stateless_embedding_result.py"),
     );
-    run_dense_tensor_embedding_oracle.addArg("--demo");
+    run_dense_tensor_embedding_oracle.addArg("--shared-demo");
     run_dense_tensor_embedding_oracle.addArtifactArg(
-        dense_tensor_embedding_exe,
+        dense_tensor_family_exe,
     );
     const run_dense_tensor_embedding_python_tests =
         b.addSystemCommand(&.{
@@ -1647,7 +1610,7 @@ pub fn build(b: *std.Build) void {
         "Run normalized dense-embedding tests and independent verification",
     );
     dense_tensor_embedding_test_step.dependOn(
-        &run_dense_tensor_embedding_tests.step,
+        &run_dense_tensor_family_tests.step,
     );
     dense_tensor_embedding_test_step.dependOn(
         &run_dense_tensor_embedding_oracle.step,
@@ -1655,20 +1618,48 @@ pub fn build(b: *std.Build) void {
     dense_tensor_embedding_test_step.dependOn(
         &run_dense_tensor_embedding_python_tests.step,
     );
+
+    const dense_tensor_family_test_step = b.step(
+        "dense-tensor-family-test",
+        "Run the shared dense-tensor family tests and independent verification",
+    );
+    dense_tensor_family_test_step.dependOn(
+        dense_tensor_reranker_test_step,
+    );
+    dense_tensor_family_test_step.dependOn(
+        dense_tensor_embedding_test_step,
+    );
+
+    const dense_tensor_family_compile_step = b.step(
+        "dense-tensor-family-compile",
+        "Compile the shared dense-tensor family production demo",
+    );
+    dense_tensor_family_compile_step.dependOn(
+        &dense_tensor_family_exe.step,
+    );
+
+    const dense_tensor_reranker_compile_step = b.step(
+        "dense-tensor-reranker-compile",
+        "Compile the shared dense-tensor family production demo",
+    );
+    dense_tensor_reranker_compile_step.dependOn(
+        dense_tensor_family_compile_step,
+    );
     const dense_tensor_embedding_compile_step = b.step(
         "dense-tensor-embedding-compile",
-        "Compile the normalized dense-embedding demo",
+        "Compile the shared dense-tensor family production demo",
     );
     dense_tensor_embedding_compile_step.dependOn(
-        &dense_tensor_embedding_exe.step,
+        dense_tensor_family_compile_step,
     );
-    // core_tests already imports both embedding modules. Full rounds only add
-    // the independent checks and the single demo artifact.
+
+    // core_tests already imports the family modules. Full rounds only add the
+    // independent checks and the single shared demo artifact.
     test_step.dependOn(&run_dense_tensor_embedding_oracle.step);
     test_step.dependOn(
         &run_dense_tensor_embedding_python_tests.step,
     );
-    test_compile_step.dependOn(&dense_tensor_embedding_exe.step);
+    test_compile_step.dependOn(&dense_tensor_family_exe.step);
 
     // Stateless generated W2 scenarios exercise the unchanged W0 workload
     // and W1 scheduled-media contracts. The focused gate compares the native
@@ -7014,10 +7005,7 @@ pub fn build(b: *std.Build) void {
         &contract_installed_c_consumer.step,
     );
     profile_core_compile_step.dependOn(
-        &dense_tensor_reranker_exe.step,
-    );
-    profile_core_compile_step.dependOn(
-        &dense_tensor_embedding_exe.step,
+        &dense_tensor_family_exe.step,
     );
 
     const profile_cpu_compile_step = b.step(

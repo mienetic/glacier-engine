@@ -1,7 +1,8 @@
-//! Canonical JSON evidence for the download-free dense-tensor reranker.
+//! Canonical JSON evidence for the download-free dense-tensor family.
 
 const std = @import("std");
 const core = @import("core");
+const embedding_demo = @import("dense_tensor_embedding_demo.zig");
 const reranker = core.dense_tensor_reranker;
 const classifier = core.dense_tensor_classifier;
 const tensor_result = core.stateless_tensor_result;
@@ -18,9 +19,14 @@ pub fn main() !void {
     defer arena.deinit();
     const arguments = try std.process.argsAlloc(arena.allocator());
     if (arguments.len == 1) return runReranker();
-    if (arguments.len == 2 and
-        std.mem.eql(u8, arguments[1], "classify"))
-        return runClassifier();
+    if (arguments.len == 2) {
+        if (std.mem.eql(u8, arguments[1], "rerank"))
+            return runReranker();
+        if (std.mem.eql(u8, arguments[1], "classify"))
+            return runClassifier();
+        if (std.mem.eql(u8, arguments[1], "embed"))
+            return embedding_demo.runEmbedding();
+    }
     return error.UnexpectedArgument;
 }
 

@@ -442,6 +442,33 @@ class StatelessEmbeddingResultOracleTests(unittest.TestCase):
                     with self.assertRaises(oracle.OracleError):
                         oracle.run_demo("/tmp/embedding-demo")
 
+    def test_shared_demo_selects_embedding_mode(self) -> None:
+        payload = json.dumps(
+            _demo_document(),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        completed = subprocess.CompletedProcess(
+            args=["/tmp/dense-tensor-demo", "embed"],
+            returncode=0,
+            stdout=payload + b"\n",
+            stderr=b"",
+        )
+        with mock.patch(
+            "bench.stateless_embedding_result.subprocess.run",
+            return_value=completed,
+        ) as run:
+            verified = oracle.run_shared_demo("/tmp/dense-tensor-demo")
+        self.assertEqual(len(IDS), verified.embedding_matrix.item_count)
+        run.assert_called_once_with(
+            ["/tmp/dense-tensor-demo", "embed"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=30,
+        )
+
     def test_duplicate_json_fields_are_rejected(self) -> None:
         completed = subprocess.CompletedProcess(
             args=["/tmp/embedding-demo"],
@@ -466,6 +493,7 @@ class StatelessEmbeddingResultOracleTests(unittest.TestCase):
             script = Path(temporary) / "demo"
             script.write_text(
                 "#!/bin/sh\n"
+                "test \"$#\" -eq 0 || exit 64\n"
                 "exec printf '%s\\n' "
                 + repr(payload)
                 + "\n",
@@ -473,6 +501,29 @@ class StatelessEmbeddingResultOracleTests(unittest.TestCase):
             )
             script.chmod(script.stat().st_mode | stat.S_IXUSR)
             self.assertEqual(0, oracle.main(("--demo", str(script))))
+
+    def test_shared_demo_cli_passes_embedding_mode(self) -> None:
+        payload = json.dumps(
+            _demo_document(),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            script = Path(temporary) / "demo"
+            script.write_text(
+                "#!/bin/sh\n"
+                "test \"$#\" -eq 1 || exit 64\n"
+                "test \"$1\" = embed || exit 64\n"
+                "exec printf '%s\\n' "
+                + repr(payload)
+                + "\n",
+                encoding="utf-8",
+            )
+            script.chmod(script.stat().st_mode | stat.S_IXUSR)
+            self.assertEqual(
+                0,
+                oracle.main(("--shared-demo", str(script))),
+            )
 
     def test_direct_cli_bootstraps_repo_import_without_pythonpath(self) -> None:
         environment = dict(os.environ)
@@ -489,6 +540,7 @@ class StatelessEmbeddingResultOracleTests(unittest.TestCase):
             )
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertIn(b"--demo", completed.stdout)
+        self.assertIn(b"--shared-demo", completed.stdout)
 
 
 if __name__ == "__main__":

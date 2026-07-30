@@ -132,6 +132,7 @@ cd "$repository_root" || {
 }
 
 reused_zig_cache=
+zig_cache_soft_limit_mib=
 if [ "$reuse_zig_cache" -eq 1 ]; then
     if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
         echo "FAIL  verifier/zig-cache: reuse is restricted to GitHub Actions" >&2
@@ -176,6 +177,10 @@ if [ "$reuse_zig_cache" -eq 1 ]; then
         echo "FAIL  verifier/zig-cache: action cache resolved outside the repository path" >&2
         exit 64
     fi
+    case "$profile" in
+        affected-fast) zig_cache_soft_limit_mib=900 ;;
+        *) zig_cache_soft_limit_mib=1800 ;;
+    esac
 fi
 
 cache_parent=${TMPDIR:-/tmp}
@@ -203,7 +208,23 @@ verification_root=$(mktemp -d "$cache_parent/glacier-verify.XXXXXX") || {
     exit 1
 }
 
+final_zig_cache_prune_attempted=0
+prune_reused_zig_cache() {
+    python3 tools/verification_policy.py prune-zig-cache \
+        --repository-root "$repository_root" \
+        --cache-root "$reused_zig_cache" \
+        --limit-mib "$zig_cache_soft_limit_mib"
+}
+
 cleanup_verification() {
+    cleanup_status=0
+    if [ "$reuse_zig_cache" -eq 1 ] &&
+        [ "$final_zig_cache_prune_attempted" -eq 0 ]; then
+        if ! prune_reused_zig_cache; then
+            echo "FAIL  verifier/zig-cache-prune: final cleanup failed" >&2
+            cleanup_status=1
+        fi
+    fi
     case "$verification_root" in
         "$cache_parent"/glacier-verify.*)
             if [ -d "$verification_root" ]; then
@@ -213,12 +234,20 @@ cleanup_verification() {
             ;;
         *)
             echo "refusing to remove unexpected verification path: $verification_root" >&2
-            return 1
+            cleanup_status=1
             ;;
     esac
+    return "$cleanup_status"
 }
 
 trap cleanup_verification EXIT
+
+if [ "$reuse_zig_cache" -eq 1 ]; then
+    prune_reused_zig_cache || {
+        echo "FAIL  verifier/zig-cache-prune: restored cache is unsafe" >&2
+        exit 1
+    }
+fi
 
 chmod 700 "$verification_root" || {
     echo "FAIL  verifier/cache: cannot protect temporary workspace" >&2
@@ -368,11 +397,8 @@ run_selected_host_build() {
     if [ "$prepared_text_inspector_requested" -eq 1 ]; then
         set -- "$@" prepared-text-result-inspector-test
     fi
-    if [ "$dense_tensor_classifier_requested" -eq 1 ]; then
-        set -- "$@" dense-tensor-reranker-test
-    fi
-    if [ "$dense_tensor_embedding_requested" -eq 1 ]; then
-        set -- "$@" dense-tensor-embedding-test
+    if [ "$dense_tensor_family_requested" -eq 1 ]; then
+        set -- "$@" dense-tensor-family-test
     fi
     if [ "$runtime_support_inspector_requested" -eq 1 ]; then
         set -- "$@" runtime-support-inspector-test
@@ -551,7 +577,7 @@ run_target_plan() {
                 ;;
         esac
         case "$selected_step" in
-            install | install-benchmarks | test-compile | unary-text-service-compile | unary-http-compile | unary-server-process-compile | profile-core-compile | profile-cpu-compile | profile-durable-compile | profile-device-compile | profile-host-tool-compile | dense-tensor-reranker-compile | dense-tensor-embedding-compile | runtime-support-inspector-compile | provider-evidence-inspector-compile | profile-complete-compile) ;;
+            install | install-benchmarks | test-compile | unary-text-service-compile | unary-http-compile | unary-server-process-compile | profile-core-compile | profile-cpu-compile | profile-durable-compile | profile-device-compile | profile-host-tool-compile | dense-tensor-family-compile | runtime-support-inspector-compile | provider-evidence-inspector-compile | profile-complete-compile) ;;
             *)
                 record_fail "verifier/target-steps" \
                     "policy emitted an unknown target step: $selected_step"
@@ -596,10 +622,9 @@ run_target_plan() {
                 profile-durable-compile) profile_rank=6 ;;
                 profile-device-compile) profile_rank=7 ;;
                 profile-host-tool-compile) profile_rank=8 ;;
-                dense-tensor-reranker-compile) profile_rank=9 ;;
-                dense-tensor-embedding-compile) profile_rank=10 ;;
-                runtime-support-inspector-compile) profile_rank=11 ;;
-                provider-evidence-inspector-compile) profile_rank=12 ;;
+                dense-tensor-family-compile) profile_rank=9 ;;
+                runtime-support-inspector-compile) profile_rank=10 ;;
+                provider-evidence-inspector-compile) profile_rank=11 ;;
                 install | install-benchmarks | test-compile | profile-complete-compile) profile_rank=0 ;;
                 *) selected_steps_valid=0 ;;
             esac
@@ -737,10 +762,10 @@ prepared_text_package_text_run_requested=0
 prepared_text_recovery_requested=0
 provider_evidence_inspector_requested=0
 provider_evidence_inspector_python_test_requested=0
-dense_tensor_classifier_requested=0
-dense_tensor_embedding_requested=0
+dense_tensor_family_requested=0
 runtime_support_inspector_requested=0
-dense_tensor_classifier_python_test_requested=0
+dense_tensor_family_python_test_requested=0
+dense_tensor_embedding_python_test_requested=0
 runtime_support_inspector_python_test_requested=0
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "prepared-text-unary-service-focused"; then
@@ -791,20 +816,20 @@ if [ "$affected_plan_ready" -eq 1 ] &&
     provider_evidence_inspector_python_test_requested=1
 fi
 if [ "$affected_plan_ready" -eq 1 ] &&
-    plan_has "dense-tensor-classifier-focused"; then
-    dense_tensor_classifier_requested=1
-fi
-if [ "$affected_plan_ready" -eq 1 ] &&
-    plan_has "dense-tensor-embedding-focused"; then
-    dense_tensor_embedding_requested=1
+    plan_has "dense-tensor-family-focused"; then
+    dense_tensor_family_requested=1
 fi
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "runtime-support-inspector-focused"; then
     runtime_support_inspector_requested=1
 fi
 if [ "$affected_plan_ready" -eq 1 ] &&
-    plan_has "dense-tensor-classifier-python-test-focused"; then
-    dense_tensor_classifier_python_test_requested=1
+    plan_has "dense-tensor-family-python-test-focused"; then
+    dense_tensor_family_python_test_requested=1
+fi
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "dense-tensor-embedding-python-test-focused"; then
+    dense_tensor_embedding_python_test_requested=1
 fi
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "runtime-support-inspector-python-test-focused"; then
@@ -842,8 +867,7 @@ if [ "$provider_evidence_inspector_requested" -eq 1 ]; then
     esac
 fi
 dense_tensor_native_host_available=0
-if [ "$dense_tensor_classifier_requested" -eq 1 ] ||
-    [ "$dense_tensor_embedding_requested" -eq 1 ] ||
+if [ "$dense_tensor_family_requested" -eq 1 ] ||
     [ "$runtime_support_inspector_requested" -eq 1 ]; then
     case "$host_name" in
         Darwin | Linux | FreeBSD) dense_tensor_native_host_available=1 ;;
@@ -1194,46 +1218,24 @@ elif [ "$provider_evidence_inspector_requested" -eq 1 ] &&
     fi
 fi
 
-if [ "$dense_tensor_classifier_requested" -eq 1 ] &&
+if [ "$dense_tensor_family_requested" -eq 1 ] &&
     [ "$dense_tensor_focused_in_quick" -eq 1 ]; then
     if [ "$host_quick_status" -eq 0 ]; then
-        record_pass "native/dense-tensor-classifier" \
+        record_pass "native/dense-tensor-family" \
             "covered by the focused host Zig DAG"
     else
-        record_skip "native/dense-tensor-classifier" \
+        record_skip "native/dense-tensor-family" \
             "focused host Zig DAG failed"
     fi
-elif [ "$dense_tensor_classifier_requested" -eq 1 ] &&
+elif [ "$dense_tensor_family_requested" -eq 1 ] &&
     [ "$run_native_full" -eq 0 ]; then
     if [ "$host_name" != "Darwin" ] &&
         [ "$host_name" != "Linux" ] &&
         [ "$host_name" != "FreeBSD" ]; then
-        record_native_unavailable "native/dense-tensor-classifier" \
+        record_native_unavailable "native/dense-tensor-family" \
             "requires native macOS, Linux, or FreeBSD execution"
     else
-        record_native_unavailable "native/dense-tensor-classifier" \
-            "requires working zig and python3 executables"
-    fi
-fi
-
-if [ "$dense_tensor_embedding_requested" -eq 1 ] &&
-    [ "$dense_tensor_focused_in_quick" -eq 1 ]; then
-    if [ "$host_quick_status" -eq 0 ]; then
-        record_pass "native/dense-tensor-embedding" \
-            "covered by the focused host Zig DAG"
-    else
-        record_skip "native/dense-tensor-embedding" \
-            "focused host Zig DAG failed"
-    fi
-elif [ "$dense_tensor_embedding_requested" -eq 1 ] &&
-    [ "$run_native_full" -eq 0 ]; then
-    if [ "$host_name" != "Darwin" ] &&
-        [ "$host_name" != "Linux" ] &&
-        [ "$host_name" != "FreeBSD" ]; then
-        record_native_unavailable "native/dense-tensor-embedding" \
-            "requires native macOS, Linux, or FreeBSD execution"
-    else
-        record_native_unavailable "native/dense-tensor-embedding" \
+        record_native_unavailable "native/dense-tensor-family" \
             "requires working zig and python3 executables"
     fi
 fi
@@ -1458,21 +1460,12 @@ fi
 if [ "$profile" = "affected" ] &&
     [ "$run_native_full" -eq 1 ] &&
     [ "$dense_tensor_focused_in_quick" -eq 0 ]; then
-    if [ "$dense_tensor_classifier_requested" -eq 1 ]; then
+    if [ "$dense_tensor_family_requested" -eq 1 ]; then
         if [ "$native_full_status" = "0" ]; then
-            record_pass "native/dense-tensor-classifier" \
+            record_pass "native/dense-tensor-family" \
                 "covered by the shared host runtime DAG"
         else
-            record_skip "native/dense-tensor-classifier" \
-                "covering host compile or runtime DAG did not pass"
-        fi
-    fi
-    if [ "$dense_tensor_embedding_requested" -eq 1 ]; then
-        if [ "$native_full_status" = "0" ]; then
-            record_pass "native/dense-tensor-embedding" \
-                "covered by the shared host runtime DAG"
-        else
-            record_skip "native/dense-tensor-embedding" \
+            record_skip "native/dense-tensor-family" \
                 "covering host compile or runtime DAG did not pass"
         fi
     fi
@@ -1525,19 +1518,37 @@ if [ "$affected_plan_ready" -eq 1 ] &&
 fi
 
 if [ "$affected_plan_ready" -eq 1 ] &&
-    [ "$dense_tensor_classifier_python_test_requested" -eq 1 ]; then
+    [ "$dense_tensor_family_python_test_requested" -eq 1 ]; then
     if [ "$python_full_status" = "0" ]; then
-        record_pass "python/dense-tensor-classifier" \
+        record_pass "python/dense-tensor-family" \
             "covered by full Python discovery"
     elif [ "$run_python_full" -eq 0 ] && [ "$has_python" -eq 1 ]; then
-        run_gate "python/dense-tensor-classifier" \
+        run_gate "python/dense-tensor-family" \
             python3 -m unittest \
             bench.tests.test_stateless_tensor_result
     elif [ "$run_python_full" -eq 0 ]; then
-        record_skip "python/dense-tensor-classifier" \
+        record_skip "python/dense-tensor-family" \
             "requires a working python3 executable"
     else
-        record_skip "python/dense-tensor-classifier" \
+        record_skip "python/dense-tensor-family" \
+            "covering full Python discovery did not pass"
+    fi
+fi
+
+if [ "$affected_plan_ready" -eq 1 ] &&
+    [ "$dense_tensor_embedding_python_test_requested" -eq 1 ]; then
+    if [ "$python_full_status" = "0" ]; then
+        record_pass "python/dense-tensor-embedding" \
+            "covered by full Python discovery"
+    elif [ "$run_python_full" -eq 0 ] && [ "$has_python" -eq 1 ]; then
+        run_gate "python/dense-tensor-embedding" \
+            python3 -m unittest \
+            bench.tests.test_stateless_embedding_result
+    elif [ "$run_python_full" -eq 0 ]; then
+        record_skip "python/dense-tensor-embedding" \
+            "requires a working python3 executable"
+    else
+        record_skip "python/dense-tensor-embedding" \
             "covering full Python discovery did not pass"
     fi
 fi
@@ -1761,6 +1772,11 @@ case "$profile" in
             "run the affected targets from docs/CONTRIBUTING.md"
         ;;
 esac
+
+if [ "$reuse_zig_cache" -eq 1 ]; then
+    final_zig_cache_prune_attempted=1
+    run_gate "cache/zig-prune" prune_reused_zig_cache
+fi
 
 printf 'Summary: %s PASS, %s SKIP, %s FAIL\n' \
     "$pass_count" "$skip_count" "$fail_count"

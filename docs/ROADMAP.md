@@ -414,6 +414,20 @@ retained tests and independent review.
   compiler caches in the private workspace, reuse them inside one run, remove
   them afterward to bound disk growth, and keep one independent DAG per foreign
   target.
+- [x] Collapse focused dense-tensor verification into one Zig test artifact
+  behind `dense-tensor-family-test`, one production-only
+  `dense-tensor-family-compile` frontier, and one shared demo artifact. Retain
+  the reranker and embedding target names as compatibility targets backed by
+  the shared compiled artifacts and keep their focused oracles distinct. Route
+  Python-test-only tensor and embedding changes independently, route
+  embedding/classifier changes through the family DAG, and add the
+  runtime-support inspector only for adapter-core changes. Retrieval
+  composition remains separate roadmap work with no focused routing claim.
+  Soft-prune hosted affected caches above
+  900 MiB and exhaustive/Metal caches above 1,800 MiB, below the setup action's
+  1,024/2,048 MiB hard limits; keep local caches temporary and leave
+  exhaustive, retained-target, GPU/native, and manual promotion gates outside
+  the ordinary fast loop.
 - [x] Route ordinary pull requests and `main` pushes through bounded
   `affected-fast` gates, then expose complete path-aware `affected` verification
   as the default manual promotion profile with an explicit base revision.

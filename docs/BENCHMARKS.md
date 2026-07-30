@@ -62,8 +62,7 @@ residency, fallback, power, and thermal observations distinct.
 | Command | Contract exercised |
 | --- | --- |
 | `zig build lane-weave-demo -Dmetal=false` | Exact admission, deterministic weighted service, rejection, cancellation, final release |
-| `zig build dense-tensor-reranker-test -Dmetal=false` | Download-free generic reranking with canonical batch identity, exact integer scores, deterministic ties, rooted ranked items, direct/scheduled publication, cancellation, independent Python recomputation, and final zero ownership; no quality or performance claim |
-| `zig build dense-tensor-embedding-test -Dmetal=false` | Download-free dense projection with canonical batch identity, checked integer accumulation, exact Q30 L2 squared-threshold normalization, direct/scheduled publication, cancellation, independent Python big-integer recomputation, and final zero ownership; no quality or performance claim |
+| `zig build dense-tensor-family-test -Dmetal=false` | One shared download-free dense-family Zig test artifact covering canonical reranking, exact Q30 L2 dense embedding, and the bounded exact-integer classifier, including direct/scheduled publication, cancellation, independent recomputation, and final zero ownership. The existing `dense-tensor-reranker-test` and `dense-tensor-embedding-test` names remain compatibility targets backed by the same compiled family artifacts while retaining distinct oracle dependencies; this is not retrieval, quality, or performance evidence |
 | `zig test src/core/workload_pressure.zig -OReleaseSafe` plus `python3 -m unittest bench.tests.test_workload_pressure` | Versioned mixed-media explicit-open-loop pressure, capacity/resource rejection, exact `1:2:4` fairness, timeout, cancellation, logical delay/high-water summaries, zero-orphan close, exact replay, and independent cross-language roots |
 | `tools/zig-with-ephemeral-cache.sh build workload-scenario-corpus-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_workload_scenario_corpus` | Four retained seeds × eight generated deterministic open-loop classes, coordinate-addressed SHA-256 decisions, unchanged W0/W1 contracts and reference goldens, independent scenario/evidence verification, zero-orphan close, and one synthetic exact-signature local-minimum shrink fixture |
 | `tools/zig-with-ephemeral-cache.sh build workload-closed-loop-test -Dmetal=false -Doptimize=ReleaseSafe -j2` plus `python3 -m unittest bench.tests.test_workload_closed_loop` | Separately versioned finite-source deterministic closed-loop plan/result wires, exact four-phase ordering, terminal-driven FIFO next-step successors, lineage and target bounds, direct cross-language replay, mutation rejection, preserved W0/W1/W2 goldens, and final zero ownership |
@@ -1002,6 +1001,21 @@ target configurations are distinct; selected roots within that target still
 share one DAG. The verifier deletes its temporary caches and install products
 on normal exit, so these compile-frontier rules are build orchestration and
 disk-boundary properties, not benchmark results.
+
+Dense-family production-only promotion uses `dense-tensor-family-compile`;
+full promotion retains the broader test-compile frontier. Existing reranker and
+embedding compile names remain compatibility targets backed by its shared
+compiled artifact, and their demo names resolve to one shared demo artifact
+with mode selection. The focused test targets retain distinct oracle
+dependencies; Python-test-only tensor and embedding changes independently run
+`bench.tests.test_stateless_tensor_result` or
+`bench.tests.test_stateless_embedding_result`. `affected-fast` uses the family
+test for embedding/classifier changes. Retrieval remains roadmap work and has
+no focused routing claim. Hosted cache reuse is soft-pruned above 900 MiB for
+affected jobs and 1,800 MiB for exhaustive/Metal jobs, below the setup action's
+1,024/2,048 MiB hard limits. Local verification retains no persistent cache.
+Exhaustive, retained-target, GPU/native, and manual promotion gates stay
+outside the ordinary fast loop.
 
 Concurrency and portability gates:
 

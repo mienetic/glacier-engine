@@ -13,6 +13,10 @@ fn writeHex(writer: anytype, bytes: []const u8) !void {
 }
 
 pub fn main() !void {
+    return runEmbedding();
+}
+
+pub fn runEmbedding() !void {
     var fixture = try embedding.ReferenceFixtureV1.init();
     const batch_map = try fixture.batchMap();
     const policy = try fixture.embeddingPolicy();

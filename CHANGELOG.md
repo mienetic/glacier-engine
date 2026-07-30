@@ -152,6 +152,22 @@ before the first stable release.
 
 ### Changed
 
+- Dense-tensor focused verification now uses one Zig test artifact behind
+  `dense-tensor-family-test`, one production-only
+  `dense-tensor-family-compile` frontier, and one shared demo artifact.
+  Existing reranker and embedding names remain compatibility targets backed by
+  the shared compiled artifacts, while their focused test routes retain
+  distinct independent oracles. Python-test-only tensor and embedding changes
+  select `bench.tests.test_stateless_tensor_result` and
+  `bench.tests.test_stateless_embedding_result` independently.
+  `affected-fast` routes embedding and classifier changes through the shared
+  family root, with adapter-core changes also selecting the runtime-support
+  inspector. Retrieval remains roadmap work and has no focused routing claim.
+  Hosted affected jobs soft-prune the reusable Zig cache above 900 MiB, and
+  exhaustive/Metal jobs above 1,800 MiB, before the setup action's
+  1,024/2,048 MiB hard limits. Local verification still uses a temporary cache
+  and removes it after the run; exhaustive, retained-target, GPU/native, and
+  manual promotion gates remain outside the ordinary fast loop.
 - Provider Evidence Inspector verification now keeps each change at its
   narrowest existing boundary. CLI changes use
   `provider-evidence-inspector-compile` instead of the broader host-tool

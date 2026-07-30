@@ -234,3 +234,11 @@ jobs:
           -Dmetal=false
           -Doptimize=ReleaseSafe
           -j2
+
+      - name: Prune reusable Zig cache
+        if: always()
+        run: >-
+          python3 tools/verification_policy.py prune-zig-cache
+          --repository-root "$GITHUB_WORKSPACE"
+          --cache-root "$GITHUB_WORKSPACE/.zig-cache"
+          --limit-mib 1800

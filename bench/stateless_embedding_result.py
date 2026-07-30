@@ -583,15 +583,16 @@ def verify_demo_document(document: object) -> VerifiedDemoV1:
     )
 
 
-def run_demo(path: str | os.PathLike[str]) -> VerifiedDemoV1:
-    """Run one demo executable and verify its single canonical JSON line."""
-
+def _run_demo(
+    path: str | os.PathLike[str],
+    arguments: Sequence[str],
+) -> VerifiedDemoV1:
     executable = os.fspath(path)
     if not executable:
         _reject("demo path must not be empty")
     try:
         completed = subprocess.run(
-            [executable],
+            [executable, *arguments],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -625,6 +626,18 @@ def run_demo(path: str | os.PathLike[str]) -> VerifiedDemoV1:
     except (json.JSONDecodeError, OracleError) as error:
         raise OracleError(f"invalid demo JSON: {error}") from error
     return verify_demo_document(document)
+
+
+def run_demo(path: str | os.PathLike[str]) -> VerifiedDemoV1:
+    """Run a standalone embedding demo using the retained no-argument API."""
+
+    return _run_demo(path, ())
+
+
+def run_shared_demo(path: str | os.PathLike[str]) -> VerifiedDemoV1:
+    """Run the shared dense-tensor demo's explicit embedding mode."""
+
+    return _run_demo(path, ("embed",))
 
 
 def _exact_bytes(value: object, label: str) -> bytes:
@@ -732,12 +745,18 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Independently verify the dense-tensor embedding demo",
     )
-    parser.add_argument(
+    demo_group = parser.add_mutually_exclusive_group(required=True)
+    demo_group.add_argument(
         "--demo",
-        required=True,
         type=Path,
         metavar="PATH",
-        help="path to glacier-dense-tensor-embedding-demo",
+        help="path to a standalone embedding demo",
+    )
+    demo_group.add_argument(
+        "--shared-demo",
+        type=Path,
+        metavar="PATH",
+        help="path to the shared Glacier dense-tensor demo",
     )
     return parser
 
@@ -746,7 +765,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _argument_parser()
     arguments = parser.parse_args(argv)
     try:
-        verified = run_demo(arguments.demo)
+        if arguments.shared_demo is not None:
+            verified = run_shared_demo(arguments.shared_demo)
+        else:
+            verified = run_demo(arguments.demo)
     except OracleError as error:
         print(f"stateless embedding verification failed: {error}", file=sys.stderr)
         return 1

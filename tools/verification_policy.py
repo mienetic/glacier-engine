@@ -7,6 +7,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -46,8 +48,7 @@ FOCUSED_TARGET_STEPS: Tuple[str, ...] = (
     "profile-durable-compile",
     "profile-device-compile",
     "profile-host-tool-compile",
-    "dense-tensor-reranker-compile",
-    "dense-tensor-embedding-compile",
+    "dense-tensor-family-compile",
     "runtime-support-inspector-compile",
     "provider-evidence-inspector-compile",
 )
@@ -285,13 +286,22 @@ PROVIDER_EVIDENCE_INSPECTOR_PYTHON_TEST_PATH = (
 DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS = {
     "src/core/dense_tensor_classifier.zig",
     "src/core/dense_tensor_reranker.zig",
+    "src/core/dense_tensor_family_test.zig",
     "examples/dense_tensor_reranker.zig",
+}
+DENSE_TENSOR_EMBEDDING_FOCUSED_PATHS = {
+    "src/core/dense_tensor_embedding.zig",
+    "src/core/stateless_embedding_result.zig",
+    "examples/dense_tensor_embedding_demo.zig",
+}
+DENSE_TENSOR_PYTHON_FOCUSED_PATHS = {
     "bench/stateless_tensor_result.py",
     "bench/tests/test_stateless_tensor_result.py",
 }
-DENSE_TENSOR_CLASSIFIER_PYTHON_TEST_PATH = (
-    "bench/tests/test_stateless_tensor_result.py"
-)
+DENSE_TENSOR_EMBEDDING_PYTHON_FOCUSED_PATHS = {
+    "bench/stateless_embedding_result.py",
+    "bench/tests/test_stateless_embedding_result.py",
+}
 STATELESS_TENSOR_RESULT_SHARED_PATH = "src/core/stateless_tensor_result.zig"
 
 RUNTIME_SUPPORT_INSPECTOR_FOCUSED_PATHS = {
@@ -912,63 +922,72 @@ def _decision_for_path(path: str) -> PathDecision:
         return PathDecision(
             path,
             "shared stateless tensor result contract changed",
-            frozenset(
-                {
-                    "dense-tensor-classifier-focused",
-                    "dense-tensor-embedding-focused",
-                }
-            ),
+            frozenset({"dense-tensor-family-focused"}),
             RETAINED_TARGETS,
-            (
-                "dense-tensor-reranker-compile",
-                "dense-tensor-embedding-compile",
-            ),
+            ("dense-tensor-family-compile",),
         )
 
     if path in DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS:
-        classifier_flags = set()
-        classifier_targets: Tuple[str, ...] = ()
-        classifier_steps = FULL_TARGET_STEPS
-        classifier_host_roots: Tuple[str, ...] = ()
-        if path == DENSE_TENSOR_CLASSIFIER_PYTHON_TEST_PATH:
-            classifier_flags.update(
-                {
-                    "dense-tensor-classifier-python-test-focused",
-                    "python-changed",
-                }
+        classifier_flags = {"dense-tensor-family-focused"}
+        classifier_steps = ("dense-tensor-family-compile",)
+        if path in {
+            "src/core/dense_tensor_classifier.zig",
+            "src/core/dense_tensor_reranker.zig",
+        }:
+            classifier_flags.add("runtime-support-inspector-focused")
+            classifier_steps = (
+                "dense-tensor-family-compile",
+                "runtime-support-inspector-compile",
             )
-        elif suffix == ".py":
-            classifier_flags.update(
-                {
-                    "dense-tensor-classifier-focused",
-                    "python-changed",
-                }
-            )
-        else:
-            classifier_flags.add("dense-tensor-classifier-focused")
-            classifier_targets = RETAINED_TARGETS
-            if path.startswith("src/core/"):
-                classifier_steps = (
-                    "profile-core-compile",
-                    "dense-tensor-reranker-compile",
-                )
-                classifier_host_roots = HOST_CONTRACT_ROOTS
-            else:
-                classifier_steps = ("dense-tensor-reranker-compile",)
-            if path == "src/core/dense_tensor_classifier.zig":
-                classifier_flags.add("runtime-support-inspector-focused")
-                classifier_steps = (
-                    "profile-core-compile",
-                    "dense-tensor-reranker-compile",
-                    "runtime-support-inspector-compile",
-                )
         return PathDecision(
             path,
-            "dense-tensor classifier, shared demo, or independent oracle changed",
+            "dense-tensor family adapter, focused root, or shared demo changed",
             frozenset(classifier_flags),
-            classifier_targets,
+            RETAINED_TARGETS,
             classifier_steps,
-            host_roots=classifier_host_roots,
+        )
+
+    if path in DENSE_TENSOR_EMBEDDING_FOCUSED_PATHS:
+        embedding_flags = {"dense-tensor-family-focused"}
+        embedding_steps = ("dense-tensor-family-compile",)
+        if path == "src/core/dense_tensor_embedding.zig":
+            embedding_flags.add("runtime-support-inspector-focused")
+            embedding_steps = (
+                "dense-tensor-family-compile",
+                "runtime-support-inspector-compile",
+            )
+        return PathDecision(
+            path,
+            "dense-tensor embedding adapter, result contract, or demo changed",
+            frozenset(embedding_flags),
+            RETAINED_TARGETS,
+            embedding_steps,
+        )
+
+    if path in DENSE_TENSOR_PYTHON_FOCUSED_PATHS:
+        return PathDecision(
+            path,
+            "dense-tensor independent Python oracle or exact test changed",
+            frozenset(
+                {
+                    "dense-tensor-family-python-test-focused",
+                    "python-changed",
+                }
+            ),
+            (),
+        )
+
+    if path in DENSE_TENSOR_EMBEDDING_PYTHON_FOCUSED_PATHS:
+        return PathDecision(
+            path,
+            "dense-tensor embedding Python oracle or exact test changed",
+            frozenset(
+                {
+                    "dense-tensor-embedding-python-test-focused",
+                    "python-changed",
+                }
+            ),
+            (),
         )
 
     if path in RUNTIME_SUPPORT_INSPECTOR_FOCUSED_PATHS:
@@ -1519,20 +1538,20 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
             "python/provider-evidence-inspector",
         ),
         (
-            "dense-tensor-classifier-focused",
-            "native/dense-tensor-classifier",
-        ),
-        (
-            "dense-tensor-embedding-focused",
-            "native/dense-tensor-embedding",
+            "dense-tensor-family-focused",
+            "native/dense-tensor-family",
         ),
         (
             "runtime-support-inspector-focused",
             "native/runtime-support-inspector",
         ),
         (
-            "dense-tensor-classifier-python-test-focused",
-            "python/dense-tensor-classifier",
+            "dense-tensor-family-python-test-focused",
+            "python/dense-tensor-family",
+        ),
+        (
+            "dense-tensor-embedding-python-test-focused",
+            "python/dense-tensor-embedding",
         ),
         (
             "runtime-support-inspector-python-test-focused",
@@ -1608,20 +1627,20 @@ def print_report(plan: VerificationPlan) -> None:
             "python/provider-evidence-inspector",
         ),
         (
-            "dense-tensor-classifier-focused",
-            "native/dense-tensor-classifier",
-        ),
-        (
-            "dense-tensor-embedding-focused",
-            "native/dense-tensor-embedding",
+            "dense-tensor-family-focused",
+            "native/dense-tensor-family",
         ),
         (
             "runtime-support-inspector-focused",
             "native/runtime-support-inspector",
         ),
         (
-            "dense-tensor-classifier-python-test-focused",
-            "python/dense-tensor-classifier",
+            "dense-tensor-family-python-test-focused",
+            "python/dense-tensor-family",
+        ),
+        (
+            "dense-tensor-embedding-python-test-focused",
+            "python/dense-tensor-embedding",
         ),
         (
             "runtime-support-inspector-python-test-focused",
@@ -1745,6 +1764,95 @@ def check_changed_shell(paths: Sequence[str]) -> None:
         )
 
 
+@dataclass(frozen=True)
+class ZigCachePruneResult:
+    before_bytes: int
+    after_bytes: int
+    removed_entries: Tuple[str, ...]
+
+
+def _logical_tree_bytes(path: Path) -> int:
+    metadata = path.lstat()
+    if stat.S_ISLNK(metadata.st_mode):
+        raise ValueError("Zig cache must not contain symlinks: " + str(path))
+    total = metadata.st_size
+    if stat.S_ISREG(metadata.st_mode):
+        return total
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError("Zig cache contains a special file: " + str(path))
+    with os.scandir(path) as entries:
+        for entry in entries:
+            total += _logical_tree_bytes(path / entry.name)
+    return total
+
+
+def prune_zig_cache(
+    repository_root: Union[os.PathLike, str],
+    cache_root: Union[os.PathLike, str],
+    limit_mib: int,
+) -> ZigCachePruneResult:
+    repository = Path(repository_root)
+    cache = Path(cache_root)
+    if not repository.is_absolute() or not cache.is_absolute():
+        raise ValueError("repository and Zig cache paths must be absolute")
+    if repository != Path(os.path.abspath(repository)) or cache != Path(
+        os.path.abspath(cache)
+    ):
+        raise ValueError("repository and Zig cache paths must be exact")
+    if limit_mib <= 0:
+        raise ValueError("Zig cache limit must be a positive MiB count")
+    if repository.is_symlink() or repository.resolve(strict=True) != repository:
+        raise ValueError("repository path must be canonical and not a symlink")
+    expected_cache = repository / ".zig-cache"
+    if cache != expected_cache:
+        raise ValueError("Zig cache path must exactly name " + str(expected_cache))
+    if cache.is_symlink() or cache.resolve(strict=True) != cache:
+        raise ValueError("Zig cache path must be canonical and not a symlink")
+
+    object_root = cache / "o"
+    before = _logical_tree_bytes(cache)
+    limit_bytes = limit_mib * 1024 * 1024
+    if before <= limit_bytes:
+        return ZigCachePruneResult(before, before, ())
+    if not object_root.exists():
+        raise ValueError("Zig cache exceeds the limit without an object directory")
+    if object_root.is_symlink() or not object_root.is_dir():
+        raise ValueError("Zig object cache must be a real directory")
+
+    candidates = []
+    for entry in object_root.iterdir():
+        if (
+            re.fullmatch(r"[0-9a-f]{32}", entry.name) is None
+            or entry.is_symlink()
+            or not entry.is_dir()
+            or entry.parent != object_root
+            or entry.resolve(strict=True).parent != object_root
+        ):
+            raise ValueError(
+                "Zig object cache contains an unexpected top-level entry: "
+                + str(entry)
+            )
+        metadata = entry.lstat()
+        entry_bytes = _logical_tree_bytes(entry)
+        candidates.append(
+            (metadata.st_mtime_ns, entry.name, entry, entry_bytes)
+        )
+    candidates.sort()
+
+    removed = []
+    after = before
+    for _, name, entry, entry_bytes in candidates:
+        if after <= limit_bytes:
+            break
+        shutil.rmtree(entry)
+        removed.append(name)
+        after -= entry_bytes
+    after = _logical_tree_bytes(cache)
+    if after > limit_bytes:
+        raise ValueError("Zig cache cannot fit the limit by evicting object entries")
+    return ZigCachePruneResult(before, after, tuple(removed))
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1768,6 +1876,11 @@ def _parser() -> argparse.ArgumentParser:
     target_parser = subparsers.add_parser("retained-targets")
     target_parser.add_argument("--targets", required=True)
     target_parser.add_argument("--target-steps", required=True)
+
+    cache_parser = subparsers.add_parser("prune-zig-cache")
+    cache_parser.add_argument("--repository-root", required=True)
+    cache_parser.add_argument("--cache-root", required=True)
+    cache_parser.add_argument("--limit-mib", required=True, type=int)
     return parser
 
 
@@ -1785,6 +1898,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             write_target_steps(target_plans, arguments.target_steps)
             print("Selected targets: " + ", ".join(RETAINED_TARGETS))
+        elif arguments.command == "prune-zig-cache":
+            result = prune_zig_cache(
+                arguments.repository_root,
+                arguments.cache_root,
+                arguments.limit_mib,
+            )
+            print(
+                "Zig cache: "
+                + str(result.before_bytes)
+                + " -> "
+                + str(result.after_bytes)
+                + " bytes; evicted "
+                + str(len(result.removed_entries))
+                + " object entries"
+            )
         else:
             paths = read_paths0(arguments.paths0)
             if arguments.command == "plan":

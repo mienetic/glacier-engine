@@ -182,7 +182,21 @@ EXPECTED_DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS = frozenset(
     {
         "src/core/dense_tensor_classifier.zig",
         "src/core/dense_tensor_reranker.zig",
+        "src/core/dense_tensor_family_test.zig",
         "examples/dense_tensor_reranker.zig",
+    }
+)
+
+EXPECTED_DENSE_TENSOR_EMBEDDING_FOCUSED_PATHS = frozenset(
+    {
+        "src/core/dense_tensor_embedding.zig",
+        "src/core/stateless_embedding_result.zig",
+        "examples/dense_tensor_embedding_demo.zig",
+    }
+)
+
+EXPECTED_DENSE_TENSOR_PYTHON_FOCUSED_PATHS = frozenset(
+    {
         "bench/stateless_tensor_result.py",
         "bench/tests/test_stateless_tensor_result.py",
     }
@@ -308,6 +322,47 @@ class VerificationPolicyTests(unittest.TestCase):
             tuple(expected),
         )
         return plan
+
+    def test_zig_cache_prune_evicts_oldest_top_level_objects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve()
+            object_root = repository / ".zig-cache" / "o"
+            object_root.mkdir(parents=True)
+            oldest = object_root / ("1" * 32)
+            newest = object_root / ("2" * 32)
+            oldest.mkdir()
+            newest.mkdir()
+            (oldest / "artifact").write_bytes(b"a" * 700_000)
+            (newest / "artifact").write_bytes(b"b" * 700_000)
+            os.utime(oldest, ns=(1_000_000_000, 1_000_000_000))
+            os.utime(newest, ns=(2_000_000_000, 2_000_000_000))
+
+            result = policy.prune_zig_cache(
+                repository,
+                repository / ".zig-cache",
+                1,
+            )
+
+            self.assertEqual(("1" * 32,), result.removed_entries)
+            self.assertFalse(oldest.exists())
+            self.assertTrue(newest.is_dir())
+            self.assertLessEqual(result.after_bytes, 1024 * 1024)
+
+    def test_zig_cache_prune_rejects_symlink_and_nonexact_roots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve()
+            cache = repository / ".zig-cache"
+            (cache / "o").mkdir(parents=True)
+            outside = repository / "outside"
+            outside.mkdir()
+            (cache / "o" / ("a" * 32)).symlink_to(
+                outside,
+                target_is_directory=True,
+            )
+            with self.assertRaisesRegex(ValueError, "symlink|unexpected"):
+                policy.prune_zig_cache(repository, cache, 1)
+            with self.assertRaisesRegex(ValueError, "exactly name"):
+                policy.prune_zig_cache(repository, outside, 1)
 
     def test_documentation_only_selects_quick_gates(self):
         plan = self.assert_targets(
@@ -614,6 +669,14 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertEqual(
             EXPECTED_DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS,
             policy.DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_DENSE_TENSOR_EMBEDDING_FOCUSED_PATHS,
+            policy.DENSE_TENSOR_EMBEDDING_FOCUSED_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_DENSE_TENSOR_PYTHON_FOCUSED_PATHS,
+            policy.DENSE_TENSOR_PYTHON_FOCUSED_PATHS,
         )
         self.assertEqual(
             EXPECTED_RUNTIME_SUPPORT_INSPECTOR_FOCUSED_PATHS,
@@ -1209,65 +1272,29 @@ class VerificationPolicyTests(unittest.TestCase):
                 self.assertFalse(plan.requires("python-full"))
                 self.assertEqual((), plan.decisions[0].host_roots)
 
-    def test_dense_tensor_classifier_paths_select_exact_focused_roots(self):
-        for changed_path in sorted(
+    def test_dense_tensor_implementations_select_shared_family_roots(self):
+        all_paths = (
             EXPECTED_DENSE_TENSOR_CLASSIFIER_FOCUSED_PATHS
-        ):
+            | EXPECTED_DENSE_TENSOR_EMBEDDING_FOCUSED_PATHS
+        )
+        for changed_path in sorted(all_paths):
             with self.subTest(changed_path=changed_path):
                 plan = policy.classify_paths([changed_path])
                 decision = plan.decisions[0]
-                if (
-                    changed_path
-                    == policy.DENSE_TENSOR_CLASSIFIER_PYTHON_TEST_PATH
-                ):
-                    self.assertEqual(
-                        frozenset(
-                            {
-                                "dense-tensor-classifier-python-test-focused",
-                                "python-changed",
-                            }
-                        ),
-                        plan.flags,
-                    )
-                    self.assertEqual((), plan.target_plans)
-                    self.assertEqual((), decision.host_roots)
-                    self.assertIn(
-                        "python/dense-tensor-classifier",
-                        policy._gate_names(decision),
-                    )
-                    continue
-                if changed_path.endswith(".py"):
-                    self.assertEqual(
-                        frozenset(
-                            {
-                                "dense-tensor-classifier-focused",
-                                "python-changed",
-                            }
-                        ),
-                        plan.flags,
-                    )
-                    self.assertEqual((), plan.target_plans)
-                    self.assertEqual((), decision.host_roots)
-                    continue
-
-                expected_steps = ("dense-tensor-reranker-compile",)
-                expected_roots = ()
-                expected_flags = {"dense-tensor-classifier-focused"}
-                if changed_path.startswith("src/core/"):
-                    expected_steps = (
-                        "profile-core-compile",
-                        "dense-tensor-reranker-compile",
-                    )
-                    expected_roots = policy.HOST_CONTRACT_ROOTS
-                if changed_path == "src/core/dense_tensor_classifier.zig":
+                expected_steps = ("dense-tensor-family-compile",)
+                expected_flags = {"dense-tensor-family-focused"}
+                if changed_path in {
+                    "src/core/dense_tensor_classifier.zig",
+                    "src/core/dense_tensor_reranker.zig",
+                    "src/core/dense_tensor_embedding.zig",
+                }:
                     expected_flags.add("runtime-support-inspector-focused")
                     expected_steps = (
-                        "profile-core-compile",
-                        "dense-tensor-reranker-compile",
+                        "dense-tensor-family-compile",
                         "runtime-support-inspector-compile",
                     )
                 self.assertEqual(frozenset(expected_flags), plan.flags)
-                self.assertEqual(expected_roots, decision.host_roots)
+                self.assertEqual((), decision.host_roots)
                 self.assertEqual(
                     tuple(
                         policy.TargetBuildPlan(target, expected_steps)
@@ -1276,9 +1303,34 @@ class VerificationPolicyTests(unittest.TestCase):
                     plan.target_plans,
                 )
                 self.assertIn(
-                    "native/dense-tensor-classifier",
+                    "native/dense-tensor-family",
                     policy._gate_names(decision),
                 )
+
+    def test_dense_tensor_python_paths_select_exact_modules_without_zig(self):
+        cases = (
+            (
+                policy.DENSE_TENSOR_PYTHON_FOCUSED_PATHS,
+                "dense-tensor-family-python-test-focused",
+                "python/dense-tensor-family",
+            ),
+            (
+                policy.DENSE_TENSOR_EMBEDDING_PYTHON_FOCUSED_PATHS,
+                "dense-tensor-embedding-python-test-focused",
+                "python/dense-tensor-embedding",
+            ),
+        )
+        for paths, flag, gate in cases:
+            for changed_path in sorted(paths):
+                with self.subTest(changed_path=changed_path):
+                    plan = policy.classify_paths([changed_path])
+                    self.assertEqual(
+                        frozenset({flag, "python-changed"}),
+                        plan.flags,
+                    )
+                    self.assertEqual((), plan.target_plans)
+                    self.assertEqual((), plan.decisions[0].host_roots)
+                    self.assertIn(gate, policy._gate_names(plan.decisions[0]))
 
     def test_shared_stateless_tensor_result_selects_only_tensor_families(self):
         plan = policy.classify_paths(
@@ -1286,22 +1338,14 @@ class VerificationPolicyTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            frozenset(
-                {
-                    "dense-tensor-classifier-focused",
-                    "dense-tensor-embedding-focused",
-                }
-            ),
+            frozenset({"dense-tensor-family-focused"}),
             plan.flags,
         )
         self.assertEqual(
             tuple(
                 policy.TargetBuildPlan(
                     target,
-                    (
-                        "dense-tensor-reranker-compile",
-                        "dense-tensor-embedding-compile",
-                    ),
+                    ("dense-tensor-family-compile",),
                 )
                 for target in policy.RETAINED_TARGETS
             ),
@@ -2592,6 +2636,21 @@ class VerificationPolicyTests(unittest.TestCase):
             "          -Dmetal=false\n"
             "          -Doptimize=ReleaseSafe\n"
             "          -j2",
+            source,
+        )
+        metal_prune_at = source.index(
+            "python3 tools/verification_policy.py prune-zig-cache",
+            model_recovery_at,
+        )
+        self.assertLess(model_recovery_at, metal_prune_at)
+        self.assertIn(
+            "      - name: Prune reusable Zig cache\n"
+            "        if: always()\n"
+            "        run: >-\n"
+            "          python3 tools/verification_policy.py prune-zig-cache\n"
+            '          --repository-root "$GITHUB_WORKSPACE"\n'
+            '          --cache-root "$GITHUB_WORKSPACE/.zig-cache"\n'
+            "          --limit-mib 1800",
             source,
         )
 
@@ -4146,10 +4205,6 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "",
                 encoding="ascii",
             )
-            (repository / "bench" / "stateless_tensor_result.py").write_text(
-                "",
-                encoding="ascii",
-            )
             (repository / "bench" / "runtime_support_registry.py").write_text(
                 "",
                 encoding="ascii",
@@ -4171,7 +4226,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout,
             )
             self.assertIn(
-                "PASS  native/dense-tensor-classifier:",
+                "PASS  native/dense-tensor-family:",
                 result.stdout,
             )
             self.assertIn(
@@ -4192,13 +4247,12 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertTrue(
                 build_calls[0].startswith(
                     "build contract-interop-test "
-                    "dense-tensor-reranker-test "
+                    "dense-tensor-family-test "
                     "runtime-support-inspector-test "
                 ),
                 build_calls,
             )
             self.assertNotIn("package-module-test", build_calls[0])
-            self.assertNotIn("dense-tensor-embedding-test", build_calls[0])
             self.assertFalse(
                 any(" -Dtarget=" in line for line in calls),
                 calls,
@@ -4247,7 +4301,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout + result.stderr,
             )
             self.assertIn(
-                "PASS  python/dense-tensor-classifier:",
+                "PASS  python/dense-tensor-family:",
                 result.stdout,
             )
             self.assertIn(
@@ -4264,7 +4318,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 calls,
             )
 
-    def test_affected_fast_shared_tensor_result_runs_two_family_roots(self):
+    def test_affected_fast_shared_tensor_result_runs_family_root_once(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             repository, merge_base, environment = self.make_repository(root)
@@ -4287,11 +4341,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout + result.stderr,
             )
             self.assertIn(
-                "PASS  native/dense-tensor-classifier:",
-                result.stdout,
-            )
-            self.assertIn(
-                "PASS  native/dense-tensor-embedding:",
+                "PASS  native/dense-tensor-family:",
                 result.stdout,
             )
             self.assertIn(
@@ -4307,8 +4357,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertEqual(1, len(build_calls), calls)
             self.assertTrue(
                 build_calls[0].startswith(
-                    "build dense-tensor-reranker-test "
-                    "dense-tensor-embedding-test "
+                    "build dense-tensor-family-test "
                 ),
                 build_calls,
             )
@@ -4343,11 +4392,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 result.stdout + result.stderr,
             )
             self.assertIn(
-                "PASS  native/dense-tensor-classifier:",
-                result.stdout,
-            )
-            self.assertIn(
-                "PASS  native/dense-tensor-embedding:",
+                "PASS  native/dense-tensor-family:",
                 result.stdout,
             )
             calls = (
@@ -4359,8 +4404,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             self.assertEqual(1, len(build_calls), calls)
             self.assertTrue(
                 build_calls[0].startswith(
-                    "build dense-tensor-reranker-test "
-                    "dense-tensor-embedding-test "
+                    "build dense-tensor-family-test "
                 ),
                 build_calls,
             )
@@ -4403,14 +4447,13 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             for call in target_calls:
                 self.assertTrue(
                     call.startswith(
-                        "build profile-core-compile "
-                        "dense-tensor-reranker-compile "
+                        "build dense-tensor-family-compile "
                         "runtime-support-inspector-compile "
                     ),
                     target_calls,
                 )
                 self.assertNotIn("profile-host-tool-compile", call)
-                self.assertNotIn("dense-tensor-embedding-compile", call)
+                self.assertNotIn("profile-core-compile", call)
 
     def test_affected_fast_runs_prepared_text_focused_dag_once(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

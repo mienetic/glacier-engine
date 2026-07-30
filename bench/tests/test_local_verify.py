@@ -269,6 +269,7 @@ class LocalVerifyTests(unittest.TestCase):
             )
 
             self.assertEqual(0, result.returncode, result.stdout)
+            self.assertIn("PASS  cache/zig-prune:", result.stdout)
             self.assertTrue(
                 (action_cache / "fake-local-entry").is_file(),
                 result.stdout,
@@ -285,9 +286,50 @@ class LocalVerifyTests(unittest.TestCase):
             self.assertIn(f"|local={action_cache}|", build_lines[0])
             self.assertIn(f"|global={action_cache}|", build_lines[0])
             self.assertEqual(
+                2,
+                log.count(
+                    "tools/verification_policy.py prune-zig-cache"
+                ),
+                log,
+            )
+            self.assertEqual(
                 [],
                 list((root / "tmp").glob("glacier-verify.*")),
                 result.stdout,
+            )
+
+    def test_ci_cache_is_pruned_again_after_a_gate_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = root / "repository"
+            tools_dir = repository / "tools"
+            tools_dir.mkdir(parents=True)
+            copied_verify = tools_dir / "verify.sh"
+            shutil.copy2(VERIFY, copied_verify)
+            action_cache = (repository / ".zig-cache").resolve()
+
+            result = self.run_verify(
+                root,
+                extra_env={
+                    "GITHUB_ACTIONS": "true",
+                    "GLACIER_VERIFY_REUSE_ZIG_CACHE": "1",
+                    "ZIG_LOCAL_CACHE_DIR": str(action_cache),
+                    "ZIG_GLOBAL_CACHE_DIR": str(action_cache),
+                    "VERIFY_FAKE_CONTRACT_STATUS": "7",
+                },
+                verify_path=copied_verify,
+            )
+
+            self.assertEqual(1, result.returncode, result.stdout)
+            self.assertIn("FAIL  host/quick-dag: exit 7", result.stdout)
+            self.assertIn("PASS  cache/zig-prune:", result.stdout)
+            log = (root / "tool.log").read_text(encoding="utf-8")
+            self.assertEqual(
+                2,
+                log.count(
+                    "tools/verification_policy.py prune-zig-cache"
+                ),
+                log,
             )
 
     def test_ci_cache_opt_in_fails_closed_outside_github_actions(

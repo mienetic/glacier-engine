@@ -1183,6 +1183,19 @@ roots, those roots join it. Ordinary pull requests and `main` pushes run only
 the bounded Debug `affected-fast` plan. Complete affected, exhaustive,
 retained-target, and hardware work remains an explicit manual, tagged-release,
 or milestone promotion gate.
+
+Dense-tensor focused verification uses one Zig test artifact behind the
+`dense-tensor-family-test` root and its production-only
+`dense-tensor-family-compile` companion. The existing reranker and embedding
+test, compile, and demo names remain compatibility targets backed by the shared
+compiled artifacts; the focused reranker/classifier and embedding routes keep
+their distinct independent oracles. Adapter-core changes also select the
+runtime-support inspector, while Python-test-only tensor and embedding changes
+select `bench.tests.test_stateless_tensor_result` and
+`bench.tests.test_stateless_embedding_result` independently.
+`affected-fast` selects the family root for embedding and classifier paths.
+Retrieval composition remains roadmap work and has no focused routing claim.
+
 Complete affected verification uses the main `install test-compile` closure
 for general core, CPU, and model changes. Bulk benchmark staging and the
 standalone benchmark consumer closure run when benchmark or build inputs
@@ -1215,6 +1228,12 @@ bounds disk growth without giving up reuse between its compile and runtime
 phases. Foreign targets remain separate because each target has a distinct
 build configuration, but all selected roots for one target are compiled by one
 target-specific invocation.
+
+Hosted CI may reuse only the pinned Zig setup action's exact cache path. It
+soft-prunes affected-job caches above 900 MiB and exhaustive/Metal caches above
+1,800 MiB, before the action's 1,024/2,048 MiB hard limits. This does not enable
+a persistent local project cache: contributor runs keep their cache in the
+temporary verifier workspace and remove it on exit.
 
 Build the portable CLI and run one deterministic, model-free publication demo:
 
